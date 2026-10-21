@@ -31,6 +31,8 @@
  * - `play` / `pause` — what it is doing now, including when it was not asked
  * - `canplay` / `loadeddata` — there are pictures to show
  * - `resize` — the stream switched to a rendition of a different shape
+ * - `progress` — more of the stream has arrived, so the seekable end may move
+ * - `durationchange` — the length is known, or a live one has grown
  */
 export type VideoEventName =
   | 'loadedmetadata'
@@ -40,6 +42,8 @@ export type VideoEventName =
   | 'canplay'
   | 'loadeddata'
   | 'resize'
+  | 'progress'
+  | 'durationchange'
 
 export interface VideoListenerOptions {
   /** Remove the listener the first time it fires. */
@@ -101,3 +105,22 @@ export const HAVE_CURRENT_DATA = 2
 
 /** `HAVE_ENOUGH_DATA`: there is a picture, and more behind it. */
 export const HAVE_ENOUGH_DATA = 4
+
+/**
+ * Where the footage a player could seek to ends, in seconds; null while it
+ * cannot say. The browser's element has its `seekable` ranges; a phone's
+ * handle keeps the end its player last reported (`seekableEnd`).
+ */
+export function seekableEndOf(
+  handle:
+    | VideoHandle
+    | { readonly seekable: { length: number; end: (index: number) => number } }
+): number | null {
+  const shaped = handle as {
+    seekable?: { length: number; end: (index: number) => number }
+    seekableEnd?: number | null
+  }
+  const ranges = shaped.seekable
+  if (ranges != null && ranges.length > 0) return ranges.end(ranges.length - 1)
+  return shaped.seekableEnd ?? null
+}

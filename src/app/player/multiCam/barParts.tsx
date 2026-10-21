@@ -4,7 +4,9 @@ import { Pressable, Text, View } from 'react-native'
 import { Icon, type IconName } from '../../components/Icon'
 import { lstrings } from '../../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../../theme/ThemeContext'
+import { intersects } from '../scoreboardOverlay/overlayLayout'
 import type { Window } from '../wallClock'
+import type { Rect } from './layout'
 
 /**
  * What the two multi-camera bars share — the browser's and the phone's.
@@ -38,11 +40,13 @@ export interface BarAngle {
 export interface MultiCamBarProps {
   window: Window
   atMs: number
-  playing: boolean
   angles: BarAngle[]
-  onTogglePlay: () => void
-  onSkip: (deltaSec: number) => void
   onScrub: (wallMs: number) => void
+  /**
+   * The track's width in px, whenever it is laid out: a drag across the
+   * pictures moves the playhead by a share of it.
+   */
+  onTrackWidth?: (px: number) => void
   /** Any press or drag on the bar, which keeps it from hiding under a finger. */
   onInteract: () => void
   /** Faded in when true, faded out and untouchable when false. */
@@ -53,38 +57,6 @@ export interface MultiCamBarProps {
 export function fractionOf(take: Window, ms: number): number {
   const span = Math.max(1, take.toMs - take.fromMs)
   return Math.min(1, Math.max(0, (ms - take.fromMs) / span))
-}
-
-/** −10 s, play or pause, +10 s: the buttons before the track. */
-export function TransportButtons(props: {
-  playing: boolean
-  onTogglePlay: () => void
-  onSkip: (deltaSec: number) => void
-}): React.ReactElement {
-  const { playing, onTogglePlay, onSkip } = props
-  return (
-    <>
-      <BarButton
-        icon="replay_10"
-        hint={lstrings.angles_back_ten}
-        onPress={() => {
-          onSkip(-10)
-        }}
-      />
-      <BarButton
-        label={playing ? '❚❚' : '▶'}
-        hint={playing ? lstrings.angles_pause : lstrings.angles_play}
-        onPress={onTogglePlay}
-      />
-      <BarButton
-        icon="forward_10"
-        hint={lstrings.angles_forward_ten}
-        onPress={() => {
-          onSkip(10)
-        }}
-      />
-    </>
-  )
 }
 
 /**
@@ -205,6 +177,34 @@ export function ExitButton(props: {
  */
 export function exitClearance(theme: Theme): number {
   return theme.rem(BUTTON_REM + theme.spaceSmRem)
+}
+
+/** The way out's side, square. */
+export function exitSize(theme: Theme): number {
+  return theme.rem(BUTTON_REM)
+}
+
+/**
+ * Where the way out's top goes, in the screen's coordinates: at `spot`, the
+ * top right of the area it is kept inside, unless the board or its box score
+ * reaches there — upright, and sideways with two angles, the board's right
+ * end does, and the ✕ hid its count — in which case `gap` under them.
+ */
+export function exitTopClear(
+  spot: Rect,
+  covers: Array<Rect | null>,
+  gap: number
+): number {
+  let y = spot.y
+  for (let moved = true; moved;) {
+    moved = false
+    for (const cover of covers) {
+      if (cover == null || !intersects({ ...spot, y }, cover)) continue
+      y = cover.y + cover.h + gap
+      moved = true
+    }
+  }
+  return y
 }
 
 /** `1:04:11` into the take, counted from when the first camera started. */

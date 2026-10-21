@@ -140,6 +140,7 @@ export const enUs = {
   /** The Videos tab of a game nothing was recorded of, in place of a player. */
   game_no_video: 'No videos.',
   game_video_unavailable: 'This video is not available right now.',
+  game_video_open: 'Watch full screen',
   /** Marks a video in the picker whose file is no longer on the server. */
   game_video_gone_suffix: '(unavailable)',
   /**
@@ -185,6 +186,9 @@ export const enUs = {
   angles_tap_for_sound: 'Tap for sound',
   angles_tile_loading: 'Camera loading…',
   angles_tile_catching_up: 'Camera catching up…',
+  angles_tile_waiting_live: 'Waiting for this camera to catch up to the game…',
+  video_not_supported:
+    "This browser can't play TeamStation video. Try Chrome, Edge or Safari.",
   angles_close: 'Close',
   angles_play: 'Play',
   angles_pause: 'Pause',

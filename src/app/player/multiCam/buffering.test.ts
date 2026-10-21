@@ -2,16 +2,20 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  acrossStartHole,
+  AHEAD_SEC,
+  BEHIND_SEC,
   canStart,
-  ceilingSec,
   heldAhead,
   isDry,
   isReady,
-  LEAD_SEC,
   LEAVE_OUT_MS,
-  MAX_AHEAD_SEC,
   neededSec,
+  RECORDED_START_GAP_SEC,
   START_AHEAD_SEC,
+  START_GAP_SEC,
+  strayed,
+  TILE_BUFFER,
   type TileBuffer,
   toLeaveOut
 } from './buffering'
@@ -77,21 +81,15 @@ describe('when the grid may start', function () {
   })
 })
 
-describe('how far ahead the tiles may load', function () {
-  it('is the emptiest tile plus the lead, so the line goes to it', function () {
-    expect(ceilingSec([web(2), web(30), web(40)])).equals(2 + LEAD_SEC)
-  })
-
-  it('climbs as the emptiest fills, up to the most', function () {
-    expect(ceilingSec([web(0), web(0)])).equals(LEAD_SEC)
-    expect(ceilingSec([web(52), web(58)])).equals(MAX_AHEAD_SEC)
-  })
-
-  it('leaves out a tile that holds all there is, and one that does not say', function () {
-    // The first holds the rest of its recording; it is short of nothing.
-    expect(ceilingSec([web(3, 3), web(25), phone(4)])).equals(25 + LEAD_SEC)
-    expect(ceilingSec([phone(4)])).equals(MAX_AHEAD_SEC)
-    expect(ceilingSec([])).equals(MAX_AHEAD_SEC)
+describe('how far ahead every player loads (U29)', function () {
+  it('is half a minute ahead and twenty seconds behind, and the phone tiles say so', function () {
+    expect(AHEAD_SEC).equals(30)
+    expect(BEHIND_SEC).equals(20)
+    expect(TILE_BUFFER).deep.include({
+      aheadSec: 30,
+      behindSec: 20,
+      heapShare: 0.15
+    })
   })
 })
 
@@ -144,5 +142,37 @@ describe('what a player holds ahead', function () {
   it('holds nothing where it is not, whatever it holds elsewhere', function () {
     expect(heldAhead([[20, 30]], 5)).equals(0)
     expect(heldAhead([], 5)).equals(0)
+  })
+
+  it('says a tile strayed when it holds nothing where it is wanted and stands elsewhere', function () {
+    // Holds where it stands, not where it is wanted.
+    expect(strayed([[150, 152]], 150, 145.4)).equals(true)
+    expect(strayed([], 150, 145.4)).equals(true)
+    // Holds where it is wanted, within a sliver of a stretch's start.
+    expect(strayed([[145.2, 152]], 150, 145.4)).equals(false)
+    expect(strayed([[140, 152]], 150, 145.4)).equals(false)
+    // Already there.
+    expect(strayed([], 145.5, 145.4)).equals(false)
+  })
+
+  it('holds what is past a hole at the very place it starts, up to the gap its player steps over', function () {
+    expect(START_GAP_SEC).equals(5)
+    // Four seconds of nothing, then thirty-two.
+    expect(heldAhead([[2013, 2045]], 2009)).equals(32)
+    // A hole wider than that is a hole.
+    expect(heldAhead([[2015, 2045]], 2009)).equals(0)
+  })
+
+  it('sends a recording standing in a start hole wider than its player jumps across it', function () {
+    expect(RECORDED_START_GAP_SEC).equals(2)
+    // Three seconds of nothing, then the footage: to its start.
+    expect(acrossStartHole([[2012, 2045]], 2009)).equals(2012)
+    // Within the two its player steps over, or past the five a hole can be,
+    // it stays.
+    expect(acrossStartHole([[2010.5, 2045]], 2009)).equals(null)
+    expect(acrossStartHole([[2015, 2045]], 2009)).equals(null)
+    // In footage, or before nothing at all, it stays.
+    expect(acrossStartHole([[2000, 2045]], 2009)).equals(null)
+    expect(acrossStartHole([], 2009)).equals(null)
   })
 })

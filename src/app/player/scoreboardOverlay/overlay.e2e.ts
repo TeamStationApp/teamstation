@@ -91,7 +91,7 @@ import {
  * 4. Recorded grid at 402x874 (one band above four stacked tiles) and at
  *    874x402 and 1280x720 (over the top-left tile by the landscape default, wider
  *    for long team names).
- * 5. H, with no scoring and no log: no board and no band.
+ * 5. H, with no scoring and no log: no board, and the tiles at the top.
  *
  * Every video and camera it made is deleted at the end; the games stay.
  */
@@ -824,7 +824,7 @@ describe('E8: the board over the web players, at the frame’s wall time', funct
     await pause(1500)
   }
 
-  it('7. a game with no scoring and no log: no board, and no band', async function () {
+  it('7. a game with no scoring and no log: no board, and the tiles at the top', async function () {
     const page = await browser('none-single', '1280x720')
     await page.openBrowser({
       url: `${APP}/games/${gameH}?video=${recorded.h1}`
@@ -845,15 +845,17 @@ describe('E8: the board over the web players, at the frame’s wall time', funct
     await until(upright, gridReady(2), 'the grid of H showed a picture')
     await pause(3000)
     const state = await gridState(upright)
+    // With no board and no box score, the angles start at the top.
     const expected = tileRects({
       width: state.window.w,
       height: state.window.h,
-      count: 2
+      count: 2,
+      align: 'top'
     })
     const tops = state.tiles.map(tile => tile.y).sort((a, b) => a - b)
     check(
       state.boards.length === 0 && Math.abs(tops[0] - expected[0].y) <= 1,
-      `H grid: no board, and the first tile where it is with no band (${tops[0]?.toFixed(1)} px, expected ${expected[0].y.toFixed(1)})`
+      `H grid: no board, and the first tile at the top (${tops[0]?.toFixed(1)} px, expected ${expected[0].y.toFixed(1)})`
     )
     await upright.detach()
   })

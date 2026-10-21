@@ -1,19 +1,38 @@
 import { expect } from 'chai'
 import Hls from 'hls.js'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 
 import {
-  aheadControl,
   APPLE_VENDOR,
   atLiveEdge,
   attachHls,
   attachNativeHls,
   HLS_MIME_TYPE,
   hlsEngine,
+  reportsLiveStalls,
   type RetryClock
 } from './attachHls'
+import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
+
+// A browser whose Media Source takes HEVC, as every one these tests stand
+// for does; the one that does not says so for itself.
+const mediaSourceBefore = Object.getOwnPropertyDescriptor(
+  globalThis,
+  'MediaSource'
+)
+before(function () {
+  Object.defineProperty(globalThis, 'MediaSource', {
+    configurable: true,
+    value: { isTypeSupported: () => true }
+  })
+})
+after(function () {
+  if (mediaSourceBefore == null)
+    Reflect.deleteProperty(globalThis, 'MediaSource')
+  else Object.defineProperty(globalThis, 'MediaSource', mediaSourceBefore)
+})
 
 /**
  * What happens to a live game when the stream stumbles.
@@ -75,29 +94,6 @@ describe('how far ahead a grid tile loads', function () {
     expect(atLiveEdge(540, 600, 4, 3, 60)).equals(true)
     expect(atLiveEdge(500, 600, 4, 3, 60)).equals(false)
   })
-  it('moves both of hls.js’s limits together', function () {
-    const config = { maxBufferLength: 10, maxMaxBufferLength: 10 }
-    const control = aheadControl(config, 10)
-    control.setAheadSec(40)
-    expect(config).deep.equals({ maxBufferLength: 40, maxMaxBufferLength: 40 })
-    control.setAheadSec(15)
-    expect(config).deep.equals({ maxBufferLength: 15, maxMaxBufferLength: 15 })
-  })
-
-  it('keeps under a cut hls.js made when the browser ran out of room', function () {
-    const config = { maxBufferLength: 60, maxMaxBufferLength: 60 }
-    const control = aheadControl(config, 60)
-    // A refused append: hls.js halves its own ceiling.
-    config.maxMaxBufferLength = 30
-    control.setAheadSec(60)
-    expect(config.maxMaxBufferLength).equals(30)
-    expect(config.maxBufferLength).equals(30)
-    // Lower still is always allowed.
-    control.setAheadSec(20)
-    expect(config.maxMaxBufferLength).equals(20)
-    control.setAheadSec(60)
-    expect(config.maxMaxBufferLength).equals(30)
-  })
 })
 
 /** A `<video>` that records what it was told, for both paths. */
@@ -105,6 +101,7 @@ class FakeVideo {
   src = ''
   error: { code: number } | null = null
   paused = true
+  muted = false
   ended = false
   currentTime = 0
   seekable = { length: 0, start: () => 0, end: () => 0 }
@@ -242,13 +239,15 @@ describe('who plays the playlist', function () {
     }
   })
 
-  it('is the browser where there is no Media Source but native HLS', function () {
+  it('is the browser where there is no Media Source but Apple’s own HLS, and nobody else there', function () {
     expect(
       hlsEngine({ vendor: APPLE_VENDOR, nativeHls: true, mediaSource: false })
     ).equals('native')
+    // Chrome answers `maybe` to HLS either way: without Media Source to
+    // decode through, nothing plays it.
     expect(
       hlsEngine({ vendor: 'Google Inc.', nativeHls: true, mediaSource: false })
-    ).equals('native')
+    ).equals('none')
   })
 
   it('is nobody without either', function () {
@@ -313,7 +312,7 @@ describe('attaching in a browser', function () {
     expect(video.attached()).equals(0)
   })
 
-  it('gives a single live viewer a minute of buffer and live delay', function () {
+  it('gives a single live viewer half a minute ahead, twenty seconds behind and 45 s of live delay (U24, U29)', function () {
     withMediaSource()
     const video = new FakeVideo()
     asBrowser('Google Inc.', () => {
@@ -326,19 +325,38 @@ describe('attaching in a browser', function () {
           isLive: () => true
         }
       )
-      expect(config.maxBufferLength).equals(60)
-      expect(config.liveSyncDuration).equals(60)
-      expect(config.backBufferLength).equals(30)
+      expect(config.maxBufferLength).equals(30)
+      expect(config.maxMaxBufferLength).equals(30)
+      expect(config.liveSyncDuration).equals(45)
+      expect(config.backBufferLength).equals(20)
       detach()
     })
   })
 
-  it('keeps recording buffers and coordinated live grid limits', function () {
+  it('starts a tile where its grid placed it, and leaves the rest to hls.js', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    asBrowser('Google Inc.', () => {
+      attachHls(video as unknown as VideoHandle, url, undefined, {
+        wantsToPlay: () => true,
+        isLive: () => true,
+        buffer: { aheadSec: 30 },
+        startSec: 2009
+      })()
+      expect(config.startPosition).equals(2009)
+      attachHls(video as unknown as VideoHandle, url)()
+      expect(config.startPosition).equals(-1)
+    })
+  })
+
+  it('keeps recording buffers, and a live grid tile’s limits with the same live delay (U24)', function () {
     withMediaSource()
     const video = new FakeVideo()
     asBrowser('Google Inc.', () => {
       attachHls(video as unknown as VideoHandle, url)()
       expect(config.maxBufferLength).equals(30)
+      expect(config.maxMaxBufferLength).equals(30)
+      expect(config.backBufferLength).equals(20)
       expect(config.liveSyncDuration).equals(undefined)
       attachHls(video as unknown as VideoHandle, url, undefined, {
         wantsToPlay: () => true,
@@ -347,7 +365,7 @@ describe('attaching in a browser', function () {
       })()
       expect(config.maxBufferLength).equals(10)
       expect(config.maxMaxBufferLength).equals(10)
-      expect(config.liveSyncDuration).equals(undefined)
+      expect(config.liveSyncDuration).equals(45)
     })
   })
 
@@ -387,7 +405,7 @@ describe('attaching in a browser', function () {
         }
       )
       video.emit('play')
-      expect(video.currentTime).equals(7140)
+      expect(video.currentTime).equals(7155)
       video.currentTime = 300
       video.emit('play')
       expect(video.currentTime).equals(300)
@@ -422,29 +440,18 @@ describe('attaching in a browser', function () {
   it('uses hls.js in Chrome and destroys it on teardown', function () {
     withMediaSource()
     const video = new FakeVideo()
-    let control: unknown = 'unset'
     asBrowser('Google Inc.', () => {
       const detach = attachHls(
         video as unknown as VideoHandle,
         url,
         undefined,
-        {
-          wantsToPlay: () => true,
-          buffer: {
-            aheadSec: 10,
-            onControl: next => {
-              control = next
-            }
-          }
-        }
+        { wantsToPlay: () => true, buffer: { aheadSec: 10 } }
       )
       expect(video.src).equals('')
       expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia'])
-      expect(control).not.equals(null)
       detach()
     })
     expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia', 'destroy'])
-    expect(control).equals(null)
     expect(video.attached()).equals(0)
   })
 
@@ -467,6 +474,131 @@ describe('attaching in a browser', function () {
     expect(video.src).equals('')
     expect(video.loads).equals(0)
     expect(video.attached()).equals(0)
+  })
+})
+
+describe('a grid tile on the browser’s own player', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+  const tile = (wants: () => boolean): PlayIntent => ({
+    wantsToPlay: wants,
+    buffer: { aheadSec: 30 }
+  })
+
+  it('is played silently to its first frame, so an iPhone loads it, and held there', async function () {
+    const video = new FakeVideo()
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      tile(() => false),
+      manualClock()
+    )
+    expect(video.plays).equals(1)
+    expect(video.muted).equals(true)
+    video.emit('canplay')
+    expect(video.paused).equals(true)
+    expect(video.muted).equals(false)
+    // Once: a later stall's recovery is not taken for the first frame.
+    video.emit('canplay')
+    expect(video.plays).equals(1)
+  })
+
+  it('plays on from its first frame when the grid wants it playing by then', function () {
+    const video = new FakeVideo()
+    video.muted = true
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      tile(() => true),
+      manualClock()
+    )
+    video.emit('canplay')
+    expect(video.paused).equals(false)
+    // Its sound as it was: muted.
+    expect(video.muted).equals(true)
+  })
+
+  it('leaves a heard tile it keeps playing silent, and says its sound waits for a tap', function () {
+    const video = new FakeVideo()
+    let held = 0
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      { ...tile(() => true), onSoundHeld: () => (held += 1) },
+      manualClock()
+    )
+    video.emit('canplay')
+    expect(video.paused).equals(false)
+    // Unmuted without a tap, an iPhone would pause it.
+    expect(video.muted).equals(true)
+    expect(held).equals(1)
+  })
+
+  it('puts back the sound the owner wants now, not what the element had at the start', function () {
+    // An angle nobody hears, its element not yet told so when it attached.
+    const video = new FakeVideo()
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      { ...tile(() => false), muted: () => true },
+      manualClock()
+    )
+    video.emit('canplay')
+    expect(video.paused).equals(true)
+    expect(video.muted).equals(true)
+  })
+
+  it('puts the sound back if Safari refuses the play, or the tile goes first', async function () {
+    const refused = new FakeVideo()
+    refused.play = async () => {
+      throw new Error('NotAllowedError')
+    }
+    attachNativeHls(
+      refused,
+      url,
+      undefined,
+      tile(() => false),
+      manualClock()
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(refused.muted).equals(false)
+    const gone = new FakeVideo()
+    const detach = attachNativeHls(
+      gone,
+      url,
+      undefined,
+      tile(() => false),
+      manualClock()
+    )
+    detach()
+    expect(gone.muted).equals(false)
+  })
+
+  it('is left alone when already playing, and a single player is never primed', function () {
+    const playing = new FakeVideo()
+    playing.paused = false
+    attachNativeHls(
+      playing,
+      url,
+      undefined,
+      tile(() => true),
+      manualClock()
+    )
+    expect(playing.plays).equals(0)
+    const single = new FakeVideo()
+    attachNativeHls(
+      single,
+      url,
+      undefined,
+      { wantsToPlay: () => false },
+      manualClock()
+    )
+    expect(single.plays).equals(0)
+    expect(single.muted).equals(false)
   })
 })
 
@@ -904,5 +1036,206 @@ describe('a live game whose playlist was closed under the player', function () {
     expect(fetched).deep.equals([])
     expect(loads).has.length(1)
     detach()
+  })
+})
+
+describe('the player’s dates, handed out as a mapping (U21)', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+  const T0 = Date.parse('2026-10-19T18:00:00Z')
+  type Stubbed = Record<string, unknown>
+  let saved: Stubbed = {}
+  /** What `attachHls` asked hls.js to call, by event. */
+  let handlers: Array<[string, (event: unknown, data: unknown) => void]> = []
+
+  afterEach(function () {
+    if (saved.isSupported == null) return
+    const proto = Hls.prototype as unknown as Stubbed
+    Hls.isSupported = saved.isSupported as typeof Hls.isSupported
+    proto.loadSource = saved.loadSource
+    proto.attachMedia = saved.attachMedia
+    proto.destroy = saved.destroy
+    proto.on = saved.on
+    saved = {}
+    handlers = []
+  })
+
+  /** hls.js as if Media Source were here, keeping the instance. */
+  function withMediaSource(): void {
+    const proto = Hls.prototype as unknown as Stubbed
+    saved = {
+      isSupported: (Hls as unknown as Stubbed).isSupported,
+      loadSource: proto.loadSource,
+      attachMedia: proto.attachMedia,
+      destroy: proto.destroy,
+      on: proto.on
+    }
+    Hls.isSupported = () => true
+    proto.loadSource = () => undefined
+    proto.attachMedia = () => undefined
+    proto.destroy = () => undefined
+    const on = saved.on as (...args: unknown[]) => unknown
+    proto.on = function (
+      this: Hls,
+      event: string,
+      listener: never,
+      context: unknown
+    ) {
+      // hls.js's own controllers register with themselves as the context;
+      // `attachHls` registers with none.
+      if (context === undefined) handlers.push([event, listener])
+      return on.call(this, event, listener, context)
+    }
+  }
+  /** Calls what `attachHls` registered for `event`, as hls.js would. */
+  const fire = (event: string, data: unknown): void => {
+    for (const [name, listener] of handlers)
+      if (name === event) listener(event, data)
+  }
+  const level = (
+    fragments: Array<{
+      start: number
+      duration: number
+      programDateTime: number | null
+    }>
+  ): unknown => ({ details: { live: true, fragments } })
+
+  it('maps hls.js’s dated fragments on every load and update, and says so when there are none', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    const handed: Array<ReturnType<typeof Object> | null> = []
+    asBrowser('Google Inc.', () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          onWallMapping: mapping => handed.push(mapping)
+        }
+      )
+      fire(
+        Hls.Events.LEVEL_LOADED,
+        level([
+          { start: 0, duration: 4, programDateTime: T0 },
+          { start: 4, duration: 4, programDateTime: T0 + 38_000 }
+        ])
+      )
+      fire(
+        Hls.Events.LEVEL_UPDATED,
+        level([
+          { start: 0, duration: 4, programDateTime: T0 },
+          { start: 4, duration: 4, programDateTime: T0 + 38_000 },
+          { start: 8, duration: 4, programDateTime: T0 + 42_000 }
+        ])
+      )
+      fire(
+        Hls.Events.LEVEL_LOADED,
+        level([{ start: 0, duration: 4, programDateTime: null }])
+      )
+      detach()
+    })
+    expect(handed).length(3)
+    const [first, second, none] = handed as Array<{
+      wallAt: (sec: number) => number | null
+      newestWall: () => number | null
+    } | null>
+    expect(first?.wallAt(5)).equals(T0 + 39_000)
+    expect(second?.newestWall()).equals(T0 + 46_000)
+    expect(none).equals(null)
+  })
+
+  it('maps Safari’s start date, again as its seekable end grows, and says so without one', function () {
+    const video = new FakeVideo() as FakeVideo & { getStartDate?: () => Date }
+    let date = Number.NaN
+    video.getStartDate = () => new Date(date)
+    const handed: Array<{
+      wallAt: (sec: number) => number | null
+      newestWall: () => number | null
+    } | null> = []
+    asBrowser(APPLE_VENDOR, () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          onWallMapping: mapping => handed.push(mapping)
+        }
+      )
+      // No date yet and no metadata: nothing to say.
+      video.emit('progress')
+      expect(handed).deep.equals([])
+      video.readyState = 1
+      video.emit('loadedmetadata')
+      expect(handed).deep.equals([null])
+      date = T0
+      video.seekable = { length: 1, start: () => 0, end: () => 30 }
+      video.emit('durationchange')
+      // The same end again is no news.
+      video.emit('progress')
+      video.seekable = { length: 1, start: () => 0, end: () => 34 }
+      video.emit('progress')
+      detach()
+    })
+    expect(handed).length(3)
+    expect(handed[1]?.wallAt(10)).equals(T0 + 10_000)
+    expect(handed[2]?.newestWall()).equals(T0 + 34_000)
+    // Detached, it listens to nothing more.
+    expect(video.attached()).equals(0)
+  })
+})
+
+describe('a browser that cannot play the video (U31)', function () {
+  it('is told, and nothing is attached', function () {
+    const video = new FakeVideo('maybe')
+    const realMediaSource = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'MediaSource'
+    )
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      value: { isTypeSupported: () => false }
+    })
+    let told = 0
+    try {
+      asBrowser('Google Inc.', () => {
+        const detach = attachHls(
+          video as unknown as VideoHandle,
+          'https://example.com/media/vid_example/master.m3u8',
+          undefined,
+          {
+            wantsToPlay: () => true,
+            onUnsupported: () => {
+              told += 1
+            }
+          }
+        )
+        detach()
+      })
+    } finally {
+      if (realMediaSource == null)
+        Reflect.deleteProperty(globalThis, 'MediaSource')
+      else Object.defineProperty(globalThis, 'MediaSource', realMediaSource)
+    }
+    expect(told).equals(1)
+    expect(video.src).equals('')
+    expect(video.attached()).equals(0)
+  })
+})
+
+describe('which live players have their stalls reported', function () {
+  it('reports the viewer’s own live player, and neither a grid tile nor a card preview', function () {
+    const isLive = (): boolean => true
+    const wantsToPlay = (): boolean => true
+    expect(reportsLiveStalls({ wantsToPlay, isLive })).equals(true)
+    expect(
+      reportsLiveStalls({ wantsToPlay, isLive, buffer: { aheadSec: 30 } })
+    ).equals(false)
+    expect(reportsLiveStalls({ wantsToPlay, isLive, preview: true })).equals(
+      false
+    )
+    // A recording has no live stalls to report.
+    expect(reportsLiveStalls({ wantsToPlay })).equals(false)
+    expect(reportsLiveStalls(undefined)).equals(false)
   })
 })

@@ -18,11 +18,11 @@ import {
   settle,
   wallTimelineOf
 } from '../../test/overlayFixtures'
+import { lstrings } from '../locales/strings'
 import { GameScreen } from '../screens/GameScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerSurface } from './PlayerSurface'
 import type { VideoHandle } from './videoHandle'
-import { zoneFor } from './zones'
 
 let root: Root | undefined
 
@@ -98,7 +98,7 @@ function fakeVideo(): VideoHandle & { calls: string[] } {
 describe('the board over the single player (C2)', function () {
   afterEach(unmount)
 
-  it('is drawn over the picture, and a tap on it reaches the square beneath', async function () {
+  it('is drawn over the picture at single, with one press to open the player and nothing else (U11)', async function () {
     const server = overlayServer()
     server.timelines.set('v1', wallTimelineOf([[0, OVERLAY_T0]]))
     server.steps.set('g1', [boardStep(OVERLAY_T0 + 1000, 1)])
@@ -108,6 +108,7 @@ describe('the board over the single player (C2)', function () {
     })
     const video = fakeVideo()
     const ref = { current: video as VideoHandle }
+    let opened = 0
     await render(
       <PlayerSurface
         videoRef={ref}
@@ -121,6 +122,9 @@ describe('the board over the single player (C2)', function () {
           durationSec: 600,
           picture: { x: 0, y: 0, w: 640, h: 360 }
         }}
+        onOpen={() => {
+          opened += 1
+        }}
       >
         <div data-testid="picture" />
       </PlayerSurface>
@@ -131,43 +135,53 @@ describe('the board over the single player (C2)', function () {
     const board = overlay()!
     expect(board).not.equals(null)
     expect(board.getAttribute('data-at')).equals(String(OVERLAY_T0 + 1000))
-    // Inside the surface, after the picture: drawn over it.
-    const surface = document.querySelector(
-      '[data-testid="picture"]'
-    )!.parentElement!
-    expect(surface.contains(board)).equals(true)
+    // Inside the surface, after the picture: drawn over it, at `single`.
+    const picture = document.querySelector('[data-testid="picture"]')!
+    const surface = picture.parentElement!
     const order = [...surface.children]
-    expect(order.indexOf(board)).greaterThan(
-      order.indexOf(document.querySelector('[data-testid="picture"]')!)
-    )
+    expect(order.indexOf(board)).greaterThan(order.indexOf(picture))
     expect(board.style.top).equals(`${0.01 * 360}px`)
     expect(board.style.height).equals(`${0.15 * 360}px`)
-    // It takes no touches, and the squares are all still there after it.
     expect(getComputedStyle(board).pointerEvents).equals('none')
-    // Each square is the one child of its gesture detector's wrapper.
-    const squares = order
-      .slice(order.indexOf(board) + 1)
-      .map(node => node.firstElementChild as HTMLElement | null)
-      .filter(node => node?.style.position === 'absolute') as HTMLElement[]
-    expect(squares.length).greaterThan(0)
 
-    // A press on the board lands on the square beneath it, which is drawn
-    // over the board and covers it: the upper-left square, which plays and
-    // pauses.
-    const px = (value: string): number => Number.parseFloat(value)
-    const under = squares.find(
-      square =>
-        px(square.style.left) <= px(board.style.left) &&
-        px(square.style.top) <= px(board.style.top) &&
-        px(square.style.left) + px(square.style.width) >=
-          px(board.style.left) + px(board.style.width) &&
-        px(square.style.top) + px(square.style.height) >=
-          px(board.style.top) + px(board.style.height)
+    // One press over the whole picture, and it opens the player.
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    expect(open.getAttribute('aria-label')).equals(lstrings.game_video_open)
+    expect(order.indexOf(open)).greaterThan(order.indexOf(board))
+    expect(order.at(-1)).equals(open)
+    await act(async () => {
+      open.click()
+    })
+    expect(opened).equals(1)
+    // No squares, holds or keys: the picture was not touched.
+    await act(async () => {
+      document.body.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          key: 'ArrowRight',
+          bubbles: true
+        })
+      )
+      document.body.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'k', bubbles: true })
+      )
+    })
+    expect(video.calls).deep.equals([])
+    expect(video.currentTime).equals(2)
+  })
+
+  it('has nothing to press without somewhere to open', async function () {
+    await render(
+      <PlayerSurface
+        videoRef={{ current: fakeVideo() }}
+        width={640}
+        height={360}
+      >
+        <div />
+      </PlayerSurface>
     )
-    expect(under).not.equals(undefined)
-    expect(
-      zoneFor(px(board.style.left) + 1, px(board.style.top) + 1, 640, 360)
-    ).equals('toggle')
+    expect(document.querySelector('[data-testid="gameVideoOpen"]')).equals(null)
   })
 
   it('draws no board, and asks for none, while the grid has the screen', async function () {

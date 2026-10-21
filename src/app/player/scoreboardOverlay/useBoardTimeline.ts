@@ -9,6 +9,7 @@ import {
   type SocketConstructor
 } from '../../scoreboard/scoreboardSocket'
 import { mergeSteps } from './boardAt'
+import { latestQueue } from './latestQueue'
 
 /** How far before the frame on screen a refetch starts. */
 export const LOOK_BACK_MS = 60_000
@@ -37,6 +38,13 @@ export interface BoardTimelineOptions {
   live: boolean
   /** The wall-clock instant of the frame on screen, or null. */
   playheadWall: () => number | null
+  /**
+   * The game may have changed: after each change notice (gathered), each
+   * time the socket opens, and each poll while it is down — when the board
+   * asks again itself. For a box score of the same game, so one socket and
+   * one poll serve both.
+   */
+  onChange?: () => void
   /** A test's socket and clock; the platform's otherwise. */
   WebSocketImpl?: SocketConstructor
   schedule?: Schedule
@@ -87,6 +95,8 @@ export function useBoardTimeline(
   const kept = useRef<{ gameId: string; steps: BoardStep[] } | null>(null)
   const playhead = useRef(options.playheadWall)
   playhead.current = options.playheadWall
+  const changed = useRef(options.onChange)
+  changed.current = options.onChange
   const origin = useRef(options.origin)
   origin.current = options.origin
   const refetch = useRef<(wallMs: number | null) => void>(() => undefined)
@@ -105,10 +115,11 @@ export function useBoardTimeline(
     let done = false
     let held: BoardStep[] | null = kept.current?.steps ?? null
     // One request at a time, applied in the order asked, so an older answer
-    // never lands on top of a newer one.
-    let chain = Promise.resolve()
+    // never lands on top of a newer one — and of those asked for while one is
+    // out only the newest, as a scrub asks around every frame it passes.
+    const queue = latestQueue()
     const load = (from: number): void => {
-      chain = chain.then(async () => {
+      queue(async () => {
         if (done) return
         const whole = held == null
         const start = whole ? fromMs : from
@@ -147,6 +158,7 @@ export function useBoardTimeline(
           onOpen: () => {
             open = true
             around(playhead.current())
+            changed.current?.()
           },
           onClose: () => {
             open = false
@@ -157,6 +169,7 @@ export function useBoardTimeline(
             gathering = schedule(() => {
               gathering = undefined
               around(playhead.current())
+              changed.current?.()
             }, NOTICE_DEBOUNCE_MS)
           },
           onStop: () => {
@@ -169,7 +182,10 @@ export function useBoardTimeline(
       }
       const poll = (): void => {
         polling = schedule(() => {
-          if (!open) around(playhead.current())
+          if (!open) {
+            around(playhead.current())
+            changed.current?.()
+          }
           poll()
         }, BOARD_POLL_MS)
       }
@@ -195,7 +211,7 @@ export function useBoardTimeline(
 }
 
 /** `{"type":"changed"}`, and nothing else the socket might send. */
-function isChangeNotice(data: unknown): boolean {
+export function isChangeNotice(data: unknown): boolean {
   try {
     const message = JSON.parse(String(data)) as { type?: unknown } | null
     return message?.type === 'changed'
@@ -205,7 +221,9 @@ function isChangeNotice(data: unknown): boolean {
 }
 
 /** The page's own origin, where there is a page. */
-function pageOrigin(given: PageOrigin | undefined): PageOrigin | undefined {
+export function pageOrigin(
+  given: PageOrigin | undefined
+): PageOrigin | undefined {
   if (given != null) return given
   const location = (globalThis as { location?: Partial<PageOrigin> }).location
   if (location?.protocol == null || location.host == null) return undefined

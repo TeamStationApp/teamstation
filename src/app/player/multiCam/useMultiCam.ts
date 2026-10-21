@@ -1,20 +1,38 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
-import type { BufferControl, PlayIntent } from '../playIntent'
+import type { PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
-import { HAVE_CURRENT_DATA } from '../videoHandle'
-import { secondsAt, wallAt, type Window, windowOf } from '../wallClock'
+import { HAVE_CURRENT_DATA, HAVE_METADATA, seekableEndOf } from '../videoHandle'
+import {
+  type AngleVideo,
+  placedAlone,
+  secondsAt,
+  wallAt,
+  type Window,
+  windowOf
+} from '../wallClock'
+import { MAPPING_WAIT_MS, type WallMapping } from '../wallMapping'
 import {
   type AngleZone,
   angleZoneFor,
   gestureAction,
   HOLD_MS,
-  STEP_SECONDS
+  SCRUB_EDGE_FRACTION,
+  SCRUB_RATE,
+  STEP_SECONDS,
+  STILL_FRACTION
 } from '../zones'
 import {
   correctionFor,
@@ -26,21 +44,23 @@ import {
   isOurSilence,
   JOIN_LEAD_SEC,
   liveOpeningMs,
-  liveTargetMs,
   masterOf,
   NUDGE_MAX_SEC,
   nudgeRate,
+  type ParkReason,
   type Placeable,
   WATCHDOG_MS,
   worthCorrecting
 } from './align'
 import {
+  acrossStartHole,
+  AHEAD_SEC,
   canStart,
-  ceilingSec,
   heldAhead,
   isDry,
   isReady,
-  LEAD_SEC,
+  START_GAP_SEC,
+  strayed,
   type TileBuffer,
   toLeaveOut
 } from './buffering'
@@ -83,7 +103,17 @@ export interface MultiCamProps {
   }) => void
   /** Where the viewer now is, so the address can say so. */
   onMoment?: (wallMs: number) => void
-  onClose: () => void
+  /**
+   * The grid went, however it went — its ✕, or the browser's Back taking the
+   * angles off the address — with where its pictures were then, or the
+   * clock's reading where none was playing.
+   */
+  onGone?: (atWallMs: number | null) => void
+  /**
+   * The viewer left, with the wall time the grid had got to, for the videos
+   * page's player to pick up at; null before any tile has placed it.
+   */
+  onClose: (atWallMs: number | null) => void
   /**
    * Whether the server still lists a video as live, for a tile whose live
    * playlist was closed under it (`PlayIntent.isLive`).
@@ -98,16 +128,12 @@ export interface MultiCamOptions {
   /** Draw what each tile is doing (`?debug=1` on the web). */
   debug?: boolean
   /**
-   * A band this tall across the top of the box that the tiles stay below:
-   * the scoreboard's, in a column. Drags and drops measure against the tiles
-   * where they are, below it.
-   */
-  top?: number
-  /**
-   * Three angles sideways leave the top-left quadrant to the scoreboard
+   * Each tile's rectangle, in reading order, as the player's layout puts
+   * them around the board and the box score (`playerLayout`). Drags and
+   * drops measure against them. Without them the tiles fill the box
    * (`tileRects`).
    */
-  boardCell?: boolean
+  rects?: Rect[]
   /**
    * Called just before the tiles stand aside for a dragged one, so a phone
    * can animate the change it is about to draw.
@@ -118,6 +144,13 @@ export interface MultiCamOptions {
    * address yet, after so many asks; undefined to stop. Tests shorten it.
    */
   liveRetryDelay?: (asks: number) => number | undefined
+  /**
+   * A tile's mapping onto the wall clock when its player has none of its own:
+   * the server's wall timeline for the video (`GridScoreboard`). Without
+   * either, its start time places it. Undefined while the timeline is still
+   * being fetched.
+   */
+  fallbackMapping?: (videoId: string) => WallMapping | null | undefined
 }
 
 /**
@@ -132,16 +165,11 @@ export const DRY_CHECK_MS = 250
 /** How often a joining tile looks to see whether the game has reached it. */
 const JOIN_POLL_MS = 30
 
+/** How far past the seekable end a tile's place may be and still count. */
+const SEEKABLE_SLACK_SEC = 0.25
+
 /** How long the bar stays up after the last touch of it. */
 const BAR_HIDE_MS = 3000
-
-/**
- * How long a finger has to rest on a tile before the tile can be moved.
- *
- * The tiles are the same surface the taps land on, so a drag that started at
- * once moved a picture whenever a tap to pause or skip slipped a little.
- */
-export const REORDER_HOLD_MS = 1000
 
 /**
  * How far a finger may slip, in pixels, and still have made a tap.
@@ -158,7 +186,7 @@ export function beyondSlop(dx: number, dy: number): boolean {
 }
 
 export interface TileState {
-  parked: 'beforeStart' | 'afterEnd' | null
+  parked: ParkReason | null
   stalledSince: number | null
   ended: boolean
 }
@@ -170,14 +198,35 @@ const freshTile = (): TileState => ({
 })
 
 /** One finger on the view, followed from down to up. */
+/**
+ * What a press has become.
+ *
+ * - `pending`: down, and not yet anything; lifted under the tap slop it is a
+ *   tap.
+ * - `scrub`: it went sideways from the middle before `HOLD_MS`, and moves the
+ *   playhead.
+ * - `held`: it rested on the middle-right square, and crawls until lifted.
+ * - `reorder`: it rested on a tile of several, and carries the tile.
+ * - `dead`: anything else; its lift does nothing.
+ */
+export type PressMode = 'pending' | 'held' | 'scrub' | 'reorder' | 'dead'
+
 interface Press {
   pointerId: number
-  /** Running while the press may still become a crawl. */
+  x0: number
+  y0: number
+  /** The tile it came down on, or null on the black around them. */
+  tile: number | null
+  /** The take's clock when it came down, which a scrub moves from. */
+  startWall: number | null
+  mode: PressMode
+  /** Running while it may still become a hold. */
   timer: ReturnType<typeof setTimeout> | null
-  /** It became one, and its lift ends the crawl. */
-  held: boolean
-  /** It has moved far enough to be a drag, so its lift is not a tap. */
+  /** It has moved beyond the tap slop, so its lift is not a tap. */
   travelled: boolean
+  /** The scrub's next playhead, and the frame that will move there. */
+  scrubTo: number | null
+  frame: number
 }
 
 /** A tile being moved, by how far it has come from where it was picked up. */
@@ -200,6 +249,13 @@ export interface MultiCam {
   playing: boolean
   atWallMs: number | null
   /**
+   * Where the pictures are now, on the wall clock: the heard tile's frame, or
+   * the clock where nothing plays. `atWallMs` is the watchdog's last reading,
+   * up to a second behind a playing tile — a close that reported it came back
+   * that much short.
+   */
+  wallNow: () => number | null
+  /**
    * The tile the clock is read from (`masterOf`), as the watchdog last chose
    * it; null until it has.
    */
@@ -212,6 +268,12 @@ export interface MultiCam {
   waiting: boolean
   /** The heard tile is playing without sound until the next touch. */
   soundBlocked: boolean
+  /**
+   * A tile's player was left playing silent because its sound needs a tap
+   * (`PlayIntent.onSoundHeld`): the heard one's is then held as a refused
+   * play's is, until the next touch.
+   */
+  soundHeld: (id: string) => void
   heardId: string | null
   /** Where each tile rests. */
   rects: Rect[]
@@ -233,10 +295,11 @@ export interface MultiCam {
    */
   controlsShown: boolean
   drag: TileDrag | null
-  pressPointer: number | null
   /** What the view wants each tile to be doing, for the source's recovery. */
   intents: { current: Map<string, boolean> }
   takeElement: (id: string) => (node: TileHandle | null) => void
+  /** Where a tile's player hands its own wall-clock mapping (`PlayIntent`). */
+  takeMapping: (id: string) => (mapping: WallMapping | null) => void
   attaching: (id: string) => number | null
   attached: (id: string, element: TileHandle, toSec: number | null) => void
   askAgain: (videoId: string) => void
@@ -247,11 +310,26 @@ export interface MultiCam {
   beginSlow: () => boolean
   endSlow: () => void
   runZone: (zone: AngleZone) => void
-  pressStart: (pointerId: number, x: number, y: number) => boolean
-  pressMoved: (pointerId: number) => void
-  pressEnd: (pointerId: number, still: boolean, x: number, y: number) => boolean
+  /**
+   * A finger, or the mouse, has come down at a point of the window, on a
+   * tile or (null) the black around them. False when it is to be ignored,
+   * because another finger is holding a crawl.
+   */
+  pressStart: (
+    pointerId: number,
+    x: number,
+    y: number,
+    tile: number | null
+  ) => boolean
+  /** It has moved to a point of the window. */
+  pressMove: (pointerId: number, x: number, y: number) => void
+  /** It has come up there; answers what it had become, or null if ignored. */
+  pressEnd: (pointerId: number, x: number, y: number) => PressMode | null
   pressCancel: (pointerId: number) => void
-  mayReorder: (pointerId: number) => boolean
+  /** The tile a press has picked up, to be carried; null for none. */
+  armedTile: number | null
+  /** The bar's track width, which a scrub is measured against. */
+  setTrackWidth: (px: number) => void
   moveTile: (index: number, x: number, y: number) => void
   dropTile: (index: number, x: number, y: number) => void
   /** The angles as the bar draws them: a name and a stretch of the take. */
@@ -292,19 +370,67 @@ export function useMultiCam(
     height,
     debug = false,
     beforeShuffle,
-    top = 0,
-    boardCell = false,
-    liveRetryDelay = livePlaybackRetryDelay
+    liveRetryDelay = livePlaybackRetryDelay,
+    fallbackMapping
   } = options
+  /** Each tile's own mapping, from its player; null when it has none. */
+  const tileMappings = useRef(new Map<string, WallMapping | null>())
+  const fallbackRef = useRef(fallbackMapping)
+  fallbackRef.current = fallbackMapping
+  /** How far a tile's player can reach, for its newest footage. */
+  const seekableEndRef = useRef<(id: string) => number | null>(() => null)
+  /**
+   * The best mapping a tile has now: the server's wall timeline, then its
+   * player's own.
+   *
+   * The timeline is placed by the frames' own wall clocks, across a reconnect
+   * too. A playlist's program dates are when its segments were written: 4–5 s
+   * after their pictures on a live ingest, and later still after a camera
+   * stalled. A grid placed by them drew every board step that far ahead of its
+   * picture, and two angles out of step by the stall. Its newest footage is
+   * the timeline's wall time at what the player can reach.
+   */
+  const mappingOf = (id: string): WallMapping | null => {
+    const served = fallbackRef.current?.(id) ?? null
+    if (served == null) return tileMappings.current.get(id) ?? null
+    return {
+      ...served,
+      newestWall: () => {
+        const end = seekableEndRef.current(id)
+        return (end == null ? null : served.wallAt(end)) ?? served.newestWall()
+      }
+    }
+  }
+  const mappingOfRef = useRef(mappingOf)
+  mappingOfRef.current = mappingOf
+  const takeMapping = useMemo(() => {
+    const handed = new Map<string, (mapping: WallMapping | null) => void>()
+    return (id: string) => {
+      let take = handed.get(id)
+      if (take == null) {
+        take = mapping => {
+          tileMappings.current.set(id, mapping)
+        }
+        handed.set(id, take)
+      }
+      return take
+    }
+  }, [])
 
-  const chosen = useMemo(
-    () =>
-      order
-        .map(id => videos.find(video => video.id === id))
-        .filter((video): video is VideoSummary => video != null)
-        .slice(0, MAX_TILES),
-    [order, videos]
-  )
+  const chosen = useMemo(() => {
+    const listed = order
+      .map(id => videos.find(video => video.id === id))
+      .filter((video): video is VideoSummary => video != null)
+      .slice(0, MAX_TILES)
+    // Each placed by its best mapping onto the wall clock, read afresh at
+    // every conversion (`wallClock.ts`). A recording with no start has none:
+    // alone it plays on its own media time, beside others it stays unplaced.
+    return placedAlone(listed).map((video, index): VideoSummary & AngleVideo =>
+      listed[index].startAt == null
+        ? video
+        : { ...video, clock: () => mappingOfRef.current(video.id) }
+    )
+  }, [order, videos])
   const names = useMemo(() => {
     const labels = angleLabels(
       videos.map(video => ({
@@ -368,6 +494,10 @@ export function useMultiCam(
   const frames = useRef(new Map<string, number>())
   /** When this view last moved each tile, so its own silence is forgiven. */
   const seekedAt = useRef(new Map<string, number>())
+  seekableEndRef.current = id => {
+    const element = elements.current.get(id)
+    return element == null ? null : seekableEndOf(element)
+  }
   /** Tiles that have had pictures at some point, for telling a stall apart. */
   const everStarted = useRef(new Set<string>())
   /**
@@ -397,6 +527,8 @@ export function useMultiCam(
   const flowing = useRef(false)
   /** When each tile the grid is waiting for was first seen short of enough. */
   const shortSince = useRef(new Map<string, number>())
+  /** Where each held tile was last moved to by the gate (`placeHeld`). */
+  const heldPlace = useRef(new Map<string, number>())
   /** When the first live tile had a picture, for a grid with no moment yet. */
   const liveSince = useRef<number | null>(null)
   /**
@@ -428,8 +560,6 @@ export function useMultiCam(
   /** Whether the viewer wants the grid playing, for a timer that outlives a render. */
   const playingRef = useRef(playing)
   playingRef.current = playing
-  /** Each browser tile's hold on how far ahead it loads. */
-  const controls = useRef(new Map<string, BufferControl>())
   /** `gate`, for a callback made before it in the render. */
   const gateRef = useRef<
     ((instant: number, finished?: Map<string, boolean>) => boolean) | null
@@ -455,12 +585,15 @@ export function useMultiCam(
     // same as "cannot play".
     () =>
       soundAngle(
-        videos.filter(one => urls[one.id] !== null),
+        videos
+          // As the grid places them: a lone unplaced angle on its media time.
+          .map(one => chosen.find(placed => placed.id === one.id) ?? one)
+          .filter(one => urls[one.id] !== null),
         order,
         audioId,
         atWallMs
       ),
-    [atWallMs, audioId, order, urls, videos]
+    [atWallMs, audioId, chosen, order, urls, videos]
   )
 
   /**
@@ -489,15 +622,15 @@ export function useMultiCam(
   const zoomedAt =
     zoomedId == null ? -1 : chosen.findIndex(video => video.id === zoomedId)
   const zoomed = zoomedAt >= 0 ? zoomedAt : null
-  const rects = tileRects({
-    width,
-    height,
-    top,
-    boardCell,
-    count: chosen.length,
-    aspect: aspectOf(chosen),
-    zoomed
-  })
+  const rects =
+    options.rects ??
+    tileRects({
+      width,
+      height,
+      count: chosen.length,
+      aspect: aspectOf(chosen),
+      zoomed
+    })
 
   /**
    * The moment the grid opens on.
@@ -521,26 +654,73 @@ export function useMultiCam(
     setAtWallMs(window.fromMs)
   }, [chosen])
 
+  /** Those waiting for an angle's wall timeline, by id. */
+  const timelineWaiters = useRef(new Map<string, Set<() => void>>())
+  /** Settles once the angle's wall timeline has answered, or after a wait. */
+  const timelineAnswered = useCallback(async (id: string): Promise<void> => {
+    if (fallbackRef.current == null || fallbackRef.current(id) !== undefined)
+      return
+    await new Promise<void>(resolve => {
+      const waiters = timelineWaiters.current.get(id) ?? new Set()
+      timelineWaiters.current.set(id, waiters)
+      const done = (): void => {
+        clearTimeout(timer)
+        waiters.delete(done)
+        resolve()
+      }
+      const timer = setTimeout(done, MAPPING_WAIT_MS)
+      waiters.add(done)
+    })
+  }, [])
+  // A timeline that arrives renders the grid again.
+  useEffect(() => {
+    for (const [id, waiters] of timelineWaiters.current)
+      if (fallbackRef.current?.(id) !== undefined)
+        for (const done of [...waiters]) done()
+  })
+
   // Where to play each angle from. One request each, which is the same
   // membership check the single player makes, and the token it hands back
   // lasts six hours — longer than any game.
+  //
+  // A tile is handed its address only once the server's wall timeline has
+  // answered, or `MAPPING_WAIT_MS` has passed, as the videos page's own
+  // landing waits. It is placed the moment its source attaches, and placed
+  // by its start instead — seconds off on a live ingest — it stayed there:
+  // alone it is the master, and nothing moves it later.
+  //
+  // Each is asked for once, whatever else renders meanwhile: an angle given
+  // its address used to ask again for every one still waiting, and start
+  // each one's wait for its timeline over.
+  const asking = useRef(new Map<string, TeamStationClient>())
   useEffect(() => {
-    let live = true
+    const held = asking.current
+    return () => {
+      held.clear()
+    }
+  }, [])
+  useEffect(() => {
     for (const video of chosen) {
-      if (urls[video.id] !== undefined) continue
+      const id = video.id
+      if (urls[id] !== undefined || asking.current.get(id) === client) continue
+      asking.current.set(id, client)
+      // Only the newest ask's answer, and none once the grid has gone.
+      const answer = (url: string | null): void => {
+        if (asking.current.get(id) !== client) return
+        asking.current.delete(id)
+        setUrls(current => ({ ...current, [id]: url }))
+      }
       client
-        .playback(video.id)
-        .then(found => {
-          if (live) setUrls(current => ({ ...current, [video.id]: found.url }))
+        .playback(id)
+        .then(async found => {
+          await timelineAnswered(id)
+          answer(found.url)
         })
         .catch(() => {
-          if (live) setUrls(current => ({ ...current, [video.id]: null }))
+          answer(null)
         })
     }
-    return () => {
-      live = false
-    }
-  }, [chosen, client, urls])
+  }, [chosen, client, timelineAnswered, urls])
 
   // A live angle is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then `playback`
@@ -592,10 +772,13 @@ export function useMultiCam(
       const restore = atWallRef.current
       if (video == null || restore == null) return null
       const toSec = secondsAt(video, restore)
+      const newest = newestSecOf(video)
       const inRange =
         toSec != null &&
         toSec >= 0 &&
-        (video.durationSec == null || toSec <= video.durationSec)
+        (video.durationSec == null || toSec <= video.durationSec) &&
+        // Not yet at a live camera: it is not sent past its newest footage.
+        (newest == null || toSec <= newest)
       if (!inRange || toSec == null) return null
       restoring.current.add(id)
       return toSec
@@ -616,7 +799,8 @@ export function useMultiCam(
               follower: {
                 video,
                 atSec: toSec ?? element.currentTime,
-                mediaSec: endOfTile(video, element)
+                mediaSec: endOfTile(video, element),
+                newestSec: newestSecOf(video)
               }
             })
 
@@ -626,10 +810,12 @@ export function useMultiCam(
       // started — and to play half a second of it out loud when it held the
       // sound.
       if (correction?.kind === 'park') {
-        element.currentTime =
-          correction.reason === 'beforeStart'
-            ? 0
-            : (mediaLengthOf(element) ?? element.currentTime)
+        // A live camera behind the game waits where it opened.
+        if (correction.reason !== 'notYet')
+          element.currentTime =
+            correction.reason === 'beforeStart'
+              ? 0
+              : (mediaLengthOf(element) ?? element.currentTime)
         intents.current.set(id, false)
         element.pause()
         setTiles(current => ({
@@ -687,6 +873,19 @@ export function useMultiCam(
   /** The angles and the heard one, for timers that outlive a render. */
   const chosenRef = useRef(chosen)
   chosenRef.current = chosen
+
+  /**
+   * Where a live angle's newest footage is on the wall, by its mapping, or
+   * failing that its player's seekable end; null where neither can say.
+   */
+  const newestWallOf = (video: VideoSummary & AngleVideo): number | null => {
+    const element = elements.current.get(video.id)
+    if (element == null) return null
+    const newest = video.clock?.()?.newestWall()
+    if (newest != null) return newest
+    const end = seekableEndOf(element)
+    return end == null ? null : wallAt(video, end)
+  }
   const heardRef = useRef(heardId)
   heardRef.current = heardId
 
@@ -707,6 +906,18 @@ export function useMultiCam(
     }
     return null
   }
+  /** `gameNow`, for callbacks made once and kept. */
+  const gameNowRef = useRef(gameNow)
+  gameNowRef.current = gameNow
+  const onGoneRef = useRef(props.onGone)
+  onGoneRef.current = props.onGone
+  // A layout effect's cleanup runs before the tiles' refs are detached, so
+  // it still reads the picture's own moment rather than the clock's.
+  useLayoutEffect(() => {
+    return () => {
+      onGoneRef.current?.(gameNowRef.current('') ?? atWallRef.current)
+    }
+  }, [])
 
   /**
    * Sends a tile just ahead of the game and starts it on the moment the game
@@ -807,13 +1018,30 @@ export function useMultiCam(
           follower: {
             video,
             atSec: element.currentTime,
-            mediaSec: endOfTile(video, element)
+            mediaSec: endOfTile(video, element),
+            newestSec: newestSecOf(video)
           },
           toleranceSec
         })
         if (correction.kind === 'park') {
           intents.current.set(video.id, false)
           element.pause()
+          // Waiting for its live footage to reach the game: left where it is,
+          // with nothing sought, until its mapping says the footage is there.
+          if (correction.reason === 'notYet') {
+            setTiles(current =>
+              current[video.id]?.parked === 'notYet'
+                ? current
+                : {
+                    ...current,
+                    [video.id]: {
+                      ...(current[video.id] ?? freshTile()),
+                      parked: 'notYet'
+                    }
+                  }
+            )
+            continue
+          }
           // Its own first or last frame, rather than whatever it happened to
           // be showing when the viewer scrubbed out of its stretch of the
           // game: a scene from an hour later under a label saying this camera
@@ -941,7 +1169,8 @@ export function useMultiCam(
           follower: {
             video,
             atSec: element?.currentTime ?? 0,
-            mediaSec: endOfTile(video, element)
+            mediaSec: endOfTile(video, element),
+            newestSec: newestSecOf(video)
           }
         })
         return correction.kind !== 'park'
@@ -1012,6 +1241,57 @@ export function useMultiCam(
   }, [chosen, heardId])
 
   /**
+   * Moves a held tile that holds nothing where the gate measures it to that
+   * place, once for each place (`strayed`), and says whether it did: its
+   * player loads around where it stands, so left there it never comes to hold
+   * enough where it is wanted, or — within `START_GAP_SEC` of it — opens the
+   * grid a segment past the moment.
+   *
+   * Only a browser's tile, which says what it holds, once it knows its
+   * stream, and never past what can be sought to — a live tile ahead of its
+   * footage waits as `notYet` instead. Once for each place, because a player
+   * that steps over a hole at the start (`START_GAP_SEC`) lands a little past
+   * where it was sent, and sending it back would be a loop.
+   */
+  const placeHeld = useCallback(
+    (video: VideoSummary, instant: number): boolean => {
+      const element = elements.current.get(video.id)
+      if (element?.buffered == null || element.seeking === true) return false
+      if (element.readyState < HAVE_METADATA) return false
+      const target = secondsAt(video, instant)
+      if (target == null || target < 0) return false
+      const end = mediaLengthOf(element)
+      if (end != null && target > end) return false
+      // A recording's player steps over only a short hole where it starts:
+      // one standing in a wider one, near the moment, is sent across it, or
+      // it stays there frozen once the grid plays.
+      const across =
+        video.status === 'live'
+          ? null
+          : acrossStartHole(heldRanges(element), element.currentTime)
+      if (
+        across != null &&
+        Math.abs(element.currentTime - target) <= START_GAP_SEC
+      ) {
+        // And not sent back into the hole for this place.
+        heldPlace.current.set(video.id, target)
+        seekedAt.current.set(video.id, Date.now())
+        element.currentTime = across
+        return true
+      }
+      if (heldPlace.current.get(video.id) === target) return false
+      if (!strayed(heldRanges(element), element.currentTime, target)) {
+        return false
+      }
+      heldPlace.current.set(video.id, target)
+      seekedAt.current.set(video.id, Date.now())
+      element.currentTime = target
+      return true
+    },
+    []
+  )
+
+  /**
    * Lets the grid play from this instant if every tile it waits for holds
    * enough there, and says whether it did.
    *
@@ -1024,9 +1304,10 @@ export function useMultiCam(
     (instant: number, finished?: Map<string, boolean>): boolean => {
       const now = Date.now()
       const waits = awaited(instant, finished).map(video => {
-        const ready = isReady(
-          bufferAt(video, elements.current.get(video.id), instant)
-        )
+        // One just moved holds nothing yet where it was sent.
+        const ready =
+          !placeHeld(video, instant) &&
+          isReady(bufferAt(video, elements.current.get(video.id), instant))
         if (ready) shortSince.current.delete(video.id)
         else if (!shortSince.current.has(video.id)) {
           shortSince.current.set(video.id, now)
@@ -1081,7 +1362,7 @@ export function useMultiCam(
       alignTo(startAt, undefined, undefined, 'open')
       return true
     },
-    [alignTo, awaited, heardId]
+    [alignTo, awaited, heardId, placeHeld]
   )
   gateRef.current = gate
 
@@ -1132,6 +1413,7 @@ export function useMultiCam(
             `buf ${bufferAhead(element).toFixed(1)}s  ` +
             `ready ${element.readyState}  ` +
             `at ${element.currentTime.toFixed(1)}  ` +
+            `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
             `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
             (tile?.parked != null ? `  parked ${tile.parked}` : '') +
             (leftOut.current.has(video.id) ? '  left out' : '')
@@ -1208,18 +1490,24 @@ export function useMultiCam(
         })
       }
 
-      // A live grid opens on the moment its tiles have reached
-      // (`liveOpeningMs`), once they have pictures to say where that is.
+      // A live grid opens behind the newest footage its tiles have
+      // (`liveOpeningMs`), once they have pictures and a mapping to say where
+      // that is.
       if (atWallRef.current == null) {
+        // Every live angle that may yet play, the ones still being asked
+        // for included: the opening waits for them (`LIVE_OPEN_WAIT_MS`).
+        // And only once each has a picture: before it, a player can say little
+        // about where its footage ends. A move or the bar does not wait for
+        // that, since a seek out of what they hold takes every tile's picture
+        // away at once while their footage is no less there.
         const at = chosen
           .filter(video => video.status === 'live' && urls[video.id] !== null)
-          .map(video => {
-            const element = elements.current.get(video.id)
-            if (element == null || element.readyState < HAVE_CURRENT_DATA) {
-              return null
-            }
-            return wallAt(video, element.currentTime)
-          })
+          .map(video =>
+            (elements.current.get(video.id)?.readyState ?? 0) <
+            HAVE_CURRENT_DATA
+              ? null
+              : newestWallOf(video)
+          )
         if (liveSince.current == null && at.some(one => one != null)) {
           liveSince.current = now
         }
@@ -1312,18 +1600,6 @@ export function useMultiCam(
         wallMs = Math.min(instant + WATCHDOG_MS, end ?? Number.MAX_SAFE_INTEGER)
       }
 
-      // How far ahead the browser tiles may load, from how full the emptiest
-      // of them is. Tiles that have been left out count most: they are the
-      // ones the line should be feeding.
-      const ceiling = ceilingSec(
-        covering
-          .filter(tile => tile.playable)
-          .map(tile => bufferOf(elements.current.get(tile.id)))
-      )
-      for (const control of controls.current.values()) {
-        control.setAheadSec(ceiling)
-      }
-
       // A tile that was left out joins in once it holds enough where the game
       // is now.
       let rejoined = false
@@ -1360,7 +1636,7 @@ export function useMultiCam(
           if (gate(instant, finishedNow)) return
           hold()
           setWaiting(anyPicture())
-          if (debug) showReadout(instant, ceiling)
+          if (debug) showReadout(instant, AHEAD_SEC)
           return
         }
       }
@@ -1377,7 +1653,7 @@ export function useMultiCam(
           (showing.length === 0 && end != null && wallMs >= end - 1000)
       )
 
-      if (debug) showReadout(wallMs, ceiling)
+      if (debug) showReadout(wallMs, AHEAD_SEC)
 
       setAtWallMs(wallMs)
       // A master that has stopped drawing is not a clock to pull everybody
@@ -1431,6 +1707,35 @@ export function useMultiCam(
   }, [])
 
   /**
+   * The furthest a live take may be moved to: where a live viewer plays,
+   * `LIVE_DELAY_SEC` behind the newest footage of its slowest angle
+   * (`liveOpeningMs`). Only the angles the grid plays count, as at the
+   * opening: one it has no address for, one left out, or one with no picture
+   * yet would hold every other angle back at its own last footage. Null for
+   * a take with nothing live, or none that can say yet.
+   */
+  const livePointMs = (): number | null => {
+    // Only angles with an address that are not left out: none still being
+    // asked for, which the opening waits for and a move need not. And none
+    // whose newest footage the grid has already played past: a camera that
+    // has stopped sending, though still listed live, is parked there and
+    // would otherwise hold every other angle back at its last picture.
+    const here = gameNowRef.current('') ?? atWallRef.current
+    const at = chosenRef.current
+      .filter(
+        video =>
+          video.status === 'live' &&
+          urls[video.id] != null &&
+          !leftOut.current.has(video.id)
+      )
+      .map(newestWallOf)
+      .filter(newest => newest == null || here == null || newest >= here)
+    return liveOpeningMs(at, Number.POSITIVE_INFINITY)
+  }
+  const livePointRef = useRef(livePointMs)
+  livePointRef.current = livePointMs
+
+  /**
    * A seek the viewer asked for: every tile, at once, to one instant.
    *
    * A step within what the tiles already hold plays straight on. One beyond
@@ -1438,7 +1743,19 @@ export function useMultiCam(
    * than starting each the moment it has a frame.
    */
   const goTo = useCallback(
-    (wallMs: number): void => {
+    (asked: number): void => {
+      // A drag or a tap at the end of a live bar lands at the live point:
+      // the newest pictures are still arriving, and asked for, every angle
+      // would wait for them. Never behind where the grid already is, though:
+      // the live point moves a segment at a time, and an angle whose camera
+      // has just gone holds it still while the pictures play on, so a move
+      // forward from there would have jumped back.
+      const limit = livePointRef.current()
+      const here = gameNowRef.current('') ?? atWallRef.current
+      const wallMs =
+        limit == null || asked <= limit
+          ? asked
+          : Math.max(limit, Math.min(asked, here ?? limit))
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
       shortSince.current.clear()
@@ -1454,6 +1771,16 @@ export function useMultiCam(
   )
 
   const toggle = useCallback((): void => {
+    // Stopped where the pictures stop: the clock's last reading is up to a
+    // second behind a playing tile, and a skip from it after the pause landed
+    // short by that much.
+    if (playingRef.current) {
+      const there = gameNowRef.current('')
+      if (there != null) {
+        atWallRef.current = there
+        setAtWallMs(there)
+      }
+    }
     setPlaying(current => {
       const next = !current
       for (const video of chosen) {
@@ -1508,6 +1835,10 @@ export function useMultiCam(
   /** False when a crawl was already running, or there is no clock to move. */
   const beginSlow = useCallback((): boolean => {
     if (slowFrame.current !== 0 || atWallRef.current == null) return false
+    // From where the pictures are. The watchdog last set the clock up to a
+    // second ago, and a crawl begun from there put every tile back by however
+    // far it had played since: a visible step back as the hold took.
+    atWallRef.current = gameNowRef.current('') ?? atWallRef.current
     crawlRate.current = SLOW_RATE
     setRateAll(SLOW_RATE, () => true)
     setSlow(SLOW_RATE)
@@ -1556,7 +1887,10 @@ export function useMultiCam(
   const skip = useCallback(
     (deltaSec: number): void => {
       if (atWallRef.current == null) return
-      goTo(atWallRef.current + deltaSec * 1000)
+      // From where the pictures are, as a crawl begins: the clock was last
+      // set up to a second ago, and a skip from it landed short by that much.
+      const from = gameNowRef.current('') ?? atWallRef.current
+      goTo(from + deltaSec * 1000)
     },
     [goTo]
   )
@@ -1641,11 +1975,22 @@ export function useMultiCam(
    * against whichever tile the finger happens to be on.
    */
   const press = useRef<Press | null>(null)
-  /**
-   * The finger the press belongs to, for the tiles: one that has picked its
-   * picture up puts it down again the moment another finger takes over.
-   */
-  const [pressPointer, setPressPointer] = useState<number | null>(null)
+
+  /** The tile a press is carrying, for the views to draw it picked up. */
+  const [armedTile, setArmedTile] = useState<number | null>(null)
+  /** The bar's track, in px; the window's width until it has said. */
+  const trackWidth = useRef<number | null>(null)
+  const setTrackWidth = useCallback((px: number): void => {
+    trackWidth.current = px > 0 ? px : null
+  }, [])
+
+  /** Stops a press's timer and any scrub frame it has waiting. */
+  const settlePress = (state: Press): void => {
+    if (state.timer != null) clearTimeout(state.timer)
+    state.timer = null
+    if (state.frame !== 0) cancelAnimationFrame(state.frame)
+    state.frame = 0
+  }
 
   /**
    * A finger has come down. False when it is to be ignored, because another
@@ -1654,35 +1999,63 @@ export function useMultiCam(
    * Every finger reaches this one press, so it is kept by pointer. A second
    * finger used to replace the first outright: the crawl the first was holding
    * then never saw its finger lift and ran on for good, and the second
-   * finger's lift was taken for a tap. A press that is only waiting to become
-   * a hold is given up to the newer finger, which is the one the viewer is
-   * thinking about.
+   * finger's lift was taken for a tap. Any other press is given up to the
+   * newer finger, which is the one the viewer is thinking about.
    */
-  const pressStart = (pointerId: number, x: number, y: number): boolean => {
+  const pressStart = (
+    pointerId: number,
+    x: number,
+    y: number,
+    tile: number | null
+  ): boolean => {
     const current = press.current
-    if (current?.held === true && current.pointerId !== pointerId) return false
-    if (current?.timer != null) clearTimeout(current.timer)
-    // Only the +10 s square crawls when held (`gestureAction`).
-    const zone = angleZoneFor(x, y, width, height)
-    const slowZone =
-      zone !== 'controls' && gestureAction(zone, 'hold') === 'slowForward'
+    if (current?.mode === 'held' && current.pointerId !== pointerId) {
+      return false
+    }
+    if (current != null) {
+      // A scrub given up where it had got to.
+      if (current.scrubTo != null) goTo(current.scrubTo)
+      settlePress(current)
+    }
+    setArmedTile(null)
     const state: Press = {
       pointerId,
+      x0: x,
+      y0: y,
+      tile,
+      // From where the pictures are, as a skip or a crawl begins: the clock's
+      // last reading is up to a second behind, and a scrub from it stepped
+      // every tile back before it moved them.
+      startWall: gameNowRef.current('') ?? atWallRef.current,
+      mode: 'pending',
       timer: null,
-      held: false,
-      travelled: false
+      travelled: false,
+      scrubTo: null,
+      frame: 0
     }
-    if (slowZone) {
-      state.timer = setTimeout(() => {
-        state.timer = null
+    // Still for `HOLD_MS`: a crawl on the +10 s square (`gestureAction`), a
+    // tile picked up anywhere else when there are others to swap it with.
+    // Otherwise it stays a press whose lift, still under the slop, is a tap.
+    state.timer = setTimeout(() => {
+      state.timer = null
+      if (press.current !== state || state.mode !== 'pending') return
+      const zone = angleZoneFor(state.x0, state.y0, width, height)
+      if (
+        zone !== 'controls' &&
+        gestureAction(zone, 'hold') === 'slowForward'
+      ) {
         // Held only if this press started the crawl. One already running —
         // an arrow key held down — belongs to its key, and lifting this
         // finger must not end it.
-        state.held = beginSlow()
-      }, HOLD_MS)
-    }
+        state.mode = beginSlow() ? 'held' : 'dead'
+        return
+      }
+      if (state.tile != null && chosen.length > 1) {
+        state.mode = 'reorder'
+        setArmedTile(state.tile)
+      }
+    }, HOLD_MS)
     press.current = state
-    setPressPointer(pointerId)
     return true
   }
 
@@ -1690,41 +2063,65 @@ export function useMultiCam(
   const pressOf = (pointerId: number): Press | null =>
     press.current?.pointerId === pointerId ? press.current : null
 
-  /** The finger has travelled: it is a drag, and will not become a hold. */
-  const pressMoved = (pointerId: number): void => {
+  /**
+   * The finger has moved. Before `HOLD_MS`, a move of `STILL_FRACTION` of the
+   * width is a drag: sideways from the middle it scrubs, otherwise it is
+   * nothing. A scrub moves the playhead at `SCRUB_RATE` of the bar's own rate,
+   * once a frame, and leaves playing or paused as it was.
+   */
+  const pressMove = (pointerId: number, x: number, y: number): void => {
     const state = pressOf(pointerId)
     if (state == null) return
-    state.travelled = true
-    if (state.timer == null) return
-    clearTimeout(state.timer)
-    state.timer = null
+    const dx = x - state.x0
+    const dy = y - state.y0
+    if (beyondSlop(dx, dy)) state.travelled = true
+    if (state.mode === 'pending') {
+      if (Math.hypot(dx, dy) < STILL_FRACTION * width) return
+      // Its timer runs until `HOLD_MS`; a press still past that scrubs no more.
+      const early = state.timer != null
+      settlePress(state)
+      const fromMiddle =
+        state.x0 >= SCRUB_EDGE_FRACTION * width &&
+        state.x0 <= (1 - SCRUB_EDGE_FRACTION) * width
+      state.mode =
+        early &&
+        fromMiddle &&
+        Math.abs(dx) > Math.abs(dy) &&
+        state.startWall != null
+          ? 'scrub'
+          : 'dead'
+    }
+    if (state.mode !== 'scrub' || state.startWall == null) return
+    const take = takeRef.current
+    const span = take == null ? 0 : take.toMs - take.fromMs
+    const track = trackWidth.current ?? width
+    if (take == null || track <= 0) return
+    state.scrubTo = Math.min(
+      take.toMs,
+      Math.max(
+        take.fromMs,
+        state.startWall + ((dx * span) / track) * SCRUB_RATE
+      )
+    )
+    showBar()
+    if (state.frame !== 0) return
+    state.frame = requestAnimationFrame(() => {
+      state.frame = 0
+      if (state.scrubTo != null) goTo(state.scrubTo)
+    })
   }
 
   /**
-   * Whether this pointer may still pick a tile up: it is the press being
-   * followed, and that press is not holding a crawl. A finger that has lost
-   * the press to another is done.
-   */
-  const mayReorder = (pointerId: number): boolean => {
-    const state = pressOf(pointerId)
-    return state != null && !state.held
-  }
-
-  /**
-   * The finger has come up. True when it was a hold, which the tile must not
-   * then read as a drop.
-   *
-   * A finger that travelled on the way is not a tap, even if it came back to
-   * where it started.
+   * The finger has come up: a crawl ends, a scrub lands, and a press that
+   * never became anything and stayed under the slop is a tap.
    */
   const pressEnd = (
     pointerId: number,
-    still: boolean,
     x: number,
     y: number
-  ): boolean => {
+  ): PressMode | null => {
     const state = pressOf(pointerId)
-    if (state == null) return false
+    if (state == null) return null
     // Inside the touch, which is the one moment iOS lets the sound back on:
     // unmuted any other time, a playing video is paused instead.
     if (soundBlockedRef.current) {
@@ -1734,28 +2131,28 @@ export function useMultiCam(
       setSoundBlocked(false)
     }
     press.current = null
-    if (state.timer != null) clearTimeout(state.timer)
-    if (state.held) {
-      endSlow()
-      return true
-    }
-    if (still && !state.travelled) {
+    settlePress(state)
+    setArmedTile(null)
+    if (state.mode === 'held') endSlow()
+    if (state.mode === 'scrub' && state.scrubTo != null) goTo(state.scrubTo)
+    if (state.mode === 'pending' && !state.travelled) {
       runZoneRef.current(angleZoneFor(x, y, width, height))
     }
-    return false
+    return state.mode
   }
 
   const pressCancel = (pointerId: number): void => {
     const state = pressOf(pointerId)
     if (state == null) return
     press.current = null
-    if (state.timer != null) clearTimeout(state.timer)
-    if (state.held) endSlow()
+    settlePress(state)
+    setArmedTile(null)
+    if (state.mode === 'held') endSlow()
   }
 
   useEffect(() => {
     return () => {
-      if (press.current?.timer != null) clearTimeout(press.current.timer)
+      if (press.current != null) settlePress(press.current)
     }
   }, [])
 
@@ -1777,23 +2174,32 @@ export function useMultiCam(
     holding: () => slowFrame.current !== 0
   })
 
-  // A live take has no end of its own, so the furthest anybody has played to
-  // stands in for one. A finished take does not: letting the clock extend the
-  // window made the total in the corner of the bar grow by a second every time
-  // it was watched to the end.
+  // A live take has no end of its own: it ends at the newest footage any of
+  // its angles has, which grows as they stream, from the first picture of the
+  // first camera at 0. Held at the moment the viewer had reached, the bar
+  // could only ever go back: dragging it forward reached nothing, and a
+  // viewer who had fallen behind could not get back to live. A finished take
+  // has none: letting the clock extend the window made the total in the
+  // corner of the bar grow by a second every time it was watched to the end.
   const anyLive = chosen.some(video => video.status === 'live')
-  const take = windowOf(
-    chosen,
-    anyLive
-      ? (liveTargetMs(
-          chosen.map(video =>
-            video.status === 'live' && atWallMs != null ? atWallMs : null
-          )
-        ) ??
-          atWallMs ??
-          undefined)
-      : undefined
-  )
+  // Each angle read as the live point reads it (`newestWallOf`): by its
+  // mapping, or its player's seekable end where it has none, as a phone's
+  // tile before the server's timeline arrives.
+  const newest = anyLive
+    ? chosen
+        .filter(video => video.status === 'live')
+        .map(newestWallOf)
+        .reduce<number | null>(
+          (most, one) => (one == null ? most : Math.max(most ?? one, one)),
+          null
+        )
+    : null
+  const played = anyLive ? atWallMs : null
+  const liveEnd =
+    newest != null && played != null
+      ? Math.max(newest, played)
+      : (newest ?? played ?? undefined)
+  const take = windowOf(chosen, liveEnd)
   takeRef.current = take
 
   // The three seconds start when there is a bar to see, not when the view
@@ -1845,17 +2251,11 @@ export function useMultiCam(
   }
 
   /**
-   * What a browser tile's source is told: start by loading `LEAD_SEC` ahead,
-   * and hand the watchdog the control that moves it from there.
+   * What a browser tile's source is told: load `AHEAD_SEC` ahead, as every
+   * player does.
    */
   const bufferFor = useCallback(
-    (id: string): PlayIntent['buffer'] => ({
-      aheadSec: LEAD_SEC,
-      onControl: control => {
-        if (control == null) controls.current.delete(id)
-        else controls.current.set(id, control)
-      }
-    }),
+    (_id: string): PlayIntent['buffer'] => ({ aheadSec: AHEAD_SEC }),
     []
   )
 
@@ -1872,6 +2272,13 @@ export function useMultiCam(
     ended,
     waiting,
     soundBlocked,
+    soundHeld: (id: string): void => {
+      // The heard angle now: a tile's prime calls this from the render that
+      // attached it, and the viewer may have chosen another since.
+      if (id !== heardRef.current) return
+      soundBlockedRef.current = true
+      setSoundBlocked(true)
+    },
     heardId,
     rects,
     zoomed,
@@ -1882,7 +2289,6 @@ export function useMultiCam(
     barShown,
     controlsShown: barShown || flashing,
     drag,
-    pressPointer,
     intents,
     takeElement,
     attaching,
@@ -1895,11 +2301,13 @@ export function useMultiCam(
     beginSlow,
     endSlow,
     runZone,
+    takeMapping,
     pressStart,
-    pressMoved,
+    pressMove,
     pressEnd,
     pressCancel,
-    mayReorder,
+    armedTile,
+    setTrackWidth,
     moveTile,
     dropTile,
     barAngles: (window: Window) =>
@@ -1911,6 +2319,7 @@ export function useMultiCam(
           startOf(video, window.fromMs) +
           (video.durationSec ?? (window.toMs - window.fromMs) / 1000) * 1000
       })),
+    wallNow: (): number | null => gameNowRef.current('') ?? atWallRef.current,
     tileWaiting: (id: string): boolean =>
       outIds.has(id) ||
       (tiles[id]?.stalledSince != null &&
@@ -1949,15 +2358,31 @@ function mediaLengthOf(element: TileHandle): number | null {
   return Math.min(declared, seekable)
 }
 
-/** Seconds of stream ahead of where a tile is playing (`heldAhead`). */
-function bufferAhead(element: TileHandle, at = element.currentTime): number {
+/** The stretches a tile holds, in order; none where its player does not say. */
+function heldRanges(element: TileHandle): Array<[number, number]> {
   const ranges = element.buffered
-  if (ranges == null) return 0
+  if (ranges == null) return []
   const held: Array<[number, number]> = []
   for (let index = 0; index < ranges.length; index++) {
     held.push([ranges.start(index), ranges.end(index)])
   }
-  return heldAhead(held, at)
+  return held
+}
+
+/** Seconds of stream ahead of where a tile is playing (`heldAhead`). */
+function bufferAhead(element: TileHandle, at = element.currentTime): number {
+  return heldAhead(heldRanges(element), at)
+}
+
+/**
+ * A live tile's newest footage, in its own seconds, by its mapping onto the
+ * wall clock; null for a recording, or a tile whose mapping cannot say.
+ */
+function newestSecOf(video: VideoSummary & AngleVideo): number | null {
+  if (video.status !== 'live') return null
+  const mapping = video.clock?.()
+  const newest = mapping?.newestWall()
+  return mapping == null || newest == null ? null : mapping.secAt(newest)
 }
 
 /**
@@ -1971,6 +2396,11 @@ function bufferOf(element: TileHandle | undefined, atSec?: number): TileBuffer {
   if (element == null) return { aheadSec: 0, leftSec: null, readyState: 0 }
   const at = atSec ?? element.currentTime
   const end = mediaLengthOf(element)
+  // A place past what can be sought to holds nothing, and is not a tile at
+  // the end of everything there is: it is not ready.
+  if (end != null && at > end + SEEKABLE_SLACK_SEC) {
+    return { aheadSec: 0, leftSec: null, readyState: element.readyState }
+  }
   return {
     aheadSec: element.buffered == null ? null : bufferAhead(element, at),
     leftSec: end == null ? null : Math.max(0, end - at),

@@ -27,6 +27,7 @@ import {
   type ScoreboardStore,
   ScoreboardUnavailable
 } from '../scoreboard/scoreboardStore'
+import { lineStepsFor, lineTimeline } from '../scoring/lineTimeline'
 
 /**
  * A game's scoreboard over HTTP. Its sockets, which carry every change as it
@@ -139,6 +140,39 @@ export function scoreboardRoutes(
       res.json({
         version: timeline.version,
         steps: stepsInWindow(timeline.steps, from, to)
+      })
+    })
+  )
+
+  /**
+   * The game's line score at every moment, from its events alone, for the
+   * box score a player draws at the wall time of the frame on screen: or at
+   * one instant (`at`), or in a window (`from`, `to`). A game with no events
+   * has no steps. It is the game's to read.
+   */
+  router.get(
+    '/games/:gameId/line-score',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const at = msParam(req.query.at, 'at')
+      const from = msParam(req.query.from, 'from')
+      const to = msParam(req.query.to, 'to')
+      if (at != null && (from != null || to != null))
+        throw badRequest('at is one instant: give it without from or to')
+      if (from != null && to != null && to < from)
+        throw badRequest('to must not be before from')
+      await visibleGame(actor, gameId)
+      const timeline = await lineTimeline(db, gameId, message => {
+        console.error(message)
+      })
+      if (timeline == null) throw notFound()
+      res.json({
+        version: timeline.version,
+        teams: timeline.teams,
+        steps: lineStepsFor(timeline.steps, { at, from, to })
       })
     })
   )

@@ -7,22 +7,37 @@ import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
-import { ExitButton, exitClearance } from './multiCam/barParts'
-import { useFullScreen } from './multiCam/fullScreen'
-import type { Rect } from './multiCam/layout'
+import type { ParkReason } from './multiCam/align'
 import {
-  beyondSlop,
+  ExitButton,
+  exitClearance,
+  exitSize,
+  exitTopClear
+} from './multiCam/barParts'
+import { useFullScreen } from './multiCam/fullScreen'
+import { edgeToEdge, type Rect } from './multiCam/layout'
+import {
+  type PlayerLayout,
+  playerLayout,
+  topOfAngles
+} from './multiCam/playerLayout'
+import { tileNotice } from './multiCam/tileNotice'
+import {
   type MultiCamProps,
-  REORDER_HOLD_MS,
+  type PressMode,
   type TileHandle,
   useMultiCam
 } from './multiCam/useMultiCam'
 import { MultiCamBar } from './MultiCamBar'
+import { playableHere } from './playable'
 import type { PlayIntent } from './playIntent'
 import {
   GridScoreboard,
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
+import type { Size } from './scoreboardOverlay/overlayLayout'
+import { useScreenInsets } from './useScreenInsets'
+import type { WallMapping } from './wallMapping'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -77,6 +92,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    * to somebody on a gigabit line who can see the same view stall. This shows
    * the numbers it reached that conclusion from.
    */
+  /** Whether this browser can play the video at all (`playable.ts`). */
+  const playable = useMemo(() => playableHere(), [])
   const debug = useMemo(
     () =>
       typeof location !== 'undefined' &&
@@ -84,15 +101,46 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     []
   )
 
-  // The game's board, at the wall time of the master tile's frame: in a
-  // band above the column upright, over the top-left angle sideways.
-  const board = useGridBoard(props, { width, height }, landscape)
+  // The game's board and box score, at the wall time of the master tile's
+  // frame, and the angles around them (`playerLayout`).
+  const board = useGridBoard(props, landscape)
+  // Under the rounded corners and the camera while the grid is up: the
+  // pictures run to the edges, and the board, the box and the controls keep
+  // to what the hardware leaves.
+  const insets = useScreenInsets()
+  const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
+  const zoomedIndex =
+    props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
+  const layoutFor = (natural: Size): PlayerLayout =>
+    playerLayout({
+      screen: { width, height },
+      safe,
+      count: board.count,
+      aspect: board.aspect,
+      landscape,
+      settings: board.settings,
+      board: board.hasBoard ? natural : null,
+      line: board.hasLine,
+      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
+    })
+  const layout = layoutFor(board.natural)
+  // The way out, in the top right, or under the board where it reaches there.
+  const exitTop = exitTopClear(
+    {
+      x: width - insets.right - theme.rem(theme.spaceSmRem) - exitSize(theme),
+      y: insets.top + theme.rem(theme.spaceSmRem),
+      w: exitSize(theme),
+      h: exitSize(theme)
+    },
+    [layout.board, layout.box],
+    theme.rem(theme.spaceSmRem)
+  )
   const mc = useMultiCam(props, {
     width,
     height,
     debug,
-    top: board.band,
-    boardCell: board.boardCell
+    rects: layout.tiles,
+    fallbackMapping: board.mappingOf
   })
   board.follow(mc)
   const {
@@ -100,12 +148,10 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     attaching,
     attached,
     pressStart,
-    pressMoved,
+    pressMove,
     pressEnd,
     pressCancel,
-    mayReorder,
-    toggle,
-    skip,
+    setTrackWidth,
     goTo,
     showBar,
     moveTile,
@@ -169,9 +215,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       window.removeEventListener('keydown', down, true)
     }
   }, [showBar])
-
-  /** Where a press on the black around the tiles came down. */
-  const marginFrom = useRef<{ x: number; y: number; id: number } | null>(null)
 
   // Black around the view as well as under it. Safari keeps the page out of
   // the notch and the home indicator when a phone is held sideways, and
@@ -248,45 +291,22 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         }}
         onPointerDown={event => {
           if (otherButton(event)) return
-          if (!pressStart(event.pointerId, event.clientX, event.clientY)) {
+          if (
+            !pressStart(event.pointerId, event.clientX, event.clientY, null)
+          ) {
             return
           }
           ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
-          marginFrom.current = {
-            x: event.clientX,
-            y: event.clientY,
-            id: event.pointerId
-          }
         }}
-        // The same rule as on a tile: a finger that travels is a drag, which
-        // neither becomes a crawl nor lands as a tap.
+        // The same press as on a tile: a drag scrubs, a hold crawls, a tap is
+        // its square's.
         onPointerMove={event => {
-          const from = marginFrom.current
-          if (from?.id !== event.pointerId) return
-          if (beyondSlop(event.clientX - from.x, event.clientY - from.y)) {
-            pressMoved(event.pointerId)
-          }
+          pressMove(event.pointerId, event.clientX, event.clientY)
         }}
         onPointerUp={event => {
-          const from = marginFrom.current
-          if (from?.id !== event.pointerId) return
-          marginFrom.current = null
-          const still = !beyondSlop(
-            event.clientX - from.x,
-            event.clientY - from.y
-          )
-          pressEnd(event.pointerId, still, event.clientX, event.clientY)
+          pressEnd(event.pointerId, event.clientX, event.clientY)
         }}
         onPointerCancel={event => {
-          if (marginFrom.current?.id === event.pointerId) {
-            marginFrom.current = null
-          }
-          pressCancel(event.pointerId)
-        }}
-        onPointerLeave={event => {
-          if (marginFrom.current?.id === event.pointerId) {
-            marginFrom.current = null
-          }
           pressCancel(event.pointerId)
         }}
       />
@@ -296,6 +316,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           videoId={video.id}
           url={mc.urls[video.id] ?? null}
           unavailable={mc.urls[video.id] === null}
+          unsupported={!playable}
           onGiveUp={askAgain}
           // Silent throughout a crawl, whichever angle is heard: the sound
           // follows the moment, and a crawl across two recordings would
@@ -318,15 +339,18 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           waiting={tileWaiting(video.id)}
           unplaceable={video.startAt == null}
           takeRef={takeElement(video.id)}
+          onWallMapping={mc.takeMapping(video.id)}
+          onSoundHeld={() => {
+            mc.soundHeld(video.id)
+          }}
           touchAction={touchAction}
           heard={video.id === mc.heardId}
           nameTop={board.nameTop(index, mc.rects[index], mc.zoomed)}
-          onPressStart={pressStart}
-          onPressMoved={pressMoved}
+          armed={mc.armedTile === index}
+          onPressStart={(pointerId, x, y) => pressStart(pointerId, x, y, index)}
+          onPressMove={pressMove}
           onPressEnd={pressEnd}
           onPressCancel={pressCancel}
-          canReorder={mayReorder}
-          pressPointer={mc.pressPointer}
           onMove={(x, y) => {
             moveTile(index, x, y)
           }}
@@ -336,13 +360,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         />
       ))}
 
-      <GridScoreboard
-        board={board}
-        box={{ width, height }}
-        landscape={landscape}
-        rects={mc.rects}
-        zoomed={mc.zoomed}
-      />
+      <GridScoreboard board={board} layout={layoutFor} />
 
       <SeekFlashView flash={mc.flash} />
       {/* Top right, clear of the finger holding the crawl on the right, and
@@ -351,11 +369,18 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         rate={mc.slow}
         right={
           mc.controlsShown
-            ? exitClearance(theme) + theme.rem(theme.spaceSmRem)
+            ? insets.right + exitClearance(theme) + theme.rem(theme.spaceSmRem)
             : undefined
         }
       />
-      <ExitButton visible={mc.controlsShown} onPress={onClose} />
+      <ExitButton
+        visible={mc.controlsShown}
+        onPress={() => {
+          onClose(mc.wallNow())
+        }}
+        top={exitTop - theme.rem(theme.spaceSmRem)}
+        right={insets.right}
+      />
 
       {/* One at a time, most specific first: they share a place on the screen
           and two of them printed over each other unreadably. The swipe for
@@ -367,7 +392,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         <View
           style={[
             styles.notice,
-            { top: board.band + theme.rem(theme.spaceSmRem) }
+            {
+              // At the top of the highest angle: under the band upright, and
+              // sideways with two angles, whose board rests on them; at the
+              // top of the pictures otherwise.
+              top:
+                Math.max(safe.y, topOfAngles(layout)) +
+                theme.rem(theme.spaceSmRem)
+            }
           ]}
           pointerEvents="none"
         >
@@ -389,15 +421,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         <MultiCamBar
           window={mc.take}
           atMs={mc.atWallMs}
-          playing={mc.playing}
           angles={barAngles(mc.take)}
-          onTogglePlay={toggle}
-          onSkip={skip}
           onScrub={goTo}
+          onTrackWidth={setTrackWidth}
           onInteract={showBar}
           visible={mc.barShown}
           rootRef={barRoot}
           panPage={swipeToHide}
+          insets={insets}
         />
       ) : null}
     </View>,
@@ -438,37 +469,33 @@ function Tile(props: {
    */
   standingAside: boolean
   name: string
-  parked: 'beforeStart' | 'afterEnd' | null
+  parked: ParkReason | null
   unplaceable: boolean
   /** Its media is not there — the server answered, and there is nothing to play. */
   unavailable: boolean
+  /** Nothing in this browser can play it: nothing is attached. */
+  unsupported: boolean
   takeRef: (node: TileHandle | null) => void
+  /** Where its player hands its own wall-clock mapping. */
+  onWallMapping: (mapping: WallMapping | null) => void
+  /** Its player was left playing silent: its sound waits for a tap. */
+  onSoundHeld: () => void
   /** `pan-y` while a swipe should reach the page and hide Safari's bars. */
   touchAction: 'none' | 'pan-y'
   /** True while this is the one being heard. */
   heard: boolean
   /** Where its name goes, below the grid's board; at the top otherwise. */
   nameTop?: number
+  /** The view's press has picked this tile up, to be carried. */
+  armed: boolean
   /**
-   * False while the press is doing something else, like a crawl, or once
-   * another finger has taken it over.
-   */
-  canReorder: (pointerId: number) => boolean
-  /** The finger the view's press now belongs to. */
-  pressPointer: number | null
-  /**
-   * The press itself, in window coordinates, for the view's nine squares.
-   * False when the view is ignoring this finger.
+   * The press itself, in window coordinates, for the view's squares, its
+   * scrub and its hold. False when the view is ignoring this finger.
    */
   onPressStart: (pointerId: number, x: number, y: number) => boolean
-  onPressMoved: (pointerId: number) => void
-  /** True when the press was a hold, which is not a drop. */
-  onPressEnd: (
-    pointerId: number,
-    still: boolean,
-    x: number,
-    y: number
-  ) => boolean
+  onPressMove: (pointerId: number, x: number, y: number) => void
+  /** What the press had become when it came up. */
+  onPressEnd: (pointerId: number, x: number, y: number) => PressMode | null
   onPressCancel: (pointerId: number) => void
   onMove: (x: number, y: number) => void
   onDrop: (x: number, y: number) => void
@@ -479,6 +506,7 @@ function Tile(props: {
     name,
     parked,
     unavailable,
+    unsupported,
     unplaceable,
     waiting,
     takeRef,
@@ -507,6 +535,15 @@ function Tile(props: {
     }
   }, [props.url])
 
+  // Its sound as the view wants it, set before its source is attached: the
+  // first play of WebKit's own player is a silent one, and it puts back the
+  // sound the view wants (`PlayIntent.muted`).
+  const mutedNow = useRef(props.muted)
+  mutedNow.current = props.muted
+  useEffect(() => {
+    if (element.current != null) element.current.muted = props.muted
+  }, [props.muted])
+
   // This tile's own source, attached when it has one and detached with it.
   // The play intent is injected rather than read off the element's pause
   // events: the view pauses tiles itself — holding them while another stalls,
@@ -523,9 +560,12 @@ function Tile(props: {
       onGiveUp,
       wantsToPlay,
       buffer,
-      isLive
+      isLive,
+      onWallMapping,
+      onSoundHeld,
+      unsupported
     } = props
-    if (node == null || url == null) return
+    if (node == null || url == null || unsupported) return
     const toSec = onAttaching(videoId)
     const detach = attachHls(
       node,
@@ -533,7 +573,15 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, buffer, isLive }
+      {
+        wantsToPlay,
+        buffer,
+        isLive,
+        onWallMapping,
+        onSoundHeld,
+        muted: () => mutedNow.current,
+        startSec: toSec ?? undefined
+      }
     )
     const start = (): void => {
       onAttached(videoId, asTile(node), toSec)
@@ -549,13 +597,9 @@ function Tile(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.url, props.videoId])
 
-  useEffect(() => {
-    if (element.current != null) element.current.muted = props.muted
-  }, [props.muted])
-
   /**
-   * The press the view turns into a square's action, and — after a finger has
-   * rested for a second — a drag that moves the picture.
+   * The press the view turns into a square's action, a scrub, a crawl or —
+   * once it has picked this tile up — a drag that moves the picture.
    *
    * Not through the gesture library the single player uses, for two reasons
    * that are both about where this view lives: it is portalled into the
@@ -564,30 +608,18 @@ function Tile(props: {
    * keeps for its `<video>` and its sticky `div`.
    */
   const dragFrom = useRef<{ x: number; y: number; id: number } | null>(null)
-  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const armedRef = useRef(false)
-  const [armed, setArmed] = useState(false)
-
-  const disarm = (): void => {
-    if (armTimer.current != null) clearTimeout(armTimer.current)
-    armTimer.current = null
-    armedRef.current = false
-    setArmed(false)
-  }
-  useEffect(() => disarm, [])
+  /** It has been moved while picked up, and must go back if put down. */
+  const carried = useRef(false)
 
   // Another finger has taken the press: a picture this tile had picked up
   // goes back where it was, and the finger that lifted it is done with it.
   const onDropRef = useRef(props.onDrop)
   onDropRef.current = props.onDrop
   useEffect(() => {
-    const from = dragFrom.current
-    if (!armedRef.current || from == null || from.id === props.pressPointer) {
-      return
-    }
-    disarm()
+    if (props.armed || !carried.current || dragFrom.current == null) return
+    carried.current = false
     onDropRef.current(0, 0)
-  }, [props.pressPointer])
+  }, [props.armed])
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (otherButton(event)) return
@@ -602,59 +634,44 @@ function Tile(props: {
       y: event.clientY,
       id: event.pointerId
     }
-    disarm()
-    armTimer.current = setTimeout(() => {
-      armTimer.current = null
-      if (!props.canReorder(event.pointerId)) return
-      armedRef.current = true
-      setArmed(true)
-    }, REORDER_HOLD_MS)
+    carried.current = false
   }
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
     const from = dragFrom.current
     if (from?.id !== event.pointerId) return
-    const x = event.clientX - from.x
-    const y = event.clientY - from.y
-    if (armedRef.current) {
-      if (!props.canReorder(event.pointerId)) return
-      props.onMove(x, y)
-      return
-    }
-    // A finger that travels before the second is up is a slip, not a drag:
-    // it neither moves the picture nor becomes one later.
-    if (beyondSlop(x, y)) {
-      if (armTimer.current != null) clearTimeout(armTimer.current)
-      armTimer.current = null
-      props.onPressMoved(event.pointerId)
-    }
+    props.onPressMove(event.pointerId, event.clientX, event.clientY)
+    if (!props.armed) return
+    carried.current = true
+    props.onMove(event.clientX - from.x, event.clientY - from.y)
   }
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
     const from = dragFrom.current
     if (from?.id !== event.pointerId) return
     dragFrom.current = null
-    // Armed, and still the press: a finger that lost it to another is done,
-    // and drops nothing.
-    const wasArmed = armedRef.current && props.canReorder(event.pointerId)
-    disarm()
-    const moved = {
-      x: event.clientX - from.x,
-      y: event.clientY - from.y
-    }
-    const still = !beyondSlop(moved.x, moved.y)
-    // A press that became a move is never also a tap.
-    props.onPressEnd(
-      event.pointerId,
-      still && !wasArmed,
-      event.clientX,
-      event.clientY
-    )
+    carried.current = false
+    const mode = props.onPressEnd(event.pointerId, event.clientX, event.clientY)
     // Always: the parent puts the picture back when the press meant nothing.
-    if (wasArmed) props.onDrop(moved.x, moved.y)
+    if (mode === 'reorder')
+      props.onDrop(event.clientX - from.x, event.clientY - from.y)
     else props.onDrop(0, 0)
   }
 
+  // What the tile is doing, as its label says it, for the e2e readings.
+  const tileState = unsupported
+    ? 'unsupported'
+    : (parked ??
+      (unavailable
+        ? 'unavailable'
+        : unplaceable
+          ? 'unplaceable'
+          : waiting
+            ? 'waiting'
+            : hasPicture
+              ? 'playing'
+              : 'loading'))
   return (
     <View
+      dataSet={{ tileState }}
       style={[
         styles.tile,
         {
@@ -692,12 +709,14 @@ function Tile(props: {
         onPointerCancel={event => {
           if (dragFrom.current?.id !== event.pointerId) return
           dragFrom.current = null
-          disarm()
+          carried.current = false
           props.onPressCancel(event.pointerId)
           props.onDrop(0, 0)
         }}
       />
-      {armed ? <View style={styles.tileArmed} pointerEvents="none" /> : null}
+      {props.armed ? (
+        <View style={styles.tileArmed} pointerEvents="none" />
+      ) : null}
       <View
         style={[styles.tileName, nameTop == null ? null : { top: nameTop }]}
         pointerEvents="none"
@@ -707,23 +726,20 @@ function Tile(props: {
         </Text>
       </View>
       {parked != null ||
+      unsupported ||
       unavailable ||
       unplaceable ||
       waiting ||
       !hasPicture ? (
         <View style={styles.tileParked} pointerEvents="none">
           <Text style={styles.tileParkedText}>
-            {unavailable
-              ? lstrings.game_video_unavailable
-              : unplaceable
-                ? lstrings.angles_unplaceable
-                : parked === 'beforeStart'
-                  ? lstrings.angles_not_recording_yet
-                  : parked === 'afterEnd'
-                    ? lstrings.angles_stopped
-                    : waiting
-                      ? lstrings.angles_tile_catching_up
-                      : lstrings.angles_tile_loading}
+            {tileNotice({
+              unsupported,
+              unavailable,
+              unplaceable,
+              parked,
+              waiting
+            })}
           </Text>
         </View>
       ) : null}

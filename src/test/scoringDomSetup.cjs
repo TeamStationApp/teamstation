@@ -36,6 +36,12 @@ Object.defineProperty(globalThis, 'requestAnimationFrame', {
     dom.window.requestAnimationFrame(() => callback(performance.now()))
 })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+// A browser that can decode the video (HEVC, through Media Source), so the
+// player draws a picture rather than saying it cannot (`playable.ts`). It
+// takes nothing hls.js asks about, so hls.js still stays out of a test page.
+globalThis.MediaSource = {
+  isTypeSupported: type => /hvc1|hev1/.test(type)
+}
 globalThis.ResizeObserver = class {
   observe() {}
   unobserve() {}

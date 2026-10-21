@@ -14,19 +14,16 @@ import {
   OVERLAY_T0,
   overlayServer,
   settle,
+  SHOWN_OVERLAY,
   wallTimelineOf
 } from '../../test/overlayFixtures'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tileRects } from './multiCam/layout'
+import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView as BrowserGrid } from './MultiCamView'
 import { MultiCamView as PhoneGrid } from './MultiCamView.native'
-import {
-  bandBoardRect,
-  bandHeight,
-  tileBoardRect,
-  tileNameTop
-} from './scoreboardOverlay/overlayLayout'
+import { tileBoardRect, tileNameTop } from './scoreboardOverlay/overlayLayout'
 
 /**
  * The phone's grid, bundled for the browser: its own file, drawn with React
@@ -213,23 +210,28 @@ function placed(): {
 describe('the board over the phone’s grid (C5)', function () {
   afterEach(unmount)
 
-  it('draws one board in a band above the stacked angles, upright', async function () {
+  it('draws one board on the top of the screen, the stacked angles butted under it, upright', async function () {
     await grid({ Grid: PhoneGrid, width: 402, height: 874 })
     const { at, board } = placed()
     expect(at).equals(String(OVERLAY_T0 + 95_000))
-    const screen = { width: 402, height: 874 }
-    const natural = { width: 607, height: 247 }
-    const expected = bandBoardRect(screen, natural, 4, 0.15)!
-    expect(board.x).closeTo(expected.x, 0.01)
-    expect(board.y).closeTo(expected.y, 0.01)
-    expect(board.h).closeTo(expected.h, 0.01)
-    const band = bandHeight(screen, natural, 4, 0.15)
-    const rects = tileRects({ ...screen, count: 4, top: band })
+    const layout = playerLayout({
+      screen: { width: 402, height: 874 },
+      safe: { x: 0, y: 0, w: 402, h: 874 },
+      count: 4,
+      aspect: 16 / 9,
+      landscape: false,
+      settings: SHOWN_OVERLAY,
+      board: { width: 607, height: 247 },
+      line: false
+    })
+    expect(board.x).closeTo(layout.board!.x, 0.01)
+    expect(board.y).closeTo(0, 0.01)
+    expect(board.h).closeTo(layout.board!.h, 0.01)
     const tiles = tileBoxes()
     expect(tiles).length(4)
     tiles.forEach((tile, index) => {
-      expect(tile.y).closeTo(rects[index].y, 0.01)
-      expect(tile.y).at.least(band)
+      expect(tile.y).closeTo(layout.tiles[index].y, 0.01)
+      expect(tile.y).at.least(board.y + board.h + GAP - 0.01)
     })
   })
 
@@ -272,56 +274,58 @@ describe('the board over the phone’s grid (C5)', function () {
     }
   })
 
-  it('keeps its notice on the angles, below the band', async function () {
-    // The test DOM's players neither play nor pause.
-    const media = window.HTMLMediaElement.prototype
-    const held = (['play', 'pause'] as const).map(
-      name => [name, Object.getOwnPropertyDescriptor(media, name)!] as const
-    )
-    Object.defineProperty(media, 'play', {
-      configurable: true,
-      value: async () => undefined
-    })
-    Object.defineProperty(media, 'pause', {
-      configurable: true,
-      value: () => undefined
-    })
-    try {
-      await grid({ Grid: PhoneGrid, width: 402, height: 874, playable: true })
-      // Every angle has a picture up and nothing ahead of it, so the grid
-      // waits for them to catch up, and says so.
-      await act(async () => {
-        for (const video of document.querySelectorAll('video')) {
-          for (const [name, value] of [
-            ['readyState', 4],
-            ['buffered', { length: 0, start: () => 0, end: () => 0 }]
-          ] as const)
-            Object.defineProperty(video, name, { configurable: true, value })
-          video.dispatchEvent(new window.Event('loadedmetadata'))
-          video.dispatchEvent(new window.Event('loadeddata'))
-        }
+  for (const [width, height] of [
+    [402, 874],
+    [874, 402]
+  ] as const)
+    it(`keeps its notice on the angles, below the band, at ${width}×${height}`, async function () {
+      // The test DOM's players neither play nor pause.
+      const media = window.HTMLMediaElement.prototype
+      const held = (['play', 'pause'] as const).map(
+        name => [name, Object.getOwnPropertyDescriptor(media, name)!] as const
+      )
+      Object.defineProperty(media, 'play', {
+        configurable: true,
+        value: async () => undefined
       })
-      await settle(1500)
-      await layOutBoards(607, 247)
-      // The outermost element holding just the words: the notice's box.
-      const notice = [...document.querySelectorAll('div')].find(
-        node => node.textContent === lstrings.angles_waiting
-      )
-      if (notice == null) throw new Error('No notice of waiting')
-      const band = bandHeight(
-        { width: 402, height: 874 },
-        { width: 607, height: 247 },
-        4,
-        0.15
-      )
-      expect(px(notice.style.top)).greaterThan(band)
-      const { board } = placed()
-      expect(board.y + board.h).lessThan(px(notice.style.top))
-    } finally {
-      for (const [name, descriptor] of held)
-        Object.defineProperty(media, name, descriptor)
-    }
-  })
+      Object.defineProperty(media, 'pause', {
+        configurable: true,
+        value: () => undefined
+      })
+      try {
+        await grid({ Grid: PhoneGrid, width, height, playable: true })
+        // Every angle has a picture up and nothing ahead of it, so the grid
+        // waits for them to catch up, and says so.
+        await act(async () => {
+          for (const video of document.querySelectorAll('video')) {
+            for (const [name, value] of [
+              ['readyState', 4],
+              ['buffered', { length: 0, start: () => 0, end: () => 0 }]
+            ] as const)
+              Object.defineProperty(video, name, { configurable: true, value })
+            video.dispatchEvent(new window.Event('loadedmetadata'))
+            video.dispatchEvent(new window.Event('loadeddata'))
+          }
+        })
+        await settle(1500)
+        await layOutBoards(607, 247)
+        // The outermost element holding just the words: the notice's box.
+        const notice = [...document.querySelectorAll('div')].find(
+          node => node.textContent === lstrings.angles_waiting
+        )
+        if (notice == null) throw new Error('No notice of waiting')
+        const { board } = placed()
+        if (width > height) {
+          // Sideways the band is over the angles, and the notice at their top.
+          expect(px(notice.style.top)).lessThan(board.y + board.h)
+        } else {
+          expect(px(notice.style.top)).greaterThan(board.y + board.h)
+        }
+      } finally {
+        for (const [name, descriptor] of held)
+          Object.defineProperty(media, name, descriptor)
+      }
+    })
 })
 
 describe('the phone’s grid and the browser’s place the board alike (U39)', function () {
@@ -350,6 +354,214 @@ describe('the phone’s grid and the browser’s place the board alike (U39)', f
         for (const key of ['x', 'y', 'w', 'h'] as const)
           expect(tile[key]).closeTo(browser.tiles[index][key], 0.01)
       })
+    })
+  }
+})
+
+describe('leaving either grid says where it had got to (U12)', function () {
+  afterEach(unmount)
+
+  for (const [name, Grid] of [
+    ['browser', BrowserGrid],
+    ['phone', PhoneGrid]
+  ] as const) {
+    it(`in the ${name}'s`, async function () {
+      const server = overlayServer()
+      const client = new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: server.fetch
+      })
+      client.playback = async () => await new Promise(() => undefined)
+      const closed: Array<number | null> = []
+      const at = OVERLAY_T0 + 65_000
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <Grid
+              client={client}
+              gameId="g1"
+              videos={IDS.map(angle)}
+              order={['a']}
+              audioId="a"
+              zoomedId={null}
+              atMs={at}
+              onChange={() => undefined}
+              onClose={atWallMs => {
+                closed.push(atWallMs)
+              }}
+            />
+          </ThemeProvider>
+        )
+      })
+      await settle()
+      const exit = document.querySelector<HTMLElement>(
+        `[aria-label="${lstrings.angles_close}"]`
+      )!
+      await act(async () => {
+        exit.click()
+      })
+      expect(closed).deep.equals([at])
+      // The phone's Back button, which its full-screen sheet is told of.
+      if (name === 'phone') {
+        // The sheet hears it once its fade-in has ended, which the test DOM
+        // does not run: the end is sent to the sheet's own element.
+        let sheet: Element = exit
+        while (sheet.parentElement?.parentElement !== document.body)
+          sheet = sheet.parentElement!
+        await act(async () => {
+          // Under its WebKit name where the DOM has no AnimationEvent.
+          for (const type of ['animationend', 'webkitAnimationEnd'])
+            sheet.dispatchEvent(new window.Event(type, { bubbles: true }))
+        })
+        await act(async () => {
+          document.dispatchEvent(
+            new window.KeyboardEvent('keyup', { key: 'Escape' })
+          )
+        })
+        expect(closed).deep.equals([at, at])
+      }
+    })
+  }
+})
+
+describe('a press on either grid: a tap, a scrub, a hold that picks a tile up (U14)', function () {
+  afterEach(unmount)
+
+  /** Where the bar says the take is, in seconds. */
+  const playhead = (): number =>
+    Number(
+      document
+        .querySelector('[aria-label="Position in the game"]')!
+        .getAttribute('aria-valuenow')
+    )
+  const wait = async (ms: number): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms))
+    })
+  }
+
+  /** The browser's pointers on one element, or the phone's touches. */
+  type Press = (
+    target: Element,
+    type: 'down' | 'move' | 'up',
+    x: number,
+    y: number
+  ) => Promise<void>
+  const pointer: Press = async (target, type, x, y) => {
+    const event = new window.MouseEvent(`pointer${type}`, {
+      bubbles: true,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: type === 'up' ? 0 : 1
+    })
+    Object.defineProperty(event, 'pointerId', { value: 7 })
+    Object.defineProperty(event, 'pointerType', { value: 'touch' })
+    await act(async () => {
+      target.dispatchEvent(event)
+    })
+  }
+  const touch: Press = async (target, type, x, y) => {
+    await act(async () => {
+      target.dispatchEvent(
+        new window.MouseEvent(type === 'move' ? 'mousemove' : `mouse${type}`, {
+          bubbles: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: type === 'up' ? 0 : 1
+        })
+      )
+    })
+  }
+
+  for (const [name, Grid, press] of [
+    ['browser', BrowserGrid, pointer],
+    ['phone', PhoneGrid, touch]
+  ] as const) {
+    it(`in the ${name}'s`, async function () {
+      this.timeout(10_000)
+      const [width, height] = [402, 874]
+      await windowSize(width, height)
+      const server = overlayServer()
+      const client = new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: server.fetch
+      })
+      client.playback = async () => await new Promise(() => undefined)
+      const orders: string[][] = []
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <Grid
+              client={client}
+              gameId="g1"
+              videos={IDS.map(angle)}
+              order={['a', 'b']}
+              audioId="a"
+              zoomedId={null}
+              atMs={OVERLAY_T0 + 120_000}
+              onChange={next => {
+                if (next.order != null) orders.push(next.order)
+              }}
+              onClose={() => undefined}
+            />
+          </ThemeProvider>
+        )
+      })
+      await settle()
+      const tileLayer = (index: number): Element =>
+        name === 'browser'
+          ? document.querySelectorAll('div[style*="cursor: grab"]')[index]
+          : document.querySelector('[data-testid="grid-touches"]')!
+      const margin =
+        name === 'browser'
+          ? document.querySelector('div[style*="z-index: 0"]')!
+          : document.querySelector('[data-testid="grid-touches"]')!
+      // Upright, the tiles stack: the first is the top one.
+      const tiles = [...document.querySelectorAll('video')].map(video => {
+        const style = video.parentElement!.style
+        return {
+          x: Number.parseFloat(style.left),
+          y: Number.parseFloat(style.top),
+          width: Number.parseFloat(style.width),
+          height: Number.parseFloat(style.height)
+        }
+      })
+      expect(playhead()).equals(120)
+
+      // A tap on the middle right of the black around the tiles skips on.
+      const right = [width * 0.9, height * 0.5] as const
+      await press(margin, 'down', ...right)
+      await press(margin, 'up', ...right)
+      expect(playhead()).equals(130)
+
+      // A sideways drag from the middle scrubs, at a quarter of the track,
+      // which is the window's width until the bar has said otherwise.
+      const y = height * 0.3
+      await press(margin, 'down', width * 0.5, y)
+      await press(margin, 'move', width * 0.5 + width * 0.25, y)
+      await wait(50)
+      await press(margin, 'up', width * 0.5 + width * 0.25, y)
+      // A ten-minute take: a quarter of a quarter of it.
+      expect(playhead()).closeTo(130 + 600 * 0.25 * 0.25, 1)
+
+      // Held still on the first tile for half a second, it is picked up, and
+      // dropped on the second it swaps with it.
+      const first = tiles[0]
+      const from = [first.x + first.width * 0.1, first.y + first.height * 0.5]
+      const jump = tiles[1].y - first.y
+      await press(tileLayer(0), 'down', from[0], from[1])
+      await wait(600)
+      await press(tileLayer(0), 'move', from[0], from[1] + jump)
+      await press(tileLayer(0), 'up', from[0], from[1] + jump)
+      expect(orders).deep.equals([['b', 'a']])
     })
   }
 })

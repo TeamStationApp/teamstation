@@ -27,7 +27,8 @@ export const animationFrames: FrameLoop = {
 export const SEEK_JUMP_MS = 2000
 
 /**
- * The step of the board for the frame on screen, read once a display frame.
+ * The step of the board for the frame on screen, read once a display frame:
+ * or of any timeline of steps, such as the game's line score.
  *
  * `wallNow` is the wall-clock instant of the picture showing now: the
  * player's position, through the video's wall timeline. It is read every
@@ -38,18 +39,20 @@ export const SEEK_JUMP_MS = 2000
  * A jump of the picture against the clock is a seek, and is reported, so the
  * steps around the new position can be fetched again.
  */
-export function usePlayheadStep(options: {
-  steps: readonly BoardStep[] | null
+export function usePlayheadStep<
+  Step extends { at: number } = BoardStep
+>(options: {
+  steps: readonly Step[] | null
   wallNow: () => number | null
   onSeek?: (wallMs: number) => void
   frames?: FrameLoop
   now?: () => number
-}): BoardStep | null {
+}): Step | null {
   const { frames = animationFrames, now = Date.now } = options
-  const [step, setStep] = useState<BoardStep | null>(null)
+  const [step, setStep] = useState<Step | null>(null)
   const latest = useRef(options)
   latest.current = options
-  const shown = useRef<BoardStep | null>(null)
+  const shown = useRef<Step | null>(null)
 
   useEffect(() => {
     let handle = 0

@@ -13,11 +13,16 @@ import {
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { lstrings } from '../locales/strings'
-import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
-import { ExitButton, exitClearance } from './multiCam/barParts'
+import type { ParkReason } from './multiCam/align'
+import {
+  ExitButton,
+  exitClearance,
+  exitSize,
+  exitTopClear
+} from './multiCam/barParts'
 import { TILE_BUFFER } from './multiCam/buffering'
 import { clearOf, edgeToEdge, type Rect } from './multiCam/layout'
 import {
@@ -25,9 +30,13 @@ import {
   orientationLock
 } from './multiCam/orientationLock'
 import {
-  beyondSlop,
+  type PlayerLayout,
+  playerLayout,
+  topOfAngles
+} from './multiCam/playerLayout'
+import { tileNotice } from './multiCam/tileNotice'
+import {
   type MultiCamProps,
-  REORDER_HOLD_MS,
   type TileDrag,
   type TileHandle,
   useMultiCam
@@ -37,8 +46,11 @@ import {
   GridScoreboard,
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
+import type { Size } from './scoreboardOverlay/overlayLayout'
+import { useScreenInsets } from './useScreenInsets'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
+import type { WallMapping } from './wallMapping'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -53,8 +65,8 @@ interface Touch {
   pageY: number
   /** The tile it came down on, which a held finger can pick up. */
   tile: number | null
-  timer: ReturnType<typeof setTimeout> | null
-  armed: boolean
+  /** It has moved its tile while carrying it. */
+  carried: boolean
 }
 
 /** Android's `TSOrientation`, which iOS has no need of. */
@@ -101,6 +113,9 @@ function tileAt(rects: Rect[], x: number, y: number): number | null {
  */
 export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const { onClose } = props
+  // Where the grid has got to, for Android's Back, which the modal hears
+  // rather than the grid inside it.
+  const wallNowRef = useRef<() => number | null>(() => null)
   return (
     <Modal
       visible
@@ -108,7 +123,9 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       supportedOrientations={['portrait', 'landscape']}
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        onClose(wallNowRef.current())
+      }}
     >
       <StatusBar hidden />
       {/* Its own safe area, measured in the modal's window. The app's is
@@ -116,61 +133,84 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           sideways it still gave the upright insets: room kept for a Dynamic
           Island at the top that was at the side. */}
       <SafeAreaProvider>
-        <MultiCamGrid {...props} />
+        <MultiCamGrid {...props} wallNowRef={wallNowRef} />
       </SafeAreaProvider>
     </Modal>
   )
 }
 
 /** The grid itself, inside the modal and its safe area. */
-function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
-  const { onClose } = props
+function MultiCamGrid(
+  props: MultiCamViewProps & {
+    wallNowRef: React.RefObject<() => number | null>
+  }
+): React.ReactElement {
+  const { onClose, wallNowRef } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   // Sideways the pictures have the whole screen; upright, all of it below the
   // top of the safe area. The controls and the board keep to the safe area.
   const { width, height } = useWindowDimensions()
-  const insets = useInsets()
+  const insets = useScreenInsets()
   const landscape = width > height
-  // Upright, the board's band is sized for the height below the top of the
-  // safe area, which is all the angles stacked under it have.
-  const boardBox = landscape
-    ? { width, height }
-    : { width, height: Math.max(0, height - insets.top) }
-  const board = useGridBoard(props, boardBox, landscape)
-  const { safe, top } = edgeToEdge(
-    { width, height },
-    insets,
-    board.band,
-    landscape
+  // The board, the box score and the angles around them, the board and the
+  // box inside the safe area (`playerLayout`).
+  const board = useGridBoard(props, landscape)
+  const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
+  const zoomedIndex =
+    props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
+  const layoutFor = (natural: Size): PlayerLayout =>
+    playerLayout({
+      screen: { width, height },
+      safe,
+      count: board.count,
+      aspect: board.aspect,
+      landscape,
+      settings: board.settings,
+      board: board.hasBoard ? natural : null,
+      line: board.hasLine,
+      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
+    })
+  const layout = layoutFor(board.natural)
+  // The way out, in the top right, or under the board where it reaches there.
+  const exitTop = exitTopClear(
+    {
+      x: safe.x + safe.w - theme.rem(theme.spaceSmRem) - exitSize(theme),
+      y: safe.y + theme.rem(theme.spaceSmRem),
+      w: exitSize(theme),
+      h: exitSize(theme)
+    },
+    [layout.board, layout.box],
+    theme.rem(theme.spaceSmRem)
   )
   const mc = useMultiCam(props, {
     width,
     height,
-    top,
-    boardCell: board.boardCell,
+    rects: layout.tiles,
     // The others slide aside rather than jump when a dragged tile changes
     // the place it would land in.
-    beforeShuffle: shuffle
+    beforeShuffle: shuffle,
+    // A phone's players read no dates: each tile is placed by its video's
+    // wall timeline, where the server has one.
+    fallbackMapping: board.mappingOf
   })
   board.follow(mc)
+  wallNowRef.current = mc.wallNow
   const {
     askAgain,
     attaching,
     attached,
     dropTile,
     goTo,
-    mayReorder,
     moveTile,
     pressCancel,
     pressEnd,
-    pressMoved,
+    pressMove,
     pressStart,
+    setTrackWidth,
     showBar,
-    skip,
     takeElement,
-    tileWaiting,
-    toggle
+    tileWaiting
   } = mc
 
   // Turning with the phone while it is up, and upright again after.
@@ -180,45 +220,25 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
   }, [])
 
   const touch = useRef<Touch | null>(null)
-  const [armed, setArmed] = useState<number | null>(null)
 
-  const disarm = (): void => {
-    const held = touch.current
-    if (held?.timer != null) clearTimeout(held.timer)
-    setArmed(null)
-  }
-  useEffect(
-    () => () => {
-      if (touch.current?.timer != null) clearTimeout(touch.current.timer)
-    },
-    []
-  )
+  const armed = mc.armedTile
 
+  // The grid's own press does the rest — a tap's square, a scrub, a crawl,
+  // a tile picked up — from the same points the browser hands it.
   const onGrant = (event: GestureResponderEvent): void => {
     const { identifier, locationX, locationY, pageX, pageY } = event.nativeEvent
     const id = Number(identifier)
-    if (!pressStart(id, locationX, locationY)) return
-    const held: Touch = {
+    const tile = tileAt(mc.rects, locationX, locationY)
+    if (!pressStart(id, locationX, locationY, tile)) return
+    touch.current = {
       id,
       x: locationX,
       y: locationY,
       pageX,
       pageY,
-      tile: tileAt(mc.rects, locationX, locationY),
-      timer: null,
-      armed: false
+      tile,
+      carried: false
     }
-    // A second's rest on a tile picks it up, unless the press has become a
-    // crawl in the meantime — the same rule, and the same second, as the web.
-    if (held.tile != null) {
-      held.timer = setTimeout(() => {
-        held.timer = null
-        if (held.tile == null || !mayReorder(id)) return
-        held.armed = true
-        setArmed(held.tile)
-      }, REORDER_HOLD_MS)
-    }
-    touch.current = held
   }
 
   const onMove = (event: GestureResponderEvent): void => {
@@ -226,17 +246,10 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
     if (held == null) return
     const x = event.nativeEvent.pageX - held.pageX
     const y = event.nativeEvent.pageY - held.pageY
-    if (held.armed) {
-      if (held.tile != null && mayReorder(held.id)) moveTile(held.tile, x, y)
-      return
-    }
-    // A finger that travels before the second is up is a slip, not a drag:
-    // it neither moves the picture nor becomes one later.
-    if (beyondSlop(x, y)) {
-      if (held.timer != null) clearTimeout(held.timer)
-      held.timer = null
-      pressMoved(held.id)
-    }
+    pressMove(held.id, held.x + x, held.y + y)
+    if (held.tile == null || armed !== held.tile) return
+    held.carried = true
+    moveTile(held.tile, x, y)
   }
 
   const onRelease = (event: GestureResponderEvent): void => {
@@ -245,15 +258,11 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
     touch.current = null
     const x = event.nativeEvent.pageX - held.pageX
     const y = event.nativeEvent.pageY - held.pageY
-    // Armed, and still the press: a finger that lost it to another is done,
-    // and drops nothing.
-    const wasArmed = held.armed && mayReorder(held.id)
-    disarm()
-    // A press that became a move is never also a tap.
-    pressEnd(held.id, !beyondSlop(x, y) && !wasArmed, held.x + x, held.y + y)
+    const mode = pressEnd(held.id, held.x + x, held.y + y)
     // Always: the picture goes back when the press meant nothing.
     if (held.tile != null) {
-      dropTile(held.tile, wasArmed ? x : 0, wasArmed ? y : 0)
+      const carried = mode === 'reorder'
+      dropTile(held.tile, carried ? x : 0, carried ? y : 0)
     }
   }
 
@@ -261,7 +270,6 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
     const held = touch.current
     if (held == null) return
     touch.current = null
-    disarm()
     pressCancel(held.id)
     if (held.tile != null) dropTile(held.tile, 0, 0)
   }
@@ -295,23 +303,18 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
             waiting={tileWaiting(video.id)}
             unplaceable={video.startAt == null}
             takeRef={takeElement(video.id)}
+            onWallMapping={mc.takeMapping(video.id)}
             heard={video.id === mc.heardId}
             nameTop={board.nameTop(index, mc.rects[index], mc.zoomed, safe)}
             nameClear={clearOf(mc.shownRects[index], safe)}
           />
         ))}
 
-        <GridScoreboard
-          board={board}
-          box={boardBox}
-          landscape={landscape}
-          rects={mc.rects}
-          zoomed={mc.zoomed}
-          safe={safe}
-        />
+        <GridScoreboard board={board} layout={layoutFor} />
 
         {/* Every touch on the grid, over the tiles and under the bar. */}
         <View
+          testID="grid-touches"
           style={styles.touches}
           onStartShouldSetResponder={() => true}
           onResponderTerminationRequest={() => false}
@@ -340,7 +343,14 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
                 : undefined
             }
           />
-          <ExitButton visible={mc.controlsShown} onPress={onClose} />
+          <ExitButton
+            visible={mc.controlsShown}
+            onPress={() => {
+              onClose(mc.wallNow())
+            }}
+            // In the safe area's coordinates, as the controls are.
+            top={exitTop - safe.y - theme.rem(theme.spaceSmRem)}
+          />
 
           {/* On the pictures, below the board's band: over the band it would
             hide the score. */}
@@ -348,7 +358,14 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
             <View
               style={[
                 styles.notice,
-                { top: board.band + theme.rem(theme.spaceSmRem) }
+                {
+                  // In the safe area's coordinates, as the controls are; at
+                  // the top of the highest angle, as the browser's grid puts
+                  // it, so it is never over the board.
+                  top:
+                    Math.max(0, topOfAngles(layout) - safe.y) +
+                    theme.rem(theme.spaceSmRem)
+                }
               ]}
               pointerEvents="none"
             >
@@ -360,11 +377,9 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
             <MultiCamBar
               window={mc.take}
               atMs={mc.atWallMs}
-              playing={mc.playing}
               angles={mc.barAngles(mc.take)}
-              onTogglePlay={toggle}
-              onSkip={skip}
               onScrub={goTo}
+              onTrackWidth={setTrackWidth}
               onInteract={showBar}
               visible={mc.barShown}
             />
@@ -389,10 +404,12 @@ function Tile(props: {
   /** Picked up, and waiting to be dropped. */
   armed: boolean
   name: string
-  parked: 'beforeStart' | 'afterEnd' | null
+  parked: ParkReason | null
   waiting: boolean
   unplaceable: boolean
   takeRef: (node: TileHandle | null) => void
+  /** Where its player says it has no dates of its own (`PlayIntent`). */
+  onWallMapping: (mapping: WallMapping | null) => void
   heard: boolean
   /** Where its name goes, below the grid's board; at the top otherwise. */
   nameTop?: number
@@ -448,7 +465,8 @@ function Tile(props: {
   // This tile's own source, attached when it has one and detached with it.
   // The play intent is the grid's, which pauses tiles itself.
   useEffect(() => {
-    const { onAttaching, onAttached, onGiveUp, wantsToPlay } = props
+    const { onAttaching, onAttached, onGiveUp, wantsToPlay, onWallMapping } =
+      props
     if (handle == null || url == null) return
     const toSec = onAttaching(videoId)
     const detach = attachHls(
@@ -457,7 +475,7 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay }
+      { wantsToPlay, onWallMapping }
     )
     const start = (): void => {
       onAttached(videoId, handle, toSec)
@@ -500,6 +518,9 @@ function Tile(props: {
         onHandle={takeHandle}
         resizeMode="contain"
         buffer={TILE_BUFFER}
+        // The heard tile takes the audio session, as the videos page's
+        // player does: sound with the ring switch on silent.
+        primary={heard}
       />
       {armed ? <View style={styles.tileArmed} /> : null}
       <View
@@ -524,17 +545,7 @@ function Tile(props: {
       !hasPicture ? (
         <View style={styles.tileParked}>
           <Text style={styles.tileParkedText}>
-            {unavailable
-              ? lstrings.game_video_unavailable
-              : unplaceable
-                ? lstrings.angles_unplaceable
-                : parked === 'beforeStart'
-                  ? lstrings.angles_not_recording_yet
-                  : parked === 'afterEnd'
-                    ? lstrings.angles_stopped
-                    : waiting
-                      ? lstrings.angles_tile_catching_up
-                      : lstrings.angles_tile_loading}
+            {tileNotice({ unavailable, unplaceable, parked, waiting })}
           </Text>
         </View>
       ) : null}

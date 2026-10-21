@@ -120,6 +120,32 @@ export function popRoute(): void {
   // The browser is the history.
 }
 
+/** Where a step back taken by `stepBackTo` is to land, until it has. */
+let landing: Route | null = null
+
+/**
+ * Back to the step this one was pushed over, with `route` as its address: a
+ * page closed by its own button — the full-screen player opened from the
+ * videos page — so the history keeps one videos page, not a copy of it for
+ * Back to walk into. The shell has already drawn `route`; the pop that
+ * follows is not handed back to it.
+ */
+export function stepBackTo(route: Route): void {
+  if (typeof window === 'undefined') return
+  initializeHistory()
+  landing = route
+  window.history.back()
+}
+
+/**
+ * A `stepBackTo` has not landed yet. The shell writes no address meanwhile:
+ * `history.back()` lands later, and a write now would go over the entry being
+ * left — the player's — and leave a copy of the videos page for Forward.
+ */
+export function steppingBack(): boolean {
+  return landing != null
+}
+
 /** A scoring child uses a real Back step so Forward can reopen the visit. */
 export function scoringOriginHistory(): number {
   initializeHistory()
@@ -140,6 +166,17 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
     let restoring: (() => void) | undefined
     let accepting = false
     const onPop = (): void => {
+      if (landing != null) {
+        const route = landing
+        landing = null
+        position = indexOfHistory() ?? position - 1
+        window.history.replaceState(
+          { tsRouteIndex: position },
+          '',
+          routePath(route)
+        )
+        return
+      }
       if (restoring != null) {
         const done = restoring
         restoring = undefined

@@ -36,6 +36,7 @@
  * the tolerance of each other, so this rarely moves a rate there at all.
  */
 
+import { LIVE_DELAY_SEC } from '../liveDelay'
 import { type AngleVideo, secondsAt, startMs } from '../wallClock'
 
 /** How far out a follower may be before it is worth a seek. */
@@ -175,7 +176,13 @@ export function worthCorrecting(readyState: number, errorSec: number): boolean {
 export type Correction =
   | { kind: 'hold' }
   | { kind: 'seek'; toSec: number }
-  | { kind: 'park'; reason: 'beforeStart' | 'afterEnd' }
+  | { kind: 'park'; reason: ParkReason }
+
+/**
+ * Why a tile is held where it is: the moment is before its camera started,
+ * after it stopped, or — live — past the newest footage it has yet.
+ */
+export type ParkReason = 'beforeStart' | 'afterEnd' | 'notYet'
 
 export interface FollowerState {
   video: AngleVideo
@@ -191,6 +198,12 @@ export interface FollowerState {
    * for a moment that never comes.
    */
   mediaSec?: number | null
+  /**
+   * A live tile's newest footage, in its own seconds, by its mapping onto the
+   * wall clock; null when it is not live or cannot say. A moment past it has
+   * not reached this camera yet.
+   */
+  newestSec?: number | null
 }
 
 /**
@@ -209,6 +222,12 @@ export function correctionFor(options: {
   const target = secondsAt(follower.video, wallMs)
   if (target == null) return { kind: 'hold' }
   if (target < 0) return { kind: 'park', reason: 'beforeStart' }
+  if (
+    follower.newestSec != null &&
+    target > follower.newestSec + toleranceSec
+  ) {
+    return { kind: 'park', reason: 'notYet' }
+  }
   // What the file holds wins over what the row says.
   const durationSec =
     follower.mediaSec != null && Number.isFinite(follower.mediaSec)
@@ -321,24 +340,6 @@ export function holdExpired(heldForMs: number): boolean {
   return heldForMs >= HOLD_MS
 }
 
-/**
- * Where four live tiles can agree to be.
- *
- * Each live tile arrives at its own live edge, and those differ by seconds —
- * hls.js holds back three segments, and a segment here is four, so about
- * twelve. Asking them all to show the instant the furthest-ahead one has
- * reached would ask the others for pictures that do not exist yet, so the view
- * holds back to the tile that is furthest behind.
- */
-export function liveTargetMs(edges: Array<number | null>): number | null {
-  let earliest: number | null = null
-  for (const edge of edges) {
-    if (edge == null) continue
-    if (earliest == null || edge < earliest) earliest = edge
-  }
-  return earliest
-}
-
 /** How long a live grid waits for its slower tiles before opening without them. */
 export const LIVE_OPEN_WAIT_MS = 3000
 
@@ -346,29 +347,27 @@ export const LIVE_OPEN_WAIT_MS = 3000
  * The moment a grid of live angles opens on.
  *
  * A live grid has no moment of its own to open on — not the take's beginning,
- * which is hours ago — so it takes one from its tiles: each opens near its own
- * live edge, and once it has a picture there, says where in the game that is.
- * Until one has, there is nothing to start from; held for want of a moment,
- * the grid used to sit still on every live angle for good.
+ * which is hours ago — so it takes one from its tiles: `LIVE_DELAY_SEC`
+ * behind the newest footage the slowest of them has (each tile's
+ * `newestWall`), where every one of them has pictures and the single player
+ * would be too. Until one has said, there is nothing to start from.
  *
- * `at` is each playable live tile's moment, null until it has a picture. The
- * grid waits for all of them, but not for longer than `LIVE_OPEN_WAIT_MS`
- * after the first: a camera that never fills is left out by the gate, as
- * anywhere else. It opens on the one furthest ahead, which the others hold
- * already: a live tile loads forward from where it opened, so the one furthest
- * behind would send the rest back to pictures they never loaded.
+ * `at` is each playable live tile's newest footage, null until its mapping
+ * can say. The grid waits for all of them, but not for longer than
+ * `LIVE_OPEN_WAIT_MS` after the first: a camera that never maps is left out,
+ * and the gate deals with it as anywhere else.
  */
 export function liveOpeningMs(
   at: Array<number | null>,
   waitedMs: number
 ): number | null {
-  let latest: number | null = null
+  let slowest: number | null = null
   let missing = false
   for (const one of at) {
     if (one == null) missing = true
-    else if (latest == null || one > latest) latest = one
+    else if (slowest == null || one < slowest) slowest = one
   }
-  if (latest == null) return null
+  if (slowest == null) return null
   if (missing && waitedMs < LIVE_OPEN_WAIT_MS) return null
-  return latest
+  return slowest - LIVE_DELAY_SEC * 1000
 }

@@ -49,8 +49,23 @@ export function gestureAction(
   return zone === 'seekForward' ? 'slowForward' : null
 }
 
-/** A press becomes a hold at a quarter of a second. */
-export const HOLD_MS = 250
+/** A press, or the Right arrow, becomes a hold at half a second. */
+export const HOLD_MS = 500
+
+/**
+ * How far a press may wander, as a share of the screen's width, and still be
+ * held still; one that goes further before `HOLD_MS` is a drag.
+ */
+export const STILL_FRACTION = 0.05
+
+/**
+ * A drag that scrubs starts this share of the screen's width in from either
+ * side: one from the edges is left to the browser and the system.
+ */
+export const SCRUB_EDGE_FRACTION = 0.1
+
+/** A drag across the picture moves the playhead at a quarter of the bar's rate. */
+export const SCRUB_RATE = 0.25
 
 /** How far a tap on the sides, or an arrow key, moves. */
 export const STEP_SECONDS = 10

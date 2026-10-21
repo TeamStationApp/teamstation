@@ -16,9 +16,11 @@ import type {
 import { asSeasonGame, asTeamSummary, asUserMatch } from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { playedFromStart } from '../../test/liveJoin'
 import { App } from '../App'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
+import { LIVE_DELAY_SEC } from '../player/liveDelay'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { HomeScreen } from './HomeScreen'
 
@@ -719,6 +721,80 @@ describe('the home screen', function () {
     await clock.tick()
     expect(text()).not.includes('LIVE NOW')
     expect(hasButton('Watch live')).equals(false)
+  })
+
+  it('plays the game being played now from its newest footage less the live delay', async function () {
+    clock = liveClock()
+    restoreVideo = playableVideo()
+    await mount({
+      live: async () => [liveGame('vid_a', 'gam_a', 'Alta Hawks', 'Bay Stars')]
+    })
+    expect(await playedFromStart(document.querySelector('video')!)).deep.equals(
+      [600 - LIVE_DELAY_SEC]
+    )
+  })
+
+  it('keeps the live card’s player through the screen’s own refreshes', async function () {
+    clock = liveClock()
+    restoreVideo = playableVideo()
+    let loads = 0
+    const proto = window.HTMLMediaElement.prototype
+    const load = Object.getOwnPropertyDescriptor(proto, 'load')!
+    Object.defineProperty(proto, 'load', {
+      configurable: true,
+      value: () => {
+        loads += 1
+      }
+    })
+    try {
+      await mount({
+        live: async () => [
+          liveGame('vid_a', 'gam_a', 'Alta Hawks', 'Bay Stars')
+        ]
+      })
+      const video = document.querySelector('video')!
+      const before = loads
+      // Each look renders the screen again; the same game goes on playing.
+      await clock.tick()
+      await clock.tick()
+      expect(document.querySelector('video')).equals(video)
+      expect(video.getAttribute('src')).equals(
+        'https://video.example/vid_a.m3u8'
+      )
+      expect(loads, 'never torn down and loaded again').equals(before)
+    } finally {
+      Object.defineProperty(proto, 'load', load)
+    }
+  })
+
+  it('plays the recent game’s card from its newest footage while its video is streaming', async function () {
+    restoreVideo = playableVideo()
+    await mount({
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      recent: async () =>
+        recentGame({ posterUrl: 'https://video.example/poster.jpg' }),
+      videos: [
+        { id: 'vid_live', status: 'live' }
+      ] as unknown as GameDetail['videos']
+    })
+    expect(await playedFromStart(document.querySelector('video')!)).deep.equals(
+      [600 - LIVE_DELAY_SEC]
+    )
+  })
+
+  it('leaves the recent game’s recording where it opens', async function () {
+    restoreVideo = playableVideo()
+    await mount({
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      recent: async () =>
+        recentGame({ posterUrl: 'https://video.example/poster.jpg' }),
+      videos: [
+        { id: 'vid_ready', status: 'ready' }
+      ] as unknown as GameDetail['videos']
+    })
+    expect(await playedFromStart(document.querySelector('video')!)).deep.equals(
+      []
+    )
   })
 
   it('keeps asking about a live game whose address is not ready yet', async function () {

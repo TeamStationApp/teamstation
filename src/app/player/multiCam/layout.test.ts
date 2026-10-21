@@ -13,6 +13,7 @@ import {
   swap,
   tileRects
 } from './layout'
+import { playerLayout } from './playerLayout'
 
 const area = (rect: Rect): number => rect.w * rect.h
 const round = (value: number): number => Math.round(value * 100) / 100
@@ -150,6 +151,44 @@ describe('the grid on a phone, edge to edge', function () {
     expect(rects[3].y + rects[3].h).greaterThan(390 - 21)
   })
 
+  it('puts the board flush with the top of the safe area, and the angles on into the bottom of it (U10)', function () {
+    const settings = {
+      show: true,
+      single: { x: 0.01, y: 0.01, height: 0.15 },
+      landscape: { x: 0.01, y: 0.01, height: 0.15 },
+      portraitHeight: 0.15
+    }
+    const { safe } = edgeToEdge(UPRIGHT, UPRIGHT_INSETS, 0, false)
+    for (const count of [1, 2, 3, 4]) {
+      const layout = playerLayout({
+        screen: UPRIGHT,
+        safe,
+        count,
+        aspect: 16 / 9,
+        landscape: false,
+        settings,
+        board: { width: 744, height: 247 },
+        line: true
+      })
+      expect(layout.board!.y, `${count}`).equals(UPRIGHT_INSETS.top)
+    }
+    // Four fill the height: the last runs to the screen's bottom edge, past
+    // the home indicator.
+    const four = playerLayout({
+      screen: UPRIGHT,
+      safe,
+      count: 4,
+      aspect: 16 / 9,
+      landscape: false,
+      settings,
+      board: { width: 744, height: 247 },
+      line: true
+    })
+    const last = four.tiles[3]
+    expect(last.y + last.h).closeTo(UPRIGHT.height, 0.01)
+    expect(last.y + last.h).greaterThan(safe.y + safe.h)
+  })
+
   it('keeps the controls to what the hardware leaves', function () {
     expect(edgeToEdge(UPRIGHT, UPRIGHT_INSETS, 0, false).safe).deep.equals({
       x: 0,
@@ -282,5 +321,35 @@ describe('moving a tile by hand', function () {
       target: null,
       slots: [0, 1, 2, 3]
     })
+  })
+})
+
+describe('where a grid sits up and down its box (U7)', function () {
+  it('is in the middle by default, at the top or at the bottom when asked, the arrangement the same', function () {
+    const middle = tileRects({ width: 874, height: 402, count: 2 })
+    const top = tileRects({ width: 874, height: 402, count: 2, align: 'top' })
+    const bottom = tileRects({
+      width: 874,
+      height: 402,
+      count: 2,
+      align: 'bottom'
+    })
+    expect(middle[0].y).closeTo((402 - middle[0].h) / 2, 1e-6)
+    expect(top[0].y).equals(0)
+    expect(bottom[0].y + bottom[0].h).closeTo(402, 1e-6)
+    for (const rects of [top, bottom])
+      rects.forEach((rect, index) => {
+        expect(rect.x).closeTo(middle[index].x, 1e-6)
+        expect(rect.w).closeTo(middle[index].w, 1e-6)
+      })
+    // Below a band, at the top of what is left.
+    const stacked = tileRects({
+      width: 402,
+      height: 874,
+      count: 2,
+      top: 100,
+      align: 'top'
+    })
+    expect(stacked[0].y).equals(100)
   })
 })

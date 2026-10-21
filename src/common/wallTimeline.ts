@@ -71,3 +71,32 @@ export function wallAt(
   const [anchorMs, wallMs] = anchors[low]
   return wallMs + (mediaMs - anchorMs)
 }
+
+/**
+ * Where in the media a wall-clock instant falls: the inverse of `wallAt`.
+ *
+ * Inside an anchored stretch, by its own offset. In a gap between two — the
+ * wall clock jumped on while the media did not — at the first picture after
+ * the gap, which is the nearest the recording comes to that moment. Before
+ * the first anchor, and past the last, by the nearest one's offset.
+ */
+export function mediaAt(
+  anchors: readonly WallAnchor[],
+  wallMs: number
+): number | null {
+  if (anchors.length === 0) return null
+  let low = 0
+  let high = anchors.length - 1
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (anchors[middle][1] <= wallMs) low = middle
+    else high = middle - 1
+  }
+  const [anchorMs, anchorWall] = anchors[low]
+  const next = anchors[low + 1]
+  if (wallMs < anchorWall) return anchorMs + (wallMs - anchorWall)
+  if (next != null && anchorMs + (wallMs - anchorWall) >= next[0]) {
+    return next[0]
+  }
+  return anchorMs + (wallMs - anchorWall)
+}

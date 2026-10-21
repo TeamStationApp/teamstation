@@ -69,10 +69,17 @@ const serverDown = {
 describe('a phone watching a live game whose camera is away', function () {
   const realSetTimeout = globalThis.setTimeout
   const realClearTimeout = globalThis.clearTimeout
+  const realFetch = globalThis.fetch
   let timers: Array<() => void> = []
+  /** The live playlist the cushion reads: 125 four-second segments. */
+  const LISTED = `#EXTM3U\n${'#EXTINF:4.000000,\nseg.m4s\n'.repeat(125)}`
 
   beforeEach(function () {
     timers = []
+    globalThis.fetch = (async () => ({
+      ok: true,
+      text: async () => LISTED
+    })) as unknown as typeof fetch
     globalThis.setTimeout = ((run: () => void) => {
       timers.push(run)
       return run
@@ -84,6 +91,7 @@ describe('a phone watching a live game whose camera is away', function () {
   afterEach(function () {
     globalThis.setTimeout = realSetTimeout
     globalThis.clearTimeout = realClearTimeout
+    globalThis.fetch = realFetch
   })
 
   /**
@@ -392,12 +400,32 @@ describe('a phone watching a live game whose camera is away', function () {
     } as unknown as VideoRef)
     handle.handleProgress({
       currentTime: 488,
-      playableDuration: 500,
-      seekableDuration: 500
+      playableDuration: 488,
+      seekableDuration: 488
     })
-    expect(seekedTo, 'twelve seconds behind is moved to a minute').closeTo(
-      452,
+    // The playlist is read; its newest footage ends at 500 s.
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve()
+    expect(seekedTo, 'twelve seconds behind is moved to 45 s').closeTo(
+      455,
       0.01
     )
+  })
+})
+
+describe('a phone’s player and the wall clock (U23)', function () {
+  it('says at once that it reads no dates, so its owner places it otherwise', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const said: unknown[] = []
+    const detach = attachHls(
+      handle,
+      'https://media.example.test/v1/index.m3u8',
+      undefined,
+      {
+        wantsToPlay: () => true,
+        onWallMapping: mapping => said.push(mapping)
+      }
+    )
+    expect(said).deep.equals([null])
+    detach()
   })
 })

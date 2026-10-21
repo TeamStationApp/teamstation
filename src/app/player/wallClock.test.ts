@@ -4,6 +4,8 @@ import { describe, it } from 'mocha'
 import {
   type AngleVideo,
   endMs,
+  placedAlone,
+  resumeSecondsAt,
   secondsAt,
   startMs,
   wallAt,
@@ -83,5 +85,44 @@ describe('the wall clock behind every angle', function () {
         (window as { fromMs: number }).fromMs
       )
     })
+  })
+})
+
+describe('a lone recording with no start, on its own media time', function () {
+  it('is put at the epoch alone, and left unplaceable beside another', function () {
+    const lone = at(null, 4, 120)
+    const [placed] = placedAlone([lone])
+    expect(startMs(placed)).equals(0)
+    // Its own seconds, whatever offset it had: nothing to sync it to.
+    expect(wallAt(placed, 30)).equals(30_000)
+    expect(secondsAt(placed, 30_000)).equals(30)
+    expect(windowOf([placed])).deep.equals({ fromMs: 0, toMs: 120_000 })
+    const pair = [lone, at('2026-10-19T18:00:00Z')]
+    expect(placedAlone(pair)).equals(pair)
+    const dated = [at('2026-10-19T18:00:00Z')]
+    expect(placedAlone(dated)).equals(dated)
+  })
+})
+
+describe('where a recording goes back to after the full-screen player', function () {
+  const start = Date.parse('2026-10-19T18:00:00Z')
+  const dated = at('2026-10-19T18:00:00Z', 2, 300)
+
+  it('is its position at the wall time reached, kept inside it', function () {
+    expect(resumeSecondsAt(dated, start + 60_000, 300)).equals(62)
+    // Before it started, and after it stopped.
+    expect(resumeSecondsAt(dated, start - 60_000, 300)).equals(0)
+    expect(resumeSecondsAt(dated, start + 900_000, 300)).equals(300)
+    // The row's length while the player has none yet.
+    expect(resumeSecondsAt(dated, start + 900_000, Number.NaN)).equals(300)
+    expect(
+      resumeSecondsAt(at('2026-10-19T18:00:00Z'), start + 900_000, 0)
+    ).equals(900)
+  })
+
+  it('is its own seconds for one with no start, and the start without a time', function () {
+    expect(resumeSecondsAt(at(null, 0, 120), 45_000, 120)).equals(45)
+    expect(resumeSecondsAt(dated, undefined, 300)).equals(0)
+    expect(resumeSecondsAt(undefined, start, 300)).equals(0)
   })
 })

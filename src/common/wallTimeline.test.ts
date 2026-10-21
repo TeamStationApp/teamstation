@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { type WallAnchor, wallAt } from './wallTimeline'
+import { mediaAt, type WallAnchor, wallAt } from './wallTimeline'
 
 describe('the wall time of a position in a video (U21)', function () {
   const T0 = 1_791_800_000_000
@@ -45,5 +45,24 @@ describe('the wall time of a position in a video (U21)', function () {
     expect(wallAt(many, 2_499_999)).equals(T0 + 2_499_999)
     expect(wallAt(many, 2_500_000)).equals(T0 + 2_520_000)
     expect(wallAt(many, 10_000_000)).equals(T0 + 10_020_000)
+  })
+})
+
+describe('the position in a video of a wall time, the inverse (U20)', function () {
+  // Ten seconds from the wall's 1000, then a 34 s gap, then on.
+  const anchors: WallAnchor[] = [
+    [0, 1000],
+    [10_000, 45_000]
+  ]
+
+  it('inverts wallAt inside each stretch', function () {
+    for (const ms of [0, 2500, 9999, 10_000, 30_000])
+      expect(mediaAt(anchors, wallAt(anchors, ms)!)).equals(ms)
+  })
+
+  it('puts a wall time in the gap at the first picture after it, and extrapolates outside', function () {
+    expect(mediaAt(anchors, 20_000)).equals(10_000)
+    expect(mediaAt(anchors, 500)).equals(-500)
+    expect(mediaAt([], 500)).equals(null)
   })
 })

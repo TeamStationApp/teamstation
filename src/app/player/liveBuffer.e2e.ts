@@ -119,8 +119,8 @@ async function main(): Promise<void> {
     await browser.evalBrowserScript({
       script: `
       const v = document.querySelector('video');
-      if (v.paused || v.currentTime < 55 || v.currentTime > 75)
-        throw new Error('Live playback did not start with a minute cushion: ' + v.currentTime);
+      if (v.paused || v.currentTime < 70 || v.currentTime > 90)
+        throw new Error('Live playback did not start 45 s behind the newest footage: ' + v.currentTime);
       v.currentTime = 10;
     `
     })

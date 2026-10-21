@@ -40,6 +40,8 @@ export interface GameHeroCardProps {
    * sound is what `Watch Replay` underneath is for.
    */
   videoUrl?: string | null
+  /** That video is streaming now, so it plays behind its newest footage. */
+  videoLive?: boolean
   /**
    * Draw the score plainly instead of over a picture.
    *
@@ -126,6 +128,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     winner: providedWinner,
     posterUrl,
     videoUrl,
+    videoLive = false,
     compact = false,
     teamStats,
     date,
@@ -252,7 +255,12 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
 
   return (
     <View testID={props.testID} style={styles.card}>
-      <VideoPoster uri={posterUrl} videoUrl={videoUrl} size="hero">
+      <VideoPoster
+        uri={posterUrl}
+        videoUrl={videoUrl}
+        live={videoLive}
+        size="hero"
+      >
         <View style={styles.over}>
           <Text style={styles.team} numberOfLines={1}>
             {`${awayName} ${awayScore ?? ''}`.trim()}

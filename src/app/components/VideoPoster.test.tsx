@@ -3,6 +3,8 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { playedFromStart } from '../../test/liveJoin'
+import { LIVE_DELAY_SEC } from '../player/liveDelay'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { applyCoverCrop, VideoPoster } from './VideoPoster'
 
@@ -114,5 +116,102 @@ describe('VideoPoster', function () {
       pictureStyle.objectPosition.includes('center') ||
         pictureStyle.objectPosition.includes('50%')
     ).equals(true)
+  })
+})
+
+describe('VideoPoster playing a live game', function () {
+  /** Safari's own player, which opens a live playlist at its start. */
+  async function onSafari(run: () => Promise<void>): Promise<void> {
+    const proto = window.HTMLMediaElement.prototype
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')!
+    const play = Object.getOwnPropertyDescriptor(proto, 'play')!
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    Object.defineProperty(proto, 'play', {
+      configurable: true,
+      value: async () => undefined
+    })
+    try {
+      await run()
+    } finally {
+      Object.defineProperty(proto, 'canPlayType', canPlay)
+      Object.defineProperty(proto, 'play', play)
+    }
+  }
+
+  it('plays it from the newest footage less the live delay, not from its start', async function () {
+    await onSafari(async () => {
+      const container = await render(
+        <VideoPoster size="hero" videoUrl="https://media/live.m3u8" live />
+      )
+      expect(
+        await playedFromStart(container.querySelector('video')!)
+      ).deep.equals([600 - LIVE_DELAY_SEC])
+    })
+  })
+
+  it('keeps its player when its game ends, rather than opening the finished playlist at its start', async function () {
+    await onSafari(async () => {
+      const proto = window.HTMLMediaElement.prototype
+      const load = Object.getOwnPropertyDescriptor(proto, 'load')!
+      let loads = 0
+      Object.defineProperty(proto, 'load', {
+        configurable: true,
+        value: () => {
+          loads += 1
+        }
+      })
+      try {
+        const url = 'https://media/live.m3u8'
+        const container = await render(
+          <VideoPoster size="hero" videoUrl={url} live />
+        )
+        const video = container.querySelector('video')!
+        const before = loads
+        // The next look says the game has ended: the same address, not live.
+        await act(async () => {
+          root?.render(
+            <ThemeProvider>
+              <VideoPoster size="hero" videoUrl={url} live={false} />
+            </ThemeProvider>
+          )
+        })
+        expect(container.querySelector('video')).equals(video)
+        expect(video.getAttribute('src')).equals(url)
+        expect(loads, 'never torn down and loaded again').equals(before)
+      } finally {
+        Object.defineProperty(proto, 'load', load)
+      }
+    })
+  })
+
+  it('joins as a live viewer when its game turns live under the same address', async function () {
+    await onSafari(async () => {
+      const url = 'https://media/game.m3u8'
+      const container = await render(<VideoPoster size="hero" videoUrl={url} />)
+      await act(async () => {
+        root?.render(
+          <ThemeProvider>
+            <VideoPoster size="hero" videoUrl={url} live />
+          </ThemeProvider>
+        )
+      })
+      expect(
+        await playedFromStart(container.querySelector('video')!)
+      ).deep.equals([600 - LIVE_DELAY_SEC])
+    })
+  })
+
+  it('leaves a recording where it opens', async function () {
+    await onSafari(async () => {
+      const container = await render(
+        <VideoPoster size="hero" videoUrl="https://media/game.m3u8" />
+      )
+      expect(
+        await playedFromStart(container.querySelector('video')!)
+      ).deep.equals([])
+    })
   })
 })

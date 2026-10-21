@@ -1,3 +1,5 @@
+import type { WallMapping } from './wallMapping'
+
 /**
  * What a caller tells `attachHls` about the player it hands over — shared by
  * the browser's `attachHls.ts` and the phone's `attachHls.native.ts`, which
@@ -27,17 +29,15 @@ export interface PlayIntent {
    * **240 MB, asked for at the same moment** — measured on a real take, the
    * grid pulled 178 MB in its first ten seconds for a game whose four streams
    * carry 11 Mbit/s between them. On a line that cannot serve that in ten
-   * seconds the four spend the opening minutes starving each other, which is
-   * how a camera stops drawing and takes the sound down with it.
+   * seconds the four spend the opening minutes starving each other.
    *
-   * So a grid starts each player at `aheadSec` and moves the limit itself
-   * while they play, through the control handed to `onControl`: raised as the
-   * slowest of them fills, lowered on the ones that have got ahead.
+   * So a grid's tile is held to `aheadSec` (`AHEAD_SEC`) as a ceiling, which
+   * it never grows past. Four live tiles on a line capped at 10.8 Mbit/s
+   * started together and recovered together from a cut with that and nothing
+   * more.
    */
   buffer?: {
     aheadSec: number
-    /** Called with the control once the player exists, and null when it goes. */
-    onControl?: (control: BufferControl | null) => void
   }
   /**
    * Whether the server still lists this video as live, asked when its
@@ -53,9 +53,37 @@ export interface PlayIntent {
   isLive?: () => boolean | Promise<boolean>
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
-}
-
-/** Moves a running player's limit on how far ahead it loads. */
-export interface BufferControl {
-  setAheadSec: (seconds: number) => void
+  /**
+   * A silent card preview rather than the viewer's own player: it joins and
+   * recovers as a live viewer, but its stalls are not reported as theirs.
+   */
+  preview?: boolean
+  /**
+   * The player's own mapping onto the wall clock, each time it changes: from
+   * the playlist's program date-times on hls.js, from Safari's start date on
+   * its own player. Null once it is clear no dates are coming — a recording
+   * without them, or a phone, whose players read none — so the owner falls
+   * back to the server's wall timeline or the start time (`wallMapping.ts`).
+   */
+  onWallMapping?: (mapping: WallMapping | null) => void
+  /** Nothing in this browser can play the video, and nothing was attached. */
+  onUnsupported?: () => void
+  /**
+   * This player was left playing silent because its sound needs a tap here:
+   * WebKit's own player, started silently to its first frame and wanted
+   * playing by then, which iOS pauses if it is unmuted without one.
+   */
+  onSoundHeld?: () => void
+  /**
+   * Whether the owner wants this player silent now: the sound a silent first
+   * play (`primeSilently`) puts back is this, not the element's at the start,
+   * which can be from before the owner had set it.
+   */
+  muted?: () => boolean
+  /**
+   * Where the player starts, in its own seconds, for an owner that has
+   * placed it already: a grid tile opened on a moment. hls.js then loads
+   * from there, rather than from its own live position and moving it.
+   */
+  startSec?: number
 }

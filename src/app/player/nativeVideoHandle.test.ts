@@ -524,3 +524,87 @@ describe('the native playhead between reports (U37)', function () {
     expect(handle.currentTime).closeTo(10.2, 1e-9)
   })
 })
+
+describe('NativeVideoHandle’s length on a live game', function () {
+  const load = (handle: NativeVideoHandle, duration: number): void => {
+    handle.handleLoad({
+      currentTime: 0,
+      duration,
+      naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+  }
+  const progress = (
+    handle: NativeVideoHandle,
+    seekableDuration: number
+  ): void => {
+    handle.handleProgress({
+      currentTime: 1200,
+      seekableDuration
+    } as unknown as Parameters<NativeVideoHandle['handleProgress']>[0])
+  }
+
+  it('grows with the footage it can reach, as a browser’s does, not held at its length when it opened', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    const heard: string[] = []
+    handle.addEventListener('durationchange', () =>
+      heard.push('durationchange')
+    )
+    // AVPlayer gives a live EVENT playlist's length on load, once.
+    load(handle, 1237)
+    progress(handle, 1249)
+    expect(handle.duration).equals(1249)
+    progress(handle, 1284)
+    expect(handle.duration).equals(1284)
+    expect(heard).deep.equals([
+      'durationchange',
+      'durationchange',
+      'durationchange'
+    ])
+  })
+
+  it('keeps a recording’s length, and a live one with none', function () {
+    const recording = new NativeVideoHandle(() => undefined)
+    recording.attach(fakePlayer().ref)
+    load(recording, 600)
+    progress(recording, 600)
+    expect(recording.duration).equals(600)
+    const live = new NativeVideoHandle(() => undefined)
+    live.attach(fakePlayer().ref)
+    // ExoPlayer's live stream: no length at all.
+    load(live, 0)
+    progress(live, 1284)
+    expect(live.duration).equals(Number.POSITIVE_INFINITY)
+  })
+})
+
+describe('NativeVideoHandle’s seekable end, for a resume that waits on it (U23)', function () {
+  it('reports progress and a new length, and the newest footage it could seek to', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    const heard: string[] = []
+    for (const name of ['progress', 'durationchange', 'timeupdate'] as const)
+      handle.addEventListener(name, () => heard.push(name))
+    expect(handle.seekableEnd).equals(null)
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 600,
+      naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(heard).deep.equals(['durationchange'])
+    // The same length again is no change.
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 600,
+      naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(heard).deep.equals(['durationchange'])
+    handle.handleProgress({
+      currentTime: 3,
+      seekableDuration: 64
+    } as unknown as Parameters<NativeVideoHandle['handleProgress']>[0])
+    expect(heard).deep.equals(['durationchange', 'progress', 'timeupdate'])
+    expect(handle.seekableEnd).equals(64)
+    expect(handle.liveEdge).equals(64)
+  })
+})

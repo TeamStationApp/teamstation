@@ -74,6 +74,21 @@ export function popRoute(): void {
   history.back()
 }
 
+/**
+ * Back to the step this one was pushed over, with `route` as its address: a
+ * page closed by its own button, so Android's Back does not walk into a copy
+ * of the page underneath. As in a browser; the shell has already drawn it.
+ */
+export function stepBackTo(route: Route): void {
+  history.back()
+  history.show(route, true)
+}
+
+/** Never: a phone's step back lands at once. */
+export function steppingBack(): boolean {
+  return false
+}
+
 export function scoringOriginHistory(): number {
   return history.depth()
 }

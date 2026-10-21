@@ -193,75 +193,6 @@ export function aboveBoardRect(
 }
 
 /**
- * The landscape grid of three angles: the board in the top-left quadrant,
- * which the angles leave to it, a video wide less the insets, or as tall as
- * the quadrant allows.
- */
-export function cellBoardRect(cell: Rect, natural: Size): Rect | null {
-  if (natural.width <= 0) return null
-  const scale = Math.min(
-    Math.max(0, cell.w - 2 * BOARD_INSET) / natural.width,
-    Math.max(0, cell.h - 2 * BOARD_INSET) / FULL_BOARD_HEIGHT
-  )
-  return fitted(
-    cell,
-    cell.x + BOARD_INSET,
-    cell.y + BOARD_INSET,
-    scale,
-    natural
-  )
-}
-
-/**
- * The portrait grid's board, in the band above the topmost angle: with four
- * angles, the full board is `portraitHeight` of one angle's height; with
- * fewer it is the screen's width less the insets. Either way it is narrowed
- * to the width.
- *
- * The four angles stack in what the band leaves, each as wide as the screen
- * unless that makes the stack too tall, and then as tall as a quarter of what
- * is left (`gridBox`). So the angle's height and the band's are found
- * together: an angle is the screen's width at its `aspect`, or, where that
- * does not fit, `h` with `count·h + portraitHeight·h + 2·inset` the screen's
- * height. A board narrowed to the width is shorter, which only leaves the
- * angles more room.
- */
-function portraitScale(
-  screen: Size,
-  natural: Size,
-  count: number,
-  portraitHeight: number,
-  aspect: number
-): number {
-  if (natural.width <= 0) return 0
-  const across = Math.max(0, screen.width - 2 * BOARD_INSET)
-  const wide = across / natural.width
-  if (count < 4) return wide
-  const angle = Math.min(
-    screen.width / aspect,
-    Math.max(0, screen.height - 2 * BOARD_INSET) / (count + portraitHeight)
-  )
-  const tall = (portraitHeight * angle) / FULL_BOARD_HEIGHT
-  return Math.min(tall, wide)
-}
-
-/**
- * The band the portrait grid keeps above its angles: the full board's height
- * at the portrait scale and the inset above and below, so the angles stay
- * put while the batter and pitcher rows come and go.
- */
-export function bandHeight(
-  screen: Size,
-  natural: Size,
-  count: number,
-  portraitHeight: number,
-  aspect = 16 / 9
-): number {
-  const scale = portraitScale(screen, natural, count, portraitHeight, aspect)
-  return scale > 0 ? FULL_BOARD_HEIGHT * scale + 2 * BOARD_INSET : 0
-}
-
-/**
  * The board moved out from under the hardware: the grid's pictures run to the
  * screen's edges, under a notch, the Dynamic Island and the rounded corners,
  * and the board must not. Where it crosses an edge of the `safe` area it goes
@@ -301,22 +232,4 @@ export function keptClear(rect: Rect, safe: Rect, area?: Rect): Rect {
         )
       : 1
   return { x, y, w: rect.w * room, h: rect.h * room }
-}
-
-/** The board in the portrait grid's band, at its left inset. */
-export function bandBoardRect(
-  screen: Size,
-  natural: Size,
-  count: number,
-  portraitHeight: number,
-  aspect = 16 / 9
-): Rect | null {
-  const scale = portraitScale(screen, natural, count, portraitHeight, aspect)
-  return fitted(
-    { x: 0, y: 0, w: screen.width, h: Number.POSITIVE_INFINITY },
-    BOARD_INSET,
-    BOARD_INSET,
-    scale,
-    natural
-  )
 }

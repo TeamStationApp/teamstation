@@ -23,8 +23,8 @@ const agents: Record<string, string> = {
     'Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36'
 }
 
-describe('where the multi-camera grid is offered', function () {
-  it('is not offered in Safari, nor in any browser on an iPhone or iPad', function () {
+describe('where the full-screen player is offered (U13)', function () {
+  it('offers one angle in Safari and on an iPhone or iPad, and not two', function () {
     for (const name of [
       'iPhoneSafari',
       'iPhoneChrome',
@@ -32,15 +32,20 @@ describe('where the multi-camera grid is offered', function () {
       'iPadSafari',
       'macSafari'
     ]) {
-      expect(multiAngleSupported(engineOf(agents[name])), name).equals(false)
+      expect(multiAngleSupported(engineOf(agents[name]), 1), name).equals(true)
+      expect(multiAngleSupported(engineOf(agents[name]), 2), name).equals(false)
     }
   })
 
-  it('is offered in Chrome, Edge and Brave elsewhere, and in both apps', function () {
-    for (const name of ['macChrome', 'windowsEdge', 'androidChrome']) {
-      expect(multiAngleSupported(engineOf(agents[name])), name).equals(true)
+  it('offers any number in Chrome, Edge and Brave elsewhere, and in both apps', function () {
+    for (const count of [1, 2, 4]) {
+      for (const name of ['macChrome', 'windowsEdge', 'androidChrome']) {
+        expect(multiAngleSupported(engineOf(agents[name]), count), name).equals(
+          true
+        )
+      }
+      expect(multiAngleSupported('avplayer', count)).equals(true)
+      expect(multiAngleSupported('exoplayer', count)).equals(true)
     }
-    expect(multiAngleSupported('avplayer')).equals(true)
-    expect(multiAngleSupported('exoplayer')).equals(true)
   })
 })

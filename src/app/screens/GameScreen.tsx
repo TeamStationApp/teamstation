@@ -22,6 +22,7 @@ import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
 import type { Side } from '../../common/scoring/state'
+import type { WallTimeline } from '../../common/wallTimeline'
 import {
   AnglePickerModal,
   AnglesUnavailableModal,
@@ -54,8 +55,9 @@ import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
+import type { PlayerFrom } from '../navigation/gameAngles'
 import { useInsets } from '../platform/safeArea'
-import { sameMoment } from '../player/angleSwitch'
+import { landingSec, sameMoment, switchTarget } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { playerEngine } from '../player/engine'
 import { seekTo } from '../player/explicitSeek'
@@ -63,6 +65,7 @@ import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
+import { playableHere } from '../player/playable'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
 import { isStillLive } from '../player/stillLive'
@@ -72,9 +75,25 @@ import {
   sameVideos,
   useVideoListRefresh
 } from '../player/useVideoListRefresh'
-import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
+import {
+  HAVE_METADATA,
+  seekableEndOf,
+  type VideoHandle
+} from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
-import { windowOf } from '../player/wallClock'
+import {
+  placedAlone,
+  resumeSecondsAt,
+  wallAt,
+  windowOf
+} from '../player/wallClock'
+import {
+  fromAnchors,
+  fromMedia,
+  fromStart,
+  MAPPING_WAIT_MS,
+  type WallMapping
+} from '../player/wallMapping'
 import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
@@ -98,6 +117,9 @@ export interface GamePlaybackReturn {
   autoPlay: boolean
 }
 
+/** How far past the seekable end a resume may still be sought to. */
+const SEEKABLE_SLACK_SEC = 0.25
+
 export interface GameScreenProps {
   client: TeamStationClient
   gameId: string
@@ -118,8 +140,7 @@ export interface GameScreenProps {
   onSettings?: () => void
   /** An explicit section. Bare addresses use the event's current default. */
   initialTab?: Tab
-  /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
-   * browser accepts, which is what makes an unmuted autoplay legal. */
+  /** Start the video, silent, as the videos page's picture always plays. */
   autoPlay?: boolean
   /**
    * Tells the shell what this game is called once it is known.
@@ -168,7 +189,14 @@ export interface GameScreenProps {
      * single player to a number that means nothing in it.
      */
     at?: number | null
+    /**
+     * The videos page's picture the player is opened from, and where it was:
+     * the player opens on that moment. `null` clears it, on the way out.
+     */
+    from?: PlayerFrom | null
   }) => void
+  /** Where the open player was opened from (`onAngles`'s `from`). */
+  from?: PlayerFrom
   /** Opens one of the two teams, from its name or its mark on the card. */
   onOpenTeam?: (team: TeamSummary) => void
   /** Opens one player, from their line in the box score. */
@@ -306,6 +334,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     angles,
     audioId,
     onAngles,
+    from,
     onOpenTeam,
     onOpenPlayer
   } = props
@@ -519,7 +548,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * new video loaded there was nothing left to restore and it started at zero.
    */
   const [resumeAt, setResumeAt] = useState<
-    { videoId: string; sec: number; playing: boolean } | undefined
+    | {
+        videoId: string
+        /** Seconds into the video, or */
+        sec?: number
+        /** the wall time to put it at, from the full-screen player. */
+        wallMs?: number
+        playing: boolean
+      }
+    | undefined
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   /** Open while saying the grid is not offered in this browser. */
@@ -534,7 +571,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * shell renders only the top of its stack: a pushed screen would unmount
    * this one, taking the `<video>` with it and stopping playback dead.
    */
-  const anglesOffered = useMemo(() => multiAngleSupported(playerEngine()), [])
+  const engine = useMemo(() => playerEngine(), [])
+  /** Whether this browser can play the video at all (`playable.ts`). */
+  const playable = useMemo(() => playableHere(), [])
+  /** "All angles": several at once. */
+  const anglesOffered = multiAngleSupported(engine, 2)
   /**
    * A guest or somebody who is a member of neither team: the score, the line
    * score and the highlights' pictures, and not the video, the box score's
@@ -543,7 +584,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const nonMemberView = game?.nonMemberView === true
   const showAngles =
-    anglesOffered && !nonMemberView && angles != null && angles.length > 0
+    !nonMemberView &&
+    angles != null &&
+    angles.length > 0 &&
+    multiAngleSupported(engine, angles.length)
 
   // The card's own content goes up into the header as the card scrolls away:
   // the away team over the home team, small, with their scores beside them.
@@ -608,15 +652,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useHeaderHandoff(headerScore)
 
   const playerRef = useRef<VideoHandle | null>(null)
-  /**
-   * Whether the player is currently drawing its own controls over the picture.
-   *
-   * `true` to begin with, and a browser never changes it: it has no way to
-   * say, and its control rectangles were measured rather than guessed at. A
-   * phone tells us, and while the bar is faded away the gesture squares get
-   * the whole picture back.
-   */
-  const [controlsVisible, setControlsVisible] = useState(true)
 
   // The box takes the video's own shape, read from the file, so there is
   // nothing left over for a black bar to fill. Until the browser knows, 16:9.
@@ -905,11 +940,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const resumeAtRef = useRef(resumeAt)
   resumeAtRef.current = resumeAt
+  /** The grid's ✕ closed it, so its going leaves the resume alone. */
+  const closedByX = useRef(false)
   const startAtSecRef = useRef(startAtSec)
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(props.autoPlay)
   autoPlayRef.current = props.autoPlay
   const placeFor = useRef<{
+    video?: VideoSummary
     videoId?: string
     playbackFor?: string
     /** Asks the server, for a video that was live when it was opened. */
@@ -921,6 +959,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     game?.videos.find(item => item.id === video?.id) ?? video
   )?.status
   placeFor.current = {
+    video,
     videoId: video?.id,
     playbackFor,
     isLive:
@@ -953,6 +992,45 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * is the one that comes back.
    */
   const lastTime = useRef(0)
+  /** The picture's own mapping onto the wall clock, from its stream's dates. */
+  const mappingRef = useRef<WallMapping | null>(null)
+  /** The server's wall timeline for it, as its board has it. */
+  const timelineRef = useRef<{
+    videoId: string | undefined
+    timeline: WallTimeline | null
+  } | null>(null)
+  /** A resume waiting on a mapping, to look again when one arrives. */
+  const landRef = useRef<(() => void) | null>(null)
+  const takeTimeline = useCallback((timeline: WallTimeline | null): void => {
+    timelineRef.current = { videoId: placeFor.current.videoId, timeline }
+    landRef.current?.()
+  }, [])
+  /**
+   * The picture's best mapping onto the wall clock: the server's wall
+   * timeline, then its stream's dates, then its start; a lone recording with
+   * no start, its own media time.
+   */
+  const inlineMapping = (of: VideoSummary): WallMapping => {
+    // A recording with no start is on its own media time, whatever dates
+    // its stream carries: the full-screen player places it there too.
+    if (of.startAt == null) return fromMedia()
+    const held = timelineRef.current
+    const anchors =
+      held?.videoId === of.id ? (held.timeline?.anchors ?? []) : []
+    // The server's wall timeline first, as the full-screen player places its
+    // tiles: it follows the frames' own wall clocks, and the stream's dates
+    // run seconds behind them on a live ingest.
+    const player = playerRef.current
+    return (
+      (anchors.length > 0
+        ? fromAnchors(anchors, () =>
+            player == null ? null : seekableEndOf(player)
+          )
+        : null) ??
+      mappingRef.current ??
+      fromStart(of)
+    )
+  }
 
   useEffect(() => {
     const element = playerNode
@@ -1000,6 +1078,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // buffers go with it, and the resume written above brings the position
     // back when it returns.
     if (element == null || playbackUrl == null || showAngles) return
+    mappingRef.current = null
+    /** The stream has said it carries no dates, or has been given its time. */
+    let datesDone = false
+    /** And the server's wall timeline has had its time to arrive. */
+    let timelineDone = false
+    // The server's wall timeline is waited for first, then the stream's
+    // dates, each for as long, from when the source is attached.
+    const timelineTimer = setTimeout(() => {
+      timelineDone = true
+      landRef.current?.()
+    }, MAPPING_WAIT_MS)
+    const noDates = (): void => {
+      if (datesDone) return
+      datesDone = true
+      clearTimeout(datesTimer)
+      landRef.current?.()
+    }
+    const datesTimer = setTimeout(noDates, MAPPING_WAIT_MS)
     const detach = attachHls(
       element,
       playbackUrl,
@@ -1008,6 +1104,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       },
       {
         wantsToPlay: () => !suspended.current && viewerWants.current,
+        onWallMapping: mapping => {
+          mappingRef.current = mapping
+          if (mapping == null) noDates()
+          else landRef.current?.()
+        },
         isLive: placeFor.current.isLive,
         startAtLiveEdge:
           !(resumeAtRef.current?.videoId === placeFor.current.videoId) &&
@@ -1018,17 +1119,102 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const resume = resumeAtRef.current
     const { videoId, playbackFor: forId } = placeFor.current
 
+    const stop = (): void => {
+      clearTimeout(datesTimer)
+      clearTimeout(timelineTimer)
+      landRef.current = null
+    }
+
     // Picking up where the other angle was, once the new source is attached.
     if (resume != null && resume.videoId === videoId && forId === videoId) {
+      const placed = placeFor.current.video
+      const wallMs = resume.wallMs
+      if (wallMs != null && placed != null) {
+        // A wall time: where it falls in this source is known once the source
+        // says how it maps onto the wall clock — as `inlineMapping`, the
+        // server's wall timeline, or that it has none, then its stream's
+        // dates, then its start — and it is sought only once the footage
+        // there can be sought to. The angle it came from was placed by its
+        // timeline, and a live stream's dates run seconds behind its frames:
+        // landing by them put a switch 4.5 s before the moment.
+        const events = [
+          'loadedmetadata',
+          'progress',
+          'durationchange',
+          'timeupdate'
+        ] as const
+        const mapping = (): WallMapping | null => {
+          const end = (): number | null => seekableEndOf(element)
+          // As `inlineMapping`: no start, its own media time.
+          if (placed.startAt == null) return fromMedia(end)
+          const held = timelineRef.current
+          const anchors =
+            held?.videoId === placed.id ? (held.timeline?.anchors ?? []) : []
+          if (anchors.length > 0) return fromAnchors(anchors, end)
+          // A timeline that has answered with no anchors is not waited for.
+          const answered = held?.videoId === placed.id && held.timeline != null
+          if (!timelineDone && !answered) return null
+          if (mappingRef.current != null) return mappingRef.current
+          if (!datesDone) return null
+          return fromStart(placed, end)
+        }
+        // Its metadata is in once it says so, whatever `readyState` reads.
+        let metadata = element.readyState >= HAVE_METADATA
+        const land = (): void => {
+          if (!metadata) return
+          const by = mapping()
+          if (by == null) return
+          let target =
+            landingSec(placed, by, wallMs, placed.status === 'live') ??
+            resumeSecondsAt(placed, wallMs, element.duration)
+          // A recording ends where its file does, whatever its row says: a
+          // moment past that lands on its last picture, rather than waiting
+          // for footage that is never coming with the picture held still.
+          if (
+            placed.status !== 'live' &&
+            Number.isFinite(element.duration) &&
+            target > element.duration
+          ) {
+            target = element.duration
+          }
+          const seekable = seekableEndOf(element)
+          if (seekable != null && target > seekable + SEEKABLE_SLACK_SEC) return
+          for (const name of events) element.removeEventListener(name, land)
+          element.removeEventListener('loadedmetadata', loaded)
+          stop()
+          // As the viewer's own seek, so nothing that joins a live stream at
+          // its edge takes it back.
+          seekTo(element, target)
+          if (resume.playing) element.play().catch(() => undefined)
+          setResumeAt(undefined)
+        }
+        const loaded = (): void => {
+          metadata = true
+          land()
+        }
+        landRef.current = land
+        for (const name of events) element.addEventListener(name, land)
+        element.addEventListener('loadedmetadata', loaded)
+        land()
+        return () => {
+          for (const name of events) element.removeEventListener(name, land)
+          element.removeEventListener('loadedmetadata', loaded)
+          stop()
+          detach()
+        }
+      }
       const apply = (): void => {
-        element.currentTime = resume.sec
+        element.currentTime =
+          resume.sec ?? resumeSecondsAt(placed, resume.wallMs, element.duration)
         if (resume.playing) element.play().catch(() => undefined)
         setResumeAt(undefined)
       }
+      stop()
       if (element.readyState >= HAVE_METADATA) apply()
       else element.addEventListener('loadedmetadata', apply, { once: true })
       return detach
     }
+    stop()
 
     // A link to a moment: start there, and start playing, because that is
     // what the person who sent the link meant by sending it. An explicit
@@ -1046,9 +1232,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
 
     if (autoPlayRef.current === true) {
-      // The tap that opened this screen is a gesture the browser counts, so an
-      // unmuted start is allowed. If it refuses anyway the controls are right
-      // there, and saying so would be noise.
+      // Silent, which every browser lets start on its own. If it refuses
+      // anyway, a tap opens the player, and saying so would be noise.
       const start = (): void => {
         element.play().catch(() => undefined)
       }
@@ -1080,17 +1265,45 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // new source. Listening for `loadedmetadata` here does not work: changing
     // the video re-runs `attachHls`, which resets the element *after* the
     // listener has fired, so the seek was being undone a moment later.
-    const sec = sameMoment(current, next, player.currentTime)
-    setResumeAt({
-      videoId: next.id,
-      sec,
-      playing: !player.paused
+    // As a wall time, from this source's own mapping: where it falls in the
+    // next one is known only once that one is attached. A recording with no
+    // start, on either side, copies the position instead.
+    const fromMapping = inlineMapping(current)
+    const sec = sameMoment(current, next, player.currentTime, {
+      from: fromMapping
     })
+    const wallMs =
+      current.startAt == null || next.startAt == null
+        ? null
+        : switchTarget(current, fromMapping, player.currentTime)
+    setResumeAt(
+      wallMs == null
+        ? { videoId: next.id, sec, playing: !player.paused }
+        : { videoId: next.id, wallMs, playing: !player.paused }
+    )
     setVideo(next)
     // The address names the angle, so it has to follow the angle. Without
     // this it went on naming the one you switched away from, and copying the
     // link mid-game handed somebody a different camera.
     onMoment?.(next.id, Math.round(sec))
+  }
+
+  /**
+   * The full-screen player, with this picture alone, at `sec` into it: the
+   * videos page's picture has no controls of its own, and a tap on it is
+   * what watching it means.
+   */
+  const openPlayer = (sec: number): void => {
+    if (video == null) return
+    onAngles?.({
+      angles: [video.id],
+      audio: video.id,
+      zoom: null,
+      at: null,
+      // Its wall time by its own mapping, which knows where a stream's gaps
+      // and discontinuities are, as its start time does not.
+      from: { videoId: video.id, sec, wallMs: inlineMapping(video).wallAt(sec) }
+    })
   }
 
   const jumpTo = (highlight: Highlight): void => {
@@ -1104,14 +1317,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // they can send to somebody else.
     if (video != null)
       onMoment?.(video.id, Math.round(highlight.startOffsetSec))
+    // The picture behind goes there too, so it is there on the way back.
     const player = playerRef.current
-    if (player == null) return
-    // Seek and keep playing: the point is to watch on from here, not to show
-    // a clip.
-    seekTo(player, highlight.startOffsetSec)
-    // A browser may refuse to start playing without a gesture it recognises;
-    // the seek has already happened, so that refusal is not worth reporting.
-    player.play().catch(() => undefined)
+    if (player != null) seekTo(player, highlight.startOffsetSec)
+    // Watched in the player, from the play on — when it can play here at
+    // all, as the picture's own tap: otherwise the player opens on a picture
+    // that can only say it cannot.
+    if (playback?.url != null && playable) openPlayer(highlight.startOffsetSec)
   }
 
   // The chosen play's full account clears itself a minute and a half after the
@@ -1417,7 +1629,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           videoId: video.id,
           live: isLive,
           durationSec: video.durationSec,
-          picture: pictureRect(layout.videoWidth, layout.videoHeight, aspect)
+          picture: pictureRect(layout.videoWidth, layout.videoHeight, aspect),
+          onTimeline: takeTimeline
         }
   const player = (
     <View style={styles.playerBlock}>
@@ -1463,29 +1676,44 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           videoRef={playerRef}
           width={layout.videoWidth}
           height={layout.videoHeight}
-          controlsVisible={controlsVisible}
           active={!showAngles}
           scoreboard={pictureBoard}
+          onOpen={
+            playback?.url == null || !playable
+              ? undefined
+              : () => {
+                  openPlayer(playerRef.current?.currentTime ?? lastTime.current)
+                }
+          }
         >
           {isLive && <LivePill />}
           {playback == null ? (
-            <ActivityIndicator color={theme.primaryTextColor} />
+            <View style={styles.inPlace}>
+              <ActivityIndicator color={theme.primaryTextColor} />
+            </View>
           ) : playback.url == null ? (
             // The row says there is a video and its files are not there. Saying
             // so beats a player that shows black and never explains itself.
-            <Text style={styles.message}>
-              {lstrings.game_video_unavailable}
-            </Text>
+            <View style={styles.inPlace}>
+              <Text style={styles.message}>
+                {lstrings.game_video_unavailable}
+              </Text>
+            </View>
+          ) : !playable ? (
+            // Nothing here can decode it: said, rather than a dead picture,
+            // and nothing is fetched for it.
+            <View style={styles.inPlace}>
+              <Text style={styles.message}>{lstrings.video_not_supported}</Text>
+            </View>
           ) : (
-            // The platform's own controls stay: they scrub, mute and go
-            // fullscreen well, and the gesture layer is cut around them rather
-            // than replacing them — `controlGeometry.ts` knows where each
-            // platform puts them.
+            // No controls of its own: a tap opens the full-screen player,
+            // which has them, and its sound. This one always plays silent, so
+            // it leaves the phone's audio session to whatever was playing.
             <VideoView
               source={playback.url}
               onHandle={takePlayer}
-              controls
-              onControlsVisible={setControlsVisible}
+              controls={false}
+              muted
               live={freshStatus === 'live'}
             />
           )}
@@ -1665,11 +1893,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const takeWindow = showAngles
     ? windowOf(
-        (angles ?? [])
-          .map(id => game.videos.find(one => one.id === id))
-          .filter((one): one is VideoSummary => one != null)
+        placedAlone(
+          (angles ?? [])
+            .map(id => game.videos.find(one => one.id === id))
+            .filter((one): one is VideoSummary => one != null)
+        )
       )
     : null
+  /**
+   * The moment the videos page's picture was at, for the player opened from
+   * it: its own wall time there, or its media time for a lone recording with
+   * no start. Without it, the address's `t` says where.
+   */
+  const fromVideo =
+    from == null ? undefined : game.videos.find(one => one.id === from.videoId)
+  const fromMs =
+    from == null || fromVideo == null
+      ? null
+      : (from.wallMs ?? wallAt(placedAlone([fromVideo])[0], from.sec))
 
   const multiCam = showAngles ? (
     <MultiCamView
@@ -1684,9 +1925,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // fought them. An address that still names one is ignored.
       zoomedId={null}
       atMs={
-        takeWindow != null && startAtSec != null && startAtSec > 0
+        fromMs ??
+        (takeWindow != null && startAtSec != null && startAtSec > 0
           ? takeWindow.fromMs + startAtSec * 1000
-          : undefined
+          : undefined)
       }
       onMoment={wallMs => {
         if (takeWindow == null) return
@@ -1701,8 +1943,43 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           zoom: next.zoomedId
         })
       }}
-      onClose={() => {
-        onAngles?.({ angles: [], audio: null, zoom: null, at: null })
+      onGone={atWallMs => {
+        // However it went — the browser's Back takes the angles off the
+        // address without a close — the picture goes back to the moment the
+        // player had reached, paused, as it does from the ✕.
+        // The ✕ has already written its own, exact, resume for this close.
+        const closed = closedByX.current
+        closedByX.current = false
+        if (closed || atWallMs == null || video == null) return
+        viewerWants.current = false
+        const back = { videoId: video.id, wallMs: atWallMs, playing: false }
+        // Into the ref as well: the grid goes in the same commit as the
+        // picture's source is attached again, which reads it before the
+        // state has rendered.
+        resumeAtRef.current = back
+        setResumeAt(back)
+      }}
+      onClose={atWallMs => {
+        // The videos page's picture goes back to the moment the player had
+        // reached, paused, and nothing that recovers a stalled player is to
+        // start it again.
+        viewerWants.current = false
+        closedByX.current = true
+        if (video != null)
+          setResumeAt(current =>
+            atWallMs != null
+              ? { videoId: video.id, wallMs: atWallMs, playing: false }
+              : current == null
+                ? undefined
+                : { ...current, playing: false }
+          )
+        onAngles?.({
+          angles: [],
+          audio: null,
+          zoom: null,
+          at: null,
+          from: null
+        })
       }}
     />
   ) : null
@@ -2154,6 +2431,20 @@ const getStyles = cacheStyles((theme: Theme) =>
       maxWidth: theme.rem(22),
       padding: theme.rem(0.75),
       textAlign: 'center'
+    },
+    /**
+     * What stands in the picture's place — loading, gone, or not playable
+     * here — in the middle of it: at the top it sat under the game's board,
+     * which hid the first half of the words.
+     */
+    inPlace: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      alignItems: 'center',
+      justifyContent: 'center'
     }
   })
 )

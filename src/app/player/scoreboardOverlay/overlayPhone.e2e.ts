@@ -62,9 +62,9 @@ import {
  *    the change made, as the step in effect at the wall clock burned into
  *    the picture.
  * 2. "All angles", at both sizes, chosen from the game page as a viewer
- *    does: upright, one board in a band above the stacked angles; sideways,
- *    one board over the top-left angle by the landscape default. Each is the
- *    step at the master tile's frame.
+ *    does: upright, one board at the top above the stacked angles; sideways,
+ *    the two angles on the bottom with the board right of the middle above
+ *    them. Each is the step at the master tile's frame.
  *
  * The native-only code (the board's gradient drawn with svg, its font and
  * the interpolated playhead) is held by its unit cases and the native type
@@ -205,7 +205,7 @@ describe('E9: the board on a phone-size player, single and every angle', functio
     }
   }
 
-  it('2. every angle: a band upright, the top-left angle sideways', async function () {
+  it('2. every angle: the board at the top upright, right of the middle above the angles sideways', async function () {
     for (const size of SIZES) {
       const page = await browser(`grid-${size}`, size)
       await page.openBrowser({
@@ -220,10 +220,13 @@ describe('E9: the board on a phone-size player, single and every angle', functio
       await page.tapOn({ text: lstrings.angles_open, timeout: 15_000 })
       await page.tapOn({ text: lstrings.angles_watch, timeout: 15_000 })
       await until(page, gridReady(2), `the grid showed both angles at ${size}`)
-      // Stopped where it is, for the board to be read against it.
+      // Twenty seconds on, and stopped there: the grid opens on the
+      // recording's first frame, which is before the first pitch, and there
+      // the board has no step to be judged by. The keys go to the page's body,
+      // as a key pressed on it does, down and up: Right skips as it comes up.
       await probe(
         page,
-        `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true })); await new Promise(resolve => setTimeout(resolve, 1500)); return true`
+        `const key = name => { for (const type of ['keydown', 'keyup']) document.body.dispatchEvent(new KeyboardEvent(type, { key: name, bubbles: true })) }; const wait = ms => new Promise(resolve => setTimeout(resolve, ms)); key('ArrowRight'); await wait(500); key('ArrowRight'); await wait(500); const master = [...document.querySelectorAll('video')].filter(video => video.closest('#root') == null)[0]; if (master != null && !master.paused) key('k'); await wait(1500); return true`
       )
       try {
         await until(
@@ -264,18 +267,23 @@ describe('E9: the board on a phone-size player, single and every angle', functio
           board != null &&
             tiles.length === 2 &&
             tiles.every(tile => tile.y >= board.y + board.h - 0.5) &&
-            board.h <= 0.15 * state.window.h + 0.5 &&
+            Math.abs(board.w - (state.window.w - 16)) <= 1 &&
             tiles[1].y >= tiles[0].y + tiles[0].h - 0.5,
-          `${size}: the band (${board?.h.toFixed(1)} px, at most 15% of ${state.window.h}) is above the stacked angles, none overlapped`
+          `${size}: the board (${board?.w.toFixed(1)} px, the width less its insets, upright with two angles) is above the stacked angles, none overlapped`
         )
       } else {
-        const [corner] = tiles
+        // Two angles on the bottom of the screen; the game is scored, so
+        // the board runs right from just right of the middle and the box
+        // score left from just left of it, both resting on the angles.
+        const top = Math.min(...tiles.map(tile => tile.y))
         check(
           board != null &&
-            board.h <= 0.15 * corner.h + 1 &&
-            Math.abs(board.x - (corner.x + 8)) <= 1 &&
-            Math.abs(board.y - (corner.y + 8)) <= 1,
-          `${size}: over the top-left angle, ${board?.h.toFixed(1)} px for a ${corner.h.toFixed(1)} px angle`
+            tiles.every(
+              tile => Math.abs(tile.y + tile.h - state.window.h) <= 1
+            ) &&
+            Math.abs(board.x - (state.window.w / 2 + 5)) <= 1 &&
+            board.y + board.h <= top - 8 + 1,
+          `${size}: the board right of the middle above the angles on the bottom, ${board?.x.toFixed(1)} px in, angles from ${top.toFixed(1)} px`
         )
       }
       // Every angle's name shows clear of the board, the heard one's 🔊 too.

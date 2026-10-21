@@ -13,13 +13,11 @@
  * the grid plays, and the grid only stops again when a tile is down to
  * `LOW_AHEAD_SEC`. Starting and stopping at the same level is the stutter.
  *
- * The other half is sharing the line. Four players asked to fill a deep buffer
- * all at once race each other for it, and the one that falls behind starves —
- * measured on a real take, four unrestrained players pulled 178 MB in their
- * first ten seconds. So no tile may load more than `LEAD_SEC` past the one
- * furthest behind: the leaders stop asking, and the line goes to the tile that
- * needs it. The ceiling climbs as the slowest tile fills, up to
- * `MAX_AHEAD_SEC`.
+ * The other half is the budget: every player, alone or one of four, loads
+ * `AHEAD_SEC` ahead and keeps `BEHIND_SEC` of what it has shown. Half a
+ * minute ahead is deep enough to ride out a dip in the line, and shallow
+ * enough that four of them never ask for minutes of a game somebody is about
+ * to scrub away from.
  */
 
 import { HAVE_ENOUGH_DATA } from '../videoHandle'
@@ -30,11 +28,8 @@ export const START_AHEAD_SEC = 5
 /** A playing tile with less than this is about to run dry. */
 export const LOW_AHEAD_SEC = 0.5
 
-/** The deepest any tile loads ahead of its picture. */
-export const MAX_AHEAD_SEC = 60
-
-/** How far past the tile furthest behind any other tile may load. */
-export const LEAD_SEC = 10
+/** How far ahead of its picture every player loads, single or tile. */
+export const AHEAD_SEC = 30
 
 /**
  * What a player keeps of the picture it has already shown.
@@ -43,7 +38,7 @@ export const LEAD_SEC = 10
  * and no more: kept without limit, four tiles hold the whole game in memory
  * until the browser refuses to take any more.
  */
-export const BEHIND_SEC = 30
+export const BEHIND_SEC = 20
 
 /**
  * How long one tile may keep the rest of the grid waiting.
@@ -69,9 +64,9 @@ export const LEAVE_OUT_MS = 10_000
  * whatever its seconds say, so a richer recording cannot do it again.
  */
 export const TILE_BUFFER = {
-  aheadSec: 30,
+  aheadSec: AHEAD_SEC,
   startSec: START_AHEAD_SEC,
-  behindSec: 0,
+  behindSec: BEHIND_SEC,
   heapShare: 0.15
 }
 
@@ -101,15 +96,77 @@ export function heldAhead(
   holeSec: number = HOLE_SEC
 ): number {
   let end: number | null = null
+  let from = atSec
   for (const [start, stop] of ranges) {
     if (end == null) {
       if (start - holeSec <= atSec && atSec <= stop) end = stop
+      else if (atSec < start && start - atSec <= START_GAP_SEC) {
+        // A hole at the very place it starts, which its player steps over:
+        // it holds what is past the hole.
+        end = stop
+        from = start
+      }
       continue
     }
     if (start - end > holeSec) break
     end = Math.max(end, stop)
   }
-  return end == null ? 0 : Math.max(0, end - atSec)
+  return end == null ? 0 : Math.max(0, end - from)
+}
+
+/**
+ * A held tile that holds nothing where it is measured, and stands somewhere
+ * else: one to move there, since its player only loads around where it is.
+ *
+ * A live tile is placed by its recording's start until its stream's own dates
+ * arrive, and the two can disagree by more than a segment. The grid then
+ * measures it at the place the dates say, and a tile left where it stood
+ * holds nothing there for ever.
+ */
+export function strayed(
+  ranges: Array<[number, number]>,
+  atSec: number,
+  targetSec: number,
+  holeSec: number = HOLE_SEC
+): boolean {
+  if (Math.abs(atSec - targetSec) <= holeSec) return false
+  return !ranges.some(
+    ([start, stop]) => start - holeSec <= targetSec && targetSec <= stop
+  )
+}
+
+/**
+ * A hole where a tile is to start that its player steps over on its own:
+ * hls.js moves a start in a gap to the footage after it. A live stream that
+ * was cut and carried on can begin its first segment's pictures a segment
+ * late, and a grid waiting for the hole to fill waited for ever.
+ */
+export const START_GAP_SEC = 5
+
+/**
+ * The hole a recording's player steps over where it starts. hls.js allows
+ * twice the target duration only on a live level; on a recording, once a
+ * parsed fragment's start has moved to its first picture, the hole is no
+ * longer inside it and only `MAX_START_GAP_JUMP` is jumped.
+ */
+export const RECORDED_START_GAP_SEC = 2
+
+/**
+ * Where a recording's tile standing in a start hole its player will not jump
+ * — wider than `RECORDED_START_GAP_SEC`, up to `START_GAP_SEC` — is to be
+ * sent: the start of the footage after it. Null when it is not in one.
+ */
+export function acrossStartHole(
+  ranges: Array<[number, number]>,
+  atSec: number,
+  holeSec: number = HOLE_SEC
+): number | null {
+  for (const [start, stop] of ranges) {
+    if (start - holeSec <= atSec && atSec <= stop) return null
+    const gap = start - atSec
+    if (gap > RECORDED_START_GAP_SEC && gap <= START_GAP_SEC) return start
+  }
+  return null
 }
 
 /** `HAVE_FUTURE_DATA`: the next frame is there, if not much after it. */
@@ -165,26 +222,6 @@ export function isDry(tile: TileBuffer): boolean {
 /** Every tile holds enough. An empty grid has nothing to wait for. */
 export function canStart(tiles: TileBuffer[]): boolean {
   return tiles.every(isReady)
-}
-
-/**
- * How far ahead every tile may load right now.
- *
- * The tile furthest behind plus `LEAD_SEC`, up to `MAX_AHEAD_SEC`. A tile
- * that already holds everything there is to hold is not short of anything and
- * is left out of the reckoning, and so is one whose player does not say.
- */
-export function ceilingSec(tiles: TileBuffer[]): number {
-  let lowest = Number.POSITIVE_INFINITY
-  for (const tile of tiles) {
-    if (tile.aheadSec == null) continue
-    if (tile.leftSec != null && tile.leftSec - tile.aheadSec <= LOW_AHEAD_SEC) {
-      continue
-    }
-    lowest = Math.min(lowest, tile.aheadSec)
-  }
-  if (!Number.isFinite(lowest)) return MAX_AHEAD_SEC
-  return Math.min(MAX_AHEAD_SEC, lowest + LEAD_SEC)
 }
 
 /**

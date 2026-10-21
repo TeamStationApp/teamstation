@@ -5,10 +5,30 @@ import { liveRejoin } from './liveRejoin'
 import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
-import { BEHIND_SEC } from './multiCam/buffering'
-import type { BufferControl, PlayIntent } from './playIntent'
+import { AHEAD_SEC, BEHIND_SEC } from './multiCam/buffering'
+import { HEVC_TYPE } from './playable'
+import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
-import type { VideoHandle } from './videoHandle'
+import { seekableEndOf, type VideoHandle } from './videoHandle'
+import {
+  type DatedFragment,
+  fromFragments,
+  fromStartDate,
+  type WallMapping
+} from './wallMapping'
+
+/**
+ * Whether a player's live stalls are reported: the viewer's own single live
+ * player, not a grid tile (the grid watches its tiles) and not a card
+ * preview, whose stalls would read as the viewer's.
+ */
+export function reportsLiveStalls(
+  intent: PlayIntent | undefined
+): intent is PlayIntent & { isLive: NonNullable<PlayIntent['isLive']> } {
+  return (
+    intent?.isLive != null && intent.buffer == null && intent.preview !== true
+  )
+}
 
 /**
  * Points a `<video>` at an HLS playlist, whichever way this browser needs.
@@ -54,41 +74,54 @@ export function attachHls(
   const engine = hlsEngine({
     vendor: typeof navigator === 'undefined' ? '' : navigator.vendor,
     nativeHls: video.canPlayType(HLS_MIME_TYPE) !== '',
-    mediaSource: Hls.isSupported()
+    mediaSource: Hls.isSupported(),
+    hevc: mediaSourceTakesHevc()
   })
-  // Neither Media Source nor native HLS. The element is left alone rather
-  // than handed a URL it cannot read.
-  if (engine === 'none') return () => undefined
+  // Nothing here can play it. The element is left alone rather than handed a
+  // URL it cannot read, and the owner says so in place of the picture.
+  if (engine === 'none') {
+    intent?.onUnsupported?.()
+    return () => undefined
+  }
   const detach =
     engine === 'native'
       ? attachNativeHls(video, url, onGiveUp, intent)
       : attachHlsJs(handle, video, url, onGiveUp, intent)
-  // A grid owns its tiles' positions and buffering; only the single live
-  // viewer may step across a missing stretch on its own.
+  // A live grid tile only crosses a hole: where it plays is the grid's.
   const stopRecovery =
-    intent?.isLive != null && intent.buffer == null
-      ? recoverLiveStalls(video, intent.wantsToPlay)
-      : undefined
+    intent?.isLive == null
+      ? undefined
+      : intent.buffer == null
+        ? recoverLiveStalls(video, intent.wantsToPlay)
+        : recoverLiveStalls(video, intent.wantsToPlay, undefined, {
+            holesOnly: true
+          })
   const stopJoining =
     intent?.isLive != null &&
     intent.buffer == null &&
     intent.startAtLiveEdge !== false
       ? joinLiveOnFirstPlay(video)
       : undefined
-  const stopDiagnostics =
-    intent?.isLive != null && intent.buffer == null
-      ? observeLiveStalls(video, {
-          engine,
-          isLive: intent.isLive,
-          wantsToPlay: intent.wantsToPlay
-        })
-      : undefined
+  const stopDiagnostics = reportsLiveStalls(intent)
+    ? observeLiveStalls(video, {
+        engine,
+        isLive: intent.isLive,
+        wantsToPlay: intent.wantsToPlay
+      })
+    : undefined
   return () => {
     stopDiagnostics?.()
     stopJoining?.()
     stopRecovery?.()
     detach()
   }
+}
+
+/** Whether this browser's Media Source takes HEVC; false without one. */
+function mediaSourceTakesHevc(): boolean {
+  return (
+    typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(HEVC_TYPE)
+  )
 }
 
 /** What a browser that plays HLS itself answers `canPlayType` for. */
@@ -110,6 +143,9 @@ export type HlsEngine = 'native' | 'hls.js' | 'none'
  *   whether or not it can actually play it, so `canPlayType` decides nothing
  *   outside WebKit.
  * - No Media Source but native HLS (an older iPhone): the browser.
+ * - Nobody where the video cannot be decoded: a browser that is not Apple's
+ *   needs HEVC through Media Source, and Chrome answers `maybe` to HLS either
+ *   way (`playable.ts`).
  */
 export function hlsEngine(browser: {
   /** `navigator.vendor`. */
@@ -118,10 +154,12 @@ export function hlsEngine(browser: {
   nativeHls: boolean
   /** hls.js can run here (`Hls.isSupported()`). */
   mediaSource: boolean
+  /** Media Source takes HEVC (`HEVC_TYPE`). */
+  hevc?: boolean
 }): HlsEngine {
-  const { vendor, nativeHls, mediaSource } = browser
-  if (nativeHls && (vendor === APPLE_VENDOR || !mediaSource)) return 'native'
-  if (mediaSource) return 'hls.js'
+  const { vendor, nativeHls, mediaSource, hevc = true } = browser
+  if (nativeHls && vendor === APPLE_VENDOR) return 'native'
+  if (mediaSource && hevc) return 'hls.js'
   return 'none'
 }
 
@@ -134,21 +172,96 @@ export interface NativeHlsVideo {
   readonly error: { readonly code: number } | null
   readonly paused: boolean
   readonly ended: boolean
+  muted: boolean
   currentTime: number
   readonly readyState: number
   readonly seekable: { readonly length: number; end: (index: number) => number }
   load: () => void
   play: () => Promise<void>
+  pause: () => void
   removeAttribute: (name: 'src') => void
   addEventListener: (
-    type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
+    type: NativeHlsEvent,
     listener: () => void,
     options?: { once?: boolean }
   ) => void
-  removeEventListener: (
-    type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
-    listener: () => void
-  ) => void
+  removeEventListener: (type: NativeHlsEvent, listener: () => void) => void
+  /**
+   * Safari's wall time for the start of the media: the first fragment's
+   * program date-time, or NaN for a playlist without one.
+   */
+  getStartDate?: () => Date
+}
+
+type NativeHlsEvent =
+  | 'error'
+  | 'canplay'
+  | 'loadedmetadata'
+  | 'play'
+  | 'pause'
+  | 'durationchange'
+  | 'progress'
+
+/**
+ * A playlist's fragments as a wall-clock mapping, when every one of them is
+ * dated; null otherwise.
+ */
+export function mappingOfFragments(
+  fragments: ReadonlyArray<{
+    start: number
+    duration: number
+    programDateTime?: number | null
+  }>
+): WallMapping | null {
+  const dated: DatedFragment[] = []
+  for (const frag of fragments) {
+    const date = frag.programDateTime
+    if (date == null || !Number.isFinite(date)) return null
+    dated.push({
+      start: frag.start,
+      duration: frag.duration,
+      programDateTime: date
+    })
+  }
+  return dated.length === 0 ? null : fromFragments(dated)
+}
+
+/**
+ * Hands Safari's mapping out as it grows: once it has metadata, and again
+ * whenever the seekable end moves on, which is what a live join waits for.
+ * Null once, when the playlist turns out to carry no dates.
+ */
+function reportStartDate(
+  video: NativeHlsVideo,
+  report: (mapping: WallMapping | null) => void
+): () => void {
+  let start: number | null = null
+  let end: number | null = null
+  let saidNone = false
+  const look = (): void => {
+    const date = video.getStartDate?.().getTime()
+    if (date == null || !Number.isFinite(date)) {
+      if (!saidNone && video.readyState >= 1) {
+        saidNone = true
+        report(null)
+      }
+      return
+    }
+    const now = seekableEndOf(video)
+    if (date === start && (now ?? 0) <= (end ?? 0)) return
+    start = date
+    end = now
+    report(fromStartDate(date, () => seekableEndOf(video)))
+  }
+  const events: NativeHlsEvent[] = [
+    'loadedmetadata',
+    'durationchange',
+    'progress'
+  ]
+  for (const name of events) video.addEventListener(name, look)
+  return () => {
+    for (const name of events) video.removeEventListener(name, look)
+  }
 }
 
 /** The clock the native path waits on, replaceable in a test. */
@@ -276,7 +389,14 @@ export function attachNativeHls(
   video.addEventListener('pause', onPause)
   video.addEventListener('canplay', recovered)
   video.addEventListener('error', onError)
+  const onWallMapping = intent?.onWallMapping
+  const stopDates =
+    onWallMapping == null ? undefined : reportStartDate(video, onWallMapping)
   video.src = url
+  const stopPriming =
+    intent?.buffer == null
+      ? undefined
+      : primeSilently(video, wantsToPlay, intent.onSoundHeld, intent.muted)
 
   // Safari can stop reading a live playlist without an error to say so; only
   // the single live viewer is watched for it, as the phones are.
@@ -298,6 +418,8 @@ export function attachNativeHls(
       : undefined
 
   return () => {
+    stopPriming?.()
+    stopDates?.()
     stopWatching?.()
     if (timer != null) clock.clearTimeout(timer)
     timer = undefined
@@ -308,6 +430,55 @@ export function attachNativeHls(
     video.removeEventListener('loadedmetadata', seekBack)
     video.removeAttribute('src')
     video.load()
+  }
+}
+
+/**
+ * Plays a grid tile on WebKit's own player once, silently, to its first frame,
+ * and stops it there unless the grid wants it playing by then — then silent,
+ * its sound left for a tap (`onSoundHeld`).
+ *
+ * An iPhone loads nothing into an element that has not been played, and the
+ * grid holds a tile paused until it holds a few seconds: opened without a tap
+ * — a reload of the player, a shared address — the tile said it was loading
+ * for ever. A silent play is one Safari allows without a tap. A tile it stops
+ * gets its sound back as it was; the grid asks for that again when it starts
+ * it.
+ */
+function primeSilently(
+  video: NativeHlsVideo,
+  wantsToPlay: () => boolean,
+  onSoundHeld?: () => void,
+  wantsMuted?: () => boolean
+): () => void {
+  if (!video.paused) return () => undefined
+  const before = video.muted
+  /** The sound to put back: what the owner wants now, else what it had. */
+  const sound = (): boolean => wantsMuted?.() ?? before
+  let done = false
+  const finish = (reached: boolean): void => {
+    if (done) return
+    done = true
+    video.removeEventListener('canplay', primed)
+    if (reached && wantsToPlay()) {
+      // Left playing, and silent: an iPhone pauses a player that started
+      // silently and is unmuted without a tap, so its sound waits for one.
+      if (!sound()) onSoundHeld?.()
+      return
+    }
+    if (reached) video.pause()
+    video.muted = sound()
+  }
+  const primed = (): void => {
+    finish(true)
+  }
+  video.addEventListener('canplay', primed)
+  video.muted = true
+  video.play().catch(() => {
+    finish(false)
+  })
+  return () => {
+    finish(false)
   }
 }
 
@@ -324,24 +495,25 @@ function attachHlsJs(
   // as bandwidth allows, up to `maxMaxBufferLength`. A ceiling is the two set
   // to the same number.
   const limit = intent?.buffer
-  const singleLive = intent?.isLive != null && limit == null
+  const live = intent?.isLive != null
   const hls = new Hls({
     // A game is watched by seeking around it, not straight through, so there
-    // is no point buffering minutes ahead of a position about to change.
-    maxBufferLength: limit?.aheadSec ?? (singleLive ? 60 : 30),
-    // Keep room for delayed playlist updates. A time-based live position
-    // avoids letting one unusually long segment choose the viewer's delay.
-    ...(singleLive ? { liveSyncDuration: LIVE_DELAY_SEC } : {}),
-    ...(limit == null ? {} : { maxMaxBufferLength: limit.aheadSec }),
+    // is no point buffering minutes ahead of a position about to change:
+    // half a minute, for every player, a grid's tiles included. The same
+    // number twice is a ceiling.
+    maxBufferLength: limit?.aheadSec ?? AHEAD_SEC,
+    // Keep room for delayed playlist updates, on every live player, a grid's
+    // tiles included. A time-based live position avoids letting one
+    // unusually long segment choose the viewer's delay.
+    ...(live ? { liveSyncDuration: LIVE_DELAY_SEC } : {}),
+    maxMaxBufferLength: limit?.aheadSec ?? AHEAD_SEC,
+    // Where its owner has already placed it, if it has.
+    ...(intent?.startSec == null ? {} : { startPosition: intent.startSec }),
     // Left to itself hls.js keeps every second already played, and a long
     // game fills the browser's quota with the past until it refuses the
     // future. Two steps of ten seconds back still come from memory.
     backBufferLength: BEHIND_SEC
   })
-
-  if (limit?.onControl != null) {
-    limit.onControl(aheadControl(hls.config, limit.aheadSec))
-  }
 
   /**
    * A live game is watched while it is being written, and the writer is
@@ -507,6 +679,18 @@ function attachHlsJs(
             hls.loadSource(url)
           }
         })
+  // The playlist's dates, each time it is read: a live one grows.
+  const onWallMapping = intent?.onWallMapping
+  if (onWallMapping != null) {
+    const dates = (
+      _event: unknown,
+      data: { details: { fragments: Parameters<typeof mappingOfFragments>[0] } }
+    ): void => {
+      onWallMapping(mappingOfFragments(data.details.fragments))
+    }
+    hls.on(Hls.Events.LEVEL_LOADED, dates)
+    hls.on(Hls.Events.LEVEL_UPDATED, dates)
+  }
   hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
     const { details } = data
     if (details.live) return
@@ -532,7 +716,6 @@ function attachHlsJs(
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     video.removeEventListener('ended', onEnded)
-    limit?.onControl?.(null)
     hls.destroy()
   }
 }
@@ -550,30 +733,4 @@ export function atLiveEdge(
   syncSec?: number
 ): boolean {
   return edgeSec - currentSec <= (syncSec ?? syncCount * targetSec) + targetSec
-}
-
-/**
- * Moves a running hls.js player's limit on how far ahead it loads.
- *
- * hls.js reads both numbers afresh on every tick, so writing them is enough.
- * When an append is refused for want of room, hls.js halves its own
- * ceiling; putting the old one back on the next call would only be refused
- * again, so a cut it made stands as the new top.
- */
-export function aheadControl(
-  config: { maxBufferLength: number; maxMaxBufferLength: number },
-  startSec: number
-): BufferControl {
-  let roomSec = Number.POSITIVE_INFINITY
-  let askedSec = startSec
-  return {
-    setAheadSec: seconds => {
-      if (config.maxMaxBufferLength < askedSec) {
-        roomSec = config.maxMaxBufferLength
-      }
-      askedSec = Math.min(seconds, roomSec)
-      config.maxBufferLength = askedSec
-      config.maxMaxBufferLength = askedSec
-    }
-  }
 }

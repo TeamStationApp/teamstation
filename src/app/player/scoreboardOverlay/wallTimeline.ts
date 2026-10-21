@@ -114,6 +114,10 @@ export function angleWallMs(
   timeline: WallTimeline | undefined,
   atSec: number
 ): number | null {
+  // The tile's own mapping first (`useMultiCam`'s: the server's timeline,
+  // then its stream's dates).
+  const mapped = video.clock?.()?.wallAt(atSec)
+  if (mapped != null) return mapped
   const anchors: readonly WallAnchor[] = timeline?.anchors ?? []
   if (anchors.length > 0) return wallAt(anchors, atSec * 1000)
   return startWallAt(video, atSec)

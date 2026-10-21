@@ -6,11 +6,7 @@ import { dragSlots, gridShape, tileRects } from '../multiCam/layout'
 import { BOARD_INSET } from './layouts'
 import {
   aboveBoardRect,
-  bandBoardRect,
-  bandHeight,
-  cellBoardRect,
   FULL_BOARD_HEIGHT,
-  intersects,
   keptClear,
   pictureRect,
   placedBoardRect,
@@ -141,90 +137,8 @@ describe('the board over a single picture (U31)', function () {
   })
 })
 
-describe('the portrait grid’s band (U33)', function () {
+describe('the tiles below a band (U33)', function () {
   const screen = { width: 402, height: 874 }
-  const portrait = defaultScoreboardSettings.portraitHeight
-  const angle = screen.width / (16 / 9)
-
-  it('with four angles, is the setting’s share of the height the stacked angles really have, inset', function () {
-    // At 402×874 four 16:9 angles at full width would not fit below the
-    // band, so each is shorter than the screen's width allows; 4:3 angles
-    // are shorter still.
-    for (const aspect of [16 / 9, 4 / 3]) {
-      const band = bandHeight(screen, SHORT, 4, portrait, aspect)
-      const rects = tileRects({ ...screen, count: 4, top: band, aspect })
-      const board = bandBoardRect(screen, SHORT, 4, portrait, aspect)!
-      expect([board.x, board.y]).deep.equals([BOARD_INSET, BOARD_INSET])
-      near(board.h, portrait * rects[0].h)
-      near(band, board.h + 2 * BOARD_INSET)
-      expect(rects[0].h).lessThan(screen.width / aspect)
-      // The stack fills what the band leaves, top to bottom.
-      near(rects[3].y + rects[3].h, screen.height)
-      // Nobody named: a shorter board, but the band does not move the angles.
-      const unnamed = bandBoardRect(screen, UNNAMED, 4, portrait, aspect)!
-      expect(unnamed.h).lessThan(board.h)
-      near(bandHeight(screen, UNNAMED, 4, portrait, aspect), band)
-    }
-    // On a screen tall enough, each angle is the screen's width.
-    const tall = { width: 402, height: 2000 }
-    const board = bandBoardRect(tall, SHORT, 4, portrait)!
-    near(board.h, portrait * angle)
-  })
-
-  it('below a notch, is the setting’s share of the angles stacked below the band', function () {
-    // An iPhone upright, its island taking 47 points at the top: the band is
-    // sized for what is below the island, and the angles start under the
-    // band and run to the bottom edge.
-    const phone = { width: 390, height: 844 }
-    const islandTop = 47
-    const below = { width: phone.width, height: phone.height - islandTop }
-    const band = bandHeight(below, SHORT, 4, portrait)
-    const rects = tileRects({ ...phone, count: 4, top: islandTop + band })
-    const board = bandBoardRect(below, SHORT, 4, portrait)!
-    near(board.h, portrait * rects[0].h)
-    near(rects[3].y + rects[3].h, phone.height)
-  })
-
-  it('with fewer angles, is the screen’s width less the insets', function () {
-    for (const count of [2, 3]) {
-      const board = bandBoardRect(screen, SHORT, count, portrait)!
-      near(board.w, screen.width - 2 * BOARD_INSET)
-      near(
-        bandHeight(screen, SHORT, count, portrait),
-        board.h + 2 * BOARD_INSET
-      )
-    }
-  })
-
-  it('is narrowed to the screen’s width when the setting would make it wider', function () {
-    const board = bandBoardRect(screen, LONG, 4, 0.9)!
-    near(board.x + board.w, screen.width - BOARD_INSET)
-  })
-
-  it('shifts the four stacked tiles below it, laid out as in what is left', function () {
-    const band = bandHeight(screen, SHORT, 4, portrait)
-    const plain = tileRects({ ...screen, count: 4 })
-    const shifted = tileRects({ ...screen, count: 4, top: band })
-    const inLeft = tileRects({
-      width: screen.width,
-      height: screen.height - band,
-      count: 4
-    })
-    expect(shifted).length(4)
-    expect(shifted[0].y).at.least(band)
-    shifted.forEach((rect, index) => {
-      near(rect.y, inLeft[index].y + band)
-      near(rect.h, inLeft[index].h)
-      near(rect.x, inLeft[index].x)
-      if (index > 0) near(rect.y, shifted[index - 1].y + shifted[index - 1].h)
-      // The board never covers an angle.
-      expect(
-        intersects(rect, bandBoardRect(screen, SHORT, 4, portrait)!)
-      ).equals(false)
-    })
-    expect(shifted.at(-1)!.y + shifted.at(-1)!.h).at.most(screen.height + 1e-6)
-    expect(plain[0].y).lessThan(shifted[0].y)
-  })
 
   it('keeps the whole screen’s shape, so a band never makes a column a grid', function () {
     const rects = tileRects({ width: 500, height: 560, count: 2, top: 84 })
@@ -287,23 +201,6 @@ describe('the board over the landscape grid (U34)', function () {
     // A narrow screen narrows it to its width.
     const narrow = aboveBoardRect({ width: 300, height: 720 }, top, SHORT)!
     near(narrow.w, 300 - 2 * BOARD_INSET)
-  })
-
-  it('with three angles, takes the top-left quadrant they leave it', function () {
-    const plain = tileRects({ ...screen, count: 3 })
-    const rects = tileRects({ ...screen, count: 3, boardCell: true })
-    // The angles take the top right, bottom left and bottom right.
-    expect(rects[0].x).greaterThan(rects[1].x)
-    near(rects[0].y, plain[0].y)
-    near(rects[1].y, rects[2].y)
-    expect(rects[1].y).greaterThan(rects[0].y)
-    near(rects[0].x, plain[1].x)
-    const cell = { x: rects[1].x, y: rects[0].y, w: rects[1].w, h: rects[0].h }
-    const board = cellBoardRect(cell, SHORT)!
-    near(board.x, cell.x + BOARD_INSET)
-    near(board.y, cell.y + BOARD_INSET)
-    near(board.w, cell.w - 2 * BOARD_INSET)
-    for (const rect of rects) expect(intersects(rect, board)).equals(false)
   })
 })
 

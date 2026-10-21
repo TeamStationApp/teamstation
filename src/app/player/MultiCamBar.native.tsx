@@ -9,8 +9,7 @@ import {
   getBarStyles,
   type MultiCamBarProps,
   TRACK_HIT_PX,
-  TrackStrips,
-  TransportButtons
+  TrackStrips
 } from './multiCam/barParts'
 
 export { barHeightRem, type BarAngle, type MultiCamBarProps }
@@ -30,11 +29,9 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
   const {
     window: take,
     atMs,
-    playing,
     angles,
-    onTogglePlay,
-    onSkip,
     onScrub,
+    onTrackWidth,
     onInteract,
     visible
   } = props
@@ -68,11 +65,6 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
       onTouchStart={onInteract}
     >
       <View style={styles.bar}>
-        <TransportButtons
-          playing={playing}
-          onTogglePlay={onTogglePlay}
-          onSkip={onSkip}
-        />
         <Text style={styles.time}>{clock(atMs - take.fromMs)}</Text>
         <View
           accessibilityRole="adjustable"
@@ -94,6 +86,7 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
           }}
           onLayout={event => {
             trackWidth.current = event.nativeEvent.layout.width
+            onTrackWidth?.(trackWidth.current)
           }}
           onStartShouldSetResponder={() => true}
           // A drag along the track keeps the finger even as it wanders up.

@@ -1,5 +1,6 @@
 import { onExplicitSeek } from './explicitSeek'
 import { joinLiveWithCushion } from './liveCushion'
+import { readRealEndSec } from './livePlaylistEnd'
 import { reloadStalledLive } from './liveReload'
 import { NativeVideoHandle } from './nativeVideoHandle'
 import type { PlayIntent } from './playIntent'
@@ -55,6 +56,10 @@ export function attachHls(
     }
     return () => undefined
   }
+
+  // A phone's player reads no dates from the stream: the owner places it by
+  // the server's wall timeline, or its start (`wallMapping.ts`).
+  intent?.onWallMapping?.(null)
 
   const patience = 5 * 60_000
   /** After this many, the address is the suspect whatever the error said. */
@@ -220,7 +225,7 @@ export function attachHls(
   // built (`VideoView.native.tsx`), and starts far enough back to be left.
   const stopJoining =
     singleLive && intent.startAtLiveEdge !== false
-      ? joinLiveWithCushion(handle)
+      ? joinLiveWithCushion(handle, async () => await readRealEndSec(url))
       : undefined
 
   return () => {

@@ -11,6 +11,12 @@ import {
 import { ThemeProvider } from '../../theme/ThemeContext'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
+import type { AngleVideo } from '../wallClock'
+import {
+  fromFragments,
+  MAPPING_WAIT_MS,
+  type WallMapping
+} from '../wallMapping'
 import { JOIN_LEAD_SEC } from './align'
 import { tileRects } from './layout'
 import {
@@ -104,6 +110,8 @@ async function grid(
   mc: () => MultiCam
   tiles: Record<string, FakeTile>
   changes: Array<{ order?: string[] }>
+  /** Renders the grid again with these props changed. */
+  rerender: (next: Partial<MultiCamProps>) => Promise<void>
 }> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.playback = async (id: string) => ({
@@ -116,7 +124,7 @@ async function grid(
   })
   const changes: Array<{ order?: string[] }> = []
   let latest: MultiCam | undefined
-  const props: MultiCamProps = {
+  let props: MultiCamProps = {
     client,
     // A starts at the take's beginning; B a minute later.
     videos: [video('A', 0), video('B', 60)],
@@ -158,7 +166,17 @@ async function grid(
       mc().attached(id, tile, mc().attaching(id))
     }
   })
-  return { mc, tiles, changes }
+  const rerender = async (next: Partial<MultiCamProps>): Promise<void> => {
+    props = { ...props, ...next }
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <Probe />
+        </ThemeProvider>
+      )
+    })
+  }
+  return { mc, tiles, changes, rerender }
 }
 
 /** Four angles, A to D, all from the take's beginning. */
@@ -321,18 +339,98 @@ describe('useMultiCam', function () {
   it('reads a quick tap on the middle right as ten seconds on', async function () {
     const { mc, tiles } = await grid()
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5)
-      mc().pressEnd(1, true, WIDTH * 0.9, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+      mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)
     })
     expect(tiles.A.currentTime).equals(130)
+  })
+
+  it('stops the clock where the pictures stop when paused', async function () {
+    const { mc, tiles } = await grid()
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    await act(async () => {
+      mc().toggle()
+    })
+    expect(mc().playing).equals(false)
+    expect(mc().atWallMs).closeTo(T0 + 120_800, 1e-3)
+    // And a skip from there is ten seconds from the picture.
+    await act(async () => {
+      mc().skip(-10)
+    })
+    expect(tiles.A.currentTime).closeTo(110.8, 1e-6)
+  })
+
+  it('holds the heard tile’s sound for a tap when its player was left playing silent, and no other’s', async function () {
+    const { mc } = await grid()
+    expect(mc().heardId).equals('A')
+    await act(async () => {
+      mc().soundHeld('B')
+    })
+    expect(mc().soundBlocked).equals(false)
+    await act(async () => {
+      mc().soundHeld('A')
+    })
+    expect(mc().soundBlocked).equals(true)
+  })
+
+  it('holds the sound of the angle heard now, for a prime begun while another was', async function () {
+    // B is heard, and its tile's prime takes this render's callback.
+    const { mc, rerender } = await grid({ audioId: 'B' })
+    expect(mc().heardId).equals('B')
+    const { soundHeld } = mc()
+    // The viewer moves the sound to A before the prime is done.
+    await rerender({ audioId: 'A' })
+    expect(mc().heardId).equals('A')
+    await act(async () => {
+      soundHeld('A')
+    })
+    expect(mc().soundBlocked).equals(true)
+  })
+
+  it('says where the pictures are now, for a close, not the clock’s last reading', async function () {
+    const { mc, tiles } = await grid()
+    expect(mc().wallNow()).equals(T0 + 120_000)
+    tiles.A.currentTime = 120.8
+    expect(mc().wallNow()).closeTo(T0 + 120_800, 1e-3)
+    // Nothing playing: the clock.
+    await act(async () => {
+      tiles.A.pause()
+      tiles.B.pause()
+    })
+    expect(mc().wallNow()).equals(mc().atWallMs)
+  })
+
+  it('skips ten seconds from where the pictures are, not from the clock’s last reading', async function () {
+    const { mc, tiles } = await grid()
+    expect(tiles.A.paused).equals(false)
+    // Played on 0.8 s past the clock's last reading.
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+      mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)
+    })
+    expect(tiles.A.currentTime).closeTo(130.8, 1e-6)
+    expect(tiles.B.currentTime).closeTo(70.8, 1e-6)
   })
 
   it('crawls every tile while the middle right is held, and lets go on the lift', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid()
+    // The pictures have played on past the clock's last reading.
+    expect(mc().atWallMs).equals(T0 + 120_000)
+    expect(tiles.A.paused).equals(false)
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
     })
+    // Not yet at a quarter of a second: the hold is half of one.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(mc().slow).equals(0)
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 300))
     })
@@ -340,26 +438,92 @@ describe('useMultiCam', function () {
     expect(tiles.A.playbackRate).equals(SLOW_RATE)
     expect(tiles.B.playbackRate).equals(SLOW_RATE)
     expect(tiles.A.muted).equals(true)
+    // It crawls on from there, not from the clock's reading: no tile is put
+    // back.
+    expect(mc().atWallMs).greaterThanOrEqual(T0 + 120_800)
+    expect(tiles.A.currentTime).equals(120.8)
+    expect(tiles.B.currentTime).equals(60.8)
     await act(async () => {
-      expect(mc().pressEnd(1, true, WIDTH * 0.9, HEIGHT * 0.5)).equals(true)
+      expect(mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)).equals('held')
     })
     expect(mc().slow).equals(0)
     expect(tiles.A.playbackRate).equals(1)
   })
 
-  it('does not crawl on a hold anywhere else', async function () {
+  it('picks a tile up on a hold anywhere else, at half a second and not before (U14)', async function () {
     this.timeout(5000)
     const { mc } = await grid()
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.5, 1)
     })
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 300))
     })
-    expect(mc().slow).equals(0)
+    expect(mc().armedTile).equals(null)
     await act(async () => {
-      mc().pressCancel(1)
+      await new Promise(resolve => setTimeout(resolve, 300))
     })
+    expect(mc().slow).equals(0)
+    expect(mc().armedTile).equals(1)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.1, HEIGHT * 0.5)).equals('reorder')
+    })
+    expect(mc().armedTile).equals(null)
+  })
+
+  it('picks nothing up with one angle, nor on the black around the tiles, and still reads the lift as a tap', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({ videos: [video('A', 0)], order: ['A'] })
+    for (const tile of [0, null]) {
+      await act(async () => {
+        mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.5, tile)
+      })
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 600))
+      })
+      expect(mc().armedTile).equals(null)
+      // Rested and let go where it came down, it is a tap: ten seconds back.
+      await act(async () => {
+        expect(mc().pressEnd(1, WIDTH * 0.1, HEIGHT * 0.5)).equals('pending')
+      })
+    }
+    expect(tiles.A.currentTime).equals(100)
+  })
+
+  it('pauses a one-angle grid for a press that rests on its centre before it lifts', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({ videos: [video('A', 0)], order: ['A'] })
+    expect(mc().playing).equals(true)
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    await act(async () => {
+      mc().pressEnd(1, WIDTH * 0.5, HEIGHT * 0.5)
+    })
+    expect(mc().playing).equals(false)
+  })
+
+  it('scrubs no more once a press has rested past the hold', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({ videos: [video('A', 0)], order: ['A'] })
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.3, HEIGHT * 0.3, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    await act(async () => {
+      mc().pressMove(1, WIDTH * 0.7, HEIGHT * 0.3)
+      // A frame, for a scrub's move to land if it were one.
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.7, HEIGHT * 0.3)).equals('dead')
+    })
+    expect(tiles.A.currentTime).equals(120)
   })
 
   it('follows the clock of the tile that is showing, once a second', async function () {
@@ -452,22 +616,171 @@ describe('useMultiCam', function () {
     expect(mc().controlsShown).equals(false)
   })
 
-  it('reads a slip of the finger as a drag, which is never a tap', async function () {
+  it('reads a slip of the finger as no tap, and a cancelled press as nothing', async function () {
     const { mc, tiles } = await grid()
+    // Past the tap's slop, short of a drag.
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5)
-      mc().pressMoved(1)
-      mc().pressEnd(1, true, WIDTH * 0.9, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+      mc().pressMove(1, WIDTH * 0.9 - 12, HEIGHT * 0.5)
+      expect(mc().pressEnd(1, WIDTH * 0.9 - 12, HEIGHT * 0.5)).equals('pending')
     })
     expect(tiles.A.currentTime).equals(120)
-    // A second finger is ignored while the first holds a crawl, and a
-    // cancelled press does nothing.
-    expect(mc().mayReorder(1)).equals(false)
     await act(async () => {
-      mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.5)
+      mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.5, 0)
       mc().pressCancel(2)
     })
     expect(tiles.A.currentTime).equals(120)
+    // Neither answers for a finger it is not following.
+    expect(mc().pressEnd(3, 0, 0)).equals(null)
+  })
+
+  it('ignores a second finger while the first holds a crawl', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid()
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    expect(mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.5, 0)).equals(false)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)).equals('held')
+    })
+    expect(mc().slow).equals(0)
+    // A press only waiting is handed to the newer finger.
+    await act(async () => {
+      mc().pressStart(3, WIDTH * 0.5, HEIGHT * 0.5, 0)
+      expect(mc().pressStart(4, WIDTH * 0.9, HEIGHT * 0.5, 0)).equals(true)
+      mc().pressEnd(4, WIDTH * 0.9, HEIGHT * 0.5)
+    })
+    expect(tiles.A.currentTime).closeTo(130, 1)
+  })
+})
+
+describe('useMultiCam scrubbing by a drag across the pictures (U14)', function () {
+  /** Lets an animation frame or two go by. */
+  const frame = async (): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+  }
+
+  it('moves every tile by a quarter of the track for a sideways drag from the middle', async function () {
+    const { mc, tiles } = await grid()
+    // The take is A's start to B's end: eleven minutes.
+    const span = 660_000
+    mc().setTrackWidth(300)
+    const start = mc().atWallMs!
+    const dx = WIDTH * 0.25
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, 0)
+      mc().pressMove(1, WIDTH * 0.5 + dx / 2, HEIGHT * 0.3 + 4)
+      mc().pressMove(1, WIDTH * 0.5 + dx, HEIGHT * 0.3 + 4)
+    })
+    await frame()
+    const expected = start + ((dx * span) / 300) * 0.25
+    expect(mc().atWallMs).closeTo(expected, 1)
+    expect(mc().barShown).equals(true)
+    expect(tiles.A.currentTime).closeTo((expected - T0) / 1000, 0.01)
+    expect(tiles.B.currentTime).closeTo((expected - T0) / 1000 - 60, 0.01)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.5 + dx, HEIGHT * 0.3)).equals('scrub')
+    })
+    // And back the other way, kept inside the take.
+    await act(async () => {
+      mc().pressStart(2, WIDTH * 0.8, HEIGHT * 0.3, 0)
+      mc().pressMove(2, 0, HEIGHT * 0.3)
+      mc().pressEnd(2, 0, HEIGHT * 0.3)
+    })
+    expect(mc().atWallMs).equals(T0)
+  })
+
+  it('scrubs from where the pictures are, not from the clock’s last reading', async function () {
+    const { mc, tiles } = await grid()
+    mc().setTrackWidth(300)
+    // The pictures have played on 0.8 s past the clock's last reading.
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    const dx = WIDTH * 0.25
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, 0)
+      mc().pressMove(1, WIDTH * 0.5 + dx, HEIGHT * 0.3)
+    })
+    await frame()
+    const expected = T0 + 120_800 + ((dx * 660_000) / 300) * 0.25
+    expect(mc().atWallMs).closeTo(expected, 1)
+    expect(tiles.A.currentTime).closeTo((expected - T0) / 1000, 0.01)
+    await act(async () => {
+      mc().pressEnd(1, WIDTH * 0.5 + dx, HEIGHT * 0.3)
+    })
+  })
+
+  it('measures against the window until the bar has said how wide its track is', async function () {
+    const { mc } = await grid()
+    const start = mc().atWallMs!
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, null)
+      mc().pressMove(1, WIDTH * 0.75, HEIGHT * 0.3)
+      mc().pressEnd(1, WIDTH * 0.75, HEIGHT * 0.3)
+    })
+    expect(mc().atWallMs).closeTo(start + 0.25 * 660_000 * 0.25, 1)
+  })
+
+  for (const playing of [false, true])
+    it(`leaves the tiles ${playing ? 'playing' : 'paused'}`, async function () {
+      const { mc, tiles } = await grid()
+      if (mc().playing !== playing)
+        await act(async () => {
+          mc().toggle()
+        })
+      const before = [mc().playing, tiles.A.paused, tiles.B.paused]
+      await act(async () => {
+        mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, 0)
+        mc().pressMove(1, WIDTH * 0.7, HEIGHT * 0.3)
+        mc().pressEnd(1, WIDTH * 0.7, HEIGHT * 0.3)
+      })
+      expect([mc().playing, tiles.A.paused, tiles.B.paused]).deep.equals(before)
+    })
+
+  it('does not scrub from the edges, nor for an up-and-down drag', async function () {
+    const { mc, tiles } = await grid()
+    for (const [x0, x1, y1] of [
+      [WIDTH * 0.05, WIDTH * 0.4, HEIGHT * 0.3],
+      [WIDTH * 0.95, WIDTH * 0.6, HEIGHT * 0.3],
+      [WIDTH * 0.5, WIDTH * 0.52, HEIGHT * 0.5]
+    ]) {
+      await act(async () => {
+        mc().pressStart(1, x0, HEIGHT * 0.3, 0)
+        mc().pressMove(1, x1, y1)
+      })
+      await frame()
+      await act(async () => {
+        expect(mc().pressEnd(1, x1, y1)).equals('dead')
+      })
+    }
+    expect(tiles.A.currentTime).equals(120)
+  })
+
+  it('never turns a crawl into a scrub', async function () {
+    this.timeout(5000)
+    const { mc } = await grid()
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    const crawling = mc().atWallMs!
+    await act(async () => {
+      mc().pressMove(1, WIDTH * 0.5, HEIGHT * 0.5)
+    })
+    await frame()
+    // A quarter-speed crawl moves the clock a little, never a drag's worth.
+    expect(mc().atWallMs! - crawling).lessThan(1000)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.5, HEIGHT * 0.5)).equals('held')
+    })
   })
 })
 
@@ -498,16 +811,23 @@ describe('useMultiCam on live angles', function () {
     videos: [liveVideo('A', 0), liveVideo('B', 60)],
     atMs: undefined
   }
+  /**
+   * Each at its newest footage: A's ends three minutes into the take, B's
+   * (a minute later to start) two and a half minutes into its own, which is
+   * half a minute later on the wall. Each holds the stretch 45 s behind A's.
+   */
   const atTheirEdges = (tiles: Record<string, FakeTile>): void => {
     tiles.A.duration = Number.POSITIVE_INFINITY
     tiles.B.duration = Number.POSITIVE_INFINITY
-    tiles.A.currentTime = 100
-    tiles.B.currentTime = 30
-    fill(tiles.A, [100, 116])
-    fill(tiles.B, [30, 46])
+    tiles.A.currentTime = 180
+    tiles.B.currentTime = 150
+    Object.assign(tiles.A, { seekable: { length: 1, end: () => 180 } })
+    Object.assign(tiles.B, { seekable: { length: 1, end: () => 150 } })
+    fill(tiles.A, [130, 180])
+    fill(tiles.B, [70, 150])
   }
 
-  it('opens on the moment the tile furthest ahead has reached, and plays every tile', async function () {
+  it('opens 45 s behind the newest footage of the slowest tile, and plays every tile (U25)', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid(live, {}, atTheirEdges)
     // No moment to open on until the tiles have said where they are.
@@ -516,9 +836,9 @@ describe('useMultiCam on live angles', function () {
     expect(tiles.B.paused).equals(true)
 
     await ticks(1)
-    expect(mc().atWallMs).equals(T0 + 100_000)
-    expect(tiles.A.currentTime).equals(100)
-    expect(tiles.B.currentTime).equals(40)
+    expect(mc().atWallMs).equals(T0 + 135_000)
+    expect(tiles.A.currentTime).equals(135)
+    expect(tiles.B.currentTime).equals(75)
     expect(tiles.A.paused).equals(false)
     expect(tiles.B.paused).equals(false)
     expect(mc().waiting).equals(false)
@@ -602,6 +922,39 @@ describe('useMultiCam on live angles', function () {
     expect(asked.filter(one => one === 'B').length).equals(1)
   })
 
+  it('asks once for each address, and waits once for a timeline that never comes', async function () {
+    this.timeout(8000)
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => {
+      asked.push(id)
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: false
+      }
+    }
+    const opened = Date.now()
+    // A's timeline is in; B's and C's are never fetched.
+    const { mc } = await grid(
+      {
+        client,
+        videos: [video('A', 0), video('B', 0), video('C', 0)],
+        order: ['A', 'B', 'C']
+      },
+      { fallbackMapping: id => (id === 'A' ? null : undefined) }
+    )
+    await until(() => mc().urls.A != null, 1000)
+    expect(mc().urls.B).equals(undefined)
+    await until(() => mc().urls.B != null && mc().urls.C != null, 4000)
+    // Both after the one wait, not one wait after the other.
+    expect(Date.now() - opened).lessThan(MAPPING_WAIT_MS + 1000)
+    expect(asked.sort()).deep.equals(['A', 'B', 'C'])
+  })
+
   it('waits a moment for a tile with no picture yet, and then opens without it', async function () {
     this.timeout(8000)
     const { mc } = await grid(live, {}, tiles => {
@@ -611,7 +964,7 @@ describe('useMultiCam on live angles', function () {
     await ticks(2)
     expect(mc().atWallMs).equals(null)
     await ticks(2)
-    expect(mc().atWallMs).equals(T0 + 100_000)
+    expect(mc().atWallMs).equals(T0 + 135_000)
   })
 })
 
@@ -635,6 +988,23 @@ describe('useMultiCam buffering', function () {
     expect(mc().waiting).equals(false)
     expect(tiles.A.paused).equals(false)
     expect(tiles.B.paused).equals(false)
+  })
+
+  it('sends a lone recording across a start hole wider than its player jumps, and plays it', async function () {
+    this.timeout(5000)
+    // Three seconds of nothing where it is to start, then the footage.
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0)], order: ['A'], atMs: T0 + 300_000 },
+      {},
+      tiles => {
+        fill(tiles.A, [303, 340])
+      }
+    )
+    await ticks(2)
+    // Sent to 300 s, the moment, and from there to the footage at 303 s.
+    expect(tiles.A.currentTime).equals(303)
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
   })
 
   it('stops every tile the moment one is about to run dry, and starts them once it has filled', async function () {
@@ -803,8 +1173,8 @@ describe('useMultiCam buffering', function () {
     expect(mc().soundBlocked).equals(true)
 
     await act(async () => {
-      mc().pressStart(1, 10, 10)
-      mc().pressEnd(1, true, 10, 10)
+      mc().pressStart(1, 10, 10, null)
+      mc().pressEnd(1, 10, 10)
     })
     expect(tiles.A.muted).equals(false)
     expect(mc().soundBlocked).equals(false)
@@ -867,31 +1237,19 @@ describe('useMultiCam buffering', function () {
     expect(fresh.paused).equals(false)
   })
 
-  it('feeds the emptiest tile by holding the others back', async function () {
+  it('loads every tile half a minute ahead, however full the others are (U29)', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid({}, {}, tiles => {
       fill(tiles.A, [120, 128])
       fill(tiles.B, [60, 100])
     })
-    const asked: Record<string, number[]> = { A: [], B: [] }
-    await act(async () => {
-      for (const id of ['A', 'B']) {
-        mc()
-          .bufferFor(id)
-          ?.onControl?.({
-            setAheadSec: seconds => asked[id].push(seconds)
-          })
-      }
-    })
-    await ticks(1)
-    // A holds 8 s, so neither may load past 18 s: B, at 40, stops asking
-    // and the line goes to A.
-    expect(asked.A.at(-1)).equals(18)
-    expect(asked.B.at(-1)).equals(18)
-
+    // Half a minute each, whatever the others hold: nobody is held back for
+    // anybody else.
+    for (const id of ['A', 'B'])
+      expect(mc().bufferFor(id), id).deep.equals({ aheadSec: 30 })
     fill(tiles.A, [120, 175])
     await ticks(1)
-    expect(asked.A.at(-1)).equals(50)
+    expect(mc().bufferFor('A')).deep.equals({ aheadSec: 30 })
     expect(tiles.A.paused).equals(false)
   })
 
@@ -906,5 +1264,439 @@ describe('useMultiCam buffering', function () {
     tiles.B.currentTime = 62
     await ticks(1)
     expect(tiles.B.currentTime).equals(62)
+  })
+})
+
+describe('useMultiCam on each tile’s own dates (U22)', function () {
+  it('lines two angles up by their program date-times, not by their starts', async function () {
+    // Both rows say the same start, but their playlists begin a minute
+    // apart on the wall: A's first fragment was captured at T0 + 60 s.
+    const { mc, tiles } = await grid({
+      videos: [video('A', 0), video('B', 0)],
+      order: ['A', 'B']
+    })
+    const dated = (wall0: number): WallMapping =>
+      fromFragments(
+        Array.from({ length: 150 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime: wall0 + index * 4000
+        }))
+      )
+    await act(async () => {
+      mc().takeMapping('A')(dated(T0 + 60_000))
+      mc().takeMapping('B')(dated(T0))
+    })
+    await act(async () => {
+      mc().goTo(T0 + 180_000)
+    })
+    expect(tiles.A.currentTime).closeTo(120, 0.01)
+    expect(tiles.B.currentTime).closeTo(180, 0.01)
+    // Without dates a tile falls back to its start, as before.
+    await act(async () => {
+      mc().takeMapping('A')(null)
+      mc().goTo(T0 + 200_000)
+    })
+    expect(tiles.A.currentTime).closeTo(200, 0.01)
+    expect(tiles.B.currentTime).closeTo(200, 0.01)
+  })
+
+  it('falls back to the server’s wall timeline for a tile with no dates', async function () {
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0), video('B', 0)], order: ['A', 'B'] },
+      {
+        fallbackMapping: id =>
+          id === 'B'
+            ? fromFragments([
+                { start: 0, duration: 600, programDateTime: T0 + 30_000 }
+              ])
+            : null
+      }
+    )
+    await act(async () => {
+      mc().goTo(T0 + 100_000)
+    })
+    expect(tiles.A.currentTime).closeTo(100, 0.01)
+    expect(tiles.B.currentTime).closeTo(70, 0.01)
+  })
+})
+
+describe('useMultiCam with a lone recording that has no start (M5, M8)', function () {
+  it('plays it on its own media time, whatever dates its player hands over', async function () {
+    const lone = { ...video('A', 0), startAt: null }
+    const { mc, tiles } = await grid({
+      videos: [lone],
+      order: ['A'],
+      atMs: 40_000
+    })
+    await act(async () => {
+      mc().takeMapping('A')(
+        fromFragments([
+          { start: 0, duration: 600, programDateTime: T0 + 30_000 }
+        ])
+      )
+      mc().goTo(70_000)
+    })
+    expect(tiles.A.currentTime).closeTo(70, 0.01)
+  })
+})
+
+describe('useMultiCam with a live camera behind the game (U27)', function () {
+  /** Four-second fragments from the take's start, `seconds` of them in all. */
+  const dated = (seconds: number): WallMapping =>
+    fromFragments(
+      Array.from({ length: seconds / 4 }, (unused, index) => ({
+        start: index * 4,
+        duration: 4,
+        programDateTime: T0 + index * 4000
+      }))
+    )
+
+  it('holds a tile whose newest footage is behind the moment, labelled, out of the gate, never sought, and puts it back once it has caught up', async function () {
+    this.timeout(10_000)
+    // Each tile's dates, as its playlist gives them before its pictures.
+    const held: Record<string, WallMapping> = {
+      A: dated(300),
+      B: dated(100)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 300])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 300 } })
+        fill(tiles.B, [60, 100])
+        Object.assign(tiles.B, { seekable: { length: 1, end: () => 100 } })
+        tiles.B.currentTime = 99
+      }
+    )
+    await ticks(2)
+    expect(mc().tiles.B?.parked).equals('notYet')
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime, 'never sought').equals(99)
+    // The other plays on, and the grid is not held for it.
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
+
+    // B's playlist grows past the moment: it is put back on it.
+    fill(tiles.B, [60, 260])
+    Object.assign(tiles.B, { seekable: { length: 1, end: () => 260 } })
+    held.B = dated(260)
+    await ticks(2)
+    expect(mc().tiles.B?.parked ?? null).equals(null)
+    expect(tiles.B.currentTime).greaterThan(140)
+  })
+  it('runs a live game’s bar from its first camera to the newest footage any angle has, and lands a move past live at the live point', async function () {
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          // B's player can reach less than A's: the slower angle sets it.
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 250 : 260) }
+          })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    // From the first camera's first picture to the newest footage either
+    // angle has, A's 260 s, though the viewer has played only to 150 s.
+    expect(mc().take?.fromMs).equals(T0)
+    expect(mc().take?.toMs).equals(T0 + 260_000)
+    // Dragged to the end, the grid goes to the live point: 45 s behind the
+    // slower angle's newest footage, B's 250 s.
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 205_000)
+    // Back is anywhere in the take.
+    await act(async () => {
+      mc().goTo(T0 + 60_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 60_000)
+  })
+
+  it('never sends a forward move back, when the grid already plays past the live point', async function () {
+    // The live point moves a segment at a time, and an angle whose camera
+    // has just gone holds it still: the pictures can be past it.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 230_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          // B's footage reaches 250 s: the live point is 205 s.
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 250 : 260) }
+          })
+          fill(tile, [200, 260])
+        }
+      }
+    )
+    expect(mc().atWallMs).equals(T0 + 230_000)
+    // Ten seconds on, past the live point: it stays where it is.
+    await act(async () => {
+      mc().goTo(T0 + 240_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 230_000)
+    // Back is still back.
+    await act(async () => {
+      mc().goTo(T0 + 220_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 220_000)
+  })
+
+  it('keeps the bar’s end and the live point while every tile seeks out of what it holds', async function () {
+    this.timeout(5000)
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 260 } })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    // A move out of what they hold: a browser's tiles keep only their
+    // metadata until the new place loads.
+    await act(async () => {
+      mc().goTo(T0 + 100_000)
+    })
+    for (const tile of Object.values(tiles)) tile.readyState = 1
+    await ticks(1)
+    expect(mc().take?.toMs).equals(T0 + 260_000)
+    // And a move past live still lands at the live point.
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 215_000)
+  })
+
+  it('lets no angle whose camera has stopped hold the live point back once the grid has played past it', async function () {
+    // B keeps its address and its picture, but its footage stopped at 150 s,
+    // and the grid already plays at 170 s.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 170_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 150 : 260) }
+          })
+          fill(tile, [140, 260])
+        }
+      }
+    )
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    // A's live point, not B's last picture less the delay.
+    expect(mc().atWallMs).equals(T0 + 215_000)
+  })
+
+  it('ends a live bar at an angle’s seekable end where it has no mapping yet', async function () {
+    // A phone's tile has no dates of its own, and the server's timeline has
+    // not arrived: its player's seekable end, placed by its start.
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      {},
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 260 } })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    expect(mc().take?.toMs).equals(T0 + 260_000)
+  })
+
+  it('lets no angle it cannot play hold the live point back at its own last footage', async function () {
+    // B's camera has gone: the server still lists it as live, its timeline
+    // ends at 100 s, and there is no address for it.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(100)
+    }
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => ({
+      videoId: id,
+      storage: 'spaces',
+      url: id === 'B' ? null : `https://media/${id}.m3u8`,
+      expiresAt: null,
+      durationSec: null,
+      unavailable: id === 'B'
+    })
+    const { mc } = await grid(
+      {
+        client,
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          // B's player stopped at its last footage.
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 100 : 260) }
+          })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    await until(() => mc().urls.B === null)
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    // A's live point, 45 s behind its newest footage: not B's, minutes back.
+    expect(mc().atWallMs).equals(T0 + 215_000)
+  })
+
+  it('places a tile by the server’s wall timeline before its own stream’s dates, and reaches its newest footage by it', async function () {
+    // The server's, by the frames' own clocks; the stream's dates 4.57 s
+    // later, as a live ingest writes them.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 260 } })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    const own = fromFragments(
+      Array.from({ length: 75 }, (unused, index) => ({
+        start: index * 4,
+        duration: 4,
+        programDateTime: T0 + index * 4000 + 4570
+      }))
+    )
+    await act(async () => {
+      mc().takeMapping('A')(own)
+    })
+    const clockOf = (index: number): WallMapping =>
+      (mc().chosen[index] as AngleVideo).clock!()!
+    const clockA = clockOf(0)
+    expect(clockA.wallAt(150)).equals(T0 + 150_000)
+    expect(clockA.newestWall()).equals(T0 + 260_000)
+    // With no timeline from the server, the stream's own dates.
+    served.A = null
+    expect(clockOf(0).wallAt(150)).equals(T0 + 154_570)
+  })
+
+  it('moves a held tile to where its dates put the moment once they arrive, once for each place', async function () {
+    this.timeout(10_000)
+    const held: Record<string, WallMapping> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 300 } })
+        }
+        fill(tiles.A, [148, 190])
+        fill(tiles.B, [150, 152])
+      }
+    )
+    await ticks(1)
+    expect(mc().waiting).equals(true)
+    expect(tiles.A.currentTime).equals(150)
+
+    // A's own dates put the moment 4.6 s earlier than its start did, where
+    // it holds nothing — within a start hole of what it holds, so it would
+    // count as ready there — and it is sent there; B, which holds where it
+    // stands, is not.
+    held.A = fromFragments(
+      Array.from({ length: 75 }, (unused, index) => ({
+        start: index * 4,
+        duration: 4,
+        programDateTime: T0 + index * 4000 + 4600
+      }))
+    )
+    await ticks(1)
+    expect(tiles.A.currentTime).closeTo(145.4, 1e-6)
+    expect(tiles.B.currentTime).equals(150)
+
+    // Its player steps over a hole there, and short of enough it is not
+    // sent back for it.
+    tiles.A.currentTime = 147
+    fill(tiles.A, [147, 149])
+    await ticks(1)
+    expect(tiles.A.currentTime).equals(147)
+    expect(mc().waiting).equals(true)
+
+    fill(tiles.A, [147, 170])
+    fill(tiles.B, [150, 200])
+    await ticks(1)
+    expect(mc().waiting).equals(false)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.A.currentTime).equals(147)
   })
 })

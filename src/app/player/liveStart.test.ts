@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { seekTo } from './explicitSeek'
-import { joinLiveOnFirstPlay } from './liveStart'
+import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
 import { seekBy } from './zones'
 
 function fixture(): {
@@ -37,6 +37,10 @@ function fixture(): {
 }
 
 describe('joining the latest footage on first play', function () {
+  it('plays 45 s behind the newest footage (U24)', function () {
+    expect(LIVE_DELAY_SEC).equals(45)
+  })
+
   it('uses the latest seekable end rather than the browser default position', function () {
     const f = fixture()
     f.video.currentTime = 240
@@ -44,7 +48,7 @@ describe('joining the latest footage on first play', function () {
     f.emit('loadedmetadata')
     expect(f.video.currentTime).equals(240)
     f.emit('play')
-    expect(f.video.currentTime).equals(7140)
+    expect(f.video.currentTime).equals(7200 - LIVE_DELAY_SEC)
     f.detach()
   })
 
@@ -54,7 +58,7 @@ describe('joining the latest footage on first play', function () {
     f.emit('loadedmetadata')
     f.ranges([[0, 900]])
     f.emit('play')
-    expect(f.video.currentTime).equals(840)
+    expect(f.video.currentTime).equals(900 - LIVE_DELAY_SEC)
     f.detach()
   })
 
@@ -70,7 +74,7 @@ describe('joining the latest footage on first play', function () {
       expect(f.video.currentTime).equals(0)
       f.ranges([[0, 600]])
       f.emit(event)
-      expect(f.video.currentTime).equals(540)
+      expect(f.video.currentTime).equals(600 - LIVE_DELAY_SEC)
       f.detach()
     }
   })
@@ -99,7 +103,7 @@ describe('joining the latest footage on first play', function () {
     expect(f.video.currentTime).equals(0)
     f.pause(false)
     f.emit('play')
-    expect(f.video.currentTime).equals(540)
+    expect(f.video.currentTime).equals(600 - LIVE_DELAY_SEC)
     f.detach()
   })
 
@@ -159,7 +163,7 @@ describe('joining the latest footage on first play', function () {
     f.ranges([[0, 900]])
     f.emit('pointerdown')
     f.emit('play')
-    expect(f.video.currentTime).equals(840)
+    expect(f.video.currentTime).equals(900 - LIVE_DELAY_SEC)
     f.detach()
   })
 

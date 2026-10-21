@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   asVideoSummary,
+  type LineScoreStep,
   TeamStationClient,
   type VideoSummary
 } from '../../common/api'
@@ -20,8 +21,9 @@ import {
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tileRects } from './multiCam/layout'
+import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView } from './MultiCamView'
-import { bandHeight, tileNameTop } from './scoreboardOverlay/overlayLayout'
+import { tileNameTop } from './scoreboardOverlay/overlayLayout'
 
 let root: Root | undefined
 
@@ -92,6 +94,14 @@ async function grid(options: {
   zoomedId?: string
   /** The single-camera placement, when not the node's default. */
   single?: { x: number; y: number; height: number }
+  /** The game's line score; none, as for a game with no events, by default. */
+  lines?: LineScoreStep[]
+  /** The angle heard; b by default. */
+  audioId?: string
+  /** Told the moment the grid had reached as it goes. */
+  onGone?: (atWallMs: number | null) => void
+  /** The moment the grid opens on. */
+  atMs?: number
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -102,6 +112,7 @@ async function grid(options: {
   server.timelines.set('c', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('d', wallTimelineOf([[0, OVERLAY_T0]]))
   server.steps.set('g1', options.steps ?? [])
+  if (options.lines != null) server.lines.set('g1', options.lines)
   if (options.pointless != null)
     server.timelines.set(options.pointless, wallTimelineOf([]))
   if (options.unplaced != null)
@@ -151,10 +162,12 @@ async function grid(options: {
         gameId={options.gameId}
         videos={videos}
         order={order}
-        audioId="b"
+        audioId={options.audioId ?? 'b'}
         zoomedId={options.zoomedId ?? null}
+        atMs={options.atMs}
         onChange={() => undefined}
         onClose={() => undefined}
+        onGone={atWallMs => options.onGone?.(atWallMs)}
       />
     </ThemeProvider>
   )
@@ -205,6 +218,95 @@ function playAt(seconds: number): void {
     })
 }
 
+/** Sets every tile's player playing, or not. */
+function playingIs(playing: boolean): void {
+  for (const video of document.querySelectorAll('video'))
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      value: !playing
+    })
+}
+
+describe('the grid coming and going', function () {
+  afterEach(unmount)
+
+  it("says the picture's own moment as it goes, not the clock's", async function () {
+    const gone: Array<number | null> = []
+    await grid({
+      width: 1280,
+      height: 720,
+      gameId: 'g1',
+      playable: true,
+      onGone: atWallMs => gone.push(atWallMs)
+    })
+    playAt(20)
+    playingIs(true)
+    await unmount()
+    // The heard angle, b, 20 s in, by its own timeline.
+    expect(gone).deep.equals([OVERLAY_T0 + 110_000])
+  })
+
+  it('opens a tile on the moment by its timeline, though its address came first', async function () {
+    // Every position a player is sent to, by element.
+    const sent = new Map<HTMLMediaElement, number[]>()
+    const time = Object.getOwnPropertyDescriptor(
+      window.HTMLMediaElement.prototype,
+      'currentTime'
+    )!
+    Object.defineProperty(window.HTMLMediaElement.prototype, 'currentTime', {
+      configurable: true,
+      get(this: HTMLMediaElement) {
+        return sent.get(this)?.at(-1) ?? 0
+      },
+      set(this: HTMLMediaElement, value: number) {
+        sent.set(this, [...(sent.get(this) ?? []), value])
+      }
+    })
+    try {
+      let answer = (): void => undefined
+      await grid({
+        width: 1280,
+        height: 720,
+        gameId: 'g1',
+        playable: true,
+        ids: ['b'],
+        audioId: 'b',
+        atMs: OVERLAY_T0 + 120_000,
+        hold: {
+          id: 'b',
+          until: new Promise(resolve => {
+            answer = resolve
+          })
+        }
+      })
+      // The address is in; the timeline is not.
+      expect(document.querySelectorAll('video')).length(1)
+      await act(async () => {
+        answer()
+      })
+      await settle(60)
+      const [video] = document.querySelectorAll('video')
+      await act(async () => {
+        Object.defineProperty(video, 'readyState', {
+          configurable: true,
+          value: 1
+        })
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      // b's frames are a minute and a half later than its start says: two
+      // minutes in on the wall is 30 s into it, not 120 s.
+      expect(sent.get(video)?.at(-1)).closeTo(30, 0.01)
+      expect(sent.get(video) ?? []).not.include(120)
+    } finally {
+      Object.defineProperty(
+        window.HTMLMediaElement.prototype,
+        'currentTime',
+        time
+      )
+    }
+  })
+})
+
 const STEPS = [
   boardStep(OVERLAY_T0 + 10_000, 1),
   boardStep(OVERLAY_T0 + 95_000, 2)
@@ -213,7 +315,24 @@ const STEPS = [
 describe('the board over the grid (C3)', function () {
   afterEach(unmount)
 
-  it('draws one board in a band above the stacked angles, upright', async function () {
+  /** The layout the grid is drawn by, for a board 607 × 247 and no box. */
+  const layoutOf = (
+    width: number,
+    height: number,
+    count: number
+  ): ReturnType<typeof playerLayout> =>
+    playerLayout({
+      screen: { width, height },
+      safe: { x: 0, y: 0, w: width, h: height },
+      count,
+      aspect: 16 / 9,
+      landscape: width > height,
+      settings: SHOWN_OVERLAY,
+      board: { width: 607, height: 247 },
+      line: false
+    })
+
+  it('draws one board at the top above the stacked angles, upright', async function () {
     await grid({ width: 402, height: 874, gameId: 'g1', steps: STEPS })
     playAt(20)
     await settle()
@@ -224,27 +343,23 @@ describe('the board over the grid (C3)', function () {
     // timeline: the second step, not the first its start would give.
     expect(drawn[0].getAttribute('data-at')).equals(String(OVERLAY_T0 + 95_000))
 
-    // Four angles: the full board 15% of one angle's height, in its band.
-    const band = bandHeight(
-      { width: 402, height: 874 },
-      { width: 607, height: 247 },
-      4,
-      0.15
-    )
-    const expected = tileRects({ width: 402, height: 874, count: 4, top: band })
+    // Four angles: the full board 15% of one angle's height, on the top of
+    // the screen, the angles butted against it.
+    const layout = layoutOf(402, 874, 4)
+    const expected = layout.tiles
     // As tall as the stacked angles really are, which at this size is less
     // than the screen's width would give them.
     expect(px(drawn[0].style.height)).closeTo(0.15 * expected[0].h, 0.01)
     expect(expected[0].h).lessThan(402 / (16 / 9))
-    expect(px(drawn[0].style.top) + px(drawn[0].style.height)).closeTo(
-      band - 8,
+    expect(px(drawn[0].style.top)).closeTo(0, 0.01)
+    expect(px(drawn[0].style.top) + px(drawn[0].style.height) + GAP).closeTo(
+      expected[0].y,
       0.01
     )
     const placed = tiles()
     expect(placed).length(4)
     placed.forEach((tile, index) => {
       expect(px(tile.style.top)).closeTo(expected[index].y, 0.01)
-      expect(px(tile.style.top)).at.least(band)
       // Clear of the board in its band, every name stays at its tile's top.
       expect(nameOf(tile).style.top).equals('')
     })
@@ -300,12 +415,15 @@ describe('the board over the grid (C3)', function () {
       }
     })
     try {
+      // Heard on a, which is recording from the take's start: b's own
+      // timeline puts its first picture a minute and a half in.
       await grid({
         width: 402,
         height: 874,
         gameId: 'g1',
         steps: STEPS,
-        playable: true
+        playable: true,
+        audioId: 'a'
       })
       playAt(20)
       await act(async () => {
@@ -329,13 +447,7 @@ describe('the board over the grid (C3)', function () {
         node => node.textContent === lstrings.angles_tap_for_sound
       )
       if (notice == null) throw new Error('No notice to tap for sound')
-      const band = bandHeight(
-        { width: 402, height: 874 },
-        { width: 607, height: 247 },
-        4,
-        0.15
-      )
-      expect(px(notice.style.top)).greaterThan(band)
+      expect(px(notice.style.top)).greaterThan(layoutOf(402, 874, 4).tiles[0].y)
       const [board] = overlays()
       expect(px(board.style.top) + px(board.style.height)).lessThan(
         px(notice.style.top)
@@ -487,7 +599,63 @@ describe('the board over the grid (C3)', function () {
     expect(overlays()).length(1)
   })
 
-  it('centres the board above two angles, sideways', async function () {
+  it("draws the game's box score where the layout puts it, at the playhead, and none for a game with no events", async function () {
+    const lines: LineScoreStep[] = [
+      {
+        at: OVERLAY_T0 + 50_000,
+        line: {
+          away: { innings: [2], r: 2, h: 3, e: 0 },
+          home: { innings: [null], r: 0, h: 0, e: 0 }
+        }
+      }
+    ]
+    for (const [width, height] of [
+      [402, 874],
+      [1280, 720]
+    ] as const) {
+      await grid({
+        width,
+        height,
+        gameId: 'g1',
+        steps: STEPS,
+        ids: ['a', 'b'],
+        lines
+      })
+      playAt(20)
+      await settle()
+      await layOutBoards(607, 247)
+      const box = document.querySelector<HTMLElement>(
+        '[data-testid="line-score-box"]'
+      )
+      if (box == null) throw new Error('no box score')
+      const expected = playerLayout({
+        screen: { width, height },
+        safe: { x: 0, y: 0, w: width, h: height },
+        count: 2,
+        aspect: 16 / 9,
+        landscape: width > height,
+        settings: SHOWN_OVERLAY,
+        board: { width: 607, height: 247 },
+        line: true
+      }).box!
+      expect(px(box.style.left)).closeTo(expected.x, 0.01)
+      expect(px(box.style.top)).closeTo(expected.y, 0.01)
+      expect(px(box.style.width)).closeTo(expected.w, 0.01)
+      // The heard angle's frame is 110 s on the wall: past the line's step.
+      expect(box.getAttribute('data-at')).equals(String(OVERLAY_T0 + 50_000))
+      expect(box.textContent).includes('Visitors')
+      await unmount()
+    }
+    await grid({ width: 402, height: 874, gameId: 'g1', steps: STEPS })
+    playAt(20)
+    await settle()
+    await layOutBoards(607, 247)
+    expect(document.querySelector('[data-testid="line-score-box"]')).equals(
+      null
+    )
+  })
+
+  it('centres the board above two angles on the bottom, sideways, with no box score', async function () {
     await grid({
       width: 1280,
       height: 720,
@@ -499,8 +667,10 @@ describe('the board over the grid (C3)', function () {
     await settle()
     await layOutBoards(607, 247)
     const [board] = overlays()
-    const rects = tileRects({ width: 1280, height: 720, count: 2 })
+    const rects = layoutOf(1280, 720, 2).tiles
     const top = rects[0].y
+    // On the bottom of the screen, which leaves the space above them whole.
+    expect(rects[0].y + rects[0].h).closeTo(720, 0.01)
     expect(px(board.style.height)).closeTo(top - 16, 0.01)
     expect(px(board.style.left) + px(board.style.width) / 2).closeTo(640, 0.01)
     expect(px(board.style.top) + px(board.style.height)).at.most(top)
@@ -509,7 +679,7 @@ describe('the board over the grid (C3)', function () {
     })
   })
 
-  it('gives the board the top-left quadrant of three angles, sideways', async function () {
+  it('gives the board the top of the top-left quadrant of three angles, against the angle on its right, sideways', async function () {
     await grid({
       width: 1280,
       height: 720,
@@ -532,9 +702,12 @@ describe('the board over the grid (C3)', function () {
       expect(px(tile.style.left)).closeTo(rects[index].x, 0.01)
       expect(px(tile.style.top)).closeTo(rects[index].y, 0.01)
     })
-    expect(px(board.style.left)).closeTo(rects[1].x + 8, 0.01)
     expect(px(board.style.top)).closeTo(rects[0].y + 8, 0.01)
-    expect(px(board.style.width)).closeTo(rects[1].w - 16, 0.01)
+    expect(px(board.style.left) + px(board.style.width)).closeTo(
+      rects[1].x + rects[1].w - GAP,
+      0.01
+    )
+    expect(px(board.style.width)).closeTo(rects[1].w - 8 - GAP, 0.01)
   })
 
   it('puts the board on a lone angle, sideways, where the single-camera setting puts it', async function () {

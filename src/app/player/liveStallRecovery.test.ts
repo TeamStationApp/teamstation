@@ -4,7 +4,10 @@ import { describe, it } from 'mocha'
 import type { RetryClock } from './attachHls'
 import { recoverLiveStalls } from './liveStallRecovery'
 
-function fixture(ranges: Array<[number, number]> = [[100, 130]]): {
+function fixture(
+  ranges: Array<[number, number]> = [[100, 130]],
+  options: { holesOnly?: boolean } = {}
+): {
   video: {
     currentTime: number
     paused: boolean
@@ -42,7 +45,7 @@ function fixture(ranges: Array<[number, number]> = [[100, 130]]): {
     }
   }
   let wanted = true
-  const stop = recoverLiveStalls(video, () => wanted, clock)
+  const stop = recoverLiveStalls(video, () => wanted, clock, options)
   const advance = (seconds: number): void => {
     for (let i = 0; i < seconds; i++) {
       now += 1000
@@ -164,5 +167,37 @@ describe('a live web viewer stalled at buffered footage', function () {
     const f = fixture()
     recoverLiveStalls(f.video, () => true)()
     f.stop()
+  })
+})
+
+describe('a live grid tile stopped at a hole (U28)', function () {
+  it('crosses a hole of up to a minute into footage it holds', function () {
+    const f = fixture(
+      [
+        [70, 100],
+        [150, 190]
+      ],
+      { holesOnly: true }
+    )
+    f.advance(10)
+    expect(f.video.currentTime).closeTo(150.05, 1e-9)
+    f.stop()
+  })
+
+  it('never moves a tile stopped inside what it holds, nor across more than a minute', function () {
+    const inside = fixture([[90, 130]], { holesOnly: true })
+    inside.advance(15)
+    expect(inside.video.currentTime).equals(100)
+    inside.stop()
+    const far = fixture(
+      [
+        [70, 100],
+        [161, 200]
+      ],
+      { holesOnly: true }
+    )
+    far.advance(15)
+    expect(far.video.currentTime).equals(100)
+    far.stop()
   })
 })
