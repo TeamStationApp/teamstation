@@ -5727,6 +5727,14 @@ describe('identity safety row ownership', () => {
     const calls: unknown[] = []
     let opened = false
     let coachY = mode === 'below-footer' ? 770 : 180
+    let memberY = 100
+    let pendingScroll = mode === 'moving-row'
+    const finishScroll = (): void => {
+      if (!pendingScroll) return
+      pendingScroll = false
+      coachY += 80
+      memberY += 80
+    }
     const document = new JSDOM(
       `<div data-testid="chat-info-members"><button data-testid="chat-info-member-${other}" aria-label="Safety number with Kyle Tucker, Member"><span>Kyle Tucker</span><span>Member</span></button><button data-testid="chat-info-member-${peer}" aria-label="Safety number with Kyle Tucker, Coach, Moderator"><span>Kyle Tucker</span><span>Coach</span></button></div>`,
       { runScripts: 'outside-only' }
@@ -5736,9 +5744,12 @@ describe('identity safety row ownership', () => {
     )
     for (const [index, button] of buttons.entries())
       button.getBoundingClientRect = () =>
-        new document.window.DOMRect(10, index === 0 ? 100 : coachY, 380, 60)
-    document.window.document.elementFromPoint = () =>
-      buttons[1].lastElementChild
+        new document.window.DOMRect(10, index === 0 ? memberY : coachY, 380, 60)
+    document.window.document.elementFromPoint = (x, y) =>
+      buttons.find(button => {
+        const b = button.getBoundingClientRect()
+        return x >= b.x && x < b.right && y >= b.y && y < b.bottom
+      })?.lastElementChild ?? null
     if (mode === 'ambiguous-dom')
       document.window.document
         .querySelector('[data-testid]')!
@@ -5808,8 +5819,35 @@ describe('identity safety row ownership', () => {
           calls.push(args)
           coachY = 180
         },
-        tapOnPoint: async (args: unknown) => {
+        tapOnPoint: async (args: { x: number; y: number }) => {
           calls.push(args)
+          finishScroll()
+          const hit = document.window.document.elementFromPoint(args.x, args.y)
+          expect(hit?.closest('button')?.getAttribute('data-testid')).equals(
+            'chat-info-member-' + peer,
+            'A stale coordinate must not open another member'
+          )
+          opened = true
+        },
+        tapOn: async (
+          args: { id: string },
+          options: { signal: AbortSignal }
+        ) => {
+          calls.push(args)
+          expect(options.signal).instanceof(AbortSignal)
+          finishScroll()
+          const button = buttons.find(
+            node => node.getAttribute('data-testid') === args.id
+          )
+          expect(button, 'Exact observed peer selector required').not.equals(
+            undefined
+          )
+          const b = button!.getBoundingClientRect()
+          const hit = document.window.document.elementFromPoint(
+            b.x + b.width / 2,
+            b.y + b.height / 2
+          )
+          expect(hit?.closest('button')).equals(buttons[1])
           opened = true
         }
       }
@@ -5855,7 +5893,11 @@ describe('identity safety row ownership', () => {
             userIdOfGumbo(2),
             actual.expected
           )
-          expect(actual.calls).deep.includes({ x: 200, y: 210 })
+          expect(actual.calls).deep.includes(
+            native
+              ? { x: 200, y: 210 }
+              : { id: 'chat-info-member-' + userIdOfGumbo(2) }
+          )
           expect(actual.calls).includes('identity-safety')
           expect(actual.calls).includes('Done')
           expect(actual.calls).includes('Group')
@@ -5892,12 +5934,28 @@ describe('identity safety row ownership', () => {
       actual.close()
     }
   })
-  it('scrolls the observed peer clear of the footer before its numeric tap', async () => {
+  it('scrolls the observed peer clear of the footer before its exact selector tap', async () => {
     const actual = model('below-footer')
     try {
       await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
       expect(actual.calls).deep.includes({ direction: 'DOWN' })
-      expect(actual.calls).deep.includes({ x: 200, y: 210 })
+      expect(actual.calls).deep.includes({
+        id: 'chat-info-member-' + userIdOfGumbo(2)
+      })
+    } finally {
+      actual.close()
+    }
+  })
+  it('keeps the exact browser peer when queued scrolling moves another member under the observed point', async () => {
+    const actual = model('moving-row')
+    try {
+      await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      expect(actual.calls).deep.includes({
+        id: 'chat-info-member-' + userIdOfGumbo(2)
+      })
+      expect(actual.calls).not.deep.includes({ x: 200, y: 210 })
+      expect(actual.calls).includes('identity-safety')
+      expect(actual.calls).includes('Done')
     } finally {
       actual.close()
     }

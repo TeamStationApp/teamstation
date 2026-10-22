@@ -3060,7 +3060,12 @@ export class Scenarios {
         (ui.native || target.topmost === true),
       'Exact role-qualified safety row must fully clear overlays'
     )
-    await ui.tapObserved({ bounds: target.bounds })
+    if (ui.native) await ui.tapObserved({ bounds: target.bounds })
+    else
+      await ui.device.tapOn(
+        { id: rowId },
+        { signal: AbortSignal.timeout(15000) }
+      )
     await until(
       async () => {
         const groups = (await this.ui.nodes()).filter(node =>
