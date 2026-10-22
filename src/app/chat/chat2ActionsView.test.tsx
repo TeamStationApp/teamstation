@@ -712,6 +712,82 @@ describe('chat message presentation', function () {
         null
       )
     })
+    it('keeps the selected preview on the coordinated fade when motion resolves after the entrance begins', async function () {
+      let resolveMotion: ((enabled: boolean) => void) | undefined
+      AccessibilityInfo.isReduceMotionEnabled = async (): Promise<boolean> =>
+        await new Promise<boolean>(resolve => {
+          resolveMotion = resolve
+        })
+      let closed = 0
+      const props = overlay({
+        onClosed: () => {
+          closed += 1
+        }
+      })
+      const scene = (closing = false): React.ReactElement => (
+        <ChatOverlayHost>
+          <div data-testid="history" style={{ overflow: 'scroll' }}>
+            History
+          </div>
+          <MessageActionOverlay {...props} closing={closing} />
+        </ChatOverlayHost>
+      )
+      const node = await render(scene())
+      const history = node.querySelector<HTMLElement>(
+        '[data-testid="history"]'
+      )!
+      history.scrollTop = 137
+      const preview = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-spotlight-preview"]'
+      )!
+      const panel = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-spotlight-panel"]'
+      )!
+      expect(animations.at(-1)!.config).includes({
+        duration: 80,
+        toValue: 1,
+        useNativeDriver: true
+      })
+      expect(getComputedStyle(preview).opacity).equals('0')
+      expect(preview.style.transform).equals('')
+      await act(async () => {
+        resolveMotion!(false)
+        await Promise.resolve()
+      })
+      expect(animations.at(-1)!.config).includes({
+        duration: 200,
+        toValue: 1,
+        useNativeDriver: true
+      })
+      expect(preview.style.transform).not.equals('')
+      expect(getComputedStyle(preview).opacity).equals('0')
+      await act(async () => {
+        animations.at(-1)!.value.setValue(0.5)
+      })
+      expect(getComputedStyle(preview).opacity).equals('0.5')
+      expect(getComputedStyle(panel).opacity).equals('0.5')
+      await finish()
+      expect(getComputedStyle(preview).opacity).equals('1')
+      expect(getComputedStyle(panel).opacity).equals('1')
+      await render(scene(true))
+      expect(animations.at(-1)!.config).includes({
+        duration: 200,
+        toValue: 0,
+        useNativeDriver: true
+      })
+      expect(preview.style.transform).not.equals('')
+      await act(async () => {
+        animations.at(-1)!.value.setValue(0.5)
+      })
+      expect(getComputedStyle(preview).opacity).equals('0.5')
+      expect(getComputedStyle(panel).opacity).equals('0.5')
+      expect(closed).equals(0)
+      await finish()
+      expect(getComputedStyle(preview).opacity).equals('0')
+      expect(getComputedStyle(panel).opacity).equals('0')
+      expect(closed).equals(1)
+      expect(history.scrollTop).equals(137)
+    })
     it('coordinates native-driver entrance and reverse exit without changing the background position', async function () {
       let closed = 0
       const node = await render(

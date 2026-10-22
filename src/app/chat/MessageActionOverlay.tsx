@@ -284,7 +284,7 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
               alignSelf: props.mine ? 'flex-end' : 'flex-start',
               width: Math.min(source?.width ?? layout.width, layout.width),
               height: layout.preview,
-              opacity: moving ? 1 : progress,
+              opacity: progress,
               transform: moving
                 ? [
                     {
