@@ -31,6 +31,12 @@ afterEach(async function () {
   host = undefined
 })
 
+/** A `#rrggbb` color as the DOM writes it back. */
+function hexToRgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+  return `rgb(${r}, ${g}, ${b})`
+}
+
 const TABS = [
   { id: 'past', label: 'Past' },
   { id: 'upcoming', label: 'Upcoming' },
@@ -122,6 +128,26 @@ describe('PillTabs', function () {
       rem(2.25),
       rem(tsBallpark.spaceXsRem)
     ])
+  })
+
+  it('puts a red dot before a live tab\u2019s label, and only there', async function () {
+    const container = await render(
+      <PillTabs
+        tabs={[
+          ...TABS,
+          { id: 'live', label: 'Live', role: 'button', live: true }
+        ]}
+        selected="past"
+        onSelect={() => undefined}
+      />
+    )
+    const dots = container.querySelectorAll('[data-testid="pill-live-dot"]')
+    expect(dots).length(1)
+    const live = dots[0].closest('[role="button"]')
+    expect(live?.textContent).equals('Live')
+    expect(getComputedStyle(dots[0]).backgroundColor).equals(
+      hexToRgb(tsBallpark.liveColor)
+    )
   })
 
   it('keeps its own small inset where nothing pads it', async function () {

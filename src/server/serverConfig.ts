@@ -294,6 +294,22 @@ export const asServerConfig = asObject({
     })
   ),
 
+  /**
+   * The replay's announcer: xAI's text to speech reads the sentences the
+   * server writes from a game's own plays. `apiKey` falls back to
+   * dictation's; with neither, narration is off and `/health` says so.
+   * `baseUrl` exists so a test can point it somewhere else.
+   */
+  speech: asOptional(
+    asObject({
+      apiKey: asOptional(asString),
+      baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
+      voice: asOptional(asString, 'rex'),
+      speed: asOptional(asNumber, 1.1),
+      bitRate: asOptional(asNumber, 64000)
+    })
+  ),
+
   /** Log every request. Noisy, but useful while the server is still new. */
   logRequests: asOptional(asBoolean, true),
 

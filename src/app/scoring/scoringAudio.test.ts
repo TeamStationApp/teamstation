@@ -2,7 +2,6 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { makeScoringAudio } from './scoringAudio'
-import { scoringAudio as nativeAudio } from './scoringAudio.native'
 describe('synthesized scoring sound', function () {
   it('unlocks on a gesture, bounds voices, honors mute, and cancels outstanding sources', async function () {
     let created = 0
@@ -66,10 +65,6 @@ describe('synthesized scoring sound', function () {
     audio.cue('pop')
     audio.stop()
     expect(stopped).equals(5)
-    nativeAudio.unlock()
-    nativeAudio.cue('pop')
-    nativeAudio.stop()
-    nativeAudio.setEnabled(false)
   })
   it('contains unlock and playback failures without affecting scoring', function () {
     let attempts = 0

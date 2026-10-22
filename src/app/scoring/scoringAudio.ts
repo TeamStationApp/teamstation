@@ -1,5 +1,6 @@
 import type { ScoringAudio, ScoringCue } from './scoringAudioTypes'
-/** Original synthesized effects. No external sound assets or asset licences. */
+import { cueSamples } from './scoringCueSamples'
+/** The field cues in the browser, from the shared samples. */
 export function makeScoringAudio(
   createContext: () => AudioContext = () => new AudioContext()
 ): ScoringAudio {
@@ -39,29 +40,9 @@ export function makeScoringAudio(
         if (voices.size >= 4) stop()
         let buffer = buffers.get(kind)
         if (buffer == null) {
-          const duration =
-            kind === 'swish' ? 0.22 : kind === 'pop' ? 0.11 : 0.06
-          buffer = context.createBuffer(
-            1,
-            Math.ceil(context.sampleRate * duration),
-            context.sampleRate
-          )
-          const data = buffer.getChannelData(0)
-          let seed = 1347
-          let previous = 0
-          for (let i = 0; i < data.length; i++) {
-            seed = (seed * 1664525 + 1013904223) >>> 0
-            const noise = seed / 2147483648 - 1
-            const t = i / context.sampleRate
-            previous = previous * 0.65 + noise * 0.35
-            data[i] =
-              kind === 'swish'
-                ? previous * Math.sin((Math.PI * i) / data.length) * 0.65
-                : kind === 'pop'
-                  ? (Math.sin(t * 2 * Math.PI * 135) * 0.65 + noise * 0.35) *
-                    Math.exp(-t * 65)
-                  : noise * Math.exp(-t * 130) * 0.8
-          }
+          const samples = cueSamples(kind, context.sampleRate)
+          buffer = context.createBuffer(1, samples.length, context.sampleRate)
+          buffer.getChannelData(0).set(samples)
           buffers.set(kind, buffer)
         }
         const source = context.createBufferSource()

@@ -166,6 +166,18 @@ export interface TeamsTable {
 }
 
 /**
+ * The announcer's spoken sentences, each kept once by the digest of the
+ * voice and the words (072narrationAudio).
+ */
+export interface NarrationAudioTable {
+  digest: string
+  text: string
+  voice: string
+  audio: Buffer
+  created_at: Generated<Date>
+}
+
+/**
  * Belonging to a season without being on a team in it: the same member a
  * team has, of every team in the season (056oneMemberKind).
  */
@@ -888,6 +900,7 @@ export interface Database {
   live_streams: LiveStreamsTable
   login_requests: LoginRequestsTable
   memberships: MembershipsTable
+  narration_audio: NarrationAudioTable
   season_members: SeasonMembersTable
   scope_roles: ScopeRolesTable
   scoreboard_log: ScoreboardLogTable

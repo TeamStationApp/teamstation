@@ -162,6 +162,16 @@ describe('addresses', function () {
     )
   })
 
+  it("reads and writes a game's replay", function () {
+    expect(parseRoute('/games/g1/replay')).deep.equals({
+      name: 'gameReplay',
+      gameId: 'g1'
+    })
+    expect(routePath({ name: 'gameReplay', gameId: 'g1' })).equals(
+      '/games/g1/replay'
+    )
+  })
+
   it('reads and writes a game scoreboard override dashboard', function () {
     expect(parseRoute('/games/g1/scoreboard-override')).deep.equals({
       name: 'scoreboardOverride',
@@ -274,6 +284,7 @@ describe('addresses', function () {
     const routes: Route[] = [
       { name: 'scoreGame', gameId: 'g1' },
       { name: 'coachGame', gameId: 'g1', teamId: 'tea_1' },
+      { name: 'gameReplay', gameId: 'g1' },
       { name: 'djGame', gameId: 'g1' },
       { name: 'home' },
       { name: 'videos', when: 'past' },

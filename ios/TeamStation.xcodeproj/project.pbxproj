@@ -38,6 +38,7 @@
 		DAF2400A14A8239C28D2D9AF /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */; };
 		DB8130B58995142585D450C9 /* Quicksand-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5A8D1C865B62BA762B9C3380 /* Quicksand-Medium.ttf */; };
 		C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */ = {isa = PBXBuildFile; fileRef = C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */; };
+		C0E5A0D1C0E5A0D1C0E5A002 /* RCTCueSounds.mm in Sources */ = {isa = PBXBuildFile; fileRef = C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */; };
 		E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		F3A7C1D20000000000000002 /* PhoneStream in Frameworks */ = {isa = PBXBuildFile; productRef = F3A7C1D20000000000000003 /* PhoneStream */; };
@@ -81,6 +82,7 @@
 		D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-Regular.ttf"; path = "../src/app/assets/fonts/Inter-Regular.ttf"; sourceTree = SOURCE_ROOT; };
 		E62A480C138F4F68BF682000 /* RCTHaptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTHaptics.mm; path = TeamStation/RCTHaptics.mm; sourceTree = SOURCE_ROOT; };
 		C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTCameraOrientation.mm; path = TeamStation/RCTCameraOrientation.mm; sourceTree = SOURCE_ROOT; };
+		C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTCueSounds.mm; path = TeamStation/RCTCueSounds.mm; sourceTree = SOURCE_ROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -162,6 +164,7 @@
 				12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */,
 				E62A480C138F4F68BF682000 /* RCTHaptics.mm */,
 				C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */,
+				C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */,
 				6F1B2D3E4A5C6B7A89D2E3F4 /* TSExpoModules.mm */,
 				7990DFAEBE7A9CCB1B99DE57 /* ExpoModulesProviders */,
 			);
@@ -432,6 +435,7 @@
 				E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */,
 				D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */,
 				C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */,
+				C0E5A0D1C0E5A0D1C0E5A002 /* RCTCueSounds.mm in Sources */,
 				5E0A1C2D3F4B5A6978C1D2E3 /* TSExpoModules.mm in Sources */,
 				A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */,
 				3780FF159797B70C60AA4C1F /* RCTWalkUpMusic.mm in Sources */,

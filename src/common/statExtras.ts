@@ -54,3 +54,8 @@ export function addStatCount(
 ): number | null {
   return a == null || b == null ? null : a + b
 }
+
+/** `5.2`, the way an innings-pitched column is always written. */
+export function inningsPitched(outs: number): string {
+  return `${Math.floor(outs / 3)}.${outs % 3}`
+}

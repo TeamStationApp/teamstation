@@ -41,6 +41,13 @@ import {
 import type { FieldCanvasProps } from './fieldTypes'
 import { useFieldSurface } from './useFieldSurface'
 
+/** The scoring screen's camera, which the replay frames its field with too. */
+export const SCORING_CAMERA = {
+  zoom: 1.25,
+  cameraTilt: (-11 * Math.PI) / 180,
+  cameraHeight: 33
+} as const
+
 export const PITCH_CONTROLS = [
   { kind: 'ball', label: 'Ball' },
   { kind: 'called', label: 'Called Strike' },
@@ -161,10 +168,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         {props.suspended !== true && (
           <FieldCanvas
             {...props.field}
-            zoom={1.25}
+            {...SCORING_CAMERA}
             bottomExtension={112}
-            cameraTilt={(-11 * Math.PI) / 180}
-            cameraHeight={33}
             onScoreboardBounds={setBounds}
           />
         )}

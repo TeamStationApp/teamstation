@@ -110,6 +110,12 @@ describe('migrations', function () {
   })
 
   it('refuses reverse identity migrations without changing the applied schema', async () => {
+    // Migrations added after the identity cutover reverse on their own; the
+    // cutover's are what refuse.
+    const later = migrations
+      .filter(migration => migration.name > '071deletedAccounts')
+      .map(migration => migration.name)
+    await migrateDown(pool, migrations, later.length)
     const before = (
       await pool.query('select name from schema_migrations order by name')
     ).rows
@@ -124,7 +130,7 @@ describe('migrations', function () {
       (await pool.query('select name from schema_migrations order by name'))
         .rows
     ).deep.equals(before)
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    expect((await migrateUp(pool, migrations)).applied).deep.equals(later)
   })
 })
 

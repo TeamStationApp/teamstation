@@ -15,6 +15,8 @@ export interface HealthBody {
   dictation: boolean
   /** The LLMs dictation has a key for. */
   dictationModels: string[]
+  /** Whether the replay's announcer can speak. Never the key. */
+  narration: boolean
 }
 
 /**
@@ -24,7 +26,11 @@ export interface HealthBody {
 export function healthRoutes(
   db: Kysely<Database>,
   version: string,
-  options: { dictation?: boolean; dictationModels?: readonly string[] } = {}
+  options: {
+    dictation?: boolean
+    dictationModels?: readonly string[]
+    narration?: boolean
+  } = {}
 ): Router {
   const router = Router()
 
@@ -51,7 +57,8 @@ export function healthRoutes(
         uptimeSec: Math.round(process.uptime()),
         pid: process.pid,
         dictation: options.dictation ?? false,
-        dictationModels: [...(options.dictationModels ?? [])]
+        dictationModels: [...(options.dictationModels ?? [])],
+        narration: options.narration ?? false
       }
       res.status(database === 'ok' ? 200 : 503).json(body)
     })

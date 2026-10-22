@@ -1,6 +1,7 @@
 import type { RunnerDecision, RunnerDragView } from '../scoring/runnerDrag'
 import type { PresentationSequence } from '../scoring/scoringPresentation'
 import type { ArcMode, BallArcState } from './ballArcModel'
+import type { ScreenRect } from './catcherBounds'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
 import type { NameplatePlacement } from './playerPresentation'
 import type { ScoreboardState } from './scoreboardModel'
@@ -76,6 +77,8 @@ export interface FieldCanvasProps {
     width: number
     height: number
   }) => void
+  /** Where the catcher is on screen, each time it moves by more than a point. */
+  onCatcherBounds?: (bounds: ScreenRect) => void
   onRunnerHold?: (id: string, anchor: { x: number; y: number }) => void
   onRunnerPlacement?: (
     id: string,

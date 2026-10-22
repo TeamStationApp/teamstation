@@ -156,6 +156,74 @@ describe('api client', function () {
       '/api/v1/users?view=administration&query=&nodeAdmin=true'
     ])
   })
+  it('fetches a replay step\u2019s narration with the client\u2019s session, and says where it is', async function () {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = []
+    let status = 200
+    const client = new TeamStationClient({
+      baseUrl: 'https://api.example.test/api/v1/',
+      token: 'tok',
+      fetch: async (url: unknown, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        return status === 200
+          ? new Response(new Blob(['ID3'], { type: 'audio/mpeg' }), {
+              status
+            })
+          : new Response(
+              JSON.stringify({ error: 'narrationUnavailable', message: 'No' }),
+              { status }
+            )
+      }
+    })
+    // The sentence is asked for as the step stood with that many actions.
+    const step = { key: '0-1', count: 2 }
+    expect(client.narrationSource('gam 1', step)).deep.equals({
+      uri: 'https://api.example.test/api/v1/games/gam%201/narrations/0-1?count=2',
+      headers: { authorization: 'Bearer tok' }
+    })
+    const signal = new AbortController().signal
+    const audio = await client.narrationAudio('gam 1', step, signal)
+    expect(await audio.text()).equals('ID3')
+    expect(calls[0].url).equals(
+      'https://api.example.test/api/v1/games/gam%201/narrations/0-1?count=2'
+    )
+    expect(calls[0].init?.headers).deep.equals({
+      authorization: 'Bearer tok',
+      accept: 'audio/mpeg'
+    })
+    expect(calls[0].init?.credentials).equals('include')
+    expect(calls[0].init?.signal).equals(signal)
+    expect(calls[0].init?.method).equals('GET')
+    // A phone's player fetches the audio itself: the check downloads none.
+    await client.narrationReady('gam 1', step, signal)
+    expect(calls[1].url).equals(calls[0].url)
+    expect(calls[1].init?.method).equals('HEAD')
+    expect(calls[1].init?.signal).equals(signal)
+    status = 503
+    const unavailable = await client
+      .narrationAudio('gam 1', step)
+      .catch((error: unknown) => error)
+    expect(unavailable).instanceOf(HttpError)
+    expect(
+      await client
+        .narrationReady('gam 1', step)
+        .catch((error: unknown) => error)
+    ).instanceOf(HttpError)
+    // A browser's session is its cookie: no header to add.
+    const cookie = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async () => {
+        throw new TypeError('Failed to fetch')
+      }
+    })
+    expect(
+      cookie.narrationSource('g', { key: '1-0', count: 1 }).headers
+    ).deep.equals({})
+    const offline = await cookie
+      .narrationAudio('g', { key: '1-0', count: 1 })
+      .catch((error: unknown) => error)
+    expect((offline as HttpError).code).equals('offline')
+  })
+
   it('reads account tag choices and writes escaped event assignments and removals', async () => {
     const choices = stubFetch(200, {
       recent: ['great catch'],

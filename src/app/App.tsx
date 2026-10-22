@@ -68,6 +68,7 @@ import {
   useBrowserBack
 } from './navigation/useAddressBar'
 import { passwordKdf } from './platform/passwordKdf'
+import { GameReplayScreen } from './replay/GameReplayScreen'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
 import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
@@ -155,6 +156,7 @@ type Pushed =
   | { name: 'scoreOptions'; gameId: string }
   /** Coach Game: a head coach's own team in a game, full screen. */
   | { name: 'coachGame'; gameId: string; teamId: string }
+  | { name: 'gameReplay'; gameId: string }
   /**
    * DJ Game, on a phone. The side showing is kept here, so coming back from
    * the song picker lands on the list the songkeeper left.
@@ -1965,6 +1967,9 @@ function Shell(props: AppProps): React.ReactElement {
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
+        onReplay={() => {
+          push({ name: 'gameReplay', gameId: top.gameId })
+        }}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -2019,6 +2024,21 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
+    ) : top.name === 'gameReplay' ? (
+      <GameReplayScreen
+        client={client}
+        socket={gameSocket}
+        gameId={top.gameId}
+        onExit={pop}
+        onNotReplayable={() => {
+          // The replay sits on its game's page, which it gives way to without
+          // leaving a step behind for Back to walk into.
+          const below = stack.at(-2)
+          inPlace.current = true
+          if (below?.name === 'game' && below.gameId === top.gameId) pop()
+          else replace(gameUnder(top.gameId))
+        }}
+      />
     ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
         signedIn={session != null}
@@ -2056,6 +2076,9 @@ function Shell(props: AppProps): React.ReactElement {
               }
             : undefined
         }
+        onReplay={() => {
+          push({ name: 'gameReplay', gameId: top.gameId })
+        }}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -2187,7 +2210,8 @@ function Shell(props: AppProps): React.ReactElement {
   const immersiveField =
     props.fieldPreview === true ||
     top?.name === 'scoreGame' ||
-    top?.name === 'coachGame'
+    top?.name === 'coachGame' ||
+    top?.name === 'gameReplay'
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -2301,6 +2325,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
         { name: 'scoreOptions', gameId: route.gameId }
       ]
     }
+  // A replay sits on its game, so Exit lands on the game page.
+  if (route.name === 'gameReplay')
+    return { [tab]: [gameUnder(route.gameId), route] }
   if (route.name === 'djGame') return { [tab]: [route] }
   // Over the game's Box score, where the coach's Back returns.
   if (route.name === 'coachGame')
@@ -2392,6 +2419,7 @@ function routeOf(
       top.name === 'scoreGame' ||
       top.name === 'scoreOptions' ||
       top.name === 'coachGame' ||
+      top.name === 'gameReplay' ||
       top.name === 'scoreboardOverride'
     ) {
       return top

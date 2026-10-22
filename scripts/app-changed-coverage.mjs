@@ -93,11 +93,18 @@ const check = spawnSync(
     // src/app/components/index.ts has no coverage record of its own.
     '--exclude',
     'src/app/components/index.ts',
-    // Type-only: the walk-up TurboModule's codegen spec, which only the
-    // native bundle loads (every other importer uses `import type`), and the
-    // glass's props interface. Neither has a line to run.
+    // Type-only: the walk-up and cue TurboModules' codegen specs, which only the
+    // native bundle loads (every other importer uses `import type`), the
+    // glass's props interface, the field's prop types and the narration
+    // players' shared interface. None has a line to run.
+    '--exclude',
+    'src/app/field/fieldTypes.ts',
+    '--exclude',
+    'src/app/replay/narrationPlayerTypes.ts',
     '--exclude',
     'src/app/walkup/NativeWalkUpMusic.ts',
+    '--exclude',
+    'src/app/scoring/NativeCueSounds.ts',
     '--exclude',
     'src/app/components/glassViewProps.ts',
     'src/app'

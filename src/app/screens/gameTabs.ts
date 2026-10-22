@@ -1,4 +1,5 @@
 import type { GameDetail } from '../../common/api'
+import { isReplayable } from '../../common/replay/replayTimeline'
 import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
 import {
@@ -7,12 +8,14 @@ import {
   gameSectionOrder
 } from './eventTabPolicy'
 
-export type GameTab = 'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj'
+export type GameTab =
+  'info' | 'boxScore' | 'watch' | 'replay' | 'score' | 'coach' | 'dj'
 
 export interface GameTabPill {
   id: GameTab
   label: string
   role?: 'button'
+  live?: boolean
 }
 
 export interface GameAction {
@@ -34,6 +37,8 @@ export interface GameTabsInput {
     | 'status'
     | 'scoringOwner'
     | 'videos'
+    | 'replayable'
+    | 'nonMemberView'
   > &
     EventTabState
   /** Present when this device can record and the viewer may film the game. */
@@ -42,6 +47,8 @@ export interface GameTabsInput {
   onCoachGame?: () => void
   /** Present when this platform supports the DJ screen. */
   onDjGame?: () => void
+  /** Present where the app can open the game's replay. */
+  onReplay?: () => void
   now?: number
 }
 
@@ -62,6 +69,22 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
     id,
     label: sectionLabel[id]
   }))
+  // The game in 3D, for a member, once something TeamStation scored is
+  // stored: replayed once it is over, followed live while it is scored.
+  // It follows Videos, wherever the game's sections put Info.
+  if (input.onReplay != null && isReplayable(game, game.replayable)) {
+    const pill: GameTabPill =
+      game.status === 'inProgress'
+        ? {
+            id: 'replay',
+            label: lstrings.game_live,
+            role: 'button',
+            live: true
+          }
+        : { id: 'replay', label: lstrings.game_replay, role: 'button' }
+    const videos = pills.findIndex(item => item.id === 'watch')
+    pills.splice(videos < 0 ? pills.length : videos + 1, 0, pill)
+  }
   return pills
 }
 

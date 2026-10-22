@@ -345,8 +345,3 @@ function round3(value: number): number {
 function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
-
-/** `5.2`, the way an innings-pitched column is always written. */
-export function inningsPitched(outs: number): string {
-  return `${Math.floor(outs / 3)}.${outs % 3}`
-}

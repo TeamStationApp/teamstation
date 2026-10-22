@@ -46,6 +46,7 @@ import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
 import { createOAuthProvider } from './oauth/provider'
 import { oauthInteractionRoutes } from './oauth/routes'
 import { openApiDocument } from './openapi'
+import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
 import { appLinkRoutes } from './routes/appLinks'
@@ -68,6 +69,7 @@ import { locationRoutes } from './routes/location'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
+import { narrationRoutes } from './routes/narrations'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
@@ -470,6 +472,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     healthRoutes(db, VERSION, {
+      narration: speechSettings(serverConfig) != null,
       dictation: serverConfig.dictation != null,
       dictationModels:
         serverConfig.dictation == null ? [] : modelsOf(serverConfig.dictation)
@@ -556,6 +559,7 @@ function runWorker(): void {
     '/api/v1',
     lineupRoutes(db, { onGameWritten: scoreboard.onGameWritten })
   )
+  app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
   app.use('/api/v1', statsRoutes(db, mediaContext))

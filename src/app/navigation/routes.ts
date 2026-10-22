@@ -97,6 +97,8 @@ export type Route =
    * lineup and defence, which he saves for it.
    */
   | { name: 'coachGame'; gameId: string; teamId: string }
+  /** The game replayed in 3D, or followed live while it is scored. */
+  | { name: 'gameReplay'; gameId: string }
   /**
    * DJ Game: both teams' batters and their walk-up songs, on a phone. The
    * web has no music to play, and shows the game instead.
@@ -455,6 +457,7 @@ export function parseRoute(path: string, search = ''): Route {
       if (parts[2] === 'settings')
         return { name: 'gameSettings', gameId: decodeURIComponent(id) }
       if (parts[2] === 'score') return { name: 'scoreGame', gameId: id }
+      if (parts[2] === 'replay') return { name: 'gameReplay', gameId: id }
       if (parts[2] === 'dj') return { name: 'djGame', gameId: id }
       if (parts[2] === 'coach' && parts[3] != null)
         return { name: 'coachGame', gameId: id, teamId: parts[3] }
@@ -590,6 +593,8 @@ export function routePath(route: Route): string {
       return `/games/${route.gameId}/score`
     case 'scoreOptions':
       return `/games/${route.gameId}/score-game`
+    case 'gameReplay':
+      return `/games/${route.gameId}/replay`
     case 'djGame':
       return `/games/${route.gameId}/dj`
     case 'coachGame':
