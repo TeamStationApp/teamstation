@@ -1,17 +1,19 @@
 import Module from 'node:module'
 
 import { expect } from 'chai'
-import { IDBFactory } from 'fake-indexeddb'
+import { IDBDatabase as FixtureDatabase, IDBFactory } from 'fake-indexeddb'
 import { before, describe, it } from 'mocha'
 
 import { newDeviceKeys } from '../../common/chatCrypto/keys'
 import { userIdOfGumbo } from '../../common/userId'
+import legacy from '../../test/legacyChatKeyRecord.json'
 import { newRecord, recordToJson } from '../chat/keyRecord'
 import { KEY_DATABASE, webKeyStore } from '../chat/keyStore'
 import type { KeychainModule } from '../chat/keyStore.native'
 import {
   openIdentityProbeStorage,
-  PROBE_DATABASE
+  PROBE_DATABASE,
+  probeIdentityStorage
 } from './chatIdentityStoreProbe'
 import type * as NativeProbe from './chatIdentityStoreProbe.native'
 import { runIdentityStoreProbe } from './chatIdentityStoreProbeRun'
@@ -29,6 +31,100 @@ async function rejected(
 }
 
 describe('isolated browser identity storage diagnostic', () => {
+  it('runs the public entry against the platform factory and cleans before reporting success', async () => {
+    const held = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB')
+    const factory = new IDBFactory()
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: factory
+    })
+    try {
+      const result = await probeIdentityStorage(signal())
+      expect(result.legacyRead).equals(true)
+      expect(result.malformedBlocked).equals(true)
+      expect(result.cleanup).equals(true)
+      expect(await factory.databases()).deep.equals([])
+    } finally {
+      if (held == null) Reflect.deleteProperty(globalThis, 'indexedDB')
+      else Object.defineProperty(globalThis, 'indexedDB', held)
+    }
+  })
+
+  it('maps existence checks to only its own actual database and record', async () => {
+    const factory = new IDBFactory()
+    const storage = await openIdentityProbeStorage({ indexedDB: factory })
+    try {
+      expect(await storage.store.exists()).equals(false)
+      await storage.install(JSON.stringify(legacy))
+      expect(await storage.store.exists()).equals(true)
+      expect((await factory.databases()).map(row => row.name)).deep.equals([
+        PROBE_DATABASE
+      ])
+    } finally {
+      await storage.cleanup()
+    }
+  })
+
+  it('reports an aborted real install transaction and still cleans the allocated database', async () => {
+    const factory = new IDBFactory()
+    const transaction = Object.getOwnPropertyDescriptor(
+      FixtureDatabase.prototype,
+      'transaction'
+    )!
+    FixtureDatabase.prototype.transaction = function (names, mode, options) {
+      const opened = (transaction.value as IDBDatabase['transaction']).call(
+        this,
+        names,
+        mode,
+        options
+      )
+      if (mode === 'readwrite')
+        queueMicrotask(() => {
+          opened.abort()
+        })
+      return opened
+    }
+    try {
+      await rejected(
+        runIdentityStoreProbe(
+          async () => await openIdentityProbeStorage({ indexedDB: factory }),
+          signal()
+        ),
+        'Compatibility write failed'
+      )
+      expect(await factory.databases()).deep.equals([])
+    } finally {
+      Object.defineProperty(
+        FixtureDatabase.prototype,
+        'transaction',
+        transaction
+      )
+    }
+  })
+
+  it('keeps a blocked cleanup visible until another connection releases the owned database', async () => {
+    const factory = new IDBFactory()
+    const storage = await openIdentityProbeStorage({ indexedDB: factory })
+    const request = factory.open(PROBE_DATABASE)
+    const held = await new Promise<IDBDatabase>(resolve => {
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+    })
+    try {
+      await rejected(storage.cleanup(), 'Compatibility cleanup failed')
+      expect((await factory.databases()).map(row => row.name)).deep.equals([
+        PROBE_DATABASE
+      ])
+    } finally {
+      held.close()
+    }
+    const deadline = Date.now() + 1000
+    while ((await factory.databases()).length > 0 && Date.now() < deadline)
+      await new Promise(resolve => setTimeout(resolve, 5))
+    expect(await factory.databases()).deep.equals([])
+  })
+
   it('uses real IndexedDB transactions and crypto while preserving the normal store', async () => {
     const factory = new IDBFactory()
     const normal = webKeyStore({ indexedDB: factory })
@@ -193,14 +289,55 @@ function keychainFixture(): KeychainFixture {
 
 describe('isolated native identity storage diagnostic', () => {
   let native: typeof NativeProbe
+  let platform: KeychainFixture
   before(async () => {
     const path = require.resolve('react-native-keychain')
     const stand = new Module(path)
     stand.filename = path
     stand.loaded = true
-    stand.exports = keychainFixture().module
+    platform = keychainFixture()
+    stand.exports = platform.module
     require.cache[path] = stand
     native = await import('./chatIdentityStoreProbe.native')
+  })
+
+  it('runs the public entry with the platform module and reports only after cleanup', async () => {
+    platform.rows.set('app.teamstation.chat', {
+      username: 'chat',
+      password: 'protected'
+    })
+    const result = await native.probeIdentityStorage(signal())
+    expect(result.legacyRead).equals(true)
+    expect(result.malformedBlocked).equals(true)
+    expect(result.cleanup).equals(true)
+    expect([...platform.rows]).deep.equals([
+      ['app.teamstation.chat', { username: 'chat', password: 'protected' }]
+    ])
+    expect(
+      platform.calls.every(call => call.endsWith(native.PROBE_SERVICE))
+    ).equals(true)
+  })
+
+  it('reports a refused install and keeps the allocated item available for cleanup', async () => {
+    const fixture = keychainFixture()
+    const storage = await native.openIdentityProbeStorage(fixture.module)
+    try {
+      expect(await storage.store.exists()).equals(true)
+      fixture.control.refuseWrite = true
+      await rejected(
+        storage.install(JSON.stringify(legacy)),
+        'Compatibility storage unavailable'
+      )
+      expect(fixture.rows.get(native.PROBE_SERVICE)?.password).equals(
+        'allocated'
+      )
+      expect(
+        fixture.calls.every(call => call.endsWith(native.PROBE_SERVICE))
+      ).equals(true)
+    } finally {
+      await storage.cleanup()
+    }
+    expect(fixture.rows.size).equals(0)
   })
 
   it('uses the production native adapter solely under its synthetic service', async () => {

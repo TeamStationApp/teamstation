@@ -97,6 +97,7 @@ function settingsClient(
   answer?: (settings: PlayerSettings) => RosterEntry | Error
 ): TeamStationClient {
   return {
+    guardians: async () => [],
     roster: async () => {
       if (roster instanceof Error) throw roster
       return roster

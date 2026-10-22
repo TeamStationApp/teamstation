@@ -293,7 +293,11 @@ describe('reported chat messages in the app', function () {
       const path = url.split('?')[0].replace(/^.*\/api\/v1/, '')
       asked.push(`${init?.method ?? 'GET'} ${path}`)
       if (path === '/auth/me') {
-        return Response.json({ id: 9, displayName: 'Zed Z', isAdmin })
+        return Response.json({
+          id: userIdOfGumbo(9),
+          displayName: 'Zed Z',
+          isAdmin
+        })
       }
       if (path === '/me/roles') return Response.json({ teams: {} })
       if (path === '/admin/chat/reports') {

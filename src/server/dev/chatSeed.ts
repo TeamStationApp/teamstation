@@ -447,6 +447,8 @@ async function upsertSeason(trx: Trx, leagueId: string): Promise<string> {
     league_id: leagueId,
     name: 'Spring 2027',
     year: 2027,
+    starts_on: '2027-03-01',
+    ends_on: '2027-05-31',
     term: 'Spring'
   }
   if (held != null) {
