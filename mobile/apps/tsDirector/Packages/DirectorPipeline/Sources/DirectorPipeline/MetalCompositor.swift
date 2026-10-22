@@ -120,15 +120,28 @@ public final class MetalCompositor: @unchecked Sendable {
     lock.unlock()
   }
 
-  /// Composites one NV12 program frame plus the cached overlay. Returns a BGRA buffer.
-  public func compose(program: CVPixelBuffer) -> CVPixelBuffer? {
+  /// Composites one NV12 programme picture plus the cached overlays into a BGRA buffer, without
+  /// waiting for the GPU.
+  ///
+  /// Returns `false`, and never calls `completion`, when the picture cannot be composed: no IOSurface
+  /// behind it, a packed buffer where planes were wanted, the output pool dry. Otherwise it commits
+  /// the work and returns `true`, and `completion` runs once on Metal's completion thread with the
+  /// composed picture, or nil if the GPU failed it.
+  ///
+  /// It used to wait for the GPU here, on the thread that called it, which was the drain thread of
+  /// the camera on air: a slow frame on the GPU was a frame that camera lost.
+  @discardableResult
+  public func compose(
+    program: CVPixelBuffer,
+    completion: @escaping @Sendable (CVPixelBuffer?) -> Void
+  ) -> Bool {
     guard
       let luma = makeTexture(from: program, plane: 0, format: .r8Unorm),
       let chroma = makeTexture(from: program, plane: 1, format: .rg8Unorm),
       let destination = outputPool.makeBuffer(),
       let target = makeTexture(from: destination, plane: 0, format: .bgra8Unorm),
       let commandBuffer = commandQueue.makeCommandBuffer()
-    else { return nil }
+    else { return false }
 
     let passDescriptor = MTLRenderPassDescriptor()
     passDescriptor.colorAttachments[0].texture = target
@@ -137,7 +150,7 @@ public final class MetalCompositor: @unchecked Sendable {
     passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
     guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
-      return nil
+      return false
     }
     encoder.setRenderPipelineState(pipelineYUV)
     encoder.setFragmentTexture(luma, index: 0)
@@ -156,13 +169,25 @@ public final class MetalCompositor: @unchecked Sendable {
     }
     encoder.endEncoding()
 
+    commandBuffer.addCompletedHandler { [weak self] buffer in
+      // Holds the source picture until the GPU has read it: released earlier, its pool could hand
+      // it back to the decoder while the GPU was still sampling it.
+      withExtendedLifetime(program) {}
+      guard buffer.status == .completed else {
+        completion(nil)
+        return
+      }
+      self?.countComposed()
+      completion(destination)
+    }
     commandBuffer.commit()
-    commandBuffer.waitUntilCompleted()
+    return true
+  }
 
+  private func countComposed() {
     lock.lock()
     composedFrames += 1
     lock.unlock()
-    return destination
   }
 
   /// The overlay quad in clip space: `(minX, minY, maxX, maxY)`, with y running upwards.

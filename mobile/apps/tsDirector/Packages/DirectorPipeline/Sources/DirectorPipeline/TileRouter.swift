@@ -641,6 +641,10 @@ public final class TileRouter: @unchecked Sendable {
   private let lock = NSLock()
   private var pipelines: [Int: SourcePipeline] = [:]
   private var programSource: Int?
+  /// The camera on air and how many times the camera on air has changed, so a picture handed over
+  /// before a cut away and back is told apart from one handed over since.
+  private var programSourceID: SourceID?
+  private var programGeneration: UInt64 = 0
   /// Cameras whose PCM is summed into the programme mix. Every live pipeline still taps audio so
   /// the waveform can draw when AUDIO is off.
   private var mixContributorIDs: Set<SourceID> = []
@@ -681,6 +685,24 @@ public final class TileRouter: @unchecked Sendable {
   private var streamedCapture = ProgrammeHeldPictureWall()
   /// Programme pictures left out because the compositor could not make one.
   private var composeMisses: UInt64 = 0
+  /// Composes the camera on air's pictures on a queue of its own; see `ProgrammeComposer`.
+  private let composer: ProgrammeComposer
+  /// How the composer reaches the router, which does not exist yet when the composer is made.
+  private let composerLink: ComposerLink
+  private var deliveryObserver: ((SourceID, CVPixelBuffer) -> Void)?
+  /// Each programme picture as it is delivered, with the camera it came from. For tests.
+  var onProgrammeDelivered: ((SourceID, CVPixelBuffer) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return deliveryObserver
+    }
+    set {
+      lock.lock()
+      deliveryObserver = newValue
+      lock.unlock()
+    }
+  }
 
   public init(
     telemetry: PipelineTelemetry,
@@ -696,6 +718,25 @@ public final class TileRouter: @unchecked Sendable {
     self.compositor = compositor
     self.programEncoder = programEncoder
     self.programStreamer = programStreamer
+    let compose: ProgrammeComposer.Compose
+    if let compositor {
+      compose = { buffer, completion in compositor.compose(program: buffer, completion: completion) }
+    } else {
+      // Nothing to burn in: the picture is the programme's as it is, still handed over off the drain.
+      compose = { buffer, completion in
+        completion(buffer)
+        return true
+      }
+    }
+    let link = ComposerLink()
+    composerLink = link
+    composer = ProgrammeComposer(
+      compose: compose,
+      isOnAir: { link.router?.isCurrentProgramme($0) ?? false },
+      isStillDue: { link.router?.isStillDue($0, deliveredIn: $1) ?? true },
+      deliver: { link.router?.deliverProgramme($0, composed: $1) },
+      onMiss: { link.router?.countComposeMiss() }
+    )
     let audioPlayer = ProgramAudioPlayer()
     self.audioPlayer = audioPlayer
     let timelines = SourceSoundTimelines(clock: clock)
@@ -717,6 +758,7 @@ public final class TileRouter: @unchecked Sendable {
       programEncoder.append(audio: frame)
     }
     restartProgrammeClock()
+    link.router = self
   }
 
   deinit {
@@ -901,6 +943,8 @@ public final class TileRouter: @unchecked Sendable {
     let existing = Array(pipelines.values)
     pipelines.removeAll()
     programSource = nil
+    programSourceID = nil
+    programGeneration &+= 1
     lock.unlock()
     for pipeline in existing {
       waveformMonitor.remove(source: pipeline.sourceID)
@@ -979,6 +1023,17 @@ public final class TileRouter: @unchecked Sendable {
     let previous = programSource
     programSource = sourceIndex
     let all = pipelines
+    // A new camera on air, not the same one moved to another slot.
+    let onAir = sourceIndex.flatMap { pipelines[$0] }?.sourceID
+    if onAir != programSourceID {
+      programSourceID = onAir
+      programGeneration &+= 1
+    }
+    let generation = programGeneration
+    // The old camera's pictures still waiting for their moment are not wanted after a cut. Cleared
+    // with the generation bump, before the new camera's sink exists, so its first picture cannot be
+    // cleared with them; the generation keeps any later picture of the old camera out.
+    if previous != sourceIndex { programPictures.removeQueued() }
     lock.unlock()
 
     // Audio is no longer tied to whichever tile is on program — it comes from every source the
@@ -988,8 +1043,17 @@ public final class TileRouter: @unchecked Sendable {
         pipeline.onProgramDiscontinuity = { [weak self] in
           self?.programStreamer.requestKeyframe()
         }
+        let sourceID = pipeline.sourceID
+        // Only hands the picture over: the camera's drain must not wait for the programme.
         pipeline.setProgramSink { [weak self] buffer, time, capture, dueHost in
-          self?.composeAndEncode(buffer, presentationTime: time, captureWall: capture, dueHost: dueHost)
+          self?.composer.submit(ProgrammeComposer.Job(
+            buffer: buffer,
+            presentationTime: time,
+            captureWall: capture,
+            dueHost: dueHost,
+            sourceID: sourceID,
+            generation: generation
+          ))
         }
       } else {
         pipeline.onProgramDiscontinuity = nil
@@ -997,10 +1061,6 @@ public final class TileRouter: @unchecked Sendable {
       }
     }
     if previous != sourceIndex {
-      // The old camera's pictures still waiting for their moment are not wanted after a cut.
-      lock.lock()
-      programPictures.removeQueued()
-      lock.unlock()
       programStreamer.requestKeyframe()
     }
     telemetry.mutate { snapshot in
@@ -1075,6 +1135,26 @@ public final class TileRouter: @unchecked Sendable {
     return composeMisses
   }
 
+  /// Programme pictures dropped because the compositor was behind, and how long a picture takes from
+  /// the camera handing it over to its delivery: the worst over the last second or so, and the
+  /// running average, in ms.
+  public func programmeComposerStatistics() -> (dropped: UInt64, millisecondsMax: Double, millisecondsAverage: Double) {
+    composer.statistics()
+  }
+
+  /// An artificial delay on every programme compose, for showing on a device that a slow compositor
+  /// costs the programme pictures rather than the camera on air. Zero outside tests.
+  public func setProgrammeComposeDelay(milliseconds: Double) {
+    composer.setComposeDelay(milliseconds: milliseconds)
+  }
+
+  public var programmeComposeDelayMilliseconds: Double { composer.composeDelayMilliseconds }
+
+  /// Waits until every picture handed to the composer has been delivered or dropped. For tests.
+  func waitUntilProgrammeIdle(timeout: TimeInterval = 5) -> Bool {
+    composer.waitUntilIdle(timeout: timeout)
+  }
+
   /// The live sound delay for a display latency cap: the cap itself when it is on, 1 s when it
   /// is off, and never under 100 ms or over 2 s, the delay line's own ceiling.
   public static func liveSoundDelaySeconds(capEnabled: Bool, capMilliseconds: Double) -> Double {
@@ -1146,7 +1226,39 @@ public final class TileRouter: @unchecked Sendable {
     waveformMonitor.append(source: frame.sourceID, sampleBuffer: frame.sampleBuffer)
   }
 
-  /// Composites a programme picture as it arrives, shows it on the preview tile, and leaves it for
+  /// Whether `job` was handed over by the camera on air since it last went on air. A picture from a
+  /// camera that has been cut away from is not composed, and one already composed is not shown.
+  private func isCurrentProgramme(_ job: ProgrammeComposer.Job) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return isCurrentProgrammeLocked(job)
+  }
+
+  /// Whether `job`, delivered `seconds` from now, still makes its moment on the programme: its
+  /// capture time plus the live delay D, which the programme's queue holds to within one tick
+  /// (`ProgrammePictureQueue`). A replay's picture is paced by its own due time and is always worth
+  /// composing.
+  private func isStillDue(_ job: ProgrammeComposer.Job, deliveredIn seconds: Double) -> Bool {
+    guard let capture = job.captureWall?.seconds else { return true }
+    lock.lock()
+    let delay = programPictures.delaySeconds
+    let period = 1 / Double(max(1, programmeClock.rate))
+    lock.unlock()
+    return capture + delay + period > clock.now.seconds + seconds
+  }
+
+  /// `isCurrentProgramme` with `lock` already held.
+  private func isCurrentProgrammeLocked(_ job: ProgrammeComposer.Job) -> Bool {
+    job.generation == programGeneration && programSource.flatMap { pipelines[$0] }?.sourceID == job.sourceID
+  }
+
+  private func countComposeMiss() {
+    lock.lock()
+    composeMisses &+= 1
+    lock.unlock()
+  }
+
+  /// A composed programme picture, on the composer's queue: shown on the preview tile and left for
   /// the programme clock to encode.
   ///
   /// The compositing happens whether or not anything is recording, which is the point of the
@@ -1154,38 +1266,38 @@ public final class TileRouter: @unchecked Sendable {
   /// committing it to a file, not discover afterwards that it was mispositioned. The recording and
   /// the stream take their frames on the programme clock instead of here, so a camera's delivery —
   /// bursts, stalls, a frozen feed — never sets their timing.
-  private func composeAndEncode(
-    _ pixelBuffer: CVPixelBuffer,
-    presentationTime: CMTime,
-    captureWall: WallClock? = nil,
-    dueHost: Double? = nil
-  ) {
-    // With a compositor, only a composed picture goes on air: one without its overlays, from a
-    // compositor that could not make a picture just then, flickers the overlay off. The last
-    // composed picture repeats instead, which no one sees.
-    let composed: CVPixelBuffer
-    if let compositor {
-      guard let made = compositor.compose(program: pixelBuffer) else {
-        lock.lock()
-        composeMisses &+= 1
-        lock.unlock()
-        return
-      }
-      composed = made
-    } else {
-      composed = pixelBuffer
-    }
-    programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
+  ///
+  /// With a compositor, only a composed picture goes on air: one without its overlays flickers the
+  /// overlay off, so a picture the compositor could not make is left out and the last repeats.
+  ///
+  /// Checked against the camera on air and its cut generation under the same lock as the cut, so a
+  /// picture of a camera cut away from that was already composing never reaches the programme's
+  /// queue after the cut cleared it, even after a cut away and back. The preview tile is enqueued
+  /// after the lock: a cut landing in that gap can leave that one picture on the preview until the
+  /// new camera's first replaces it a frame later. Nothing records the preview.
+  private func deliverProgramme(_ job: ProgrammeComposer.Job, composed: CVPixelBuffer) {
     // A replay picture's moment, moved from the host clock onto the wall clock the tick runs on.
-    let due = dueHost.map { clock.now.seconds - (CMClockGetTime(CMClockGetHostTimeClock()).seconds - $0) }
+    let due = job.dueHost.map { clock.now.seconds - (CMClockGetTime(CMClockGetHostTimeClock()).seconds - $0) }
     lock.lock()
+    guard isCurrentProgrammeLocked(job) else {
+      lock.unlock()
+      return
+    }
     programPictures.add(
-      ProgramPicture(buffer: composed, captureWall: captureWall),
-      capture: captureWall?.seconds,
+      ProgramPicture(buffer: composed, captureWall: job.captureWall),
+      capture: job.captureWall?.seconds,
       due: due
     )
+    let observer = deliveryObserver
     lock.unlock()
+    programRenderer.enqueue(pixelBuffer: composed, presentationTime: job.presentationTime)
+    observer?(job.sourceID, composed)
   }
+}
+
+/// A weak way back from the programme composer to the router that owns it.
+private final class ComposerLink: @unchecked Sendable {
+  weak var router: TileRouter?
 }
 
 /// One camera's sound as `TileRouter.soundStatus` reports it.
