@@ -107,7 +107,8 @@
     "test.playerNative": "node scripts/build-player-native-tests.mjs",
     "coverage.umpires": "node scripts/umpire-coverage.mjs",
     "coverage.umpires.server": "node scripts/umpire-server-coverage.mjs",
-    "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs"
+    "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs",
+    "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",

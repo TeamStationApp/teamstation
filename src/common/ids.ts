@@ -36,6 +36,9 @@ export const idPrefixes = {
   user: 'usr',
   userEmail: 'uem',
   userLink: 'lnk',
+  venue: 'ven',
+  venueClaim: 'vcl',
+  venueField: 'fld',
   video: 'vid'
 } as const
 
