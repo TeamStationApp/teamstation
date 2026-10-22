@@ -3947,7 +3947,7 @@ export class Chat2UI {
             )
             assert(
               rawEmpty(node) ||
-                (node.index < 0 &&
+                (node.value == null &&
                   sentinel != null &&
                   typeof node.label === 'string' &&
                   node.text === node.label &&

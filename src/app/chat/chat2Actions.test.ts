@@ -1950,7 +1950,8 @@ describe('chat native adapter compatibility', function () {
   function editable(
     mode = 'capped',
     initial = 'B',
-    attached = false
+    attached = false,
+    complete = false
   ): {
     actual: Chat2UI
     calls: string[]
@@ -1966,7 +1967,7 @@ describe('chat native adapter compatibility', function () {
     let sentinelTyped = false
     let choosing = false
     const emptyName = (): string =>
-      mode === 'dynamic-empty-name' || mode === 'raw-empty-name'
+      mode === 'dynamic-empty-name' || mode === 'raw-empty-name' || complete
         ? 'Message Message'
         : mode === 'unrelated-empty-name'
           ? 'Another field'
@@ -2028,6 +2029,7 @@ describe('chat native adapter compatibility', function () {
           })
         )
       if (
+        complete ||
         mode === 'raw' ||
         mode === 'raw-empty-name' ||
         (mode === 'literal-placeholder-after' &&
@@ -2037,8 +2039,14 @@ describe('chat native adapter compatibility', function () {
         nodes.push(
           node(2, 'TextView', {
             identifier: 'chat-composer',
-            label: value === '' ? emptyName() : 'Message',
-            placeholderValue: 'Message',
+            label:
+              value === '' ||
+              (mode === 'retained-aggregated-placeholder' &&
+                value === 'Message Message')
+                ? emptyName()
+                : 'Message',
+            ...(complete ? {} : { placeholderValue: 'Message' }),
+            rect: field().bounds,
             value: value.trim() !== '' ? value.trim() : undefined
           })
         )
@@ -2135,6 +2143,8 @@ describe('chat native adapter compatibility', function () {
         if (sentinelTyped && mode === 'retained-sentinel-name') value = '777'
         else if (sentinelTyped && mode === 'literal-placeholder-after')
           value = 'Message'
+        else if (sentinelTyped && mode === 'retained-aggregated-placeholder')
+          value = 'Message Message'
         else if (!['retained-text', 'retained-placeholder'].includes(mode))
           value = selected ? '' : value.slice(0, -1)
         selected = false
@@ -2148,7 +2158,10 @@ describe('chat native adapter compatibility', function () {
       calls.push('type:' + String(args.text))
       value += String(args.text)
       if (mode.startsWith('mention-') && value === '@') choosing = true
-      if (args.text === '7777') sentinelTyped = true
+      if (args.text === '7777') {
+        sentinelTyped = true
+        if (mode === 'stale-sentinel') value = '777'
+      }
     }
     actual.device.screenshot = async () => captureImages[0]
     actual.device.eraseText = async () => {
@@ -2191,6 +2204,92 @@ describe('chat native adapter compatibility', function () {
     })
     expect(model.value()).equals('')
     expect(proof.outcome).equals('passed')
+  })
+  it('proves a complete raw empty editor with omitted value and placeholder only after the exact disjoint sentinel is deleted', async () => {
+    const model = editable('dynamic-empty-name', '', false, true)
+    await model.actual.replaceDraft('')
+    const proof = model.actual.steps.find(
+      step => step.name === 'Observed iOS editor replacement'
+    )!
+    expect(proof.before).deep.includes({
+      index: 2,
+      label: 'Message Message',
+      value: undefined,
+      placeholderValue: undefined
+    })
+    expect(proof.sentinel).deep.includes({
+      index: 2,
+      label: 'Message',
+      value: '7777',
+      text: '7777'
+    })
+    expect(proof.after).deep.includes({
+      index: 2,
+      label: 'Message Message',
+      value: undefined,
+      text: 'Message Message'
+    })
+    expect(proof.revalidated).deep.equals(proof.after)
+    expect(proof.allowedEmptyLabels).deep.equals(['Message', 'Message Message'])
+    expect((proof.actionReads as unknown[]).length).greaterThan(0)
+    expect(proof.send).deep.includes({ enabled: false })
+    expect(proof.outcome).equals('passed')
+    expect(model.value()).equals('')
+    expect(model.calls.filter(call => call === 'type:7777')).has.length(1)
+    expect(model.calls.filter(call => call === 'point:270,470')).has.length(2)
+    expect(model.calls).not.includes('erase-ACK')
+  })
+  for (const mode of [
+    'retained-aggregated-placeholder',
+    'retained-sentinel-name',
+    'stale-sentinel',
+    'moved-editor',
+    'missing-delete'
+  ])
+    it('rejects complete raw empty-editor proof with ' + mode, async () => {
+      const model = editable(mode, '', false, true)
+      const failure = await captureFailure(model.actual.replaceDraft(''))
+      const proof = model.actual.steps.find(
+        step => step.name === 'Observed iOS editor replacement'
+      )!
+      expect(proof.outcome).equals('failed')
+      if (mode === 'retained-aggregated-placeholder') {
+        expect(proof.afterCandidate).deep.includes({
+          index: 2,
+          label: 'Message Message',
+          value: 'Message Message',
+          text: 'Message Message'
+        })
+        expect(String(failure)).includes(
+          'Fresh editor must expose empty placeholder'
+        )
+      }
+      if (mode === 'retained-sentinel-name')
+        expect(proof.afterCandidate).deep.includes({ value: '777' })
+      if (mode === 'stale-sentinel')
+        expect(String(failure)).includes('Fresh exact sentinel')
+      if (mode === 'moved-editor')
+        expect(String(failure)).includes('Same editor geometry')
+      if (mode === 'missing-delete')
+        expect(String(failure)).includes('Observed Delete key')
+    })
+  it('keeps exact known nonempty replacement strict for complete raw snapshots', async () => {
+    const model = editable('dynamic-empty-name', '', false, true)
+    await model.actual.replaceDraft('Fresh\nsecond line')
+    expect(model.value()).equals('Fresh\nsecond line')
+    expect(model.calls).not.includes('type:7777')
+    const ambiguous = editable(
+      'retained-aggregated-placeholder',
+      '',
+      false,
+      true
+    )
+    await captureFailure(ambiguous.actual.replaceDraft('Message Message'))
+    expect(
+      ambiguous.actual.steps.find(
+        step => step.name === 'Observed iOS editor replacement'
+      )?.outcome
+    ).equals('failed')
   })
   it('uses the raw placeholder as the base for an already aggregated empty name', async () => {
     const model = editable('raw-empty-name', '')
