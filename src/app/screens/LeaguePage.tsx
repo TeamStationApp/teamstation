@@ -21,7 +21,12 @@ import {
 import { ActionList } from '../components/ActionRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { StickySectionLayout } from '../components/StickySectionLayout'
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  cacheStyles,
+  ScopedThemeProvider,
+  type Theme,
+  useTheme
+} from '../theme/ThemeContext'
 import { GroupRelationshipRow } from './GroupRelationshipRow'
 import type { GroupLinkChoice } from './GroupScreen'
 import { LevelPeopleTab } from './LevelPeopleTab'
@@ -63,6 +68,14 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
   const { client, detail, onOpen, onCreate, onLink, initialTab, onTab } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  // Some themes use a light card surface with light canvas text.
+  const teamListTheme = useMemo(
+    () =>
+      theme.primaryTextColor === theme.cardBackgroundColor
+        ? { ...theme, primaryTextColor: theme.secondaryTextColor }
+        : theme,
+    [theme]
+  )
   const { group } = detail
   const league: GroupRef = { kind: 'league', id: group.id }
   const tabs = [
@@ -282,45 +295,47 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               <Text style={styles.muted}>No teams in this league yet.</Text>
             </Card>
           )}
-          <ActionList>
-            {teams.map(team => (
-              <GroupRelationshipRow
-                key={team.id}
-                group={team}
-                detail={[
-                  team.external ? 'Placeholder team' : undefined,
-                  team.locality == null
-                    ? undefined
-                    : localityLabel(team.locality)
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-                onOpen={() => {
-                  onOpen({ kind: 'team', id: team.id })
-                }}
-                links={(
-                  detail.teamSeasons.find(row => row.teamId === team.id)
-                    ?.seasonIds ?? []
-                )
-                  .filter(id => seasonNames.has(id))
-                  .map(id => ({
-                    label: seasonNames.get(id)!,
-                    onPress: () => {
-                      onOpen({ kind: 'season', id })
-                    }
-                  }))}
-                label={`Leave ${team.name} from ${group.name}`}
-                disabled={breaker.busy}
-                onLeave={
-                  !detail.canManage || !childTeamIds.has(team.id)
-                    ? undefined
-                    : () => {
-                        breaker.review({ kind: 'team', id: team.id }, league)
+          <ScopedThemeProvider theme={teamListTheme}>
+            <ActionList bounded={teams.length > 0} testID="league-teams-card">
+              {teams.map(team => (
+                <GroupRelationshipRow
+                  key={team.id}
+                  group={team}
+                  detail={[
+                    team.external ? 'Placeholder team' : undefined,
+                    team.locality == null
+                      ? undefined
+                      : localityLabel(team.locality)
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  onOpen={() => {
+                    onOpen({ kind: 'team', id: team.id })
+                  }}
+                  links={(
+                    detail.teamSeasons.find(row => row.teamId === team.id)
+                      ?.seasonIds ?? []
+                  )
+                    .filter(id => seasonNames.has(id))
+                    .map(id => ({
+                      label: seasonNames.get(id)!,
+                      onPress: () => {
+                        onOpen({ kind: 'season', id })
                       }
-                }
-              />
-            ))}
-          </ActionList>
+                    }))}
+                  label={`Leave ${team.name} from ${group.name}`}
+                  disabled={breaker.busy}
+                  onLeave={
+                    !detail.canManage || !childTeamIds.has(team.id)
+                      ? undefined
+                      : () => {
+                          breaker.review({ kind: 'team', id: team.id }, league)
+                        }
+                  }
+                />
+              ))}
+            </ActionList>
+          </ScopedThemeProvider>
         </View>
       )}
       {tab === 'people' && detail.canSeePeople === true && (
