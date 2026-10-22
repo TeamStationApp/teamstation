@@ -7,7 +7,8 @@ const {
   istanbulCounts,
   jacocoCounts,
   lineReportFromCounts,
-  resolveSpecs
+  resolveSpecs,
+  withoutTypeOnlyLines
 } = require('./changed-line-coverage.cjs')
 
 // The changed-line coverage gate every milestone runs:
@@ -148,6 +149,18 @@ function countsFor(args, topLevel, paths, cwd) {
       const entry = raw[join(topLevel, path)] ?? raw[path]
       if (entry != null) counts[path] = entry
     }
+  }
+  for (const [path, lines] of Object.entries(counts)) {
+    if (!/\.[cm]?tsx?$/.test(path)) continue
+    let source
+    try {
+      source = readFileSync(join(topLevel, path), 'utf8')
+    } catch (error) {
+      // An unavailable source cannot justify excluding any measured line.
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    counts[path] = withoutTypeOnlyLines(path, source, lines)
   }
   return counts
 }
