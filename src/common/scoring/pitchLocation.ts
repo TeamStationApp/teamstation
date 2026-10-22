@@ -1,6 +1,7 @@
 import { asBoolean, asNumber, asObject, asOptional } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
+import { asPitchType, PITCH_TYPE_NAMES } from './pitchType'
 import type { BatSide } from './state'
 
 /**
@@ -48,12 +49,14 @@ export function pitchZone(
 /**
  * The fields a pitch — one the batter hit, or one he did not — may say of
  * itself, as the action cleaners take them. A speed or zone out of range is
- * taken here and dropped by the engine (`isPitchSpeed`, `isPitchZone`).
+ * taken here and dropped by the engine (`isPitchSpeed`, `isPitchZone`); a
+ * pitch type no one knows is dropped here.
  */
 export const PITCH_DATA_CLEANERS = {
   speed: asOptional(asNumber),
   zone: asOptional(asNumber),
-  pitchLocation: asOptional(asPitchLocation)
+  pitchLocation: asOptional(asPitchLocation),
+  pitchType: asPitchType
 }
 
 /** The same fields as `toolSchema()` offers them to a dictation model. */
@@ -77,5 +80,10 @@ export const PITCH_DATA_TOOL_FIELDS = {
   zone: {
     type: 'integer',
     description: 'MLB zone number, only if said as a number'
+  },
+  pitchType: {
+    type: 'string',
+    enum: PITCH_TYPE_NAMES,
+    description: 'The kind of pitch, only when said: see THE PITCH'
   }
 }

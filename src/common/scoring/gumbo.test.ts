@@ -450,7 +450,8 @@ describe('reading a game back', function () {
         fielder: 14,
         speed: 84.5,
         zone: 10,
-        pitchLocation: { height: 'high', side: 'inside', inZone: true }
+        pitchLocation: { height: 'high', side: 'inside', inZone: true },
+        pitchType: 'sinker'
       },
       { type: 'result', eventType: 'single' },
       { type: 'pitch', call: 'C', zone: 99, speed: 70 }
@@ -466,11 +467,19 @@ describe('reading a game back', function () {
     }): unknown[] => play.playEvents.map(event => event.pitchData)
     expect(pitches(replayed.state.liveData.plays.allPlays[0])).deep.equals([
       undefined,
-      { startSpeed: 84.5, zone: 1 }
+      {
+        startSpeed: 84.5,
+        zone: 1,
+        location: { height: 'high', side: 'inside', inZone: true }
+      }
     ])
     expect(pitches(replayed.state.liveData.plays.currentPlay!)).deep.equals([
       { startSpeed: 70 }
     ])
+    // The kind of pitch replays with it.
+    expect(
+      replayed.state.liveData.plays.allPlays[0].playEvents[1].details.type
+    ).deep.equals({ code: 'SI', description: 'Sinker' })
   })
 
   it('reads each stored record once, and no record from one that is not an object', function () {

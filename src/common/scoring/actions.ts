@@ -9,6 +9,7 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
+import { DEPTHS, FOUL_DEPTHS, FOUL_SIDES } from './depth'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
@@ -231,6 +232,10 @@ const actionCleaners = {
   pitch: asObject({
     type: asLiteral('pitch'),
     call: asOneOf(PITCH_CALLS),
+    /** A foul's side of the field, when the scorer says where it went. */
+    direction: asOptional(asOneOf(FOUL_SIDES)),
+    /** A foul's depth, when the scorer says where it went. */
+    depth: asOptional(asOneOf(FOUL_DEPTHS)),
     ...PITCH_DATA_CLEANERS
   }),
   ballInPlay: asObject({
@@ -250,6 +255,10 @@ const actionCleaners = {
     direction: asOptional(asOneOf(DIRECTIONS)),
     landingHeight: asOptional(asNumber),
     homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS)),
+    /** How far it went, in the scorer's words: placed at this game's fence. */
+    depth: asOptional(asOneOf(DEPTHS)),
+    /** A distance the scorer said, in feet; it wins over a depth. */
+    distanceFeet: asOptional(asNumber),
     ...PITCH_DATA_CLEANERS
   }),
   result: asObject({
@@ -402,11 +411,20 @@ export function cleanAction(
       }
     }
   try {
-    return {
-      action: withoutUndefined(
-        actionCleaners[type as ActionType](raw)
-      ) as ScoringAction
+    const action = withoutUndefined(
+      actionCleaners[type as ActionType](raw)
+    ) as ScoringAction
+    // Only a foul has somewhere it went: any other pitch keeps its call and
+    // drops the place, as a bad optional field is dropped elsewhere.
+    if (
+      action.type === 'pitch' &&
+      action.call !== 'F' &&
+      (action.direction != null || action.depth != null)
+    ) {
+      const { direction: _direction, depth: _depth, ...pitch } = action
+      return { action: pitch }
     }
+    return { action }
   } catch (error) {
     return {
       problem: {
@@ -687,6 +705,14 @@ export function toolSchema(): Tool[] {
           PITCH_CALLS,
           'B ball, C called strike, S swinging strike, F foul, T foul tip, L foul bunt'
         ),
+        direction: oneOf(
+          FOUL_SIDES,
+          'For a foul F only, the side it went: see WHERE THE BALL WENT'
+        ),
+        depth: oneOf(
+          FOUL_DEPTHS,
+          'For a foul F only, how far it went: see WHERE THE BALL WENT'
+        ),
         ...PITCH_DATA_TOOL_FIELDS
       },
       ['call']
@@ -706,6 +732,14 @@ export function toolSchema(): Tool[] {
         ),
         homeRunKind: oneOf(HOME_RUN_KINDS, 'For a home run'),
         landingHeight: { type: 'number' },
+        depth: oneOf(
+          DEPTHS,
+          'How far the ball went, only when the words say it: see WHERE THE BALL WENT'
+        ),
+        distanceFeet: {
+          type: 'number',
+          description: 'Feet the ball traveled, only when a distance is said'
+        },
         ...PITCH_DATA_TOOL_FIELDS
       },
       ['contact']
