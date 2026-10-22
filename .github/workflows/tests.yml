@@ -1,0 +1,103 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    name: Test baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TS_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5433/postgres
+      TS_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install FFmpeg build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential nasm pkg-config libx264-dev libx265-dev
+      - uses: actions/cache@v4
+        id: ffmpeg
+        with:
+          path: .test-tools/ffmpeg
+          key: ffmpeg-9.0.1-ubuntu24.04-${{ runner.arch }}-x264-x265-v1
+      - name: Build the pinned FFmpeg release
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          curl --fail --location --retry 3 https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          echo "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/ffmpeg-9.0.1"
+          ./configure --prefix="$GITHUB_WORKSPACE/.test-tools/ffmpeg" --enable-gpl --enable-libx264 --enable-libx265 --disable-doc --disable-debug --disable-ffplay
+          make -j2
+          make install
+      - name: Configure the synthetic test environment
+        run: |
+          echo "$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin" >> "$GITHUB_PATH"
+          echo "TS_FFMPEG=$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
+          node -e 'require("fs").writeFileSync("serverConfig.json", JSON.stringify({ffmpegPath: process.cwd() + "/.test-tools/ffmpeg/bin/ffmpeg", ffmpegVersion: "9.0.1"}))'
+          .test-tools/ffmpeg/bin/ffmpeg -version
+          .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx264
+          .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx265
+      - run: npm ci
+      - run: npm run prepare
+      - run: npm run precommit
+
+  portable:
+    name: Portable contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/scripts/deploy/Gemfile
+      BUNDLE_PATH: ${{ github.workspace }}/vendor/bundle
+      BUNDLE_FROZEN: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0.1'
+          bundler: '4.0.3'
+      - run: npm ci
+      - run: npm run prepare
+      - run: bundle install
+      - run: npm run test:portable

@@ -52,10 +52,8 @@ describe('070 scoring identities only when needed', function () {
     await admin.query(`create database ${name}`)
     const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
     pool = new Pool({ connectionString: url })
-    await migrateUp(
-      pool,
-      migrations.filter(m => m.name <= migration070PlayerGumboIds.name)
-    )
+    // Current account merging also reads tables introduced after migration 070.
+    await migrateUp(pool, migrations)
     db = makeDatabase(url)
     await db
       .insertInto('teams')

@@ -95,13 +95,53 @@ npm run lint
 `npm run build` compiles `src/` to `lib/` and `npm run build.web` bundles the
 app to `dist/`, both at the root.
 
-**Run `npm run prepare` once**, per clone rather than per worktree. It installs
-the husky hook that lints before every commit. `npm install` will not do it for
-you: `.npmrc` sets `ignore-scripts`, which is what makes a fresh install safe
-and also what stops `prepare` running. Without it there is no gate, and the
-lint count drifts — it reached 98 the last time nobody was counting. The hook
-sets `core.hooksPath`, which lives in `.git/config` and so is shared by every
-worktree of this repository.
+**Run `npm run prepare` in every clone and every worktree after `npm ci`.**
+The committed `.npmrc` sets `ignore-scripts=true`, so installation does not
+run it automatically. Keep that policy; run `prepare` explicitly. Git shares
+`core.hooksPath` across worktrees, but each worktree needs its own generated
+`.husky/_/pre-commit` launcher and its own dependencies. Check both:
+
+```sh
+git config --get core.hooksPath   # .husky/_
+test -x .husky/_/pre-commit
+npm run precommit
+```
+
+The commit gate runs lint, typecheck and `npm test`, stopping at the first
+failure. It clears Git's hook-local repository variables so fixtures can
+create their own repositories safely. Allow about twenty minutes for the
+full suite. It needs Node 24,
+FFmpeg 9.0.1 (with libx264/libx265), Redis, and PostgreSQL 18 with permission
+to create disposable test databases. Set `ffmpegPath` in the gitignored
+`serverConfig.json` to that executable, set `TS_FFMPEG` to the same path
+for the standalone media fixtures, and put its directory on PATH. Tests
+use `TS_TEST_DATABASE_URL` or
+`postgres://localhost:5433/postgres`; use a dedicated local test cluster.
+Redis uses `TS_TEST_REDIS_URL` or `redis://127.0.0.1:6379/15`; reserve that
+database for one test run at a time.
+`npm test` includes source unit tests, database/API/media integration tests,
+and bundled rendered-component tests, including native navigation adapters.
+Browser/device `*.e2e.ts` and external-model `*.integration.ts` scenarios
+require their own environments and are not part of this command.
+
+`npm run test:portable` adds the event-control, deployment, hosting and
+coverage-provenance contracts. Deployment tests need the locked Ruby bundle:
+
+```sh
+# Use Ruby 4 and Bundler 4.0.3 on PATH.
+export BUNDLE_GEMFILE="$PWD/scripts/deploy/Gemfile"
+export BUNDLE_PATH="$PWD/vendor/bundle"
+BUNDLE_FROZEN=true bundle install
+npm run test:portable
+```
+
+Real signing, Mason and hosting integration checks remain opt-in; a pending
+case is not evidence that its external environment passed. GitHub Actions
+runs `Test baseline` and `Portable contracts` on pushes and on the PR merge
+result. Require both checks in the master ruleset, with branches up to date:
+local hooks can be bypassed, and merely adding a workflow does not make its
+checks required. The local gate checks the working tree; CI checks the actual
+committed merge result, including partially staged changes.
 
 Configuration is written by `cleaner-config` to `serverConfig.json` **at the
 root** on first run; it is gitignored, and every field has a default.
