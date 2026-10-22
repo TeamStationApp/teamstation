@@ -224,7 +224,7 @@ export function PlayerSettingsTab(
                 <Chip
                   key={position}
                   label={position}
-                  role="checkbox"
+                  role="button"
                   on={on}
                   disabled={busy}
                   onPress={() => {
@@ -375,7 +375,7 @@ export function changesOf(saved: Saved, draft: Draft): PlayerSettings {
 function Chip(props: {
   label: string
   accessibilityLabel?: string
-  role: 'checkbox' | 'radio'
+  role: 'button' | 'radio'
   on: boolean
   disabled: boolean
   onPress: () => void
@@ -386,10 +386,15 @@ function Chip(props: {
     <Pressable
       accessibilityRole={role}
       accessibilityLabel={props.accessibilityLabel ?? label}
-      accessibilityState={{ checked: on, disabled }}
+      accessibilityState={{
+        checked: role === 'radio' ? on : undefined,
+        selected: role === 'button' ? on : undefined,
+        disabled
+      }}
       // react-native-web does not render `aria-checked` from
       // `accessibilityState`, so the web says it directly.
-      aria-checked={on}
+      aria-checked={role === 'radio' ? on : undefined}
+      aria-pressed={role === 'button' ? on : undefined}
       disabled={disabled}
       onPress={onPress}
       style={[styles.chip, on ? styles.chipOn : styles.chipOff]}

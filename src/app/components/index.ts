@@ -87,3 +87,6 @@ export type { GlassViewProps } from './glassViewProps'
 export { DangerText } from './DangerText'
 export { HeroCard } from './HeroCard'
 export { PictureSheet } from './PictureSheet'
+
+export { TextWidthButton, type TextWidthButtonProps } from './TextWidthButton'
+export { Checkbox, type CheckboxProps } from './Checkbox'

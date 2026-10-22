@@ -8,13 +8,19 @@ import { Icon, type IconName } from './Icon'
 import { TeamEmblem } from './TeamEmblem'
 
 export interface ListRowProps {
+  /** Custom leading identity mark, before the name. */
+  leading?: React.ReactNode
   teamName?: string
   detailTestID?: string
   detail?: string
+  /** Wrapping secondary content aligned beneath the title, beside the emblem. */
+  detailContent?: React.ReactNode
   testID?: string
   accessibilityLabel?: string
   selected?: boolean
   disabled?: boolean
+  /** Opt-in muted text and navigation marks for unavailable rows. */
+  muted?: boolean
   title: string
   subtitle?: string
   subtitleNumberOfLines?: number
@@ -72,36 +78,44 @@ export function ListRow(props: ListRowProps): React.ReactElement {
 
   const content = (
     <>
-      {props.teamName != null ? (
-        <TeamEmblem name={props.teamName} uri={emblemUri} />
-      ) : (
-        (emblem != null || emblemIcon != null) && (
-          <Emblem
-            uri={emblemUri}
-            fallback={emblem ?? ''}
-            icon={emblemIcon}
-            shape={emblemShape}
-          />
-        )
-      )}
+      {props.leading ??
+        (props.teamName != null ? (
+          <TeamEmblem name={props.teamName} uri={emblemUri} />
+        ) : (
+          (emblem != null || emblemIcon != null) && (
+            <Emblem
+              uri={emblemUri}
+              fallback={emblem ?? ''}
+              icon={emblemIcon}
+              shape={emblemShape}
+            />
+          )
+        ))}
       <View style={styles.text}>
-        <Text style={styles.title} numberOfLines={1}>
+        <Text
+          style={[styles.title, props.muted === true && styles.muted]}
+          numberOfLines={1}
+        >
           {title}
         </Text>
         {subtitle != null && (
-          <Text style={styles.subtitle} numberOfLines={subtitleNumberOfLines}>
+          <Text
+            style={[styles.subtitle, props.muted === true && styles.muted]}
+            numberOfLines={subtitleNumberOfLines}
+          >
             {subtitle}
           </Text>
         )}
         {props.detail != null && (
           <Text
-            style={styles.subtitle}
+            style={[styles.subtitle, props.muted === true && styles.muted]}
             numberOfLines={1}
             testID={props.detailTestID}
           >
             {props.detail}
           </Text>
         )}
+        {props.detailContent}
       </View>
       {trailing != null && (
         <Text style={styles.trailing} numberOfLines={1}>
@@ -111,7 +125,14 @@ export function ListRow(props: ListRowProps): React.ReactElement {
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
       {end}
       {onPress != null && (
-        <Icon name="chevron_right" color={theme.secondaryTextColor} />
+        <Icon
+          name="chevron_right"
+          color={
+            props.muted === true
+              ? theme.tertiaryTextColor
+              : theme.secondaryTextColor
+          }
+        />
       )}
     </>
   )
@@ -147,6 +168,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(theme.spaceMdRem),
     padding: theme.rem(theme.cardContentInsetRem)
   },
+  muted: { color: theme.tertiaryTextColor },
   pressed: {
     backgroundColor: theme.highlightRowActiveBackground
   },

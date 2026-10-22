@@ -64,6 +64,31 @@ for (const Row of [ScheduleRow, RsvpScheduleRow]) {
       }
     })
 
+    it('keeps the personal UMP badge before LIVE and results, and hides it for cancellations', async () => {
+      await render({ isUmpire: true })
+      expect(document.body.textContent).matches(/UMP.*LIVE/)
+      const badge = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid="settings-pill-badge"]'
+        )
+      ].find(el => el.textContent === 'UMP')
+      expect(getComputedStyle(badge!).backgroundColor).equals('rgb(0, 0, 0)')
+      await render({
+        isUmpire: true,
+        isGameLive: false,
+        status: 'final',
+        awayScore: 2,
+        homeScore: 3
+      })
+      expect(document.body.textContent).contains('UMP').and.contains('2')
+      await render({ isUmpire: true, isGameLive: false, status: 'cancelled' })
+      expect(document.body.textContent).not.contains('UMP')
+      await render({ isUmpire: undefined })
+      expect(document.body.textContent).not.contains('UMP')
+      await render({ isUmpire: false })
+      expect(document.body.textContent).not.contains('UMP')
+    })
+
     it('hides LIVE when an older server omits the flag', async () => {
       await render({ isGameLive: undefined })
       expect(visible()).equals(false)

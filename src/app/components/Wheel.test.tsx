@@ -163,6 +163,22 @@ describe('the wheel', function () {
     expect(chosen).deep.equals([10])
   })
 
+  it('keeps an explicit choice over a pending scroll settle', async function () {
+    const chosen = await render(5)
+    await act(async () => {
+      handler(
+        wheel(),
+        'onScroll',
+        'snapToInterval'
+      )({
+        nativeEvent: { contentOffset: { y: 2 * ROW } }
+      })
+      row(-1).click()
+      await delay(200)
+    })
+    expect(chosen).deep.equals([-1])
+  })
+
   it('chooses where a phone’s drag or fling stops, kept to the ends', async function () {
     const chosen = await render(0)
     await act(async () => {

@@ -11,12 +11,19 @@ export function StickySectionLayout({
   sections,
   children,
   onScroll,
-  wide
+  wide,
+  scrollRef,
+  contentStyle
 }: StickySectionLayoutProps): React.ReactElement {
   const { headerHeight } = useHeaderSlot()
   const theme = useTheme()
   return (
-    <Screen onScroll={onScroll} wide={wide}>
+    <Screen
+      onScroll={onScroll}
+      wide={wide}
+      scrollRef={scrollRef}
+      contentStyle={contentStyle}
+    >
       {hero}
       <div
         data-testid="sticky-season-sections"

@@ -99,6 +99,43 @@ describe('card content spacing', () => {
     }
   }
 
+  for (const interactive of [false, true]) {
+    it(`mutes unavailable row copy without changing default styles (${interactive})`, async () => {
+      let presses = 0
+      const card = await render(
+        <ListCard>
+          <ListRow title="Available" subtitle="Details" />
+          <ListRow
+            title="Unavailable"
+            subtitle="Details"
+            detail="More detail"
+            muted
+            disabled
+            onPress={
+              interactive
+                ? () => {
+                    presses++
+                  }
+                : undefined
+            }
+          />
+        </ListCard>,
+        tsBallpark
+      )
+      const title = (value: string): Element =>
+        [...card.querySelectorAll('*')].find(n => n.textContent === value)!
+      expect(getComputedStyle(title('Unavailable')).color).not.equals(
+        getComputedStyle(title('Available')).color
+      )
+      const action = card.querySelector<HTMLElement>('[role="button"]')
+      if (action != null)
+        await act(async () => {
+          action.click()
+        })
+      expect(presses).equals(0)
+    })
+  }
+
   it('adds dividers only between present sections and preserves row actions', async () => {
     let presses = 0
     const card = await render(

@@ -125,6 +125,20 @@ describe('pill label clearance', () => {
     })
     expect(presses).equals(0)
   })
+  it('wraps descriptive badges without constraining their height', async () => {
+    const container = await render(
+      <Badge wrap label="First and Third Base: 1 required, 0 optional" />
+    )
+    const badge = container.firstElementChild!
+    expect(getComputedStyle(badge).maxWidth).equals('100%')
+    expect(getComputedStyle(badge).height).equals('auto')
+    expect(parseFloat(getComputedStyle(badge).borderTopLeftRadius)).at.most(
+      parseFloat(getComputedStyle(badge).paddingLeft)
+    )
+    expect(getComputedStyle(badge.firstElementChild!).whiteSpace).not.equals(
+      'nowrap'
+    )
+  })
   for (const tone of [
     'win',
     'loss',

@@ -167,7 +167,7 @@ describe('scoped scoring presentation', () => {
     expect(css(node('Disabled field')).opacity).equals('0.5')
   })
 
-  it('exposes multiword pill labels and checked/disabled state without truncation', async () => {
+  it('exposes multiword pill labels and pressed/disabled state without truncation', async () => {
     let presses = 0
     await mount(
       <ScoringSheet title="Pills" onClose={() => undefined}>
@@ -193,7 +193,7 @@ describe('scoped scoring presentation', () => {
         />
       </ScoringSheet>
     )
-    expect(node('great catch').getAttribute('aria-checked')).equals('true')
+    expect(node('great catch').getAttribute('aria-pressed')).equals('true')
     expect(node('Disabled position').getAttribute('aria-disabled')).equals(
       'true'
     )
