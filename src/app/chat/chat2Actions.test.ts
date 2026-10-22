@@ -5792,9 +5792,15 @@ describe('identity safety row ownership', () => {
 })
 
 describe('native installed legacy reply navigation', () => {
+  const directories: string[] = []
+  afterEach(() => {
+    for (const directory of directories.splice(0))
+      rmSync(directory, { recursive: true, force: true })
+  })
   function model(
     mode = 'resolved',
-    native = true
+    native = true,
+    surface = 'ios'
   ): {
     scenario: Scenarios
     baseline: { text: Chat2Message; reply: Chat2Message }
@@ -5816,6 +5822,8 @@ describe('native installed legacy reply navigation', () => {
       }
     }
     const calls: unknown[] = []
+    const runDir = mkdtempSync(join(tmpdir(), 'legacy-scoped-read-'))
+    directories.push(runDir)
     const row = {
       x: 20,
       y: ['above-header', 'no-progress'].includes(mode)
@@ -5827,9 +5835,113 @@ describe('native installed legacy reply navigation', () => {
       height: mode === 'tall-file' ? 900 : 240
     }
     const quote = { x: 40, y: 220, width: 300, height: 80 }
+    interface Tree extends PublicNode {
+      children?: Tree[]
+    }
+    const hierarchy = (): Tree => {
+      const label =
+        mode === 'unavailable'
+          ? 'Jump to message from Former member: Message unavailable'
+          : 'Jump to message from You: Original legacy text.'
+      const currentQuote: Tree = {
+        type: mode === 'wrong-type' ? 'Other' : 'Button',
+        text: mode === 'wrong-label' ? 'Another quote' : label,
+        bounds:
+          mode === 'outside-row'
+            ? { ...quote, y: 100 }
+            : mode === 'offscreen'
+              ? { ...quote, x: -10 }
+              : mode === 'nonfinite'
+                ? { ...quote, width: NaN }
+                : quote
+      }
+      return {
+        type: 'ScrollView',
+        bounds: { x: 0, y: 0, width: 400, height: 800 },
+        children: [
+          {
+            id: 'chat-message-msg_other',
+            type: 'ViewGroup',
+            bounds: { x: 20, y: 20, width: 340, height: 160 },
+            children: [
+              {
+                type: 'Button',
+                text: label,
+                bounds: { x: 40, y: 30, width: 300, height: 60 }
+              },
+              {
+                type: 'TextView',
+                text: baseline.reply.body,
+                bounds: { x: 40, y: 100, width: 300, height: 40 }
+              }
+            ]
+          },
+          {
+            id:
+              mode === 'wrong-row'
+                ? 'chat-message-msg_wrong'
+                : 'chat-message-msg_reply',
+            type: 'ViewGroup',
+            bounds: { ...row },
+            children: [
+              ...(mode === 'unresolved' || mode === 'wrong-parent'
+                ? []
+                : [currentQuote]),
+              ...(mode === 'ambiguous'
+                ? [{ ...currentQuote, bounds: { ...quote, y: 305 } }]
+                : []),
+              {
+                id: 'chat-message-body-msg_reply',
+                type: 'ViewGroup',
+                bounds: { x: 40, y: row.y + 120, width: 300, height: 40 },
+                children: [
+                  {
+                    type: 'TextView',
+                    text:
+                      mode === 'wrong-body'
+                        ? baseline.reply.body.toUpperCase()
+                        : baseline.reply.body,
+                    bounds: { x: 40, y: row.y + 120, width: 300, height: 40 }
+                  }
+                ]
+              }
+            ]
+          },
+          ...(mode === 'wrong-parent' ? [currentQuote] : [])
+        ]
+      }
+    }
+    const read = (): Tree => {
+      calls.push({ nativeHierarchy: surface })
+      if (mode === 'transport') throw Error('Actual native transport failure')
+      return hierarchy()
+    }
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native,
-      surface: 'ios',
+      surface,
+      runDir,
+      iosRaw: async () => {
+        const nodes: unknown[] = []
+        const visit = (node: Tree, parentIndex?: number): void => {
+          const index = nodes.length
+          nodes.push({
+            index,
+            parentIndex,
+            type:
+              node.type === 'TextView'
+                ? 'StaticText'
+                : node.type === 'ViewGroup'
+                  ? 'Other'
+                  : node.type,
+            identifier: node.id,
+            label: node.text,
+            rect: node.bounds
+          })
+          for (const child of node.children ?? []) visit(child, index)
+        }
+        visit(read())
+        return Buffer.from(JSON.stringify({ nodes }))
+      },
       visible: async () => true,
       id: async (id: string) => {
         calls.push({ latest: id })
@@ -5840,51 +5952,15 @@ describe('native installed legacy reply navigation', () => {
       device: {
         assertVisible: async (selector: { id?: string; text?: string }) => {
           calls.push(selector)
-          if (
-            [baseline.text.body, baseline.reply.body].includes(
-              selector.text ?? ''
-            )
-          )
-            return {
-              element: {
-                found: true,
-                text: mode === 'wrong-body' ? 'Different text' : selector.text
-              }
-            }
-          if (selector.id != null)
-            return {
-              element: {
-                found: true,
-                id: mode === 'wrong-row' ? 'msg_other' : selector.id,
-                bounds: row
-              }
-            }
-          if (mode === 'transport')
-            throw Error('Actual native transport failure')
-          if (
-            mode === 'ambiguous' ||
-            (mode === 'unavailable' &&
-              selector.text?.startsWith('Jump to message from You:') === true)
-          )
-            throw Object.assign(Error('No unique exact quote'), {
-              code: 'COMMAND_FAILED'
-            })
           return {
             element: {
-              found: mode !== 'unresolved',
-              text: mode === 'wrong-label' ? 'Another quote' : selector.text,
-              class: mode === 'wrong-type' ? 'Other' : 'Button',
-              bounds:
-                mode === 'outside-row'
-                  ? { ...quote, y: 100 }
-                  : mode === 'offscreen'
-                    ? { ...quote, x: -10 }
-                    : mode === 'nonfinite'
-                      ? { ...quote, width: NaN }
-                      : quote
+              found: true,
+              id: 'e16',
+              bounds: { x: 0, y: 0, width: 0, height: 0 }
             }
           }
         },
+        hierarchy: async () => read(),
         platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
         swipe: async (args: unknown) => {
           calls.push({ swipe: args })
@@ -5907,37 +5983,45 @@ describe('native installed legacy reply navigation', () => {
     }) as Scenarios
     return { scenario, baseline, calls }
   }
-  for (const mode of ['resolved', 'unavailable'])
-    it(
-      'uses the exact recent reply and its observed ' +
-        mode +
-        ' quote before requiring the original ID',
-      async () => {
-        const actual = model(mode)
-        await actual.scenario.identityLegacyAnchor(
-          actual.baseline.text,
-          actual.baseline
-        )
-        expect(actual.calls[0]).deep.equals({ latest: 'chat-jump-latest' })
-        expect(actual.calls[1]).deep.equals({ anchor: 'msg_reply' })
-        expect(actual.calls).deep.includes({ tap: { x: 190, y: 260 } })
-        expect(actual.calls.at(-1)).deep.equals({
-          present: 'chat-bubble-msg_original'
-        })
-        expect(actual.calls).deep.includes({
-          text:
+  for (const surface of ['ios', 'android'])
+    for (const mode of ['resolved', 'unavailable'])
+      it(
+        'uses the exact recent reply and its observed ' +
+          mode +
+          ' quote among duplicate global labels on ' +
+          surface,
+        async () => {
+          const actual = model(mode, true, surface)
+          await actual.scenario.identityLegacyAnchor(
+            actual.baseline.text,
+            actual.baseline
+          )
+          expect(actual.calls[0]).deep.equals({ latest: 'chat-jump-latest' })
+          expect(actual.calls[1]).deep.equals({ anchor: 'msg_reply' })
+          expect(actual.calls).deep.includes({ tap: { x: 190, y: 260 } })
+          expect(actual.calls.at(-1)).deep.equals({
+            present: 'chat-bubble-msg_original'
+          })
+          const proof = actual.scenario.observations.find(
+            p => p.kind === 'quote'
+          )
+          expect((proof?.element as PublicNode).text).equals(
             mode === 'resolved'
               ? 'Jump to message from You: Original legacy text.'
-              : 'Jump to message from Former member: Message unavailable',
-          timeout: 2000
-        })
-      }
-    )
+              : 'Jump to message from Former member: Message unavailable'
+          )
+          expect(
+            actual.calls.some(
+              call => typeof call === 'object' && call != null && 'text' in call
+            )
+          ).equals(false)
+        }
+      )
   for (const mode of ['above-header', 'below-composer', 'tall-file'])
     it(
       'frames the actual ' +
         mode +
-        ' region with a vertical measured gesture before literal body verification',
+        ' region with a vertical measured gesture before scoped body verification',
       async () => {
         const actual = model(mode)
         await actual.scenario.identityLegacyBody(actual.baseline.reply)
@@ -5952,10 +6036,10 @@ describe('native installed legacy reply navigation', () => {
             ? swipe.swipe.endY > swipe.swipe.startY
             : swipe.swipe.endY < swipe.swipe.startY
         ).equals(true)
-        expect(actual.calls.at(-1)).deep.equals({
-          text: 'Preserved legacy reply.',
-          timeout: 2000
-        })
+        const proof = actual.scenario.observations.find(p => p.kind === 'body')
+        expect((proof?.element as PublicNode).text).equals(
+          'Preserved legacy reply.'
+        )
       }
     )
   for (const mode of ['no-progress', 'wrong-body'])
@@ -6016,6 +6100,7 @@ describe('native installed legacy reply navigation', () => {
     'nonfinite',
     'unresolved',
     'ambiguous',
+    'wrong-parent',
     'transport'
   ])
     it(
@@ -6036,7 +6121,30 @@ describe('native installed legacy reply navigation', () => {
               ('tap' in call || 'present' in call)
           )
         ).equals(false)
-        if (mode === 'transport') expect(actual.calls).has.length(5)
+        if (mode === 'transport') expect(actual.calls).has.length(3)
+      }
+    )
+  for (const mode of ['wrong-parent', 'ambiguous', 'wrong-body'])
+    it(
+      'rejects Android scoped ' +
+        mode +
+        ' with no dependency on assertVisible return text',
+      async () => {
+        const actual = model(mode, true, 'android')
+        await captureFailure(
+          actual.scenario.identityLegacyAnchor(
+            actual.baseline.text,
+            actual.baseline
+          )
+        )
+        expect(
+          actual.calls.some(
+            call =>
+              typeof call === 'object' &&
+              call != null &&
+              ('tap' in call || 'present' in call)
+          )
+        ).equals(false)
       }
     )
 })

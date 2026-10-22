@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -3124,52 +3124,19 @@ export class Scenarios {
     assert(Array.from(baseline.text.body).length <= 200)
     await this.anchor(baseline.reply)
     await this.identityLegacyBody(baseline.reply)
-    interface Element {
-      found?: boolean
-      id?: string
-      text?: string
-      class?: string
-      bounds?: PublicNode['bounds']
-    }
     const proof: Json = { legacyQuoteJump: target.id, reply: baseline.reply.id }
     this.observations.push(proof)
-    const read = async (selector: Json): Promise<Element> => {
-      const response = await ui.device.assertVisible(
-        { ...selector, timeout: 2000 },
-        { signal: AbortSignal.timeout(5000) }
-      )
-      proof.reads = [...((proof.reads as unknown[]) ?? []), response]
-      const element = (response as { element?: Element }).element
-      assert(element?.found === true, 'Actual resolved legacy element required')
-      return element
-    }
     const rowId = 'chat-message-' + baseline.reply.id
-    const row = await read({ id: rowId })
-    assert.equal(row.id, rowId, 'Exact legacy reply row required')
+    const parent = await this.targetBounds(rowId)
     const resolvedLabel = 'Jump to message from You: ' + baseline.text.body
-    let label = resolvedLabel
-    let quote: Element
-    try {
-      // A literal lets the native driver query beyond its capped global snapshot.
-      quote = await read({ text: label })
-    } catch (error) {
-      if (
-        error == null ||
-        typeof error !== 'object' ||
-        !('code' in error) ||
-        error.code !== 'COMMAND_FAILED'
-      )
-        throw error
-      label = 'Jump to message from Former member: Message unavailable'
-      quote = await read({ text: label })
-    }
-    assert.equal(quote.text, label, 'Exact rendered legacy quote required')
+    const quote = await this.identityLegacyRead(baseline.reply, 'quote')
     assert(
-      ui.surface !== 'ios' || quote.class === 'Button',
-      'Actual legacy quote Button required'
+      quote.text === resolvedLabel ||
+        quote.text ===
+          'Jump to message from Former member: Message unavailable',
+      'Exact rendered legacy quote required'
     )
     const bounds = need(quote.bounds, 'Actual legacy quote bounds required')
-    const parent = need(row.bounds, 'Actual legacy reply bounds required')
     const screen = await ui.device.platformInfo()
     const width = Number(screen.screenWidth)
     const height = Number(screen.screenHeight)
@@ -3190,6 +3157,95 @@ export class Scenarios {
     await ui.tapObserved({ bounds })
     await ui.present('chat-bubble-' + target.id)
     proof.outcome = 'passed'
+  }
+
+  /** Read the target's actual descendants; duplicate text in other rows is irrelevant. */
+  async identityLegacyRead(
+    message: Chat2Message,
+    kind: 'body' | 'quote'
+  ): Promise<PublicNode> {
+    const ui = this.ui
+    assert(ui.native, 'Native legacy scoped read required')
+    const scopeId =
+      (kind === 'body' ? 'chat-message-body-' : 'chat-message-') + message.id
+    const text =
+      kind === 'body' ? exactText(message.body) : '^Jump to message from .*'
+    const type =
+      kind === 'quote'
+        ? 'Button'
+        : ui.surface === 'ios'
+          ? 'StaticText'
+          : 'TextView'
+    const selected = { text, childOf: { id: scopeId } }
+    const path = join(
+      ui.runDir,
+      'identity-legacy-' + kind + '-' + randomUUID() + '.json'
+    )
+    let element: PublicNode
+    let nodeCount: number
+    if (ui.surface === 'ios') {
+      const raw = await ui.iosRaw(AbortSignal.timeout(10000))
+      writeFileSync(path, raw, { mode: 0o600, flag: 'wx' })
+      const read = iosPublicRead(raw, selected, type)
+      const actual = need(
+        read.element,
+        'Exact scoped iOS legacy element required'
+      )
+      const byIndex = new Map(read.nodes.map(n => [n.index, n]))
+      let owner = actual.parentIndex
+      let owned = false
+      const seen = new Set<number>()
+      while (owner != null) {
+        assert(!seen.has(owner), 'Acyclic actual legacy ancestry required')
+        seen.add(owner)
+        const parent = need(
+          byIndex.get(owner),
+          'Complete actual legacy ancestry required'
+        )
+        if (parent.id === scopeId) owned = true
+        owner = parent.parentIndex
+      }
+      assert(
+        owned,
+        'Actual legacy element must descend from its exact message scope'
+      )
+      element = actual
+      nodeCount = read.nodes.length
+    } else {
+      const raw = await ui.device.hierarchy({
+        signal: AbortSignal.timeout(10000)
+      })
+      writeFileSync(path, JSON.stringify(raw), { mode: 0o600, flag: 'wx' })
+      const box = androidScopedBounds(raw, selected, type)
+      const nodes = flattenPublicHierarchy(raw)
+      const matches = nodes.filter(
+        n =>
+          n.type === type &&
+          new RegExp(text).test(n.text ?? '') &&
+          n.bounds != null &&
+          ['x', 'y', 'width', 'height'].every(
+            key =>
+              n.bounds![key as keyof typeof box] ===
+              box[key as keyof typeof box]
+          )
+      )
+      assert(
+        matches.length === 1,
+        'Unique scoped Android legacy text and bounds required'
+      )
+      element = matches[0]
+      nodeCount = nodes.length
+    }
+    this.observations.push({
+      legacyScopedRead: message.id,
+      kind,
+      scopeId,
+      nodeCount,
+      hierarchy: path,
+      sha256: digest(path),
+      element
+    })
+    return element
   }
 
   async identityLegacyBody(message: Chat2Message): Promise<void> {
@@ -3246,19 +3302,9 @@ export class Scenarios {
         2000
       )
     }
-    // Literal lookup reaches the native deep query; equality retains the exact oracle.
-    const response = await ui.device.assertVisible(
-      { text: message.body, timeout: 2000 },
-      { signal: AbortSignal.timeout(5000) }
-    )
-    const element = (
-      response as { element?: { found?: boolean; text?: string } }
-    ).element
-    assert(
-      element?.found === true && element.text === message.body,
-      'Exact native legacy body required'
-    )
-    samples.push({ literalBodyResult: response })
+    const element = await this.identityLegacyRead(message, 'body')
+    assert(element.text === message.body, 'Exact native legacy body required')
+    samples.push({ scopedBodyResult: element })
   }
 
   async I1(): Promise<void> {
@@ -3307,15 +3353,9 @@ export class Scenarios {
         }
         if (this.ui.native) {
           const label = 'Jump to message from You: ' + baseline.text.body
-          const response = await this.ui.device.assertVisible({
-            text: label,
-            timeout: 2000
-          })
-          const element = (
-            response as { element?: { found?: boolean; text?: string } }
-          ).element
+          const element = await this.identityLegacyRead(baseline.reply, 'quote')
           assert(
-            element?.found === true && element.text === label,
+            element.text === label,
             'Exact rendered legacy reply quote required'
           )
         } else
