@@ -24,6 +24,7 @@ export interface RsvpScheduleRowProps {
   venue?: string | null
   status: string
   isGameLive?: boolean
+  isUmpire?: boolean
   pendingApproval?: boolean
   cancellationReason?: string | null
   withdrawnByTeamName?: string | null
@@ -141,6 +142,9 @@ export function RsvpScheduleRow(
         <Text style={[styles.team, styles.firstName]} numberOfLines={1}>
           {first}
         </Text>
+        {props.isUmpire === true && !cancelled && (
+          <Badge label="UMP" tone="umpire" />
+        )}
         {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
       </View>
       {second != null && (

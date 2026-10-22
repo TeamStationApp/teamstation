@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Animated, Modal, Platform, Pressable, Text, View } from 'react-native'
+import { Animated, Modal, Platform, Text, View } from 'react-native'
 
 import { dictationModelOf } from '../../common/api'
+import { Checkbox } from '../components/Checkbox'
 import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
@@ -710,11 +711,10 @@ function ScreenQuestion(props: {
           {question.pick?.choices.map((choice, index) => {
             const on = picks.includes(index)
             return (
-              <Pressable
+              <Checkbox
                 key={`${index}:${choice.label}`}
-                accessibilityRole="checkbox"
-                accessibilityLabel={choice.label}
-                aria-checked={on}
+                label={choice.label}
+                checked={on}
                 onPress={() => {
                   setPicks(
                     on
@@ -722,28 +722,7 @@ function ScreenQuestion(props: {
                       : [...picks, index]
                   )
                 }}
-                style={{
-                  borderRadius: theme.rem(theme.radiusRem),
-                  borderWidth: 2,
-                  borderColor: on
-                    ? theme.scoringOutColor
-                    : theme.scoringInstructionBorder,
-                  backgroundColor: on ? theme.scoringOutColor : 'transparent',
-                  padding: 10
-                }}
-              >
-                <Text
-                  style={{
-                    color: on
-                      ? theme.scoringDecisionText
-                      : theme.primaryTextColor,
-                    fontFamily: theme.semiBoldTextFont
-                  }}
-                >
-                  {on ? '✓ ' : ''}
-                  {choice.label}
-                </Text>
-              </Pressable>
+              />
             )
           })}
           {question.pick != null && (

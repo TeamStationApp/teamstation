@@ -52,7 +52,10 @@ describe('070 scoring identities only when needed', function () {
     await admin.query(`create database ${name}`)
     const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
     pool = new Pool({ connectionString: url })
-    await migrateUp(pool, migrations)
+    await migrateUp(
+      pool,
+      migrations.filter(m => m.name <= migration070PlayerGumboIds.name)
+    )
     db = makeDatabase(url)
     await db
       .insertInto('teams')

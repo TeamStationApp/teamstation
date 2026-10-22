@@ -28,6 +28,7 @@ import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { followMerges } from '../teams/followMerges'
+import { assignedUmpireGames } from '../umpires/presence'
 import { canAdminister, canManagePeople } from './rights'
 
 export async function publicGroup(
@@ -246,8 +247,14 @@ export async function publicGames(
           .groupBy('game_id')
           .execute()
   const counts = new Map(videoRows.map(row => [row.game_id, row.count]))
+  const umpiring = await assignedUmpireGames(
+    db,
+    actor,
+    rows.map(row => row.id)
+  )
   const published = rows.map(row => ({
     id: row.id,
+    isUmpire: umpiring.has(row.id),
     videoCount: counts.get(row.id) ?? 0,
     homeTeam: { id: row.home_team_id, name: row.homeName },
     awayTeam: { id: row.away_team_id, name: row.awayName },

@@ -33,6 +33,7 @@ import type { MediaContext } from '../media/mediaContext'
 import type { ScheduleRow } from '../routes/seasons'
 import { mayScheduleIn, scheduleRights } from '../schedule/scheduleGames'
 import { noteScopeChange } from '../socket/syncRevision'
+import { recheckUmpireAssignments } from '../umpires/assignments'
 
 type ResolvedEvent = Omit<EventInfo, 'attendees' | 'replyUserIds'> & {
   teamIds: string[]
@@ -645,6 +646,7 @@ export async function updateEventInfo(
         .set(location)
         .where('id', '=', id)
         .execute()
+      await recheckUmpireAssignments(trx, id)
       noteScopeChange(trx, { gameId: id })
     } else {
       const askedType =
@@ -713,6 +715,7 @@ export async function teamEventDetail(
   const event = await resolveEvent(db, actor, id)
   return asGameDetail({
     ...event,
+    umpires: null,
     isGameLive: false,
     nonMemberView: false,
     homeTeamId: event.teamId,

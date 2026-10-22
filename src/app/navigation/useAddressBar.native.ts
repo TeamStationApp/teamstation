@@ -118,7 +118,9 @@ export function backFromScoringPlayer(origin?: number): boolean {
  * in the header is it.
  */
 export function useBrowserBack(
-  onRoute: (route: Route, onHandled?: (accepted: boolean) => void) => void
+  onRoute: (route: Route, onHandled?: (accepted: boolean) => void) => void,
+  // The shell checks before leaving and reports rejection through onHandled.
+  _beforeLeave?: () => Promise<boolean>
 ): void {
   useEffect(() => {
     let pending = false

@@ -23,10 +23,10 @@ export function ScoringPill({
   const badge = theme.scoringSurface.badges.green
   return (
     <Pressable
-      accessibilityRole="checkbox"
+      accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ checked: selected, disabled }}
-      aria-checked={selected}
+      accessibilityState={{ selected, disabled }}
+      aria-pressed={selected}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({

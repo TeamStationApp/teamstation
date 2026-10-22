@@ -69,7 +69,13 @@ describe('scoring roster HTTP contract', function () {
       .execute()
     await db
       .insertInto('seasons')
-      .values({ id: season, name: 'Fall', year: 2026 })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: season,
+        name: 'Fall',
+        year: 2026
+      })
       .execute()
     await db
       .insertInto('season_teams')

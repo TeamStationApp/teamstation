@@ -577,7 +577,7 @@ describe('user identity snapshot across real database schemas', function () {
       expect(separated.tables.game_guest_details).not.equals(undefined)
       await migrateUp(
         pool,
-        migrations.filter(m => m.name >= '069')
+        migrations.filter(m => m.name >= '069' && m.name < '071')
       )
       const canonical = await capture()
       expect(compareUserIds(separated, canonical).differences).deep.equals([])
@@ -611,6 +611,8 @@ describe('user identity snapshot across real database schemas', function () {
     } finally {
       client.release()
     }
+    // Historical identity comparisons end at 070; current HTTP routes use the current schema.
+    await migrateUp(pool, migrations)
     db = new Kysely({ dialect: new PostgresDialect({ pool }) })
     const media: MediaContext = {
       ffmpegPath: 'ffmpeg',

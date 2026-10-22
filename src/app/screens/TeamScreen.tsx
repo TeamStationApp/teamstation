@@ -642,6 +642,7 @@ function GameCard(props: {
           first={eventName(game) ?? lines.second}
           startAt={game.startAt}
           isGameLive={game.isGameLive}
+          isUmpire={game.isUmpire}
           venue={game.venue}
           status={game.status}
           awayScore={game.awayScore}
@@ -734,6 +735,7 @@ function ScheduleCard(props: {
     first: eventName(game) ?? lines.second,
     startAt: game.startAt,
     isGameLive: game.isGameLive,
+    isUmpire: game.isUmpire,
     venue: game.venue,
     status: game.status,
     awayScore: game.awayScore,

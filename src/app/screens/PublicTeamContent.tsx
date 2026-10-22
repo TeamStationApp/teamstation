@@ -96,6 +96,7 @@ export function PublicTeamContent({
               second={`at ${game.homeTeam.name}`}
               startAt={game.startAt}
               isGameLive={game.isGameLive}
+              isUmpire={game.isUmpire}
               venue={game.venue}
               status={game.status}
               pendingApproval={game.pendingApproval}

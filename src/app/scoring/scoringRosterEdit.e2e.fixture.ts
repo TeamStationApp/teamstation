@@ -147,6 +147,8 @@ export async function rosterEditFixture(
     await db
       .insertInto('seasons')
       .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
         id: 'season_fixture',
         name: 'Fixture season',
         year: 2026,

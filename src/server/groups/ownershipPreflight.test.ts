@@ -111,7 +111,14 @@ describe('ownership cutover in PostgreSQL', function () {
       .execute()
     await h.db
       .insertInto('seasons')
-      .values({ id: 's', name: 'Demo Spring', year: 2027, league_id: 'l' })
+      .values({
+        starts_on: `2027-03-01`,
+        ends_on: `2027-05-31`,
+        id: 's',
+        name: 'Demo Spring',
+        year: 2027,
+        league_id: 'l'
+      })
       .execute()
     await h.db
       .insertInto('season_teams')
@@ -162,6 +169,8 @@ describe('ownership cutover in PostgreSQL', function () {
     await h.db
       .insertInto('seasons')
       .values({
+        starts_on: `2027-03-01`,
+        ends_on: `2027-05-31`,
         id: 'guest',
         name: 'Demo Exhibition',
         year: 2027,

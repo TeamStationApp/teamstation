@@ -332,7 +332,14 @@ describe('the scoreboard over HTTP', function () {
     await db.insertInto('leagues').values({ id: league, name: 'L' }).execute()
     await db
       .insertInto('seasons')
-      .values({ id: season, league_id: league, name: 'S', year: 2026 })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: season,
+        league_id: league,
+        name: 'S',
+        year: 2026
+      })
       .execute()
     await db
       .insertInto('season_teams')

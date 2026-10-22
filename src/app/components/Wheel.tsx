@@ -78,6 +78,7 @@ export function Wheel({
         }}
         accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
         onAccessibilityAction={event => {
+          if (timer.current != null) clearTimeout(timer.current)
           const index = Math.min(
             options.length - 1,
             Math.max(
@@ -138,6 +139,8 @@ export function Wheel({
               accessibilityLabel={`${label} ${format(option)}`}
               accessibilityState={{ selected: option === value }}
               onPress={() => {
+                // A pending scroll-settle must not replace an explicit choice.
+                if (timer.current != null) clearTimeout(timer.current)
                 onChange(option)
                 scroll.current?.scrollTo({
                   y: options.indexOf(option) * ROW,

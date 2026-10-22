@@ -34,6 +34,7 @@ import {
   seasonParticipantCounts,
   seasonParticipants
 } from '../stats/seasonTeams'
+import { assignedUmpireGames } from '../umpires/presence'
 
 /**
  * Seasons, and what is in one.
@@ -471,11 +472,17 @@ export async function scheduleOf(
     games.map(game => game.id)
   )
   const now = Date.now()
+  const umpiring = await assignedUmpireGames(
+    db,
+    filter.actor,
+    games.map(g => g.id)
+  )
 
   const answer = games.map((game): ScheduleRow => {
     const poster = posters.get(game.id)
     return {
       id: game.id,
+      isUmpire: umpiring.has(game.id),
       homeLogoPath: game.homeLogoPath,
       awayLogoPath: game.awayLogoPath,
       homeTeamId: game.homeTeamId,

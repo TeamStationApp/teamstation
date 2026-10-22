@@ -111,6 +111,8 @@ describe('a player, and who may change their name', function () {
     await db
       .insertInto('seasons')
       .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
         id: seasonId,
         name: 'Spring 2026',
         year: 2026,

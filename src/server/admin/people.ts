@@ -249,11 +249,24 @@ export async function closeInto(
       )
     const final = (await survivorsOf(trx, [keeping])).get(keeping)!
     const closingIds = (await onePerson(trx, closing)).userIds
-    await assertMergeScoringSafe(
-      trx,
-      closingIds,
-      (await onePerson(trx, final)).userIds
-    )
+    const keepingIds = (await onePerson(trx, final)).userIds
+    const collision = await trx
+      .selectFrom('umpire_assignments as closing')
+      .innerJoin(
+        'umpire_assignments as keeping',
+        'keeping.game_id',
+        'closing.game_id'
+      )
+      .select('closing.game_id')
+      .whereRef('closing.slot', '!=', 'keeping.slot')
+      .where('closing.user_id', 'in', closingIds)
+      .where('keeping.user_id', 'in', keepingIds)
+      .executeTakeFirst()
+    if (collision != null)
+      throw conflict(
+        'Remove one umpire assignment before merging people assigned to the same game'
+      )
+    await assertMergeScoringSafe(trx, closingIds, keepingIds)
     await trx
       .selectFrom('users')
       .select('id')

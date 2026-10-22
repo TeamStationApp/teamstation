@@ -17,10 +17,38 @@ describe('independent creation relations', function () {
     await h.db
       .insertInto('seasons')
       .values([
-        { id: 's1', name: 'Standalone One', year: 2027, league_id: null },
-        { id: 's2', name: 'Standalone Two', year: 2027, league_id: null },
-        { id: 'sl1', name: 'Regular', year: 2027, league_id: 'l' },
-        { id: 'sl2', name: 'Playoffs', year: 2027, league_id: 'l' }
+        {
+          starts_on: `2027-03-01`,
+          ends_on: `2027-05-31`,
+          id: 's1',
+          name: 'Standalone One',
+          year: 2027,
+          league_id: null
+        },
+        {
+          starts_on: `2027-03-01`,
+          ends_on: `2027-05-31`,
+          id: 's2',
+          name: 'Standalone Two',
+          year: 2027,
+          league_id: null
+        },
+        {
+          starts_on: `2027-03-01`,
+          ends_on: `2027-05-31`,
+          id: 'sl1',
+          name: 'Regular',
+          year: 2027,
+          league_id: 'l'
+        },
+        {
+          starts_on: `2027-03-01`,
+          ends_on: `2027-05-31`,
+          id: 'sl2',
+          name: 'Playoffs',
+          year: 2027,
+          league_id: 'l'
+        }
       ])
       .execute()
   })

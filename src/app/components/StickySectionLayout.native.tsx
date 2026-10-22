@@ -23,7 +23,9 @@ export function StickySectionLayout({
   sections,
   children,
   onScroll,
-  wide
+  wide,
+  scrollRef,
+  contentStyle
 }: StickySectionLayoutProps): React.ReactElement {
   const theme = useTheme()
   const { headerHeight } = useHeaderSlot()
@@ -66,6 +68,7 @@ export function StickySectionLayout({
   }))
   return (
     <Animated.ScrollView
+      ref={scrollRef}
       style={{ flex: 1, backgroundColor: theme.backgroundColor }}
       onScroll={handleScroll}
       scrollEventThrottle={16}
@@ -78,16 +81,19 @@ export function StickySectionLayout({
       contentContainerStyle={{ paddingTop: headerHeight, alignItems: 'center' }}
     >
       <View
-        style={{
-          width: '100%',
-          maxWidth:
-            wide === true ? undefined : theme.rem(theme.maxContentWidthRem),
-          paddingTop: theme.rem(theme.spaceLgRem),
-          paddingBottom: bottom,
-          paddingLeft: side.left,
-          paddingRight: side.right,
-          gap: theme.rem(theme.spaceLgRem)
-        }}
+        style={[
+          {
+            width: '100%',
+            maxWidth:
+              wide === true ? undefined : theme.rem(theme.maxContentWidthRem),
+            paddingTop: theme.rem(theme.spaceLgRem),
+            paddingBottom: bottom,
+            paddingLeft: side.left,
+            paddingRight: side.right,
+            gap: theme.rem(theme.spaceLgRem)
+          },
+          contentStyle
+        ]}
       >
         <ContentInsetContext.Provider value={side}>
           {hero}

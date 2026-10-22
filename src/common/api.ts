@@ -120,6 +120,32 @@ import {
 } from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import {
+  asUmpireLeaderboard,
+  asUmpireLeagues,
+  asUmpireLevel,
+  asUmpireLevels,
+  asUmpirePeople,
+  asUmpireSchedule,
+  asUmpireSeasons,
+  asUmpireSettings,
+  asUmpireTypes
+} from './umpireCleaners'
+import type { UmpireEdit } from './umpireEdits'
+import type {
+  UmpireCertification,
+  UmpireLevel,
+  UmpirePerson,
+  UmpireSeason,
+  UmpireSettings,
+  UmpireType,
+  UmpireTypeCount
+} from './umpires'
+import type {
+  UmpireLeaderboard,
+  UmpireLeague,
+  UmpireSchedule
+} from './umpireSchedule'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
@@ -279,6 +305,31 @@ export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 
 export const asGameDetail = withEventMetadata(
   asObject({
+    umpires: asOptional(
+      asEither(
+        asObject({
+          positions: asArray(
+            asObject({
+              slot: asString,
+              typeId: asString,
+              typeName: asString,
+              ordinal: asNumber,
+              required: asBoolean,
+              person: asEither(
+                asObject({
+                  userId: asString,
+                  name: asString,
+                  avatarUrl: asOptional(asNullable(asString))
+                }),
+                asLiteral(null)
+              )
+            })
+          )
+        }),
+        asLiteral(null)
+      ),
+      null
+    ),
     guests: asGuests,
     unrostered: asUnrostered,
     guestPlayers: asOptional(
@@ -1724,6 +1775,249 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
 })
 
 export class TeamStationClient {
+  async umpireSettings(league: string): Promise<UmpireSettings> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-settings`,
+      asUmpireSettings
+    )
+  }
+
+  async setUmpireSettings(
+    league: string,
+    settings: { management?: boolean; credits?: boolean }
+  ): Promise<UmpireSettings> {
+    return await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(league)}/umpire-settings`,
+      asUmpireSettings,
+      settings
+    )
+  }
+
+  async umpireLevels(league: string): Promise<UmpireLevel[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/umpire-levels`,
+        asUmpireLevels
+      )
+    ).levels
+  }
+
+  async addUmpireLevel(league: string, name: string): Promise<UmpireLevel> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(league)}/umpire-levels`,
+      asUmpireLevel,
+      { name }
+    )
+  }
+
+  async removeUmpireLevel(league: string, level: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/leagues/${encodeURIComponent(league)}/umpire-levels/${encodeURIComponent(level)}`,
+      asUnknownOk
+    )
+  }
+
+  async umpireTypes(league: string): Promise<UmpireType[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/umpire-types`,
+        asUmpireTypes
+      )
+    ).types
+  }
+
+  async addUmpireType(league: string, name: string): Promise<UmpireType> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(league)}/umpire-types`,
+      asUmpireLevel,
+      { name }
+    )
+  }
+
+  async removeUmpireType(league: string, id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/leagues/${encodeURIComponent(league)}/umpire-types/${encodeURIComponent(id)}`,
+      asUnknownOk
+    )
+  }
+
+  async umpireNoteTypes(league: string): Promise<UmpireType[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/umpire-note-types`,
+        asUmpireTypes
+      )
+    ).types
+  }
+
+  async addUmpireNoteType(league: string, name: string): Promise<UmpireType> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(league)}/umpire-note-types`,
+      asUmpireLevel,
+      { name }
+    )
+  }
+
+  async removeUmpireNoteType(league: string, id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/leagues/${encodeURIComponent(league)}/umpire-note-types/${encodeURIComponent(id)}`,
+      asUnknownOk
+    )
+  }
+
+  async saveUmpireNote(
+    game: string,
+    type: string,
+    before: string,
+    value: string
+  ): Promise<{ value: string }> {
+    return await this.request(
+      'PUT',
+      `/games/${encodeURIComponent(game)}/umpire-notes/${encodeURIComponent(type)}`,
+      asObject({ value: asString }),
+      { before, value }
+    )
+  }
+
+  async umpireRequirements(league: string): Promise<UmpireSeason[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/umpire-requirements`,
+        asUmpireSeasons
+      )
+    ).seasons
+  }
+
+  async setUmpireRequirements(
+    league: string,
+    requirement: {
+      seasonIds: string[]
+      levelId: string
+      types: UmpireTypeCount[]
+    }
+  ): Promise<void> {
+    await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(league)}/umpire-requirements`,
+      asUnknownOk,
+      requirement
+    )
+  }
+
+  async umpirePeople(league: string, query?: string): Promise<UmpirePerson[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/${query == null ? 'umpires' : `umpire-candidates?q=${encodeURIComponent(query)}`}`,
+        asUmpirePeople
+      )
+    ).people
+  }
+
+  async saveUmpires(
+    league: string,
+    changes: UmpireEdit[]
+  ): Promise<UmpirePerson[]> {
+    return (
+      await this.request(
+        'PUT',
+        `/leagues/${encodeURIComponent(league)}/umpires`,
+        asUmpirePeople,
+        { changes }
+      )
+    ).people
+  }
+
+  async grantUmpire(league: string, userId: string): Promise<void> {
+    await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(league)}/umpires`,
+      asUnknownOk,
+      { userId }
+    )
+  }
+
+  async revokeUmpire(league: string, userId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/leagues/${encodeURIComponent(league)}/umpires/${encodeURIComponent(userId)}`,
+      asUnknownOk
+    )
+  }
+
+  async certifyUmpire(
+    league: string,
+    userId: string,
+    certification: UmpireCertification
+  ): Promise<void> {
+    await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(league)}/umpires/${encodeURIComponent(userId)}/certifications`,
+      asUnknownOk,
+      certification
+    )
+  }
+
+  async umpireLeagues(): Promise<UmpireLeague[]> {
+    return (await this.request('GET', '/me/umpire-leagues', asUmpireLeagues))
+      .leagues
+  }
+
+  async umpireSchedule(league: string, query = ''): Promise<UmpireSchedule> {
+    const params = new URLSearchParams(query)
+    for (const key of ['days', 'levels']) {
+      const values = params.getAll(key).flatMap(value => value.split(','))
+      params.delete(key)
+      for (const value of values) if (value !== '') params.append(key, value)
+    }
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
+      asUmpireSchedule
+    )
+  }
+
+  async umpireLeaderboard(league: string): Promise<UmpireLeaderboard> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-leaderboard`,
+      asUmpireLeaderboard
+    )
+  }
+
+  async assignUmpire(
+    game: string,
+    assignment: { slot: string; userId: string; creditTeamId?: string }
+  ): Promise<void> {
+    await this.request(
+      'POST',
+      `/games/${encodeURIComponent(game)}/umpire-slots`,
+      asUnknownOk,
+      assignment
+    )
+  }
+
+  async removeUmpire(game: string, slot: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/games/${encodeURIComponent(game)}/umpire-slots`,
+      asUnknownOk,
+      { slot }
+    )
+  }
+
   async nodeAccounts(query = '', nodeAdmin = false): Promise<NodeAccount[]> {
     return await this.request(
       'GET',

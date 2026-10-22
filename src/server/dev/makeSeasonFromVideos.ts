@@ -165,6 +165,8 @@ async function main(): Promise<void> {
       await db
         .insertInto('seasons')
         .values({
+          starts_on: `${year}-03-01`,
+          ends_on: `${year}-05-31`,
           id,
           name: seasonName,
           year,

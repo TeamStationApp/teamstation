@@ -64,7 +64,8 @@ async function type(label: string, value: string): Promise<void> {
 }
 
 const checked = (label: string): boolean =>
-  labelled(label).getAttribute('aria-checked') === 'true'
+  (labelled(label).getAttribute('aria-checked') ??
+    labelled(label).getAttribute('aria-pressed')) === 'true'
 const saveDisabled = (): boolean =>
   labelled('Save').getAttribute('aria-disabled') === 'true'
 const text = (): string => document.body.textContent ?? ''

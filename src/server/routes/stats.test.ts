@@ -95,8 +95,22 @@ describe('one player’s figures', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: spring, name: 'Spring 2026', year: 2026, era_innings: 6 },
-        { id: fall, name: 'Fall 2025', year: 2025, era_innings: 6 }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: spring,
+          name: 'Spring 2026',
+          year: 2026,
+          era_innings: 6
+        },
+        {
+          starts_on: `2025-03-01`,
+          ends_on: `2025-05-31`,
+          id: fall,
+          name: 'Fall 2025',
+          year: 2025,
+          era_innings: 6
+        }
       ])
       .execute()
     await db

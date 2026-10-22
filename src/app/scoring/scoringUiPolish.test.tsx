@@ -123,7 +123,7 @@ describe('scoring UI polish', () => {
       })
       expect(chosen).equals(position)
     }
-    expect(node('Player position SS').getAttribute('aria-checked')).equals(
+    expect(node('Player position SS').getAttribute('aria-pressed')).equals(
       'true'
     )
     const spot = (position: string): (typeof PLAYER_POSITION_SPOTS)[number] =>

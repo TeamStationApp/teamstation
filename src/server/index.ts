@@ -84,6 +84,7 @@ import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
 import { timeRoutes } from './routes/time'
+import { umpireRoutes } from './routes/umpires'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
@@ -556,6 +557,7 @@ function runWorker(): void {
   )
   app.use('/api/v1', nodeAdministrationRoutes(db, mediaContext.space))
   app.use('/api/v1', gameApprovalRoutes(db))
+  app.use('/api/v1', umpireRoutes(db, mediaContext))
   app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use(

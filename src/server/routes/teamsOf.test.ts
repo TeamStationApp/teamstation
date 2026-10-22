@@ -105,8 +105,20 @@ describe('the teams and seasons a player has played in', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: spring, name: 'Spring 2026', year: 2026 },
-        { id: fall, name: 'Fall 2025', year: 2025 }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: spring,
+          name: 'Spring 2026',
+          year: 2026
+        },
+        {
+          starts_on: `2025-03-01`,
+          ends_on: `2025-05-31`,
+          id: fall,
+          name: 'Fall 2025',
+          year: 2025
+        }
       ])
       .execute()
     await db

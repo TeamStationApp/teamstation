@@ -4,6 +4,7 @@ import {
   Pressable,
   type StyleProp,
   Text,
+  type TextStyle,
   type ViewStyle
 } from 'react-native'
 
@@ -36,6 +37,8 @@ export interface ButtonProps {
   /** Drawn before the label. */
   icon?: IconName
   style?: StyleProp<ViewStyle>
+  /** Allows a bounded label to shrink without changing other buttons. */
+  labelStyle?: StyleProp<TextStyle>
   /** For a device test that must tell this button from text that reads the same. */
   testID?: string
 }
@@ -71,6 +74,7 @@ export function Button(props: ButtonProps): React.ReactElement {
     block = false,
     icon,
     style,
+    labelStyle,
     testID
   } = props
   const theme = useTheme()
@@ -125,7 +129,8 @@ export function Button(props: ButtonProps): React.ReactElement {
               styles[`${kind}Label`],
               compact && { fontSize: 14 },
               small && styles.smallLabel,
-              textColor != null && { color: textColor }
+              textColor != null && { color: textColor },
+              labelStyle
             ]}
           >
             {busy ? busyLabel : label}

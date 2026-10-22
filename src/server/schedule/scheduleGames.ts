@@ -30,6 +30,7 @@ import { requestGameStats } from '../statsBuilder/request'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
 import { isUndeterminedName, teamNameKey } from '../teams/teamNames'
+import { recheckUmpireAssignments } from '../umpires/assignments'
 import { materialGame, requireImmediateGameConsent } from './gameApprovals'
 
 /**
@@ -254,6 +255,7 @@ export async function scheduleGames(
               ? [materialGame(game)]
               : [fresh.previous, materialGame(game)]
           )
+          await recheckUmpireAssignments(trx, applied.gameId)
           await trx
             .insertInto('audit_log')
             .values({

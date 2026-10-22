@@ -192,10 +192,10 @@ describe('player entry sheet', function () {
     await tap('Player position P')
     await tap('Player position DH')
     await tap('Player position P')
-    expect(node('Player position DH').getAttribute('aria-checked')).equals(
+    expect(node('Player position DH').getAttribute('aria-pressed')).equals(
       'true'
     )
-    expect(node('Player position P').getAttribute('aria-checked')).equals(
+    expect(node('Player position P').getAttribute('aria-pressed')).equals(
       'false'
     )
     const scroll = node('First Name').closest<HTMLElement>(

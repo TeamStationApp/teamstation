@@ -562,12 +562,16 @@ describe('the season screen', function () {
         {
           ...base,
           id: 'gam_public_final',
+          isUmpire: true,
+          isGameLive: true,
           status: 'final',
           cancellationReason: null
         },
         {
           ...base,
           id: 'gam_public_withdrawn',
+          isUmpire: true,
+          isGameLive: true,
           status: 'cancelled',
           cancellationReason: 'withdrawal',
           withdrawnByTeamName: 'Demo Visitor'
@@ -588,6 +592,11 @@ describe('the season screen', function () {
       initialWhen: 'all'
     })
     expect(text()).includes('final · 2–4')
+    const badges = [
+      ...document.querySelectorAll('[data-testid="settings-pill-badge"]')
+    ]
+    expect(badges.map(b => b.textContent)).deep.equals(['UMP', 'LIVE'])
+    expect(badges[0].parentElement).equals(badges[1].parentElement)
     expect(text()).includes(
       `${shortDate(base.startAt)} · ${shortTime(base.startAt)} · Demo Public Field`
     )

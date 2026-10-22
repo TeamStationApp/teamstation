@@ -20,7 +20,7 @@ export function InvitationsWaiting({
   scopeKind: 'team' | 'season' | 'league'
   scopeId: string
   onChanged?: () => void
-}): React.ReactElement {
+}): React.ReactElement | null {
   const styles = getStyles(useTheme())
   const [page, setPage] = useState<ManagePage>()
   const [revision, setRevision] = useState(0)
@@ -94,6 +94,13 @@ export function InvitationsWaiting({
       }
     }
   }
+  if (
+    scopeKind !== 'team' &&
+    (page?.pending.length ?? 0) === 0 &&
+    error === '' &&
+    confirmation.sheet == null
+  )
+    return null
   return (
     <View style={styles.page}>
       {page != null && (
