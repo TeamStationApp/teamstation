@@ -7,7 +7,8 @@ const {
   istanbulCounts,
   jacocoCounts,
   lineReportFromCounts,
-  resolveSpecs
+  resolveSpecs,
+  withoutTypeOnlyLines
 } = require('./changed-line-coverage.cjs')
 
 // The changed-line coverage gate every milestone runs:
@@ -15,6 +16,7 @@ const {
 //   node scripts/changed-line-check.cjs (--coverage <coverage-final.json> |
 //     --counts <json> | --jacoco <report.xml> --source-root <dir> …)
 //     --ext <.x> [--ext …] [--exclude <path|glob> …] [--allow-empty]
+//     [--min <percent>]
 //     <pathspec> …
 //
 // `--jacoco` reads a JaCoCo XML report, which names each file by its package
@@ -29,11 +31,13 @@ const {
 // are under 90%, when an added file covers under 90% of its own lines, when
 // an executable changed file has no coverage record, and when nothing under
 // the pathspecs changed, unless `--allow-empty`.
+// An explicit --min applies that minimum to each changed file as well as
+// the total and every new file (90 for unit-only, 95 for combined counters).
 
 const USAGE =
   'usage: changed-line-check.cjs (--coverage <file> | --counts <file> | ' +
   '--jacoco <file> --source-root <dir>…) --ext <.x> [--exclude <path>] ' +
-  '[--allow-empty] <pathspec>…'
+  '[--allow-empty] [--min <percent>] <pathspec>…'
 
 function parseArgs(argv) {
   const args = {
@@ -49,7 +53,14 @@ function parseArgs(argv) {
     else if (arg === '--report') args.report = argv[++i]
     else if (arg === '--coverage') args.coverage = argv[++i]
     else if (arg === '--counts') args.counts = argv[++i]
-    else if (arg === '--jacoco') args.jacoco = argv[++i]
+    else if (arg === '--min') {
+      const value = argv[++i]
+      if (value == null || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value))
+        throw new Error('--min needs a percentage from 0 to 100')
+      args.min = Number(value)
+      if (args.min > 100)
+        throw new Error('--min needs a percentage from 0 to 100')
+    } else if (arg === '--jacoco') args.jacoco = argv[++i]
     else if (arg === '--source-root') args.sourceRoots.push(argv[++i])
     else if (arg === '--ext') args.exts.push(argv[++i])
     else if (arg === '--exclude') args.excludes.push(argv[++i])
@@ -126,11 +137,30 @@ function countsFor(args, topLevel, paths, cwd) {
       if (entry != null) counts[path] = istanbulCounts(entry)
     }
   } else {
-    const raw = JSON.parse(readFileSync(resolve(cwd, args.counts), 'utf8'))
+    const saved = JSON.parse(readFileSync(resolve(cwd, args.counts), 'utf8'))
+    const raw =
+      saved.schema === 'llvm-line-counts-v1'
+        ? require('./llvm-changed-line-counts.cjs').validateCounts(
+            saved,
+            topLevel
+          )
+        : saved
     for (const path of paths) {
       const entry = raw[join(topLevel, path)] ?? raw[path]
       if (entry != null) counts[path] = entry
     }
+  }
+  for (const [path, lines] of Object.entries(counts)) {
+    if (!/\.[cm]?tsx?$/.test(path)) continue
+    let source
+    try {
+      source = readFileSync(join(topLevel, path), 'utf8')
+    } catch (error) {
+      // An unavailable source cannot justify excluding any measured line.
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    counts[path] = withoutTypeOnlyLines(path, source, lines)
   }
   return counts
 }
@@ -200,7 +230,9 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   const counts = countsFor(args, topLevel, Object.keys(changes), cwd)
   const report = lineReportFromCounts(changes, counts, () => true, {
     newFiles: added,
-    newFileMin: 90
+    min: args.min ?? 90,
+    perFileMin: args.min,
+    newFileMin: args.min ?? 90
   })
   if (args.report != null)
     writeFileSync(resolve(cwd, args.report), JSON.stringify(report, null, 2))
@@ -215,7 +247,9 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   }
   for (const path of report.missing) log(`  ${path}: no coverage record`)
   for (const path of report.shortNewFiles)
-    log(`  ${path}: a new file under 90% on its own`)
+    log(`  ${path}: a new file under ${args.min ?? 90}% on its own`)
+  for (const path of report.shortFiles)
+    log(`  ${path}: changed lines under ${args.min}% on their own`)
   log(
     `Changed executable line coverage: ${report.covered}/${report.total} ` +
       `(${report.percent.toFixed(2)}%)${report.pass ? '' : ' FAILED'}`

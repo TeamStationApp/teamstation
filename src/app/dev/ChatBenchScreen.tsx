@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
 import { loadChatCore } from '../../common/chatCrypto/core'
 import type { ChatCoreStatus } from '../../common/chatCrypto/coreCall'
 import { vectorSummary } from '../../common/chatCrypto/vectors'
+import { Button } from '../components/Button'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -12,6 +13,8 @@ import {
   type ChatBenchResult,
   runChatBench
 } from './chatBenchRun'
+import { probeIdentityStorage } from './chatIdentityStoreProbe'
+import type { IdentityProbeResult } from './chatIdentityStoreProbeRun'
 
 export interface ChatBenchScreenProps extends ChatBenchOptions {
   /** The bench itself; tests hand in a small one. */
@@ -20,6 +23,8 @@ export interface ChatBenchScreenProps extends ChatBenchOptions {
   checkVectors?: () => string
   /** Loads this platform's chat crypto core; the real one by default. */
   loadCore?: () => Promise<ChatCoreStatus>
+  /** Only this gated diagnostic screen may start the isolated storage check. */
+  runStorageProbe?: (signal: AbortSignal) => Promise<IdentityProbeResult>
 }
 
 /**
@@ -49,13 +54,45 @@ export function ChatBenchScreen(
     now,
     run = runChatBench,
     checkVectors = vectorSummary,
-    loadCore = loadChatCore
+    loadCore = loadChatCore,
+    runStorageProbe = probeIdentityStorage
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const insets = useInsets()
   const [lines, setLines] = useState<string[] | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const probe = useRef<AbortController | undefined>(undefined)
+  const [probing, setProbing] = useState(false)
+  const [probeResult, setProbeResult] = useState<
+    IdentityProbeResult | undefined
+  >(undefined)
+  const [probeFailed, setProbeFailed] = useState(false)
+  useEffect(
+    () => () => {
+      probe.current?.abort()
+    },
+    []
+  )
+  const checkStorage = (): void => {
+    if (probe.current != null || lines?.[0] !== 'vectors ok') return
+    const controller = new AbortController()
+    probe.current = controller
+    setProbing(true)
+    setProbeResult(undefined)
+    setProbeFailed(false)
+    runStorageProbe(controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted) setProbeResult(result)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setProbeFailed(true)
+      })
+      .finally(() => {
+        if (probe.current === controller) probe.current = undefined
+        if (!controller.signal.aborted) setProbing(false)
+      })
+  }
 
   useEffect(() => {
     let live = true
@@ -118,6 +155,25 @@ export function ChatBenchScreen(
       {lines != null || error != null ? (
         <Text style={styles.done}>done</Text>
       ) : null}
+      <Button
+        label="Check saved chat compatibility"
+        onPress={checkStorage}
+        disabled={probing || lines?.[0] !== 'vectors ok'}
+      />
+      {probing ? (
+        <Text style={styles.line}>Checking isolated synthetic storage…</Text>
+      ) : null}
+      {probeFailed ? (
+        <Text style={styles.line}>identity storage failed</Text>
+      ) : null}
+      {probeResult == null ? null : (
+        <>
+          <Text style={styles.line}>identity storage ok</Text>
+          <Text testID="chat-identity-storage-result" style={styles.line}>
+            {JSON.stringify(probeResult)}
+          </Text>
+        </>
+      )}
     </View>
   )
 }

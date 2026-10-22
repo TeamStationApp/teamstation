@@ -16,6 +16,11 @@ function valueOf(id: string): bigint {
   return value
 }
 
+/** The complete account value, validated before decoding; never a JS number. */
+export function valueOfUserId(id: UserId): bigint {
+  return valueOf(asUserId(id))
+}
+
 /** A canonical positive 128-bit identity. No coercion or case folding. */
 export const asUserId: Cleaner<UserId> = raw => {
   if (typeof raw !== 'string' || raw.length !== 26 || !FORMAT.test(raw)) {

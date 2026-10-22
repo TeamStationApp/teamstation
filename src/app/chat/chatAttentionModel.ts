@@ -81,7 +81,7 @@ export function revealAttentionTarget(
 
 export function attentionMessages(
   view: ConversationView,
-  userId: number,
+  userId: string,
   session: ChatAttentionSession
 ): MessageView[] {
   if (view.unverified) return []
@@ -110,7 +110,7 @@ export function attentionMessages(
 
 export function attentionReferences(
   view: ConversationView,
-  userId: number,
+  userId: string,
   boundary: number,
   seen: ReadonlySet<string> = new Set()
 ): string[] {

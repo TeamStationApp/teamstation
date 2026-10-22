@@ -35,7 +35,7 @@ type Mode = 'first' | 'chained' | 'chainBreak'
 
 /** A member's current per-user key, checked against their identity. */
 interface Recipient {
-  userId: number
+  userId: string
   identityId: string
   generation: number
   publicKey: Uint8Array

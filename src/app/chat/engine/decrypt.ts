@@ -81,7 +81,7 @@ export class IdentityCache {
   }
 
   /** Forgets a person's identities, so whether each is current is read again. */
-  forgetUser(userId: number): void {
+  forgetUser(userId: string): void {
     for (const [id, identity] of this.known) {
       if (identity.userId === userId) this.known.delete(id)
     }
@@ -110,7 +110,7 @@ async function identityOf(
  */
 export async function pinCurrent(
   ctx: EngineContext,
-  userId: number,
+  userId: string,
   identityKey: string
 ): Promise<'new' | 'same' | 'changed'> {
   if (userId === ctx.userId) return 'same'

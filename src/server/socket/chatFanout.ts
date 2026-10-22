@@ -4,6 +4,7 @@ import { Client } from 'pg'
 
 import { asLiteral } from '../../common/asLiteral'
 import type { ChatSocketFrame } from '../../common/gameSocket'
+import { asUserId } from '../../common/userId'
 import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
 import type { Database } from '../db/database'
 
@@ -18,8 +19,8 @@ export type ChatChangePayload =
       k: 'message' | 'members' | 'epoch' | 'grant' | 'read'
       seq?: number
     }
-  | { c: string; k: 'typing'; u: number }
-  | { u: number; k: 'link' | 'devices' | 'preferences' }
+  | { c: string; k: 'typing'; u: string }
+  | { u: string; k: 'link' | 'devices' | 'preferences' }
 
 export const asChatChangePayload = asEither(
   asObject({
@@ -27,13 +28,13 @@ export const asChatChangePayload = asEither(
     k: asLiteral('message', 'members', 'epoch', 'grant', 'read'),
     seq: asOptional(asNumber)
   }),
-  asObject({ c: asString, k: asLiteral('typing'), u: asNumber }),
-  asObject({ u: asNumber, k: asLiteral('link', 'devices', 'preferences') })
+  asObject({ c: asString, k: asLiteral('typing'), u: asUserId }),
+  asObject({ u: asUserId, k: asLiteral('link', 'devices', 'preferences') })
 )
 
 /** Somebody signed in on one socket of this worker. */
 export interface ChatSubscriber {
-  userId: number
+  userId: string
   send: (frame: ChatSocketFrame) => void
 }
 
@@ -41,7 +42,7 @@ export interface ChatSubscriber {
 export type MemberReader = (
   db: Kysely<Database>,
   conversationId: string
-) => Promise<Set<number>>
+) => Promise<Set<string>>
 
 export interface ChatFanoutOptions {
   db: Kysely<Database>
@@ -80,7 +81,7 @@ export const readMembers: MemberReader = async (db, conversationId) =>
 export async function notifyTyping(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number
+  userId: string
 ): Promise<void> {
   const payload = JSON.stringify({ c: conversationId, k: 'typing', u: userId })
   await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(db)
@@ -112,9 +113,9 @@ export class ChatFanout {
   private readonly now: () => Date
   private readonly log: (message: string) => void
   /** The sockets on this worker, by user id. */
-  private readonly subscribers = new Map<number, Set<ChatSubscriber>>()
+  private readonly subscribers = new Map<string, Set<ChatSubscriber>>()
   /** Member sets by conversation, oldest first. */
-  private readonly members = new Map<string, Promise<Set<number>>>()
+  private readonly members = new Map<string, Promise<Set<string>>>()
   private client: Client | undefined
   private readonly hangingUp = new Set<Promise<void>>()
   private retry: ReturnType<typeof setTimeout> | undefined
@@ -221,14 +222,14 @@ export class ChatFanout {
     for (const userId of members) this.sendTo(userId, frame)
   }
 
-  private sendTo(userId: number, frame: ChatSocketFrame): void {
+  private sendTo(userId: string, frame: ChatSocketFrame): void {
     const set = this.subscribers.get(userId)
     if (set == null) return
     for (const subscriber of [...set]) subscriber.send(frame)
   }
 
   /** A conversation's members, from the cache or read once. */
-  private async membersOf(conversationId: string): Promise<Set<number>> {
+  private async membersOf(conversationId: string): Promise<Set<string>> {
     let reading = this.members.get(conversationId)
     if (reading != null) {
       // Most recently used last.

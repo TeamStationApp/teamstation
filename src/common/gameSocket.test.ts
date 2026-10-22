@@ -12,6 +12,7 @@ import {
   TYPING_INTERVAL_MS,
   type WebSocketLike
 } from './gameSocket'
+import { userIdOfValue } from './userId'
 
 /** A WebSocket the test opens, closes and talks through by hand. */
 class FakeSocket implements WebSocketLike {
@@ -1015,7 +1016,11 @@ describe('GameSocket chat (U9)', function () {
       hint,
       { ...noSeq, kind: 'members' },
       { type: 'chatUser', kind: 'devices' },
-      { type: 'chatTyping', conversationId: 'cnv_1', userId: 7 },
+      {
+        type: 'chatTyping',
+        conversationId: 'cnv_1',
+        userId: userIdOfValue((1n << 127n) + 7n)
+      },
       { type: 'resync' }
     ]
     for (const frame of frames) last().receive(frame)
@@ -1024,6 +1029,8 @@ describe('GameSocket chat (U9)', function () {
     last().receive({ ...hint, seq: 'four' })
     last().receive({ type: 'chatUser', kind: 'everything' })
     last().receive({ type: 'chatTyping', conversationId: 'cnv_1' })
+    last().receive({ type: 'chatTyping', conversationId: 'cnv_1', userId: 7 })
+    last().receive({ type: 'chatTyping', conversationId: 'cnv_1', userId: '7' })
     last().receive({ type: 'typed', conversationId: 'cnv_1', id: 'c9' })
     last().receive({ type: 'typed', conversationId: 'cnv_1' })
     expect(chat).deep.equals(frames)

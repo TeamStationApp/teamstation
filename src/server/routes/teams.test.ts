@@ -110,6 +110,19 @@ describe('teams by external id, and making one', function () {
       }))
     )
     await db
+      .insertInto('user_emails')
+      .values(
+        [admin, member, seasonAdmin, leagueAdmin].map((person, index) => ({
+          id: makeId('userEmail'),
+          user_id: userIdOfGumbo(person.userId),
+          email: `team-fixture${index}@example.test`,
+          is_primary: true,
+          verified_at: now,
+          source: 'manual'
+        }))
+      )
+      .execute()
+    await db
       .insertInto('auth_sessions')
       .values(
         (

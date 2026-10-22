@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { fromHex, hex, oracle, seed } from '../../test/chatCryptoOracle'
+import { userIdOfGumbo } from '../userId'
 import { call } from './core'
 import { num } from './coreCall'
 import {
@@ -141,7 +142,7 @@ describe('chatCrypto HPKE', () => {
     const ephemeral = seed('ephemeral')
     const link = linkAad({ linkId: 'clk_link1', newDeviceId: 'cdv_dev2' })
     const puk = pukAad({
-      userId: 42,
+      userId: userIdOfGumbo(42),
       identityId: 'cid_1',
       generation: 3,
       deviceId: 'cdv_dev2'
@@ -149,7 +150,7 @@ describe('chatCrypto HPKE', () => {
     const epoch = epochAad({
       conversationId: 'cnv_c1',
       epoch: 7,
-      recipientUserId: 42,
+      recipientUserId: userIdOfGumbo(42),
       identityId: 'cid_1',
       generation: 3
     })
@@ -244,7 +245,7 @@ describe('chatCrypto HPKE', () => {
       const otherEpoch = epochAad({
         conversationId: 'cnv_c1',
         epoch: 8,
-        recipientUserId: 42,
+        recipientUserId: userIdOfGumbo(42),
         identityId: 'cid_1',
         generation: 3
       })

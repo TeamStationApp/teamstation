@@ -7,10 +7,12 @@ import type {
   ChatCoreStatus,
   CoreUnavailableReason
 } from '../../common/chatCrypto/coreCall'
+import { HttpError } from '../../common/errors'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatCoreGate } from './ChatCoreGate'
-import { chatCoreLog } from './chatCoreLog'
+import { chatCoreLog, chatStartFailure, chatStartLog } from './chatCoreLog'
 import { ChatUnavailable } from './ChatUnavailable'
+import { storedRecordFromJson, UnreadableKeyRecordError } from './keyRecord'
 
 let root: Root | undefined
 
@@ -280,5 +282,67 @@ describe('chatCoreLog', () => {
     expect(JSON.parse(asked[0].init.body as string).source).equals(
       'chatCore-ios'
     )
+  })
+})
+
+describe('chatStartLog', () => {
+  it('names why chat did not start without any of the saved keys', () => {
+    const unreadable = (() => {
+      try {
+        storedRecordFromJson('{"secret":"do-not-log"')
+      } catch (error) {
+        return error
+      }
+    })()
+    expect(unreadable).instanceOf(UnreadableKeyRecordError)
+    expect(chatStartFailure(unreadable)).equals('storedRecord:invalid')
+    expect(
+      chatStartFailure(new UnreadableKeyRecordError('wrappingKeyMissing'))
+    ).equals('storedRecord:wrappingKeyMissing')
+    expect(chatStartFailure(new HttpError('offline', 'gone'))).equals(
+      'http:offline'
+    )
+    expect(chatStartFailure(new TypeError('Failed to fetch'))).equals(
+      'TypeError'
+    )
+    expect(chatStartFailure('odd')).equals('string')
+  })
+
+  it('posts the reason to /logs as chatStart-<platform>, once per reason', async () => {
+    const posts: Array<{ url: string; body: any }> = []
+    const warned: string[] = []
+    const realWarn = console.warn
+    console.warn = (line: string) => {
+      warned.push(line)
+    }
+    try {
+      const log = chatStartLog(
+        'http://api.example/api/v1',
+        'web',
+        async (url, body) => {
+          posts.push({ url, body: JSON.parse(body) })
+          throw new Error('offline')
+        }
+      )
+      log(new UnreadableKeyRecordError('unknownVersion'))
+      // Try again, failing the same way: told once.
+      log(new UnreadableKeyRecordError('unknownVersion'))
+      log(new HttpError('offline', 'gone'))
+      await delay(10)
+    } finally {
+      console.warn = realWarn
+    }
+    expect(warned).deep.equals([
+      'Chat could not start: storedRecord:unknownVersion',
+      'Chat could not start: http:offline'
+    ])
+    expect(posts).lengthOf(2)
+    expect(posts[0].url).equals('http://api.example/api/v1/logs')
+    expect(posts[0].body.source).equals('chatStart-web')
+    expect(posts[0].body.lines[0]).deep.include({
+      level: 'warn',
+      text: 'Chat could not start: storedRecord:unknownVersion',
+      data: { reason: 'storedRecord:unknownVersion' }
+    })
   })
 })

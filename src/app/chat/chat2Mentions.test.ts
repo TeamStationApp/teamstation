@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { MAX_BODY } from '../../common/chatContent'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   insertMention,
   mentionIds,
@@ -21,7 +22,7 @@ import {
 
 const text = 'Hi @Aaron Judge ready'
 const token: MentionToken = {
-  userId: 2,
+  userId: userIdOfGumbo(2),
   start: 3,
   end: 15,
   label: '@Aaron Judge'
@@ -47,7 +48,7 @@ describe('local mention ranges', function () {
   })
 
   it('inserts a stable member ID at the requested caret, adds a separator, and preserves text around it', function () {
-    const person = member(2, 'Aaron Judge')
+    const person = member(userIdOfGumbo(2), 'Aaron Judge')
     const request = mentionRequest('Hi  ready', 'Hi @ ready')!
     const next = insertMention(request, request.text, undefined, person)!
     expect(next.text).equals(text)
@@ -85,18 +86,18 @@ describe('local mention ranges', function () {
       reconcileMentions(
         'Hi @AA ',
         'Hi @AAA ',
-        [{ userId: 2, start: 3, end: 6, label: '@AA' }],
+        [{ userId: userIdOfGumbo(2), start: 3, end: 6, label: '@AA' }],
         { selection: { start: 5, end: 5 } }
       )
     ).deep.equals([])
     expect(
       reconcileMentions('Hi @AA ', 'Hi @AAA ', [
-        { userId: 2, start: 3, end: 6, label: '@AA' }
+        { userId: userIdOfGumbo(2), start: 3, end: 6, label: '@AA' }
       ])
     ).deep.equals([])
     expect(mentionIds('Hi @Aaron Judge', undefined, [person()])).deep.equals([])
     function person(): ReturnType<typeof member> {
-      return member(2, 'Aaron Judge')
+      return member(userIdOfGumbo(2), 'Aaron Judge')
     }
   })
 
@@ -132,7 +133,7 @@ describe('local mention ranges', function () {
   it('refuses malformed or split-surrogate tokens and enforces the existing Unicode body limit', function () {
     expect(validMentionTokens(text, [token])).deep.equals([token])
     for (const bad of [
-      { ...token, userId: 0 },
+      { ...token, userId: 0 as unknown as string },
       { ...token, start: -1 },
       { ...token, end: 100 },
       { ...token, end: 3 },
@@ -142,7 +143,7 @@ describe('local mention ranges', function () {
       expect(validMentionTokens(text, [bad])).deep.equals([])
     expect(
       validMentionTokens('@🙂 ', [
-        { userId: 2, start: 0, end: 2, label: '@\ud83d' }
+        { userId: userIdOfGumbo(2), start: 0, end: 2, label: '@\ud83d' }
       ])
     ).deep.equals([])
     const long = '🙂'.repeat(MAX_BODY - 2) + ' @'
@@ -151,7 +152,7 @@ describe('local mention ranges', function () {
         { text: long, start: long.length - 1, end: long.length },
         long,
         [],
-        member(2, 'Aaron Judge')
+        member(userIdOfGumbo(2), 'Aaron Judge')
       )
     ).equals(undefined)
     expect(
@@ -166,37 +167,50 @@ describe('local mention ranges', function () {
       { ...token, start: 13, end: 25 }
     ]
     expect(
-      mentionIds(twice, tokens, [member(2, 'Renamed Member')])
-    ).deep.equals([2])
+      mentionIds(twice, tokens, [member(userIdOfGumbo(2), 'Renamed Member')])
+    ).deep.equals([userIdOfGumbo(2)])
     expect(mentionIds(twice, tokens, [])).deep.equals([])
     const duplicateNames = [
-      { ...tokens[0], userId: 2 },
-      { ...tokens[1], userId: 3 }
+      { ...tokens[0], userId: userIdOfGumbo(2) },
+      { ...tokens[1], userId: userIdOfGumbo(3) }
     ]
     expect(
       mentionIds(twice, duplicateNames, [
-        member(2, 'Aaron Judge'),
-        member(3, 'Aaron Judge')
+        member(userIdOfGumbo(2), 'Aaron Judge'),
+        member(userIdOfGumbo(3), 'Aaron Judge')
       ])
-    ).deep.equals([2, 3])
+    ).deep.equals([userIdOfGumbo(2), userIdOfGumbo(3)])
     expect(
-      validMentionTokens(text, [token, { ...token, userId: 3 }])
+      validMentionTokens(text, [token, { ...token, userId: userIdOfGumbo(3) }])
     ).deep.equals([])
     expect(twice).equals('@Aaron Judge @Aaron Judge ')
-    const legacy = message({ body: '@Aaron Judge', mentions: [2, 2, 3] })
+    const legacy = message({
+      body: '@Aaron Judge',
+      mentions: [userIdOfGumbo(2), userIdOfGumbo(2), userIdOfGumbo(3)]
+    })
     expect(
-      mentionIds(legacy.body, undefined, [member(2, 'Aaron Judge')], legacy)
-    ).deep.equals([2])
+      mentionIds(
+        legacy.body,
+        undefined,
+        [member(userIdOfGumbo(2), 'Aaron Judge')],
+        legacy
+      )
+    ).deep.equals([userIdOfGumbo(2)])
     expect(
       mentionIds(
         legacy.body + ' changed',
         undefined,
-        [member(2, 'Aaron Judge')],
+        [member(userIdOfGumbo(2), 'Aaron Judge')],
         legacy
       )
     ).deep.equals([])
     expect(
-      mentionIds(legacy.body, [], [member(2, 'Aaron Judge')], legacy)
+      mentionIds(
+        legacy.body,
+        [],
+        [member(userIdOfGumbo(2), 'Aaron Judge')],
+        legacy
+      )
     ).deep.equals([])
   })
 })
@@ -209,10 +223,12 @@ describe('mention draft ownership', function () {
     const submitted = owner.begin('cnv_1')!
     owner.write('cnv_1', {
       ...owner.draft('cnv_1'),
-      mentionTokens: [{ ...token, userId: 3 }]
+      mentionTokens: [{ ...token, userId: userIdOfGumbo(3) }]
     })
     owner.finish('cnv_1', submitted, true)
-    expect(owner.draft('cnv_1').mentionTokens![0].userId).equals(3)
+    expect(owner.draft('cnv_1').mentionTokens![0].userId).equals(
+      userIdOfGumbo(3)
+    )
     expect(owner.draft('cnv_1').text).equals(text)
   })
 

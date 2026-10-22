@@ -50,7 +50,7 @@ export async function teamStaff(
     .where('team_id', '=', teamId)
     .where('role', 'in', ['owner', 'manager'])
     .execute()
-  const held: Array<{ userId: number; role: Role }> = [
+  const held: Array<{ userId: string; role: Role }> = [
     ...roleRows,
     ...owners.map(row => ({ userId: row.userId, role: 'admin' as const }))
   ]
@@ -60,7 +60,7 @@ export async function teamStaff(
     db,
     held.map(row => row.userId)
   )
-  const rolesOf = new Map<number, Set<Role>>()
+  const rolesOf = new Map<string, Set<Role>>()
   for (const row of held) {
     const userId = survivorOf.get(row.userId)
     if (userId == null) continue
@@ -111,15 +111,15 @@ export async function teamStaff(
  */
 export async function rowsOfPeople(
   db: Kysely<Database>,
-  userIds: number[]
-): Promise<number[]> {
+  userIds: string[]
+): Promise<string[]> {
   const unique = [...new Set(userIds)]
   if (unique.length === 0) return []
-  const { rows } = await sql<{ id: number }>`
+  const { rows } = await sql<{ id: string }>`
     with recursive closed (id, depth) as (
       select id, 0
       from users
-      where id = any(${unique}::bigint[])
+      where id = any(${unique}::text[])
       union all
       select users.id, closed.depth + 1
       from closed
@@ -128,7 +128,7 @@ export async function rowsOfPeople(
     )
     select distinct id from closed
   `.execute(db)
-  return rows.map(row => Number(row.id))
+  return rows.map(row => row.id)
 }
 
 /**
@@ -138,15 +138,15 @@ export async function rowsOfPeople(
  */
 export async function survivors(
   db: Kysely<Database>,
-  userIds: number[]
-): Promise<Map<number, number>> {
+  userIds: string[]
+): Promise<Map<string, string>> {
   const unique = [...new Set(userIds)]
   if (unique.length === 0) return new Map()
-  const { rows } = await sql<{ startId: number; survivorId: number }>`
+  const { rows } = await sql<{ startId: string; survivorId: string }>`
     with recursive chain (start_id, id, merged_into, depth) as (
       select id, id, merged_into, 0
       from users
-      where id = any(${unique}::bigint[])
+      where id = any(${unique}::text[])
       union all
       select chain.start_id, users.id, users.merged_into, chain.depth + 1
       from chain
@@ -157,5 +157,5 @@ export async function survivors(
     from chain
     where merged_into is null
   `.execute(db)
-  return new Map(rows.map(row => [Number(row.startId), Number(row.survivorId)]))
+  return new Map(rows.map(row => [row.startId, row.survivorId]))
 }

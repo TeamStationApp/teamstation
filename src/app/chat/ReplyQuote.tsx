@@ -8,7 +8,7 @@ import type { QuoteView } from './engine/apply'
 
 export function ReplyQuote(props: {
   quote: QuoteView
-  userId: number
+  userId?: string
   onJump?: (id: string) => void
   messageGesture?: MessagePressGesture
 }): React.ReactElement {

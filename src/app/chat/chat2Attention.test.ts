@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   AttentionCancelled,
   ChatHistoryCoordinator,
@@ -32,7 +33,7 @@ const session = (): NonNullable<ReturnType<typeof newAttentionSession>> =>
   newAttentionSession(opened())!
 const quote = {
   id: 'msg_original',
-  authorId: 1,
+  authorId: userIdOfGumbo(1),
   authorName: 'Aaron Judge',
   snippet: 'Claimed words',
   status: 'unavailable' as const
@@ -72,10 +73,19 @@ describe('session attention classification and history projection', function () 
       id: quote.id,
       seq: 20,
       mine: true,
-      senderUserId: 1
+      senderUserId: userIdOfGumbo(1)
     })
-    const reply = message({ id: 'msg_reply', seq: 220, quote, mentions: [1] })
-    const mention = message({ id: 'msg_mention', seq: 210, mentions: [1] })
+    const reply = message({
+      id: 'msg_reply',
+      seq: 220,
+      quote,
+      mentions: [userIdOfGumbo(1)]
+    })
+    const mention = message({
+      id: 'msg_mention',
+      seq: 210,
+      mentions: [userIdOfGumbo(1)]
+    })
     const claimed = message({
       id: 'msg_claimed',
       seq: 230,
@@ -88,18 +98,27 @@ describe('session attention classification and history projection', function () 
         claimed,
         original,
         mention,
-        message({ id: 'msg_own', seq: 240, mine: true, mentions: [1] }),
-        message({ id: 'msg_own_id', seq: 241, senderUserId: 1, mentions: [1] }),
-        message({ id: 'msg_read', seq: 200, mentions: [1] })
+        message({
+          id: 'msg_own',
+          seq: 240,
+          mine: true,
+          mentions: [userIdOfGumbo(1)]
+        }),
+        message({
+          id: 'msg_own_id',
+          seq: 241,
+          senderUserId: userIdOfGumbo(1),
+          mentions: [userIdOfGumbo(1)]
+        }),
+        message({ id: 'msg_read', seq: 200, mentions: [userIdOfGumbo(1)] })
       ]
     })
     expect(
-      attentionMessages(current, 1, state).map(value => value.id)
+      attentionMessages(current, userIdOfGumbo(1), state).map(value => value.id)
     ).deep.equals(['msg_mention', 'msg_reply'])
-    expect(attentionReferences(current, 1, state.boundary)).deep.equals([
-      quote.id,
-      'msg_missing'
-    ])
+    expect(
+      attentionReferences(current, userIdOfGumbo(1), state.boundary)
+    ).deep.equals([quote.id, 'msg_missing'])
     for (const status of ['locked', 'lost', 'invalid', 'removed'] as const) {
       expect(
         attentionMessages(
@@ -109,34 +128,42 @@ describe('session attention classification and history projection', function () 
               { ...original, status }
             ]
           }),
-          1,
+          userIdOfGumbo(1),
           state
         )
       ).deep.equals([])
       expect(
         attentionMessages(
           opened({ messages: [{ ...mention, status }] }),
-          1,
+          userIdOfGumbo(1),
           state
         )
       ).deep.equals([])
     }
     expect(
-      attentionMessages({ ...current, unverified: true }, 1, state)
+      attentionMessages(
+        { ...current, unverified: true },
+        userIdOfGumbo(1),
+        state
+      )
     ).deep.equals([])
     expect(
-      attentionReferences({ ...current, unverified: true }, 1, state.boundary)
+      attentionReferences(
+        { ...current, unverified: true },
+        userIdOfGumbo(1),
+        state.boundary
+      )
     ).deep.equals([])
     state.seen.add(mention.id)
     expect(
-      attentionMessages(current, 1, state).map(value => value.id)
+      attentionMessages(current, userIdOfGumbo(1), state).map(value => value.id)
     ).deep.equals(['msg_reply'])
     expect(
       attentionMessages(
         opened({
           messages: [{ ...mention, edited: true, body: 'New wording' }]
         }),
-        1,
+        userIdOfGumbo(1),
         state
       )
     ).deep.equals([])
@@ -145,10 +172,10 @@ describe('session attention classification and history projection', function () 
         opened({
           messages: [
             { ...reply, mentions: [] },
-            { ...original, senderUserId: 3, mine: false }
+            { ...original, senderUserId: userIdOfGumbo(3), mine: false }
           ]
         }),
-        1,
+        userIdOfGumbo(1),
         state
       )
     ).deep.equals([])
@@ -235,7 +262,7 @@ function paging(
     },
     options: {
       conversationId: initial.conversation.id,
-      userId: 1,
+      userId: userIdOfGumbo(1),
       session: newAttentionSession(initial)!,
       view: () => current,
       loadEarlier: async () => {
@@ -263,7 +290,12 @@ describe('bounded serialized ordinary attention history', function () {
       }),
       opened({
         messages: [
-          message({ id: quote.id, seq: 20, senderUserId: 1, mine: true }),
+          message({
+            id: quote.id,
+            seq: 20,
+            senderUserId: userIdOfGumbo(1),
+            mine: true
+          }),
           reply,
           second
         ],
@@ -274,9 +306,11 @@ describe('bounded serialized ordinary attention history', function () {
     await discoverAttentionHistory(loaded.options)
     expect(loaded.calls).equals(2)
     expect(
-      attentionMessages(loaded.current!, 1, loaded.options.session).map(
-        value => value.id
-      )
+      attentionMessages(
+        loaded.current!,
+        userIdOfGumbo(1),
+        loaded.options.session
+      ).map(value => value.id)
     ).deep.equals(['msg_reply', 'msg_second'])
     expect(loaded.options.session.floor).equals(201)
     expect(
@@ -366,7 +400,11 @@ describe('bounded serialized ordinary attention history', function () {
     ])
     await discoverAttentionHistory(exhausted.options)
     expect(
-      attentionMessages(exhausted.current!, 1, exhausted.options.session)
+      attentionMessages(
+        exhausted.current!,
+        userIdOfGumbo(1),
+        exhausted.options.session
+      )
     ).deep.equals([])
   })
 

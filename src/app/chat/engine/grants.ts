@@ -93,7 +93,7 @@ export async function readGrants(
 export async function fillGrants(ctx: EngineContext): Promise<number> {
   const requests = await readGrants(ctx)
   const boxes: ChatGrantBox[] = []
-  const heads = new Map<string, Set<number> | undefined>()
+  const heads = new Map<string, Set<string> | undefined>()
   for (const request of requests) {
     // Every identity seen is pinned, so a reset's old safety number is kept
     // for the approval prompt.

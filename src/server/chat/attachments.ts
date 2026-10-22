@@ -289,7 +289,7 @@ export async function readAttachment(
     throw notFound()
   }
   if (row.completed_at == null) {
-    if (Number(row.uploader_user_id) !== caller.userId) throw notFound()
+    if (row.uploader_user_id !== caller.userId) throw notFound()
     const total = partCount(Number(row.size), CHAT_PART_SIZE)
     const received = await receivedParts(
       chatUploadDir(context.uploadsDir, row.id)
@@ -476,8 +476,7 @@ async function uploadersRow(
     .where('id', '=', attachmentId)
     .executeTakeFirst()
   if (
-    row == null ||
-    Number(row.uploader_user_id) !== caller.userId ||
+    row?.uploader_user_id !== caller.userId ||
     !(await memberNow(db, row.conversation_id, caller.userId, now))
   ) {
     throw notFound()

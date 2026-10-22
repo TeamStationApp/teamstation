@@ -2,9 +2,11 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from './migrations'
 import { BASELINE, migrateDown, migrateUp } from './runner'
-import { testDatabaseUrl } from './testDatabase'
+import { schemaSnapshot } from './schemaSnapshot'
+import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
 /**
  * Runs the real migrations against a scratch database, so the SQL itself is
@@ -110,29 +112,71 @@ describe('migrations', function () {
   })
 
   it('refuses reverse identity migrations without changing the applied schema', async () => {
-    // Migrations added after the identity cutover reverse on their own; the
-    // cutover's are what refuse.
+    // Later migrations reverse on their own; the latest identity cutover refuses.
     const later = migrations
-      .filter(migration => migration.name > '071deletedAccounts')
+      .filter(migration => migration.name > '075chatCanonicalUserIds')
       .map(migration => migration.name)
     await migrateDown(pool, migrations, later.length)
     const before = (
       await pool.query('select name from schema_migrations order by name')
     ).rows
+    const schema = await schemaSnapshot(pool)
     let failure: unknown
     try {
       await migrateDown(pool, migrations, migrations.length)
     } catch (error) {
       failure = error
     }
-    expect(String(failure)).matches(/Restore the (?:verified )?pre-cutover/)
+    expect(String(failure)).contains('Restore the matching pre-cutover')
     expect(
       (await pool.query('select name from schema_migrations order by name'))
         .rows
     ).deep.equals(before)
+    expect(await schemaSnapshot(pool)).deep.equals(schema)
     expect((await migrateUp(pool, migrations)).applied).deep.equals(later)
   })
 })
+
+for (const cutover of ['069userIds', '071deletedAccounts']) {
+  describe(`reverse at the ${cutover} identity boundary`, function () {
+    this.timeout(60000)
+    it('refuses through the runner without changing its schema or ledger', async () => {
+      const name = `teamstation_cutover_${cutover.toLowerCase()}_${process.pid}_${Date.now()}`
+      const admin = new Pool({ connectionString: adminUrl, max: 1 })
+      let pool: Pool | undefined
+      try {
+        await admin.query(`create database "${name}"`)
+        pool = new Pool({
+          connectionString: adminUrl.replace(/\/[^/]*$/, `/${name}`),
+          max: 1
+        })
+        const history = migrations.filter(
+          migration => migration.name <= cutover
+        )
+        await migrateUp(pool, history)
+        const schema = await schemaSnapshot(pool)
+        const ledger = (
+          await pool.query('select name from schema_migrations order by name')
+        ).rows
+        const failure = await migrateDown(pool, history, 1).then(
+          () => undefined,
+          (error: unknown) => error
+        )
+        expect(String(failure)).matches(/Restore the (?:verified )?pre-cutover/)
+        expect(await schemaSnapshot(pool)).deep.equals(schema)
+        expect(
+          (await pool.query('select name from schema_migrations order by name'))
+            .rows
+        ).deep.equals(ledger)
+        expect((await migrateUp(pool, history)).applied).deep.equals([])
+      } finally {
+        await pool?.end()
+        await dropScratchDatabase(admin, name)
+        await admin.end()
+      }
+    })
+  })
+}
 
 describe('reversible migration history before persistent guest identities', function () {
   this.timeout(60000)
@@ -310,13 +354,42 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
         expect(result.applied).deep.equals([
           '057eventInfo',
           '058eventDetails',
-          '059accountMail'
+          '059accountMail',
+          '060scoreboardLog',
+          '061videoWallTimeline',
+          '062phoneStreams',
+          '063gameStarted',
+          '064membershipRequests',
+          '065radarReadings',
+          '066gameGuests',
+          '067gameUnroster',
+          '068chatUserIdBridge',
+          '068gumboIds',
+          '069userIds',
+          '070playerGumboIds',
+          '071deletedAccounts',
+          '072narrationAudio',
+          '072seasonDates',
+          '073syncClock',
+          '073umpireManagement',
+          '074optionalUmpires',
+          '074syncIdempotency',
+          '075chatCanonicalUserIds',
+          '075umpireTypes',
+          '076umpireNotes',
+          '077venues',
+          '078gameFields',
+          '079seasonScheduling',
+          '080schedulePreviews'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
-        'select display_name from users where id = 1001'
+        'select id, display_name from users where id = $1',
+        [userIdOfGumbo(1001)]
       )
-      expect(rows).deep.equals([{ display_name: 'Upgrade fixture' }])
+      expect(rows).deep.equals([
+        { id: userIdOfGumbo(1001), display_name: 'Upgrade fixture' }
+      ])
       expect((await migrateUp(pool, migrations)).applied).deep.equals([])
     })
   })

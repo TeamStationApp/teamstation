@@ -11,6 +11,7 @@ import {
   Platform
 } from 'react-native'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { ChatBounds } from './chatInteractionModel'
 import type { MessageSource } from './chatMessageSource'
@@ -164,7 +165,7 @@ describe('chat message presentation', function () {
   ): MessageBubbleProps => ({
     message: message({ senderName: 'Trea Turner' }),
     conversation: chat(),
-    members: [member(2, 'Trea Turner')],
+    members: [member(userIdOfGumbo(2), 'Trea Turner')],
     engine: { openAttachment: async () => new Uint8Array() },
     files: fileOps,
     maxWidth: 210,

@@ -1,3 +1,4 @@
+import { userIdOfGumbo } from '../userId'
 import { lp, u64, utf8 } from './bytes'
 import {
   openPreviousEpochKey,
@@ -22,6 +23,7 @@ import {
   linkAad,
   pukAad
 } from './hpke'
+import { runIdentityVectors } from './identityVectors'
 import { signingPublicKey } from './keys'
 import { linkCode } from './linkCode'
 import { GENESIS_HASH, logRowHash } from './logHash'
@@ -138,7 +140,7 @@ export function runVectors(): VectorResult[] {
   const aads: Record<HpkePurpose, Uint8Array> = {
     link: linkAad({ linkId: 'clk_link1', newDeviceId: 'cdv_dev2' }),
     puk: pukAad({
-      userId: 42,
+      userId: userIdOfGumbo(42),
       identityId: 'cid_1',
       generation: 3,
       deviceId: 'cdv_dev2'
@@ -146,14 +148,14 @@ export function runVectors(): VectorResult[] {
     epoch: epochAad({
       conversationId: 'cnv_c1',
       epoch: 7,
-      recipientUserId: 42,
+      recipientUserId: userIdOfGumbo(42),
       identityId: 'cid_1',
       generation: 3
     }),
     grant: epochAad({
       conversationId: 'cnv_c1',
       epoch: 7,
-      recipientUserId: 42,
+      recipientUserId: userIdOfGumbo(42),
       identityId: 'cid_1',
       generation: 3
     })
@@ -197,7 +199,7 @@ export function runVectors(): VectorResult[] {
     conversationId: 'cnv_c1',
     epoch: 7,
     messageId: 'msg_aaaaaaaaaaaaaaaaaaaaaaaaaa',
-    senderUserId: 42,
+    senderUserId: userIdOfGumbo(42),
     kind: 'post' as const
   }
   check(
@@ -335,7 +337,7 @@ export function runVectors(): VectorResult[] {
     'true false'
   )
   const pukFields = {
-    userId: 42,
+    userId: userIdOfGumbo(42),
     identityId: 'cid_1',
     generation: 3,
     privateKey: seed('puk 3')
@@ -367,7 +369,7 @@ export function runVectors(): VectorResult[] {
     `1:${toHex(seed('puk 1'))} 2:${toHex(seed('puk 2'))}`
   )
   const pukSigned = {
-    userId: 42,
+    userId: userIdOfGumbo(42),
     generation: 3,
     publicKey: recipient.publicKey
   }
@@ -398,7 +400,7 @@ export function runVectors(): VectorResult[] {
         conversationId: 'cnv_c1',
         seq: 1,
         event: 'join',
-        userId: 42,
+        userId: userIdOfGumbo(42),
         actorUserId: null,
         reason: null,
         at: 1790000000000
@@ -407,8 +409,8 @@ export function runVectors(): VectorResult[] {
         conversationId: 'cnv_c1',
         seq: 2,
         event: 'leave',
-        userId: 42,
-        actorUserId: 7,
+        userId: userIdOfGumbo(42),
+        actorUserId: userIdOfGumbo(7),
         reason: 'notEligible',
         at: 1790000001000
       })
@@ -422,8 +424,11 @@ export function runVectors(): VectorResult[] {
     'safety number',
     () =>
       safetyNumber(
-        { userId: 42, identityKey },
-        { userId: 7, identityKey: signingPublicKey(seed('identity 7')) }
+        { userId: userIdOfGumbo(42), identityKey },
+        {
+          userId: userIdOfGumbo(7),
+          identityKey: signingPublicKey(seed('identity 7'))
+        }
       ),
     FROZEN.safetyNumber
   )
@@ -432,7 +437,7 @@ export function runVectors(): VectorResult[] {
     () => linkCode(recipient.publicKey, 'clk_link1'),
     FROZEN.linkCode
   )
-  return results
+  return [...results, ...runIdentityVectors(call)]
 }
 
 /**

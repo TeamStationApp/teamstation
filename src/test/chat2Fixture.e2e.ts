@@ -18,13 +18,18 @@ import {
 } from 'cleaners'
 
 import { ChatEngine } from '../app/chat/engine/engine'
-import { approveLink, ensureEnrolled } from '../app/chat/engine/links'
+import {
+  approveLink,
+  ensureEnrolled,
+  rotatePuk
+} from '../app/chat/engine/links'
 import {
   type ChatKeyStore,
   recordFromJson,
   recordToJson
 } from '../app/chat/keyRecord'
 import { TeamStationClient } from '../common/api'
+import { asUserId } from '../common/userId'
 
 export const CHAT2_SURFACES = [
   'web-wide',
@@ -63,7 +68,7 @@ export function need<T>(value: T | undefined, description: string): T {
 }
 
 const asActor = asObject({
-  userId: asNumber,
+  userId: asUserId,
   email: asString,
   password: asString,
   accountLabel: asString,
@@ -78,7 +83,26 @@ const asMessage = asObject({
   id: asString,
   seq: asNumber,
   body: asString,
-  authorId: asNumber
+  authorId: asUserId
+})
+export const asIdentityCompatibility = asObject({
+  legacy: asObject(
+    asObject({
+      actor: asString,
+      deviceId: asString,
+      identityId: asString,
+      identityPublicKey: asString,
+      pukGeneration: asNumber,
+      pukPublicKey: asString,
+      safetyNumber: asString,
+      text: asMessage,
+      reply: asMessage,
+      file: asMessage,
+      textMentions: asArray(asUserId),
+      replyMentions: asArray(asUserId)
+    })
+  ),
+  fullWidthActors: asArray(asString)
 })
 const asDevice = asObject({
   id: asString,
@@ -135,6 +159,7 @@ const asFixture = asObject({
   peer: asString,
   sameUserPeer: asOptional(asString),
   scenarioPeers: asOptional(asObject(asString), {}),
+  identityCompatibility: asOptional(asIdentityCompatibility),
   lockedViewer: asOptional(asString),
   readOnlyViewer: asOptional(asString),
   lockedCases: asOptional(
@@ -151,7 +176,7 @@ const asFixture = asObject({
   formerActor: asOptional(asString),
   controls: asOptional(asObject(asString), {}),
   authorization: asOptional(
-    asObject({ playerIds: asArray(asNumber), acceptedAdult: asNumber })
+    asObject({ playerIds: asArray(asUserId), acceptedAdult: asUserId })
   ),
   avatarProbe: asOptional(
     asObject({
@@ -238,7 +263,7 @@ const asFixture = asObject({
   members: asOptional(
     asArray(
       asObject({
-        userId: asNumber,
+        userId: asUserId,
         name: asString,
         role: asString,
         search: asString
@@ -445,7 +470,7 @@ export function loadChat2Fixture(path: string): Chat2Fixture {
   )
   for (const actor of Object.values(fixture.actors)) {
     assert(
-      Number.isSafeInteger(actor.userId) && actor.userId > 0,
+      asUserId(actor.userId) === actor.userId,
       'Synthetic user ID required'
     )
     assert(
@@ -491,12 +516,99 @@ export function loadChat2Fixture(path: string): Chat2Fixture {
   return fixture
 }
 
+/** A changed harness may reuse an application build only across these test files. */
+export function verifyChat2HarnessSource(
+  root: string,
+  applicationSource: string,
+  harnessSource = process.env.CHAT2_HARNESS_SOURCE ?? applicationSource
+): {
+  applicationSource: string
+  harnessSource: string
+  harnessDiffSha256: string
+  changedTestFiles: Array<{ path: string; sha256: string }>
+} {
+  assert(
+    /^[a-f0-9]{40}$/.test(applicationSource),
+    'Full application source SHA required'
+  )
+  assert(
+    /^[a-f0-9]{40}$/.test(harnessSource),
+    'Full harness source SHA required'
+  )
+  const git = (args: string[]): string =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8' })
+  assert(
+    git(['rev-parse', 'HEAD']).trim() === harnessSource,
+    'Checkout and requested harness source differ'
+  )
+  assert(
+    git(['status', '--porcelain', '--untracked-files=no']).trim() === '',
+    'Build/UI proofs require frozen tracked source'
+  )
+  const ancestry = spawnSync(
+    'git',
+    ['merge-base', '--is-ancestor', applicationSource, harnessSource],
+    { cwd: root }
+  )
+  assert(ancestry.status === 0, 'Application source must be a harness ancestor')
+  const allowed = new Set([
+    'src/app/chat/chat2.e2e.ts',
+    'src/test/chat2Maestro.e2e.ts',
+    'src/test/chat2Fixture.e2e.ts',
+    'src/app/chat/chat2Actions.test.ts',
+    'src/test/chat2FixtureIdentity.test.ts',
+    'src/app/chat/engine/dmTitle.test.ts'
+  ])
+  const paths = git([
+    'diff',
+    '--name-only',
+    '-z',
+    applicationSource,
+    harnessSource,
+    '--'
+  ])
+    .split('\0')
+    .filter(Boolean)
+  assert(
+    paths.every(path => allowed.has(path)),
+    'Application changes require a new build and capture archive'
+  )
+  const diff = git([
+    'diff',
+    '--no-ext-diff',
+    '--binary',
+    '--full-index',
+    applicationSource,
+    harnessSource,
+    '--'
+  ])
+  const changedTestFiles = paths.map(path => {
+    const committed = git(['show', harnessSource + ':' + path])
+    const sha256 = digest(join(root, path))
+    assert(
+      createHash('sha256').update(committed).digest('hex') === sha256,
+      'Harness file differs from its committed bytes'
+    )
+    return { path, sha256 }
+  })
+  return {
+    applicationSource,
+    harnessSource,
+    harnessDiffSha256: createHash('sha256').update(diff).digest('hex'),
+    changedTestFiles
+  }
+}
+
 export function sourceBinding(
   root: string,
   fixture: Chat2Fixture,
   surface: Chat2Surface
 ): {
   source: string
+  applicationSource: string
+  harnessSource: string
+  harnessDiffSha256: string
+  changedTestFiles: Array<{ path: string; sha256: string }>
   binding: ReturnType<typeof asBinding>
   bindingReceiptSha256: string
 } {
@@ -504,21 +616,7 @@ export function sourceBinding(
     process.env.CHAT2_SOURCE,
     'CHAT2_SOURCE must pin the final full source SHA'
   )
-  assert(/^[a-f0-9]{40}$/.test(source), 'Full source SHA required')
-  assert(
-    execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: root,
-      encoding: 'utf8'
-    }).trim() === source,
-    'Checkout and requested source differ'
-  )
-  assert(
-    execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], {
-      cwd: root,
-      encoding: 'utf8'
-    }).trim() === '',
-    'Build/UI proofs require frozen tracked source'
-  )
+  const harness = verifyChat2HarnessSource(root, source)
   const binding = need(
     fixture.bindings[surface],
     'Exact surface build binding required'
@@ -552,7 +650,12 @@ export function sourceBinding(
       receipt.mediaOrigin === binding.mediaOrigin,
     'Build/source/API/media binding differs'
   )
-  return { source, binding, bindingReceiptSha256: digest(binding.receipt) }
+  return {
+    source,
+    ...harness,
+    binding,
+    bindingReceiptSha256: digest(binding.receipt)
+  }
 }
 
 export function redact(fixture: Chat2Fixture, value: string): string {
@@ -633,6 +736,7 @@ export async function fixturePeer(
   client: TeamStationClient
   engine: ChatEngine
   approvePending: () => Promise<void>
+  rotateUserKey: () => Promise<number>
   close: () => void
 }> {
   const actor = need(fixture.actors[key], 'Synthetic peer missing')
@@ -670,14 +774,30 @@ export async function fixturePeer(
     throw new Chat2Blocked(
       'Existing synthetic peer is not ready; preserve its keys'
     )
-  const engine = new ChatEngine(setup)
+  let engine = new ChatEngine(setup)
   assert(
     (await engine.start()) === 'ready',
     'Existing protocol peer must be ready'
   )
   return {
     client,
-    engine,
+    get engine() {
+      return engine
+    },
+    rotateUserKey: async () => {
+      engine.stop()
+      const current = need(
+        await store.load(),
+        'Existing provider record required'
+      )
+      const rotated = await rotatePuk(setup, current)
+      engine = new ChatEngine(setup)
+      assert(
+        (await engine.start()) === 'ready',
+        'Rotated provider must be ready'
+      )
+      return need(rotated.puks.at(-1), 'Rotated generation required').generation
+    },
     approvePending: async () => {
       for (const link of await client.chatLinks()) {
         signal?.throwIfAborted()

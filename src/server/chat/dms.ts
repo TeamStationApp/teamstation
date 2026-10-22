@@ -1,6 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import { ageOn } from '../../common/age'
+import { compareUserIds } from '../../common/chatCrypto/userId'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
@@ -71,7 +72,7 @@ export const DM_MAX_MEMBERS = 20
 const CLOSE_IN_AGE_MONTHS = 48
 
 interface UserRow {
-  id: number
+  id: string
   account: boolean
   birthYear: number | null
   birthMonth: number | null
@@ -80,7 +81,7 @@ interface UserRow {
 /** Why a DM's membership is not allowed. */
 export interface RuleBreak {
   rule: 'pairRule' | 'adultRequired'
-  playerIds: number[]
+  playerIds: string[]
 }
 
 /**
@@ -88,13 +89,13 @@ export interface RuleBreak {
  * transaction and kept.
  */
 export class DmFacts {
-  private readonly rows = new Map<number, UserRow | null>()
-  private readonly teams = new Map<number, string[]>()
+  private readonly rows = new Map<string, UserRow | null>()
+  private readonly teams = new Map<string, string[]>()
   private readonly seasons = new Map<string, string[]>()
-  private readonly staff = new Map<number, Set<number>>()
+  private readonly staff = new Map<string, Set<string>>()
   private readonly kin = new Map<
-    number,
-    { guardians: Set<number>; family: Set<number> }
+    string,
+    { guardians: Set<string>; family: Set<string> }
   >()
 
   constructor(
@@ -103,7 +104,7 @@ export class DmFacts {
   ) {}
 
   /** Reads these users' rows at once, for the checks that follow. */
-  async load(userIds: number[]): Promise<void> {
+  async load(userIds: string[]): Promise<void> {
     const missing = [...new Set(userIds)].filter(id => !this.rows.has(id))
     if (missing.length === 0) return
     const rows = await this.db
@@ -140,13 +141,13 @@ export class DmFacts {
     for (const row of players) this.teams.get(row.user_id)?.push(row.team_id)
   }
 
-  private async row(userId: number): Promise<UserRow | null> {
+  private async row(userId: string): Promise<UserRow | null> {
     await this.load([userId])
     return this.rows.get(userId) ?? null
   }
 
   /** An account, and not under 13. */
-  async eligible(userId: number): Promise<boolean> {
+  async eligible(userId: string): Promise<boolean> {
     const row = await this.row(userId)
     return (
       row != null &&
@@ -156,17 +157,17 @@ export class DmFacts {
   }
 
   /** The teams this person plays on. */
-  async playerTeams(userId: number): Promise<string[]> {
+  async playerTeams(userId: string): Promise<string[]> {
     await this.load([userId])
     return this.teams.get(userId) ?? []
   }
 
-  async isPlayer(userId: number): Promise<boolean> {
+  async isPlayer(userId: string): Promise<boolean> {
     return (await this.playerTeams(userId)).length > 0
   }
 
   /** A player who is an account and not under 13. */
-  async playerWithAccount(userId: number): Promise<boolean> {
+  async playerWithAccount(userId: string): Promise<boolean> {
     return (await this.isPlayer(userId)) && (await this.eligible(userId))
   }
 
@@ -190,7 +191,7 @@ export class DmFacts {
    * every season those teams are in, and role holders on those seasons'
    * leagues (part of season staff). Survivors, eligible or not.
    */
-  async staffOf(playerId: number): Promise<Set<number>> {
+  async staffOf(playerId: string): Promise<Set<string>> {
     const held = this.staff.get(playerId)
     if (held != null) return held
     const teams = await this.playerTeams(playerId)
@@ -208,7 +209,7 @@ export class DmFacts {
    * P's immediate coaches: direct `admin` or `coach` on a team P plays on,
    * owners and managers included. Survivors.
    */
-  async coachesOf(playerId: number): Promise<Set<number>> {
+  async coachesOf(playerId: string): Promise<Set<string>> {
     const teams = await this.playerTeams(playerId)
     if (teams.length === 0) return new Set()
     const roles = await this.db
@@ -233,8 +234,8 @@ export class DmFacts {
 
   /** P's guardians and adult family members who are eligible. */
   async relativesOf(
-    playerId: number
-  ): Promise<{ guardians: Set<number>; family: Set<number> }> {
+    playerId: string
+  ): Promise<{ guardians: Set<string>; family: Set<string> }> {
     const held = this.kin.get(playerId)
     if (held != null) return held
     // Every row that is the player: a link names the row they had when it
@@ -249,8 +250,8 @@ export class DmFacts {
       this.db,
       rows.map(row => row.user_id)
     )
-    const guardians = new Set<number>()
-    const family = new Set<number>()
+    const guardians = new Set<string>()
+    const family = new Set<string>()
     for (const row of rows) {
       const id = survivorOf.get(row.user_id)
       if (id == null || id === playerId || !(await this.eligible(id))) continue
@@ -264,7 +265,7 @@ export class DmFacts {
   }
 
   /** Whether two players share a team or a season. */
-  async sharesSeason(a: number, b: number): Promise<boolean> {
+  async sharesSeason(a: string, b: string): Promise<boolean> {
     const teamsA = await this.playerTeams(a)
     const teamsB = await this.playerTeams(b)
     if (teamsA.some(team => teamsB.includes(team))) return true
@@ -274,7 +275,7 @@ export class DmFacts {
   }
 
   /** Whether A counts as an adult beside player P, for the MAAPP rule. */
-  async isAdultFor(adultId: number, playerId: number): Promise<boolean> {
+  async isAdultFor(adultId: string, playerId: string): Promise<boolean> {
     if (!(await this.isPlayer(adultId))) return true
     const adult = await this.row(adultId)
     if (adult?.birthYear == null || adult.birthMonth == null) return false
@@ -293,7 +294,7 @@ export class DmFacts {
    * A player with an account who is under 18 (or has no birth month), on a
    * team in a season of a league that is a SafeSport LAO.
    */
-  async covered(playerId: number): Promise<boolean> {
+  async covered(playerId: string): Promise<boolean> {
     if (!(await this.playerWithAccount(playerId))) return false
     const row = await this.row(playerId)
     if (
@@ -316,7 +317,7 @@ export class DmFacts {
   }
 
   /** P's guardians, adult family members, and the adults among P's staff. */
-  async includedAdults(playerId: number): Promise<Set<number>> {
+  async includedAdults(playerId: string): Promise<Set<string>> {
     const { guardians, family } = await this.relativesOf(playerId)
     const adults = new Set([...guardians, ...family])
     for (const id of await this.staffOf(playerId)) {
@@ -328,7 +329,7 @@ export class DmFacts {
   }
 
   /** Whether two people share a Staff, Members, Season Staff, All Staff or Org chat. */
-  async shareNamingChat(a: number, b: number): Promise<boolean> {
+  async shareNamingChat(a: string, b: string): Promise<boolean> {
     const row = await this.db
       .selectFrom('chat_members as mine')
       .innerJoin(
@@ -356,7 +357,7 @@ export class DmFacts {
    * All Staff of a season it plays in, or holds a role on that season's
    * league.
    */
-  async mayNameFan(creatorId: number, fanId: number): Promise<boolean> {
+  async mayNameFan(creatorId: string, fanId: string): Promise<boolean> {
     const follows = await this.db
       .selectFrom('team_follows')
       .select(['team_id'])
@@ -382,7 +383,7 @@ export class DmFacts {
   }
 
   /** Whether C may name player P. */
-  async mayNamePlayer(creatorId: number, playerId: number): Promise<boolean> {
+  async mayNamePlayer(creatorId: string, playerId: string): Promise<boolean> {
     if (creatorId === playerId) return true
     const { guardians } = await this.relativesOf(playerId)
     if (guardians.has(creatorId)) return true
@@ -398,9 +399,9 @@ export class DmFacts {
    * `dmPlayers` (for the included-adult rule).
    */
   async mayName(
-    creatorId: number,
-    targetId: number,
-    dmPlayers: number[] = []
+    creatorId: string,
+    targetId: string,
+    dmPlayers: string[] = []
   ): Promise<boolean> {
     if (creatorId === targetId) return false
     if (!(await this.eligible(creatorId))) return false
@@ -425,9 +426,9 @@ export class DmFacts {
   }
 
   /** The players with accounts among these people. */
-  async playersAmong(userIds: number[]): Promise<number[]> {
+  async playersAmong(userIds: string[]): Promise<string[]> {
     await this.load(userIds)
-    const players: number[] = []
+    const players: string[] = []
     for (const id of userIds) {
       if (await this.playerWithAccount(id)) players.push(id)
     }
@@ -435,8 +436,8 @@ export class DmFacts {
   }
 
   /** The players whose pair rule this membership breaks. */
-  async pairRuleBreaks(members: number[]): Promise<number[]> {
-    const broken: number[] = []
+  async pairRuleBreaks(members: string[]): Promise<string[]> {
+    const broken: string[] = []
     for (const playerId of await this.playersAmong(members)) {
       const staff = await this.staffOf(playerId)
       const { guardians, family } = await this.relativesOf(playerId)
@@ -459,8 +460,8 @@ export class DmFacts {
   }
 
   /** The covered players whose MAAPP rule this membership breaks. */
-  async maappBreaks(members: number[]): Promise<number[]> {
-    const broken: number[] = []
+  async maappBreaks(members: string[]): Promise<string[]> {
+    const broken: string[] = []
     for (const playerId of await this.playersAmong(members)) {
       if (!(await this.covered(playerId))) continue
       const { guardians, family } = await this.relativesOf(playerId)
@@ -482,7 +483,7 @@ export class DmFacts {
   }
 
   /** The first rule this membership breaks, pair rule first. */
-  async ruleBreak(members: number[]): Promise<RuleBreak | undefined> {
+  async ruleBreak(members: string[]): Promise<RuleBreak | undefined> {
     const pair = await this.pairRuleBreaks(members)
     if (pair.length > 0) return { rule: 'pairRule', playerIds: pair }
     const maapp = await this.maappBreaks(members)
@@ -508,15 +509,15 @@ function refuse(broken: RuleBreak): never {
 /** Checks that `actor` may name each of `named` into `members`. */
 async function mustName(
   facts: DmFacts,
-  actor: number,
-  named: number[],
-  members: number[]
+  actor: string,
+  named: string[],
+  members: string[]
 ): Promise<void> {
   if (!(await facts.eligible(actor))) {
     throw forbidden('Not found', { reason: 'notCandidate', userIds: named })
   }
   const players = await facts.playersAmong(members)
-  const refused: number[] = []
+  const refused: string[] = []
   for (const id of named) {
     if (!(await facts.mayName(actor, id, players))) refused.push(id)
   }
@@ -526,7 +527,7 @@ async function mustName(
 }
 
 /** These ids once each, without `self`. */
-function uniqueOthers(userIds: number[], self: number): number[] {
+function uniqueOthers(userIds: string[], self: string): string[] {
   return [...new Set(userIds)].filter(id => id !== self)
 }
 
@@ -541,8 +542,8 @@ export interface DmCreated {
  */
 export async function createDm(
   db: Kysely<Database>,
-  creatorId: number,
-  userIds: number[],
+  creatorId: string,
+  userIds: string[],
   now: Date = new Date()
 ): Promise<DmCreated> {
   const others = uniqueOthers(userIds, creatorId)
@@ -561,7 +562,7 @@ export async function createDm(
     if (broken != null) refuse(broken)
 
     if (others.length === 1) {
-      const pair = [creatorId, others[0]].sort((a, b) => a - b)
+      const pair = [creatorId, others[0]].sort(compareUserIds)
       // One one-to-one per pair at a time, however many ask at once.
       await sql`select pg_advisory_xact_lock(hashtext(${`dm:${pair.join(':')}`}))`.execute(
         trx
@@ -584,8 +585,8 @@ export async function createDm(
 /** The open DM whose members now are exactly these two, if there is one. */
 async function openOneToOne(
   trx: Kysely<Database>,
-  a: number,
-  b: number
+  a: string,
+  b: string
 ): Promise<string | undefined> {
   const { rows } = await sql<{ id: string }>`
     select c.id
@@ -593,10 +594,10 @@ async function openOneToOne(
     where c.kind = 'dm'
       and c.closed_at is null
       and (
-        select array_agg(m.user_id order by m.user_id)
+        select count(*) = 2 and bool_and(m.user_id in (${a}, ${b}))
         from chat_members m
         where m.conversation_id = c.id and m.left_at is null
-      ) = array[${a}::bigint, ${b}::bigint]
+      )
     order by c.created_at
     limit 1
   `.execute(trx)
@@ -623,10 +624,10 @@ async function lockDm(
 export async function addDmMembers(
   db: Kysely<Database>,
   conversationId: string,
-  adderId: number,
-  userIds: number[],
+  adderId: string,
+  userIds: string[],
   now: Date = new Date()
-): Promise<number[]> {
+): Promise<string[]> {
   return await inTransaction(db, async trx => {
     const dm = await lockDm(trx, conversationId)
     const current = await currentMembers(trx, conversationId)
@@ -662,7 +663,7 @@ export async function addDmMembers(
 export async function leaveDm(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   now: Date = new Date()
 ): Promise<{ closed: boolean }> {
   return await inTransaction(db, async trx => {
@@ -689,14 +690,14 @@ async function closeForBreak(
   trx: Kysely<Database>,
   conversationId: string,
   broken: RuleBreak,
-  actorUserId: number | null,
+  actorUserId: string | null,
   now: Date
 ): Promise<void> {
   await closeConversation(
     trx,
     conversationId,
     {
-      userId: Math.min(...broken.playerIds),
+      userId: [...broken.playerIds].sort(compareUserIds)[0],
       actorUserId,
       reason: broken.rule
     },
@@ -713,13 +714,13 @@ export async function recheckDm(
   db: Kysely<Database>,
   conversationId: string,
   now: Date = new Date()
-): Promise<{ removed: number[]; closed: boolean }> {
+): Promise<{ removed: string[]; closed: boolean }> {
   return await inTransaction(db, async trx => {
     const dm = await lockDm(trx, conversationId)
     const current = await currentMembers(trx, conversationId)
     const facts = new DmFacts(trx, now)
     await facts.load(current)
-    const removed: number[] = []
+    const removed: string[] = []
     for (const id of current) {
       if (!(await facts.eligible(id))) removed.push(id)
     }
@@ -749,8 +750,8 @@ export async function recheckDm(
  */
 export async function mergeChats(
   db: Kysely<Database>,
-  closing: number,
-  keeping: number,
+  closing: string,
+  keeping: string,
   now: Date = new Date()
 ): Promise<string[]> {
   await db
@@ -794,7 +795,7 @@ export async function mergeChats(
 }
 
 export interface Candidate {
-  userId: number
+  userId: string
   /** How they stand to the player(s), for the included-adult sheet. */
   label?: string
 }
@@ -805,13 +806,13 @@ export interface Candidate {
  */
 export async function dmCandidateIds(
   db: Kysely<Database>,
-  callerId: number,
+  callerId: string,
   now: Date = new Date()
-): Promise<number[]> {
+): Promise<string[]> {
   const facts = new DmFacts(db, now)
   if (!(await facts.eligible(callerId))) return []
-  const pool = new Set<number>()
-  const add = (ids: Iterable<number>): void => {
+  const pool = new Set<string>()
+  const add = (ids: Iterable<string>): void => {
     for (const id of ids) pool.add(id)
   }
 
@@ -911,7 +912,7 @@ export async function dmCandidateIds(
   const survivorOf = await survivors(db, [...pool])
   const ids = [...new Set(survivorOf.values())].filter(id => id !== callerId)
   await facts.load(ids)
-  const named: number[] = []
+  const named: string[] = []
   for (const id of ids) {
     if (!(await facts.mayName(callerId, id))) continue
     // Somebody the pair rule keeps out of every DM with the caller (a
@@ -930,14 +931,14 @@ export async function dmCandidateIds(
  */
 export async function includedAdultIds(
   db: Kysely<Database>,
-  callerId: number,
-  playerIds: number[],
+  callerId: string,
+  playerIds: string[],
   all: boolean,
   now: Date = new Date()
 ): Promise<Candidate[]> {
   const facts = new DmFacts(db, now)
   await facts.load([callerId, ...playerIds])
-  const refused: number[] = []
+  const refused: string[] = []
   for (const playerId of playerIds) {
     if (
       !(await facts.playerWithAccount(playerId)) ||
@@ -950,8 +951,8 @@ export async function includedAdultIds(
     throw forbidden('Not found', { reason: 'notCandidate', userIds: refused })
   }
 
-  const labels = new Map<number, string>()
-  const offer = (id: number, label: string): void => {
+  const labels = new Map<string, string>()
+  const offer = (id: string, label: string): void => {
     if (id === callerId || playerIds.includes(id) || labels.has(id)) return
     labels.set(id, label)
   }
@@ -988,12 +989,12 @@ const ROLE_WORDS: Record<string, string> = {
 async function staffLabelsFor(
   db: Kysely<Database>,
   facts: DmFacts,
-  playerId: number
-): Promise<Map<number, string>> {
+  playerId: string
+): Promise<Map<string, string>> {
   const teams = await facts.playerTeams(playerId)
   const seasons = await facts.seasonsOf(teams)
-  const labels = new Map<number, string>()
-  const set = async (userId: number, label: string): Promise<void> => {
+  const labels = new Map<string, string>()
+  const set = async (userId: string, label: string): Promise<void> => {
     const id = (await survivors(db, [userId])).get(userId)
     if (id != null && !labels.has(id)) labels.set(id, label)
   }

@@ -20,6 +20,7 @@ import {
 } from '../../common/api'
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
+import { chatRowText, nativeRowInList } from '../../test/chatRows'
 
 interface Bounds {
   x: number
@@ -107,8 +108,8 @@ interface Fixture {
   initialMessagePinned?: boolean
   initialPreferences?: { pinned: boolean; muted: boolean }
   orientationPolicy: 'portrait-only' | 'rotate'
-  actor: { userId: number; email: string; password: string }
-  peers?: Array<{ userId: number }>
+  actor: { userId: string; email: string; password: string }
+  peers?: Array<{ userId: string }>
 }
 
 function required(key: string): string {
@@ -131,6 +132,25 @@ assert(
   'Explicit native platform required'
 )
 const deviceId = required('CHAT_DEVICE')
+const legacyRows = process.env.CHAT_UI_NATIVE_LEGACY_ROWS === '1'
+
+/**
+ * The Chat tab row of a conversation: by its `chat-conversation-<id>` test
+ * id, or, for a legacy build without row ids, by its title as `chatRows`
+ * matches it (iOS names a row `title, preview, unread`). The fixture's own
+ * conversation is known by id even when only its label is given.
+ */
+function chatRow(
+  label: string,
+  conversationId?: string
+): { id: string } | { text: string } {
+  const id =
+    conversationId ??
+    (label === fixture.conversationLabel ? fixture.conversationId : undefined)
+  return id != null && !legacyRows
+    ? { id: `chat-conversation-${id}` }
+    : { text: chatRowText(label, platform === 'ios' ? 'ios' : 'android') }
+}
 const daemonName = required('MAESTRO_D')
 const artifactDirectory = resolve(required('CHAT_UI_ARTIFACTS'))
 const resultDirectory = resolve(required('CHAT_UI_NATIVE_RESULTS'))
@@ -836,10 +856,7 @@ async function main(): Promise<void> {
       return
     }
     await m.assertVisible({ text: 'Chats', timeout: 60000 })
-    const initialRow =
-      process.env.CHAT_UI_NATIVE_LEGACY_ROWS === '1'
-        ? { text: fixture.conversationLabel }
-        : { id: `chat-conversation-${fixture.conversationId}` }
+    const initialRow = chatRow(fixture.conversationLabel)
     await reveal(m, initialRow, 'DOWN')
     await m.assertVisible({ ...initialRow, timeout: 60000 })
     const tree = await m.hierarchy()
@@ -1152,8 +1169,8 @@ async function main(): Promise<void> {
       conversationId?: string
     ): Promise<void> {
       if (conversationId != null)
-        await reveal(m, { id: `chat-conversation-${conversationId}` })
-      else await reveal(m, { text: label }, 'DOWN')
+        await reveal(m, chatRow(label, conversationId))
+      else await reveal(m, chatRow(label), 'DOWN')
       await hold(550, label, conversationId)
       await m.assertVisible({ text: 'Mark unread', timeout: 10000 })
       const text = strings(flatten(await m.hierarchy()))
@@ -1182,7 +1199,7 @@ async function main(): Promise<void> {
         readFileSync(required('CHAT_UI_NATIVE_LIST_TERMINAL_FIXTURE'), 'utf8')
       ) as {
         synthetic: true
-        actorUserId: number
+        actorUserId: string
         zeroRows: [string, string]
         membersConversationId: string
         membersHeading: string
@@ -1524,6 +1541,9 @@ async function main(): Promise<void> {
       )
       const rowId =
         selected == null ? undefined : `chat-conversation-${selected.id}`
+      const titled = new RegExp(
+        chatRowText(label, platform === 'ios' ? 'ios' : 'android')
+      )
       if (rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1')
         await reveal(m, { id: rowId })
       let prior: Bounds | undefined
@@ -1531,23 +1551,16 @@ async function main(): Promise<void> {
       const row = await until(
         'Conversation row must finish scrolling before a measured hold',
         async () => {
-          const nodes = flatten(await m.hierarchy())
-          const row = nodes.find(
-            node =>
-              (rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1'
-                ? node.id === rowId
-                : node.text === label || node.label === label) &&
-              node.bounds != null
+          // The list is the one holding the matched row node, which a
+          // legacy row without an id is found by too.
+          const found = nativeRowInList(await m.hierarchy(), node =>
+            rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1'
+              ? node.id === rowId
+              : titled.test(node.text ?? '') || titled.test(node.label ?? '')
           )
-          const bounds = row?.bounds
-          if (bounds == null) return undefined
-          const viewport = nodes.find(
-            node =>
-              node.type?.includes('ScrollView') === true &&
-              node.bounds != null &&
-              flatten(node).some(child => child.id === rowId)
-          )?.bounds
-          if (viewport == null) return undefined
+          if (found == null) return undefined
+          const { row, viewport } = found
+          const bounds = row.bounds
           const left = Math.max(bounds.x, viewport.x) + 6
           const right =
             Math.min(bounds.x + bounds.width, viewport.x + viewport.width) - 6
@@ -4408,7 +4421,7 @@ async function main(): Promise<void> {
         selfReplyBody: string
         pinnedBeforeDelete: boolean
         synthetic: boolean
-        authorUserId: number
+        authorUserId: string
         preparePersonalPin?: boolean
       }
       assert(
@@ -6812,7 +6825,7 @@ async function main(): Promise<void> {
     await m.inputText({ text: fixture.draft })
     await m.hideKeyboard().catch(() => undefined)
     await m.tapOn({ text: 'Back' })
-    await reveal(m, { text: fixture.conversationLabel })
+    await reveal(m, chatRow(fixture.conversationLabel))
     await open()
     assert(
       (await composerValue(m)).includes(fixture.draft),

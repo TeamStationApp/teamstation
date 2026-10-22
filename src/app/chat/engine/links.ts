@@ -36,7 +36,8 @@ import {
   type ChatKeyStore,
   latestPuk,
   newRecord,
-  unb64
+  unb64,
+  UnreadableKeyRecordError
 } from '../keyRecord'
 
 /**
@@ -60,7 +61,8 @@ import {
  * A device whose session changed resumes with a signed challenge and keeps
  * its keys. When the server refuses (`deviceRevoked`, `unknownDevice`), or
  * the stored record belongs to another user, the record is wiped and the
- * device starts again as a new one.
+ * device starts again as a new one. A record that cannot be read at all is
+ * kept until the person resets chat on this device (`resetUnreadableChat`).
  */
 
 /** The client calls the key routes need. */
@@ -85,7 +87,7 @@ export interface ChatSetup {
   client: ChatKeysClient
   store: ChatKeyStore
   /** The signed-in user. */
-  userId: number
+  userId: string
   /** How this device names itself when it registers. */
   device: { name: string; platform: 'web' | 'ios' | 'android' }
 }
@@ -587,6 +589,58 @@ export async function revokeOtherDevice(
   await setup.client.revokeChatDevice(deviceId)
   const mine = await setup.client.myChatKeys()
   return mine.pukNeedsRotation ? await rotatePuk(setup, record) : record
+}
+
+/**
+ * "Reset chat on this device", for a saved record that cannot be read
+ * (`UnreadableKeyRecordError`): the device it belongs to is revoked, then
+ * the record is wiped, so chat starts again here as a new device.
+ *
+ * Wiping alone would leave that device active on the server, where the
+ * restart counts it as another device of the person's: someone whose only
+ * device this was would be asked to approve this one from a device that
+ * can never answer, instead of being offered a new identity, and the dead
+ * device would stay listed in Chat devices. Its id is in the unreadable
+ * record, but the server names it too, as the device bound to this
+ * session (`myChatKeys().deviceId`): this client registered or resumed it,
+ * and its keys are the ones in this store. It is revoked with
+ * `keepSession`, since revoking it the way sign-out does would end the
+ * session and sign the person out.
+ *
+ * Unlike `leaveChat`, the wipe waits for the revoke: if the server cannot
+ * be asked, the record is kept and the error passes on, so the reset can
+ * be tried again while this session still names the device. Wiping first
+ * would register a new device on this session, which takes the binding
+ * from the dead one and leaves no way to revoke it from here. A session
+ * bound to no device (signed in again since, and never resumed, which
+ * needs the keys) has nothing it can revoke, so the record is wiped as
+ * before; that device stays until another device or a new identity
+ * removes it.
+ *
+ * A store that reads after all, or holds nothing, is left alone: there is
+ * nothing to reset, and starting again uses it. Any other failure to read
+ * passes on with the record kept, as the gate's Try again does.
+ */
+export async function resetUnreadableChat(
+  setup: Pick<ChatSetup, 'client' | 'store'>
+): Promise<void> {
+  const { client, store } = setup
+  try {
+    await store.load()
+    return
+  } catch (error) {
+    // A newer build wrote it: updating the app reads it, so nothing is reset.
+    if (
+      !(error instanceof UnreadableKeyRecordError) ||
+      error.reason === 'unknownVersion'
+    )
+      throw error
+  }
+  const mine = await client.myChatKeys()
+  if (mine.deviceId != null) {
+    await client.revokeChatDevice(mine.deviceId, { keepSession: true })
+  }
+  await store.wipe()
 }
 
 /** How long sign-out waits for the core (a module still on its way). */

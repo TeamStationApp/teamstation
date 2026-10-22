@@ -1,5 +1,7 @@
 import { safeNext } from '../../common/signInReturn'
 import { asUserId, userIdOfGumbo } from '../../common/userId'
+import { chatBenchPath } from '../dev/chatBench'
+
 export { safeNext } from '../../common/signInReturn'
 /**
  * Every screen has an address.
@@ -13,8 +15,6 @@ export { safeNext } from '../../common/signInReturn'
  * Parsing and building live together so they cannot drift: a route that can be
  * read but not written is a Back button that goes somewhere else.
  */
-
-import { chatBenchPath } from '../dev/chatBench'
 
 export type When = 'upcoming' | 'past' | 'all'
 type GroupKind = 'league' | 'season' | 'team'

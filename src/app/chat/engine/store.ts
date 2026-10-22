@@ -59,7 +59,7 @@ export interface ConversationState {
   /** A completed read sync distinguishes an absent own cursor from pending data. */
   readsReady: boolean
   /** Who is typing, by user id, until when (milliseconds). */
-  typing: Map<number, number>
+  typing: Map<string, number>
 }
 
 export type ChatEngineEvent =
@@ -74,7 +74,7 @@ export type ChatEngineEvent =
   /** The person's own devices or link requests changed. */
   | { type: 'devices' }
   /** A person's safety number changed. */
-  | { type: 'safetyNumber'; userId: number }
+  | { type: 'safetyNumber'; userId: string }
   /** Work the engine did by itself failed. */
   | { type: 'error'; error: unknown }
 

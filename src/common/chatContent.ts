@@ -5,12 +5,14 @@ import {
   asObject,
   asOptional,
   asString,
+  asUnknown,
   type Cleaner
 } from 'cleaners'
 import { base64url } from 'rfc4648'
 
 import { fromUtf8, utf8 } from './chatCrypto/bytes'
 import { isMessageId } from './chatCrypto/messageIds'
+import { asUserId, type UserId, userIdOfGumbo } from './userId'
 
 /**
  * What is inside a chat message, once it is opened.
@@ -49,7 +51,7 @@ export interface AttachmentRef {
 
 export interface ChatQuote {
   id: string
-  authorId: number
+  authorId: UserId
   snippet: string
 }
 
@@ -57,12 +59,12 @@ export type ChatContent =
   | {
       type: 'text'
       body: string
-      mentions: number[]
+      mentions: UserId[]
       quote?: ChatQuote
       attachments: AttachmentRef[]
     }
   | { type: 'reaction'; targetId: string; emoji: string; remove: boolean }
-  | { type: 'edit'; targetId: string; body: string; mentions: number[] }
+  | { type: 'edit'; targetId: string; body: string; mentions: UserId[] }
   | { type: 'delete'; targetId: string }
 
 const asWhole =
@@ -74,8 +76,6 @@ const asWhole =
     }
     return value
   }
-
-const asUserIdNumber = asWhole(1, Number.MAX_SAFE_INTEGER)
 
 const asText =
   (most: number): Cleaner<string> =>
@@ -113,7 +113,7 @@ const asKey32: Cleaner<string> = raw => {
   return text
 }
 
-const asMentions = asArray(asUserIdNumber)
+const asMentions = asArray(asUserId)
 
 const asAttachmentFields = asObject({
   id: asLabel,
@@ -148,7 +148,7 @@ const asAttachments: Cleaner<AttachmentRef[]> = raw => {
 
 const asQuote: Cleaner<ChatQuote> = asObject({
   id: asMessageIdText,
-  authorId: asUserIdNumber,
+  authorId: asUserId,
   snippet: asText(MAX_BODY)
 })
 
@@ -216,5 +216,17 @@ export function encodeContent(content: ChatContent): Uint8Array {
 
 /** The bytes `openMessage` returns, back to checked content. */
 export function decodeContent(bytes: Uint8Array): ChatContent {
-  return asChatContent(JSON.parse(fromUtf8(bytes)))
+  // Only authenticated plaintext reaches this reader. The bytes signed and
+  // encrypted by an older sender remain untouched; normalize their IDs here.
+  const raw = asObject(asUnknown)(JSON.parse(fromUtf8(bytes)))
+  const openedId: Cleaner<UserId> = value =>
+    typeof value === 'number' ? userIdOfGumbo(value) : asUserId(value)
+  if (raw.type === 'text' || raw.type === 'edit') {
+    raw.mentions = asArray(openedId)(raw.mentions)
+    if (raw.type === 'text' && raw.quote != null) {
+      const quote = asObject(asUnknown)(raw.quote)
+      raw.quote = { ...quote, authorId: openedId(quote.authorId) }
+    }
+  }
+  return asChatContent(raw)
 }

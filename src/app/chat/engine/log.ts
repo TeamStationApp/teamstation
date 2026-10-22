@@ -3,6 +3,7 @@ import {
   GENESIS_HASH,
   verifiedPrefix
 } from '../../../common/chatCrypto/logHash'
+import { compareUserIds } from '../../../common/chatCrypto/userId'
 import { b64, type ChatLogHead, unb64 } from '../keyRecord'
 import type { EngineContext } from './context'
 
@@ -65,7 +66,7 @@ export function foldLog(
   return {
     seq: last?.seq ?? head.seq,
     hash: last?.hash ?? head.hash,
-    members: [...members].sort((a, b) => a - b),
+    members: [...members].sort(compareUserIds),
     resets: resets.slice(-MAX_RESETS),
     broken: good < rows.length
   }

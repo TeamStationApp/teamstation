@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import type { ChatPreferences } from '../../common/api'
 import type { AttachmentRef } from '../../common/chatContent'
+import { userIdOfGumbo } from '../../common/userId'
 import { lstrings } from '../locales/strings'
 import {
   conversationPill,
@@ -96,7 +97,7 @@ describe('chat UI follow-up model', function () {
   for (const { name, change } of contextChanges)
     it(`retains the entire newer sendable context when only ${name} changes before success`, function () {
       const state = newChatWorkspaceState()
-      const owner = chatDraftOwner(state, {}, 1)
+      const owner = chatDraftOwner(state, {}, userIdOfGumbo(1))
       const submitted = submittedContext()
       owner.write('A', submitted)
       const token = owner.begin('A')!
@@ -111,7 +112,7 @@ describe('chat UI follow-up model', function () {
 
   it('retains the entire context after submitted attachments are removed and deliberately readded', function () {
     const state = newChatWorkspaceState()
-    const owner = chatDraftOwner(state, {}, 1)
+    const owner = chatDraftOwner(state, {}, userIdOfGumbo(1))
     const submitted = submittedContext()
     owner.write('A', submitted)
     const token = owner.begin('A')!
@@ -122,7 +123,7 @@ describe('chat UI follow-up model', function () {
 
   it('retains unchanged reply and files beside externally supplied newer offscreen text', function () {
     const state = newChatWorkspaceState()
-    const owner = chatDraftOwner(state, {}, 1)
+    const owner = chatDraftOwner(state, {}, userIdOfGumbo(1))
     const submitted = submittedContext()
     owner.write('A', submitted)
     const token = owner.begin('A')!
@@ -136,7 +137,7 @@ describe('chat UI follow-up model', function () {
   ))
     it(`retains the whole context for an externally supplied offscreen ${name}`, function () {
       const state = newChatWorkspaceState()
-      const owner = chatDraftOwner(state, {}, 1)
+      const owner = chatDraftOwner(state, {}, userIdOfGumbo(1))
       const submitted = submittedContext()
       owner.write('A', submitted)
       const token = owner.begin('A')!
@@ -147,7 +148,7 @@ describe('chat UI follow-up model', function () {
 
   it('clears the whole submitted context when only layout and an equivalent attachment array changed', function () {
     const state = newChatWorkspaceState()
-    const owner = chatDraftOwner(state, {}, 1)
+    const owner = chatDraftOwner(state, {}, userIdOfGumbo(1))
     const submitted = submittedContext()
     owner.write('A', submitted)
     const token = owner.begin('A')!
@@ -173,7 +174,7 @@ describe('chat UI follow-up model', function () {
   it('reconciles offscreen submitted fields while preserving current revisions and geometry', function () {
     const state = newChatWorkspaceState()
     const engine = {}
-    const owner = chatDraftOwner(state, engine, 1)
+    const owner = chatDraftOwner(state, engine, userIdOfGumbo(1))
     const file = {
       bytes: new Uint8Array([1]),
       contentType: 'text/plain',
@@ -233,23 +234,23 @@ describe('chat UI follow-up model', function () {
   it('invalidates pending writes across user and engine ownership without affecting a new same-id draft', function () {
     const state = newChatWorkspaceState()
     const engine = {}
-    const first = chatDraftOwner(state, engine, 1)
-    expect(chatDraftOwner(state, engine, 1)).equals(first)
+    const first = chatDraftOwner(state, engine, userIdOfGumbo(1))
+    expect(chatDraftOwner(state, engine, userIdOfGumbo(1))).equals(first)
     first.write('A', { ...emptyChatDraft(), text: 'Old user' })
     const token = first.begin('A')!
-    const next = chatDraftOwner(state, engine, 2)
+    const next = chatDraftOwner(state, engine, userIdOfGumbo(2))
     next.write('A', { ...emptyChatDraft(), text: 'Current user' })
     expect(first.finish('A', token, true)).equals(undefined)
     first.write('A', { ...emptyChatDraft(), text: 'Late old write' })
     expect(first.begin('A')).equals(undefined)
     expect(next.draft('A').text).equals('Current user')
-    const replaced = chatDraftOwner(state, {}, 2)
+    const replaced = chatDraftOwner(state, {}, userIdOfGumbo(2))
     expect(replaced.draft('A')).deep.equals(emptyChatDraft())
   })
 
   it('reconciles against newer externally supplied offscreen draft fields as well as owner revisions', function () {
     const state = newChatWorkspaceState()
-    const owner = chatDraftOwner(state, {}, 1)
+    const owner = chatDraftOwner(state, {}, userIdOfGumbo(1))
     owner.write('A', {
       ...emptyChatDraft(),
       text: 'Submitted',

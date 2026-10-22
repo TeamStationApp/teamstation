@@ -10,7 +10,7 @@ import type { ChatScreenEngine } from './screenEngine'
 
 export interface SafetyNumberScreenProps {
   engine: Pick<ChatScreenEngine, 'safetyNumber'>
-  userId: number
+  userId: string
   name: string
   onDone: () => void
 }
@@ -65,6 +65,7 @@ export function SafetyNumberScreen(
           </Text>
           <Card>
             <View
+              testID="chat-safety-number"
               style={styles.grid}
               accessibilityLabel={sprintf(
                 lstrings.chat_safety_number_with,
@@ -72,7 +73,11 @@ export function SafetyNumberScreen(
               )}
             >
               {safetyGroups(digits).map((group, index) => (
-                <Text key={index} style={styles.group}>
+                <Text
+                  key={index}
+                  testID={'chat-safety-group-' + index}
+                  style={styles.group}
+                >
                   {group}
                 </Text>
               ))}

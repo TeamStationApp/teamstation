@@ -603,7 +603,7 @@ const userIdsBody = {
         type: 'object',
         required: ['userIds'],
         properties: {
-          userIds: { type: 'array', items: { type: ['integer', 'string'] } }
+          userIds: { type: 'array', items: userIdSchema }
         }
       }
     }
@@ -6170,7 +6170,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 schema: {
                   type: 'object',
                   properties: {
-                    userId: { type: 'string' },
+                    userId: userIdSchema,
                     email: { type: 'string' },
                     kind: { type: 'string', enum: ['guardian', 'family'] }
                   }
@@ -6586,9 +6586,21 @@ export function openApiDocument(version: string): OpenApiDocument {
             'session is ended. When it held the current identity, every chat ' +
             'of the user is flagged for a new epoch and `GET /chat/me/keys` ' +
             'reports `pukNeedsRotation`. Revoking again changes nothing. ' +
-            'Audited.',
+            '`?keepSession=true` revokes the device bound to this session ' +
+            'and keeps the session signed in (a device whose saved keys ' +
+            'cannot be read, reset in place); 403 `notThisDevice` for any ' +
+            'other device. Audited.',
           security: [{ bearer: [] }],
-          parameters: [pathParam('deviceId')],
+          parameters: [
+            pathParam('deviceId'),
+            {
+              name: 'keepSession',
+              in: 'query',
+              schema: { type: 'boolean' },
+              description:
+                'Keep the session signed in; only for the device bound to it.'
+            }
+          ],
           responses: {
             200: { description: 'The device' },
             401: errorResponse,
@@ -6639,9 +6651,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Enrol: publish the first identity',
           description:
             "The identity's id and public key, PUK generation 1's public key " +
-            "with the identity's signature over `u64(userId) ‖ u64(1) ‖ " +
+            "with the identity's signature over `identity(userId) ‖ u64(1) ‖ " +
             "lp(publicKey)`, and the PUK private key boxed to this session's " +
-            'device (HPKE `puk`), which is then linked. 409 ' +
+            'device. `identity(userId)` is the eight-byte big-endian value ' +
+            'for legacy account values through 2^53−1, otherwise `ff` followed ' +
+            'by the full sixteen-byte big-endian value. The box uses ' +
+            'HPKE `puk`; the device is then linked. 409 ' +
             '`identityExists` the second time, `idTaken` for a used id; 400 ' +
             '`badSignature`; 403 `noDevice` without a registered device. ' +
             'Opens a grant request (notifying `grant`) in every chat of the ' +
@@ -6906,7 +6921,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               items: {
                 type: 'object',
                 properties: {
-                  userId: { type: 'integer' },
+                  userId: userIdSchema,
                   pukGeneration: { type: 'integer' },
                   box: b64
                 }
@@ -6966,7 +6981,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 properties: {
                   conversationId: { type: 'string' },
                   epoch: { type: 'integer' },
-                  userId: { type: 'integer' },
+                  userId: userIdSchema,
                   identityId: { type: 'string' },
                   pukGeneration: { type: 'integer' },
                   box: b64

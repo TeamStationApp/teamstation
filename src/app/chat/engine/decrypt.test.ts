@@ -16,6 +16,7 @@ import {
   newPukKey
 } from '../../../common/chatCrypto/keys'
 import { sealMessage } from '../../../common/chatCrypto/seal'
+import { userIdOfGumbo } from '../../../common/userId'
 import { b64, newRecord, withEpochKey } from '../keyRecord'
 import { type EngineContext, KeyHolder } from './context'
 import { IdentityCache, openEpochKeys } from './decrypt'
@@ -53,7 +54,7 @@ function fixture(): {
   identityKeys: ReturnType<typeof newIdentityKey>
 } {
   const identityKeys = newIdentityKey()
-  const record = newRecord(1, 'cdv_test', newDeviceKeys())
+  const record = newRecord(userIdOfGumbo(1), 'cdv_test', newDeviceKeys())
   record.identity = { id: 'cid_test', keys: identityKeys }
   record.puks = [{ generation: 1, keys: newPukKey() }]
   const state = newConversationState({
@@ -89,7 +90,7 @@ function fixture(): {
     valid: true,
     record: {
       epoch: 1,
-      createdByUserId: 1,
+      createdByUserId: userIdOfGumbo(1),
       identityId: 'cid_test',
       previousKeyBox: null,
       chainBreak: false,
@@ -99,7 +100,7 @@ function fixture(): {
   })
   const identity: ChatIdentity = {
     id: 'cid_test',
-    userId: 1,
+    userId: userIdOfGumbo(1),
     publicKey: b64(identityKeys.publicKey),
     createdAt: '2027-04-10T12:00:00Z',
     replacedAt: null
@@ -120,7 +121,7 @@ function fixture(): {
         throw new Error('Unexpected network request')
       }
     }),
-    userId: 1,
+    userId: userIdOfGumbo(1),
     keys,
     memory: new ChatMemory(),
     identities: new IdentityCache({ chatIdentity: async () => identity }),
@@ -149,7 +150,7 @@ describe('chat decryption when the crypto core stops', () => {
       conversationId: 'cnv_test',
       epoch: 1,
       messageId: 'msg_test',
-      senderUserId: 1,
+      senderUserId: userIdOfGumbo(1),
       kind: 'post',
       epochKey,
       identitySecretKey: identityKeys.secretKey,
@@ -160,7 +161,7 @@ describe('chat decryption when the crypto core stops', () => {
       conversationId: 'cnv_test',
       seq: 1,
       epoch: 1,
-      senderUserId: 1,
+      senderUserId: userIdOfGumbo(1),
       senderIdentityId: 'cid_test',
       kind: 'post',
       targetIds: null,

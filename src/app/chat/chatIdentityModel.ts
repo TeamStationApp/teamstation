@@ -1,3 +1,4 @@
+import { compareUserIds } from '../../common/chatCrypto/userId'
 import { initialsOf } from '../components/initials'
 import { teamInitialsOf, teamTint } from '../components/teamTile'
 import { lstrings } from '../locales/strings'
@@ -62,7 +63,7 @@ export function conversationIdentity(chat: ConversationListItem): ChatIdentity {
         .filter(person => !person.left)
         .map(person => [person.userId, person])
     ).values()
-  ].sort((a, b) => a.userId - b.userId)
+  ].sort((a, b) => compareUserIds(a.userId, b.userId))
   if (current.length > 0) {
     return {
       label: current.map(person => person.shortName).join(', '),

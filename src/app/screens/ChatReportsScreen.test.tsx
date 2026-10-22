@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { ChatReport } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -76,8 +77,8 @@ const report = (over: Partial<ChatReport> = {}): ChatReport => ({
   id: 'crp_1',
   conversation: { id: 'cnv_1', kind: 'teamMembers', title: 'Hawks Members' },
   messageId: 'msg_1',
-  reporter: { userId: 2, shortName: 'Blair B' },
-  sender: { userId: 3, shortName: 'Casey C' },
+  reporter: { userId: userIdOfGumbo(2), shortName: 'Blair B' },
+  sender: { userId: userIdOfGumbo(3), shortName: 'Casey C' },
   kind: 'post',
   sentAt: '2027-04-10T12:00:00.000Z',
   plaintext: JSON.stringify({
@@ -126,7 +127,7 @@ describe('reported chat messages (site administrators)', function () {
       report({
         id: 'crp_2',
         conversation: { id: 'cnv_2', kind: 'dm', title: null },
-        sender: { userId: 4, shortName: 'Dana D' },
+        sender: { userId: userIdOfGumbo(4), shortName: 'Dana D' },
         plaintext: 'made-up words',
         verified: false
       }),
@@ -292,7 +293,11 @@ describe('reported chat messages in the app', function () {
       const path = url.split('?')[0].replace(/^.*\/api\/v1/, '')
       asked.push(`${init?.method ?? 'GET'} ${path}`)
       if (path === '/auth/me') {
-        return Response.json({ id: 9, displayName: 'Zed Z', isAdmin })
+        return Response.json({
+          id: userIdOfGumbo(9),
+          displayName: 'Zed Z',
+          isAdmin
+        })
       }
       if (path === '/me/roles') return Response.json({ teams: {} })
       if (path === '/admin/chat/reports') {

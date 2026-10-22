@@ -317,7 +317,13 @@ describe('chat audiences (U5)', function () {
     const loose = makeId('season')
     await db
       .insertInto('seasons')
-      .values({ id: loose, name: 'Fall Ball', year: 2027 })
+      .values({
+        id: loose,
+        name: 'Fall Ball',
+        year: 2027,
+        starts_on: '2027-09-01',
+        ends_on: '2027-11-30'
+      })
       .execute()
     const conversations: Titled[] = [
       {

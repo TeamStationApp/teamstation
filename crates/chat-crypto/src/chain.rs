@@ -7,7 +7,7 @@
 //!   SHA-256(previous_key_box)`, the SHA-256 of no bytes when there is none.
 //! - **Per-user keys.** PUK generation n carries `previous_keys_box`: every
 //!   older private key, sealed under `HKDF-SHA256(generation n private key,
-//!   info = "ts-chat/v1/prev-puk")`, AAD `u64(userId) ‖ lp(identityId) ‖
+//!   info = "ts-chat/v1/prev-puk")`, AAD `identity(userId) ‖ lp(identityId) ‖
 //!   u64(n)`. The TypeScript lays out and reads back the list of older keys;
 //!   this seals and opens it.
 //!
@@ -17,6 +17,7 @@
 use crate::bytes::{join, lp, u64be};
 use crate::error::{Refusal, Result};
 use crate::prim;
+use crate::user_id;
 use crate::random;
 use zeroize::Zeroizing;
 
@@ -63,15 +64,15 @@ fn puk_chain_key(private_key: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     Ok(Zeroizing::new(prim::hkdf(private_key, &[], b"ts-chat/v1/prev-puk", 32)?))
 }
 
-fn puk_chain_aad(user_id: u64, identity_id: &[u8], generation: u64) -> Vec<u8> {
-    join(&[&u64be(user_id), &lp(identity_id), &u64be(generation)])
+fn puk_chain_aad(user_id: u128, identity_id: &[u8], generation: u64) -> Vec<u8> {
+    join(&[&user_id::encode(user_id), &lp(identity_id), &u64be(generation)])
 }
 
-pub fn seal_previous_puk_keys(user_id: u64, identity_id: &[u8], generation: u64, private_key: &[u8], plaintext: &[u8], nonce: Option<&[u8]>) -> Result<Vec<u8>> {
+pub fn seal_previous_puk_keys(user_id: u128, identity_id: &[u8], generation: u64, private_key: &[u8], plaintext: &[u8], nonce: Option<&[u8]>) -> Result<Vec<u8>> {
     seal_box(&puk_chain_key(private_key)?, &puk_chain_aad(user_id, identity_id, generation), plaintext, nonce)
 }
 
-pub fn open_previous_puk_keys(user_id: u64, identity_id: &[u8], generation: u64, private_key: &[u8], previous_keys_box: &[u8]) -> Result<Vec<u8>> {
+pub fn open_previous_puk_keys(user_id: u128, identity_id: &[u8], generation: u64, private_key: &[u8], previous_keys_box: &[u8]) -> Result<Vec<u8>> {
     open_box(&puk_chain_key(private_key)?, &puk_chain_aad(user_id, identity_id, generation), previous_keys_box)
 }
 

@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -15,6 +15,7 @@ import emojiData from 'emojibase-data/en/compact.json'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { gumboOfUserId } from '../../common/userId'
 import {
   CHAT2_SCENARIOS,
   CHAT2_SURFACES,
@@ -1495,7 +1496,7 @@ export async function observeInfoCaptureReady(
 export class Scenarios {
   readonly group: string
   readonly viewerKey: string
-  readonly viewerId: number
+  readonly viewerId: string
   readonly peers = new Map<string, Peer>()
   readonly observations: Json[] = []
   get touchActions(): boolean {
@@ -1724,7 +1725,7 @@ export class Scenarios {
     return await fixtureClient(this.f, this.viewerKey)
   }
 
-  async run(name: Chat2Scenario): Promise<void> {
+  async run(name: Chat2Scenario | 'I1' | 'I2' | 'I3'): Promise<void> {
     await this[name]()
   }
 
@@ -1742,6 +1743,10 @@ export class Scenarios {
       if (await ui.visible({ text: exactText(actor.email) }, 2000))
         await ui.back()
       else {
+        if (['I1', 'I2'].includes(ui.scenario))
+          throw new Chat2Blocked(
+            'Compatibility requires its own prepared profile; account replacement is prohibited'
+          )
         requireAfterArchive(this.f)
         await m.scrollUntilVisible({
           element: { text: exactText('Sign out') },
@@ -1795,6 +1800,10 @@ export class Scenarios {
       )
     }
     if (await ui.visible({ text: 'Link this device' }, 500)) {
+      assert(
+        ui.scenario !== 'I1',
+        'The preserved legacy profile must not request another device link'
+      )
       const signal = ui.native
         ? undefined
         : AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
@@ -2276,7 +2285,7 @@ export class Scenarios {
 
   async peerMessage(
     body: string,
-    options: { quoteId?: string; mentions?: number[] } = {},
+    options: { quoteId?: string; mentions?: string[] } = {},
     conversation = this.group
   ): Promise<MessageView> {
     const peer = await this.protocolPeer()
@@ -2611,10 +2620,10 @@ export class Scenarios {
       ),
       'Current other-member with a unique public safety label required'
     )
-    const selector = { text: exactText('Safety number with ' + member.name) }
+    const selector = { id: 'chat-info-member-' + member.userId }
     if (!ui.native)
       await ui.dom(
-        `const n=document.querySelector(${JSON.stringify('[aria-label="Safety number with ' + member.name + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
+        `const n=document.querySelector(${JSON.stringify('[data-testid="' + selector.id + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
       )
     await ui.device.scrollUntilVisible({
       element: selector,
@@ -2908,6 +2917,740 @@ export class Scenarios {
     } finally {
       fixtureControl(this.f, 'clear-fault')
     }
+  }
+
+  async identitySafety(peerId: string, expected: string): Promise<void> {
+    const member = need(
+      this.f.members.find(m => m.userId === peerId),
+      'Safety peer must be a current member'
+    )
+    assert.notEqual(
+      member.userId,
+      this.viewerId,
+      'Distinct safety peer required'
+    )
+    assert(member.role !== '', 'Observed public safety role required')
+    assert.equal(
+      this.f.members.filter(
+        m =>
+          m.userId !== this.viewerId &&
+          m.name === member.name &&
+          m.role === member.role
+      ).length,
+      1,
+      'Unique public safety name and role required'
+    )
+    await this.openInfo()
+    const rowId = 'chat-info-member-' + peerId
+    const label = 'Safety number with ' + member.name + ', ' + member.role
+    const ui = this.ui
+    type Box = NonNullable<PublicNode['bounds']>
+    const samples: Json[] = []
+    this.observations.push({
+      safetyPeer: peerId,
+      publicName: member.name,
+      publicRole: member.role,
+      samples
+    })
+    if (ui.native) {
+      await ui.device.scrollUntilVisible({
+        element: { id: rowId },
+        direction: 'DOWN',
+        timeout: 15000
+      })
+    }
+    const read = async (): Promise<{
+      bounds: Box
+      top: number
+      bottom: number
+      topmost?: boolean
+    }> => {
+      const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
+      const width = Number(
+        'screenWidth' in info ? info.screenWidth : info.width
+      )
+      const height = Number(
+        'screenHeight' in info ? info.screenHeight : info.height
+      )
+      assert([width, height].every(v => Number.isFinite(v) && v > 0))
+      const nodes = await ui.nodes()
+      const finite = (b: Box | undefined): b is Box =>
+        b != null &&
+        [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+        b.width > 0 &&
+        b.height > 0
+      const visible = (b: Box | undefined): b is Box =>
+        finite(b) &&
+        b.x >= 0 &&
+        b.y >= 0 &&
+        b.x + b.width <= width &&
+        b.y + b.height <= height
+      const headers = nodes.filter(
+        n =>
+          visible(n.bounds) &&
+          n.bounds.y + n.bounds.height <= height / 3 &&
+          (n.text === 'Back' ||
+            n.text === 'Notifications' ||
+            n.text?.startsWith('Account, ') === true)
+      )
+      assert(
+        headers.length > 0,
+        'Observed public header required before safety tap'
+      )
+      const footers = nodes.filter(
+        n =>
+          visible(n.bounds) &&
+          n.bounds.height < height / 3 &&
+          n.bounds.y > height / 2 &&
+          ['Home', 'Videos', 'Schedule', 'Chat'].includes(n.text ?? '')
+      )
+      const top =
+        Math.max(...headers.map(n => n.bounds!.y + n.bounds!.height)) + 8
+      const bottom = Math.min(height - 8, ...footers.map(n => n.bounds!.y - 8))
+      assert(
+        Number.isFinite(top) &&
+          Number.isFinite(bottom) &&
+          top > 0 &&
+          bottom < height &&
+          bottom - top > 32,
+        'Actual safe Info reading band required'
+      )
+      let target: { bounds: Box; topmost?: boolean }
+      if (ui.native) {
+        const rows = nodes.filter(
+          n =>
+            n.id === rowId &&
+            (ui.surface !== 'ios' || /button$/i.test(n.type ?? '')) &&
+            finite(n.bounds)
+        )
+        assert.equal(
+          rows.length,
+          1,
+          'Unique actual name and role safety row required'
+        )
+        assert(
+          rows[0].text === label || rows[0].text === label + ', Moderator',
+          'Exact peer short name and visible role required'
+        )
+        target = { bounds: rows[0].bounds! }
+      } else {
+        const actual = await ui.dom(`
+          const section=document.querySelector('[data-testid="chat-info-members"]');
+          if(!section)throw Error('Actual Info member section required');
+          const matches=Array.from(section.querySelectorAll('button,[role="button"]')).filter(n=>n.getAttribute('data-testid')===${JSON.stringify(rowId)}&&[${JSON.stringify(label)},${JSON.stringify(label + ', Moderator')}].includes(n.getAttribute('aria-label'))&&Array.from(n.querySelectorAll('*')).some(c=>c.textContent===${JSON.stringify(member.role)}&&c.closest('button,[role="button"]')===n)).map(n=>{const b=n.getBoundingClientRect(),hit=document.elementFromPoint(b.x+b.width/2,b.y+b.height/2);return {bounds:{x:b.x,y:b.y,width:b.width,height:b.height},topmost:hit!=null&&(hit===n||n.contains(hit))}});
+          return {matches};
+        `)
+        assert(
+          Array.isArray(actual.matches) && actual.matches.length === 1,
+          'Unique actual name and role safety row required'
+        )
+        target = actual.matches[0] as typeof target
+      }
+      assert(
+        finite(target.bounds) &&
+          target.bounds.x >= 0 &&
+          target.bounds.x + target.bounds.width <= width &&
+          target.bounds.height < bottom - top
+      )
+      samples.push({ ...target, top, bottom })
+      return { ...target, top, bottom }
+    }
+    let target = await read()
+    for (
+      let step = 0;
+      step < 8 &&
+      (target.bounds.y < target.top ||
+        target.bounds.y + target.bounds.height > target.bottom);
+      step++
+    ) {
+      await ui.device.scroll(
+        { direction: target.bounds.y < target.top ? 'UP' : 'DOWN' },
+        { signal: AbortSignal.timeout(15000) }
+      )
+      target = await read()
+    }
+    assert(
+      target.bounds.y >= target.top &&
+        target.bounds.y + target.bounds.height <= target.bottom &&
+        (ui.native || target.topmost === true),
+      'Exact role-qualified safety row must fully clear overlays'
+    )
+    if (ui.native) await ui.tapObserved({ bounds: target.bounds })
+    else
+      await ui.device.tapOn(
+        { id: rowId },
+        { signal: AbortSignal.timeout(15000) }
+      )
+    await until(
+      async () => {
+        const groups = (await this.ui.nodes()).filter(node =>
+          /^chat-safety-group-\d+$/.test(node.id ?? '')
+        )
+        if (groups.length !== 12) return undefined
+        const ordered = groups.sort(
+          (a, b) => Number(a.id!.slice(18)) - Number(b.id!.slice(18))
+        )
+        assert.equal(new Set(ordered.map(n => n.id)).size, 12)
+        assert(ordered.every(n => /^[0-9]{5}$/.test(n.text ?? '')))
+        assert.equal(
+          ordered.map(n => n.text).join(''),
+          expected,
+          'Actual installed safety digits must match the original public-key baseline'
+        )
+        return true
+      },
+      'actual safety digits',
+      15000
+    )
+    await this.ui.shot(
+      'identity-safety',
+      'Actual installed account safety digits matched the authenticated counterpart'
+    )
+    await this.ui.text('Done')
+    await this.openGroup()
+  }
+
+  /** Native I1 reaches the old post through its recent, authenticated reply. */
+  async identityLegacyAnchor(
+    target: Chat2Message,
+    baseline: { text: Chat2Message; reply: Chat2Message }
+  ): Promise<void> {
+    const ui = this.ui
+    if (!ui.native) {
+      await this.anchor(target)
+      return
+    }
+    if (await ui.visible({ id: 'chat-jump-latest' }, 1000))
+      await ui.id('chat-jump-latest')
+    if (target.id !== baseline.text.id) {
+      await this.anchor(target)
+      return
+    }
+    assert.equal(baseline.text.authorId, this.viewerId)
+    assert(Array.from(baseline.text.body).length <= 200)
+    await this.anchor(baseline.reply)
+    await this.identityLegacyBody(baseline.reply)
+    const proof: Json = { legacyQuoteJump: target.id, reply: baseline.reply.id }
+    this.observations.push(proof)
+    const rowId = 'chat-message-' + baseline.reply.id
+    const parent = await this.targetBounds(rowId)
+    const resolvedLabel = 'Jump to message from You: ' + baseline.text.body
+    const quote = await this.identityLegacyRead(baseline.reply, 'quote')
+    assert(
+      quote.text === resolvedLabel ||
+        quote.text ===
+          'Jump to message from Former member: Message unavailable',
+      'Exact rendered legacy quote required'
+    )
+    const bounds = need(quote.bounds, 'Actual legacy quote bounds required')
+    const screen = await ui.device.platformInfo()
+    const width = Number(screen.screenWidth)
+    const height = Number(screen.screenHeight)
+    assert(
+      [bounds, parent].every(
+        b =>
+          [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+          b.width > 0 &&
+          b.height > 0
+      ) &&
+        [width, height].every(v => Number.isFinite(v) && v > 0) &&
+        bounds.x >= Math.max(0, parent.x) &&
+        bounds.y >= Math.max(0, parent.y) &&
+        bounds.x + bounds.width <= Math.min(width, parent.x + parent.width) &&
+        bounds.y + bounds.height <= Math.min(height, parent.y + parent.height),
+      'Exact legacy quote must fit its observed reply row and screen'
+    )
+    await ui.tapObserved({ bounds })
+    await ui.present('chat-bubble-' + target.id)
+    proof.outcome = 'passed'
+  }
+
+  /** Read the target's actual descendants; duplicate text in other rows is irrelevant. */
+  async identityLegacyRead(
+    message: Chat2Message,
+    kind: 'body' | 'quote'
+  ): Promise<PublicNode> {
+    const ui = this.ui
+    assert(ui.native, 'Native legacy scoped read required')
+    const scopeId =
+      (kind === 'body' ? 'chat-message-body-' : 'chat-message-') + message.id
+    const text =
+      kind === 'body' ? exactText(message.body) : '^Jump to message from .*'
+    const type =
+      kind === 'quote'
+        ? 'Button'
+        : ui.surface === 'ios'
+          ? 'StaticText'
+          : 'TextView'
+    const selected = { text, childOf: { id: scopeId } }
+    const path = join(
+      ui.runDir,
+      'identity-legacy-' + kind + '-' + randomUUID() + '.json'
+    )
+    let element: PublicNode
+    let nodeCount: number
+    if (ui.surface === 'ios') {
+      const raw = await ui.iosRaw(AbortSignal.timeout(10000))
+      writeFileSync(path, raw, { mode: 0o600, flag: 'wx' })
+      const read = iosPublicRead(raw, selected, type)
+      const actual = need(
+        read.element,
+        'Exact scoped iOS legacy element required'
+      )
+      const byIndex = new Map(read.nodes.map(n => [n.index, n]))
+      let owner = actual.parentIndex
+      let owned = false
+      const seen = new Set<number>()
+      while (owner != null) {
+        assert(!seen.has(owner), 'Acyclic actual legacy ancestry required')
+        seen.add(owner)
+        const parent = need(
+          byIndex.get(owner),
+          'Complete actual legacy ancestry required'
+        )
+        if (parent.id === scopeId) owned = true
+        owner = parent.parentIndex
+      }
+      assert(
+        owned,
+        'Actual legacy element must descend from its exact message scope'
+      )
+      element = actual
+      nodeCount = read.nodes.length
+    } else {
+      const raw = await ui.device.hierarchy({
+        signal: AbortSignal.timeout(10000)
+      })
+      writeFileSync(path, JSON.stringify(raw), { mode: 0o600, flag: 'wx' })
+      const box = androidScopedBounds(raw, selected, type)
+      const nodes = flattenPublicHierarchy(raw)
+      const matches = nodes.filter(
+        n =>
+          n.type === type &&
+          new RegExp(text).test(n.text ?? '') &&
+          n.bounds != null &&
+          ['x', 'y', 'width', 'height'].every(
+            key =>
+              n.bounds![key as keyof typeof box] ===
+              box[key as keyof typeof box]
+          )
+      )
+      assert(
+        matches.length === 1,
+        'Unique scoped Android legacy text and bounds required'
+      )
+      element = matches[0]
+      nodeCount = nodes.length
+    }
+    this.observations.push({
+      legacyScopedRead: message.id,
+      kind,
+      scopeId,
+      nodeCount,
+      hierarchy: path,
+      sha256: digest(path),
+      element
+    })
+    return element
+  }
+
+  async identityLegacyBody(message: Chat2Message): Promise<void> {
+    const ui = this.ui
+    if (!ui.native) {
+      await ui.device.assertVisible({ text: exactText(message.body) })
+      return
+    }
+    const band = await this.readingBand()
+    const samples: Json[] = []
+    this.observations.push({ legacyBody: message.id, band, samples })
+    let box = await this.targetBounds('chat-bubble-' + message.id)
+    const requiredHeight = (): number =>
+      Math.min(box.height, band.bottom - band.top - 32)
+    // Native frame serialization can round by half a coordinate unit.
+    const edgeTolerance = 0.5
+    const fits = (): boolean =>
+      box.height > 0 &&
+      box.y >= band.top + 8 - edgeTolerance &&
+      box.y + requiredHeight() <= band.bottom - 8 + edgeTolerance
+    for (let step = 0; ; step++) {
+      assert(
+        [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+          box.width > 0 &&
+          band.bottom - band.top > 64,
+        'Finite legacy bubble and actual reading band required'
+      )
+      const clipped = box.height <= 0
+      assert(
+        !clipped || box.y < band.top || box.y >= band.bottom,
+        'Clipped legacy bounds require an observed offscreen direction'
+      )
+      samples.push({
+        ...box,
+        requiredHeight: clipped ? null : requiredHeight(),
+        clipped
+      })
+      if (fits()) break
+      assert(
+        step < 8,
+        'Legacy bubble must clear header, pins and composer before text verification'
+      )
+      const delta = clipped
+        ? ((box.y < band.top ? 1 : -1) * (band.bottom - band.top)) / 2
+        : box.y < band.top + 8
+          ? Math.min((band.bottom - band.top) / 2, band.top + 16 - box.y)
+          : -Math.min(
+              (band.bottom - band.top) / 2,
+              box.y + requiredHeight() - band.bottom + 16
+            )
+      const middle = (band.top + band.bottom) / 2
+      const previousY = box.y
+      const previousHeight = box.height
+      await ui.measuredSwipe({
+        startX: Math.round(box.x + box.width / 2),
+        endX: Math.round(box.x + box.width / 2),
+        startY: Math.round(middle - delta / 2),
+        endY: Math.round(middle + delta / 2),
+        duration: 350
+      })
+      box = await until(
+        async () => {
+          const next = await this.targetBounds('chat-bubble-' + message.id)
+          samples.push({ afterGesture: next })
+          return Math.abs(next.y - previousY) >= 1 ||
+            (previousHeight <= 0 && next.height > 0)
+            ? next
+            : undefined
+        },
+        'native legacy reader progress after measured gesture',
+        2000
+      )
+    }
+    const element = await this.identityLegacyRead(message, 'body')
+    assert(element.text === message.body, 'Exact native legacy body required')
+    samples.push({ scopedBodyResult: element })
+  }
+
+  async I1(): Promise<void> {
+    await this.check(
+      'I1 preserved installed legacy identity and encrypted history',
+      async () => {
+        const baseline = need(
+          need(
+            this.f.identityCompatibility,
+            'Identity compatibility descriptor required'
+          ).legacy[this.ui.surface],
+          'Legacy surface baseline required'
+        )
+        assert.equal(
+          this.viewerKey,
+          baseline.actor,
+          'Prepared legacy profile actor required'
+        )
+        assert(
+          gumboOfUserId(this.viewerId) != null,
+          'Legacy-derived canonical account required'
+        )
+        const client = await this.client()
+        const before = await client.myChatKeys()
+        const devices = (await client.chatDevices())
+          .map(d => [d.id, d.boxPublicKey, d.signPublicKey, d.revokedAt])
+          .sort((a, b) => a[0]!.localeCompare(b[0]!))
+        assert.equal(before.identity?.id, baseline.identityId)
+        assert.equal(before.identity?.publicKey, baseline.identityPublicKey)
+        assert(
+          before.generations.some(
+            p =>
+              p.generation === baseline.pukGeneration &&
+              p.publicKey === baseline.pukPublicKey
+          )
+        )
+        assert(
+          devices.some(d => d[0] === baseline.deviceId && d[3] == null),
+          'Original installed device required before reopen'
+        )
+        await this.signIn()
+        await this.openGroup()
+        for (const message of [baseline.text, baseline.reply]) {
+          await this.identityLegacyAnchor(message, baseline)
+          await this.identityLegacyBody(message)
+        }
+        if (this.ui.native) {
+          const label = 'Jump to message from You: ' + baseline.text.body
+          const element = await this.identityLegacyRead(baseline.reply, 'quote')
+          assert(
+            element.text === label,
+            'Exact rendered legacy reply quote required'
+          )
+        } else
+          await this.ui.device.assertVisible({
+            text: '^Jump to message from .*'
+          })
+        await this.identityLegacyAnchor(baseline.file, baseline)
+        if (this.ui.native) await this.identityLegacyBody(baseline.file)
+        await until(
+          async () => {
+            try {
+              return await this.ui.renderedPhoto({
+                id: 'chat-bubble-' + baseline.file.id
+              })
+            } catch {
+              return undefined
+            }
+          },
+          'actual legacy encrypted attachment',
+          30000
+        )
+        const peer = await this.protocolPeer()
+        await this.peerTarget(peer, this.group, baseline.text.id)
+        await this.peerTarget(peer, this.group, baseline.reply.id)
+        const history = peer.engine.view(this.group)!
+        assert(
+          baseline.textMentions.length + baseline.replyMentions.length > 0,
+          'A real authenticated legacy numeric mention is required'
+        )
+        assert.deepEqual(
+          history.messages.find(m => m.id === baseline.text.id)?.mentions,
+          baseline.textMentions
+        )
+        assert.deepEqual(
+          history.messages.find(m => m.id === baseline.reply.id)?.mentions,
+          baseline.replyMentions
+        )
+        assert.equal(
+          history.messages.find(m => m.id === baseline.reply.id)?.quote
+            ?.authorId,
+          baseline.text.authorId
+        )
+        assert.equal(
+          history.messages.find(m => m.id === baseline.reply.id)?.quote?.id,
+          baseline.text.id
+        )
+        assert.equal(
+          await peer.engine.safetyNumber(this.viewerId),
+          baseline.safetyNumber
+        )
+        await this.identitySafety(
+          need(
+            (await peer.client.whoAmI())?.id,
+            'Safety peer session required'
+          ),
+          baseline.safetyNumber
+        )
+        const body = 'Legacy identity continuity ' + Date.now()
+        await this.ui.replaceDraft(body)
+        await this.ui.text('Send')
+        assert.equal((await this.delivered(body)).senderUserId, this.viewerId)
+        const after = await client.myChatKeys()
+        assert.deepEqual(after.identity, before.identity)
+        assert.deepEqual(
+          after.generations.map(({ box, ...p }) => p),
+          before.generations.map(({ box, ...p }) => p)
+        )
+        assert.deepEqual(
+          (await client.chatDevices())
+            .map(d => [d.id, d.boxPublicKey, d.signPublicKey, d.revokedAt])
+            .sort((a, b) => a[0]!.localeCompare(b[0]!)),
+          devices,
+          'Reopening must not enroll, revoke or replace a device'
+        )
+        this.observations.push({
+          legacyIdentityContinuous: true,
+          originalDeviceId: baseline.deviceId,
+          authenticatedNumericMentionsAndQuote: true,
+          legacyPhotoOpened: true,
+          safetyNumberUnchanged: true
+        })
+        await this.ui.shot(
+          'identity-legacy',
+          'Actual legacy profile after lossless database and saved-record upgrade'
+        )
+      }
+    )
+  }
+
+  async I2(): Promise<void> {
+    await this.check(
+      'I2 full-width account with mixed replies, mentions, files and linked-device rotation',
+      async () => {
+        const compatibility = need(
+          this.f.identityCompatibility,
+          'Identity compatibility descriptor required'
+        )
+        assert(
+          compatibility.fullWidthActors.includes(this.viewerKey),
+          'Explicit fresh full-width actor required'
+        )
+        assert.equal(gumboOfUserId(this.viewerId), null)
+        const client = await this.client()
+        assert.equal(
+          (await client.whoAmI())?.gumboId,
+          null,
+          'Fresh account must have no scoring mapping'
+        )
+        const original = need(
+          (await client.myChatKeys()).identity,
+          'Fresh full-width protocol provider must already be enrolled'
+        )
+        need(
+          this.f.actors[this.viewerKey].provider,
+          'Fresh actor requires its own pre-enrolled protocol provider'
+        )
+        await this.signIn()
+        await this.openGroup()
+        const peer = await this.protocolPeer()
+        const peerId = need(
+          (await peer.client.whoAmI())?.id,
+          'Legacy peer account required'
+        )
+        assert(
+          gumboOfUserId(peerId) != null,
+          'Mixed legacy/full-width accounts required'
+        )
+        const target = this.f.messages.target
+        assert.equal(
+          target.authorId,
+          peerId,
+          'Prepared legacy peer reply target required'
+        )
+        await this.reply(target)
+        await this.ui.typeMentionTrigger()
+        await this.ui.id('chat-mention-member-' + peerId)
+        await this.ui.append(' mixed identity ' + Date.now())
+        const body = await this.ui.draft()
+        await this.attachPhoto()
+        await this.ui.text('Send')
+        const sent = await this.delivered(body)
+        assert.equal(sent.senderUserId, this.viewerId)
+        assert.deepEqual(sent.mentions, [peerId])
+        assert.equal(sent.quote?.id, target.id)
+        assert.equal(sent.quote?.authorId, target.authorId)
+        assert.equal(sent.attachments.length, 1)
+        const own = await this.protocolPeer(this.viewerKey)
+        const activeDevices = (await client.chatDevices()).filter(
+          d => d.revokedAt == null && d.linked
+        )
+        assert(
+          activeDevices.length >= 2,
+          'Actual linked application and protocol devices required'
+        )
+        const generation = await own.rotateUserKey()
+        await peer.engine.fillGrants()
+        const incoming = need(
+          await peer.engine.attach(
+            this.group,
+            [
+              {
+                bytes: new Uint8Array(
+                  readFileSync(
+                    need(this.f.files, 'Synthetic photo required').photo
+                  )
+                ),
+                contentType: 'image/png',
+                fileName: 'identity-fixture.png'
+              }
+            ],
+            'Mixed incoming identity ' + Date.now(),
+            { quoteId: sent.id, mentions: [this.viewerId] }
+          ),
+          'Verified mixed incoming file required'
+        )
+        await this.openGroup()
+        await this.anchor({
+          id: incoming.id,
+          seq: incoming.seq,
+          body: incoming.body,
+          authorId: peerId
+        })
+        await until(
+          async () => {
+            try {
+              return await this.ui.renderedPhoto({
+                id: 'chat-bubble-' + incoming.id
+              })
+            } catch {
+              return undefined
+            }
+          },
+          'actual mixed encrypted attachment after rotation',
+          30000
+        )
+        await own.engine.open(this.group)
+        const onSecond = need(
+          own.engine
+            .view(this.group)
+            ?.messages.find(message => message.id === incoming.id),
+          'The linked full-width protocol device must decrypt the incoming message'
+        )
+        assert.deepEqual(onSecond.mentions, [this.viewerId])
+        assert.equal(onSecond.quote?.authorId, this.viewerId)
+        const safety = need(
+          await own.engine.safetyNumber(peerId),
+          'Mixed safety digits required'
+        )
+        assert.equal(safety, await peer.engine.safetyNumber(this.viewerId))
+        await this.identitySafety(peerId, safety)
+        assert.deepEqual((await client.myChatKeys()).identity, original)
+        this.observations.push({
+          fullWidthId: this.viewerId,
+          noScoringMapping: true,
+          linkedDevices: activeDevices.map(d => d.id),
+          rotatedGeneration: generation,
+          mixedFileReplyMentionDelivered: true
+        })
+        await this.ui.shot(
+          'identity-mixed',
+          'Actual mixed account encrypted history after linked-device key rotation'
+        )
+      }
+    )
+  }
+
+  async I3(): Promise<void> {
+    await this.check(
+      'I3 isolated real platform persistence and injected adapter write refusal',
+      async () => {
+        if (this.ui.surface === 'ios')
+          await this.ui.device.stopApp({ appId: this.ui.fixture.appId })
+        await this.ui.open('/dev/chat-bench')
+        if (this.ui.surface === 'ios')
+          await this.ui.device.assertVisible({
+            text: exactText('Chat crypto bench'),
+            timeout: 30000
+          })
+        await this.ui.device.assertVisible({
+          text: exactText('vectors ok'),
+          timeout: 30000
+        })
+        await this.ui.text('Check saved chat compatibility')
+        await this.ui.device.assertVisible({
+          text: exactText('identity storage ok'),
+          timeout: 30000
+        })
+        await this.ui.device.assertNotVisible({
+          text: exactText('identity storage failed'),
+          timeout: 1000
+        })
+        for (const expected of [
+          '"enrollmentAttempts":0',
+          '"wipeAttempts":0',
+          '"cleanup":true',
+          'injected adapter write refusal'
+        ])
+          await this.ui.device.assertVisible({
+            text: '.*' + expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*'
+          })
+        await this.ui.shot(
+          'identity-storage',
+          'Actual dedicated synthetic platform store; failure is injected at the write adapter, and cleanup is verified'
+        )
+        this.observations.push({
+          isolatedStorageDiagnostic: true,
+          injectedAdapterRefusal: true,
+          protectedProfileMutation: false,
+          cleanupObserved: true
+        })
+      }
+    )
   }
 
   async E1(): Promise<void> {
@@ -3206,16 +3949,13 @@ export class Scenarios {
         if (ui.surface === 'ios') {
           const row = await ui.iosRead(
             {
-              text: exactText('Safety number with ' + member.name),
+              id: 'chat-info-member-' + member.userId,
               childOf: { id: 'chat-info-members' }
             },
             'Button'
           )
           await ui.tapObserved(row)
-        } else
-          await ui.device.tapOn({
-            text: exactText('Safety number with ' + member.name)
-          })
+        } else await ui.id('chat-info-member-' + member.userId)
         await ui.device.assertVisible({
           text: 'Safety number.*',
           timeout: 10000
@@ -5884,21 +6624,25 @@ async function main(): Promise<void> {
     command === 'capture' ||
       command === 'variants' ||
       command === 'surface' ||
-      CHAT2_SCENARIOS.includes(command as Chat2Scenario),
+      CHAT2_SCENARIOS.includes(command as Chat2Scenario) ||
+      ['I1', 'I2', 'I3'].includes(command),
     'Unknown chat2 scenario'
   )
   const ui = new Chat2UI(fixture, surface, command)
   const scenarios = new Scenarios(fixture, ui)
   let outcome: 'passed' | 'failed' | 'blocked' = 'failed'
   let failure: unknown
-  const completed: Chat2Scenario[] = []
+  const completed: string[] = []
   const allScenarios = [scenarios]
   try {
     fixtureControl(fixture, 'prepare', { surface, source: ui.binding.source })
     await ui.start()
     if (command === 'capture') await scenarios.capture()
     else if (command === 'variants') await scenarios.variants()
-    else {
+    else if (['I1', 'I2', 'I3'].includes(command)) {
+      await scenarios.run(command as 'I1' | 'I2' | 'I3')
+      completed.push(command)
+    } else {
       requireAfterArchive(fixture)
       await scenarios.signIn()
       for (const scenario of command === 'surface'

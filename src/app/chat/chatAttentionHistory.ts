@@ -41,7 +41,7 @@ export type AttentionDiscovery = 'complete' | 'more'
  */
 export async function discoverAttentionHistory(options: {
   conversationId: string
-  userId: number
+  userId: string
   session: ChatAttentionSession
   view: (id: string) => ConversationView | undefined
   loadEarlier: (id: string) => Promise<ConversationView>

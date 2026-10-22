@@ -74,7 +74,7 @@ import {
  * you" when nobody else ever was.
  */
 export function dmTitle(
-  userId: number,
+  userId: string,
   members: ChatMember[] | undefined,
   people: Array<Pick<ChatDmPerson, 'userId' | 'shortName' | 'left'>>
 ): string {
@@ -140,7 +140,7 @@ export interface ConversationView {
   messages: MessageView[]
   members: MemberView[]
   /** Who is typing now, other than the person. */
-  typing: Array<{ userId: number; name: string | undefined }>
+  typing: Array<{ userId: string; name: string | undefined }>
   /** "History is locked — it unlocks when another member opens TeamStation". */
   historyLocked: boolean
   /** "Earlier messages can't be opened". */
@@ -158,7 +158,7 @@ export interface ConversationView {
   ownReadSeq?: number
   /** "<name>'s safety number changed", where the record says so. */
   safetyChanges: Array<{
-    userId: number
+    userId: string
     name: string | undefined
     seq: number
     at: number
@@ -170,7 +170,7 @@ export interface GrantApproval {
   requestId: number
   conversationId: string
   conversationTitle: string | undefined
-  userId: number
+  userId: string
   name: string | undefined
   /** Before the reset, when this device had seen it. */
   oldSafetyNumber: string | undefined
@@ -181,7 +181,7 @@ export interface ChatEngineOptions {
   client: ChatEngineClient
   store: ChatKeyStore
   /** The signed-in user. */
-  userId: number
+  userId: string
   /** How this device names itself if it registers. */
   device: ChatSetup['device']
   /** The app's socket, for chat hints and typing. */
@@ -823,7 +823,7 @@ export class ChatEngine {
     body: string,
     options: {
       quoteId?: string
-      mentions?: number[]
+      mentions?: string[]
       attachments?: AttachmentRef[]
     } = {}
   ): Promise<MessageView | undefined> {
@@ -861,7 +861,7 @@ export class ChatEngine {
     conversationId: string,
     files: OutgoingFile[],
     body = '',
-    options: { quoteId?: string; mentions?: number[] } = {}
+    options: { quoteId?: string; mentions?: string[] } = {}
   ): Promise<MessageView | undefined> {
     const ctx = this.ctx
     const attachments: AttachmentRef[] = []
@@ -895,7 +895,7 @@ export class ChatEngine {
     conversationId: string,
     targetId: string,
     body: string,
-    mentions: number[] = []
+    mentions: string[] = []
   ): Promise<void> {
     const target = this.target(conversationId, targetId)
     if (!target.mine || target.status !== 'ok') {
@@ -1154,7 +1154,7 @@ export class ChatEngine {
     })
   }
 
-  private safetyWith(mine: Uint8Array, userId: number, key: string): string {
+  private safetyWith(mine: Uint8Array, userId: string, key: string): string {
     const cached = `${b64(mine)}:${userId}:${key}`
     let digits = this.safety.get(cached)
     if (digits == null) {
@@ -1171,7 +1171,7 @@ export class ChatEngine {
    * The 60-digit safety number the person shares with `userId`, from their
    * current identity; undefined when they have none.
    */
-  async safetyNumber(userId: number): Promise<string | undefined> {
+  async safetyNumber(userId: string): Promise<string | undefined> {
     const mine = this.ctx.keys.record.identity?.keys.publicKey
     if (mine == null) return undefined
     const keys = await this.options.client.chatUserKeys(userId)
@@ -1276,7 +1276,7 @@ export class ChatEngine {
     }
   }
 
-  private typed(conversationId: string, userId: number): void {
+  private typed(conversationId: string, userId: string): void {
     const state = this.memory.state(conversationId)
     if (state == null || userId === this.options.userId) return
     const ms = this.options.typingMs ?? 6000
@@ -1393,7 +1393,7 @@ export class ChatEngine {
   }
 
   /** The head of a chat's membership log as this device verified it. */
-  verifiedMembers(conversationId: string): number[] | undefined {
+  verifiedMembers(conversationId: string): string[] | undefined {
     if (this.context == null) return undefined
     const head = headOf(this.context, conversationId)
     return head.broken ? undefined : head.members

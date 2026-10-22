@@ -23,6 +23,37 @@ fn seed(label: &str) -> [u8; 32] {
     prim::sha256(label.as_bytes())
 }
 
+#[test]
+fn canonical_identity_vectors() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/common/chatCrypto/canonicalIdentityVectors.json");
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let identity = seed("identity");
+    let identity_key = prim::ed25519_public_key(&identity).unwrap();
+    let epoch_key = seed("epoch key");
+    let nonce = &seed("nonce")[..24];
+    let older = join(&[&u64be(1), &lp(&seed("puk 1"))]);
+    for row in file["rows"].as_array().unwrap() {
+        let value: u128 = row["value"].as_str().unwrap().parse().unwrap();
+        let encoded = chat_crypto::user_id::encode(value);
+        assert_eq!(to_hex(&encoded), s(row, "encoded"));
+        assert_eq!(chat_crypto::user_id::parse(&encoded, false).unwrap(), value);
+        let fields = seal::Fields { conversation_id: b"cnv_identity", epoch: 1,
+            message_id: b"msg_aaaaaaaaaaaaaaaaaaaaaaaaaa", sender_user_id: value, kind: b"post" };
+        let sealed = seal::seal_message(&fields, &epoch_key, b"authenticated legacy or full-width author", &identity, Some(nonce)).unwrap();
+        assert_eq!(to_hex(&fields.aad()), s(row, "messageAad"));
+        assert_eq!(to_hex(&prim::sha256(&sealed.ciphertext)), s(row, "ciphertextSha256"));
+        assert_eq!(to_hex(&sealed.signature), s(row, "signature"));
+        assert!(seal::verify_message(&fields, &sealed.nonce, &sealed.ciphertext, &sealed.signature, &identity_key));
+        let previous = chain::seal_previous_puk_keys(value, b"cid_identity", 3, &seed("puk 3"), &older, Some(nonce)).unwrap();
+        assert_eq!(to_hex(&previous), s(row, "previousKeysBox"));
+        assert_eq!(chain::open_previous_puk_keys(value, b"cid_identity", 3, &seed("puk 3"), &previous).unwrap(), older);
+        assert_eq!(to_hex(&prim::ed25519_sign(&join(&[&encoded, &u64be(3), &lp(&identity_key)]), &identity).unwrap()), s(row, "pukSignature"));
+        assert_eq!(to_hex(&digits::log_row_hash(&[0; 32], b"cnv_identity", 1, b"join", value, 0, b"", 1234).unwrap()), s(row, "logNull"));
+        assert_eq!(to_hex(&digits::log_row_hash(&[0; 32], b"cnv_identity", 1, b"join", value, 7, b"", 1234).unwrap()), s(row, "logMixed"));
+        assert_eq!(digits::safety_half(&identity_key, value), s(row, "safetyHalf"));
+    }
+}
+
 fn s<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap()
 }

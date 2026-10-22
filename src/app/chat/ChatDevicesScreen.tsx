@@ -30,7 +30,7 @@ export const DEVICES_POLL_MS = 3000
 
 export interface ChatDevicesScreenProps {
   client: ChatKeysClient
-  userId: number
+  userId: string
   /** This device's key store; the platform's own by default. */
   store?: ChatKeyStore
   /** How this device names itself; read from the platform by default. */

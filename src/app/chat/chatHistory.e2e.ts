@@ -140,8 +140,8 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
       const members = ((await apiGet(
         page,
         `/chat/conversations/${chat.id}/members`
-      )) ?? []) as Array<{ shortName: string; userId: number }>
-      const me = (await apiGet(page, '/auth/me')) as { id?: number } | undefined
+      )) ?? []) as Array<{ shortName: string; userId: string }>
+      const me = (await apiGet(page, '/auth/me')) as { id?: string } | undefined
       const others = members
         .filter(member => String(member.userId) !== String(me?.id))
         .map(member => member.shortName)

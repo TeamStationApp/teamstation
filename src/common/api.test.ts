@@ -897,10 +897,20 @@ describe('api client', function () {
     expect(schedule.calls[0].url).equals('http://x/api/v1/teams/tem_1/schedule')
 
     const staff = client([
-      { userId: 42, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
+      {
+        userId: userIdOfGumbo(42),
+        shortName: 'Hank C',
+        avatarUrl: null,
+        roles: ['coach']
+      }
     ])
     expect(await staff.client.teamStaff('tem_1')).deep.equals([
-      { userId: 42, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
+      {
+        userId: userIdOfGumbo(42),
+        shortName: 'Hank C',
+        avatarUrl: null,
+        roles: ['coach']
+      }
     ])
     expect(staff.calls[0].url).equals('http://x/api/v1/teams/tem_1/staff')
   })
@@ -921,21 +931,30 @@ describe('api client', function () {
         calls: stub.calls
       }
     }
-    const g1 = { userId: 7, name: 'Gale G', email: 'g1@x', kind: 'guardian' }
+    const g1 = {
+      userId: userIdOfGumbo(7),
+      name: 'Gale G',
+      email: 'g1@x',
+      kind: 'guardian'
+    }
 
     const list = client([g1])
-    expect(await list.client.guardians('tem 1', 42)).deep.equals([g1])
+    expect(await list.client.guardians('tem 1', userIdOfGumbo(42))).deep.equals(
+      [g1]
+    )
     expect(list.calls[0].url).equals(
-      'http://x/api/v1/teams/tem%201/players/42/guardians'
+      `http://x/api/v1/teams/tem%201/players/${userIdOfGumbo(42)}/guardians`
     )
 
     const byId = client({ guardians: [g1] })
     expect(
-      await byId.client.addGuardian('tem_1', 42, { userId: 7 })
+      await byId.client.addGuardian('tem_1', userIdOfGumbo(42), {
+        userId: userIdOfGumbo(7)
+      })
     ).deep.equals({ guardians: [g1], invited: undefined })
     expect(byId.calls[0].method).equals('POST')
     expect(JSON.parse(byId.calls[0].body ?? '')).deep.equals({
-      userId: '7',
+      userId: userIdOfGumbo(7),
       kind: 'guardian'
     })
 
@@ -950,7 +969,7 @@ describe('api client', function () {
       (
         await byEmail.client.addGuardian(
           'tem_1',
-          '42',
+          userIdOfGumbo(42),
           { email: 'aunt@x' },
           'family'
         )
@@ -962,26 +981,37 @@ describe('api client', function () {
     })
 
     const removed = client({ removed: true })
-    expect(await removed.client.removeGuardian('tem_1', 42, 7)).equals(true)
+    expect(
+      await removed.client.removeGuardian(
+        'tem_1',
+        userIdOfGumbo(42),
+        userIdOfGumbo(7)
+      )
+    ).equals(true)
     expect(removed.calls[0]).deep.include({
       method: 'DELETE',
-      url: 'http://x/api/v1/teams/tem_1/players/42/guardians/7'
+      url: `http://x/api/v1/teams/tem_1/players/${userIdOfGumbo(42)}/guardians/${userIdOfGumbo(7)}`
     })
 
-    const born = client({ userId: 42, birthMonth: '2012-03' })
+    const born = client({ userId: userIdOfGumbo(42), birthMonth: '2012-03' })
     expect(
-      await born.client.setBirthMonth(42, { year: 2012, month: 3 })
+      await born.client.setBirthMonth(userIdOfGumbo(42), {
+        year: 2012,
+        month: 3
+      })
     ).equals('2012-03')
     expect(born.calls[0]).deep.include({
       method: 'PUT',
-      url: 'http://x/api/v1/players/42/birth-month'
+      url: `http://x/api/v1/players/${userIdOfGumbo(42)}/birth-month`
     })
     expect(JSON.parse(born.calls[0].body ?? '')).deep.equals({
       year: 2012,
       month: 3
     })
-    const cleared = client({ userId: 42, birthMonth: null })
-    expect(await cleared.client.setBirthMonth(42, null)).equals(null)
+    const cleared = client({ userId: userIdOfGumbo(42), birthMonth: null })
+    expect(await cleared.client.setBirthMonth(userIdOfGumbo(42), null)).equals(
+      null
+    )
     expect(JSON.parse(cleared.calls[0].body ?? '')).deep.equals({
       year: null,
       month: null
@@ -1036,7 +1066,7 @@ describe('api client', function () {
       scope: null,
       scopeName: null,
       memberCount: 1,
-      people: [{ userId: 7, shortName: 'Eli C', left: true }]
+      people: [{ userId: userIdOfGumbo(7), shortName: 'Eli C', left: true }]
     }
     const list = client([chat, dm])
     // A server that names nobody (an older one) reads as nobody to name.
@@ -1075,7 +1105,7 @@ describe('api client', function () {
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
 
     const member = {
-      userId: 42,
+      userId: userIdOfGumbo(42),
       shortName: 'Hank C',
       avatarUrl: null,
       label: 'Coach',
@@ -1092,9 +1122,9 @@ describe('api client', function () {
       'http://x/api/v1/chat/conversations/cnv%201/members'
     )
 
-    const reads = client([{ userId: 42, seq: 3 }])
+    const reads = client([{ userId: userIdOfGumbo(42), seq: 3 }])
     expect(await reads.client.chatReads('cnv_1')).deep.equals([
-      { userId: 42, seq: 3 }
+      { userId: userIdOfGumbo(42), seq: 3 }
     ])
     expect(reads.calls[0].url).equals(
       'http://x/api/v1/chat/conversations/cnv_1/reads'
@@ -1103,7 +1133,7 @@ describe('api client', function () {
     const row = {
       seq: 1,
       event: 'join',
-      userId: 42,
+      userId: userIdOfGumbo(42),
       actorUserId: null,
       reason: 'audience',
       prevHash: 'AA',
@@ -1117,7 +1147,11 @@ describe('api client', function () {
     )
     await client([]).client.chatLog('cnv_1')
 
-    const person = { userId: 42, shortName: 'Hank C', avatarUrl: null }
+    const person = {
+      userId: userIdOfGumbo(42),
+      shortName: 'Hank C',
+      avatarUrl: null
+    }
     const candidates = client([person])
     expect(await candidates.client.dmCandidates('ha nk')).deep.equals([person])
     expect(candidates.calls[0].url).equals(
@@ -1125,28 +1159,40 @@ describe('api client', function () {
     )
     await client([]).client.dmCandidates()
 
-    const adult = { userId: 7, shortName: 'Gale G', label: 'Guardian' }
+    const adult = {
+      userId: userIdOfGumbo(7),
+      shortName: 'Gale G',
+      label: 'Guardian'
+    }
     const adults = client([adult])
-    expect(await adults.client.includedAdults([1, 2], 'ga')).deep.equals([
-      adult
-    ])
+    expect(
+      await adults.client.includedAdults(
+        [userIdOfGumbo(1), userIdOfGumbo(2)],
+        'ga'
+      )
+    ).deep.equals([adult])
     expect(adults.calls[0].url).equals(
-      'http://x/api/v1/chat/included-adults?playerIds=1,2&q=ga'
+      `http://x/api/v1/chat/included-adults?playerIds=${[1, 2].map(userIdOfGumbo).join(',')}&q=ga`
     )
-    await client([]).client.includedAdults([1])
+    await client([]).client.includedAdults([userIdOfGumbo(1)])
 
     const made = client({ ...chat, kind: 'dm', title: null, scope: null })
-    expect((await made.client.createDm([42])).kind).equals('dm')
+    expect((await made.client.createDm([userIdOfGumbo(42)])).kind).equals('dm')
     expect(made.calls[0]).deep.include({
       method: 'POST',
       url: 'http://x/api/v1/chat/dms'
     })
     expect(JSON.parse(made.calls[0].body ?? '')).deep.equals({
-      userIds: [42]
+      userIds: [userIdOfGumbo(42)]
     })
 
-    const added = client({ added: [7] })
-    expect(await added.client.addDmMembers('cnv_1', [7, 8])).deep.equals([7])
+    const added = client({ added: [userIdOfGumbo(7)] })
+    expect(
+      await added.client.addDmMembers('cnv_1', [
+        userIdOfGumbo(7),
+        userIdOfGumbo(8)
+      ])
+    ).deep.equals([userIdOfGumbo(7)])
     expect(added.calls[0].url).equals('http://x/api/v1/chat/dms/cnv_1/members')
 
     const left = client({ left: true, closed: true })
@@ -1212,6 +1258,11 @@ describe('api client', function () {
     expect(revoked.calls[0]).deep.include({
       method: 'DELETE',
       url: 'http://x/api/v1/chat/devices/cdv%201'
+    })
+    await revoked.client.revokeChatDevice('cdv 1', { keepSession: true })
+    expect(revoked.calls[1]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/chat/devices/cdv%201?keepSession=true'
     })
 
     const challenge = { nonce: 'NN', sessionId: 'ses_1', expiresAt: 'soon' }
@@ -1305,20 +1356,26 @@ describe('api client', function () {
     }).client.myChatKeys()
 
     const theirs = {
-      userId: 42,
+      userId: userIdOfGumbo(42),
       identity: { id: 'cid_9', publicKey: 'II', createdAt: 'then' },
       puk: { generation: 3, publicKey: 'PK', signature: 'SG' }
     }
     const users = client(theirs)
-    expect(await users.client.chatUserKeys(42)).deep.equals(theirs)
-    expect(users.calls[0].url).equals('http://x/api/v1/chat/users/42/keys')
-    await client({ userId: 42, identity: null, puk: null }).client.chatUserKeys(
-      42
+    expect(await users.client.chatUserKeys(userIdOfGumbo(42))).deep.equals(
+      theirs
     )
+    expect(users.calls[0].url).equals(
+      `http://x/api/v1/chat/users/${userIdOfGumbo(42)}/keys`
+    )
+    await client({
+      userId: userIdOfGumbo(42),
+      identity: null,
+      puk: null
+    }).client.chatUserKeys(userIdOfGumbo(42))
 
     const old = {
       id: 'cid_9',
-      userId: 42,
+      userId: userIdOfGumbo(42),
       publicKey: 'II',
       createdAt: 'then',
       replacedAt: 'later'
@@ -1402,7 +1459,7 @@ describe('api client', function () {
       epochs: [
         {
           epoch: 2,
-          createdByUserId: 7,
+          createdByUserId: userIdOfGumbo(7),
           identityId: 'cid_1',
           previousKeyBox: 'PK',
           chainBreak: false,
@@ -1431,7 +1488,7 @@ describe('api client', function () {
       epoch: 3,
       previousKeyBox: 'PK',
       signature: 'SG',
-      boxes: [{ userId: 7, pukGeneration: 1, box: 'BX' }]
+      boxes: [{ userId: userIdOfGumbo(7), pukGeneration: 1, box: 'BX' }]
     }
     const made = client({
       epoch: 3,
@@ -1452,7 +1509,7 @@ describe('api client', function () {
       id: 1,
       conversationId: 'cnv_1',
       epoch: 3,
-      userId: 8,
+      userId: userIdOfGumbo(8),
       identityId: 'cid_3',
       identityKey: 'IK',
       pukGeneration: 1,
@@ -1470,7 +1527,7 @@ describe('api client', function () {
       {
         conversationId: 'cnv_1',
         epoch: 3,
-        userId: 8,
+        userId: userIdOfGumbo(8),
         identityId: 'cid_3',
         pukGeneration: 1,
         box: 'BX'
@@ -1481,7 +1538,7 @@ describe('api client', function () {
       skipped: [
         {
           conversationId: 'cnv_1',
-          userId: 8,
+          userId: userIdOfGumbo(8),
           identityId: 'cid_3',
           pukGeneration: 1,
           reason: 'notOpen'
@@ -1517,7 +1574,7 @@ describe('api client', function () {
       conversationId: 'cnv_1',
       seq: 3,
       epoch: 1,
-      senderUserId: 7,
+      senderUserId: userIdOfGumbo(7),
       senderIdentityId: 'cid_1',
       kind: 'delete',
       targetIds: ['msg_bbbbbbbbbbbbbbbbbbbbbbbbbb'],
@@ -1590,8 +1647,8 @@ describe('api client', function () {
         title: 'Hawks Members'
       },
       messageId: message.id,
-      reporter: { userId: 8, shortName: 'Blair B' },
-      sender: { userId: 7, shortName: 'Casey C' },
+      reporter: { userId: userIdOfGumbo(8), shortName: 'Blair B' },
+      sender: { userId: userIdOfGumbo(7), shortName: 'Casey C' },
       kind: 'post',
       sentAt: '2027-04-10T12:00:00.000Z',
       plaintext: '{"type":"text"}',
@@ -1710,7 +1767,7 @@ describe('api client', function () {
     ).equals(true)
     expect(
       asScopeGrant({ id: 'sea_1', name: 'Spring', role: 'spectator' }).isPlayer
-    ).equals(undefined)
+    ).equals(false)
     expect(() =>
       asScopeGrant({ id: 'tem_1', name: 'H', role: 'member', isPlayer: 'yes' })
     ).to.throw()
