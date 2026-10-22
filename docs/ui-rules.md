@@ -169,3 +169,11 @@ Stats restrictions use the same message and blue login/membership action inline
 under the public stats (the inning box score or team season performance). Do not
 open a warning modal for stats. Keep team selection, request errors and pending
 confirmation inline too; signing in returns to the same stats tab.
+
+## Text in compact table cells
+
+Use `TickerText` when a single-line identity must fit a fixed table column.
+It pans only overflowing text, pauses at both ends, respects reduced motion,
+and exposes one complete accessible label. Names and affiliated teams in
+umpire assignment cells use this component. Ordinary descriptive table cells
+use two-line wrapping instead.

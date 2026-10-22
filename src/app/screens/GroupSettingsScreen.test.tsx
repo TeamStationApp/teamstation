@@ -15,6 +15,7 @@ import {
   unmount
 } from '../../test/gameFormDom'
 import { GroupSettingsScreen } from './GroupSettingsScreen'
+import { InvitationsWaiting } from './InvitationsWaiting'
 
 function fixture(kind: GroupRef['kind'] = 'team'): {
   client: TeamStationClient
@@ -88,6 +89,63 @@ function fixture(kind: GroupRef['kind'] = 'team'): {
 
 describe('group settings identity and individual saves', () => {
   afterEach(unmount)
+  it('places umpire settings after league management with the same section gap', async () => {
+    const f = fixture('league')
+    f.client.umpireSettings = async () => ({ management: true, credits: true })
+    f.client.umpireTypes = async () => [
+      { id: 'uty_demo', name: 'Ump', position: 0, inUse: false }
+    ]
+    f.client.umpireLevels = async () => [
+      { id: 'aa', name: 'AA', position: 0, inUse: false }
+    ]
+    const opened: string[] = []
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'league', id: 'canonical' }}
+        onUmpires={n => opened.push(n)}
+      />
+    )
+    const headings = [...document.querySelectorAll<HTMLElement>('[dir="auto"]')]
+    const umpire = headings.find(n => n.textContent === 'UMPIRE MANAGEMENT')!
+    const details = headings.find(n => n.textContent === 'LEAGUE DETAILS')!
+    expect(umpire, text()).not.equals(undefined)
+    expect(headings.indexOf(umpire)).greaterThan(
+      headings.indexOf(
+        headings.find(n => n.textContent === 'LEAGUE MANAGEMENT')!
+      )
+    )
+    expect(getComputedStyle(umpire.parentElement!.parentElement!).gap).equals(
+      getComputedStyle(details.parentElement!.parentElement!).gap
+    )
+    expect(
+      umpire.parentElement!.parentElement!.previousElementSibling!.textContent
+    ).includes('LEAGUE MANAGEMENT')
+    await press('Manage Umpires')
+    expect(opened).deep.equals(['leagueUmpires'])
+    expect(text().indexOf('Umpire schedule')).lessThan(
+      text().indexOf('Enable Team Credits')
+    )
+  })
+  it('keeps invitation failures recoverable and removes the empty section after retry', async () => {
+    const f = fixture('league')
+    const load = f.client.managePage.bind(f.client)
+    f.client.managePage = async () => {
+      throw new Error('Offline')
+    }
+    await mount(
+      <InvitationsWaiting
+        client={f.client}
+        scopeKind="league"
+        scopeId="canonical"
+      />
+    )
+    expect(text()).includes('People could not load')
+    f.client.managePage = load
+    await press('Retry people')
+    expect(text()).not.includes('People could not load')
+    expect(find('Retry people')).equals(undefined)
+  })
   it('releases an invalidated name save when a parent removal refreshes the same group', async () => {
     const f = fixture()
     const own = await f.client.group({ kind: 'team', id: 'canonical' })

@@ -8,6 +8,7 @@ import {
   playerRsvpCounts,
   type Rsvp
 } from '../../common/eventInfo'
+import type { UmpireGameBlock } from '../../common/umpireSchedule'
 import {
   Button,
   Card,
@@ -27,6 +28,7 @@ import {
   openEventDirections
 } from '../platform/eventDirections'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { GameUmpires } from '../umpires/GameUmpires'
 import { attendanceSections, attendanceSubtitle } from './eventAttendance'
 import {
   eventReplyRows,
@@ -53,13 +55,15 @@ export function EventInfoTab({
   client,
   eventId,
   event,
-  onLoaded
+  onLoaded,
+  umpires
 }: {
   client: TeamStationClient
   eventId: string
   /** The event the RSVP card's modal answers for; without it the card is read-only. */
   event?: RsvpEvent
   onLoaded?: (info: EventInfo) => void
+  umpires?: UmpireGameBlock | null
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -357,6 +361,7 @@ export function EventInfoTab({
           />
         </>
       )}
+      <GameUmpires umpires={umpires ?? null} />
       {info.canViewAttendance &&
         attendanceSections(info.attendees)
           .filter(group => group.rows.length > 0)

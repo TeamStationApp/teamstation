@@ -249,6 +249,7 @@ export function GamesFeedScreen(
                       second={lines.second}
                       startAt={game.startAt}
                       isGameLive={game.isGameLive}
+                      isUmpire={game.isUmpire}
                       venue={game.venue}
                       status={game.status}
                       awayScore={game.awayScore}

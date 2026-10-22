@@ -32,6 +32,7 @@ import {
   useHeaderSlot
 } from '../components'
 import { ActionList } from '../components/ActionRow'
+import { Badge } from '../components/Badge'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { FollowButton } from '../components/FollowButton'
 import { SegmentedPill } from '../components/SegmentedPill'
@@ -627,6 +628,7 @@ export function SeasonPresentation(
                       second={lines.second}
                       startAt={game.startAt}
                       isGameLive={game.isGameLive}
+                      isUmpire={game.isUmpire}
                       venue={game.venue}
                       status={game.status}
                       awayScore={game.awayScore}
@@ -661,6 +663,13 @@ export function SeasonPresentation(
                     <Text style={[styles.name, styles.publicGameMatchup]}>
                       {game.awayTeam.name} at {game.homeTeam.name}
                     </Text>
+                    {game.isUmpire === true && game.status !== 'cancelled' && (
+                      <Badge label="UMP" tone="umpire" />
+                    )}
+                    {game.isGameLive === true &&
+                      game.status !== 'cancelled' && (
+                        <Badge label="LIVE" tone="live" />
+                      )}
                     {game.pendingApproval && (
                       <Text
                         accessibilityLabel={`Pending approval for ${game.awayTeam.name} at ${game.homeTeam.name}`}

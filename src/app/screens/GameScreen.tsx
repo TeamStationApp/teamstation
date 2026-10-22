@@ -2042,6 +2042,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           client={client}
           eventId={gameId}
           event={game}
+          umpires={game.umpires}
         />
       ) : (
         <BoxScore

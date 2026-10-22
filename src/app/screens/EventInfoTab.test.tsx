@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
+import type { UmpireGameBlock } from '../../common/umpireSchedule'
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventInfoTab } from './EventInfoTab'
@@ -85,14 +86,22 @@ const EVENT: RsvpEvent = {
   eventType: 'game',
   title: ''
 }
-async function render(client: TeamStationClient): Promise<void> {
+async function render(
+  client: TeamStationClient,
+  umpires?: UmpireGameBlock
+): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <EventInfoTab client={client} eventId="g1" event={EVENT} />
+        <EventInfoTab
+          client={client}
+          eventId="g1"
+          event={EVENT}
+          umpires={umpires}
+        />
       </ThemeProvider>
     )
   })
@@ -141,6 +150,31 @@ const clientFor = (info = initial()): TeamStationClient => {
   return client
 }
 describe('event Info location and family controls', () => {
+  it('puts umpire person cards ahead of ordinary attendance without replacing RSVP controls', async () => {
+    await render(clientFor(), {
+      positions: [
+        {
+          slot: 'type:1',
+          typeId: 'type',
+          typeName: 'First Base',
+          ordinal: 1,
+          required: true,
+          person: { userId: 'ump', name: 'Mike T' }
+        }
+      ]
+    })
+    const sections = [
+      ...document.querySelectorAll(
+        '[data-testid="game-umpires"], [data-testid^="attendance-"]'
+      )
+    ]
+    expect(sections[0].getAttribute('data-testid')).equals('game-umpires')
+    expect(sections.length).greaterThan(1)
+    expect(sections[0].textContent).contains('First Base')
+    expect(
+      document.querySelector('[data-testid="event-replies-open"]')
+    ).not.equals(null)
+  })
   it('uses the displayed map coordinates for venue-only directions after lookup', async () => {
     const client = clientFor({ ...initial(), venue: 'Demo Park' })
     let complete:

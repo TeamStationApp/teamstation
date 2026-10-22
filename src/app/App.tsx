@@ -14,6 +14,7 @@ import { asTeamSummary } from '../common/api'
 import { GameSocket, type ScreenScope } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
 import { managesRoster } from '../common/roles'
+import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import {
@@ -137,6 +138,11 @@ import {
   ThemeProvider,
   useTheme
 } from './theme/ThemeContext'
+import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
+import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
+import { UmpireMask } from './umpires/UmpireMask'
+import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
+import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
 import { DjGameScreen } from './walkup/DjGameScreen'
 import { resolveSong } from './walkup/resolveSong'
 import walkUpMusic from './walkup/walkUpMusic'
@@ -491,6 +497,40 @@ function Shell(props: AppProps): React.ReactElement {
     []
   )
   const scoringLeave = useRef<(() => Promise<boolean>) | undefined>(undefined)
+  const umpireLeave = useRef<(() => Promise<boolean>) | undefined>(undefined)
+  const umpireLeaveApproved = useRef(false)
+  const registerUmpireLeave = useCallback((check: () => Promise<boolean>) => {
+    umpireLeave.current = check
+    return () => {
+      if (umpireLeave.current === check) umpireLeave.current = undefined
+    }
+  }, [])
+  const checkUmpireLeave = useCallback(
+    async () => umpireLeave.current == null || (await umpireLeave.current()),
+    []
+  )
+  const guardUmpireLeave = useCallback(
+    (move: () => void, rejected?: () => void): boolean => {
+      const check = umpireLeave.current
+      if (check == null || umpireLeaveApproved.current) return false
+      check()
+        .then(accepted => {
+          if (!accepted || umpireLeave.current !== check) {
+            rejected?.()
+            return
+          }
+          umpireLeaveApproved.current = true
+          try {
+            move()
+          } finally {
+            umpireLeaveApproved.current = false
+          }
+        })
+        .catch(() => rejected?.())
+      return true
+    },
+    []
+  )
   const scoringRefresh = useRef<ScoringSettingsRefresh | undefined>(undefined)
   const registerScoringLeave = useCallback((check: () => Promise<boolean>) => {
     scoringLeave.current = check
@@ -561,6 +601,21 @@ function Shell(props: AppProps): React.ReactElement {
       scoringVisit.current = undefined
     }
   }, [signedInAs])
+  const [umpireLeagues, setUmpireLeagues] = useState<UmpireLeague[]>([])
+  useEffect(() => {
+    let live = true
+    setUmpireLeagues([])
+    if (signedInAs != null)
+      client
+        .umpireLeagues()
+        .then(leagues => {
+          if (live) setUmpireLeagues(leagues)
+        })
+        .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [client, signedInAs, roleRevision])
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
   useResumePendingUploads(client, signedInAs)
@@ -954,6 +1009,15 @@ function Shell(props: AppProps): React.ReactElement {
 
   const goToRoute = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
+      if (
+        guardUmpireLeave(
+          () => {
+            goToRoute(route, onHandled)
+          },
+          () => onHandled?.(false)
+        )
+      )
+        return
       let visit = scoringVisit.current
       if (visit != null && scoringApproved.current) {
         clearScoringVisit(visit)
@@ -1051,12 +1115,21 @@ function Shell(props: AppProps): React.ReactElement {
       setFilters(current => filtersForRoute(current, route))
       onHandled?.(true)
     },
-    [clearScoringVisit]
+    [clearScoringVisit, guardUmpireLeave]
   )
-  useBrowserBack(goToRoute)
+  useBrowserBack(
+    goToRoute,
+    top?.name === 'umpireSchedule' ? checkUmpireLeave : undefined
+  )
 
   /** The tab, or — pressed on the tab already showing — that tab's root. */
   const selectTab = (next: NavTabId): void => {
+    if (
+      guardUmpireLeave(() => {
+        selectTab(next)
+      })
+    )
+      return
     if (scoringVisit.current != null) {
       afterScoringLeave(() => {
         selectTab(next)
@@ -1083,6 +1156,12 @@ function Shell(props: AppProps): React.ReactElement {
       setCreateRefused(true)
       return
     }
+    if (
+      guardUmpireLeave(() => {
+        push(next)
+      })
+    )
+      return
     if (scoringVisit.current != null) {
       afterScoringLeave(() => {
         push(next)
@@ -1118,6 +1197,7 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }
   const pop = (): void => {
+    if (guardUmpireLeave(pop)) return
     if (
       top?.name === 'player' &&
       isScoringPlayerChild({ ...top, name: 'player' }, scoringVisit.current)
@@ -1804,11 +1884,89 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'notification', id })
         }}
       />
+    ) : top.name === 'umpireSchedule' ? (
+      <UmpireScheduleScreen
+        key={top.id}
+        client={client}
+        onBeforeLeave={registerUmpireLeave}
+        route={{
+          ...top,
+          id: top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
+        }}
+        leagues={umpireLeagues}
+        onOpenTeam={teamId => {
+          push({
+            name: 'team',
+            team: asTeamSummary({
+              id: teamId,
+              name: '',
+              shortName: null,
+              logoPath: null
+            })
+          })
+        }}
+        onOpenGame={gameId => {
+          push({ name: 'game', gameId, title: '', tab: 'info' })
+        }}
+        onRoute={route => {
+          setStacks(current => ({
+            ...current,
+            [tab]: [...current[tab].slice(0, -1), route]
+          }))
+        }}
+      />
+    ) : top.name === 'leagueUmpires' ? (
+      <LeagueUmpiresScreen
+        key={top.id}
+        client={client}
+        league={top.id}
+        onChanged={refreshRoles}
+        onOpenPerson={(userId, name) => {
+          openPerson({ kind: 'league', id: top.id }, userId, name)
+        }}
+      />
+    ) : top.name === 'umpireNoteTypes' ? (
+      <UmpireLevelsScreen
+        key={top.id + ':notes'}
+        client={client}
+        league={top.id}
+        kind="notes"
+      />
+    ) : top.name === 'umpireTypes' ? (
+      <UmpireLevelsScreen
+        key={top.id + ':types'}
+        client={client}
+        league={top.id}
+        kind="types"
+      />
+    ) : top.name === 'umpireLevels' ? (
+      <UmpireLevelsScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'umpireRequirements' ||
+      top.name === 'umpireRequirementEdit' ? (
+      <UmpireRequirementsScreen
+        key={`${top.name}:${top.id}`}
+        client={client}
+        league={top.id}
+        seasonIds={
+          top.name === 'umpireRequirementEdit' ? top.seasonIds : undefined
+        }
+        onNext={seasonIds => {
+          push({ name: 'umpireRequirementEdit', id: top.id, seasonIds })
+        }}
+        onApplied={pop}
+      />
     ) : top.name === 'groupSettings' ? (
       <GroupSettingsScreen
         key={`${top.kind}:${top.id}:${settingsVisit}`}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
+        onUmpires={name => {
+          push(
+            name === 'umpireSchedule'
+              ? { name, id: top.id, view: 'league' }
+              : { name, id: top.id }
+          )
+        }}
 
         onAddPeople={group => {
           push({ name: 'groupAddPeople', ...group, teamReturn: top.teamReturn })
@@ -2427,6 +2585,15 @@ function Shell(props: AppProps): React.ReactElement {
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
+      umpire={
+        umpireLeagues.length === 0 ? undefined : (
+          <UmpireMask
+            onPress={() => {
+              push({ name: 'umpireSchedule', id: umpireLeagues[0].id })
+            }}
+          />
+        )
+      }
       notifications={
         session == null
           ? undefined

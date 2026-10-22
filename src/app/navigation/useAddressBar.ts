@@ -212,7 +212,10 @@ export function backFromScoringPlayer(origin?: number): boolean {
 }
 
 /** Calls back when the reader presses Back or Forward. */
-export function useBrowserBack(onRoute: (route: Route) => void): void {
+export function useBrowserBack(
+  onRoute: (route: Route) => void,
+  beforeLeave?: () => Promise<boolean>
+): void {
   useEffect(() => {
     if (typeof window === 'undefined') return
     initializeHistory()
@@ -240,7 +243,15 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
         position = indexOfHistory() ?? position
         return
       }
-      const held = guard
+      const registeredGuard = guard
+      const held: typeof guard =
+        guard ??
+        (beforeLeave == null
+          ? undefined
+          : {
+              check: beforeLeave,
+              destination: currentRoute()
+            })
       if (held == null || held.allow?.(currentRoute()) === true) {
         position = indexOfHistory() ?? position
         noteTrail(locationPath())
@@ -255,7 +266,7 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
         held
           .check()
           .then(accepted => {
-            if (!accepted || guard !== held) return
+            if (!accepted || guard !== registeredGuard) return
             accepting = true
             const finish = (): void => {
               position = nextPosition
@@ -282,5 +293,5 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
     return () => {
       window.removeEventListener('popstate', onPop)
     }
-  }, [onRoute])
+  }, [onRoute, beforeLeave])
 }
