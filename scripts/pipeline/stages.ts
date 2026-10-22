@@ -303,6 +303,11 @@ export async function simulatorBuild(ctx: Stage, build: Build): Promise<void> {
       '-xcconfig',
       await xcconfig(ctx, row),
       'CODE_SIGNING_ALLOWED=NO',
+      // Release bundles the JavaScript; Swift's optimizer crashes compiling
+      // CameramanControlUI for the Simulator, and Apple silicon Simulators
+      // run arm64 only.
+      'ARCHS=arm64',
+      'SWIFT_OPTIMIZATION_LEVEL=-Onone',
       `MARKETING_VERSION=${build.version}`,
       `CURRENT_PROJECT_VERSION=${build.buildNumber}`
     ],

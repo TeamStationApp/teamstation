@@ -582,6 +582,8 @@ describe('TeamStation pipeline', () => {
     const simulator = fake.calls.find(call => call.file === 'xcodebuild')!
     assert(simulator.args.includes('CODE_SIGNING_ALLOWED=NO'))
     assert(simulator.args.includes('iphonesimulator'))
+    assert(simulator.args.includes('ARCHS=arm64'))
+    assert(simulator.args.includes('SWIFT_OPTIMIZATION_LEVEL=-Onone'))
   })
 
   it('builds Director for iPad from its generated project, without Sentry, and refuses the wrong device family', async () => {
