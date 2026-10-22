@@ -18,14 +18,15 @@ import {
 const artifacts = process.env.TS_NAVBAR_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_NAVBAR_ARTIFACTS')
 const before = process.argv.includes('before')
+const daemonName = process.env.TS_NAVBAR_DAEMON ?? 'navbarPop'
 
 async function main(): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
   const f = await groupFixture(resolve('dist'))
-  const daemon = await maestro('navbarPop')
+  const daemon = await maestro(daemonName)
   const { m, page, browser } = await browserSession(
     daemon,
-    'navbarPop-phone',
+    `${daemonName}-phone`,
     402,
     874,
     artifacts!

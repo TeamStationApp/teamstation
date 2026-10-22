@@ -1,6 +1,8 @@
+import { mock } from 'node:test'
+
 import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
-import { describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import type { Mesh, MeshBasicMaterial, Texture } from 'three'
 
@@ -9,6 +11,12 @@ import { Scoreboard } from './Scoreboard'
 import { DEMO_SCOREBOARD } from './scoreboardModel'
 
 describe('the scoreboard texture', function () {
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['setTimeout'] })
+  })
+  afterEach(() => {
+    mock.timers.reset()
+  })
   it('is drawn again only when what the board says changes, after the render', async function () {
     const renderer = await create(
       React.createElement(Scoreboard, { state: { ...DEMO_SCOREBOARD } })
@@ -33,7 +41,7 @@ describe('the scoreboard texture', function () {
     // Drawn in a task of its own: the board keeps what it said until then.
     expect(map()).equals(first)
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 5))
+      mock.timers.tick(0)
     })
     const second = map()
     expect(second).not.equals(first)

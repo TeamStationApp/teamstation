@@ -73,6 +73,7 @@ export default [
       '**/lib/**',
       '**/dist/**',
       '.cursor/**',
+      '.test-tools/**',
       'tools/**',
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that

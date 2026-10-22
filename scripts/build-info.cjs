@@ -23,6 +23,13 @@ function bundleBuildInfo(
     try {
       return execFileSync('git', args, {
         cwd: root,
+        // Hooks export their repository context. Metadata belongs to the
+        // requested root, which may be an archive or a different checkout.
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => !name.startsWith('GIT_')
+          )
+        ),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore']
       }).trim()
