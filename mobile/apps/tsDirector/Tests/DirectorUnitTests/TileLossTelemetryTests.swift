@@ -1,3 +1,4 @@
+import Foundation
 import DirectorPipeline
 import Testing
 
@@ -84,5 +85,17 @@ struct TileLossTelemetryTests {
     let snapshot = telemetry.snapshot
     #expect(snapshot.tiles.first { $0.index == 0 }?.packetsLostPerSecond == 0)
     #expect(snapshot.composedFramesPerSecond == 0)
+  }
+
+  @Test("Delay-line trims reach the HUD line, the Performance panel and dump-state")
+  func trimsAreReported() throws {
+    var tile = liveTile()
+    tile.codedPicturesTrimmed = 3
+    tile.decodedPicturesTrimmed = 4
+    #expect(tile.accessibilityValue.contains(" trim=3/4"))
+    #expect(tile.trimSummary == "trimmed 3 coded · 4 decoded")
+    let json = try #require(String(data: try JSONEncoder().encode(tile), encoding: .utf8))
+    #expect(json.contains("\"codedPicturesTrimmed\":3"))
+    #expect(json.contains("\"decodedPicturesTrimmed\":4"))
   }
 }

@@ -100,6 +100,20 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// How long the app may have been away and still pick a take back up, in seconds. A flow can
   /// set it to a second or two and reach the expiry without waiting an hour for it.
   public var resumeDowntimeLimitSeconds: Double?
+  /// An artificial delay on every programme compose, in milliseconds, so a device run can show a
+  /// slow compositor costing the programme pictures and never the camera on air.
+  public var programmeComposeDelayMilliseconds: Double?
+
+  /// Whether the process was launched as a test (`-uiTest`). Unlike `isUITest`, `/configure` cannot
+  /// change it.
+  public private(set) var launchedAsUITest = false
+
+  /// The compose delay the app applies: only in a process launched as a test, so a link that
+  /// reaches `/configure` on an operator's iPad, even one that turns `uiTest` on, cannot slow its
+  /// programme down.
+  public var appliedProgrammeComposeDelayMilliseconds: Double {
+    launchedAsUITest ? (programmeComposeDelayMilliseconds ?? 0) : 0
+  }
 
   public init() {}
 
@@ -112,6 +126,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     var configuration = LaunchConfiguration()
 
     configuration.isUITest = boolean(values["uiTest"]) ?? false
+    configuration.launchedAsUITest = configuration.isUITest
     if let raw = values["sourceProfile"], let profile = SourceProfile(rawValue: raw) {
       configuration.sourceProfile = profile
     }
@@ -194,6 +209,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = values["resumeLimit"], let seconds = Double(value), seconds > 0 {
       configuration.resumeDowntimeLimitSeconds = seconds
     }
+    if let value = values["programmeComposeDelay"], let milliseconds = Double(value), milliseconds >= 0 {
+      configuration.programmeComposeDelayMilliseconds = milliseconds
+    }
 
     // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
     // there after the process exits. The next tap of the icon would then still be running last
@@ -237,6 +255,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = queryItems["resumeLimit"], let seconds = Double(value), seconds > 0 {
       resumeDowntimeLimitSeconds = seconds
     }
+    if let value = queryItems["programmeComposeDelay"], let milliseconds = Double(value), milliseconds >= 0 {
+      programmeComposeDelayMilliseconds = milliseconds
+    }
   }
 
   /// `streamCodec` (`h264` or `hevc`), `streamResolution` (`1280x720`), `streamFrameRate`, and
@@ -268,6 +289,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     // debugging time; every argument above must appear here.
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
     "programBitrate", "programFrameRate", "displayLatencyCap", "diskLatencyCap", "resumeLimit",
+    "programmeComposeDelay",
     "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources", "ndiRudp",
     "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit",
     "streamCodec", "streamResolution", "streamFrameRate", "streamBitrateLow", "streamBitrateHigh"

@@ -43,4 +43,34 @@ struct LaunchConfigurationTests {
       #expect(LaunchConfiguration.knownKeys.contains(key))
     }
   }
+
+  @Test("The programme compose delay arrives at launch and over /configure")
+  func programmeComposeDelay() {
+    let defaults = UserDefaults(suiteName: "launch-\(UUID().uuidString)")!
+    var launch = LaunchConfiguration.resolve(
+      arguments: [ "-programmeComposeDelay", "20" ],
+      environment: [:],
+      defaults: defaults
+    )
+    #expect(launch.programmeComposeDelayMilliseconds == 20)
+    launch.apply(queryItems: [ "programmeComposeDelay": "0" ])
+    #expect(launch.programmeComposeDelayMilliseconds == 0)
+    launch.apply(queryItems: [ "programmeComposeDelay": "-3" ])
+    #expect(launch.programmeComposeDelayMilliseconds == 0, "a negative delay is ignored")
+    #expect(LaunchConfiguration.knownKeys.contains("programmeComposeDelay"))
+    #expect(LaunchConfiguration.resolve(arguments: [], environment: [:], defaults: defaults).programmeComposeDelayMilliseconds == nil)
+  }
+
+  @Test("The compose delay only applies in a test launch")
+  func programmeComposeDelayNeedsUITest() {
+    let defaults = UserDefaults(suiteName: "launch-\(UUID().uuidString)")!
+    var launch = LaunchConfiguration.resolve(arguments: [ "-programmeComposeDelay", "20" ], environment: [:], defaults: defaults)
+    #expect(!launch.isUITest)
+    #expect(launch.appliedProgrammeComposeDelayMilliseconds == 0, "an operator launch ignores it")
+    launch.apply(queryItems: [ "uiTest": "true", "programmeComposeDelay": "200" ])
+    #expect(launch.isUITest)
+    #expect(launch.appliedProgrammeComposeDelayMilliseconds == 0, "a link that turns uiTest on does not")
+    let test = LaunchConfiguration.resolve(arguments: [ "-uiTest", "true", "-programmeComposeDelay", "20" ], environment: [:], defaults: defaults)
+    #expect(test.appliedProgrammeComposeDelayMilliseconds == 20)
+  }
 }

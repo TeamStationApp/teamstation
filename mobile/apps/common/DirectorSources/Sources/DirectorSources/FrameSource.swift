@@ -364,6 +364,12 @@ public struct ReceiveStats: Sendable, Equatable {
   public var playoutLateFrames: UInt64 = 0
   /// Pictures waiting in the delay line right now.
   public var playoutDepth: Int = 0
+  /// Pictures the delay line threw away because it was full: received and never shown. `coded` is
+  /// the line of access units waiting to be decoded, `decoded` the pictures waiting for their moment
+  /// after it. Without these, a tile that falls behind reads as a camera sending fewer frames, with
+  /// every other loss counter at zero.
+  public var codedPicturesTrimmed: UInt64 = 0
+  public var decodedPicturesTrimmed: UInt64 = 0
   /// Packets the network lost, counted from gaps in the transport's own numbering.
   ///
   /// This is the one number that separates "the network dropped it" from "the iPad could not keep

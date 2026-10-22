@@ -882,11 +882,11 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // The same instant, expressed on the clock the delay line schedules against.
     let scheduled = timelineSeconds + anchor
     _ = playout.note(lateness: arrived - scheduled, at: arrived)
-    pictures.enqueue(
+    stats.decodedPicturesTrimmed &+= UInt64(pictures.enqueue(
       picture,
       due: playout.dueTime(presentationSeconds: scheduled),
       keepingAtMost: min(Int((rate * Self.pictureQueueSeconds).rounded(.up)), poolFrames)
-    )
+    ))
     lock.unlock()
     let publishElapsed = Date().timeIntervalSince(publishStarted) * 1_000
 

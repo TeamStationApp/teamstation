@@ -519,6 +519,7 @@ public final class AppEnvironment {
       capEnabled: session.displayLatencyCapEnabled,
       capMilliseconds: session.displayLatencyCapMilliseconds
     ))
+    self.router.setProgrammeComposeDelay(milliseconds: launch.appliedProgrammeComposeDelayMilliseconds)
     // The programme clock's rates until a take or a stream says otherwise.
     self.router.setRecordingRate(session.programFrameRate)
     self.router.setStreamRate(session.streamFrameRate)
@@ -4732,6 +4733,11 @@ public final class AppEnvironment {
       $0.programmeLatePictures = pictures.late
       $0.programmeSkippedPictures = pictures.skipped
       $0.programmeComposeMisses = self.router.programmeComposeMisses
+      let composing = self.router.programmeComposerStatistics()
+      $0.programmeComposeDropped = composing.dropped
+      $0.programmeComposeMillisecondsMax = (composing.millisecondsMax * 10).rounded() / 10
+      $0.programmeComposeMillisecondsAverage = (composing.millisecondsAverage * 10).rounded() / 10
+      $0.programmeComposeDelayMilliseconds = self.router.programmeComposeDelayMilliseconds
       $0.audioMixFades = mix.fades
       $0.audioMixConcealedSeconds = (mix.concealedSeconds * 100).rounded() / 100
       $0.recordingMixFades = recordingMix.fades
@@ -4836,6 +4842,8 @@ public final class AppEnvironment {
         tile.playoutMilliseconds = receive.playoutMilliseconds
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
+        tile.codedPicturesTrimmed = receive.codedPicturesTrimmed
+        tile.decodedPicturesTrimmed = receive.decodedPicturesTrimmed
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
         tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
@@ -5008,6 +5016,7 @@ public final class AppEnvironment {
       if let url = launch.streamURL { config.streamURL = url }
       config = Self.applying(launch, to: config)
       applyDisplayLatencyCap()
+      router.setProgrammeComposeDelay(milliseconds: launch.appliedProgrammeComposeDelayMilliseconds)
       if launch.useTestClock, testClock == nil { statusMessage = "Test clock requires relaunch" }
       if let profile = launch.sourceProfile {
         Task { await applySourceProfile(profile) }

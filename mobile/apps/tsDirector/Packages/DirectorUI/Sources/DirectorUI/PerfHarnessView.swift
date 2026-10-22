@@ -46,6 +46,14 @@ public struct PerfHarnessView: View {
             .accessibilityIdentifier("perf-convert-ms")
           LabeledContent("Thermal state", value: environment.snapshot.thermalState)
             .accessibilityIdentifier("perf-thermal")
+          LabeledContent("Programme compose", value: environment.snapshot.programmeComposeSummary)
+            .accessibilityIdentifier("perf-programme-compose")
+          LabeledContent("Programme dropped", value: "\(environment.snapshot.programmeComposeDropped)")
+            .accessibilityIdentifier("perf-programme-dropped")
+          if environment.snapshot.programmeComposeDelayMilliseconds > 0 {
+            LabeledContent("Compose delay (test)", value: "\(Int(environment.snapshot.programmeComposeDelayMilliseconds)) ms")
+              .accessibilityIdentifier("perf-programme-compose-delay")
+          }
         }
 
         Section {
@@ -127,6 +135,9 @@ public struct PerfHarnessView: View {
               .font(.system(size: 12, design: .monospaced))
               .foregroundStyle(.secondary)
               Text(tile.isArchiving ? "archiving \(tile.archiveHeight)p, camera's own stream" : "not archiving")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.secondary)
+              Text(tile.trimSummary)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
             }

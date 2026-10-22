@@ -284,6 +284,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
+  /// Pictures this camera's delay lines threw away because they were full: received, never shown.
+  /// `coded` before decoding, `decoded` after. See `ReceiveStats`.
+  public var codedPicturesTrimmed: UInt64 = 0
+  public var decodedPicturesTrimmed: UInt64 = 0
   /// Wire codec this camera negotiated, for the operator's camera list. Known from the SDP, so it is
   /// there before the first picture is decoded.
   public var sourceCodec = ""
@@ -381,6 +385,11 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
     self.index = index
   }
 
+  /// The Performance panel's line for the delay lines' trims.
+  public var trimSummary: String {
+    "trimmed \(codedPicturesTrimmed) coded · \(decodedPicturesTrimmed) decoded"
+  }
+
   /// The compact string exposed as the tile's accessibility value. Maestro asserts on
   /// substrings of this, so the shape is part of the contract in plan §6.6.
   ///
@@ -411,6 +420,8 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
     parts.append(String(format: "pl=%.0f", playoutMilliseconds))
     parts.append(String(format: "rel=%.0f", releaseGapMaxMilliseconds))
     parts.append("late=\(playoutLateFrames)")
+    // Pictures the delay lines trimmed, coded/decoded: frames that arrived and were never shown.
+    parts.append("trim=\(codedPicturesTrimmed)/\(decodedPicturesTrimmed)")
     // The number on the tile's loss pill, so a flow can assert it moved when the network did.
     parts.append(String(format: "loss=%.0f", packetsLostPerSecond))
     return parts.joined(separator: " ")
@@ -626,6 +637,16 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var programmeSkippedPictures: UInt64 = 0
   /// Programme pictures left out because the compositor could not make one.
   public var programmeComposeMisses: UInt64 = 0
+  /// Programme pictures dropped because the compositor was behind. The camera on air hands its
+  /// pictures over and never waits, so a slow compositor costs the programme these instead.
+  public var programmeComposeDropped: UInt64 = 0
+  /// How long a programme picture takes from the camera handing it over to the compositor finishing
+  /// it: the worst over the last second or so and the running average, in milliseconds. A picture
+  /// that takes longer than its share of the live delay arrives late and is not shown.
+  public var programmeComposeMillisecondsMax: Double = 0
+  public var programmeComposeMillisecondsAverage: Double = 0
+  /// The test harness's artificial compose delay, so a dump says when one is on. Zero in use.
+  public var programmeComposeDelayMilliseconds: Double = 0
   /// Fades into silence and silence emitted in each mix, over every source.
   public var audioMixFades: UInt64 = 0
   public var audioMixConcealedSeconds: Double = 0
@@ -760,6 +781,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var recordingSeconds: Int {
     guard dvr.isRecording, let startedAt = dvr.recordingStartedAt else { return 0 }
     return max(0, Int(clockSeconds - startedAt))
+  }
+
+  /// The Performance panel's compose time: running average and worst over the last second or so.
+  public var programmeComposeSummary: String {
+    String(format: "%.1f avg · %.1f max ms", programmeComposeMillisecondsAverage, programmeComposeMillisecondsMax)
   }
 }
 
