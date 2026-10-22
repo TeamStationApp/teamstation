@@ -72,7 +72,9 @@ const roster = [
     positions: [],
     isPlayer: true,
     role: 'member',
-    group: 'player'
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null
   }),
   asRosterEntry({
     userId: userIdOfGumbo(20),
@@ -81,7 +83,9 @@ const roster = [
     positions: [],
     isPlayer: false,
     role: 'member',
-    group: 'follower'
+    section: 'follower',
+    staffRoles: [],
+    inheritedFrom: null
   }),
   asRosterEntry({
     userId: userIdOfGumbo(21),
@@ -90,7 +94,9 @@ const roster = [
     positions: [],
     isPlayer: false,
     role: 'member',
-    group: 'follower'
+    section: 'follower',
+    staffRoles: [],
+    inheritedFrom: null
   })
 ]
 
