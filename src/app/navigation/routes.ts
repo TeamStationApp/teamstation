@@ -85,6 +85,8 @@ export type CreationRoute =
   /** A league's Auto-Scheduler, and its Field Manager. */
   | { name: 'autoScheduler'; leagueId: string }
   | { name: 'fieldManager'; leagueId: string }
+  /** One season of a league's next schedule. */
+  | { name: 'scheduleSeason'; leagueId: string; seasonId: string }
   /** A venue in the registry, or a Google place not yet in it. */
   | { name: 'venue'; venueId: string }
   | { name: 'venuePlace'; placeId: string }
@@ -117,6 +119,7 @@ export function isCreationRoute(route: {
     'gameSettings',
     'autoScheduler',
     'fieldManager',
+    'scheduleSeason',
     'venue',
     'venuePlace',
     'venueField'
@@ -411,7 +414,13 @@ export function parseRoute(path: string, search = ''): Route {
       if (parts[3] === 'scheduler' && id === 'league')
         return parts[4] === 'fields'
           ? { name: 'fieldManager', leagueId: groupId }
-          : { name: 'autoScheduler', leagueId: groupId }
+          : parts[4] === 'seasons' && parts[5] != null && parts[5] !== ''
+            ? {
+                name: 'scheduleSeason',
+                leagueId: groupId,
+                seasonId: decodeURIComponent(parts[5])
+              }
+            : { name: 'autoScheduler', leagueId: groupId }
       if (parts[3] === 'invite-administrator' && id === 'team')
         return { name: 'promoteExternal', id: groupId }
       if (parts[3] === 'create-game' && id !== 'league')
@@ -694,6 +703,8 @@ export function routePath(route: Route): string {
       return `/groups/league/${encodeURIComponent(route.leagueId)}/scheduler`
     case 'fieldManager':
       return `/groups/league/${encodeURIComponent(route.leagueId)}/scheduler/fields`
+    case 'scheduleSeason':
+      return `/groups/league/${encodeURIComponent(route.leagueId)}/scheduler/seasons/${encodeURIComponent(route.seasonId)}`
     case 'venue':
       return `/venues/${encodeURIComponent(route.venueId)}`
     case 'venuePlace':

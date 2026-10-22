@@ -68,7 +68,14 @@ const tsSuites = [
   'src/server/schedule/gameApprovals.test.ts',
   'src/server/events/eventInfo.test.ts',
   'src/server/routes/schedule.test.ts',
-  'src/app/screens/gameDraft.fields.test.ts'
+  'src/app/screens/gameDraft.fields.test.ts',
+  // M5: exhibition teams, season settings and the setup.
+  'src/migrate/migrations/079seasonScheduling.test.ts',
+  'src/common/schedulingChecks.test.ts',
+  'src/server/routes/schedulingSetup.test.ts',
+  'src/server/routes/seasonReaders.test.ts',
+  'src/server/admin/mergeTeamsSeasonFlags.test.ts',
+  'src/common/api.scheduling.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -86,7 +93,11 @@ const appSuites = [
   'src/app/screens/EventInfoTab.test.tsx',
   'src/app/screens/GameFormScreen.create.test.tsx',
   'src/app/screens/GameFormScreen.edit.test.tsx',
-  'src/app/components/EventVenueFields.test.tsx'
+  'src/app/components/EventVenueFields.test.tsx',
+  // M5: the setup, its grid and a season's detail.
+  'src/app/screens/AutoSchedulerScreen.test.tsx',
+  'src/app/screens/SeasonScheduleGrid.test.tsx',
+  'src/app/screens/ScheduleSeasonScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

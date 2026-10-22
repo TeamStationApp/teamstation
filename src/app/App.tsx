@@ -115,6 +115,7 @@ import { OnboardingScreen } from './screens/OnboardingScreen'
 import { PersonProfileScreen } from './screens/PersonProfileScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
+import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
@@ -1809,9 +1810,21 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'autoScheduler' ? (
       <AutoSchedulerScreen
         key={top.leagueId}
+        client={client}
+        leagueId={top.leagueId}
         onFieldManager={() => {
           push({ name: 'fieldManager', leagueId: top.leagueId })
         }}
+        onOpenSeason={seasonId => {
+          push({ name: 'scheduleSeason', leagueId: top.leagueId, seasonId })
+        }}
+      />
+    ) : top.name === 'scheduleSeason' ? (
+      <ScheduleSeasonScreen
+        key={top.seasonId}
+        client={client}
+        leagueId={top.leagueId}
+        seasonId={top.seasonId}
       />
     ) : top.name === 'fieldManager' ? (
       <FieldManagerScreen
@@ -2882,7 +2895,11 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   if (route.name === 'gameSettings')
     return { [tab]: [gameUnder(route.gameId), route] }
-  if (route.name === 'autoScheduler' || route.name === 'fieldManager') {
+  if (
+    route.name === 'autoScheduler' ||
+    route.name === 'fieldManager' ||
+    route.name === 'scheduleSeason'
+  ) {
     const league = {
       name: 'group' as const,
       kind: 'league' as const,

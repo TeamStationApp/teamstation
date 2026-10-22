@@ -962,6 +962,38 @@ export interface VenueFieldsTable {
   updated_at: Generated<Date>
 }
 
+/** A team marked as an exhibition team in a season. */
+export interface SeasonTeamFlagsTable {
+  season_id: string
+  team_id: string
+  exhibition: Generated<boolean>
+}
+
+/** A season's scheduling settings for the Auto-Scheduler. */
+export interface SeasonScheduleSettingsTable {
+  season_id: string
+  field_size: string
+  game_minutes: number
+  buffer_minutes: number
+  regular_games: number
+  exhibition_games: number
+  doubleheaders: 'never' | 'ifNecessary' | 'allowed'
+  starts_on: ColumnType<unknown, string, string>
+  ends_on: ColumnType<unknown, string, string>
+  blackouts: CalendarDates
+  /** A list of window periods (`src/common/seasonScheduling.ts`). */
+  windows: ColumnType<unknown, string | undefined, string>
+  updated_at: Generated<Date>
+}
+
+/** The seasons and fields a league's next schedule is built from. */
+export interface LeagueScheduleSetupsTable {
+  league_id: string
+  season_ids: Generated<string[]>
+  field_ids: Generated<string[]>
+  updated_at: Generated<Date>
+}
+
 /** A warning about a game's field, once it has been announced. */
 export interface GameFieldWarningsTable {
   game_id: string
@@ -1036,6 +1068,9 @@ export interface Database {
   external_ids: ExternalIdsTable
   games: GamesTable
   game_field_warnings: GameFieldWarningsTable
+  league_schedule_setups: LeagueScheduleSetupsTable
+  season_schedule_settings: SeasonScheduleSettingsTable
+  season_team_flags: SeasonTeamFlagsTable
   game_player_stats: GamePlayerStatsTable
   game_stats_state: GameStatsStateTable
   invite_redemptions: InviteRedemptionsTable

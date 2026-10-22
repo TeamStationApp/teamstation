@@ -66,7 +66,8 @@ type FieldRow = Selectable<VenueFieldsTable>
 function hoursOf(raw: unknown): WeekdayHours[] {
   return asWeeklyHours(raw)
 }
-function datesOf(raw: unknown): string[] {
+/** Stored calendar dates as `YYYY-MM-DD`, in order. */
+export function datesOf(raw: unknown): string[] {
   return Array.isArray(raw)
     ? raw.map(value => calendarDateText(value)!).sort()
     : []

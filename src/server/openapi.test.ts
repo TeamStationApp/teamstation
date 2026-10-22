@@ -43,6 +43,7 @@ import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
+import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
@@ -188,6 +189,7 @@ describe('the API document', function () {
       ...routesOf(nodeAdministrationRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(venueRoutes(db, media)),
+      ...routesOf(schedulingSetupRoutes(db)),
       ...routesOf(scoreboardRoutes(db, store))
     ]
 
@@ -245,6 +247,7 @@ describe('the API document', function () {
       ...routesOf(nodeAdministrationRoutes(db)),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(venueRoutes(db, media)),
+      ...routesOf(schedulingSetupRoutes(db)),
       // Only the player routes the document describes: the reads of a
       // player's page are left out of it, as they always have been.
       ...routesOf(playerRoutes(db, media)),

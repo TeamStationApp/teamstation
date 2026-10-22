@@ -61,6 +61,36 @@ function signedIn(canManage = true): void {
       canManage
     })
   proto.venue = async () => venueDetail({ fields: [venueField()] })
+  proto.scheduleSetup = async leagueId => ({
+    leagueId,
+    seasonIds: ['sea_a'],
+    fieldIds: [],
+    seasons: [
+      {
+        id: 'sea_a',
+        name: 'Demo Regular',
+        year: 2027,
+        timezone: 'UTC',
+        participants: 2,
+        exhibitionTeams: 0,
+        teams: [],
+        saved: false,
+        settings: {
+          fieldSize: '60/90',
+          gameMinutes: 120,
+          bufferMinutes: 15,
+          regularGames: 0,
+          exhibitionGames: 0,
+          doubleheaders: 'ifNecessary',
+          startsOn: '2027-03-01',
+          endsOn: '2027-05-31',
+          blackouts: [],
+          windows: []
+        }
+      }
+    ],
+    fields: []
+  })
   proto.venueForPlace = async placeId =>
     venueDetail({ id: null, placeId, name: 'Harbor Field' })
 }
@@ -92,6 +122,7 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
     for (const path of [
       '/groups/league/lea_a/scheduler',
       '/groups/league/lea_a/scheduler/fields',
+      '/groups/league/lea_a/scheduler/seasons/sea_a',
       '/venues/ven_a',
       '/venues/place/harbor-field',
       '/venues/ven_a/fields/fld_one'
@@ -100,6 +131,9 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
     expect(parseRoute('/groups/season/sea_a/scheduler', '').name).not.equals(
       'autoScheduler'
     )
+    expect(
+      parseRoute('/groups/league/lea_a/scheduler/seasons/', '')
+    ).deep.equals({ name: 'autoScheduler', leagueId: 'lea_a' })
     expect(parseRoute('/venues', '')).deep.equals({ name: 'home' })
     expect(parseRoute('/venues/place', '')).deep.equals({ name: 'home' })
   })
@@ -135,6 +169,15 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
     await open('/groups/league/lea_a')
     await press('Auto-Scheduler, Fields, season settings and schedules')
     await settle()
+    expect(window.location.pathname).equals('/groups/league/lea_a/scheduler')
+    await press('Open Demo Regular')
+    await settle(200)
+    expect(window.location.pathname).equals(
+      '/groups/league/lea_a/scheduler/seasons/sea_a'
+    )
+    expect(document.body.textContent).includes('No game windows yet.')
+    window.history.back()
+    await settle(300)
     expect(window.location.pathname).equals('/groups/league/lea_a/scheduler')
     await press(
       'Field Manager, Find, claim and set up the venues and fields your league plays on'

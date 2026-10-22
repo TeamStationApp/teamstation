@@ -210,7 +210,78 @@ export async function seedThrough(
   const fieldId = await seedFields(fx, venueId)
   if (order < 5) return { venueId, fieldId }
   await seedGamesOnField(fx, venueId, fieldId)
+  if (order < 7) return { venueId, fieldId }
+  await seedSchedulingSetup(fx, fieldId)
   return { venueId, fieldId }
+}
+
+/** seasonA's game windows as E6 sets them: a second period from June 1. */
+export const SEASON_A_WINDOWS = [
+  {
+    from: SEASON_STARTS_ON,
+    hours: [
+      ...[1, 2, 3, 4, 5].map(weekday => ({
+        weekday,
+        start: '17:30',
+        end: '21:00'
+      })),
+      { weekday: 6, start: '08:00', end: '18:00' }
+    ]
+  },
+  {
+    from: '2027-06-01',
+    hours: [
+      ...[1, 2, 3, 4, 5].map(weekday => ({
+        weekday,
+        start: '18:00',
+        end: '21:00'
+      })),
+      { weekday: 6, start: '08:00', end: '18:00' }
+    ]
+  }
+]
+
+/** seasonA's settings as E6 leaves them. */
+export const SEASON_A_SETTINGS = {
+  fieldSize: '50/70',
+  gameMinutes: 90,
+  bufferMinutes: 10,
+  regularGames: 4,
+  exhibitionGames: 1,
+  doubleheaders: 'ifNecessary',
+  startsOn: SEASON_STARTS_ON,
+  endsOn: SEASON_ENDS_ON,
+  blackouts: [],
+  windows: SEASON_A_WINDOWS
+}
+
+/**
+ * E6's state: the Otters and Herons flagged as exhibition teams, seasonA's
+ * settings, and seasonA and Field 1 chosen for the run.
+ */
+export async function seedSchedulingSetup(
+  fx: AutoSchedulerFixture,
+  fieldId: string
+): Promise<void> {
+  for (const name of EXHIBITION)
+    await api(
+      fx,
+      101,
+      'PUT',
+      `/seasons/${fx.f.seasonA}/memberships/${fx.teams[name]}`,
+      { exhibition: true }
+    )
+  await api(
+    fx,
+    101,
+    'PUT',
+    `/seasons/${fx.f.seasonA}/schedule-settings`,
+    SEASON_A_SETTINGS
+  )
+  await api(fx, 101, 'PUT', `/leagues/${fx.f.leagueA}/schedule-setup`, {
+    seasonIds: [fx.f.seasonA],
+    fieldIds: [fieldId]
+  })
 }
 
 /** The second game E4 books: noon on G1's Saturday, in the other size. */

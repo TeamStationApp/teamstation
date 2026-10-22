@@ -21,8 +21,10 @@ import {
   type AutoSchedulerFixture,
   autoSchedulerFixture,
   bookSecondGame,
+  EXHIBITION,
   FIELD_ONE_HOURS,
   G1,
+  SEASON_A_WINDOWS,
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
@@ -628,13 +630,338 @@ async function e5(run: Run): Promise<void> {
   )
 }
 
+/** Clicks the last element of this role and exact text, once enabled. */
+async function tapText(
+  b: BrowserSession,
+  text: string,
+  roles = '[role="button"], [role="radio"], [role="tab"]'
+): Promise<void> {
+  trace(`tap text ${text}`)
+  await b.page.waitForFunction(
+    (wanted: string, selector: string) =>
+      [...document.querySelectorAll(selector)].some(
+        node =>
+          node.textContent === wanted &&
+          node.getAttribute('aria-disabled') !== 'true'
+      ),
+    { timeout: 15000 },
+    text,
+    roles
+  )
+  await b.page.evaluate(
+    (wanted: string, selector: string) => {
+      const matches = [...document.querySelectorAll(selector)].filter(
+        node => node.textContent === wanted
+      )
+      ;(matches[matches.length - 1] as HTMLElement).click()
+    },
+    text,
+    roles
+  )
+}
+
+/** Picks a wall time, "HH:MM", in the open time picker. */
+async function pickTime(b: BrowserSession, time: string): Promise<void> {
+  const hour = Number(time.slice(0, 2))
+  await tapLabel(
+    b,
+    `Hour ${String(hour % 12 === 0 ? 12 : hour % 12).padStart(2, '0')}`
+  )
+  await tapLabel(b, `Minute ${time.slice(3)}`)
+  await tapLabel(b, `Period ${hour < 12 ? 'AM' : 'PM'}`)
+  await tapText(b, 'Use time')
+}
+
+/** Opens a day of a weekly-hours list and sets it open from start to end. */
+async function setDay(
+  b: BrowserSession,
+  list: string,
+  day: string,
+  start: string,
+  end: string
+): Promise<void> {
+  trace(`${list}: ${day} ${start}–${end}`)
+  await b.m.tapOn({ css: `[aria-label^="${list}: ${day}, "]`, timeout: 15000 })
+  await contains(b.page, 'Done')
+  const closed = await b.page.evaluate(
+    () => document.querySelector('[aria-label^="Opens "]') === null
+  )
+  if (closed) await tapText(b, 'Open')
+  await b.m.tapOn({ css: '[aria-label^="Opens "]', timeout: 15000 })
+  await pickTime(b, start)
+  await b.m.tapOn({ css: '[aria-label^="Closes "]', timeout: 15000 })
+  await pickTime(b, end)
+  await tapText(b, 'Done')
+  await b.page.waitForFunction(
+    (selector: string) => document.querySelector(selector) === null,
+    { timeout: 15000 },
+    '[aria-label^="Opens "]'
+  )
+}
+
+/** Sets a number in the grid's editor for one cell. */
+async function setNumber(
+  b: BrowserSession,
+  cell: string,
+  label: string,
+  value: string
+): Promise<void> {
+  await tapLabel(b, cell)
+  await fill(b.m, label, value)
+  await tapText(b, 'Save')
+  await b.page.waitForFunction(
+    (wanted: string) =>
+      document.querySelector(`input[aria-label="${wanted}"]`) === null,
+    { timeout: 15000 },
+    label
+  )
+}
+
+/**
+ * Scrolls the element whose own text is this to the top of the screen,
+ * below the app's header, and lets the scroll settle.
+ */
+async function scrollToText(
+  b: BrowserSession,
+  text: string,
+  block: 'start' | 'center'
+): Promise<void> {
+  await b.page.evaluate(
+    (wanted: string, where: 'start' | 'center') => {
+      const found = [...document.querySelectorAll('div, span')].find(
+        node => node.childElementCount === 0 && node.textContent === wanted
+      )
+      if (found === undefined) return
+      found.scrollIntoView({ block: where })
+      if (where === 'start') {
+        let scroller = found.parentElement
+        while (
+          scroller !== null &&
+          scroller.scrollHeight <= scroller.clientHeight
+        )
+          scroller = scroller.parentElement
+        if (scroller !== null) scroller.scrollTop -= 72
+        else window.scrollBy(0, -72)
+      }
+    },
+    text,
+    block
+  )
+  await new Promise(resolve => setTimeout(resolve, 500))
+}
+
+/** Waits for text to leave the page, as a save lands. */
+async function gone(b: BrowserSession, text: string): Promise<void> {
+  await b.page.waitForFunction(
+    (wanted: string) => !String(document.body.textContent).includes(wanted),
+    { timeout: 15000 },
+    text
+  )
+}
+
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
+/** Whether the Build schedule button can be pressed. */
+async function buildEnabled(b: BrowserSession): Promise<boolean> {
+  return await b.page.evaluate(() => {
+    const button = [...document.querySelectorAll('[role="button"]')].find(
+      node => node.textContent === 'Build schedule'
+    )
+    return (
+      button !== undefined && button.getAttribute('aria-disabled') !== 'true'
+    )
+  })
+}
+
+/**
+ * E6: the league admin chooses seasonA and seasonC, sets their numbers in
+ * the grid, flags seasonA's two exhibition teams, gives it windows with a
+ * June 1 period, chooses Field 1, and reads the early warnings change.
+ */
+async function e6(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const scheduler = `/groups/league/${fx.f.leagueA}/scheduler`
+  const admin = await run.session('autoScheduler-e6', 101)
+  await run.visit(admin, scheduler)
+  await contains(admin.page, 'FIELDS FOR THIS RUN')
+  await tapLabel(admin, 'Demo Regular')
+  await contains(admin.page, 'SCHEDULE SETTINGS')
+  await tapLabel(admin, 'Demo Playoffs')
+  await tapLabel(admin, 'Demo Playoffs Size: 60/90')
+  await tapLabel(admin, '55/80')
+  await tapLabel(admin, 'Demo Playoffs Size: 55/80')
+  await tapText(admin, 'Cancel')
+  await tapLabel(admin, 'Field 1, Example Park')
+  await tapLabel(admin, 'Demo Regular Size: 60/90')
+  await tapLabel(admin, '50/70')
+  await setNumber(
+    admin,
+    'Demo Regular Game: 120 min',
+    'Game length, in minutes',
+    '90'
+  )
+  await setNumber(
+    admin,
+    'Demo Regular Between: 15 min',
+    'Time between games, in minutes',
+    '10'
+  )
+  await setNumber(
+    admin,
+    'Demo Regular Regular: 0',
+    'Regular-season games per team',
+    '3'
+  )
+  await setNumber(
+    admin,
+    'Demo Regular Exhibition: 0',
+    'Exhibition games per team',
+    '1'
+  )
+  await tapLabel(admin, 'Demo Regular Doubleheaders: Only if necessary')
+  await tapLabel(admin, 'Only if necessary')
+  // The season's detail: exhibition teams and windows.
+  await tapLabel(admin, 'Open Demo Regular')
+  await at(admin, /\/scheduler\/seasons\//)
+  await contains(admin.page, 'Check the teams that play only exhibition games')
+  for (const name of EXHIBITION) {
+    await tapLabel(admin, `Demo ${name}`)
+    await contains(admin.page, `Demo ${name} saved.`)
+  }
+  await tapText(admin, 'Add game windows')
+  const march = 'Windows from Monday, March 1, 2027'
+  await contains(admin.page, 'From Monday, March 1, 2027')
+  for (const day of WEEKDAY_NAMES)
+    await setDay(admin, march, day, '17:30', '21:00')
+  await setDay(admin, march, 'Saturday', '08:00', '18:00')
+  await tapText(admin, 'Add a period from a date')
+  await chooseDate(admin, '2027-06-01')
+  const june = 'Windows from Tuesday, June 1, 2027'
+  await contains(admin.page, 'From Tuesday, June 1, 2027')
+  for (const day of WEEKDAY_NAMES)
+    await setDay(admin, june, day, '18:00', '21:00')
+  // The last day's save may still be on its way.
+  const read = async (): Promise<Record<string, unknown>> =>
+    await fx.f.h.db
+      .selectFrom('season_schedule_settings')
+      .selectAll()
+      .where('season_id', '=', fx.f.seasonA)
+      .executeTakeFirstOrThrow()
+  let saved = await read()
+  for (
+    let tries = 0;
+    tries < 50 &&
+    JSON.stringify(saved.windows) !== JSON.stringify(SEASON_A_WINDOWS);
+    tries++
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 200))
+    saved = await read()
+  }
+  expect(saved).include({
+    field_size: '50/70',
+    game_minutes: 90,
+    buffer_minutes: 10,
+    regular_games: 3,
+    exhibition_games: 1,
+    doubleheaders: 'ifNecessary'
+  })
+  expect(saved.windows).deep.equals(SEASON_A_WINDOWS)
+  // Back to the grid: the warnings, live.
+  await run.visit(admin, scheduler)
+  await contains(admin.page, 'EARLY WARNINGS')
+  await contains(
+    admin.page,
+    '7 teams × 3 games is 21 team games, an odd number'
+  )
+  await contains(admin.page, '4 for one, 3 for the other')
+  await contains(
+    admin.page,
+    'Must fix: Demo Playoffs has no chosen field that sets up as 55/80.'
+  )
+  expect(await buildEnabled(admin)).equals(false)
+  await setNumber(
+    admin,
+    'Demo Regular Regular: 3',
+    'Regular-season games per team',
+    '4'
+  )
+  await gone(admin, 'an odd number')
+  await contains(admin.page, '4 for one, 3 for the other')
+  expect(await buildEnabled(admin)).equals(false)
+  // Back to the grid's first columns, which the cell taps scrolled past.
+  await admin.page.evaluate(() => {
+    const grid = document.querySelector('[data-testid="season-schedule-grid"]')
+    if (grid !== null)
+      for (const node of [grid, ...grid.querySelectorAll('div')])
+        node.scrollLeft = 0
+  })
+  await scrollToText(admin, 'SCHEDULE SETTINGS', 'start')
+  await capture(admin.m, artifacts, 'scheduler-grid.png')
+  await tapLabel(admin, 'Demo Playoffs')
+  await gone(admin, 'Demo Playoffs has no chosen field')
+  await admin.page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Demo Regular Total games: 21"]') !==
+      null,
+    { timeout: 15000 }
+  )
+  expect(await buildEnabled(admin)).equals(true)
+  const setup = await fx.f.h.db
+    .selectFrom('league_schedule_setups')
+    .select(['season_ids', 'field_ids'])
+    .where('league_id', '=', fx.f.leagueA)
+    .executeTakeFirstOrThrow()
+  expect(setup).deep.equals({
+    season_ids: [fx.f.seasonA],
+    field_ids: [run.state.fieldId]
+  })
+  // seasonA's Teams tab lists the flagged teams as exhibition teams.
+  await run.visit(admin, `/groups/season/${fx.f.seasonA}?tab=teams`)
+  await contains(admin.page, 'EXHIBITION TEAMS')
+  const exhibitionHeading = await admin.page.evaluate(() => {
+    const text = String(document.body.textContent)
+    return text.slice(text.indexOf('EXHIBITION TEAMS'))
+  })
+  for (const name of EXHIBITION)
+    expect(exhibitionHeading).includes(`Demo ${name}`)
+  await scrollToText(admin, 'EXHIBITION TEAMS', 'start')
+  await capture(admin.m, artifacts, 'season-teams-after.png')
+  await run.pass(
+    'E6',
+    'seasonA and seasonC chosen; seasonA set to 50/70, 90 minutes, 10 between, 3 then 4 regular and 1 exhibition, with two window periods and two exhibition teams; the odd-total warning clears at 4, the 4/3 exhibition split stays, Build schedule is disabled until seasonC is removed; the flagged teams list under Exhibition Teams'
+  )
+}
+
+/** Chooses a date in the open calendar picker. */
+async function chooseDate(b: BrowserSession, date: string): Promise<void> {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December'
+  ]
+  await b.m.tapOn({ css: '[aria-label^="Choose month:"]', timeout: 15000 })
+  await tapLabel(b, months[Number(date.slice(5, 7)) - 1])
+  await tapLabel(b, `Choose ${date}`)
+  await tapText(b, 'Use date')
+}
+
 const SCENARIOS: Record<string, (run: Run) => Promise<void>> = {
   E0: e0,
   E1: e1,
   E2: e2,
   E3: e3,
   E4: e4,
-  E5: e5
+  E5: e5,
+  E6: e6
 }
 
 async function main(): Promise<void> {

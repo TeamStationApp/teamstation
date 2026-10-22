@@ -44,7 +44,8 @@ import {
   asGroupRef,
   type CreateGroup,
   type GroupKind,
-  type GroupRef
+  type GroupRef,
+  isRecord
 } from './groupCreation'
 import {
   asParentPreview,
@@ -120,6 +121,13 @@ import {
 } from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import {
+  asScheduleSetup,
+  asSeasonScheduleSettings,
+  type ScheduleSettings,
+  type ScheduleSetup,
+  type SeasonScheduleSettings
+} from './seasonScheduling'
 import {
   asUmpireLeaderboard,
   asUmpireLeagues,
@@ -221,6 +229,18 @@ export const asTeamSummary = asObject({
   kind: asOptional(asEither(asLiteral('full'), asLiteral('external')), 'full')
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
+
+/**
+ * A team on a season's list: `exhibition` is set, and true, when the
+ * season's admin flagged it as an exhibition team. Older servers omit it.
+ */
+export type SeasonTeamSummary = TeamSummary & { exhibition?: true }
+function asSeasonTeamSummary(raw: unknown): SeasonTeamSummary {
+  const team = asTeamSummary(raw)
+  return isRecord(raw) && raw.exhibition === true
+    ? { ...team, exhibition: true }
+    : team
+}
 
 export const asGameSummary = withEventMetadata(
   asObject({
@@ -2933,6 +2953,54 @@ export class TeamStationClient {
     ).items
   }
 
+  /** The league's Auto-Scheduler setup: its seasons, fields and choices. */
+  async scheduleSetup(leagueId: string): Promise<ScheduleSetup> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-setup`,
+      asScheduleSetup
+    )
+  }
+
+  /** Chooses the seasons and fields of the league's next schedule. */
+  async saveScheduleSetup(
+    leagueId: string,
+    choice: { seasonIds: string[]; fieldIds: string[] }
+  ): Promise<ScheduleSetup> {
+    return await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-setup`,
+      asScheduleSetup,
+      choice
+    )
+  }
+
+  async saveScheduleSettings(
+    seasonId: string,
+    settings: ScheduleSettings
+  ): Promise<SeasonScheduleSettings> {
+    return await this.request(
+      'PUT',
+      `/seasons/${encodeURIComponent(seasonId)}/schedule-settings`,
+      asSeasonScheduleSettings,
+      settings
+    )
+  }
+
+  /** Flags a team in a season as an exhibition team, or not. */
+  async setExhibitionTeam(
+    seasonId: string,
+    teamId: string,
+    exhibition: boolean
+  ): Promise<void> {
+    await this.request(
+      'PUT',
+      `/seasons/${encodeURIComponent(seasonId)}/memberships/${encodeURIComponent(teamId)}`,
+      asObject({ exhibition: asBoolean }),
+      { exhibition }
+    )
+  }
+
   /** The venue for a Google place: the registry's, or the place itself. */
   async venueForPlace(placeId: string): Promise<VenueDetail> {
     const [venue] = (
@@ -3132,11 +3200,11 @@ export class TeamStationClient {
     return games[0] ?? null
   }
 
-  async seasonTeams(seasonId: string): Promise<TeamSummary[]> {
+  async seasonTeams(seasonId: string): Promise<SeasonTeamSummary[]> {
     return await this.request(
       'GET',
       `/seasons/${encodeURIComponent(seasonId)}/teams`,
-      asArray(asTeamSummary)
+      asArray(asSeasonTeamSummary)
     )
   }
 

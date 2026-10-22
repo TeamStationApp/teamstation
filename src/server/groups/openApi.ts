@@ -320,6 +320,22 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
         security: [{ bearer: [] }],
         parameters: [parameter('seasonId'), parameter('teamId')],
         responses
+      },
+      put: {
+        summary: 'Flag a team in a season as an exhibition team, or not',
+        security: [{ bearer: [] }],
+        description:
+          'For a season admin. The team must be an active or parent-managed team of the season. A flagged team is listed under Exhibition Teams, and the Auto-Scheduler gives it exhibition games only.',
+        parameters: [parameter('seasonId'), parameter('teamId')],
+        requestBody: body({
+          type: 'object',
+          required: ['exhibition'],
+          properties: { exhibition: { type: 'boolean' } }
+        }),
+        responses: {
+          ...responses,
+          200: { description: '{ seasonId, teamId, exhibition }' }
+        }
       }
     },
     '/groups/{kind}/{id}': {
