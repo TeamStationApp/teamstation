@@ -2605,7 +2605,7 @@ export class Scenarios {
       ),
       'Current other-member with a unique public safety label required'
     )
-    const selector = { text: exactText('Safety number with ' + member.name) }
+    const selector = { id: 'chat-info-member-' + member.userId }
     await ui.device.scrollUntilVisible({
       element: selector,
       direction: 'DOWN',
@@ -2613,7 +2613,7 @@ export class Scenarios {
     })
     if (!ui.native)
       await ui.dom(
-        `const n=document.querySelector(${JSON.stringify('[aria-label="Safety number with ' + member.name + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
+        `const n=document.querySelector(${JSON.stringify('[data-testid="' + selector.id + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
       )
     const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
     const width = Number('screenWidth' in info ? info.screenWidth : info.width)
@@ -2926,7 +2926,8 @@ export class Scenarios {
       'Unique public safety name and role required'
     )
     await this.openInfo()
-    const label = 'Safety number with ' + member.name
+    const rowId = 'chat-info-member-' + peerId
+    const label = 'Safety number with ' + member.name + ', ' + member.role
     const ui = this.ui
     type Box = NonNullable<PublicNode['bounds']>
     const samples: Json[] = []
@@ -2937,15 +2938,8 @@ export class Scenarios {
       samples
     })
     if (ui.native) {
-      assert.equal(
-        this.f.members.filter(
-          m => m.userId !== this.viewerId && m.role === member.role
-        ).length,
-        1,
-        'Unique public role required for native scrolling'
-      )
       await ui.device.scrollUntilVisible({
-        element: { text: exactText(member.role) },
+        element: { id: rowId },
         direction: 'DOWN',
         timeout: 15000
       })
@@ -3008,35 +3002,27 @@ export class Scenarios {
       )
       let target: { bounds: Box; topmost?: boolean }
       if (ui.native) {
-        const roles = nodes.filter(
-          n => n.text === member.role && finite(n.bounds)
-        )
         const rows = nodes.filter(
           n =>
-            n.text === label &&
+            n.id === rowId &&
             (ui.surface !== 'ios' || /button$/i.test(n.type ?? '')) &&
-            finite(n.bounds) &&
-            roles.some(
-              role =>
-                role.bounds!.x >= n.bounds!.x &&
-                role.bounds!.y >= n.bounds!.y &&
-                role.bounds!.x + role.bounds!.width <=
-                  n.bounds!.x + n.bounds!.width &&
-                role.bounds!.y + role.bounds!.height <=
-                  n.bounds!.y + n.bounds!.height
-            )
+            finite(n.bounds)
         )
         assert.equal(
           rows.length,
           1,
           'Unique actual name and role safety row required'
         )
+        assert(
+          rows[0].text === label || rows[0].text === label + ', Moderator',
+          'Exact peer short name and visible role required'
+        )
         target = { bounds: rows[0].bounds! }
       } else {
         const actual = await ui.dom(`
           const section=document.querySelector('[data-testid="chat-info-members"]');
           if(!section)throw Error('Actual Info member section required');
-          const matches=Array.from(section.querySelectorAll('button,[role="button"]')).filter(n=>n.getAttribute('aria-label')===${JSON.stringify(label)}&&Array.from(n.querySelectorAll('*')).some(c=>c.textContent===${JSON.stringify(member.role)}&&c.closest('button,[role="button"]')===n)).map(n=>{const b=n.getBoundingClientRect(),hit=document.elementFromPoint(b.x+b.width/2,b.y+b.height/2);return {bounds:{x:b.x,y:b.y,width:b.width,height:b.height},topmost:hit!=null&&(hit===n||n.contains(hit))}});
+          const matches=Array.from(section.querySelectorAll('button,[role="button"]')).filter(n=>n.getAttribute('data-testid')===${JSON.stringify(rowId)}&&[${JSON.stringify(label)},${JSON.stringify(label + ', Moderator')}].includes(n.getAttribute('aria-label'))&&Array.from(n.querySelectorAll('*')).some(c=>c.textContent===${JSON.stringify(member.role)}&&c.closest('button,[role="button"]')===n)).map(n=>{const b=n.getBoundingClientRect(),hit=document.elementFromPoint(b.x+b.width/2,b.y+b.height/2);return {bounds:{x:b.x,y:b.y,width:b.width,height:b.height},topmost:hit!=null&&(hit===n||n.contains(hit))}});
           return {matches};
         `)
         assert(
@@ -3263,24 +3249,34 @@ export class Scenarios {
     // Native frame serialization can round by half a coordinate unit.
     const edgeTolerance = 0.5
     const fits = (): boolean =>
+      box.height > 0 &&
       box.y >= band.top + 8 - edgeTolerance &&
       box.y + requiredHeight() <= band.bottom - 8 + edgeTolerance
     for (let step = 0; ; step++) {
       assert(
         [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
           box.width > 0 &&
-          box.height > 0 &&
           band.bottom - band.top > 64,
         'Finite legacy bubble and actual reading band required'
       )
-      samples.push({ ...box, requiredHeight: requiredHeight() })
+      const clipped = box.height <= 0
+      assert(
+        !clipped || box.y < band.top || box.y >= band.bottom,
+        'Clipped legacy bounds require an observed offscreen direction'
+      )
+      samples.push({
+        ...box,
+        requiredHeight: clipped ? null : requiredHeight(),
+        clipped
+      })
       if (fits()) break
       assert(
         step < 8,
         'Legacy bubble must clear header, pins and composer before text verification'
       )
-      const delta =
-        box.y < band.top + 8
+      const delta = clipped
+        ? ((box.y < band.top ? 1 : -1) * (band.bottom - band.top)) / 2
+        : box.y < band.top + 8
           ? Math.min((band.bottom - band.top) / 2, band.top + 16 - box.y)
           : -Math.min(
               (band.bottom - band.top) / 2,
@@ -3288,6 +3284,7 @@ export class Scenarios {
             )
       const middle = (band.top + band.bottom) / 2
       const previousY = box.y
+      const previousHeight = box.height
       await ui.measuredSwipe({
         startX: Math.round(box.x + box.width / 2),
         endX: Math.round(box.x + box.width / 2),
@@ -3299,7 +3296,10 @@ export class Scenarios {
         async () => {
           const next = await this.targetBounds('chat-bubble-' + message.id)
           samples.push({ afterGesture: next })
-          return Math.abs(next.y - previousY) >= 1 ? next : undefined
+          return Math.abs(next.y - previousY) >= 1 ||
+            (previousHeight <= 0 && next.height > 0)
+            ? next
+            : undefined
         },
         'native legacy reader progress after measured gesture',
         2000
@@ -3925,16 +3925,13 @@ export class Scenarios {
         if (ui.surface === 'ios') {
           const row = await ui.iosRead(
             {
-              text: exactText('Safety number with ' + member.name),
+              id: 'chat-info-member-' + member.userId,
               childOf: { id: 'chat-info-members' }
             },
             'Button'
           )
           await ui.tapObserved(row)
-        } else
-          await ui.device.tapOn({
-            text: exactText('Safety number with ' + member.name)
-          })
+        } else await ui.id('chat-info-member-' + member.userId)
         await ui.device.assertVisible({
           text: 'Safety number.*',
           timeout: 10000

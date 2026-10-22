@@ -4081,10 +4081,12 @@ describe('chat native adapter compatibility', function () {
     }) as Scenarios
     const selected = await scenario.showInfoMember()
     expect(selected.userId).equals(userIdOfGumbo(3))
-    expect(selectors[0]).deep.equals({ text: '^Safety number with Unique$' })
+    expect(selectors[0]).deep.equals({
+      id: 'chat-info-member-' + userIdOfGumbo(3)
+    })
     expect(selectors[1]).deep.equals([
       {
-        text: '^Safety number with Unique$',
+        id: 'chat-info-member-' + userIdOfGumbo(3),
         childOf: { id: 'chat-info-members' }
       },
       'Button'
@@ -4509,7 +4511,7 @@ describe('chat native adapter compatibility', function () {
     expect(scenario.observations[0]).deep.includes({
       infoMemberFraming: {
         userId: userIdOfGumbo(3),
-        selector: { text: '^Safety number with Unique$' },
+        selector: { id: 'chat-info-member-' + userIdOfGumbo(3) },
         bounds: { x: 20, y: 400, width: 280, height: 56 },
         unobscuredBand: { top: 82, bottom: 632 },
         expectedRole: 'Member'
@@ -5611,7 +5613,8 @@ describe('compatibility harness route and coordinate boundaries', () => {
 describe('identity safety row ownership', () => {
   function model(
     mode = 'normal',
-    native = false
+    native = false,
+    surface = native ? 'android' : 'web-narrow'
   ): {
     scenario: Scenarios
     expected: string
@@ -5626,7 +5629,7 @@ describe('identity safety row ownership', () => {
     let opened = false
     let coachY = mode === 'below-footer' ? 770 : 180
     const document = new JSDOM(
-      '<div data-testid="chat-info-members"><button aria-label="Safety number with Kyle Tucker"><span>Kyle Tucker</span><span>Member</span></button><button aria-label="Safety number with Kyle Tucker"><span>Kyle Tucker</span><span>Coach</span></button></div>',
+      `<div data-testid="chat-info-members"><button data-testid="chat-info-member-${other}" aria-label="Safety number with Kyle Tucker, Member"><span>Kyle Tucker</span><span>Member</span></button><button data-testid="chat-info-member-${peer}" aria-label="Safety number with Kyle Tucker, Coach, Moderator"><span>Kyle Tucker</span><span>Coach</span></button></div>`,
       { runScripts: 'outside-only' }
     )
     const buttons = Array.from(
@@ -5653,8 +5656,9 @@ describe('identity safety row ownership', () => {
         bounds: { x: 0, y: 740, width: 80, height: 50 }
       },
       {
-        text: 'Safety number with Kyle Tucker',
-        type: native ? 'android.view.View' : 'Button',
+        id: 'chat-info-member-' + other,
+        text: 'Safety number with Kyle Tucker, Member',
+        type: surface === 'android' ? 'android.view.View' : 'Button',
         bounds: { x: 10, y: 100, width: 380, height: 60 }
       },
       {
@@ -5663,8 +5667,12 @@ describe('identity safety row ownership', () => {
         bounds: { x: 80, y: 130, width: 120, height: 20 }
       },
       {
-        text: 'Safety number with Kyle Tucker',
-        type: native ? 'android.view.View' : 'Button',
+        id: 'chat-info-member-' + peer,
+        text:
+          mode === 'wrong-spoken-role'
+            ? 'Safety number with Kyle Tucker, Member'
+            : 'Safety number with Kyle Tucker, Coach, Moderator',
+        type: surface === 'android' ? 'android.view.View' : 'Button',
         bounds: { x: 10, y: coachY, width: 380, height: 60 }
       },
       {
@@ -5675,7 +5683,7 @@ describe('identity safety row ownership', () => {
     ]
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native,
-      surface: native ? 'android' : 'web-narrow',
+      surface,
       metrics: () => ({ width: 400, height: 800 }),
       nodes: async () =>
         opened
@@ -5683,7 +5691,7 @@ describe('identity safety row ownership', () => {
               id: 'chat-safety-group-' + i,
               text: mode === 'wrong-digits' && i === 0 ? '54321' : '12345'
             }))
-          : ordinary(),
+          : ordinary().filter(node => !native || node.type !== 'TextView'),
       dom: async (script: string) =>
         document.window.eval('(()=>{' + script + '})()'),
       text: async (label: string) => {
@@ -5757,6 +5765,34 @@ describe('identity safety row ownership', () => {
         }
       }
     )
+  it('uses the exact iOS row and its spoken role when descendant role text is absent from accessibility', async () => {
+    const actual = model('normal', true, 'ios')
+    try {
+      await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      expect(actual.calls).deep.includes({ x: 200, y: 210 })
+      expect(actual.calls).deep.includes({
+        element: { id: 'chat-info-member-' + userIdOfGumbo(2) },
+        direction: 'DOWN',
+        timeout: 15000
+      })
+    } finally {
+      actual.close()
+    }
+  })
+  it('rejects the exact native row if its spoken role belongs to a different member', async () => {
+    const actual = model('wrong-spoken-role', true, 'ios')
+    try {
+      const failure = await captureFailure(
+        actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      )
+      expect(String(failure)).includes(
+        'Exact peer short name and visible role required'
+      )
+      expect(actual.calls).not.includes('identity-safety')
+    } finally {
+      actual.close()
+    }
+  })
   it('scrolls the observed peer clear of the footer before its numeric tap', async () => {
     const actual = model('below-footer')
     try {
@@ -5824,10 +5860,16 @@ describe('native installed legacy reply navigation', () => {
     const calls: unknown[] = []
     const runDir = mkdtempSync(join(tmpdir(), 'legacy-scoped-read-'))
     directories.push(runDir)
+    const clipped = mode.startsWith('clipped-')
     const row = {
-      x: 20,
-      y:
-        mode === 'float-edge'
+      x: clipped ? 126 : 20,
+      y: clipped
+        ? mode === 'clipped-above'
+          ? 0
+          : mode === 'clipped-indeterminate'
+            ? 700
+            : 2543
+        : mode === 'float-edge'
           ? 178.66664632161456
           : mode === 'occluded-edge'
             ? 170.1666717529297
@@ -5836,8 +5878,8 @@ describe('native installed legacy reply navigation', () => {
               : mode === 'below-composer'
                 ? 650
                 : 200,
-      width: 340,
-      height: mode === 'tall-file' ? 900 : 240
+      width: clipped ? 672 : 340,
+      height: clipped ? -143 : mode === 'tall-file' ? 900 : 240
     }
     const quote = { x: 40, y: 220, width: 300, height: 80 }
     interface Tree extends PublicNode {
@@ -5898,7 +5940,12 @@ describe('native installed legacy reply navigation', () => {
               {
                 id: 'chat-message-body-msg_reply',
                 type: 'ViewGroup',
-                bounds: { x: 40, y: row.y + 120, width: 300, height: 40 },
+                bounds: {
+                  x: row.x + 20,
+                  y: row.y + 120,
+                  width: row.width - 40,
+                  height: 40
+                },
                 children: [
                   {
                     type: 'TextView',
@@ -5906,7 +5953,12 @@ describe('native installed legacy reply navigation', () => {
                       mode === 'wrong-body'
                         ? baseline.reply.body.toUpperCase()
                         : baseline.reply.body,
-                    bounds: { x: 40, y: row.y + 120, width: 300, height: 40 }
+                    bounds: {
+                      x: row.x + 20,
+                      y: row.y + 120,
+                      width: row.width - 40,
+                      height: 40
+                    }
                   }
                 ]
               }
@@ -5966,10 +6018,20 @@ describe('native installed legacy reply navigation', () => {
           }
         },
         hierarchy: async () => read(),
-        platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
+        platformInfo: async () => ({
+          screenWidth: clipped ? 1080 : 400,
+          screenHeight: clipped ? 2400 : 800
+        }),
         swipe: async (args: unknown) => {
           calls.push({ swipe: args })
-          if (!['no-progress', 'occluded-edge'].includes(mode))
+          if (clipped && mode !== 'clipped-no-progress') {
+            row.y = 700
+            row.height = 410
+          } else if (
+            !['no-progress', 'occluded-edge', 'clipped-no-progress'].includes(
+              mode
+            )
+          )
             row.y = mode === 'tall-file' ? 116 : 200
         },
         tapOnPoint: async (args: unknown) => {
@@ -5982,9 +6044,11 @@ describe('native installed legacy reply navigation', () => {
       ui,
       observations: [],
       readingBand: async () =>
-        ['float-edge', 'occluded-edge'].includes(mode)
-          ? { top: 170.6666717529297, bottom: 700.6666870117188 }
-          : { top: 100, bottom: 700 },
+        clipped
+          ? { top: 432, bottom: 1929 }
+          : ['float-edge', 'occluded-edge'].includes(mode)
+            ? { top: 170.6666717529297, bottom: 700.6666870117188 }
+            : { top: 100, bottom: 700 },
       targetBounds: async () => ({ ...row }),
       anchor: async (target: Chat2Message) => {
         calls.push({ anchor: target.id })
@@ -6177,6 +6241,61 @@ describe('native installed legacy reply navigation', () => {
               ('tap' in call || 'present' in call)
           )
         ).equals(false)
+      }
+    )
+  for (const mode of ['clipped-below', 'clipped-above'])
+    it(
+      'reveals observed Android ' +
+        mode +
+        ' bounds before requiring positive dimensions and exact text',
+      async () => {
+        const actual = model(mode, true, 'android')
+        await actual.scenario.identityLegacyBody(actual.baseline.reply)
+        const proof = actual.scenario.observations.find(
+          p => p.legacyBody === 'msg_reply'
+        )!
+        const samples = proof.samples as Array<{
+          height?: number
+          clipped?: boolean
+        }>
+        expect(samples[0]).includes({ height: -143, clipped: true })
+        expect(
+          samples.some(
+            sample => sample.height === 410 && sample.clipped === false
+          )
+        ).equals(true)
+        expect(
+          actual.scenario.observations.some(p => p.kind === 'body')
+        ).equals(true)
+        const gesture = (
+          actual.calls[0] as { swipe: { startY: number; endY: number } }
+        ).swipe
+        expect(
+          mode === 'clipped-below'
+            ? gesture.endY < gesture.startY
+            : gesture.endY > gesture.startY
+        ).equals(true)
+      }
+    )
+  for (const mode of ['clipped-no-progress', 'clipped-indeterminate'])
+    it(
+      'rejects Android ' +
+        mode +
+        ' without accepting clipped geometry as visible',
+      async () => {
+        const actual = model(mode, true, 'android')
+        const failure = await captureFailure(
+          actual.scenario.identityLegacyBody(actual.baseline.reply)
+        )
+        expect(String(failure)).includes(
+          mode === 'clipped-no-progress'
+            ? 'native legacy reader progress'
+            : 'observed offscreen direction'
+        )
+        expect(
+          actual.scenario.observations.some(p => p.kind === 'body')
+        ).equals(false)
+        expect(actual.calls).has.length(mode === 'clipped-no-progress' ? 1 : 0)
       }
     )
 })
