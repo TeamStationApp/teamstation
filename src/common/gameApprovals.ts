@@ -131,6 +131,11 @@ export interface GameRequestTerms {
   replacesGameId?: string | null
   hostingAuthorizerUserId?: string
   hostingAuthorizationSource?: 'initiator' | 'legacyReceipt'
+  /**
+   * The Auto-Scheduler preview that proposed this game. Set only by the
+   * server when it publishes a preview; a client can't send it.
+   */
+  schedulePreviewId?: string
 }
 
 export function asGameTimezone(raw: unknown): string {
@@ -246,4 +251,20 @@ export function asGameProposal(raw: unknown): GameProposal {
   if (raw.initiatingTeamId != null)
     result.initiatingTeamId = requiredId(raw.initiatingTeamId)
   return result
+}
+
+/**
+ * Cancellations the system made: a team's withdrawal, a game replaced by a
+ * change that dropped a team, and a game the Auto-Scheduler took away when
+ * it rescheduled. Nothing sets such a game back to scheduled, so its
+ * matchup can't be duplicated.
+ */
+export const SYSTEM_CANCELLATIONS = [
+  'withdrawal',
+  'replacement',
+  'rescheduled'
+] as const
+
+export function systemCancelled(reason: string | null | undefined): boolean {
+  return (SYSTEM_CANCELLATIONS as readonly string[]).includes(reason ?? '')
 }

@@ -202,7 +202,7 @@ export async function seedFields(
 export async function seedThrough(
   fx: AutoSchedulerFixture,
   scenario: string
-): Promise<{ venueId?: string; fieldId?: string }> {
+): Promise<{ venueId?: string; fieldId?: string; previewId?: string }> {
   const order = Number(scenario.slice(1))
   if (order < 2) return {}
   const venueId = await seedClaimedPark(fx)
@@ -212,7 +212,20 @@ export async function seedThrough(
   await seedGamesOnField(fx, venueId, fieldId)
   if (order < 7) return { venueId, fieldId }
   await seedSchedulingSetup(fx, fieldId)
-  return { venueId, fieldId }
+  // E10 builds from E6's setup, with no preview of E7's in the way.
+  if (order < 8 || order >= 10) return { venueId, fieldId }
+  const preview = await api<{ id: string }>(
+    fx,
+    101,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    { mode: 'full', existing: 'workAround' }
+  )
+  if (order < 9) return { venueId, fieldId, previewId: preview.id }
+  await api(fx, 101, 'POST', `/schedule-previews/${preview.id}/publications`, {
+    option: 0
+  })
+  return { venueId, fieldId, previewId: preview.id }
 }
 
 /** seasonA's game windows as E6 sets them: a second period from June 1. */

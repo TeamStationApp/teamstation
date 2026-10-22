@@ -314,6 +314,8 @@ export interface GamesTable {
   /** The registry field the game is on, and the size it is set up in. */
   field_id: Generated<string | null>
   field_size: Generated<string | null>
+  /** The Auto-Scheduler preview the game was published from. */
+  schedule_preview_id: Generated<string | null>
 }
 
 /**
@@ -962,6 +964,41 @@ export interface VenueFieldsTable {
   updated_at: Generated<Date>
 }
 
+/** One build of a league's schedule, and the edits made to one option. */
+export interface SchedulePreviewsTable {
+  id: string
+  league_id: string
+  created_by: string
+  created_at: Generated<Date>
+  mode: 'full' | 'partial'
+  /** The snapshot the engine ran on (`src/server/autoScheduler/snapshot.ts`). */
+  input: ColumnType<unknown, string, string>
+  /** The engine's options (`src/common/autoScheduler/types.ts`). */
+  options: ColumnType<unknown, string | undefined, string>
+  /** Why no option could be built, when none could. */
+  blocking: string | null
+  /** Rejected and added games (`src/common/schedulePreviews.ts`). */
+  edits: ColumnType<unknown, string | undefined, string>
+  status: Generated<'open' | 'published' | 'discarded'>
+  published_option: number | null
+  published_at: Timestamp | null
+  /** How many upcoming games its publication replaced. */
+  removed_games: number | null
+}
+
+/** A game a publication proposed. */
+export interface SchedulePreviewGamesTable {
+  preview_id: string
+  game_key: string
+  season_id: string
+  home_team_id: string
+  away_team_id: string
+  request_id: string | null
+  game_id: string | null
+  rejected_at: Timestamp | null
+  resolved_at: Timestamp | null
+}
+
 /** A team marked as an exhibition team in a season. */
 export interface SeasonTeamFlagsTable {
   season_id: string
@@ -1071,6 +1108,8 @@ export interface Database {
   league_schedule_setups: LeagueScheduleSetupsTable
   season_schedule_settings: SeasonScheduleSettingsTable
   season_team_flags: SeasonTeamFlagsTable
+  schedule_preview_games: SchedulePreviewGamesTable
+  schedule_previews: SchedulePreviewsTable
   game_player_stats: GamePlayerStatsTable
   game_stats_state: GameStatsStateTable
   invite_redemptions: InviteRedemptionsTable

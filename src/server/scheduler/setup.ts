@@ -19,7 +19,7 @@ import { datesOf } from '../venues/venues'
 
 type Db = Kysely<Database>
 
-interface SeasonRow {
+export interface SeasonRow {
   id: string
   name: string
   year: number
@@ -45,6 +45,24 @@ async function seasonRow(db: Db, seasonId: string): Promise<SeasonRow> {
     .executeTakeFirst()
   if (season == null) throw notFound()
   return season
+}
+
+/** Seasons by id, in no particular order. */
+export async function seasonRows(db: Db, ids: string[]): Promise<SeasonRow[]> {
+  if (ids.length === 0) return []
+  return await db
+    .selectFrom('seasons')
+    .select([
+      'id',
+      'name',
+      'year',
+      'timezone',
+      'league_id',
+      'starts_on',
+      'ends_on'
+    ])
+    .where('id', 'in', ids)
+    .execute()
 }
 
 /** The league a season is scheduled under; a season must have one. */

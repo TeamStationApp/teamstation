@@ -115,6 +115,7 @@ import { OnboardingScreen } from './screens/OnboardingScreen'
 import { PersonProfileScreen } from './screens/PersonProfileScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
+import { SchedulePreviewScreen } from './screens/SchedulePreviewScreen'
 import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
@@ -1818,6 +1819,23 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenSeason={seasonId => {
           push({ name: 'scheduleSeason', leagueId: top.leagueId, seasonId })
         }}
+        onOpenPreview={previewId => {
+          push({ name: 'schedulePreview', leagueId: top.leagueId, previewId })
+        }}
+      />
+    ) : top.name === 'schedulePreview' ? (
+      <SchedulePreviewScreen
+        key={top.previewId}
+        client={client}
+        leagueId={top.leagueId}
+        previewId={top.previewId}
+        onOpenPreview={previewId => {
+          replace({
+            name: 'schedulePreview',
+            leagueId: top.leagueId,
+            previewId
+          })
+        }}
       />
     ) : top.name === 'scheduleSeason' ? (
       <ScheduleSeasonScreen
@@ -2185,6 +2203,13 @@ function Shell(props: AppProps): React.ReactElement {
               name: 'group',
               kind: 'season',
               id: notice.seasonId,
+              tab: 'schedule'
+            })
+          else if (notice.teamId != null)
+            push({
+              name: 'group',
+              kind: 'team',
+              id: notice.teamId,
               tab: 'schedule'
             })
         }}
@@ -2898,7 +2923,8 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   if (
     route.name === 'autoScheduler' ||
     route.name === 'fieldManager' ||
-    route.name === 'scheduleSeason'
+    route.name === 'scheduleSeason' ||
+    route.name === 'schedulePreview'
   ) {
     const league = {
       name: 'group' as const,

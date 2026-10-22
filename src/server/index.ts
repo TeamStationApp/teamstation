@@ -78,6 +78,7 @@ import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
+import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
@@ -606,6 +607,7 @@ function runWorker(): void {
   )
   app.use('/api/v1', venueRoutes(db, mediaContext, { places: placesProvider }))
   app.use('/api/v1', schedulingSetupRoutes(db))
+  app.use('/api/v1', schedulePreviewRoutes(db))
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {

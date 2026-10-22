@@ -18,11 +18,16 @@ import {
   type GameFieldSummary,
   type GameIntent,
   type GameProposal,
-  type GameRequestTerms
+  type GameRequestTerms,
+  systemCancelled
 } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import type { Actor } from '../auth/sessions'
+import {
+  gameNeedsAttention,
+  requestNeedsAttention
+} from '../autoScheduler/attention'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
@@ -505,6 +510,7 @@ export async function finishGameRequest(
   // The game's teams and season before a change moved it, to tell both.
   let before: GameFigureIds | undefined
   let previousFieldId: string | null = null
+  let cancelsSchedulerGame = false
   let gameId = terms.gameId
   if (gameId == null) {
     if (terms.replacesGameId != null) {
@@ -539,7 +545,8 @@ export async function finishGameRequest(
           terms.game.timezone ?? (await gameTimezone(trx, terms.game.seasonId)),
         status: terms.game.status,
         field_id: terms.game.fieldId ?? null,
-        field_size: terms.game.fieldId == null ? null : terms.game.fieldSize
+        field_size: terms.game.fieldId == null ? null : terms.game.fieldSize,
+        schedule_preview_id: terms.schedulePreviewId ?? null
       })
       .execute()
   } else {
@@ -563,10 +570,7 @@ export async function finishGameRequest(
       throw conflict(
         'An original team administrator must authorize changes to this game'
       )
-    if (
-      current.cancellation_reason === 'withdrawal' ||
-      current.cancellation_reason === 'replacement'
-    )
+    if (systemCancelled(current.cancellation_reason))
       throw conflict(
         'A withdrawn game cannot be restored by a scheduling proposal'
       )
@@ -608,6 +612,10 @@ export async function finishGameRequest(
     }
     await requireEditableTeams(trx, current, terms.game)
     previousFieldId = current.field_id
+    cancelsSchedulerGame =
+      current.schedule_preview_id != null &&
+      current.status !== 'cancelled' &&
+      terms.game.status === 'cancelled'
     await trx
       .updateTable('games')
       .set({
@@ -653,10 +661,19 @@ export async function finishGameRequest(
       .where('game_id', '=', gameId)
       .where('id', '!=', id)
       .execute()
+  // A scheduler game's row is known once it exists.
+  await trx
+    .updateTable('schedule_preview_games')
+    .set({ game_id: gameId })
+    .where('request_id', '=', id)
+    .execute()
   await refreshAroundGame(trx, gameId, clock, [previousFieldId])
   await notifyGameChange(trx, { game: gameId, kind: 'game' })
   // Published or changed: its season's row and its teams' lists.
   await noteGameFigures(trx, gameId, before)
+  // A rainout entered in Game Settings.
+  if (cancelsSchedulerGame)
+    await gameNeedsAttention(trx, gameId, 'cancelled', request.sender_id)
   return true
 }
 
@@ -700,7 +717,9 @@ export async function proposeGame(
   actor: Actor,
   body: GameProposal,
   clock: Clock = realClock,
-  resumingRequestId?: string
+  resumingRequestId?: string,
+  /** Server-only: the Auto-Scheduler preview publishing this game. */
+  options: { schedulePreviewId?: string } = {}
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
     await lockKeys(trx, [
@@ -814,10 +833,7 @@ export async function proposeGame(
     if (body.sender.kind === 'season' && body.sender.id !== game.seasonId)
       throw forbidden('Send this game from its hosting season')
     if (body.gameId != null && old == null) throw notFound()
-    if (
-      old?.cancellation_reason === 'withdrawal' ||
-      old?.cancellation_reason === 'replacement'
-    )
+    if (systemCancelled(old?.cancellation_reason))
       throw conflict('A canceled withdrawal or replacement cannot be restored')
     if (old != null && !(await matchesVersion(trx, old, body.expected)))
       throw conflict('Review the current game before changing its schedule')
@@ -912,7 +928,10 @@ export async function proposeGame(
             hostingAuthorizerUserId: fresh.userId,
             hostingAuthorizationSource: 'initiator' as const
           }
-        : {})
+        : {}),
+      ...(options.schedulePreviewId == null
+        ? {}
+        : { schedulePreviewId: options.schedulePreviewId })
     }
     const id = makeId('invite')
     const sent = clock.now()
@@ -965,6 +984,7 @@ export async function proposeGame(
       await notifyGameChange(trx, { game: old.id, kind: 'game' })
       // Cancelled, it leaves its teams' records.
       await noteGameFigures(trx, old.id)
+      await gameNeedsAttention(trx, old.id, 'replaced', fresh.userId)
     }
     await trx
       .insertInto('group_requests')
@@ -1082,6 +1102,7 @@ export async function decideGameRequest(
         .where('id', '=', id)
         .execute()
       await refreshFieldWarnings(trx, [terms.game.fieldId], clock)
+      await requestNeedsAttention(trx, request, 'declined', fresh.userId)
     } else {
       for (const side of permitted)
         await trx
@@ -1119,11 +1140,7 @@ export async function withdrawFromGame(
     if (![game.home_team_id, game.away_team_id].includes(teamId))
       throw forbidden('Only a participating team can withdraw')
     await requireScheduler(trx, fresh, { kind: 'team', id: teamId })
-    if (
-      game.cancellation_reason === 'withdrawal' ||
-      game.cancellation_reason === 'replacement'
-    )
-      return game
+    if (systemCancelled(game.cancellation_reason)) return game
     const refs: GroupRef[] = [
       { kind: 'team', id: game.home_team_id },
       { kind: 'team', id: game.away_team_id },
@@ -1183,6 +1200,8 @@ export async function withdrawFromGame(
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
     // Cancelled by a withdrawal, it leaves its teams' records.
     await noteGameFigures(trx, gameId)
+    if (game.status !== 'cancelled')
+      await gameNeedsAttention(trx, gameId, 'teamWithdrew', fresh.userId)
     return withdrawn
   })
 }
@@ -1237,7 +1256,9 @@ export async function withdrawGameRequest(
   db: Kysely<Database>,
   actor: Actor,
   id: string,
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  /** Set by `resendGameRequest`: the game stays proposed, as a new request. */
+  options: { resending?: boolean } = {}
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
     await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
@@ -1277,7 +1298,7 @@ export async function withdrawGameRequest(
       throw conflict(
         'This game is already published. A team administrator can withdraw from the game.'
       )
-    if (request.status === 'pending')
+    if (request.status === 'pending') {
       await trx
         .updateTable('group_requests')
         .set({
@@ -1287,6 +1308,17 @@ export async function withdrawGameRequest(
         })
         .where('id', '=', id)
         .execute()
+      // The Auto-Scheduler's own withdrawal of a game its admin rejected
+      // needs no word to that admin.
+      const rejected = await trx
+        .selectFrom('schedule_preview_games')
+        .select('preview_id')
+        .where('request_id', '=', id)
+        .where('rejected_at', 'is not', null)
+        .executeTakeFirst()
+      if (options.resending !== true && rejected == null)
+        await requestNeedsAttention(trx, request, 'withdrawn', fresh.userId)
+    }
     await refreshFieldWarnings(
       trx,
       [(request.terms as GameRequestTerms).game.fieldId],
@@ -1340,7 +1372,7 @@ export async function resendGameRequest(
       throw conflict(
         'A newer invitation exists. Open the latest invitation to resend it.'
       )
-    await withdrawGameRequest(trx, fresh, id, clock)
+    await withdrawGameRequest(trx, fresh, id, clock, { resending: true })
     const terms = original.terms as GameRequestTerms
     const proposal: GameProposal = {
       sender: {
@@ -1368,12 +1400,24 @@ export async function resendGameRequest(
       fresh,
       proposal,
       clock,
-      terms.replacesGameId == null ? undefined : original.id
+      terms.replacesGameId == null ? undefined : original.id,
+      terms.schedulePreviewId == null
+        ? {}
+        : { schedulePreviewId: terms.schedulePreviewId }
     )
     await trx
       .updateTable('group_requests')
       .set({ supersedes_id: id })
       .where('id', '=', next.id)
+      .execute()
+    // A scheduler game's row follows its proposal to the resent one.
+    await trx
+      .updateTable('schedule_preview_games')
+      .set({
+        request_id: next.id,
+        ...(next.status === 'accepted' ? { game_id: next.game_id } : {})
+      })
+      .where('request_id', '=', id)
       .execute()
     await trx
       .updateTable('group_requests')
@@ -1509,9 +1553,7 @@ export async function schedulingGame(
   return {
     game: materialGame(row),
     version: gameVersion(materialGame(row)),
-    canPropose:
-      row.cancellation_reason !== 'withdrawal' &&
-      row.cancellation_reason !== 'replacement',
+    canPropose: !systemCancelled(row.cancellation_reason),
     withdrawTeamIds: teamIds,
     administeredTeamIds: teamIds,
     field: await fieldSummary(db, row.field_id, row.field_size)

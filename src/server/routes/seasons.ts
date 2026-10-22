@@ -319,6 +319,14 @@ export async function scheduleOf(
         .on('videos.hidden', '=', false)
         .on(isRealVideo)
     )
+    // A game the Auto-Scheduler took away when it rescheduled leaves the
+    // schedules; a rainout or a withdrawal stays on them, canceled.
+    .where(eb =>
+      eb.or([
+        eb('games.cancellation_reason', 'is', null),
+        eb('games.cancellation_reason', '!=', 'rescheduled')
+      ])
+    )
     .select([
       'games.id as id',
       'games.home_team_id as homeTeamId',

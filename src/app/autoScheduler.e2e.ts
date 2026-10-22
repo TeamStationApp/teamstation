@@ -9,9 +9,10 @@
 //     node -r sucrase/register src/app/autoScheduler.e2e.ts --only E0
 //
 // E0 runs on origin/master too: it opens only screens that exist there.
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { cp, mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
@@ -24,6 +25,7 @@ import {
   EXHIBITION,
   FIELD_ONE_HOURS,
   G1,
+  SEASON_A_SETTINGS,
   SEASON_A_WINDOWS,
   seedThrough
 } from '../test/autoSchedulerFixture'
@@ -49,8 +51,8 @@ interface Run {
   fx: AutoSchedulerFixture
   artifacts: string
   support: string
-  /** What the scenarios so far made: the venue and its first field. */
-  state: { venueId?: string; fieldId?: string }
+  /** What the scenarios so far made: the venue, its first field, a preview. */
+  state: { venueId?: string; fieldId?: string; previewId?: string }
   session: (device: string, user: number) => Promise<BrowserSession>
   visit: (b: BrowserSession, path: string) => Promise<void>
   pass: (id: string, description: string) => Promise<void>
@@ -660,6 +662,20 @@ async function tapText(
   )
 }
 
+/**
+ * Clicks the element with exactly this accessible label in the page itself,
+ * waiting for it first: for a sheet's rows, which hold a label and a detail.
+ */
+async function clickLabel(b: BrowserSession, label: string): Promise<void> {
+  trace(`click label ${label}`)
+  const selector = `[aria-label="${label}"]`
+  await b.page.waitForSelector(selector, { timeout: 15000 })
+  await b.page.evaluate((wanted: string) => {
+    const node = document.querySelector(wanted)
+    if (node !== null) (node as HTMLElement).click()
+  }, selector)
+}
+
 /** Picks a wall time, "HH:MM", in the open time picker. */
 async function pickTime(b: BrowserSession, time: string): Promise<void> {
   const hour = Number(time.slice(0, 2))
@@ -948,10 +964,570 @@ async function chooseDate(b: BrowserSession, date: string): Promise<void> {
     'November',
     'December'
   ]
+  await fill(b.m, 'Year', date.slice(0, 4))
   await b.m.tapOn({ css: '[aria-label^="Choose month:"]', timeout: 15000 })
   await tapLabel(b, months[Number(date.slice(5, 7)) - 1])
   await tapLabel(b, `Choose ${date}`)
   await tapText(b, 'Use date')
+}
+
+/** The preview the address bar names, once it is open. */
+async function openPreview(b: BrowserSession): Promise<string> {
+  const path = await at(b, /\/scheduler\/previews\/[^/]+$/)
+  await contains(b.page, 'Publish this option')
+  return decodeURIComponent(path.slice(path.lastIndexOf('/') + 1))
+}
+
+interface StoredOption {
+  games: Array<{
+    key: string
+    homeTeamId: string
+    awayTeamId: string
+    startAt: string
+    endAt: string
+    fieldId: string
+  }>
+  fairness: Array<{
+    teamId: string
+    exhibitionTeam: boolean
+    regularGames: number
+    exhibitionGames: number
+  }>
+  reasons: string[]
+  unmet: Array<{ message: string; cause: string }>
+}
+
+async function storedPreview(
+  run: Run,
+  previewId: string
+): Promise<{
+  options: StoredOption[]
+  blocking: string | null
+  status: string
+}> {
+  const row = await run.fx.f.h.db
+    .selectFrom('schedule_previews')
+    .select(['options', 'blocking', 'status'])
+    .where('id', '=', previewId)
+    .executeTakeFirstOrThrow()
+  return {
+    options: row.options as StoredOption[],
+    blocking: row.blocking,
+    status: row.status
+  }
+}
+
+/** No two games on Field 1 overlap. */
+async function noOverlaps(run: Run): Promise<void> {
+  const games = await run.fx.f.h.db
+    .selectFrom('games')
+    .select(['id', 'start_at', 'end_at'])
+    .where('field_id', '=', run.state.fieldId!)
+    .where('status', '=', 'scheduled')
+    .orderBy('start_at')
+    .execute()
+  for (let i = 1; i < games.length; i++)
+    expect(
+      games[i].start_at.getTime() >= games[i - 1].end_at!.getTime(),
+      `${games[i - 1].id} and ${games[i].id}`
+    ).equals(true)
+}
+
+/**
+ * E7: the league admin builds seasonA's schedule around its existing games:
+ * up to three options, Option 1 recommended, equal counts, the exhibition
+ * split E6 warned of, and the fairness rows.
+ */
+async function e7(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const admin = await run.session('autoScheduler-e7', 101)
+  await run.visit(admin, `/groups/league/${fx.f.leagueA}/scheduler`)
+  await tapText(admin, 'Build schedule')
+  await contains(admin.page, 'These seasons already have 2 upcoming games')
+  await clickLabel(admin, 'Work around them')
+  const previewId = await openPreview(admin)
+  run.state.previewId = previewId
+  const stored = await storedPreview(run, previewId)
+  expect(stored.options.length).within(1, 3)
+  const [best] = stored.options
+  for (const row of best.fairness.filter(item => !item.exhibitionTeam))
+    expect([row.regularGames, row.exhibitionGames]).deep.equals([4, 1])
+  expect(
+    best.fairness
+      .filter(row => row.exhibitionTeam)
+      .map(row => row.exhibitionGames)
+      .sort((a, b) => a - b)
+  ).deep.equals([3, 4])
+  const fixed = await fx.f.h.db
+    .selectFrom('games')
+    .select(['start_at', 'end_at'])
+    .where('field_id', '=', run.state.fieldId!)
+    .execute()
+  for (const option of stored.options)
+    for (const game of option.games)
+      for (const held of fixed)
+        expect(
+          Date.parse(game.startAt) < held.end_at!.getTime() &&
+            held.start_at.getTime() < Date.parse(game.endAt)
+        ).equals(false)
+  await contains(admin.page, 'Option 1 · Recommended')
+  await contains(admin.page, 'FAIRNESS')
+  await admin.page.evaluate(() => {
+    window.scrollTo(0, 0)
+  })
+  await capture(admin.m, artifacts, 'preview-option-1.png')
+  if (stored.options.length > 1) {
+    expect(stored.options[1].reasons.length).greaterThan(0)
+    await tapText(admin, 'Option 2', '[role="tab"], [role="button"]')
+    await contains(admin.page, stored.options[1].reasons[0])
+    await capture(admin.m, artifacts, 'preview-option-2.png')
+  }
+  await run.pass(
+    'E7',
+    `Work around: ${stored.options.length} options, Option 1 recommended; every participant 4 regular and 1 exhibition, the exhibition teams 4 and 3; no option overlaps the fixed games`
+  )
+}
+
+/** E8: publishing Option 1 puts every game on seasonA's schedule at once. */
+async function e8(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const previewId = run.state.previewId!
+  const admin = await run.session('autoScheduler-e8', 101)
+  await run.visit(
+    admin,
+    `/groups/league/${fx.f.leagueA}/scheduler/previews/${previewId}`
+  )
+  await contains(admin.page, 'Publish this option')
+  const stored = await storedPreview(run, previewId)
+  await tapText(admin, 'Publish this option')
+  await contains(
+    admin.page,
+    `${stored.options[0].games.length} games scheduled`
+  )
+  const games = await fx.f.h.db
+    .selectFrom('games')
+    .select(['status', 'field_id', 'home_team_id', 'away_team_id'])
+    .where('schedule_preview_id', '=', previewId)
+    .execute()
+  expect(games.length).equals(stored.options[0].games.length)
+  expect(
+    games.every(
+      game => game.status === 'scheduled' && game.field_id === run.state.fieldId
+    )
+  ).equals(true)
+  expect(
+    games.some(
+      game =>
+        game.home_team_id === fx.teams.Visitors ||
+        game.away_team_id === fx.teams.Visitors
+    )
+  ).equals(true)
+  const notices = await fx.f.h.db
+    .selectFrom('notification_events')
+    .select('metadata')
+    .where('source_type', '=', 'schedulePublished')
+    .execute()
+  expect(notices.length).equals(9)
+  await run.visit(
+    admin,
+    `/groups/league/${fx.f.leagueA}/scheduler/previews/${previewId}`
+  )
+  await contains(admin.page, 'Published schedule')
+  await run.visit(admin, `/groups/season/${fx.f.seasonA}?tab=schedule`)
+  await tapText(
+    admin,
+    'Upcoming',
+    '[role="tab"], [role="button"], [role="radio"]'
+  )
+  await contains(admin.page, 'Demo Visitors')
+  await scrollToText(admin, 'Upcoming', 'start')
+  await capture(admin.m, artifacts, 'season-schedule-published.png')
+  const outside = await run.session('autoScheduler-e8-visitors', 103)
+  await run.visit(outside, '/notifications')
+  await contains(
+    outside.page,
+    'Demo Regular schedule updated for Demo Visitors'
+  )
+  await capture(outside.m, artifacts, 'outside-team-notice.png')
+  await run.pass(
+    'E8',
+    `Option 1 published: all ${games.length} games scheduled at once on Field 1, the Visitors’ included; one schedulePublished notice per team; the preview reads Published`
+  )
+}
+
+/**
+ * E9: a team withdraws from one game and another is rained out; the league
+ * admin recalculates just those teams, rejects one more game, adds one by
+ * hand, and publishes.
+ */
+async function e9(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const previewId = run.state.previewId!
+  const rows = await fx.f.h.db
+    .selectFrom('schedule_preview_games')
+    .select(['game_id', 'home_team_id', 'away_team_id'])
+    .where('preview_id', '=', previewId)
+    .where('game_id', 'is not', null)
+    .orderBy('game_key')
+    .execute()
+  const visitorsGame = rows.find(
+    row =>
+      row.home_team_id === fx.teams.Visitors ||
+      row.away_team_id === fx.teams.Visitors
+  )!
+  await api(fx, 103, 'POST', `/games/${visitorsGame.game_id}/withdrawals`, {
+    teamId: fx.teams.Visitors
+  })
+  const rained = rows.find(
+    row =>
+      row.game_id !== visitorsGame.game_id &&
+      ![row.home_team_id, row.away_team_id].some(id =>
+        [visitorsGame.home_team_id, visitorsGame.away_team_id].includes(id)
+      )
+  )!
+  const scheduling = await api<{
+    game: Record<string, unknown>
+    version: string
+  }>(fx, 101, 'GET', `/games/${rained.game_id}/scheduling`)
+  await api(fx, 101, 'POST', '/game-requests', {
+    sender: { kind: 'season', id: fx.f.seasonA },
+    gameId: rained.game_id,
+    expected: scheduling.version,
+    game: { ...scheduling.game, status: 'cancelled' },
+    idempotencyKey: 'e9-rainout'
+  })
+  const attention = await fx.f.h.db
+    .selectFrom('notification_events')
+    .select('id')
+    .where('source_type', '=', 'scheduleNeedsAttention')
+    .execute()
+  expect(attention.length).equals(2)
+  const listedTeams = new Set([
+    visitorsGame.home_team_id,
+    visitorsGame.away_team_id,
+    rained.home_team_id,
+    rained.away_team_id
+  ])
+  const before = await fx.f.h.db
+    .selectFrom('games')
+    .select(['id', 'start_at', 'home_team_id', 'away_team_id'])
+    .where('season_id', '=', fx.f.seasonA)
+    .where('status', '=', 'scheduled')
+    .execute()
+  const admin = await run.session('autoScheduler-e9', 101)
+  await run.visit(admin, `/groups/league/${fx.f.leagueA}/scheduler`)
+  await contains(admin.page, 'NEEDS RESCHEDULING')
+  await scrollToText(admin, 'NEEDS RESCHEDULING', 'start')
+  await capture(admin.m, artifacts, 'needs-rescheduling.png')
+  await tapText(admin, 'Recalculate just these teams')
+  const partialId = await openPreview(admin)
+  const partial = await storedPreview(run, partialId)
+  const option = partial.options[0]
+  for (const game of option.games)
+    expect(
+      listedTeams.has(game.homeTeamId) && listedTeams.has(game.awayTeamId)
+    ).equals(true)
+  // Reject one more game, then add it back by hand at its own time.
+  const rejected = [...option.games].sort((a, b) =>
+    a.startAt === b.startAt
+      ? a.key.localeCompare(b.key)
+      : a.startAt.localeCompare(b.startAt)
+  )[0]
+  const rejectLabel = await admin.page.evaluate(() => {
+    const node = document.querySelector('[aria-label^="Reject "]')
+    return node === null ? '' : String(node.getAttribute('aria-label'))
+  })
+  await tapLabel(admin, rejectLabel)
+  await contains(admin.page, 'Game rejected.')
+  await tapText(admin, 'Add game')
+  const names = new Map(
+    (
+      await fx.f.h.db
+        .selectFrom('teams')
+        .select(['id', 'name'])
+        .where('id', 'in', [rejected.homeTeamId, rejected.awayTeamId])
+        .execute()
+    ).map(team => [team.id, team.name])
+  )
+  await tapLabel(admin, 'Home: Choose')
+  await tapLabel(admin, names.get(rejected.homeTeamId)!)
+  await tapLabel(admin, 'Away: Choose')
+  await tapLabel(admin, names.get(rejected.awayTeamId)!)
+  await tapLabel(admin, 'Field: Choose')
+  await tapLabel(admin, 'Field 1, Example Park')
+  await tapLabel(admin, 'Size: Choose')
+  await tapLabel(admin, '50/70')
+  const local = new Date(rejected.startAt).toLocaleString('sv-SE', {
+    timeZone: 'America/New_York'
+  })
+  await tapLabel(admin, 'Date: Choose')
+  await chooseDate(admin, local.slice(0, 10))
+  await tapLabel(admin, 'Start: Choose')
+  await pickTime(admin, local.slice(11, 16))
+  await tapText(admin, 'Add this game')
+  await contains(admin.page, 'Game added.')
+  await tapText(admin, 'Publish this option')
+  await contains(admin.page, 'scheduled')
+  expect(
+    await (async () =>
+      (
+        await api<{ items: unknown[] }>(
+          fx,
+          101,
+          'GET',
+          `/leagues/${fx.f.leagueA}/games-to-reschedule`
+        )
+      ).items)()
+  ).deep.equals([])
+  const after = await fx.f.h.db
+    .selectFrom('games')
+    .select(['id', 'start_at', 'home_team_id', 'away_team_id'])
+    .where('season_id', '=', fx.f.seasonA)
+    .where('status', '=', 'scheduled')
+    .execute()
+  // Only the listed teams' games moved.
+  const moved = before.filter(
+    game =>
+      !after.some(
+        other =>
+          other.id === game.id &&
+          other.start_at.getTime() === game.start_at.getTime()
+      )
+  )
+  for (const game of moved)
+    expect(
+      listedTeams.has(game.home_team_id) && listedTeams.has(game.away_team_id)
+    ).equals(true)
+  // The added game is on the schedule at the rejected game's time.
+  expect(
+    after.some(
+      game =>
+        game.start_at.toISOString() ===
+          new Date(rejected.startAt).toISOString() &&
+        game.home_team_id === rejected.homeTeamId
+    )
+  ).equals(true)
+  await noOverlaps(run)
+  await run.pass(
+    'E9',
+    'a withdrawal and a rainout listed with league-admin notices; Recalculate just these teams moved only their games; one more game rejected and added back by hand; nothing overlaps; the list is empty after publishing'
+  )
+}
+
+/**
+ * Runs a curl against the fixture server and logs it, token hidden. The
+ * server runs in this process, so curl must not block its event loop.
+ */
+async function curl(
+  run: Run,
+  lines: string[],
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<string> {
+  const token = run.fx.f.h.tokens.get(101)!
+  const args = [
+    '-sS',
+    '-X',
+    method,
+    '-H',
+    'Content-Type: application/json',
+    '-H',
+    `Authorization: Bearer ${token}`,
+    ...(body === undefined ? [] : ['-d', JSON.stringify(body)]),
+    '-w',
+    '\nHTTP %{http_code}\n',
+    `${run.fx.f.h.origin}/api/v1${path}`
+  ]
+  const shown = args
+    .map(arg =>
+      arg.startsWith('Authorization:')
+        ? "'Authorization: Bearer $TOKEN'"
+        : /[\s{}"*$]/.test(arg)
+          ? `'${arg}'`
+          : arg
+    )
+    .join(' ')
+  const { stdout: output } = await promisify(execFile)('curl', args, {
+    encoding: 'utf8'
+  })
+  // A preview's body is long; the log keeps its start.
+  const answer = output.trim()
+  lines.push(
+    `$ curl ${shown}`,
+    answer.length > 1500
+      ? `${answer.slice(0, 1500)} … (${answer.length - 1500} more characters)${answer.slice(answer.lastIndexOf('\n'))}`
+      : answer,
+    ''
+  )
+  return output
+}
+
+/**
+ * E10, after E1–E9: with only Saturdays open and 40 games asked for, the
+ * option says what it couldn't give and why; with no slot at all, the
+ * preview has no options and says why. Then the API log.
+ */
+async function e10(run: Run): Promise<void> {
+  trace('E10 const { fx, artifacts } = run')
+  const { fx, artifacts } = run
+  trace('E10 const venueId = run.state.venueId!')
+  const venueId = run.state.venueId!
+  trace('E10 const fieldId = run.state.fieldId!')
+  const fieldId = run.state.fieldId!
+  trace('E10 await api')
+  await api(fx, 101, 'PUT', `/venues/${venueId}/fields/${fieldId}`, {
+    hours: [{ weekday: 6, start: '08:00', end: '18:00' }]
+  })
+  trace('E10 await api')
+  await api(fx, 101, 'PUT', `/seasons/${fx.f.seasonA}/schedule-settings`, {
+    ...SEASON_A_SETTINGS,
+    regularGames: 40
+  })
+  trace('E10 const admin = await run.session')
+  const admin = await run.session('autoScheduler-e10', 101)
+  trace('E10 await run.visit')
+  await run.visit(admin, `/groups/league/${fx.f.leagueA}/scheduler`)
+  trace('E10 await tapText')
+  await tapText(admin, 'Build schedule')
+  trace('E10 await clickLabel')
+  await clickLabel(admin, 'Replace them')
+  trace('E10 const capacityId = await openPreview')
+  const capacityId = await openPreview(admin)
+  trace('E10 const capacity = await storedPreview')
+  const capacity = await storedPreview(run, capacityId)
+  trace('E10 const unmet = capacity.options[0].unmet[')
+  const unmet = capacity.options[0].unmet[0]
+  expect(unmet.message).matches(
+    /^every team gets \d+ of the 40 requested regular-season games$/
+  )
+  expect(unmet.cause).equals(
+    'not enough 50/70 field time to give every team 40 games'
+  )
+  trace('E10 const counts = new Set')
+  const counts = new Set(
+    capacity.options[0].fairness
+      .filter(row => !row.exhibitionTeam)
+      .map(row => row.regularGames)
+  )
+  expect(counts.size).equals(1)
+  trace('E10 await contains')
+  await contains(admin.page, unmet.message)
+  trace('E10 await scrollToText')
+  await scrollToText(admin, 'WHAT COULDN’T BE MET', 'start')
+  trace('E10 await capture')
+  await capture(admin.m, artifacts, 'preview-capacity.png')
+  trace('E10 await api')
+  await api(fx, 101, 'PUT', `/venues/${venueId}/fields/${fieldId}`, {
+    startsOn: '2027-03-06',
+    endsOn: '2027-03-06',
+    hours: [{ weekday: 6, start: '08:00', end: '09:00' }]
+  })
+  trace('E10 await run.visit')
+  await run.visit(admin, `/groups/league/${fx.f.leagueA}/scheduler`)
+  trace('E10 await tapText')
+  await tapText(admin, 'Build schedule')
+  trace('E10 await clickLabel')
+  await clickLabel(admin, 'Replace them')
+  trace('E10 const path = await at')
+  const path = await at(admin, /\/scheduler\/previews\/[^/]+$/)
+  trace('E10 const blockedId = decodeURIComponent')
+  const blockedId = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1))
+  trace('E10 await contains')
+  await contains(
+    admin.page,
+    'No schedule fits: not enough 50/70 field time to give every team 40 games.'
+  )
+  trace('E10 await absent')
+  await absent(admin.page, 'Publish this option')
+  trace('E10 await absent')
+  await absent(admin.page, 'Option 1')
+  trace('E10 const blocked = await storedPreview')
+  const blocked = await storedPreview(run, blockedId)
+  expect(blocked.options).deep.equals([])
+  // maestro-d never answers a screenshot of this short, still page (no
+  // animation, request or DOM change runs on it), so the browser takes it.
+  trace('E10 await new Promise')
+  await new Promise(resolve => setTimeout(resolve, 700))
+  trace('E10 await admin.page.screenshot')
+  await admin.page.screenshot({
+    path: join(artifacts, 'preview-blocked.png')
+  })
+  // The API log: a search, a claim, settings, a build and a publish.
+  trace('E10 const lines: string[] = []')
+  const lines: string[] = []
+  await curl(run, lines, 'GET', '/venues?query=Example')
+  await curl(run, lines, 'POST', '/venues', {
+    placeId: 'harbor-field',
+    leagueId: fx.f.leagueA
+  })
+  await curl(run, lines, 'GET', `/seasons/${fx.f.seasonA}/schedule-settings`)
+  trace('E10 await api')
+  await api(fx, 101, 'PUT', `/venues/${venueId}/fields/${fieldId}`, {
+    startsOn: null,
+    endsOn: null,
+    hours: FIELD_ONE_HOURS
+  })
+  trace('E10 await api')
+  // Two more games a team, so the logged build has games to place.
+  await api(fx, 101, 'PUT', `/seasons/${fx.f.seasonA}/schedule-settings`, {
+    ...SEASON_A_SETTINGS,
+    regularGames: 6
+  })
+  await curl(run, lines, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
+    mode: 'full'
+  })
+  trace('E10 const built = JSON.parse')
+  const answer = await curl(
+    run,
+    lines,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    { mode: 'full', existing: 'workAround' }
+  )
+  const first = JSON.parse(answer.replace(/\nHTTP \d+\n$/, '')) as {
+    id: string
+    options: Array<{ games: Array<{ key: string }> }>
+  }
+  expect(first.options[0].games.length).greaterThan(1)
+  // Reject one game, then recalculate: the rest stay, and it is placed again.
+  await curl(run, lines, 'PUT', `/schedule-previews/${first.id}`, {
+    option: 0,
+    rejectedGameKeys: [first.options[0].games[0].key]
+  })
+  // Recalculating replaces the first preview, so publishing it is refused.
+  const again = await curl(
+    run,
+    lines,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    { mode: 'partial', fromPreviewId: first.id, option: 0 }
+  )
+  const built = JSON.parse(again.replace(/\nHTTP \d+\n$/, '')) as {
+    id: string
+  }
+  const refused = await curl(
+    run,
+    lines,
+    'POST',
+    `/schedule-previews/${first.id}/publications`,
+    { option: 0 }
+  )
+  expect(refused).includes('HTTP 409')
+  const published = await curl(
+    run,
+    lines,
+    'POST',
+    `/schedule-previews/${built.id}/publications`,
+    { option: 0 }
+  )
+  expect(published).includes('HTTP 200')
+  expect(published).not.includes('"scheduled":0')
+  await writeFile(join(artifacts, 'scheduler-api.log'), lines.join('\n'))
+  await run.pass(
+    'E10',
+    'Saturdays only and 40 games asked: Option 1 gives every team the same lowered count with its capacity cause; with no slot, no options and the blocking message; the API log recorded'
+  )
 }
 
 const SCENARIOS: Record<string, (run: Run) => Promise<void>> = {
@@ -961,7 +1537,11 @@ const SCENARIOS: Record<string, (run: Run) => Promise<void>> = {
   E3: e3,
   E4: e4,
   E5: e5,
-  E6: e6
+  E6: e6,
+  E7: e7,
+  E8: e8,
+  E9: e9,
+  E10: e10
 }
 
 async function main(): Promise<void> {
@@ -972,6 +1552,9 @@ async function main(): Promise<void> {
     : undefined
   if (only != null && SCENARIOS[only] == null)
     throw new Error(`No scenario ${only}`)
+  // `--only E10 --alone` runs E10's own steps on seeded state, to debug them.
+  const fullPass =
+    only == null || (only === 'E10' && !process.argv.includes('--alone'))
   // Browser profiles and the served copy of the app are working files, kept
   // out of the artifacts directory.
   const support = resolve('coverage/autoScheduler/support')
@@ -988,6 +1571,7 @@ async function main(): Promise<void> {
   })
   const daemon = await maestro(process.env.MAESTRO_D ?? 'seasonAutoScheduler')
   const sessions: BrowserSession[] = []
+  const signedIn = new Map<number, BrowserSession>()
   const lines = 'scenarios.log'
   await writeFile(
     join(artifacts, lines),
@@ -1000,14 +1584,19 @@ async function main(): Promise<void> {
     fx,
     artifacts,
     support,
-    state: only == null ? {} : await seedThrough(fx, only),
+    state: fullPass ? {} : await seedThrough(fx, only),
     visit,
     pass: async (id, description) => {
       await log(artifacts, lines, `${id} PASS: ${description}`)
     },
     session: async (device, user) => {
+      // One signed-in browser per person for the whole run: sign-in codes
+      // are rate limited per address, and a full pass signs in often.
+      const held = signedIn.get(user)
+      if (held != null) return held
       const b = await browserSession(daemon, device, WIDTH, HEIGHT, support)
       sessions.push(b)
+      signedIn.set(user, b)
       const email = EMAILS[user] ?? `fixture${user}@example.com`
       await visit(b, '/sign-in')
       await fill(b.m, 'E-mail address', email)
@@ -1025,8 +1614,10 @@ async function main(): Promise<void> {
     }
   }
   try {
+    // The full pass, E10, runs E1 to E10 on one fixture; E0's before
+    // shots are taken on the base branch.
     for (const [id, scenario] of Object.entries(SCENARIOS))
-      if (only == null || only === id) await scenario(run)
+      if (fullPass ? id !== 'E0' : only === id) await scenario(run)
     const coverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
     if (coverage != null)
       await recordBrowserCoverage(

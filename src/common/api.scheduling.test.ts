@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { TeamStationClient } from './api'
+import type { GameToReschedule, SchedulePreview } from './schedulePreviews'
 import type { ScheduleSettings, ScheduleSetup } from './seasonScheduling'
 
 const SETTINGS: ScheduleSettings = {
@@ -116,6 +117,85 @@ describe('api client scheduling setup', () => {
         { exhibition: true }
       ],
       ['GET', '/api/v1/seasons/sea%2Fa/teams', undefined]
+    ])
+  })
+
+  it('builds, reads, edits and publishes previews, and lists games to reschedule', async () => {
+    const preview: SchedulePreview = {
+      id: 'spv/1',
+      leagueId: 'lea/a',
+      mode: 'full',
+      existing: 'workAround',
+      status: 'open',
+      createdAt: '2026-10-22T12:00:00.000Z',
+      options: [],
+      blocking: 'not enough 50/70 field time to give every team 4 games',
+      edits: { option: 0, rejectedGameKeys: [], addedGames: [] },
+      replacing: 0,
+      publishedOption: null,
+      publishedAt: null,
+      published: [],
+      teams: [],
+      seasons: [],
+      fields: []
+    }
+    const listed: GameToReschedule = {
+      previewId: 'spv/1',
+      gameKey: 'g1',
+      gameId: null,
+      seasonId: 'sea_a',
+      homeTeamId: 'tem_a',
+      awayTeamId: 'tem_b',
+      homeTeamName: 'Demo Hawks',
+      awayTeamName: 'Demo Owls',
+      startAt: '2027-04-17T14:00:00.000Z',
+      endAt: null,
+      timezone: 'UTC',
+      exhibition: false,
+      fieldId: null,
+      reason: 'declined'
+    }
+    const added = {
+      seasonId: 'sea_a',
+      homeTeamId: 'tem_a',
+      awayTeamId: 'tem_b',
+      exhibition: false,
+      fieldId: 'fld_one',
+      size: '50/70' as const,
+      startAt: '2027-04-17T14:00:00.000Z',
+      endAt: '2027-04-17T15:30:00.000Z'
+    }
+    const { api, calls } = client([
+      preview,
+      preview,
+      preview,
+      { preview, scheduled: 1, awaiting: 0, removed: 0 },
+      { items: [listed] }
+    ])
+    expect(
+      await api.buildSchedulePreview('lea/a', {
+        mode: 'full',
+        existing: 'workAround'
+      })
+    ).deep.equals(preview)
+    await api.schedulePreview('spv/1')
+    await api.editSchedulePreview('spv/1', { option: 0, addedGames: [added] })
+    expect((await api.publishSchedulePreview('spv/1', 0)).scheduled).equals(1)
+    expect(await api.gamesToReschedule('lea/a')).deep.equals([listed])
+    expect(calls).deep.equals([
+      [
+        'POST',
+        '/api/v1/leagues/lea%2Fa/schedule-previews',
+        { mode: 'full', existing: 'workAround' }
+      ],
+      ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
+      [
+        'PUT',
+        '/api/v1/schedule-previews/spv%2F1',
+        { option: 0, addedGames: [added] }
+      ],
+      ['POST', '/api/v1/schedule-previews/spv%2F1/publications', { option: 0 }],
+      ['GET', '/api/v1/leagues/lea%2Fa/games-to-reschedule', undefined]
     ])
   })
 })

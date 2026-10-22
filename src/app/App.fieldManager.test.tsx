@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { asSessionUser, TeamStationClient } from '../common/api'
 import type { Notification } from '../common/notifications'
 import { asGroupDetail } from '../common/publicGroups'
+import type { SchedulePreview } from '../common/schedulePreviews'
 import { userIdOfGumbo } from '../common/userId'
 import type { VenueSummary } from '../common/venues'
 import { press, settle } from '../test/gameFormDom'
@@ -61,6 +62,7 @@ function signedIn(canManage = true): void {
       canManage
     })
   proto.venue = async () => venueDetail({ fields: [venueField()] })
+  proto.gamesToReschedule = async () => []
   proto.scheduleSetup = async leagueId => ({
     leagueId,
     seasonIds: ['sea_a'],
@@ -123,6 +125,7 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
       '/groups/league/lea_a/scheduler',
       '/groups/league/lea_a/scheduler/fields',
       '/groups/league/lea_a/scheduler/seasons/sea_a',
+      '/groups/league/lea_a/scheduler/previews/spv_a',
       '/venues/ven_a',
       '/venues/place/harbor-field',
       '/venues/ven_a/fields/fld_one'
@@ -258,6 +261,76 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
     expect(document.body.textContent).not.includes('Auto-Scheduler')
   })
 
+  it('opens a preview, and a recalculated one takes its place', async () => {
+    signedIn()
+    const preview = (id: string): SchedulePreview => ({
+      id,
+      leagueId: 'lea_a',
+      mode: 'full',
+      existing: 'workAround',
+      status: 'open',
+      createdAt: '2026-10-22T12:00:00.000Z',
+      options: [
+        {
+          games: [
+            {
+              key: 'g1',
+              seasonId: 'sea_a',
+              homeTeamId: 'tem_a',
+              awayTeamId: 'tem_b',
+              exhibition: false,
+              fieldId: 'fld_one',
+              size: '50/70',
+              startAt: '2027-04-17T14:00:00.000Z',
+              endAt: '2027-04-17T15:30:00.000Z'
+            }
+          ],
+          fairness: [],
+          reasons: [],
+          unmet: [],
+          score: [0]
+        }
+      ],
+      blocking: null,
+      edits: { option: 0, rejectedGameKeys: ['g0'], addedGames: [] },
+      replacing: 0,
+      publishedOption: null,
+      publishedAt: null,
+      published: [],
+      teams: [
+        { id: 'tem_a', name: 'Demo Hawks' },
+        { id: 'tem_b', name: 'Demo Owls' }
+      ],
+      seasons: [
+        {
+          id: 'sea_a',
+          name: 'Demo Regular',
+          timezone: 'UTC',
+          gameMinutes: 90,
+          participants: ['tem_a', 'tem_b'],
+          exhibitionTeams: []
+        }
+      ],
+      fields: [
+        {
+          id: 'fld_one',
+          name: 'Field 1',
+          venueName: 'Example Park',
+          sizes: ['50/70']
+        }
+      ]
+    })
+    proto.schedulePreview = async id => preview(id)
+    proto.buildSchedulePreview = async () => preview('spv_b')
+    await open('/groups/league/lea_a/scheduler/previews/spv_a')
+    expect(document.body.textContent).includes('Owls at Demo Hawks')
+    await press('Recalculate')
+    await settle(200)
+    expect(window.location.pathname).equals(
+      '/groups/league/lea_a/scheduler/previews/spv_b'
+    )
+  })
+
   it('opens what a scheduling notice names', async () => {
     const notice = (overrides: Partial<Notification>): Notification => ({
       id: 'aud_1',
@@ -285,6 +358,10 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
       [
         notice({ type: 'schedulePublished', seasonId: 'sea_a' }),
         '/groups/season/sea_a'
+      ],
+      [
+        notice({ type: 'schedulePublished', teamId: 'tem_a' }),
+        '/groups/team/tem_a'
       ]
     ] as const) {
       signedIn()

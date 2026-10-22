@@ -41,7 +41,7 @@ type GameRow = Pick<
   | 'timezone'
 >
 
-interface FieldFacts {
+export interface FieldFacts {
   id: string
   name: string
   venueName: string
@@ -51,7 +51,8 @@ interface FieldFacts {
   availability: ReturnType<typeof effectiveAvailability>
 }
 
-async function fieldFacts(
+/** What a field's warnings, and the Auto-Scheduler, need to know of it. */
+export async function fieldFacts(
   db: Kysely<Database>,
   fieldIds: string[]
 ): Promise<Map<string, FieldFacts>> {

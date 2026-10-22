@@ -3,6 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
+import type {
+  GameToReschedule,
+  PreviewRequest
+} from '../../common/schedulePreviews'
 import type {
   ScheduleSettings,
   ScheduleSetup,
@@ -91,20 +96,45 @@ function setupOf(overrides: Partial<ScheduleSetup> = {}): ScheduleSetup {
 
 function fakeClient(
   first: ScheduleSetup | Error,
-  options: { failSave?: boolean; failChoice?: boolean } = {}
+  options: {
+    failSave?: boolean
+    failChoice?: boolean
+    existing?: number
+    failBuild?: boolean
+    listed?: GameToReschedule[]
+  } = {}
 ): {
   client: TeamStationClient
   choices: Array<{ seasonIds: string[]; fieldIds: string[] }>
   saves: Array<[string, ScheduleSettings]>
+  builds: PreviewRequest[]
 } {
   let setup = first instanceof Error ? setupOf() : first
   let reads = 0
   const record = {
     choices: [] as Array<{ seasonIds: string[]; fieldIds: string[] }>,
     saves: [] as Array<[string, ScheduleSettings]>,
+    builds: [] as PreviewRequest[],
     client: undefined as unknown as TeamStationClient
   }
   record.client = {
+    gamesToReschedule: async () => options.listed ?? [],
+    buildSchedulePreview: async (
+      _leagueId: string,
+      request: PreviewRequest
+    ) => {
+      record.builds.push(request)
+      if (options.failBuild === true) throw new Error('The engine stopped')
+      if (options.existing != null && request.existing == null)
+        throw new HttpError(
+          'conflict',
+          'These seasons already have upcoming games',
+          {
+            existingGames: options.existing
+          }
+        )
+      return { id: 'spv_one' }
+    },
     scheduleSetup: async () => {
       reads++
       if (first instanceof Error && reads === 1) throw first
@@ -147,7 +177,7 @@ async function show(
       onOpenSeason={seasonId => {
         calls.seasons.push(seasonId)
       }}
-      onBuild={() => {
+      onOpenPreview={() => {
         calls.builds++
       }}
     />
@@ -193,6 +223,7 @@ describe('the Auto-Scheduler setup', () => {
     expect(text()).includes('4 for one, 3 for the other')
     expect(disabled(buildButton())).equals(false)
     await tapText('Build schedule')
+    await settle(20)
     expect(calls.builds).equals(1)
     await tapLabel('Open the Field Manager')
     await press(
@@ -321,5 +352,92 @@ describe('the Auto-Scheduler setup', () => {
     expect(text()).includes('This league has no seasons yet.')
     expect(text()).includes('Your league has no fields yet.')
     expect(text()).includes('Must fix: Choose a season to schedule.')
+  })
+
+  it('asks whether to replace or work around existing games, and says when a build fails', async () => {
+    const fake = fakeClient(setupOf(), { existing: 2 })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapText('Build schedule')
+    await settle(20)
+    expect(text()).includes('These seasons already have 2 upcoming games')
+    await press('Work around them')
+    await settle(20)
+    expect(fake.builds).deep.equals([
+      { mode: 'full' },
+      { mode: 'full', existing: 'workAround' }
+    ])
+    expect(calls.builds).equals(1)
+    await tapText('Build schedule')
+    await settle(20)
+    await press('Replace them')
+    await settle(20)
+    expect(fake.builds.at(-1)).deep.equals({
+      mode: 'full',
+      existing: 'replace'
+    })
+    await tapText('Build schedule')
+    await settle(20)
+    await tapLabel('Close')
+    await unmount()
+    await show(fakeClient(setupOf(), { failBuild: true }).client, calls)
+    await tapText('Build schedule')
+    await settle(20)
+    expect(text()).includes('The engine stopped')
+  })
+
+  it('lists games that need rescheduling, and recalculates their teams or everything', async () => {
+    const listed: GameToReschedule[] = [
+      {
+        previewId: 'spv_old',
+        gameKey: 'g1',
+        gameId: 'gam_1',
+        seasonId: 'sea_a',
+        homeTeamId: 'tem_hawks',
+        awayTeamId: 'tem_owls',
+        homeTeamName: 'Demo Hawks',
+        awayTeamName: 'Demo Owls',
+        startAt: '2027-04-17T14:00:00.000Z',
+        endAt: '2027-04-17T15:30:00.000Z',
+        timezone: 'America/New_York',
+        exhibition: false,
+        fieldId: null,
+        reason: 'declined'
+      },
+      {
+        previewId: 'spv_old',
+        gameKey: 'g2',
+        gameId: null,
+        seasonId: 'sea_a',
+        homeTeamId: 'tem_foxes',
+        awayTeamId: 'tem_hawks',
+        homeTeamName: 'Demo Foxes',
+        awayTeamName: 'Demo Hawks',
+        startAt: '2027-04-24T14:00:00.000Z',
+        endAt: null,
+        timezone: 'America/New_York',
+        exhibition: false,
+        fieldId: null,
+        reason: 'teamWithdrew'
+      }
+    ]
+    const fake = fakeClient(setupOf(), { listed })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    expect(text()).includes('NEEDS RESCHEDULING')
+    expect(text()).includes('Demo Owls at Demo Hawks')
+    expect(text()).includes('Declined')
+    expect(text()).includes('A team withdrew')
+    await tapText('Recalculate just these teams')
+    await settle(20)
+    expect(fake.builds.at(-1)).deep.equals({
+      mode: 'partial',
+      existing: 'replace',
+      teamIds: ['tem_hawks', 'tem_owls', 'tem_foxes']
+    })
+    await tapText('Recalculate everything')
+    await settle(20)
+    expect(fake.builds.at(-1)).deep.equals({ mode: 'full' })
+    expect(calls.builds).equals(2)
   })
 })

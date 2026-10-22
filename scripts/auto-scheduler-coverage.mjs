@@ -75,7 +75,15 @@ const tsSuites = [
   'src/server/routes/schedulingSetup.test.ts',
   'src/server/routes/seasonReaders.test.ts',
   'src/server/admin/mergeTeamsSeasonFlags.test.ts',
-  'src/common/api.scheduling.test.ts'
+  'src/common/api.scheduling.test.ts',
+  // M6: the scheduler.
+  'src/migrate/migrations/080schedulePreviews.test.ts',
+  'src/common/autoScheduler/*.test.ts',
+  'src/server/routes/schedulePreviews.test.ts',
+  'src/server/autoScheduler/publish.test.ts',
+  'src/server/autoScheduler/reschedule.test.ts',
+  'src/server/autoScheduler/rules.test.ts',
+  'src/server/autoScheduler/buildOffThread.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -97,7 +105,9 @@ const appSuites = [
   // M5: the setup, its grid and a season's detail.
   'src/app/screens/AutoSchedulerScreen.test.tsx',
   'src/app/screens/SeasonScheduleGrid.test.tsx',
-  'src/app/screens/ScheduleSeasonScreen.test.tsx'
+  'src/app/screens/ScheduleSeasonScreen.test.tsx',
+  // M6: the preview screen.
+  'src/app/screens/SchedulePreviewScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

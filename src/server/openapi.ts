@@ -17,6 +17,7 @@ import {
   CLIP_MIN_MS,
   WALK_UP_PROVIDERS
 } from '../common/walkUpSong'
+import { schedulePreviewPaths } from './autoScheduler/schedulePreviewsOpenApi'
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
@@ -2343,6 +2344,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...umpirePaths(errorResponse),
       ...venuePaths(errorResponse),
       ...schedulingSetupPaths(errorResponse),
+      ...schedulePreviewPaths(errorResponse),
       ...eventInfoPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {

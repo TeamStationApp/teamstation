@@ -170,6 +170,8 @@ export async function mergeTeams(
     ['games', 'home_team_id'],
     ['games', 'away_team_id'],
     ['games', 'withdrawn_by_team_id'],
+    ['schedule_preview_games', 'home_team_id'],
+    ['schedule_preview_games', 'away_team_id'],
     ['events', 'battingTeamId'],
     ['event_players', 'team_id']
   ]
@@ -348,7 +350,8 @@ export async function mergeTeams(
         longitude = case when target.address is null then source.longitude else target.longitude end,
         end_at = coalesce(target.end_at, source.end_at),
         field_id = case when target.field_id is null then source.field_id else target.field_id end,
-        field_size = case when target.field_id is null then source.field_size else target.field_size end
+        field_size = case when target.field_id is null then source.field_size else target.field_size end,
+        schedule_preview_id = coalesce(target.schedule_preview_id, source.schedule_preview_id)
         from games source where target.id = ${fixture.keptGameId} and source.id = ${fixture.retiredGameId}`.execute(
         trx
       )
@@ -374,6 +377,12 @@ export async function mergeTeams(
         join games g on g.id=${fixture.keptGameId} join seasons s on s.id=g.season_id
         where n.game_id=${fixture.retiredGameId} and t.league_id=s.league_id
         on conflict do nothing`.execute(trx)
+      // A game the Auto-Scheduler published is the kept game now.
+      await trx
+        .updateTable('schedule_preview_games')
+        .set({ game_id: fixture.keptGameId })
+        .where('game_id', '=', fixture.retiredGameId)
+        .execute()
       // Its warnings go with it (they cascade); the kept game's field is
       // looked at again once the retired game is gone.
       const fields = await trx

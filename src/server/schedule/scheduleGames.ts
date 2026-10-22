@@ -1,7 +1,7 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
 import { HttpError } from '../../common/errors'
-import type { GameIntent } from '../../common/gameApprovals'
+import { type GameIntent, systemCancelled } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
 import {
   asScheduleGameRow,
@@ -13,6 +13,7 @@ import {
 } from '../../common/scheduleGames'
 import { adminScopes } from '../access'
 import type { Actor } from '../auth/sessions'
+import { gameNeedsAttention } from '../autoScheduler/attention'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -372,9 +373,7 @@ async function applyRow(
       .where('external_ids.external_id', '=', externalId.id)
       .executeTakeFirst()
     if (held != null) {
-      context.withdrawn =
-        held.cancellation_reason === 'withdrawal' ||
-        held.cancellation_reason === 'replacement'
+      context.withdrawn = systemCancelled(held.cancellation_reason)
       context.previous = {
         homeTeamId: held.home_team_id,
         awayTeamId: held.away_team_id,
@@ -501,9 +500,7 @@ async function applyRow(
         .where('id', '=', twin.id)
         .executeTakeFirstOrThrow()
       context.previous = materialGame(original)
-      context.withdrawn =
-        original.cancellation_reason === 'withdrawal' ||
-        original.cancellation_reason === 'replacement'
+      context.withdrawn = systemCancelled(original.cancellation_reason)
       await recordExternalId(trx, 'game', twin.id, externalId)
       if (twin.status === 'inProgress' || twin.status === 'final') {
         return { result: 'updated', gameId: twin.id, status: twin.status }
@@ -615,11 +612,7 @@ async function updateHeld(
     .forUpdate()
     .executeTakeFirstOrThrow()
   const game = { ...held, ...locked }
-  if (
-    (game.cancellation_reason === 'withdrawal' ||
-      game.cancellation_reason === 'replacement') &&
-    row.status === 'scheduled'
-  )
+  if (systemCancelled(game.cancellation_reason) && row.status === 'scheduled')
     throw new RowError('conflict', 'A withdrawn game cannot be restored')
   if (game.status === 'inProgress' || game.status === 'final') {
     return {
@@ -704,6 +697,8 @@ async function updateHeld(
     await notifyGameChange(trx, { game: held.id, kind: 'game' })
     // A score, a status or a side changed moves its teams' records.
     await noteGameFigures(trx, held.id)
+    if (changes.status === 'cancelled')
+      await gameNeedsAttention(trx, held.id, 'cancelled', null)
   }
   const written = alreadyWritten || Object.keys(changes).length > 0
   return {

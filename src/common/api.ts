@@ -99,6 +99,16 @@ import {
   type SearchRow
 } from './publicGroups'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import {
+  type AddedGame,
+  asGameToReschedule,
+  asPublication,
+  asSchedulePreview,
+  type GameToReschedule,
+  type PreviewRequest,
+  type Publication,
+  type SchedulePreview
+} from './schedulePreviews'
 import { asScoreboardState, type ScoreboardState } from './scoreboard'
 import {
   cleanAction,
@@ -2960,6 +2970,67 @@ export class TeamStationClient {
       `/leagues/${encodeURIComponent(leagueId)}/schedule-setup`,
       asScheduleSetup
     )
+  }
+
+  /** Builds a preview of the league's schedule. See `PreviewRequest`. */
+  async buildSchedulePreview(
+    leagueId: string,
+    request: PreviewRequest
+  ): Promise<SchedulePreview> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
+      asSchedulePreview,
+      request
+    )
+  }
+
+  async schedulePreview(previewId: string): Promise<SchedulePreview> {
+    return await this.request(
+      'GET',
+      `/schedule-previews/${encodeURIComponent(previewId)}`,
+      asSchedulePreview
+    )
+  }
+
+  /** Rejects and adds games of one option of a preview. */
+  async editSchedulePreview(
+    previewId: string,
+    edits: {
+      option: number
+      rejectedGameKeys?: string[]
+      addedGames?: AddedGame[]
+    }
+  ): Promise<SchedulePreview> {
+    return await this.request(
+      'PUT',
+      `/schedule-previews/${encodeURIComponent(previewId)}`,
+      asSchedulePreview,
+      edits
+    )
+  }
+
+  async publishSchedulePreview(
+    previewId: string,
+    option: number
+  ): Promise<Publication> {
+    return await this.request(
+      'POST',
+      `/schedule-previews/${encodeURIComponent(previewId)}/publications`,
+      asPublication,
+      { option }
+    )
+  }
+
+  /** The league's published games that need rescheduling. */
+  async gamesToReschedule(leagueId: string): Promise<GameToReschedule[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(leagueId)}/games-to-reschedule`,
+        asObject({ items: asArray(asGameToReschedule) })
+      )
+    ).items
   }
 
   /** Chooses the seasons and fields of the league's next schedule. */

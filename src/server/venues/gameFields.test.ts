@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { GameIntent } from '../../common/gameApprovals'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   demoLocality,
   type GroupFixture,
@@ -554,5 +555,49 @@ describe('games on registry fields', function () {
     })
     expect(moved.results[0].result).equals('updated')
     expect(await warningKinds(other)).deep.equals(['conflict'])
+    // Had the Auto-Scheduler published it, a batch cancellation tells the
+    // league's admins, and a rescheduled game can't be brought back.
+    await f.h.db
+      .insertInto('schedule_previews')
+      .values({
+        id: 'spv_batch',
+        league_id: f.leagueA,
+        created_by: userIdOfGumbo(101),
+        mode: 'full',
+        input: '{}'
+      })
+      .execute()
+    await f.h.db
+      .updateTable('games')
+      .set({ schedule_preview_id: 'spv_batch' })
+      .where('id', '=', id)
+      .execute()
+    const cancelled = await request('POST', `/teams/${f.teamA}/games`, {
+      games: [{ ...row, startAt: AT(13), status: 'cancelled' }]
+    })
+    expect(cancelled.results[0].status).equals('cancelled')
+    const notices = await f.h.db
+      .selectFrom('notification_events')
+      .select(['metadata', 'recorded_recipients'])
+      .where('source_type', '=', 'scheduleNeedsAttention')
+      .execute()
+    expect(notices.length).equals(1)
+    expect(notices[0].metadata).include({
+      leagueId: f.leagueA,
+      previewId: 'spv_batch'
+    })
+    expect(notices[0].recorded_recipients).include(userIdOfGumbo(101))
+    await f.h.db
+      .updateTable('games')
+      .set({ cancellation_reason: 'rescheduled' })
+      .where('id', '=', id)
+      .execute()
+    const restored = await request('POST', `/teams/${f.teamA}/games`, {
+      games: [{ ...row, startAt: AT(13), status: 'scheduled' }]
+    })
+    expect(restored.results[0].result).equals('error')
+    expect(restored.results[0].error.message).equals(
+      'A withdrawn game cannot be restored'
+    )
   })
 })

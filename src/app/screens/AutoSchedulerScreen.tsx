@@ -2,6 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
+import { isRecord } from '../../common/groupCreation'
+import {
+  type GameToReschedule,
+  type PreviewRequest,
+  rescheduleReasonLabel
+} from '../../common/schedulePreviews'
 import { buildable, schedulingChecks } from '../../common/schedulingChecks'
 import {
   BUFFER_MINUTES,
@@ -28,6 +35,7 @@ import { DateRangePicker } from '../components/DateRangePicker'
 import { PickerDialog } from '../components/PickerDialog'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { gameTimeLabel } from './SchedulePreviewScreen'
 import { type GridColumn, SeasonScheduleGrid } from './SeasonScheduleGrid'
 import { sizesLabel } from './VenueScreen'
 
@@ -75,14 +83,14 @@ export function AutoSchedulerScreen({
   leagueName,
   onFieldManager,
   onOpenSeason,
-  onBuild
+  onOpenPreview
 }: {
   client: TeamStationClient
   leagueId: string
   leagueName?: string
   onFieldManager: () => void
   onOpenSeason: (seasonId: string) => void
-  onBuild?: () => void
+  onOpenPreview: (previewId: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -96,19 +104,49 @@ export function AutoSchedulerScreen({
   }>()
   const [numberText, setNumberText] = useState('')
   const [numberError, setNumberError] = useState('')
+  const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
+  const [asking, setAsking] = useState<{ existing: number }>()
+  const [building, setBuilding] = useState(false)
   const begin = useLatestRequest()
   useEffect(() => {
     const current = begin()
     setError('')
-    client.scheduleSetup(leagueId).then(
-      found => {
-        if (current()) setSetup(found)
+    Promise.all([
+      client.scheduleSetup(leagueId),
+      client.gamesToReschedule(leagueId)
+    ]).then(
+      ([found, listed]) => {
+        if (!current()) return
+        setSetup(found)
+        setToReschedule(listed)
       },
       () => {
         if (current()) setError('The Auto-Scheduler could not load. Try again.')
       }
     )
   }, [client, leagueId, revision, begin])
+  /**
+   * Builds a preview and opens it. A first build of seasons that already
+   * have upcoming games asks whether to replace them or work around them.
+   */
+  const build = async (request: PreviewRequest): Promise<void> => {
+    setBuilding(true)
+    setError('')
+    try {
+      const preview = await client.buildSchedulePreview(leagueId, request)
+      onOpenPreview(preview.id)
+    } catch (failure) {
+      const details =
+        failure instanceof HttpError && isRecord(failure.details)
+          ? failure.details
+          : undefined
+      if (details != null && typeof details.existingGames === 'number')
+        setAsking({ existing: details.existingGames })
+      else failed(failure)
+    } finally {
+      setBuilding(false)
+    }
+  }
   const failed = (failure: unknown): void => {
     setError(
       failure instanceof Error && failure.message !== ''
@@ -363,13 +401,88 @@ export function AutoSchedulerScreen({
           </View>
         )}
         <Button
-          label="Build schedule"
-          disabled={busy || !buildable(checks)}
+          label={building ? 'Building schedule…' : 'Build schedule'}
+          disabled={busy || building || !buildable(checks)}
           onPress={() => {
-            onBuild?.()
+            build({ mode: 'full' }).catch(() => undefined)
           }}
         />
+        {toReschedule.length > 0 && (
+          <>
+            <SectionHeader
+              title="Needs rescheduling"
+              note={String(toReschedule.length)}
+            />
+            <View testID="needs-rescheduling">
+              <ListCard>
+                {toReschedule.map(game => (
+                  <ListRow
+                    key={`${game.previewId}:${game.gameKey}`}
+                    title={`${game.awayTeamName} at ${game.homeTeamName}`}
+                    subtitle={`${rescheduleReasonLabel(game.reason)}\n${gameTimeLabel(game, game.timezone)}`}
+                    subtitleNumberOfLines={3}
+                  />
+                ))}
+              </ListCard>
+            </View>
+            <Button
+              label="Recalculate just these teams"
+              disabled={busy || building}
+              onPress={() => {
+                build({
+                  mode: 'partial',
+                  existing: 'replace',
+                  teamIds: [
+                    ...new Set(
+                      toReschedule.flatMap(game => [
+                        game.homeTeamId,
+                        game.awayTeamId
+                      ])
+                    )
+                  ]
+                }).catch(() => undefined)
+              }}
+            />
+            <Button
+              label="Recalculate everything"
+              kind="secondary"
+              disabled={busy || building || !buildable(checks)}
+              onPress={() => {
+                build({ mode: 'full' }).catch(() => undefined)
+              }}
+            />
+          </>
+        )}
       </View>
+      {asking != null && (
+        <ChoiceSheet
+          title={`These seasons already have ${asking.existing === 1 ? 'an upcoming game' : `${asking.existing} upcoming games`}`}
+          choices={[
+            {
+              label: 'Replace them',
+              detail:
+                'Schedule your league’s upcoming games again. Played games, and games a team outside the league agreed to, stay.',
+              onPress: () => {
+                build({ mode: 'full', existing: 'replace' }).catch(
+                  () => undefined
+                )
+              }
+            },
+            {
+              label: 'Work around them',
+              detail: 'Keep every upcoming game and schedule around it.',
+              onPress: () => {
+                build({ mode: 'full', existing: 'workAround' }).catch(
+                  () => undefined
+                )
+              }
+            }
+          ]}
+          onClose={() => {
+            setAsking(undefined)
+          }}
+        />
+      )}
       {editedSeason != null && editing?.column === 'fieldSize' && (
         <ChoiceSheet
           title={`${editedSeason.name}: field size`}
