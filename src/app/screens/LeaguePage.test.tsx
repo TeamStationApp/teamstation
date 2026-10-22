@@ -12,7 +12,8 @@ import {
   type PublicGroup
 } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
 
@@ -192,6 +193,26 @@ describe('the league page', () => {
       }
     })
   }
+  it('keeps dark-theme team names readable on the shared surface', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        {render(api, [])}
+      </ScopedThemeProvider>
+    )
+    await press('Teams')
+    const card = document.querySelector<HTMLElement>(
+      '[data-testid="league-teams-card"]'
+    )!
+    const title = [...card.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Demo Hawks'
+    )!
+    expect(getComputedStyle(title).color).equals('rgb(31, 36, 24)')
+    expect(getComputedStyle(title).color).not.equals(
+      getComputedStyle(card).backgroundColor
+    )
+  })
   it('lists seasons newest first by time frame, with no schedule', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail

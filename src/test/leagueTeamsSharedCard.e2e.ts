@@ -99,6 +99,24 @@ async function main(): Promise<void> {
           )!.parentElement!
           const css = getComputedStyle(card)
           const reference = getComputedStyle(ref)
+          const title = [...card.querySelectorAll<HTMLElement>('*')].find(
+            node =>
+              node.children.length === 0 && node.textContent === 'Demo Hawks'
+          )!
+          const luminance = (color: string): number => {
+            const rgb = color
+              .match(/\d+/g)!
+              .slice(0, 3)
+              .map(value => {
+                const channel = Number(value) / 255
+                return channel <= 0.04045
+                  ? channel / 12.92
+                  : ((channel + 0.055) / 1.055) ** 2.4
+              })
+            return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
+          }
+          const foreground = luminance(getComputedStyle(title).color)
+          const background = luminance(css.backgroundColor)
           const rows = [
             ...card.querySelectorAll<HTMLElement>(
               '[data-testid="relationship-action-row"]'
@@ -111,6 +129,9 @@ async function main(): Promise<void> {
             )!
             .getBoundingClientRect()
           return {
+            contrast:
+              (Math.max(foreground, background) + 0.05) /
+              (Math.min(foreground, background) + 0.05),
             rows: rows.length,
             children: card.children.length,
             surface: css.backgroundColor,
@@ -127,6 +148,7 @@ async function main(): Promise<void> {
             ].map(n => n.getBoundingClientRect().height)
           }
         })
+        assert(geometry.contrast >= 4.5)
         assert.equal(geometry.rows, 2)
         assert.equal(geometry.children, 3)
         assert.equal(geometry.surface, geometry.reference)
