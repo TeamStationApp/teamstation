@@ -378,6 +378,10 @@ describe('TeamStation pipeline', () => {
       rows.map(row => row.name)
     )
     assert.equal(group.options.needs[0].name, 'test')
+    const test = recorded.find(
+      ([name]) => name === 'build:test'
+    )![1] as StageOptions
+    assert.deepEqual(test.tools?.brew, ['ffmpeg'])
     assert.equal(group.options.failFast, false)
     assert.equal(
       group.members['distributor-macos'].apple?.distribution,

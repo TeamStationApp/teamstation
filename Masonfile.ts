@@ -99,7 +99,8 @@ export function setup(m: Setup): void {
     w => {
       const tested = w.stage('test', {
         on: { labels: ['teamstation-test'] },
-        tools: { node },
+        // The media and picture tests run ffmpeg and ffprobe.
+        tools: { node, brew: ['ffmpeg'] },
         timeout: '1h',
         run: test
       })
