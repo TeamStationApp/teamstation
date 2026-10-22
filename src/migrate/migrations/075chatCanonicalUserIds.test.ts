@@ -124,7 +124,7 @@ async function history(pool: Pool): Promise<void> {
       ]
     )
   await pool.query(`insert into leagues(id,name) values('lea_ids','Test League');
-    insert into seasons(id,league_id,name,year) values('sea_ids','lea_ids','Test Season',2027);
+    insert into seasons(id,league_id,name,year,starts_on,ends_on) values('sea_ids','lea_ids','Test Season',2027,'2027-03-01','2027-05-31');
     insert into teams(id,name,league_id) values('tem_ids','Test Team','lea_ids'),('tem_other','Other Team','lea_ids');
     insert into season_teams(season_id,team_id) values('sea_ids','tem_ids');`)
   await pool.query(

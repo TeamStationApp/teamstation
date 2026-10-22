@@ -35,6 +35,10 @@ function run(command, args) {
 run('node', ['scripts/chatCryptoBuild.mjs', 'node', 'wasm'])
 await build({
   ...webSettings,
+  alias: {
+    ...webSettings.alias,
+    'react-native-svg': './src/test/umpireSvgStub.tsx'
+  },
   stdin: {
     contents: [
       ...globSync('src/app/chat/**/*.test.tsx'),
@@ -44,6 +48,10 @@ await build({
       'src/app/components/GuardiansModal.test.tsx',
       'src/app/screens/ChatReportsScreen.test.tsx',
       'src/app/screens/TeamScreen.test.tsx',
+      'src/app/screens/PlayerSettingsTab.test.tsx',
+      'src/app/umpires/appMask.test.tsx',
+      'src/app/umpires/routes.test.tsx',
+      'src/app/umpires/noteEditor.test.tsx',
       'src/app/components/Emblem.test.tsx',
       'src/app/components/GlassView.test.tsx',
       'src/app/components/AppNav.test.tsx'
