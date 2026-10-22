@@ -3260,8 +3260,11 @@ export class Scenarios {
     let box = await this.targetBounds('chat-bubble-' + message.id)
     const requiredHeight = (): number =>
       Math.min(box.height, band.bottom - band.top - 32)
+    // Native frame serialization can round by half a coordinate unit.
+    const edgeTolerance = 0.5
     const fits = (): boolean =>
-      box.y >= band.top + 8 && box.y + requiredHeight() <= band.bottom - 8
+      box.y >= band.top + 8 - edgeTolerance &&
+      box.y + requiredHeight() <= band.bottom - 8 + edgeTolerance
     for (let step = 0; ; step++) {
       assert(
         [box.x, box.y, box.width, box.height].every(Number.isFinite) &&

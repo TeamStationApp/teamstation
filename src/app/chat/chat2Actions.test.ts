@@ -5826,11 +5826,16 @@ describe('native installed legacy reply navigation', () => {
     directories.push(runDir)
     const row = {
       x: 20,
-      y: ['above-header', 'no-progress'].includes(mode)
-        ? -131
-        : mode === 'below-composer'
-          ? 650
-          : 200,
+      y:
+        mode === 'float-edge'
+          ? 178.66664632161456
+          : mode === 'occluded-edge'
+            ? 170.1666717529297
+            : ['above-header', 'no-progress'].includes(mode)
+              ? -131
+              : mode === 'below-composer'
+                ? 650
+                : 200,
       width: 340,
       height: mode === 'tall-file' ? 900 : 240
     }
@@ -5964,7 +5969,8 @@ describe('native installed legacy reply navigation', () => {
         platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
         swipe: async (args: unknown) => {
           calls.push({ swipe: args })
-          if (mode !== 'no-progress') row.y = mode === 'tall-file' ? 116 : 200
+          if (!['no-progress', 'occluded-edge'].includes(mode))
+            row.y = mode === 'tall-file' ? 116 : 200
         },
         tapOnPoint: async (args: unknown) => {
           calls.push({ tap: args })
@@ -5975,7 +5981,10 @@ describe('native installed legacy reply navigation', () => {
       viewerId: viewer,
       ui,
       observations: [],
-      readingBand: async () => ({ top: 100, bottom: 700 }),
+      readingBand: async () =>
+        ['float-edge', 'occluded-edge'].includes(mode)
+          ? { top: 170.6666717529297, bottom: 700.6666870117188 }
+          : { top: 100, bottom: 700 },
       targetBounds: async () => ({ ...row }),
       anchor: async (target: Chat2Message) => {
         calls.push({ anchor: target.id })
@@ -6066,6 +6075,29 @@ describe('native installed legacy reply navigation', () => {
         }
       }
     )
+  it('accepts the observed fractional top edge without issuing a spurious native gesture', async () => {
+    const actual = model('float-edge')
+    await actual.scenario.identityLegacyBody(actual.baseline.reply)
+    expect(
+      actual.calls.some(
+        call => typeof call === 'object' && call != null && 'swipe' in call
+      )
+    ).equals(false)
+    expect(actual.scenario.observations.some(p => p.kind === 'body')).equals(
+      true
+    )
+  })
+  it('still rejects actual header occlusion when a normal measured gesture makes no progress', async () => {
+    const actual = model('occluded-edge')
+    const failure = await captureFailure(
+      actual.scenario.identityLegacyBody(actual.baseline.reply)
+    )
+    expect(String(failure)).includes('native legacy reader progress')
+    expect(actual.calls).has.length(1)
+    expect(actual.scenario.observations.some(p => p.kind === 'body')).equals(
+      false
+    )
+  })
   it('retains the exact browser body regex without native framing', async () => {
     const actual = model('resolved', false)
     await actual.scenario.identityLegacyBody(actual.baseline.reply)
