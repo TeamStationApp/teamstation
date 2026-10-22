@@ -27,6 +27,7 @@ import {
   type Theme,
   useTheme
 } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
 import { GroupRelationshipRow } from './GroupRelationshipRow'
 import type { GroupLinkChoice } from './GroupScreen'
 import { LevelPeopleTab } from './LevelPeopleTab'
@@ -72,7 +73,12 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
   const teamListTheme = useMemo(
     () =>
       theme.primaryTextColor === theme.cardBackgroundColor
-        ? { ...theme, primaryTextColor: theme.secondaryTextColor }
+        ? {
+            ...theme,
+            primaryTextColor: theme.secondaryTextColor,
+            activeColor: theme.secondaryTextColor,
+            dangerColor: tsBallpark.dangerColor
+          }
         : theme,
     [theme]
   )

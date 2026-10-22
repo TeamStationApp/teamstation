@@ -234,6 +234,14 @@ describe('the league page', () => {
       node => node.children.length === 0 && node.textContent === 'Demo Hawks'
     )!
     expect(getComputedStyle(title).color).equals('rgb(31, 36, 24)')
+    const seasonLabel = [...card.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Demo Spring'
+    )!
+    const leaveLabel = [...card.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Leave'
+    )!
+    expect(getComputedStyle(seasonLabel).color).equals('rgb(31, 36, 24)')
+    expect(getComputedStyle(leaveLabel).color).equals('rgb(186, 26, 26)')
     expect(getComputedStyle(title).color).not.equals(
       getComputedStyle(card).backgroundColor
     )

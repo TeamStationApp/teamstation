@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   const address = server.address()
   assert(address != null && typeof address !== 'string')
   const url = `http://127.0.0.1:${address.port}`
-  const daemon = await maestro(process.env.MAESTRO_D ?? 'leagueTeamsSharedCard')
+  let daemon: Awaited<ReturnType<typeof maestro>> | undefined
   const logs = [
     '$ node -r sucrase/register src/test/leagueTeamsSharedCard.e2e.ts'
   ]
@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     await m.assertVisible({ text, timeout: 15000 })
   }
   try {
+    daemon = await maestro(process.env.MAESTRO_D ?? 'leagueTeamsSharedCard')
     browser = await browserSession(
       daemon,
       'league-teams-chromium',
@@ -99,10 +100,6 @@ async function main(): Promise<void> {
           )!.parentElement!
           const css = getComputedStyle(card)
           const reference = getComputedStyle(ref)
-          const title = [...card.querySelectorAll<HTMLElement>('*')].find(
-            node =>
-              node.children.length === 0 && node.textContent === 'Demo Hawks'
-          )!
           const luminance = (color: string): number => {
             const rgb = color
               .match(/\d+/g)!
@@ -115,7 +112,11 @@ async function main(): Promise<void> {
               })
             return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
           }
-          const foreground = luminance(getComputedStyle(title).color)
+          const labels = ['Demo Hawks', 'Demo Spring', 'Leave'].map(text =>
+            [...card.querySelectorAll<HTMLElement>('*')].find(
+              node => node.children.length === 0 && node.textContent === text
+            )!
+          )
           const background = luminance(css.backgroundColor)
           const rows = [
             ...card.querySelectorAll<HTMLElement>(
@@ -129,9 +130,13 @@ async function main(): Promise<void> {
             )!
             .getBoundingClientRect()
           return {
-            contrast:
-              (Math.max(foreground, background) + 0.05) /
-              (Math.min(foreground, background) + 0.05),
+            contrast: labels.map(label => {
+              const foreground = luminance(getComputedStyle(label).color)
+              return (
+                (Math.max(foreground, background) + 0.05) /
+                (Math.min(foreground, background) + 0.05)
+              )
+            }),
             rows: rows.length,
             children: card.children.length,
             surface: css.backgroundColor,
@@ -148,7 +153,7 @@ async function main(): Promise<void> {
             ].map(n => n.getBoundingClientRect().height)
           }
         })
-        assert(geometry.contrast >= 4.5)
+        assert(geometry.contrast.every(ratio => ratio >= 4.5))
         assert.equal(geometry.rows, 2)
         assert.equal(geometry.children, 3)
         assert.equal(geometry.surface, geometry.reference)
@@ -261,20 +266,27 @@ async function main(): Promise<void> {
       'Finished app: actual League Teams card, real team and season destinations, Leave Cancel preserved relationship'
     )
   } finally {
-    await writeFile(
-      join(out, before ? 'baseline.log' : 'acceptance.log'),
-      logs.join('\n') + '\n'
-    )
-    await simulator?.detach()
-    await browser?.browser.disconnect()
-    await daemon.shutdown()
-    await fixture?.h.close()
-    await new Promise<void>((resolve, reject) =>
-      server.close(error => {
-        if (error == null) resolve()
-        else reject(error)
-      })
-    )
+    await Promise.all([
+      writeFile(
+        join(out, before ? 'baseline.log' : 'acceptance.log'),
+        logs.join('\n') + '\n'
+      ),
+      (async () => {
+        try {
+          await simulator?.detach()
+          await browser?.browser.disconnect()
+        } finally {
+          await daemon?.shutdown()
+        }
+      })(),
+      fixture?.h.close(),
+      new Promise<void>((resolve, reject) =>
+        server.close(error => {
+          if (error == null) resolve()
+          else reject(error)
+        })
+      )
+    ])
   }
 }
 main().catch((error: unknown) => {
