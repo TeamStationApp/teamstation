@@ -392,7 +392,7 @@ describe('TeamStation pipeline', () => {
       ['admin', 'manager']
     )
     const android = buildStage(rowFor('cameraman-android'))
-    assert.deepEqual(android.on, { labels: ['teamstation-android'] })
+    assert.deepEqual(android.on, { type: 'teamstation-android' })
     assert(android.secrets!.includes('ANDROID_KEYSTORE'))
     assert.deepEqual(buildStage(rowFor('teamstation-ios')).tools?.brew, [
       'xcodegen',

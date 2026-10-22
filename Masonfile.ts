@@ -11,9 +11,10 @@
  * `release` sends TeamStation's App Store build to TestFlight once an admin or
  * manager approves it.
  *
- * Nodes are chosen by label: `teamstation-test` runs the tests,
- * `teamstation-android` builds the Android apps, and Apple builds run on a Mac
- * with the project's signing label. The stage functions are in
+ * Nodes: the `teamstation-test` label runs the tests, nodes of the
+ * `teamstation-android` type (a cloud pool's Linux machines, which start when
+ * a row needs one) build the Android apps, and Apple builds run on a Mac with
+ * the project's signing label. The stage functions are in
  * `scripts/pipeline/`; the private settings are the `TS_PIPELINE_CONFIG`,
  * `ANDROID_SIGNING` and `ANDROID_KEYSTORE` project secrets.
  */
@@ -43,7 +44,7 @@ export function buildStage(row: Row): StageOptions {
   if (row.platform === 'android')
     return {
       ...common,
-      on: { labels: ['teamstation-android'] },
+      on: { type: 'teamstation-android' },
       secrets: ['TS_PIPELINE_CONFIG', 'ANDROID_SIGNING', 'ANDROID_KEYSTORE'],
       tools: {
         node,
