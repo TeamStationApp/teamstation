@@ -49,7 +49,10 @@ export interface Chat2Device {
   launchApp: (args: Args) => Promise<unknown>
   openLink: (args: Args) => Promise<unknown>
   tapOn: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
-  tapOnPoint: (args: Args) => Promise<unknown>
+  tapOnPoint: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>
   longPressOn: (args: Args) => Promise<unknown>
   swipe: (args: Args) => Promise<unknown>
   scroll: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
@@ -3367,7 +3370,11 @@ export class Chat2UI {
   }
 
   async open(path: string): Promise<void> {
-    assert(path.startsWith('/chat'), 'Only fixture chat routes may be opened')
+    assert(
+      path.startsWith('/chat') ||
+        (this.scenario === 'I3' && path === '/dev/chat-bench'),
+      'Only fixture chat routes or the exact I3 bench route may be opened'
+    )
     if (!this.native) {
       await this.dom(
         'history.pushState(null,"",' +
@@ -3400,9 +3407,13 @@ export class Chat2UI {
 
   async tapObserved(node: PublicNode): Promise<void> {
     const b = need(node.bounds, 'Observed public element bounds required')
-    await this.device.tapOnPoint({
-      point: `${Math.round(b.x + b.width / 2)},${Math.round(b.y + b.height / 2)}`
-    })
+    await this.device.tapOnPoint(
+      {
+        x: Math.round(b.x + b.width / 2),
+        y: Math.round(b.y + b.height / 2)
+      },
+      { signal: AbortSignal.timeout(15000) }
+    )
   }
 
   async hideKeyboard(): Promise<void> {
@@ -4575,6 +4586,8 @@ export class Chat2UI {
       variant: process.env.CHAT2_VARIANT ?? 'default',
       outcome: cleanupFailed ? 'failed' : outcome,
       source: this.binding.source,
+      applicationSource: this.binding.applicationSource,
+      harnessSource: this.binding.harnessSource,
       binding: this.binding,
       fixtureOwnership: this.fixture.ownershipId,
       device: this.deviceId,

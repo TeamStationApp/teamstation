@@ -3616,7 +3616,7 @@ describe('chat native adapter compatibility', function () {
       tapped.push(args)
     }
     await actual.iosMenuAction('Copy')
-    expect(tapped).deep.equals([{ point: '110,40' }])
+    expect(tapped).deep.equals([{ x: 110, y: 40 }])
     try {
       await actual.iosMenuAction('Paste')
       throw Error('Unexpected success')
@@ -3638,7 +3638,7 @@ describe('chat native adapter compatibility', function () {
       tapped.push(args)
     }
     await actual.deleteBackward()
-    expect(tapped).deep.equals([{ point: '270,470' }])
+    expect(tapped).deep.equals([{ x: 270, y: 470 }])
   })
   it('rejects an absent or disabled Delete key without issuing BACKSPACE', async () => {
     for (const nodes of [
@@ -5544,4 +5544,248 @@ describe('positive Android IME observations', function () {
         ).equals('failed')
       })
     })
+})
+
+describe('compatibility harness route and coordinate boundaries', () => {
+  it('opens only the exact I3 bench route and retains ordinary chat navigation', async () => {
+    const calls: unknown[] = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      scenario: 'I3',
+      native: false,
+      surface: 'web-narrow',
+      dom: async (script: string) => {
+        calls.push(script)
+        return {}
+      }
+    }) as Chat2UI
+    await ui.open('/dev/chat-bench')
+    await ui.open('/chat/example')
+    expect(calls).has.length(2)
+    for (const scenario of ['I1', 'I2', 'E1', 'capture']) {
+      Object.assign(ui, { scenario })
+      await captureFailure(ui.open('/dev/chat-bench'))
+    }
+    Object.assign(ui, { scenario: 'I3' })
+    for (const path of [
+      '/dev/other',
+      '/dev/chat-bench/',
+      '/dev/chat-bench?x=1',
+      '/dev/chat-bench#x',
+      'https://example.test/dev/chat-bench'
+    ])
+      await captureFailure(ui.open(path))
+    expect(calls).has.length(2)
+    Object.assign(ui, {
+      native: true,
+      surface: 'android',
+      fixture: { scheme: 'teamstation' },
+      device: {
+        openLink: async (args: unknown) => {
+          calls.push(args)
+        }
+      }
+    })
+    await ui.open('/dev/chat-bench')
+    expect(calls[2]).deep.equals({ link: 'teamstation://dev/chat-bench' })
+  })
+  it('passes an observed center as bounded numeric coordinates instead of a percentage point string', async () => {
+    const calls: Array<Record<string, unknown>> = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      device: {
+        tapOnPoint: async (
+          args: Record<string, unknown>,
+          options: { signal: AbortSignal }
+        ) => {
+          expect(options.signal).instanceOf(AbortSignal)
+          expect(options.signal.aborted).equals(false)
+          calls.push(args)
+        }
+      }
+    }) as Chat2UI
+    await ui.tapObserved({ bounds: { x: 17, y: 499, width: 341, height: 56 } })
+    expect(calls).deep.equals([{ x: 188, y: 527 }])
+  })
+})
+
+describe('identity safety row ownership', () => {
+  function model(
+    mode = 'normal',
+    native = false
+  ): {
+    scenario: Scenarios
+    expected: string
+    calls: unknown[]
+    close: () => void
+  } {
+    const peer = userIdOfGumbo(2)
+    const other = userIdOfGumbo(3)
+    const viewer = userIdOfGumbo(1)
+    const expected = '12345'.repeat(12)
+    const calls: unknown[] = []
+    let opened = false
+    let coachY = mode === 'below-footer' ? 770 : 180
+    const document = new JSDOM(
+      '<div data-testid="chat-info-members"><button aria-label="Safety number with Kyle Tucker"><span>Kyle Tucker</span><span>Member</span></button><button aria-label="Safety number with Kyle Tucker"><span>Kyle Tucker</span><span>Coach</span></button></div>',
+      { runScripts: 'outside-only' }
+    )
+    const buttons = Array.from(
+      document.window.document.querySelectorAll('button')
+    )
+    for (const [index, button] of buttons.entries())
+      button.getBoundingClientRect = () =>
+        new document.window.DOMRect(10, index === 0 ? 100 : coachY, 380, 60)
+    document.window.document.elementFromPoint = () =>
+      buttons[1].lastElementChild
+    if (mode === 'ambiguous-dom')
+      document.window.document
+        .querySelector('[data-testid]')!
+        .append(buttons[1].cloneNode(true))
+    const ordinary = (): PublicNode[] => [
+      {
+        text: 'Back',
+        type: 'Button',
+        bounds: { x: 0, y: 0, width: 80, height: 40 }
+      },
+      {
+        text: 'Home',
+        type: 'Button',
+        bounds: { x: 0, y: 740, width: 80, height: 50 }
+      },
+      {
+        text: 'Safety number with Kyle Tucker',
+        type: native ? 'android.view.View' : 'Button',
+        bounds: { x: 10, y: 100, width: 380, height: 60 }
+      },
+      {
+        text: 'Member',
+        type: 'TextView',
+        bounds: { x: 80, y: 130, width: 120, height: 20 }
+      },
+      {
+        text: 'Safety number with Kyle Tucker',
+        type: native ? 'android.view.View' : 'Button',
+        bounds: { x: 10, y: coachY, width: 380, height: 60 }
+      },
+      {
+        text: 'Coach',
+        type: 'TextView',
+        bounds: { x: 80, y: coachY + 30, width: 120, height: 20 }
+      }
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native,
+      surface: native ? 'android' : 'web-narrow',
+      metrics: () => ({ width: 400, height: 800 }),
+      nodes: async () =>
+        opened
+          ? Array.from({ length: 12 }, (_, i) => ({
+              id: 'chat-safety-group-' + i,
+              text: mode === 'wrong-digits' && i === 0 ? '54321' : '12345'
+            }))
+          : ordinary(),
+      dom: async (script: string) =>
+        document.window.eval('(()=>{' + script + '})()'),
+      text: async (label: string) => {
+        calls.push(label)
+      },
+      shot: async (kind: string) => {
+        calls.push(kind)
+      },
+      device: {
+        platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
+        scrollUntilVisible: async (args: unknown) => {
+          calls.push(args)
+        },
+        scroll: async (args: unknown) => {
+          calls.push(args)
+          coachY = 180
+        },
+        tapOnPoint: async (args: unknown) => {
+          calls.push(args)
+          opened = true
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerId: viewer,
+      ui,
+      observations: [],
+      f: {
+        members: [
+          { userId: peer, name: 'Kyle Tucker', role: 'Coach' },
+          {
+            userId: other,
+            name: 'Kyle Tucker',
+            role: mode === 'ambiguous-role' ? 'Coach' : 'Member'
+          }
+        ]
+      },
+      openInfo: async () => {
+        calls.push('Info')
+      },
+      openGroup: async () => {
+        calls.push('Group')
+      }
+    }) as Scenarios
+    return {
+      scenario,
+      expected,
+      calls,
+      close: () => {
+        document.window.close()
+      }
+    }
+  }
+  for (const native of [false, true])
+    it(
+      'opens the role-qualified peer among duplicate names with exact safety digits: ' +
+        (native ? 'Android View hierarchy model' : 'real DOM model'),
+      async () => {
+        const actual = model('normal', native)
+        try {
+          await actual.scenario.identitySafety(
+            userIdOfGumbo(2),
+            actual.expected
+          )
+          expect(actual.calls).deep.includes({ x: 200, y: 210 })
+          expect(actual.calls).includes('identity-safety')
+          expect(actual.calls).includes('Done')
+          expect(actual.calls).includes('Group')
+        } finally {
+          actual.close()
+        }
+      }
+    )
+  it('scrolls the observed peer clear of the footer before its numeric tap', async () => {
+    const actual = model('below-footer')
+    try {
+      await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      expect(actual.calls).deep.includes({ direction: 'DOWN' })
+      expect(actual.calls).deep.includes({ x: 200, y: 210 })
+    } finally {
+      actual.close()
+    }
+  })
+  for (const mode of ['ambiguous-role', 'ambiguous-dom', 'wrong-digits'])
+    it(
+      'rejects ' + mode + ' without claiming successful safety verification',
+      async () => {
+        const actual = model(mode)
+        try {
+          const failure = await captureFailure(
+            actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+          )
+          expect(String(failure)).includes(
+            mode === 'wrong-digits'
+              ? 'Actual installed safety digits must match'
+              : mode === 'ambiguous-dom'
+                ? 'Unique actual name and role'
+                : 'Unique public safety name and role'
+          )
+          expect(actual.calls).not.includes('identity-safety')
+        } finally {
+          actual.close()
+        }
+      }
+    )
 })

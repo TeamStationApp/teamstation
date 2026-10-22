@@ -2909,19 +2909,172 @@ export class Scenarios {
       this.f.members.find(m => m.userId === peerId),
       'Safety peer must be a current member'
     )
+    assert.notEqual(
+      member.userId,
+      this.viewerId,
+      'Distinct safety peer required'
+    )
+    assert(member.role !== '', 'Observed public safety role required')
     assert.equal(
-      this.f.members.filter(m => m.name === member.name).length,
+      this.f.members.filter(
+        m =>
+          m.userId !== this.viewerId &&
+          m.name === member.name &&
+          m.role === member.role
+      ).length,
       1,
-      'Unique public safety label required'
+      'Unique public safety name and role required'
     )
     await this.openInfo()
     const label = 'Safety number with ' + member.name
-    await this.ui.device.scrollUntilVisible({
-      element: { text: exactText(label) },
-      direction: 'DOWN',
-      timeout: 15000
+    const ui = this.ui
+    type Box = NonNullable<PublicNode['bounds']>
+    const samples: Json[] = []
+    this.observations.push({
+      safetyPeer: peerId,
+      publicName: member.name,
+      publicRole: member.role,
+      samples
     })
-    await this.ui.text(label)
+    if (ui.native) {
+      assert.equal(
+        this.f.members.filter(
+          m => m.userId !== this.viewerId && m.role === member.role
+        ).length,
+        1,
+        'Unique public role required for native scrolling'
+      )
+      await ui.device.scrollUntilVisible({
+        element: { text: exactText(member.role) },
+        direction: 'DOWN',
+        timeout: 15000
+      })
+    }
+    const read = async (): Promise<{
+      bounds: Box
+      top: number
+      bottom: number
+      topmost?: boolean
+    }> => {
+      const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
+      const width = Number(
+        'screenWidth' in info ? info.screenWidth : info.width
+      )
+      const height = Number(
+        'screenHeight' in info ? info.screenHeight : info.height
+      )
+      assert([width, height].every(v => Number.isFinite(v) && v > 0))
+      const nodes = await ui.nodes()
+      const finite = (b: Box | undefined): b is Box =>
+        b != null &&
+        [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+        b.width > 0 &&
+        b.height > 0
+      const visible = (b: Box | undefined): b is Box =>
+        finite(b) &&
+        b.x >= 0 &&
+        b.y >= 0 &&
+        b.x + b.width <= width &&
+        b.y + b.height <= height
+      const headers = nodes.filter(
+        n =>
+          visible(n.bounds) &&
+          n.bounds.y + n.bounds.height <= height / 3 &&
+          (n.text === 'Back' ||
+            n.text === 'Notifications' ||
+            n.text?.startsWith('Account, ') === true)
+      )
+      assert(
+        headers.length > 0,
+        'Observed public header required before safety tap'
+      )
+      const footers = nodes.filter(
+        n =>
+          visible(n.bounds) &&
+          n.bounds.height < height / 3 &&
+          n.bounds.y > height / 2 &&
+          ['Home', 'Videos', 'Schedule', 'Chat'].includes(n.text ?? '')
+      )
+      const top =
+        Math.max(...headers.map(n => n.bounds!.y + n.bounds!.height)) + 8
+      const bottom = Math.min(height - 8, ...footers.map(n => n.bounds!.y - 8))
+      assert(
+        Number.isFinite(top) &&
+          Number.isFinite(bottom) &&
+          top > 0 &&
+          bottom < height &&
+          bottom - top > 32,
+        'Actual safe Info reading band required'
+      )
+      let target: { bounds: Box; topmost?: boolean }
+      if (ui.native) {
+        const roles = nodes.filter(
+          n => n.text === member.role && finite(n.bounds)
+        )
+        const rows = nodes.filter(
+          n =>
+            n.text === label &&
+            (ui.surface !== 'ios' || /button$/i.test(n.type ?? '')) &&
+            finite(n.bounds) &&
+            roles.some(
+              role =>
+                role.bounds!.x >= n.bounds!.x &&
+                role.bounds!.y >= n.bounds!.y &&
+                role.bounds!.x + role.bounds!.width <=
+                  n.bounds!.x + n.bounds!.width &&
+                role.bounds!.y + role.bounds!.height <=
+                  n.bounds!.y + n.bounds!.height
+            )
+        )
+        assert.equal(
+          rows.length,
+          1,
+          'Unique actual name and role safety row required'
+        )
+        target = { bounds: rows[0].bounds! }
+      } else {
+        const actual = await ui.dom(`
+          const section=document.querySelector('[data-testid="chat-info-members"]');
+          if(!section)throw Error('Actual Info member section required');
+          const matches=Array.from(section.querySelectorAll('button,[role="button"]')).filter(n=>n.getAttribute('aria-label')===${JSON.stringify(label)}&&Array.from(n.querySelectorAll('*')).some(c=>c.textContent===${JSON.stringify(member.role)}&&c.closest('button,[role="button"]')===n)).map(n=>{const b=n.getBoundingClientRect(),hit=document.elementFromPoint(b.x+b.width/2,b.y+b.height/2);return {bounds:{x:b.x,y:b.y,width:b.width,height:b.height},topmost:hit!=null&&(hit===n||n.contains(hit))}});
+          return {matches};
+        `)
+        assert(
+          Array.isArray(actual.matches) && actual.matches.length === 1,
+          'Unique actual name and role safety row required'
+        )
+        target = actual.matches[0] as typeof target
+      }
+      assert(
+        finite(target.bounds) &&
+          target.bounds.x >= 0 &&
+          target.bounds.x + target.bounds.width <= width &&
+          target.bounds.height < bottom - top
+      )
+      samples.push({ ...target, top, bottom })
+      return { ...target, top, bottom }
+    }
+    let target = await read()
+    for (
+      let step = 0;
+      step < 8 &&
+      (target.bounds.y < target.top ||
+        target.bounds.y + target.bounds.height > target.bottom);
+      step++
+    ) {
+      await ui.device.scroll(
+        { direction: target.bounds.y < target.top ? 'UP' : 'DOWN' },
+        { signal: AbortSignal.timeout(15000) }
+      )
+      target = await read()
+    }
+    assert(
+      target.bounds.y >= target.top &&
+        target.bounds.y + target.bounds.height <= target.bottom &&
+        (ui.native || target.topmost === true),
+      'Exact role-qualified safety row must fully clear overlays'
+    )
+    await ui.tapObserved({ bounds: target.bounds })
     await until(
       async () => {
         const groups = (await this.ui.nodes()).filter(node =>
