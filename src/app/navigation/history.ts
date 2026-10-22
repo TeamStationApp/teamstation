@@ -27,9 +27,7 @@ export function frameMatchesPath(frame: ClearedFrame, path: string): boolean {
     case 'player':
       return frame.userId != null && pathname === `/players/${frame.userId}`
     case 'season':
-      return (
-        frame.season != null && pathname === `/seasons/${frame.season.id}`
-      )
+      return frame.season != null && pathname === `/seasons/${frame.season.id}`
     case 'group':
       return (
         frame.kind != null &&

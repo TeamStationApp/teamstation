@@ -2,6 +2,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import ts from 'typescript'
+
 /**
  * Holds the scoring library to its layering. Nothing under src/common/scoring
  * imports the app or the server, and the app imports only the parts of the
@@ -40,11 +42,63 @@ function sources(dir) {
   return out
 }
 
+// These exports only inspect a game. Other exports in these modules mutate it.
+const READ_ONLY_EXPORTS = {
+  lineup: ['ordinal', 'begun'],
+  lineupHistory: ['revealedSides', 'confirmedSides']
+}
+
 function imports(text) {
   const found = []
-  const pattern = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g
-  let match
-  while ((match = pattern.exec(text)) != null) found.push(match[1])
+  const source = ts.createSourceFile('source.tsx', text, ts.ScriptTarget.Latest)
+  function visit(node) {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const spec = node.moduleSpecifier
+      if (spec != null && ts.isStringLiteral(spec)) {
+        const clause = ts.isImportDeclaration(node)
+          ? node.importClause
+          : node.exportClause
+        const bindings = ts.isImportDeclaration(node)
+          ? clause?.namedBindings
+          : clause
+        const names =
+          bindings != null &&
+          (ts.isNamedImports(bindings) || ts.isNamedExports(bindings))
+            ? bindings.elements
+                .filter(item => !item.isTypeOnly)
+                .map(item => (item.propertyName ?? item.name).text)
+            : null
+        found.push({
+          spec: spec.text,
+          typeOnly: node.isTypeOnly === true || clause?.isTypeOnly === true,
+          names:
+            ts.isImportDeclaration(node) && clause?.name != null ? null : names
+        })
+      }
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) &&
+          node.expression.text === 'require')) &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      found.push({ spec: node.arguments[0].text, typeOnly: false, names: null })
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression != null &&
+      ts.isStringLiteral(node.moduleReference.expression)
+    ) {
+      found.push({
+        spec: node.moduleReference.expression.text,
+        typeOnly: node.isTypeOnly,
+        names: null
+      })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
   return found
 }
 
@@ -55,7 +109,7 @@ export function checkLayering(root) {
   const app = resolve(root, 'src/app')
   const server = resolve(root, 'src/server')
   for (const file of sources(library)) {
-    for (const spec of imports(readFileSync(file, 'utf8'))) {
+    for (const { spec } of imports(readFileSync(file, 'utf8'))) {
       if (!spec.startsWith('.')) continue
       const target = resolve(dirname(file), spec)
       if (target.startsWith(app + '/') || target.startsWith(server + '/'))
@@ -65,12 +119,19 @@ export function checkLayering(root) {
     }
   }
   for (const file of sources(app)) {
-    for (const spec of imports(readFileSync(file, 'utf8'))) {
+    for (const { spec, typeOnly, names } of imports(
+      readFileSync(file, 'utf8')
+    )) {
       if (!spec.startsWith('.')) continue
       const target = resolve(dirname(file), spec)
       if (!target.startsWith(library + '/')) continue
       const module = relative(library, target).split('/')[0]
-      if (!APP_MAY_IMPORT.includes(module))
+      const allowed = READ_ONLY_EXPORTS[module] ?? []
+      if (
+        !APP_MAY_IMPORT.includes(module) &&
+        !typeOnly &&
+        !(names != null && names.every(name => allowed.includes(name)))
+      )
         problems.push(
           `${relative(root, file)}: the app may not import scoring/${module}`
         )
@@ -79,10 +140,16 @@ export function checkLayering(root) {
   return problems
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+export function main(root) {
   const problems = checkLayering(root)
   for (const problem of problems) console.error(problem)
-  if (problems.length > 0) process.exit(1)
+  if (problems.length > 0) return 1
   console.log('Scoring layering holds.')
+  return 0
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.exitCode = main(
+    resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  )
 }
