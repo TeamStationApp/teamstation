@@ -3123,7 +3123,7 @@ export class Scenarios {
     assert.equal(baseline.text.authorId, this.viewerId)
     assert(Array.from(baseline.text.body).length <= 200)
     await this.anchor(baseline.reply)
-    await ui.device.assertVisible({ text: exactText(baseline.reply.body) })
+    await this.identityLegacyBody(baseline.reply)
     interface Element {
       found?: boolean
       id?: string
@@ -3192,6 +3192,75 @@ export class Scenarios {
     proof.outcome = 'passed'
   }
 
+  async identityLegacyBody(message: Chat2Message): Promise<void> {
+    const ui = this.ui
+    if (!ui.native) {
+      await ui.device.assertVisible({ text: exactText(message.body) })
+      return
+    }
+    const band = await this.readingBand()
+    const samples: Json[] = []
+    this.observations.push({ legacyBody: message.id, band, samples })
+    let box = await this.targetBounds('chat-bubble-' + message.id)
+    const requiredHeight = (): number =>
+      Math.min(box.height, band.bottom - band.top - 32)
+    const fits = (): boolean =>
+      box.y >= band.top + 8 && box.y + requiredHeight() <= band.bottom - 8
+    for (let step = 0; ; step++) {
+      assert(
+        [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+          box.width > 0 &&
+          box.height > 0 &&
+          band.bottom - band.top > 64,
+        'Finite legacy bubble and actual reading band required'
+      )
+      samples.push({ ...box, requiredHeight: requiredHeight() })
+      if (fits()) break
+      assert(
+        step < 8,
+        'Legacy bubble must clear header, pins and composer before text verification'
+      )
+      const delta =
+        box.y < band.top + 8
+          ? Math.min((band.bottom - band.top) / 2, band.top + 16 - box.y)
+          : -Math.min(
+              (band.bottom - band.top) / 2,
+              box.y + requiredHeight() - band.bottom + 16
+            )
+      const middle = (band.top + band.bottom) / 2
+      const previousY = box.y
+      await ui.measuredSwipe({
+        startX: Math.round(box.x + box.width / 2),
+        endX: Math.round(box.x + box.width / 2),
+        startY: Math.round(middle - delta / 2),
+        endY: Math.round(middle + delta / 2),
+        duration: 350
+      })
+      box = await until(
+        async () => {
+          const next = await this.targetBounds('chat-bubble-' + message.id)
+          samples.push({ afterGesture: next })
+          return Math.abs(next.y - previousY) >= 1 ? next : undefined
+        },
+        'native legacy reader progress after measured gesture',
+        2000
+      )
+    }
+    // Literal lookup reaches the native deep query; equality retains the exact oracle.
+    const response = await ui.device.assertVisible(
+      { text: message.body, timeout: 2000 },
+      { signal: AbortSignal.timeout(5000) }
+    )
+    const element = (
+      response as { element?: { found?: boolean; text?: string } }
+    ).element
+    assert(
+      element?.found === true && element.text === message.body,
+      'Exact native legacy body required'
+    )
+    samples.push({ literalBodyResult: response })
+  }
+
   async I1(): Promise<void> {
     await this.check(
       'I1 preserved installed legacy identity and encrypted history',
@@ -3234,10 +3303,27 @@ export class Scenarios {
         await this.openGroup()
         for (const message of [baseline.text, baseline.reply]) {
           await this.identityLegacyAnchor(message, baseline)
-          await this.ui.device.assertVisible({ text: exactText(message.body) })
+          await this.identityLegacyBody(message)
         }
-        await this.ui.device.assertVisible({ text: '^Jump to message from .*' })
+        if (this.ui.native) {
+          const label = 'Jump to message from You: ' + baseline.text.body
+          const response = await this.ui.device.assertVisible({
+            text: label,
+            timeout: 2000
+          })
+          const element = (
+            response as { element?: { found?: boolean; text?: string } }
+          ).element
+          assert(
+            element?.found === true && element.text === label,
+            'Exact rendered legacy reply quote required'
+          )
+        } else
+          await this.ui.device.assertVisible({
+            text: '^Jump to message from .*'
+          })
         await this.identityLegacyAnchor(baseline.file, baseline)
+        if (this.ui.native) await this.identityLegacyBody(baseline.file)
         await until(
           async () => {
             try {

@@ -5816,7 +5816,16 @@ describe('native installed legacy reply navigation', () => {
       }
     }
     const calls: unknown[] = []
-    const row = { x: 20, y: 200, width: 340, height: 240 }
+    const row = {
+      x: 20,
+      y: ['above-header', 'no-progress'].includes(mode)
+        ? -131
+        : mode === 'below-composer'
+          ? 650
+          : 200,
+      width: 340,
+      height: mode === 'tall-file' ? 900 : 240
+    }
     const quote = { x: 40, y: 220, width: 300, height: 80 }
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native,
@@ -5831,7 +5840,17 @@ describe('native installed legacy reply navigation', () => {
       device: {
         assertVisible: async (selector: { id?: string; text?: string }) => {
           calls.push(selector)
-          if (selector.text === '^Preserved legacy reply\\.$') return {}
+          if (
+            [baseline.text.body, baseline.reply.body].includes(
+              selector.text ?? ''
+            )
+          )
+            return {
+              element: {
+                found: true,
+                text: mode === 'wrong-body' ? 'Different text' : selector.text
+              }
+            }
           if (selector.id != null)
             return {
               element: {
@@ -5867,6 +5886,10 @@ describe('native installed legacy reply navigation', () => {
           }
         },
         platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
+        swipe: async (args: unknown) => {
+          calls.push({ swipe: args })
+          if (mode !== 'no-progress') row.y = mode === 'tall-file' ? 116 : 200
+        },
         tapOnPoint: async (args: unknown) => {
           calls.push({ tap: args })
         }
@@ -5876,6 +5899,8 @@ describe('native installed legacy reply navigation', () => {
       viewerId: viewer,
       ui,
       observations: [],
+      readingBand: async () => ({ top: 100, bottom: 700 }),
+      targetBounds: async () => ({ ...row }),
       anchor: async (target: Chat2Message) => {
         calls.push({ anchor: target.id })
       }
@@ -5908,6 +5933,60 @@ describe('native installed legacy reply navigation', () => {
         })
       }
     )
+  for (const mode of ['above-header', 'below-composer', 'tall-file'])
+    it(
+      'frames the actual ' +
+        mode +
+        ' region with a vertical measured gesture before literal body verification',
+      async () => {
+        const actual = model(mode)
+        await actual.scenario.identityLegacyBody(actual.baseline.reply)
+        const swipe = actual.calls.find(
+          call => typeof call === 'object' && call != null && 'swipe' in call
+        ) as {
+          swipe: { startX: number; endX: number; startY: number; endY: number }
+        }
+        expect(swipe.swipe.startX).equals(swipe.swipe.endX)
+        expect(
+          mode === 'above-header'
+            ? swipe.swipe.endY > swipe.swipe.startY
+            : swipe.swipe.endY < swipe.swipe.startY
+        ).equals(true)
+        expect(actual.calls.at(-1)).deep.equals({
+          text: 'Preserved legacy reply.',
+          timeout: 2000
+        })
+      }
+    )
+  for (const mode of ['no-progress', 'wrong-body'])
+    it(
+      'rejects native ' + mode + ' instead of claiming the exact readable body',
+      async () => {
+        const actual = model(mode)
+        const failure = await captureFailure(
+          actual.scenario.identityLegacyBody(actual.baseline.reply)
+        )
+        expect(String(failure)).includes(
+          mode === 'no-progress'
+            ? 'native legacy reader progress'
+            : 'Exact native legacy body required'
+        )
+        if (mode === 'no-progress') {
+          expect(actual.calls).has.length(1)
+          expect(
+            actual.calls.every(
+              call =>
+                typeof call === 'object' && call != null && 'swipe' in call
+            )
+          ).equals(true)
+        }
+      }
+    )
+  it('retains the exact browser body regex without native framing', async () => {
+    const actual = model('resolved', false)
+    await actual.scenario.identityLegacyBody(actual.baseline.reply)
+    expect(actual.calls).deep.equals([{ text: '^Preserved legacy reply\\.$' }])
+  })
   it('retains browser navigation without native controls or quote queries', async () => {
     const actual = model('resolved', false)
     await actual.scenario.identityLegacyAnchor(
