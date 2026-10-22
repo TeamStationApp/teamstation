@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { asGameDetail, type GameDetail } from '../../common/api'
 import type { GameSocketListener } from '../../common/gameSocket'
+import { replayTimelineOf } from '../../common/replay/replayTimeline'
 import type { StoredGame } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import {
@@ -14,6 +15,7 @@ import {
   REPLAY_GAME_ID,
   REPLAY_TEAMS,
   replayActions,
+  replayContext,
   scored
 } from '../../test/replayGameFixture'
 import type { ScreenRect } from '../field/catcherBounds'
@@ -1017,6 +1019,43 @@ describe('the replay screen', function () {
       expect(card()).includes("That's the ballgame!")
       // Hurrying through the missed steps, it read only the last.
       expect(announcer.played).deep.equals(['9999-1'])
+    })
+
+    it('fetches no sentence for a ball in play until the scorer places it', async function () {
+      resize(402, 874)
+      const inPlay = actions.findIndex(action => action.type === 'ballInPlay')
+      const bare = { type: 'ballInPlay' as const, contact: 'swing' as const }
+      let stored = await scored([...actions.slice(0, inPlay), bare])
+      const key = replayTimelineOf(stored, replayContext()).steps.at(-1)!.key
+      const game = gameOf({ status: 'inProgress' })
+      await show(
+        game,
+        stored,
+        fakeClient(
+          async () => game,
+          async () => stored
+        ),
+        { pollMs: 60 }
+      )
+      await showCatcher()
+      await press('Turn announcer on')
+      for (let i = 0; i < 5; i++) {
+        now += 5000
+        await wait(60)
+      }
+      expect(announcer.asked).not.includes(key)
+      expect(card()).not.includes('in play')
+      stored = await scored([
+        ...actions.slice(0, inPlay),
+        bare,
+        ...actions.slice(inPlay, inPlay + 3)
+      ])
+      for (let i = 0; i < 40 && !card().includes('single'); i++) {
+        now += 1000
+        await wait(60)
+      }
+      expect(announcer.asked).includes(key)
+      expect(card()).includes('single')
     })
 
     it('with no socket, reads the game until it is over', async function () {

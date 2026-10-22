@@ -403,6 +403,41 @@ export function replayActions(setup = replaySetup()): ScoringAction[] {
   ]
 }
 
+/**
+ * A short game for the announcer's runs: three walks load the bases in the
+ * top of the 1st, a grand slam clears them, three strikeouts end the half,
+ * and the scorer ends the game there.
+ */
+export function rallyActions(): ScoringAction[] {
+  const walk = [pitch('B'), pitch('B'), pitch('B'), pitch('B'), close]
+  const strikeout = [pitch('S'), pitch('S'), pitch('S'), close]
+  return [
+    ...walk,
+    ...walk,
+    ...walk,
+    pitch('C'),
+    {
+      type: 'ballInPlay',
+      contact: 'swing',
+      launchAngle: 31.5,
+      launchAngleDragged: true,
+      location: { x: -40, z: -128 },
+      homeRunKind: 'out-of-park'
+    },
+    { type: 'result', eventType: 'home_run' },
+    close,
+    ...strikeout,
+    ...strikeout,
+    ...strikeout,
+    { type: 'gameFlow', kind: 'endGame' }
+  ]
+}
+
+/** The rally game, finished. */
+export async function rallyGame(setup = replaySetup()): Promise<StoredGame> {
+  return await scored(rallyActions(), setup)
+}
+
 /** Scores the actions and returns what the server holds after them. */
 export async function scored(
   actions: ScoringAction[],

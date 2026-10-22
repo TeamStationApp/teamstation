@@ -5,6 +5,7 @@ import {
   AWAY_PLAYERS,
   finalGame,
   HOME_PLAYERS,
+  rallyGame,
   replayActions,
   replayContext,
   scored
@@ -30,6 +31,7 @@ import {
   narrateStep,
   narrateTimeline,
   type Narration,
+  scorersSentence,
   spoken,
   stepsWithStates
 } from './narration'
@@ -58,6 +60,41 @@ const inPlay = (
   fielder,
   launchAngle,
   location
+})
+
+describe('runners who score together', function () {
+  this.timeout(20000)
+
+  it('names them in one sentence, in the order they crossed the plate', function () {
+    expect(scorersSentence(['Player 1'])).equals('Player 1 scores!')
+    expect(scorersSentence(['Player 1', 'Player 2'])).equals(
+      'Player 1 and Player 2 score!'
+    )
+    expect(scorersSentence(['Player 1', 'Player 2', 'Player 3'])).equals(
+      'Player 1, Player 2 and Player 3 all score!'
+    )
+    expect(scorersSentence(['Player 1', null])).equals(
+      'Player 1 and a runner score!'
+    )
+    expect(scorersSentence([null])).equals('A runner scores!')
+    expect(scorersSentence([])).equals('')
+    expect(scorersSentence([null, 'Player 2'])).equals(
+      'A runner and Player 2 score!'
+    )
+  })
+
+  it('calls a grand slam with its three runners together, and not the batter', async function () {
+    const stored = await rallyGame()
+    const timeline = replayTimelineOf(stored, replayContext())
+    const narrations = narrateTimeline(timeline)
+    const texts = timeline.steps.map(
+      step => narrations.get(step.key)?.text ?? ''
+    )
+    const slam = texts.find(text => text.includes('grand slam'))
+    expect(slam).match(/A grand slam! \w+ \w, \w+ \w and \w+ \w all score! /)
+    expect(slam).not.match(/scores!/)
+    for (const text of texts) expect(text.split('score').length).lessThan(3)
+  })
 })
 
 describe('replay narration of a whole game', function () {
@@ -315,7 +352,7 @@ describe('replay narration of single plays', function () {
       close
     )
     expect(slam.text).match(
-      /^Player 4 hits it deep to left-center, that ball is gone! A grand slam! Player 1 scores!/
+      /^Player 4 hits it deep to left-center, that ball is gone! A grand slam! Player 1, Player 2 and Player 3 all score!/
     )
     expect(slam.emphasis).equals('excited')
     const doubled = say(

@@ -112,6 +112,32 @@ describe('replay seed', function () {
     expect(gamesWithRecords.has(REPLAY_SEED.games.final)).equals(true)
   })
 
+  it('stores the rally game finished, its grand slam scoring three runners', async function () {
+    expect(await game(REPLAY_SEED.games.rally)).includes({
+      status: 'final',
+      scoringOwner: 'teamstation'
+    })
+    expect(
+      await db!
+        .selectFrom('games')
+        .select(['away_score', 'home_score'])
+        .where('id', '=', REPLAY_SEED.games.rally)
+        .executeTakeFirstOrThrow()
+    ).deep.equals({ away_score: 4, home_score: 0 })
+    const plays = await db!
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', REPLAY_SEED.games.rally)
+      .execute()
+    const slam = plays
+      .map(
+        row =>
+          row.gumbo as { result: { eventType: string }; runners?: unknown[] }
+      )
+      .find(gumbo => gumbo.result.eventType === 'home_run')
+    expect(slam?.runners).length(4)
+  })
+
   it('lets each member see the games, the outsider none, and only the scorer score', async function () {
     const final = await game(REPLAY_SEED.games.final)
     const scope = {

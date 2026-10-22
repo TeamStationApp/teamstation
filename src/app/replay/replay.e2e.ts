@@ -83,6 +83,18 @@ import {
  *     A tap a second into a sentence stops it, and the rewound sentences are
  *     read again. Writes rewind-announcer.log and what was heard,
  *     rewind-announcer.mp3.
+ *
+ *   REPLAY_SCENARIO=liveInPlay REPLAY_PHASE=before|after
+ *     The scorer chooses Single and waits five seconds before placing the
+ *     ball while a season member follows; `after` expects nothing on the
+ *     viewer's card until the ball is placed. Writes live-in-play-<phase>.mp4.
+ *
+ *   REPLAY_SCENARIO=scorers   (the server's `speech` set)
+ *     The rally game's grand slam names its three runners in one sentence,
+ *     and the announcer reads it. Writes scorers-after.mp3.
+ *
+ * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
+ * REPLAY_IMPORTED override them.
  */
 
 const FINAL = process.env.REPLAY_FINAL ?? 'gam_replaySeedFinal'
@@ -1061,6 +1073,7 @@ async function noAnnouncer(m: Device): Promise<void> {
   await shot(m, 'replay-no-announcer')
 }
 
+const RALLY = process.env.REPLAY_RALLY ?? 'gam_replaySeedRally'
 const MIXED = process.env.REPLAY_MIXED ?? 'gam_replaySeedMixed'
 
 /** A game's replay, or its live view, straight from its address. */
@@ -1743,6 +1756,144 @@ async function rewindAnnouncer(m: Device): Promise<void> {
   console.log(lines.slice(1, 3).concat(lines.slice(-1)).join('\n'))
 }
 
+/**
+ * The scorer puts a ball in play while a season member follows: before
+ * (`REPLAY_PHASE=before`) only recorded; after, nothing shows until the
+ * ball is placed, then the hit and its result.
+ */
+async function liveInPlay(
+  daemon: Parameters<typeof attachWeb>[0]
+): Promise<void> {
+  const phase = required('REPLAY_PHASE')
+  const out = await artifactsDir()
+  const log: string[] = [
+    `$ REPLAY_SCENARIO=liveInPlay REPLAY_PHASE=${phase} node -r sucrase/register src/app/replay/replay.e2e.ts`
+  ]
+  const started = Date.now()
+  const note = (line: string): void => {
+    const entry = `${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s  ${line}`
+    log.push(entry)
+    console.log(entry)
+  }
+  const viewer = await attachWeb(daemon, '402x874', 'inPlayViewer')
+  const scorer = await attachWeb(daemon, '402x874', 'inPlayScorer')
+  let recorder: ReturnType<typeof screenRecorder> | undefined
+  try {
+    await signInWeb(scorer, SCORER)
+    await scorer.openBrowser({
+      url: `${required('REPLAY_WEB_URL')}/games/${LIVE}/score`
+    })
+    await scorer.assertVisible({ text: 'Ball', timeout: 30000 })
+    await signInWeb(viewer, SEASON)
+    await openReplay(viewer, LIVE)
+    await evalJson<boolean>(viewer, CARD_LOG)
+    const opened = await cardUntil(
+      viewer,
+      'the card',
+      text => text !== '',
+      15000
+    )
+    note(`opened on: ${opened}`)
+    recorder = screenRecorder(viewer)
+    await wait(1500)
+    await tapButton(scorer, 'Swing in Play')
+    await tapButton(scorer, 'Single')
+    const chosen = Date.now()
+    note('the scorer chooses Single; the ball is not placed yet')
+    await wait(5000)
+    const meanwhile = (await cards(viewer)).filter(card => card.t > chosen)
+    note(
+      `while unplaced: ${meanwhile.length === 0 ? 'the card did not change' : meanwhile.map(card => card.text).join(' | ')}`
+    )
+    // Out to left field, well away from where an unplaced ball is aimed.
+    await untilControl(
+      scorer,
+      'Tap or drag a player to where the ball was fielded'
+    )
+    await fieldKey(scorer, ' ')
+    for (let i = 0; i < 20; i++) await fieldKey(scorer, 'ArrowLeft')
+    await fieldKey(scorer, 'Enter')
+    await untilControl(scorer, 'Drag up and down for ball trajectory.')
+    await fieldKey(scorer, 'Enter')
+    const accepted = Date.now()
+    note('the scorer places the ball in left field and accepts its trajectory')
+    const shown = await cardUntil(
+      viewer,
+      'the single',
+      text => text.includes('single'),
+      10000
+    )
+    note(`shown after ${Date.now() - accepted} ms: ${shown}`)
+    await wait(6000)
+    if (phase === 'after') {
+      assert.equal(
+        meanwhile.length,
+        0,
+        'the card changed before the ball was placed'
+      )
+      assert.ok(shown.includes('left'), `not to left field: ${shown}`)
+      assert.ok(Date.now() - accepted < 12000)
+    }
+  } finally {
+    await recorder?.stop(join(out, `live-in-play-${phase}.mp4`))
+    await viewer.detach()
+    await scorer.detach()
+  }
+  await writeFile(join(out, `live-in-play-${phase}.log`), `${log.join('\n')}\n`)
+}
+
+async function scorers(m: Device): Promise<void> {
+  const out = await artifactsDir()
+  await signInWeb(m, LEAGUE)
+  await openReplay(m, RALLY)
+  await evalJson<boolean>(m, MEDIA_LOG)
+  await evalJson<boolean>(m, CARD_LOG)
+  await m.tapOn({ id: 'replay-speaker' })
+  const slam = await cardUntil(
+    m,
+    'the grand slam',
+    text => text.includes('A grand slam!'),
+    240000
+  )
+  console.log(`grand slam card: ${slam}`)
+  assert.match(slam, /A grand slam! \w+ \w, \w+ \w and \w+ \w all score!/)
+  // Its sentence read to the end.
+  const deadline = Date.now() + 30000
+  for (;;) {
+    const events = await mediaEvents(m)
+    const play = events.find(
+      event => event.type === 'play' && event.card.includes('A grand slam!')
+    )
+    if (
+      play != null &&
+      events.some(
+        event =>
+          event.src === play.src && event.t > play.t && event.type === 'ended'
+      )
+    )
+      break
+    assert.ok(Date.now() < deadline, 'the grand slam was not read to its end')
+    await wait(200)
+  }
+  const all = await cards(m)
+  for (const card of all)
+    assert.ok(card.text.split('scores!').length < 3, `twice: ${card.text}`)
+  const events = await mediaEvents(m)
+  const spans = playedSpans(events).filter(span =>
+    span.card.includes('A grand slam!')
+  )
+  assert.equal(spans[0]?.seconds, null, 'the grand slam was cut off')
+  await heardAudio(RALLY, spans, join(out, 'scorers-after.mp3'))
+  const lines = [
+    '$ REPLAY_SCENARIO=scorers node -r sucrase/register src/app/replay/replay.e2e.ts',
+    `# the grand slam's card: ${slam}`,
+    `# cards in the replay: ${all.length}, none with "scores!" twice`,
+    '# heard: the grand slam sentence, played to its end -> scorers-after.mp3'
+  ]
+  await writeFile(join(out, 'scorers-after-e2e.log'), `${lines.join('\n')}\n`)
+  console.log(lines.join('\n'))
+}
+
 async function main(): Promise<void> {
   const scenario = required('REPLAY_SCENARIO')
   const daemon = await connect()
@@ -1766,6 +1917,9 @@ async function main(): Promise<void> {
     else if (scenario === 'rewindLive') await rewindLive(daemon)
     else if (scenario === 'rewindAnnouncer')
       await rewindAnnouncer((m = await attachWeb(daemon)))
+    else if (scenario === 'liveInPlay') await liveInPlay(daemon)
+    else if (scenario === 'scorers')
+      await scorers((m = await attachWeb(daemon)))
     else assert.fail(`Unknown scenario ${scenario}`)
     console.log(`PASS: ${scenario}`)
   } finally {

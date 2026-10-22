@@ -165,7 +165,7 @@ describe('the announcer’s queue', function () {
     expect(output.released).deep.equals(['clip:0-0'])
   })
 
-  it('holds the replay while a sentence is fetched, and for at most eight seconds', async function () {
+  it('holds the replay while a sentence is fetched, and for at most sixteen seconds', async function () {
     const { narration, output, timers, speaking } = queue()
     narration.setMuted(false)
     narration.speak({ key: '0-0', count: 1 })

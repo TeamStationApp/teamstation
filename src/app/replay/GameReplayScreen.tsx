@@ -42,6 +42,7 @@ import { ReplayBoxScore } from './ReplayBoxScore'
 import {
   catchingUp,
   noticeOpacity,
+  ready,
   replayCard,
   type ReplayEvent,
   type ReplayMode,
@@ -329,13 +330,15 @@ function ReplayView(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [narration, shownKey, shownCount, sentence, hurrying, rewinds])
   // A replay fetches the next two sentences; a live game all it has queued,
-  // or, while it is catching up, the step it will land on.
+  // or, while it is catching up, the step it will land on. A ball in play
+  // the scorer has yet to place has no sentence to fetch.
+  const playable = state.queue.filter(entry => ready(state, entry.step))
   const upcoming: NarrationStep[] = (
     state.mode === 'replay'
-      ? state.queue.slice(0, PREFETCH)
+      ? playable.slice(0, PREFETCH)
       : behind
-        ? state.queue.slice(-1)
-        : state.queue
+        ? playable.slice(-1)
+        : playable
   )
     .filter(entry => fresh(entry.step.key))
     .map(entry => ({

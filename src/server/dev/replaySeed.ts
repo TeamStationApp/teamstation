@@ -14,6 +14,7 @@ import {
   importedThenScoredGame,
   inProgressGame,
   type Player,
+  rallyGame,
   REPLAY_TEAMS,
   replaySetup
 } from '../../test/replayGameFixture'
@@ -28,7 +29,8 @@ import { ensureGumboId, insertUser } from '../users/insertUser'
 /**
  * The games the replay's end-to-end scenarios run against, in a development
  * database: a made-up league with one season and two teams, the replay
- * fixture's game stored four ways, and five accounts to sign in with.
+ * fixture's game stored four ways, a short rally game whose grand slam
+ * scores three runners, and five accounts to sign in with.
  *
  *   node -r sucrase/register src/server/dev/replaySeed.ts [--password <pw>]
  *
@@ -43,7 +45,8 @@ export const REPLAY_SEED = {
     final: 'gam_replaySeedFinal',
     inProgress: 'gam_replaySeedLive',
     importedThenScored: 'gam_replaySeedMixed',
-    imported: 'gam_replaySeedImported'
+    imported: 'gam_replaySeedImported',
+    rally: 'gam_replaySeedRally'
   },
   emails: {
     team: 'replay-team@example.test',
@@ -341,6 +344,14 @@ export async function seedReplay(
     REPLAY_SEED.games.importedThenScored,
     mixed.plays.filter(play => 'teamStation' in play),
     mixed.currentPlay,
+    'teamstation'
+  )
+  const rally = await rallyGame(setup)
+  await post(
+    db,
+    REPLAY_SEED.games.rally,
+    rally.plays,
+    rally.currentPlay,
     'teamstation'
   )
   await post(

@@ -2,7 +2,7 @@
  * When the replay's announcer speaks, shared by the web's and the phone's
  * players, which only fetch, play and stop. A step's sentence is fetched
  * ahead while the speaker is on, played as the step is shown, and the replay
- * waits for it to end, for at most eight seconds. Audio is keyed by the step
+ * waits for it to end, for at most sixteen seconds. Audio is keyed by the step
  * and how many actions it holds, so a step that grows is fetched again and
  * the announcer always reads the sentence on the card.
  */
@@ -39,8 +39,12 @@ export interface NarrationTimers {
   now: () => number
 }
 
-/** The longest the replay waits for a sentence. */
-export const SPEECH_CAP_MS = 8000
+/**
+ * The longest the replay waits for a sentence: the longest one the announcer
+ * is given (`MAX_NARRATION`, 240 characters) takes about fifteen and a half
+ * seconds in its voice, and the next step would cut off anything longer.
+ */
+export const SPEECH_CAP_MS = 16000
 /**
  * Sentences in a row that could not be fetched as their steps were shown,
  * which turn the announcer off. A sentence fetched ahead that fails is

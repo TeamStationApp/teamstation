@@ -12,10 +12,12 @@ import {
   replayContext,
   scored
 } from '../../test/replayGameFixture'
+import type { ScoringAction } from '../scoring/actions'
 import type { StoredGame } from '../scoring/session'
 import {
   extendTimeline,
   hasRecords,
+  isDetermined,
   isReplayable,
   replayContextOf,
   replayTimelineOf,
@@ -253,5 +255,54 @@ describe('replay context and whether a game replays', function () {
     expect(isReplayable({ nonMemberView: true, status: 'final' }, true)).equals(
       false
     )
+  })
+
+  describe('a ball in play the scorer has yet to place', function () {
+    const actions = replayActions()
+    const inPlay = actions.findIndex(action => action.type === 'ballInPlay')
+    const located = actions[inPlay]
+    const bare: ScoringAction = { type: 'ballInPlay', contact: 'swing' }
+    const timelineOf = async (
+      taken: ScoringAction[]
+    ): Promise<ReturnType<typeof replayTimelineOf>> =>
+      replayTimelineOf(await scored(taken), context)
+
+    it('is undetermined while it is the last step and holds only the bare ball', async function () {
+      const timeline = await timelineOf([...actions.slice(0, inPlay), bare])
+      const last = timeline.steps.at(-1)!
+      expect(last.kind).equals('inPlay')
+      expect(isDetermined(last, timeline)).equals(false)
+      // Every other step is determined.
+      for (const step of timeline.steps.slice(0, -1))
+        expect(isDetermined(step, timeline)).equals(true)
+    })
+
+    it('is determined once it is placed, has a result, or another step follows', async function () {
+      const placed = await timelineOf([
+        ...actions.slice(0, inPlay),
+        bare,
+        located
+      ])
+      expect(isDetermined(placed.steps.at(-1)!, placed)).equals(true)
+      const resulted = await timelineOf([
+        ...actions.slice(0, inPlay),
+        bare,
+        { type: 'result', eventType: 'single' }
+      ])
+      expect(isDetermined(resulted.steps.at(-1)!, resulted)).equals(true)
+      // A step with a later one after it is never held, whatever it holds.
+      const whole = await timelineOf(actions)
+      const earlier = whole.steps.find(step => step.kind === 'inPlay')!
+      expect(isDetermined({ ...earlier, actions: [bare] }, whole)).equals(true)
+      for (const ball of [
+        { ...bare, fielder: (located as { fielder: number }).fielder },
+        { ...bare, trajectory: 'line_drive' as const }
+      ]) {
+        const timeline = await timelineOf([...actions.slice(0, inPlay), ball])
+        expect(isDetermined(timeline.steps.at(-1)!, timeline)).equals(true)
+      }
+      const pitched = await timelineOf(actions.slice(0, 1))
+      expect(isDetermined(pitched.steps[0], pitched)).equals(true)
+    })
   })
 })

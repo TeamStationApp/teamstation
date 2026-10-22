@@ -505,8 +505,10 @@ export function narrateStep(
     )
     .map(t => t.runner)
     .filter(runner => !(type === 'home_run' && runner === batterId))
-  for (const runner of scorers)
-    said.parts.push(`${names.get(runner) ?? 'A runner'} scores!`)
+  if (scorers.length > 0)
+    said.parts.push(
+      scorersSentence(scorers.map(runner => names.get(runner) ?? null))
+    )
   if (transitions.some(t => t.type === 'runScored')) {
     said.excited = true
     said.parts.push(teamSaying(after))
@@ -593,6 +595,24 @@ function resumeFrom(
   if (named.size !== names.size) return
   for (const [id, name] of names) if (named.get(id) !== name) return
   return tail
+}
+
+/**
+ * The runners who crossed the plate on one play, in one sentence and in the
+ * order they scored: "Player 1 scores!", "Player 1 and Player 2 score!", "Player 1,
+ * Player 2 and Player 3 all score!". A runner without a name is "a runner";
+ * with no runners there is nothing to say.
+ */
+export function scorersSentence(names: ReadonlyArray<string | null>): string {
+  if (names.length === 0) return ''
+  const named = names.map(name => name ?? 'a runner')
+  const listed =
+    named.length === 1
+      ? named[0]
+      : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
+  const said = listed.charAt(0).toUpperCase() + listed.slice(1)
+  if (named.length === 1) return `${said} scores!`
+  return named.length === 2 ? `${said} score!` : `${said} all score!`
 }
 
 /**

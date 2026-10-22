@@ -81,6 +81,29 @@ export function stepsOf(
   return steps
 }
 
+/**
+ * Whether the scorer has said what a step's delivery did. The scoring screen
+ * saves a ball in play twice: the outcome's bare ball, then the one with
+ * where it went. Until the second, or anything after the ball, reaches a
+ * viewer, the last step of a game being scored is a ball nobody has placed,
+ * and the scorer's own screen has drawn nothing yet either.
+ */
+export function isDetermined(
+  step: ReplayStep,
+  timeline: ReplayTimeline
+): boolean {
+  if (step.kind !== 'inPlay') return true
+  if (timeline.steps.at(-1)?.key !== step.key) return true
+  const first = step.actions.findIndex(action => action.type === 'ballInPlay')
+  return step.actions.some((action, index) =>
+    action.type === 'ballInPlay'
+      ? action.location != null ||
+        action.fielder != null ||
+        action.trajectory != null
+      : index > first
+  )
+}
+
 /** The scorer closing a play. */
 export function isClose(action: ScoringAction): boolean {
   return action.type === 'gameFlow' && action.kind === 'closePlay'

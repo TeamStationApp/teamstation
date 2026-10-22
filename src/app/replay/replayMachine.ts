@@ -4,11 +4,12 @@ import {
   rewindTarget,
   stateBefore
 } from '../../common/replay/replayRewind'
-import type {
-  ReplayStep,
-  ReplayStepKind,
-  ReplayTimeline,
-  TimelineChange
+import {
+  isDetermined,
+  type ReplayStep,
+  type ReplayStepKind,
+  type ReplayTimeline,
+  type TimelineChange
 } from '../../common/replay/replayTimeline'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
@@ -150,18 +151,41 @@ function counts(timeline: ReplayTimeline): Record<string, number> {
   )
 }
 
-/** A live view of the game as it stands, with nothing left to play. */
-function liveAt(timeline: ReplayTimeline, changed: boolean): ReplayState {
-  const shown = timeline.steps.at(-1) ?? null
+/**
+ * A live view of the game as it stands, with nothing left to play, or, while
+ * the scorer has yet to place a ball in play, standing just before it with
+ * that ball queued until it is placed.
+ */
+function liveAt(
+  timeline: ReplayTimeline,
+  changed: boolean,
+  /** Stand at the end even before an unplaced ball: the game took no more. */
+  atEnd = false
+): ReplayState {
+  const last = timeline.steps.at(-1)
+  const waiting = !atEnd && last != null && !isDetermined(last, timeline)
+  const shown = waiting
+    ? (timeline.steps.at(-2) ?? null)
+    : (timeline.steps.at(-1) ?? null)
+  const applied = counts({
+    ...timeline,
+    steps: waiting ? timeline.steps.slice(0, -1) : timeline.steps
+  })
   return {
     mode: 'live',
     scoring: trimmed(
-      initialScoringState(timeline.end, true, { watching: true })
+      initialScoringState(
+        waiting
+          ? stateBefore(timeline, timeline.steps.length - 1)
+          : timeline.end,
+        true,
+        { watching: true }
+      )
     ),
     timeline,
     narrations: narrateTimeline(timeline),
-    queue: [],
-    applied: counts(timeline),
+    queue: waiting ? [{ step: last, actions: last.actions }] : [],
+    applied,
     shown,
     shownCount: shown?.actions.length ?? 0,
     changed,
@@ -172,7 +196,8 @@ function liveAt(timeline: ReplayTimeline, changed: boolean): ReplayState {
     idleSince: null,
     celebrationEndsAt: null,
     pausedCelebration: null,
-    final: timeline.end.final,
+    // Over and shown in full, unless a ball is still queued.
+    final: !waiting && timeline.end.final,
     gameOver: timeline.end.final,
     hurrying: false,
     follows: true,
@@ -186,8 +211,13 @@ function liveAt(timeline: ReplayTimeline, changed: boolean): ReplayState {
  * now stands, still paused if the viewer paused it, and still over if the
  * server said so.
  */
-function snapped(state: ReplayState, timeline: ReplayTimeline): ReplayState {
-  const next = liveAt(timeline, true)
+function snapped(
+  state: ReplayState,
+  timeline: ReplayTimeline,
+  /** The game refused a step: stand at its end, nothing queued again. */
+  atEnd = false
+): ReplayState {
+  const next = liveAt(timeline, true, atEnd)
   return {
     ...next,
     paused: state.paused,
@@ -255,11 +285,12 @@ function playNext(state: ReplayState, now: number): ReplayState {
   const live = state.mode === 'live'
   if (after.session === before.session && next.actions.length > 0)
     // The game would not take the step. Followed live, even rewound, it has
-    // changed under this view; a finished game goes to how it ended.
+    // changed under this view; a finished game goes to how it ended. Either
+    // way the refused step is not queued again.
     return live || state.follows
-      ? snapped(state, state.timeline)
+      ? snapped(state, state.timeline, true)
       : {
-          ...liveAt(state.timeline, false),
+          ...liveAt(state.timeline, false, true),
           mode: 'replay',
           paused: state.paused,
           gameOver: state.gameOver,
@@ -277,8 +308,12 @@ function playNext(state: ReplayState, now: number): ReplayState {
   }
   return {
     ...state,
-    // A rewound live view that has caught up follows the scorer again.
-    mode: state.follows && rest.length === 0 ? 'live' : state.mode,
+    // A rewound live view that has caught up follows the scorer again: what
+    // is left, if anything, is a ball the scorer has yet to place.
+    mode:
+      state.follows && rest.every(entry => !ready(state, entry.step))
+        ? 'live'
+        : state.mode,
     notice: null,
     scoring: trimmed({ ...after, presentationEnabled: true }),
     queue: rest,
@@ -297,11 +332,21 @@ function playNext(state: ReplayState, now: number): ReplayState {
  * more than CATCH_UP_QUEUE steps queued until one is left.
  */
 export function catchingUp(state: ReplayState): boolean {
+  // A ball the scorer has yet to place is not a step behind.
+  const waiting = state.queue.filter(entry => ready(state, entry.step)).length
   return (
     state.mode === 'live' &&
-    (state.queue.length > CATCH_UP_QUEUE ||
-      (state.hurrying && state.queue.length > 1))
+    (waiting > CATCH_UP_QUEUE || (state.hurrying && waiting > 1))
   )
+}
+
+/**
+ * Whether a queued step may play: in a view that follows a game being
+ * scored, not a ball in play the scorer has yet to place. Once the game is
+ * over nothing more will place it, and it plays as a replay plays it.
+ */
+export function ready(state: ReplayState, step: ReplayStep): boolean {
+  return !state.follows || state.gameOver || isDetermined(step, state.timeline)
 }
 
 function tick(state: ReplayState, now: number): ReplayState {
@@ -350,6 +395,9 @@ function tick(state: ReplayState, now: number): ReplayState {
     now >= (next.idleSince ?? now) + IN_PLAY_TAIL_MS
   if (!settled || (next.slotEndsAt != null && now < next.slotEndsAt))
     return next
+  // Nothing of a ball in play is drawn or said before the scorer places it,
+  // as on the scorer's own screen.
+  if (!ready(next, next.queue[0].step)) return next
   return playNext(next, now)
 }
 

@@ -910,4 +910,162 @@ describe('replay machine', function () {
       expect(snapped.queue).length(0)
     })
   })
+
+  describe('a ball in play the scorer has yet to place', function () {
+    const actions = replayActions()
+    const inPlay = actions.findIndex(action => action.type === 'ballInPlay')
+    const located = actions[inPlay] as Extract<
+      (typeof actions)[number],
+      { type: 'ballInPlay' }
+    >
+    const bare = { type: 'ballInPlay' as const, contact: 'swing' as const }
+    const rest = actions.slice(inPlay + 1, inPlay + 3)
+    const upTo = actions.slice(0, inPlay)
+
+    /** Where the hit drawn is going, in the field model's ground plane. */
+    function aimed(state: ReplayState): number {
+      const hit = state.scoring.presentation as
+        | { kind: string; arc?: { target: { x: number; z: number } } }
+        | null
+        | undefined
+      expect(hit?.kind).equals('hit')
+      return Math.atan2(hit!.arc!.target.x, hit!.arc!.target.z)
+    }
+
+    it('draws and says nothing until the scorer places it, then draws it from home plate with its result', async function () {
+      const before = await timelineOf(scored(upTo))
+      let state = startReplay('live', before)
+      const chosen = extendTimeline(
+        before,
+        await scored([...upTo, bare]),
+        context
+      )
+      state = replayReducer(state, { type: 'CHANGED', change: chosen })
+      expect(state.queue).length(1)
+      expect(catchingUp(state)).equals(false)
+      const shownBefore = state.shown?.key
+      // Twenty seconds on, nothing of the ball has been drawn or said.
+      for (let at = 100; at <= 20000; at += 100)
+        state = field(replayReducer(state, { type: 'TICK', now: at }))
+      expect(state.queue).length(1)
+      expect(state.shown?.key).equals(shownBefore)
+      expect(state.scoring.presentation ?? null).equals(null)
+      const placed = extendTimeline(
+        chosen.timeline,
+        await scored([...upTo, bare, located, ...rest]),
+        context
+      )
+      state = replayReducer(state, { type: 'CHANGED', change: placed })
+      expect(state.queue[0].actions.map(action => action.type)).deep.equals([
+        'ballInPlay',
+        'ballInPlay',
+        'result',
+        'runnerMovement'
+      ])
+      state = replayReducer(state, { type: 'TICK', now: 20100 })
+      expect(state.shown?.key).equals(placed.timeline.steps.at(-1)!.key)
+      // One hit, from the plate to where the scorer put it, not to center.
+      expect(aimed(state)).closeTo(
+        Math.atan2(located.location!.x, located.location!.z),
+        0.05
+      )
+      expect(replayCard(state, WORDS).line).contains('single')
+    })
+
+    it('opens Live, or snaps, just before a ball nobody has placed yet', async function () {
+      const chosen = await timelineOf(scored([...upTo, bare]))
+      const opened = startReplay('live', chosen)
+      const last = chosen.steps.at(-1)!
+      expect(opened.queue.map(entry => entry.step.key)).deep.equals([last.key])
+      expect(opened.applied[last.key]).equals(undefined)
+      expect(opened.shown?.key).equals(chosen.steps.at(-2)!.key)
+      expect(
+        opened.scoring.session.liveData.plays.currentPlay?.result.eventType ??
+          null
+      ).not.equals('single')
+      const placed = extendTimeline(
+        chosen,
+        await scored([...upTo, bare, located, ...rest]),
+        context
+      )
+      let state = replayReducer(opened, { type: 'CHANGED', change: placed })
+      state = replayReducer(state, { type: 'TICK', now: 100 })
+      expect(state.shown?.key).equals(last.key)
+      expect(aimed(state)).closeTo(
+        Math.atan2(located.location!.x, located.location!.z),
+        0.05
+      )
+      // A corrected game that ends on an unplaced ball snaps to just before it.
+      const earlier = await timelineOf(scored(actions.slice(0, inPlay + 3)))
+      const snapped = replayReducer(startReplay('live', earlier), {
+        type: 'CHANGED',
+        change: { kind: 'rewrite', timeline: chosen }
+      })
+      expect(snapped.queue.map(entry => entry.step.key)).deep.equals([last.key])
+      expect(snapped.changed).equals(true)
+    })
+
+    it('plays a ball nobody placed once the game is over', async function () {
+      const chosen = await timelineOf(scored([...upTo, bare]))
+      let state = startReplay('live', chosen)
+      expect(state.queue).length(1)
+      state = run(state, () => false, 0).state
+      expect(state.queue).length(1)
+      state = replayReducer(state, { type: 'GAME_OVER' })
+      const done = run(state, next => next.final, 400000)
+      expect(done.state.final).equals(true)
+      expect(done.state.queue).length(0)
+      expect(done.state.shown?.key).equals(chosen.steps.at(-1)!.key)
+    })
+
+    it('follows the scorer again after a rewind once only an unplaced ball is left', async function () {
+      const chosen = await timelineOf(scored([...upTo, bare]))
+      const back = replayReducer(startReplay('live', chosen), {
+        type: 'REWIND',
+        now: 1000,
+        words: { top: 'Rewind to top of %s', bottom: 'Rewind to bottom of %s' }
+      })
+      expect(back.mode).equals('replay')
+      const caught = run(back, next => next.queue.length === 1, 1000)
+      expect(caught.state.queue[0].step.key).equals(chosen.steps.at(-1)!.key)
+      expect(caught.state.mode).equals('live')
+    })
+
+    it('ends the view when the game will not take a ball nobody placed', async function () {
+      // A finished game with a bare ball after its end: the game refuses it.
+      const finished = await timelineOf(finalGame())
+      const refused = {
+        ...finished,
+        steps: [
+          ...finished.steps,
+          {
+            key: '9998-0',
+            atBatIndex: 9998,
+            actionStart: 0,
+            actions: [bare],
+            kind: 'inPlay' as const
+          }
+        ]
+      }
+      for (const state of [
+        replayReducer(startReplay('live', refused), { type: 'GAME_OVER' }),
+        replayReducer(startReplay('replay', refused, true), {
+          type: 'TICK',
+          now: 0
+        })
+      ]) {
+        const done = run(state, next => next.final, 0)
+        expect(done.state.final).equals(true)
+        expect(done.state.queue).length(0)
+      }
+    })
+
+    it('leaves a replay of a finished game as it was', async function () {
+      const chosen = await timelineOf(scored([...upTo, bare]))
+      const replay = startReplay('replay', chosen)
+      expect(replay.follows).equals(false)
+      const played = run(replay, state => state.queue.length === 0)
+      expect(played.state.shown?.key).equals(chosen.steps.at(-1)!.key)
+    })
+  })
 })
