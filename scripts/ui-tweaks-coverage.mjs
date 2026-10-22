@@ -50,6 +50,8 @@ const paths = [
     !/^src\/.+\.tsx?$/.test(path) ||
     /\.(test|e2e|integration|smoke)\./.test(path) ||
     path.startsWith('src/test/') ||
+    path === 'src/server/chat/chatTestFixture.ts' ||
+    path === 'src/server/dev/chatSeed.ts' ||
     /\.d\.ts$/.test(path)
   )
     return false
@@ -183,12 +185,17 @@ for (const path of untracked.filter(path => paths.includes(path))) {
 const {
   changedLines,
   istanbulCounts,
-  lineReportFromCounts
+  lineReportFromCounts,
+  withoutTypeOnlyLines
 } = require('./changed-line-coverage.cjs')
 const counts = {}
 for (const path of paths)
   if (map.files().includes(resolve(path)))
-    counts[path] = istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
+    counts[path] = withoutTypeOnlyLines(
+      path,
+      readFileSync(path, 'utf8'),
+      istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
+    )
 const result = lineReportFromCounts(
   changedLines(diff),
   counts,

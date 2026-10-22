@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Platform, Pressable, Text, type TextInput, View } from 'react-native'
 
+import { compareUserIds } from '../../common/chatCrypto/userId'
 import { TextField } from '../components'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
@@ -13,7 +14,7 @@ import type { MemberView } from './engine/engine'
 export function MentionPicker(props: {
   members: readonly MemberView[]
   error?: string
-  onSelect: (userId: number) => void
+  onSelect: (userId: string) => void
   onClose: () => void
 }): React.ReactElement {
   const theme = useTheme()
@@ -26,7 +27,7 @@ export function MentionPicker(props: {
   const latest = useRef({ onSelect, onClose })
   latest.current = { onSelect, onClose }
   const live = useRef(true)
-  const pending = useRef<{ userId: number } | 'cancel' | undefined>(undefined)
+  const pending = useRef<{ userId: string } | 'cancel' | undefined>(undefined)
   const phase = useRef<'idle' | 'closing' | 'settled'>('idle')
   useEffect(() => {
     live.current = true
@@ -41,11 +42,11 @@ export function MentionPicker(props: {
     phase.current = 'idle'
     setClosing(false)
   }, [completion])
-  const invoke = (choice: { userId: number } | 'cancel'): void => {
+  const invoke = (choice: { userId: string } | 'cancel'): void => {
     if (choice === 'cancel') latest.current.onClose()
     else latest.current.onSelect(choice.userId)
   }
-  const request = (choice: { userId: number } | 'cancel'): void => {
+  const request = (choice: { userId: string } | 'cancel'): void => {
     if (Platform.OS === 'web') {
       invoke(choice)
       return
@@ -80,7 +81,7 @@ export function MentionPicker(props: {
       )
       .sort((a, b) => {
         const name = a.shortName.localeCompare(b.shortName)
-        return name !== 0 ? name : a.userId - b.userId
+        return name !== 0 ? name : compareUserIds(a.userId, b.userId)
       })
   }, [props.members, query])
   return (

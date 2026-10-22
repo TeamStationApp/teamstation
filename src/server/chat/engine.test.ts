@@ -53,6 +53,7 @@ import type {
   ChatSocketListener
 } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import { closeInto } from '../admin/people'
 import { listen } from '../dev/fakeSpace'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -128,11 +129,11 @@ class FakeSocket {
  * grant requests rewritten, and the next call of a method refused.
  */
 class LyingClient extends TeamStationClient {
-  readonly lies = new Map<string, number>()
+  readonly lies = new Map<string, string>()
   /** Identities the server says it does not have. */
   readonly missing = new Set<string>()
   /** People whose published per-user key comes with a broken signature. */
-  readonly forged = new Set<number>()
+  readonly forged = new Set<string>()
   grants: ((real: ChatGrantRequest[]) => ChatGrantRequest[]) | undefined
   readonly refusals: Array<{ method: string; error: HttpError }> = []
 
@@ -152,7 +153,7 @@ class LyingClient extends TeamStationClient {
     return userId == null ? real : { ...real, userId }
   }
 
-  async chatUserKeys(userId: number): Promise<ChatUserKeys> {
+  async chatUserKeys(userId: string): Promise<ChatUserKeys> {
     const real = await super.chatUserKeys(userId)
     return !this.forged.has(userId) || real.puk == null
       ? real
@@ -247,7 +248,7 @@ describe('the chat engine (U12)', function () {
     if (fixture == null) throw new Error('no fixture')
     return fixture
   }
-  const id = (key: string): number => f().id(key)
+  const id = (key: string): string => f().id(key)
 
   /** A device on the session `who` of person `key`, not started. */
   function deviceOn(
@@ -351,19 +352,19 @@ describe('the chat engine (U12)', function () {
   async function boxedAt(
     conversationId: string,
     epoch: number
-  ): Promise<number[]> {
+  ): Promise<string[]> {
     const rows = await f()
       .db.selectFrom('chat_epoch_boxes')
       .select(['user_id'])
       .where('conversation_id', '=', conversationId)
       .where('epoch', '=', epoch)
       .execute()
-    return rows.map(row => row.user_id).sort((a, b) => a - b)
+    return rows.map(row => row.user_id).sort()
   }
 
   async function openRequests(
     conversationId: string,
-    userId: number
+    userId: string
   ): Promise<Array<{ filled: boolean; superseded: boolean }>> {
     const rows = await f()
       .db.selectFrom('chat_grant_requests')
@@ -377,8 +378,7 @@ describe('the chat engine (U12)', function () {
     }))
   }
 
-  const sorted = (...keys: string[]): number[] =>
-    keys.map(id).sort((a, b) => a - b)
+  const sorted = (...keys: string[]): string[] => keys.map(id).sort()
 
   it('is not ready before it starts, and lists chats all the same', async function () {
     const early = deviceOn('Hc', 'Hc')
@@ -2212,7 +2212,11 @@ describe('the chat engine (U12)', function () {
       conversationId: chatOf,
       userId: id('B')
     })
-    b.socket.emit({ type: 'chatTyping', conversationId: 'cnv_x', userId: 1 })
+    b.socket.emit({
+      type: 'chatTyping',
+      conversationId: 'cnv_x',
+      userId: userIdOfGumbo(1)
+    })
     expect(b.engine.view(chatOf)?.typing.map(who => who.userId)).deep.equals([
       id('A')
     ])

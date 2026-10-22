@@ -176,7 +176,7 @@ export function chatMessageRoutes(
 
   const mustBeMember = async (
     conversationId: string,
-    userId: number
+    userId: string
   ): Promise<void> => {
     if (!(await memberNow(db, conversationId, userId, clock()))) {
       throw notFound()

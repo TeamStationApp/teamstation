@@ -25,7 +25,7 @@ import { rowsOfPeople } from '../teams/teamStaff'
 export type RelativeKind = 'guardian' | 'family'
 
 export interface Guardian {
-  userId: number
+  userId: string
   name: string
   /** Their primary address, or null when they have none on file. */
   email: string | null
@@ -51,10 +51,10 @@ export interface Linked {
  */
 export async function linkGuardian(
   trx: Kysely<Database>,
-  playerId: number,
-  guardianId: number,
+  playerId: string,
+  guardianId: string,
   teamId: string,
-  actor: number | null,
+  actor: string | null,
   kind: RelativeKind = 'guardian'
 ): Promise<Linked> {
   if (guardianId === playerId) {
@@ -141,16 +141,16 @@ export async function linkGuardian(
  */
 export async function unlinkGuardian(
   trx: Kysely<Database>,
-  playerId: number,
-  guardianId: number
+  playerId: string,
+  guardianId: string
 ): Promise<boolean> {
   return await unlinkKinds(trx, playerId, guardianId, ['guardian', 'family'])
 }
 
 async function unlinkKinds(
   trx: Kysely<Database>,
-  playerId: number,
-  guardianId: number,
+  playerId: string,
+  guardianId: string,
   kinds: RelativeKind[]
 ): Promise<boolean> {
   const guardianRows = await rowsOfPeople(trx, [guardianId])
@@ -222,7 +222,7 @@ async function unlinkKinds(
  */
 export async function guardiansOf(
   db: Kysely<Database>,
-  playerId: number
+  playerId: string
 ): Promise<Guardian[]> {
   const person = await onePerson(db, playerId)
   const links = await db
@@ -237,7 +237,7 @@ export async function guardiansOf(
     db,
     links.map(link => link.user_id)
   )
-  const kinds = new Map<number, RelativeKind>()
+  const kinds = new Map<string, RelativeKind>()
   for (const link of links) {
     const userId = survivors.get(link.user_id) ?? link.user_id
     if (userId === person.userId) continue
@@ -260,7 +260,7 @@ export async function guardiansOf(
     .orderBy('is_primary', 'desc')
     .orderBy('created_at')
     .execute()
-  const emailOf = new Map<number, string>()
+  const emailOf = new Map<string, string>()
   for (const row of emails) {
     if (!emailOf.has(row.user_id)) emailOf.set(row.user_id, row.email)
   }
@@ -282,8 +282,8 @@ export async function guardiansOf(
 /** Whether `userId` is a guardian of `playerId` (any row of the player). */
 export async function isGuardianOf(
   db: Kysely<Database>,
-  userId: number,
-  playerId: number
+  userId: string,
+  playerId: string
 ): Promise<boolean> {
   const guardians = await guardiansOf(db, playerId)
   return guardians.some(
@@ -299,8 +299,8 @@ export async function isGuardianOf(
  */
 export async function mayKeepBirthMonth(
   db: Kysely<Database>,
-  actor: { userId: number; isAdmin: boolean },
-  playerId: number
+  actor: { userId: string; isAdmin: boolean },
+  playerId: string
 ): Promise<boolean> {
   if (actor.isAdmin) return true
   const person = await onePerson(db, playerId)

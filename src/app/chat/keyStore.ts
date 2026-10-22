@@ -2,8 +2,9 @@ import { fromUtf8, utf8 } from '../../common/chatCrypto/bytes'
 import {
   type ChatKeyRecord,
   type ChatKeyStore,
-  recordFromJson,
-  recordToJson
+  recordToJson,
+  storedRecordFromJson,
+  UnreadableKeyRecordError
 } from './keyRecord'
 
 /**
@@ -103,19 +104,27 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
       try {
         const sealed = await read<Sealed>(db, RECORD)
         const key = await read<CryptoKey>(db, WRAP)
-        if (sealed == null || key == null) return undefined
+        if (sealed == null) return undefined
+        if (key == null)
+          throw new UnreadableKeyRecordError('wrappingKeyMissing')
+        let plain: ArrayBuffer
         try {
-          const plain = await subtle().decrypt(
+          plain = await subtle().decrypt(
             { name: 'AES-GCM', iv: sealed.iv, additionalData: AAD },
             key,
             sealed.ciphertext
           )
-          return recordFromJson(fromUtf8(new Uint8Array(plain)))
-        } catch {
-          // Sealed under a key that is gone, or not a record at all: as good
-          // as no record. Enrolment starts this device again.
-          return undefined
+        } catch (error) {
+          // A record or key that does not open. Anything else (no crypto
+          // here at all) says nothing about the record, so it is not one.
+          if (
+            error instanceof Error &&
+            ['OperationError', 'InvalidAccessError'].includes(error.name)
+          )
+            throw new UnreadableKeyRecordError('undecryptable')
+          throw error
         }
+        return storedRecordFromJson(fromUtf8(new Uint8Array(plain)))
       } finally {
         db.close()
       }

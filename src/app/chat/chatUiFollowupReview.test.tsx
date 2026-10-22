@@ -6,6 +6,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import * as ReactNative from 'react-native'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
@@ -139,7 +140,7 @@ function deferred<T>(): {
 const original = (id = 'msg_original', mine = false): MessageView =>
   message({
     id,
-    senderUserId: mine ? 1 : 2,
+    senderUserId: userIdOfGumbo(mine ? 1 : 2),
     senderName: mine ? 'Mookie Betts' : 'Shohei Ohtani',
     mine,
     body: id === 'msg_original' ? 'Practice notes' : 'Bring water'
@@ -161,7 +162,10 @@ class ReviewEngine implements ChatScreenEngine {
           title: id === 'cnv_aurora' ? 'Aurora Members' : 'Solstice Members',
           scopeName: id === 'cnv_aurora' ? 'Aurora' : 'Solstice'
         }),
-        members: [member(1, 'Mookie Betts'), member(2, 'Shohei Ohtani')],
+        members: [
+          member(userIdOfGumbo(1), 'Mookie Betts'),
+          member(userIdOfGumbo(2), 'Shohei Ohtani')
+        ],
         messages: [original(), original('msg_second')]
       })
     ])
@@ -280,7 +284,7 @@ async function workspace(
   engine: ReviewEngine,
   state: ChatWorkspaceState,
   conversationId: string | null = 'cnv_aurora',
-  userId = 1,
+  userId = userIdOfGumbo(1),
   listNavigation?: ChatListNavigationCapture
 ): Promise<void> {
   await render(
@@ -560,7 +564,7 @@ describe('chat review persistent submission ownership', function () {
       await workspace(first, state)
       await press('Send')
       const next = boundary === 'engine' ? new ReviewEngine() : first
-      const userId = boundary === 'user' ? 2 : 1
+      const userId = userIdOfGumbo(boundary === 'user' ? 2 : 1)
       state.listAnchor = { id: 'cnv_aurora', relativeY: 12 }
       await workspace(next, state, 'cnv_aurora', userId)
       expect(
@@ -598,10 +602,10 @@ describe('chat review popup lifetime and accessible failures', function () {
       await act(async () => {
         engine.update('cnv_aurora', {
           messages: [
-            { ...original('msg_original', true), readBy: [2] },
+            { ...original('msg_original', true), readBy: [userIdOfGumbo(2)] },
             { ...original('msg_arrived'), seq: 3 }
           ],
-          typing: [{ userId: 2, name: 'Shohei Ohtani' }]
+          typing: [{ userId: userIdOfGumbo(2), name: 'Shohei Ohtani' }]
         })
         engine.emit({ type: 'conversations' })
         await wait()
@@ -1184,7 +1188,7 @@ describe('chat measured chrome reader anchors', function () {
           <ChatOverlayHost>
             <ChatWorkspace
               engine={engine}
-              userId={1}
+              userId={userIdOfGumbo(1)}
               state={state}
               conversationId="cnv_aurora"
               onOpen={() => {}}
@@ -1283,7 +1287,7 @@ describe('chat measured chrome reader anchors', function () {
       <ChatOverlayHost>
         <ChatWorkspace
           engine={engine}
-          userId={1}
+          userId={userIdOfGumbo(1)}
           state={state}
           conversationId="cnv_aurora"
           onOpen={() => {}}
@@ -1491,7 +1495,9 @@ describe('chat review final native scroll positions', function () {
     const engine = new ReviewEngine()
     engine.update('cnv_aurora', { messages: [original()] })
     const state = newChatWorkspaceState()
-    const tokens = [{ userId: 2, start: 0, end: 14, label: '@Shohei Ohtani' }]
+    const tokens = [
+      { userId: userIdOfGumbo(2), start: 0, end: 14, label: '@Shohei Ohtani' }
+    ]
     state.drafts.set('cnv_aurora', {
       ...terminalDraft(),
       text: '@Shohei Ohtani ',
@@ -1744,19 +1750,21 @@ async function nativeGesture(kind: NativeTarget): Promise<{
   if (kind === 'quote')
     value.quote = {
       id: 'msg_original',
-      authorId: 2,
+      authorId: userIdOfGumbo(2),
       authorName: 'Shohei Ohtani',
       snippet: 'Practice notes',
       status: 'ok'
     }
   if (kind === 'reaction')
-    value.reactions = [{ emoji: '👍', userIds: [2], mine: false }]
+    value.reactions = [
+      { emoji: '👍', userIds: [userIdOfGumbo(2)], mine: false }
+    ]
   await render(
     <MessageBubble
       key={++nativeFixture}
       message={value}
       conversation={chat()}
-      members={[member(2, 'Shohei Ohtani')]}
+      members={[member(userIdOfGumbo(2), 'Shohei Ohtani')]}
       engine={{
         openAttachment: async attachment => {
           short.push(`fetch:${attachment.id}`)
@@ -2348,12 +2356,12 @@ describe('review4 selected clone controls', function () {
       body: 'Current reply body',
       quote: {
         id: 'msg_original',
-        authorId: 1,
+        authorId: userIdOfGumbo(1),
         authorName: 'Mookie Betts',
         snippet: 'Original quoted body',
         status: 'ok'
       },
-      reactions: [{ emoji: '👍', userIds: [2], mine: false }]
+      reactions: [{ emoji: '👍', userIds: [userIdOfGumbo(2)], mine: false }]
     })
     engine.update('cnv_aurora', {
       messages: [
@@ -2365,7 +2373,7 @@ describe('review4 selected clone controls', function () {
       <ChatOverlayHost>
         <ChatWorkspace
           engine={engine}
-          userId={1}
+          userId={userIdOfGumbo(1)}
           state={newChatWorkspaceState()}
           conversationId="cnv_aurora"
           onOpen={() => {}}
@@ -2421,7 +2429,7 @@ describe('review4 selected clone controls', function () {
     const reply = message({
       quote: {
         id: 'msg_original',
-        authorId: 1,
+        authorId: userIdOfGumbo(1),
         authorName: 'Mookie Betts',
         snippet: 'Original quoted body',
         status: 'ok'
@@ -2441,7 +2449,7 @@ describe('review4 selected clone controls', function () {
         maxWidth={300}
         swipe={false}
         actions={[]}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onLongPress={() => {}}
         onReply={() => {}}
         onToggleReaction={() => {}}
@@ -3940,7 +3948,7 @@ describe('review4 no-event clamps and reachable jumps', function () {
         body: 'Received reply',
         quote: {
           id: 'msg_original',
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: 'Shohei Ohtani',
           snippet: 'Practice notes',
           status: 'ok'
@@ -6031,7 +6039,13 @@ async function responsiveWorkspaceList(
     })
   )
   const state = newChatWorkspaceState()
-  await workspace(engine, state, 'cnv_return_0', 1, listNavigation)
+  await workspace(
+    engine,
+    state,
+    'cnv_return_0',
+    userIdOfGumbo(1),
+    listNavigation
+  )
   const host = document.querySelector<HTMLElement>(
     '[data-testid="chat-workspace"]'
   )!
@@ -6285,7 +6299,7 @@ async function stationaryHoldPane(): Promise<{
       <ChatOverlayHost>
         <ChatWorkspace
           engine={engine}
-          userId={1}
+          userId={userIdOfGumbo(1)}
           state={state}
           conversationId="cnv_aurora"
           onOpen={() => {}}

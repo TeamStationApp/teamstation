@@ -14,6 +14,9 @@ import { join, resolve } from 'node:path'
 
 import puppeteer from 'puppeteer'
 
+import { chatRowById, chatRowSelector } from '../../test/chatRows'
+import { readSeedTable } from '../../test/chatSeedTable'
+
 interface Device {
   evalBrowserScript: (options: { script: string }) => Promise<unknown>
   openLink: (options: { link: string }) => Promise<unknown>
@@ -71,26 +74,25 @@ function required(key: string): string {
 const WEB = required('TS_CHAT_WEB_URL').replace(/\/+$/, '')
 const API = required('TS_CHAT_API_URL').replace(/\/+$/, '')
 const hidden: string[] = []
+/**
+ * The Hawks Members row in the workspace's list. The seed gives it posts, so
+ * its name is `Hawks Members, <latest message>[, <n> unread]` and it is
+ * matched by its title as the leading part (`chatRows`).
+ */
+const MEMBERS_ROW = chatRowSelector(
+  'Hawks Members',
+  '[data-testid="chat-list-pane"]'
+)
 
 async function signIn(device: Device, key: string): Promise<void> {
-  let credentials:
-    { userId: number; email: string; password: string } | undefined
-  for (const line of readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8').split(
-    '\n'
-  )) {
-    const match = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-    if (match?.[1] === key)
-      credentials = {
-        userId: Number(match[2]),
-        email: match[3],
-        password: match[4]
-      }
-  }
+  const credentials = readSeedTable(
+    readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8')
+  )[key]
   assert(credentials != null, 'Fixture sign-in unavailable')
   hidden.push(credentials.password)
   await device.openLink({ link: WEB })
   const authorized = (await device.evalBrowserScript({
-    script: `const response=await fetch(${JSON.stringify(API + '/auth/me')},{credentials:'include'});if(response.ok){const user=await response.json();if(Number(user.id)!==${credentials.userId})throw new Error('Fixture profile belongs to another user');return true}return false`
+    script: `const response=await fetch(${JSON.stringify(API + '/auth/me')},{credentials:'include'});if(response.ok){const user=await response.json();if(user.id!==${JSON.stringify(credentials.userId)})throw new Error('Fixture profile belongs to another user');return true}return false`
   })) as { data?: unknown }
   if (authorized.data === 'true' || authorized.data === true) {
     const ready = (await device.evalBrowserScript({
@@ -114,7 +116,10 @@ async function signIn(device: Device, key: string): Promise<void> {
   await device.tapOn({ css: 'input[aria-label="Password"]' })
   await device.inputText({ text: credentials.password })
   await device.tapOn({ text: 'Sign in' })
-  await device.assertVisible({ text: 'Follow a team', timeout: 60000 })
+  await device.assertVisible({
+    css: '[data-testid="chat-conversation-list"]',
+    timeout: 60000
+  })
 }
 
 async function s1(daemon: Daemon): Promise<void> {
@@ -257,7 +262,7 @@ async function s2(daemon: Daemon): Promise<void> {
       })
     )
     const artifacts = required('CHAT_UI_ARTIFACTS')
-    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ css: MEMBERS_ROW })
     await m.assertVisible({
       text: 'Practice update: please bring water and arrive at 5:30.',
       timeout: 60000
@@ -285,8 +290,7 @@ async function s2(daemon: Daemon): Promise<void> {
       ),
       await m.screenshot()
     )
-    if (narrow)
-      await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    if (narrow) await m.tapOn({ css: MEMBERS_ROW })
     await m.tapOn({ text: 'Conversation actions' })
     await m.assertVisible({ text: 'Unpin' })
     await m.tapOn({ text: 'Unpin' })
@@ -384,7 +388,7 @@ async function s4(daemon: Daemon): Promise<void> {
       )
     }
     await m.tapOn({ text: 'Back' })
-    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ css: MEMBERS_ROW })
     console.log(
       await m.evalBrowserScript({
         script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!=='An unsent practice note\\nBring a glove')throw new Error('Back/reopen lost draft');input.focus();return JSON.stringify({backReopenDraft:true});`
@@ -643,7 +647,7 @@ async function s6(daemon: Daemon): Promise<void> {
     await hold()
     await m.tapOn({ text: 'Unpin' })
     await m.tapOn({ text: 'Back' })
-    await m.longPressOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.longPressOn({ css: MEMBERS_ROW })
     await m.assertVisible({ text: 'Mark unread' })
     writeFileSync(
       join(required('CHAT_UI_ARTIFACTS'), 'narrow-conversation-menu-after.png'),
@@ -691,9 +695,6 @@ async function s4Full(daemon: Daemon): Promise<void> {
     await signIn(m, 'Hc')
     await m.openLink({ link: WEB + '/chat/' + conversation })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
-    await m.evalBrowserScript({
-      script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const chat=(await r.json()).find(x=>x.id===${JSON.stringify(conversation)});window.chatUiResizeTitle=chat?.kind==='dm'?chat.people.filter(x=>!x.left).map(x=>x.shortName).join(', '):chat?.title;if(!window.chatUiResizeTitle)throw new Error('Synthetic DM title unavailable');return true`
-    })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.pressKey({ key: 'Cmd+A' })
     await m.pressKey({ key: 'Backspace' })
@@ -731,7 +732,8 @@ async function s4Full(daemon: Daemon): Promise<void> {
     }
     await m.tapOn({ text: 'Back' })
     await m.evalBrowserScript({
-      script: `const list=document.querySelector('[data-testid="chat-list-pane"]');const buttons=[...list.querySelectorAll('[role="button"][aria-label]')];const row=buttons.find(x=>x.getAttribute('aria-label')===window.chatUiResizeTitle);if(!row)throw new Error('Synthetic DM row unavailable');row.click();return true`
+      // By its id: the row's name is its title and then the latest message.
+      script: `const row=document.querySelector('[data-testid="chat-list-pane"]').querySelector(${JSON.stringify(chatRowById(conversation))});if(!row)throw new Error('Synthetic DM row unavailable');row.click();return true`
     })
     await m.assertVisible({ text: 'Remove notes.txt' })
     console.log(
@@ -1069,7 +1071,7 @@ async function review2Browser(daemon: Daemon): Promise<void> {
     console.log(
       await read(
         primary,
-        `${api};const me=await request('GET','/auth/me');const members={};for(const id of ${JSON.stringify([selected, incoming])})members[id]=(await request('GET','/chat/conversations/'+id+'/members')).map(m=>Number(m.userId));const forbidden=Number(${JSON.stringify(process.env.CHAT_UI_EXCLUDED_USER ?? '0')});if(Object.values(members).some(ids=>ids.includes(forbidden)))throw Error('Independent browser room includes reserved native actor');if(members[${JSON.stringify(incoming)}].length!==2)throw Error('Peer fixture must be an ordinary two-adult DM');return JSON.stringify({actor:me.id,members})`
+        `${api};const me=await request('GET','/auth/me');const members={};for(const id of ${JSON.stringify([selected, incoming])})members[id]=(await request('GET','/chat/conversations/'+id+'/members')).map(m=>m.userId);const forbidden=${JSON.stringify(process.env.CHAT_UI_EXCLUDED_USER ?? '')};if(Object.values(members).some(ids=>ids.includes(forbidden)))throw Error('Independent browser room includes reserved native actor');if(members[${JSON.stringify(incoming)}].length!==2)throw Error('Peer fixture must be an ordinary two-adult DM');return JSON.stringify({actor:me.id,members})`
       )
     )
     originalMuted = (await chat(primary)).preferences.muted
@@ -1341,7 +1343,7 @@ async function arrivalPeer(daemon: Daemon): Promise<void> {
   const request = JSON.parse(
     readFileSync(required('CHAT_UI_ARRIVAL_REQUEST'), 'utf8')
   ) as {
-    actorUserId: number
+    actorUserId: string
     selectedConversationId: string
     proposedOffscreenConversationId: string
     probeBody: string
@@ -1372,15 +1374,15 @@ async function arrivalPeer(daemon: Daemon): Promise<void> {
   try {
     await signIn(m, 'Hc')
     const preflight = await read<{
-      authorUserId: number
+      authorUserId: string
       rooms: Array<{
         conversationId: string
-        memberIds: number[]
+        memberIds: string[]
         canPost: boolean
         lastSeq: number
       }>
     }>(
-      `${api};const me=await get('/auth/me'),chats=await get('/chat/conversations'),result=[];for(const id of ${JSON.stringify([request.selectedConversationId, request.proposedOffscreenConversationId])}){const chat=chats.find(c=>c.id===id),members=await get('/chat/conversations/'+id+'/members');if(!chat?.canPost||chat.closed||chat.locked||chat.noHolder||!members.some(m=>Number(m.userId)===${request.actorUserId})||!members.some(m=>Number(m.userId)===Number(me.id)))throw Error('Current peer/receiver membership or posting eligibility missing');result.push({conversationId:id,memberIds:members.map(m=>Number(m.userId)),canPost:chat.canPost,lastSeq:chat.lastSeq})}return JSON.stringify({authorUserId:me.id,rooms:result})`
+      `${api};const me=await get('/auth/me'),chats=await get('/chat/conversations'),result=[];for(const id of ${JSON.stringify([request.selectedConversationId, request.proposedOffscreenConversationId])}){const chat=chats.find(c=>c.id===id),members=await get('/chat/conversations/'+id+'/members');if(!chat?.canPost||chat.closed||chat.locked||chat.noHolder||!members.some(m=>m.userId===${JSON.stringify(request.actorUserId)})||!members.some(m=>m.userId===me.id))throw Error('Current peer/receiver membership or posting eligibility missing');result.push({conversationId:id,memberIds:members.map(m=>m.userId),canPost:chat.canPost,lastSeq:chat.lastSeq})}return JSON.stringify({authorUserId:me.id,rooms:result})`
     )
     writeFileSync(
       required('CHAT_UI_ARRIVAL_PREFLIGHT'),
@@ -1480,7 +1482,7 @@ async function arrivalPeer(daemon: Daemon): Promise<void> {
     const posted = await read<{
       messageId: string
       seq: number
-      senderUserId: number
+      senderUserId: string
     }>(
       `${api};for(let n=0;n<150;n++){const posts=(await get(${JSON.stringify('/chat/conversations/' + ready.conversationId + '/messages?after=' + before)})).filter(p=>p.kind==='post');if(posts.length===1&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify({messageId:posts[0].id,seq:posts[0].seq,senderUserId:posts[0].senderUserId});if(posts.length>1)throw Error('Peer stage appended more than one post');await new Promise(r=>setTimeout(r,100))}throw Error('Normal encrypted peer stage did not settle')`
     )
@@ -1706,7 +1708,10 @@ async function bands(daemon: Daemon): Promise<void> {
   try {
     await signIn(m, narrow ? 'Hs' : 'Hc')
     await m.openLink({ link: WEB + '/chat' })
-    await m.assertVisible({ text: 'Follow a team', timeout: 60000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-conversation-list"]',
+      timeout: 60000
+    })
     const availableDms = getData(
       await m.evalBrowserScript({
         script: `${listScript}return chats.filter(x=>x.kind==='dm').length`
@@ -2178,7 +2183,10 @@ async function reader(daemon: Daemon): Promise<void> {
   try {
     await signIn(m, 'Hs')
     await m.openLink({ link: WEB + '/chat' })
-    await m.assertVisible({ text: 'Follow a team', timeout: 60000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-conversation-list"]',
+      timeout: 60000
+    })
     const found = (await m.evalBrowserScript({
       script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const chat=(await r.json()).find(x=>x.kind==='seasonAnnouncements'&&!x.canPost&&x.lastSeq>0);if(!chat)throw new Error('Existing reader fixture unavailable');return JSON.stringify(chat.id)`
     })) as { data: string }
@@ -2655,13 +2663,13 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
   const checkpoint = (): void => {
     writeFileSync(output, JSON.stringify(prepared, null, 2), { mode: 0o600 })
   }
-  const seed = readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8')
-  const uid = (key: string): number => {
-    for (const line of seed.split('\n')) {
-      const match = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-      if (match?.[1] === key) return Number(match[2])
-    }
-    throw new Error('Explicit fixture actor missing')
+  const seed = readSeedTable(
+    readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8')
+  )
+  const uid = (key: string): string => {
+    const person = seed[key]
+    if (person == null) throw new Error('Explicit fixture actor missing')
+    return person.userId
   }
   const attach = async (name: string, profile: string): Promise<Device> =>
     await daemon.attach({
@@ -2728,7 +2736,7 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
     )
     const candidate = await read<{ shortName: string } | null>(
       own,
-      `${api};return JSON.stringify((await get('/chat/dm-candidates?q=')).find(p=>Number(p.userId)===${uid(peerActor)})??null)`
+      `${api};return JSON.stringify((await get('/chat/dm-candidates?q=')).find(p=>p.userId===${JSON.stringify(uid(peerActor))})??null)`
     )
     assert(
       candidate != null,
@@ -2754,13 +2762,13 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
       conversationId.startsWith('cnv_') && !before.includes(conversationId),
       'A new normal DM is required'
     )
-    const members = await read<number[]>(
+    const members = await read<string[]>(
       own,
-      `${api};return JSON.stringify((await get('/chat/conversations/'+${JSON.stringify(conversationId)}+'/members')).map(m=>Number(m.userId)).sort((a,b)=>a-b))`
+      `${api};return JSON.stringify((await get('/chat/conversations/'+${JSON.stringify(conversationId)}+'/members')).map(m=>m.userId).sort())`
     )
     assert.deepEqual(
       members,
-      [uid(actor), uid(peerActor)].sort((a, b) => a - b),
+      [uid(actor), uid(peerActor)].sort(),
       'Exact two-adult membership required'
     )
     Object.assign(prepared, {
@@ -2793,7 +2801,7 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
     await own.assertVisible({ text: replyBody, timeout: 60000 })
     let other = await read<{ id: string; title: string } | null>(
       own,
-      `${api};for(const chat of await get('/chat/conversations')){if(chat.id===${JSON.stringify(conversationId)}||!chat.canPost||chat.closed||chat.locked||chat.noHolder||chat.lastSeq!==0)continue;const members=await get('/chat/conversations/'+chat.id+'/members');if(members.some(m=>Number(m.userId)===${uid(peerActor)}))return JSON.stringify({id:chat.id,title:chat.title})}return null`
+      `${api};for(const chat of await get('/chat/conversations')){if(chat.id===${JSON.stringify(conversationId)}||!chat.canPost||chat.closed||chat.locked||chat.noHolder||chat.lastSeq!==0)continue;const members=await get('/chat/conversations/'+chat.id+'/members');if(members.some(m=>m.userId===${JSON.stringify(uid(peerActor))}))return JSON.stringify({id:chat.id,title:chat.title})}return null`
     )
     if (other == null) {
       await own.openLink({ link: WEB + '/chat/new' })
@@ -2817,9 +2825,9 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
         id.startsWith('cnv_') && id !== conversationId && !before.includes(id),
         'A separate new ordinary scope is required'
       )
-      const secondMembers = await read<number[]>(
+      const secondMembers = await read<string[]>(
         own,
-        `${api};return JSON.stringify((await get('/chat/conversations/'+${JSON.stringify(id)}+'/members')).map(m=>Number(m.userId)).sort((a,b)=>a-b))`
+        `${api};return JSON.stringify((await get('/chat/conversations/'+${JSON.stringify(id)}+'/members')).map(m=>m.userId).sort())`
       )
       assert.deepEqual(
         secondMembers,
@@ -3094,8 +3102,8 @@ async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
       css: '[data-testid="chat-composer"]',
       timeout: 60000
     })
-    const authorUserId = await data<number>(
-      `${api}return Number((await get('/auth/me')).id)`
+    const authorUserId = await data<string>(
+      `${api}return (await get('/auth/me')).id`
     )
     if (!deleting) {
       console.log(
@@ -3140,7 +3148,7 @@ async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
         synthetic: boolean
         conversationId: string
         originalId: string
-        authorUserId: number
+        authorUserId: string
         attemptedDelete?: boolean
       }
       assert(
@@ -3231,7 +3239,7 @@ async function purgeFixture(daemon: Daemon, deleting: boolean): Promise<void> {
         '$ Authenticated encrypted author deletion POST kind=delete; GET wire clearedAt and GET personalpins verify disappearance'
       )
       const proof = await data<object>(
-        `${api}for(let n=0;n<100;n++){const changes=await get(path+'/messages?after='+${before});const deletion=changes.find(p=>p.kind==='delete'&&p.senderUserId===${authorUserId}&&p.targetIds?.includes(${JSON.stringify(fixture.originalId)}));const all=await get(path+'/messages?limit=100&before='+(${before}+2));const target=all.find(p=>p.id===${JSON.stringify(fixture.originalId)});const pins=await get(path+'/pins');if(deletion&&target?.clearedAt&&!pins.some(p=>p.messageId===${JSON.stringify(fixture.originalId)}))return JSON.stringify({authorizedEncryptedDeletion:true,targetCleared:true,personalPinPurged:true,deletePostId:deletion.id});await new Promise(r=>setTimeout(r,100))}throw new Error('Author deletion/personalpin purge not observed')`
+        `${api}for(let n=0;n<100;n++){const changes=await get(path+'/messages?after='+${before});const deletion=changes.find(p=>p.kind==='delete'&&p.senderUserId===${JSON.stringify(authorUserId)}&&p.targetIds?.includes(${JSON.stringify(fixture.originalId)}));const all=await get(path+'/messages?limit=100&before='+(${before}+2));const target=all.find(p=>p.id===${JSON.stringify(fixture.originalId)});const pins=await get(path+'/pins');if(deletion&&target?.clearedAt&&!pins.some(p=>p.messageId===${JSON.stringify(fixture.originalId)}))return JSON.stringify({authorizedEncryptedDeletion:true,targetCleared:true,personalPinPurged:true,deletePostId:deletion.id});await new Promise(r=>setTimeout(r,100))}throw new Error('Author deletion/personalpin purge not observed')`
       )
       console.log(JSON.stringify(proof))
       writeFileSync(
@@ -3266,10 +3274,10 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     )
     console.log(
       await m.evalBrowserScript({
-        script: `const row=document.querySelector('[role="button"][aria-label="Hawks Members"]');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
+        script: `const row=document.querySelector(${JSON.stringify(MEMBERS_ROW)});if(!row)throw new Error('Hawks Members row unavailable');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
       })
     )
-    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ css: MEMBERS_ROW })
     await m.assertVisible({
       text: required('CHAT_UI_TARGET_TEXT'),
       timeout: 60000

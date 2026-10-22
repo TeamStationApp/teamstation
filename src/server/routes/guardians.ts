@@ -5,7 +5,7 @@ import type { Kysely } from 'kysely'
 import { asBirthMonthBody, birthMonthText } from '../../common/age'
 import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { adminScopes, canCoach, roleScopes, visibleScopes } from '../access'
 import { findUserByEmail } from '../auth/emails'
 import type { Database } from '../db/database'
@@ -60,7 +60,7 @@ export function guardianRoutes(
   const router = Router()
 
   /** The player, when they play on the team; 404 otherwise. */
-  const mustPlayOn = async (teamId: string, userId: number): Promise<void> => {
+  const mustPlayOn = async (teamId: string, userId: string): Promise<void> => {
     const place = await db
       .selectFrom('memberships')
       .innerJoin('users', 'users.id', 'memberships.user_id')
@@ -319,7 +319,7 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {

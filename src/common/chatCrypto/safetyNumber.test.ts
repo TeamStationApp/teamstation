@@ -4,21 +4,28 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { seed } from '../../test/chatCryptoOracle'
+import { userIdOfGumbo, valueOfUserId } from '../userId'
 import { deriveKeyPair } from './hpke'
 import { signingPublicKey } from './keys'
 import { linkCode } from './linkCode'
 import { safetyHalf, safetyNumber, safetyNumberGroups } from './safetyNumber'
 
-const alice = { userId: 42, identityKey: signingPublicKey(seed('identity')) }
-const bob = { userId: 7, identityKey: signingPublicKey(seed('identity 7')) }
+const alice = {
+  userId: userIdOfGumbo(42),
+  identityKey: signingPublicKey(seed('identity'))
+}
+const bob = {
+  userId: userIdOfGumbo(7),
+  identityKey: signingPublicKey(seed('identity 7'))
+}
 const SAFETY = '420693152042024233918378460099523999522228652791089056264003'
 
 /** The same digits, the long way, with Node's SHA-512. */
-function nodeHalf(party: { userId: number; identityKey: Uint8Array }): string {
+function nodeHalf(party: { userId: string; identityKey: Uint8Array }): string {
   const length = Buffer.alloc(4)
   length.writeUInt32BE(party.identityKey.length)
   const id = Buffer.alloc(8)
-  id.writeBigUInt64BE(BigInt(party.userId))
+  id.writeBigUInt64BE(valueOfUserId(party.userId))
   let hash: Buffer = Buffer.concat([
     Buffer.of(0),
     length,

@@ -1,3 +1,4 @@
+import { chatUserIdBootstrap } from '../chatUserIdBootstrap'
 import type { Migration } from '../runner'
 
 /**
@@ -43,10 +44,10 @@ import type { Migration } from '../runner'
  */
 export const migration052Chat: Migration = {
   name: '052chat',
-  up: `
+  up: chatUserIdBootstrap(`
 create table chat_devices (
   id              text        primary key,
-  user_id         bigint      not null references users (id) on delete cascade,
+  user_id         __chat_user_id_type__      not null references users (id) on delete cascade,
   session_id      text        references auth_sessions (id) on delete set null,
   name            text        not null,
   platform        text        not null check (platform in ('web', 'ios', 'android')),
@@ -71,7 +72,7 @@ create index chat_resume_challenges_device on chat_resume_challenges (device_id)
 
 create table chat_identities (
   id                  text        primary key,
-  user_id             bigint      not null references users (id) on delete cascade,
+  user_id             __chat_user_id_type__      not null references users (id) on delete cascade,
   identity_public_key bytea       not null,
   created_at          timestamptz not null default now(),
   replaced_at         timestamptz,
@@ -81,7 +82,7 @@ create unique index chat_identities_current on chat_identities (user_id)
   where replaced_at is null;
 
 create table chat_user_keys (
-  user_id           bigint      not null,
+  user_id           __chat_user_id_type__      not null,
   identity_id       text        not null,
   generation        integer     not null check (generation >= 1),
   public_key        bytea       not null,
@@ -94,7 +95,7 @@ create table chat_user_keys (
 );
 
 create table chat_user_key_boxes (
-  user_id     bigint      not null,
+  user_id     __chat_user_id_type__      not null,
   identity_id text        not null,
   generation  integer     not null,
   device_id   text        not null references chat_devices (id) on delete cascade,
@@ -108,7 +109,7 @@ create index chat_user_key_boxes_device on chat_user_key_boxes (device_id);
 
 create table chat_links (
   id                    text        primary key,
-  user_id               bigint      not null references users (id) on delete cascade,
+  user_id               __chat_user_id_type__      not null references users (id) on delete cascade,
   new_device_id         text        not null references chat_devices (id) on delete cascade,
   approved_by_device_id text        references chat_devices (id) on delete set null,
   box                   bytea,
@@ -126,7 +127,7 @@ create table chat_conversations (
   )),
   scope_type     text,
   scope_id       text,
-  created_by     bigint      references users (id) on delete set null,
+  created_by     __chat_user_id_type__      references users (id) on delete set null,
   needs_rotation boolean     not null default false,
   closed_at      timestamptz,
   last_seq       bigint      not null default 0,
@@ -146,7 +147,7 @@ create unique index chat_conversations_scope
 
 create table chat_members (
   conversation_id text        not null references chat_conversations (id) on delete cascade,
-  user_id         bigint      not null references users (id) on delete cascade,
+  user_id         __chat_user_id_type__      not null references users (id) on delete cascade,
   joined_at       timestamptz not null default now(),
   left_at         timestamptz,
   created_at      timestamptz not null default now(),
@@ -158,8 +159,8 @@ create table chat_membership_log (
   conversation_id text        not null references chat_conversations (id) on delete cascade,
   seq             bigint      not null check (seq >= 1),
   event           text        not null check (event in ('join', 'leave', 'identityReset', 'closed')),
-  user_id         bigint      not null references users (id),
-  actor_user_id   bigint      references users (id),
+  user_id         __chat_user_id_type__      not null references users (id),
+  actor_user_id   __chat_user_id_type__      references users (id),
   reason          text,
   prev_hash       bytea       not null check (octet_length(prev_hash) = 32),
   hash            bytea       not null check (octet_length(hash) = 32),
@@ -171,7 +172,7 @@ create table chat_membership_log (
 create table chat_epochs (
   conversation_id    text        not null references chat_conversations (id) on delete cascade,
   epoch              integer     not null check (epoch >= 1),
-  created_by_user_id bigint      not null,
+  created_by_user_id __chat_user_id_type__      not null,
   identity_id        text        not null,
   previous_key_box   bytea,
   chain_break        boolean     not null default false,
@@ -191,11 +192,11 @@ create table chat_epochs (
 create table chat_epoch_boxes (
   conversation_id    text        not null,
   epoch              integer     not null,
-  user_id            bigint      not null,
+  user_id            __chat_user_id_type__      not null,
   identity_id        text        not null,
   generation         integer     not null,
   box                bytea       not null,
-  granted_by_user_id bigint      references users (id),
+  granted_by_user_id __chat_user_id_type__      references users (id),
   created_at         timestamptz not null default now(),
   primary key (conversation_id, epoch, user_id, identity_id, generation),
   foreign key (conversation_id, epoch)
@@ -208,7 +209,7 @@ create index chat_epoch_boxes_user on chat_epoch_boxes (user_id);
 create table chat_grant_requests (
   id              bigint      generated always as identity primary key,
   conversation_id text        not null references chat_conversations (id) on delete cascade,
-  user_id         bigint      not null,
+  user_id         __chat_user_id_type__      not null,
   identity_id     text        not null,
   generation      integer     not null,
   identity_reset  boolean     not null default false,
@@ -229,7 +230,7 @@ create table chat_messages (
   conversation_id    text        not null,
   seq                bigint      not null check (seq >= 1),
   epoch              integer     not null,
-  sender_user_id     bigint      not null,
+  sender_user_id     __chat_user_id_type__      not null,
   sender_identity_id text        not null,
   kind               text        not null check (kind in ('post', 'reaction', 'edit', 'delete', 'moderatorDelete')),
   target_ids         text[],
@@ -251,7 +252,7 @@ create table chat_messages (
 create table chat_attachments (
   id               text        primary key,
   conversation_id  text        not null references chat_conversations (id) on delete cascade,
-  uploader_user_id bigint      not null references users (id),
+  uploader_user_id __chat_user_id_type__      not null references users (id),
   size             bigint      not null check (size >= 0),
   object_key       text        not null,
   digest           bytea       not null check (octet_length(digest) = 32),
@@ -272,7 +273,7 @@ create index chat_message_attachments_attachment
 
 create table chat_read_cursors (
   conversation_id text        not null references chat_conversations (id) on delete cascade,
-  user_id         bigint      not null references users (id) on delete cascade,
+  user_id         __chat_user_id_type__      not null references users (id) on delete cascade,
   seq             bigint      not null default 0,
   at              timestamptz not null default now(),
   created_at      timestamptz not null default now(),
@@ -283,7 +284,7 @@ create table chat_reports (
   id               text        primary key,
   conversation_id  text        not null references chat_conversations (id) on delete cascade,
   message_id       text        not null references chat_messages (id) on delete cascade,
-  reporter_user_id bigint      not null references users (id),
+  reporter_user_id __chat_user_id_type__      not null references users (id),
   envelope         jsonb       not null,
   message_key      bytea       not null,
   plaintext        text        not null,
@@ -441,7 +442,7 @@ union all
 select 'season', id from seasons
 union all
 select 'league', id from leagues;
-`,
+`),
   down: `
 drop trigger chat_dirty_leagues on leagues;
 drop trigger chat_dirty_users_account on users;

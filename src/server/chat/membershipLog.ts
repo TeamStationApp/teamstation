@@ -36,8 +36,8 @@ export type ChatChangeKind = 'message' | 'members' | 'epoch' | 'grant' | 'read'
 
 export interface LogEntry {
   event: LogEvent
-  userId: number
-  actorUserId: number | null
+  userId: string
+  actorUserId: string | null
   reason: string | null
 }
 
@@ -68,7 +68,7 @@ export type ChatUserChangeKind = 'link' | 'devices' | 'preferences'
  */
 export async function notifyChatUser(
   trx: Kysely<Database>,
-  userId: number,
+  userId: string,
   kind: ChatUserChangeKind
 ): Promise<void> {
   const payload = JSON.stringify({ u: userId, k: kind })
@@ -139,8 +139,8 @@ export async function appendLog(
 export async function joinMembers(
   trx: Kysely<Database>,
   conversationId: string,
-  userIds: number[],
-  actorUserId: number | null,
+  userIds: string[],
+  actorUserId: string | null,
   reason: string,
   now: Date
 ): Promise<void> {
@@ -178,8 +178,8 @@ export async function joinMembers(
 export async function leaveMembers(
   trx: Kysely<Database>,
   conversationId: string,
-  userIds: number[],
-  actorUserId: number | null,
+  userIds: string[],
+  actorUserId: string | null,
   reason: string,
   now: Date
 ): Promise<void> {
@@ -207,7 +207,7 @@ export async function leaveMembers(
 export async function closeConversation(
   trx: Kysely<Database>,
   conversationId: string,
-  entry: { userId: number; actorUserId: number | null; reason: string },
+  entry: { userId: string; actorUserId: string | null; reason: string },
   now: Date
 ): Promise<void> {
   await trx
@@ -230,7 +230,7 @@ export async function closeConversation(
 export async function openGrantRequests(
   trx: Kysely<Database>,
   conversationId: string,
-  userIds: number[],
+  userIds: string[],
   identityReset = false
 ): Promise<number> {
   if (userIds.length === 0) return 0
@@ -297,7 +297,7 @@ export async function openGrantRequests(
 export async function currentMembers(
   trx: Kysely<Database>,
   conversationId: string
-): Promise<number[]> {
+): Promise<string[]> {
   const rows = await trx
     .selectFrom('chat_members')
     .select(['user_id'])

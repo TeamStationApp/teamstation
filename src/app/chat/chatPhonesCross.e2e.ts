@@ -24,6 +24,7 @@ import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import { readSeedTable } from '../../test/chatSeedTable'
 import { signInTestAccount } from '../../test/passwordFixtures'
 
 interface Device {
@@ -61,24 +62,22 @@ function required(key: string): string {
 function person(
   run: string,
   key: string
-): { userId: number; email: string; password: string; shortName: string } {
-  const row = readFileSync(join(run, 'seed.txt'), 'utf8')
-    .split('\n')
-    .map(line => line.trim().split(/\s+/))
-    .find(cells => cells[0] === key)
+): { userId: string; email: string; password: string; shortName: string } {
+  const row = readSeedTable(readFileSync(join(run, 'seed.txt'), 'utf8'))[key]
   assert(row != null, `${key} is not in the seed table`)
+  const [first, last] = row.name.split(' ')
   return {
-    userId: Number(row[3]),
-    email: row[4],
-    password: row[5],
-    shortName: `${row[1]} ${row[2].slice(0, 1)}`
+    userId: row.userId,
+    email: row.email,
+    password: row.password,
+    shortName: `${first} ${last.slice(0, 1)}`
   }
 }
 
 /** The iPhone person's DM with B, opened (or found) through the API as them. */
 async function dmOf(
   n: { email: string; password: string },
-  b: { userId: number }
+  b: { userId: string }
 ): Promise<string> {
   // Through the password protocol, as the app signs in: the raw password
   // never leaves this process.

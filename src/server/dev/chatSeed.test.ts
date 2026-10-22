@@ -5,9 +5,11 @@ import { Pool } from 'pg'
 
 import { ageOn } from '../../common/age'
 import { passwordBytes } from '../../common/passwordProtocol'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { readSeedTable } from '../../test/chatSeedTable'
 import { findUserByEmail } from '../auth/emails'
 import {
   nativeArgon,
@@ -268,9 +270,15 @@ describe('the chat seed', function () {
     const text = describeSeed(second)
     expect(text).contains('Hawks v Owls (final)')
     expect(text).match(
-      /^Hc +Hank Coach +\d+ +hc@chat\.example\.com +same for all$/m
+      /^Hc +Hank Coach +usr_\w{22} +hc@chat\.example\.com +same for all$/m
     )
-    expect(text).match(/^Q +Quilvio Veras +\d+ +\(no account\)$/m)
+    expect(text).match(/^Q +Quilvio Veras +usr_\w{22} +\(no account\)$/m)
+    expect(readSeedTable(text).Hc).deep.equals({
+      userId: second.people.Hc.userId,
+      name: 'Hank Coach',
+      email: 'hc@chat.example.com',
+      password: 'same for all'
+    })
   })
 
   it('refuses an address that already belongs to somebody else', async function () {
@@ -279,9 +287,14 @@ describe('the chat seed', function () {
     const url = adminUrl.replace(/\/[^/]*$/, `/${scratch}`)
     const pool = new Pool({ connectionString: url })
     await migrateUp(pool, migrations)
+    const someone = userIdOfGumbo(777)
     await pool.query(
-      `insert into users (id, "legacyId", display_name) values (777, 'u777', 'Someone');
-       insert into user_emails (id, user_id, email) values ('uem_x', 777, 'l@chat.example.com')`
+      `insert into users (id, "legacyId", display_name) values ($1, 'u777', 'Someone')`,
+      [someone]
+    )
+    await pool.query(
+      `insert into user_emails (id, user_id, email) values ('uem_x', $1, 'l@chat.example.com')`,
+      [someone]
     )
     await pool.end()
     const other = makeDatabase(url)

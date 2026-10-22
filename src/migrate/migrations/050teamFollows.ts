@@ -1,3 +1,4 @@
+import { chatUserIdBootstrap } from '../chatUserIdBootstrap'
 import type { Migration } from '../runner'
 
 /**
@@ -12,15 +13,15 @@ import type { Migration } from '../runner'
  */
 export const migration050TeamFollows: Migration = {
   name: '050teamFollows',
-  up: `
+  up: chatUserIdBootstrap(`
 create table team_follows (
-  user_id    bigint      not null references users(id) on delete cascade,
+  user_id    __chat_user_id_type__      not null references users(id) on delete cascade,
   team_id    text        not null references teams(id) on delete cascade,
   created_at timestamptz not null default now(),
   primary key (user_id, team_id)
 );
 create index team_follows_team on team_follows (team_id);
-`,
+`),
   down: `
 drop table team_follows;
 `

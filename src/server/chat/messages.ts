@@ -8,6 +8,7 @@ import {
 } from '../../common/chatCrypto/seal'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import { asUserId, userIdOfGumbo } from '../../common/userId'
 import type { ChatKind, ChatMessagesTable, Database } from '../db/database'
 import type { MediaContext } from '../media/mediaContext'
 import { latestEpoch, lockConversation } from './epochs'
@@ -105,7 +106,7 @@ export interface ChatMessageView {
   conversationId: string
   seq: number
   epoch: number
-  senderUserId: number
+  senderUserId: string
   senderIdentityId: string
   kind: EnvelopeKind
   targetIds: string[] | null
@@ -130,7 +131,7 @@ export interface ReportEnvelope {
   conversationId: string
   seq: number
   epoch: number
-  senderUserId: number
+  senderUserId: string
   senderIdentityId: string
   senderIdentityKey: string
   kind: EnvelopeKind
@@ -145,8 +146,8 @@ export interface ChatReportView {
   id: string
   conversation: { id: string; kind: ChatKind; title: string | null }
   messageId: string
-  reporter: { userId: number; shortName: string }
-  sender: { userId: number; shortName: string }
+  reporter: { userId: string; shortName: string }
+  sender: { userId: string; shortName: string }
   kind: EnvelopeKind
   sentAt: string
   plaintext: string
@@ -199,7 +200,7 @@ async function views(
     conversationId: row.conversation_id,
     seq: Number(row.seq),
     epoch: row.epoch,
-    senderUserId: Number(row.sender_user_id),
+    senderUserId: row.sender_user_id,
     senderIdentityId: row.sender_identity_id,
     kind: row.kind,
     targetIds: row.target_ids,
@@ -234,7 +235,7 @@ export type PostingStanding = 'poster' | 'reader' | 'stranger'
 export async function mayPost(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   now: Date
 ): Promise<PostingStanding> {
   if (!(await memberNow(db, conversationId, userId, now))) return 'stranger'
@@ -271,7 +272,7 @@ export async function postMessage(
       if (existing != null) {
         if (
           existing.conversation_id === conversationId &&
-          Number(existing.sender_user_id) === caller.userId
+          existing.sender_user_id === caller.userId
         ) {
           const [message] = await views(trx, [existing])
           return { message, created: false }
@@ -409,7 +410,7 @@ function idTaken(): Error {
 async function checkTargets(
   trx: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   body: MessageBody
 ): Promise<void> {
   const targetIds = body.targetIds ?? []
@@ -429,7 +430,7 @@ async function checkTargets(
         reason: 'target'
       })
     }
-    if (body.kind === 'delete' && Number(row.sender_user_id) !== userId) {
+    if (body.kind === 'delete' && row.sender_user_id !== userId) {
       throw refuse('notYours', 'You may delete only your own messages')
     }
   }
@@ -439,7 +440,7 @@ async function checkTargets(
 async function checkAttachments(
   trx: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   body: MessageBody
 ): Promise<void> {
   const rows = await trx
@@ -549,7 +550,7 @@ export async function messagesOf(
 export async function markRead(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   seq: number,
   now: Date,
   clearManualUnreadRevision?: number
@@ -620,7 +621,7 @@ export async function conversationOfMessage(
  */
 export async function reportMessage(
   db: Kysely<Database>,
-  reporterUserId: number,
+  reporterUserId: string,
   body: ReportBody,
   now: Date
 ): Promise<{ id: string; verified: boolean }> {
@@ -645,7 +646,7 @@ export async function reportMessage(
       conversationId: row.conversation_id,
       epoch: row.epoch,
       messageId: row.id,
-      senderUserId: Number(row.sender_user_id),
+      senderUserId: row.sender_user_id,
       kind: row.kind,
       nonce: new Uint8Array(row.nonce),
       ciphertext: new Uint8Array(row.ciphertext),
@@ -668,7 +669,7 @@ export async function reportMessage(
       conversationId: row.conversation_id,
       seq: Number(row.seq),
       epoch: row.epoch,
-      senderUserId: Number(row.sender_user_id),
+      senderUserId: row.sender_user_id,
       senderIdentityId: row.sender_identity_id,
       senderIdentityKey: b64(row.identityKey),
       kind: row.kind,
@@ -732,7 +733,18 @@ export async function reportsFor(
     .orderBy('chat_reports.id', 'desc')
     .limit(MAX_PAGE)
     .execute()
-  const envelopes = rows.map(row => row.envelope as ReportEnvelope)
+  // Historic report copies retain their authenticated numeric projection.
+  // Normalize only this read view; never rewrite the saved envelope/plaintext.
+  const envelopes = rows.map(row => {
+    const saved = row.envelope as ReportEnvelope & { senderUserId: unknown }
+    return {
+      ...saved,
+      senderUserId:
+        typeof saved.senderUserId === 'number'
+          ? userIdOfGumbo(saved.senderUserId)
+          : asUserId(saved.senderUserId)
+    }
+  })
   const titled = rows.map(row => ({
     id: row.conversation_id,
     kind: row.kind,
@@ -741,10 +753,10 @@ export async function reportsFor(
   }))
   const titles = titlesOf(titled, await scopeIdentities(db, scopesOf(titled)))
   const people = await chatPeople(db, space, [
-    ...rows.map(row => Number(row.reporter_user_id)),
+    ...rows.map(row => row.reporter_user_id),
     ...envelopes.map(envelope => envelope.senderUserId)
   ])
-  const person = (userId: number): { userId: number; shortName: string } => ({
+  const person = (userId: string): { userId: string; shortName: string } => ({
     userId,
     shortName: people.get(userId)?.shortName ?? ''
   })
@@ -756,7 +768,7 @@ export async function reportsFor(
       title: titles.get(row.conversation_id) ?? null
     },
     messageId: row.message_id,
-    reporter: person(Number(row.reporter_user_id)),
+    reporter: person(row.reporter_user_id),
     sender: person(envelopes[index].senderUserId),
     kind: envelopes[index].kind,
     sentAt: envelopes[index].createdAt,

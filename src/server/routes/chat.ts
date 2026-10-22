@@ -3,7 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   addDmMembers,
   createDm,
@@ -59,7 +59,7 @@ export function chatRoutes(
   /** The conversation, when the caller is in it now; 404 otherwise. */
   const mustBeMember = async (
     conversationId: string,
-    userId: number
+    userId: string
   ): Promise<void> => {
     if (!(await memberNow(db, conversationId, userId, clock()))) {
       throw notFound()

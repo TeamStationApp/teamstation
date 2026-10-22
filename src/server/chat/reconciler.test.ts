@@ -1,15 +1,18 @@
 import { expect } from 'chai'
-import { type Kysely, sql } from 'kysely'
+import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
 import { verifiedPrefix } from '../../common/chatCrypto/logHash'
+import { compareUserIds } from '../../common/chatCrypto/userId'
 import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
-import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  dropScratchDatabase,
+  testDatabaseUrl
+} from '../../migrate/testDatabase'
 import { type Database, makeDatabase } from '../db/database'
-import { chatSeed } from '../dev/chatSeed'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
 import { createDm } from './dms'
 import { appendLog, joinMembers, openGrantRequests } from './membershipLog'
@@ -75,7 +78,7 @@ async function chainsVerify(db: Kysely<Database>): Promise<boolean> {
 /** Gives a user an identity and a per-user key generation (raw rows). */
 async function giveIdentity(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<string> {
   const identityId = makeId('chatIdentity')
   await db
@@ -83,7 +86,7 @@ async function giveIdentity(
     .values({
       id: identityId,
       user_id: userId,
-      identity_public_key: new Uint8Array(32).fill(userId % 251)
+      identity_public_key: new Uint8Array(32).fill(7)
     })
     .execute()
   await db
@@ -103,9 +106,9 @@ async function giveIdentity(
 async function giveEpoch(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   identityId: string,
-  boxed: Array<{ userId: number; identityId: string }>
+  boxed: Array<{ userId: string; identityId: string }>
 ): Promise<void> {
   await db
     .insertInto('chat_epochs')
@@ -222,7 +225,7 @@ describe('the chat reconciler (U5)', function () {
     expect(await members(staff.id)).deep.equals(['Ha', 'Hc', 'Hk', 'Hs'])
     const rows = await log(staff.id)
     const expected = ['Ha', 'Hc', 'Hk', 'Hs']
-      .sort((a, b) => fixture.id(a) - fixture.id(b))
+      .sort((a, b) => compareUserIds(fixture.id(a), fixture.id(b)))
       .map(key => `join ${key} audience`)
     expect(
       rows.map(row => `${row.event} ${row.who} ${row.reason}`)
@@ -731,35 +734,44 @@ describe('the chat reconciler over data from before 051 (U5)', function () {
 
   after(async function () {
     if (adminPool == null) return
-    await adminPool.query(`drop database if exists ${name} with (force)`)
+    await dropScratchDatabase(adminPool, name)
     await adminPool.end()
   })
 
   it('creates the scope chats on its first run', async function () {
     await adminPool?.query(`create database ${name}`)
     const at = migrations.findIndex(migration => migration.name === '052chat')
-    const seed = await (async () => {
+    const seed = {
+      leagueId: 'lea_legacy',
+      seasonId: 'sea_legacy',
+      teams: { hawks: 'tem_legacy' }
+    }
+    await (async () => {
       const pool = new Pool({ connectionString: url })
       try {
         await migrateUp(pool, migrations.slice(0, at))
-        const early = makeDatabase(url)
-        let seeded
-        try {
-          seeded = await chatSeed(early, {
-            password: 'pw',
-            now: new Date('2027-04-10T12:00:00Z'),
-            writeFollow: async (db, userId, ref) => {
-              await sql`insert into team_follows (user_id, team_id)
-                values (${userId}, ${ref.id}) on conflict do nothing`.execute(
-                db
-              )
-            }
-          })
-        } finally {
-          await early.destroy()
-        }
+        // Historical account rows really are bigint before 069. The current
+        // seed intentionally mints full-width accounts and cannot seed this era.
+        await pool.query(`
+          insert into users(id,"legacyId",display_name,password_hash,birth_year,birth_month)
+            select n, 'usr_' || lpad(n::text,16,'1'), 'Hank Aaron', 'fixture', 1990, 1
+            from generate_series(1,5) n;
+          insert into user_emails(id,user_id,email,is_primary,verified_at)
+            select 'uem_legacy_' || n,n,n || '@example.test',true,now() from generate_series(1,5) n;
+          insert into leagues(id,name) values('lea_legacy','Legacy League');
+          insert into seasons(id,league_id,name,year) values('sea_legacy','lea_legacy','Legacy Season',2027);
+          insert into teams(id,name) values('tem_legacy','Legacy Team');
+          insert into season_teams(season_id,team_id) values('sea_legacy','tem_legacy');
+          insert into scope_roles(id,user_id,scope_type,scope_id,role) values
+            ('sro_legacy_1',1,'league','lea_legacy','admin'),
+            ('sro_legacy_2',2,'season','sea_legacy','coach'),
+            ('sro_legacy_3',3,'team','tem_legacy','coach');
+          insert into memberships(id,user_id,team_id,role,is_player) values
+            ('mem_legacy_3',3,'tem_legacy','member',false),
+            ('mem_legacy_4',4,'tem_legacy','member',true);
+          insert into team_follows(user_id,team_id) values(5,'tem_legacy');
+        `)
         await migrateUp(pool, migrations)
-        return seeded
       } finally {
         await pool.end()
       }

@@ -148,7 +148,21 @@ export function selfTest(call: CoreCall): boolean {
     const frozen = vectorFile.frozen
     return (
       hex(call('sha256', [ciphertext])[0]) === frozen.sealCiphertextSha256 &&
-      hex(signature) === frozen.sealSignature
+      hex(signature) === frozen.sealSignature &&
+      // Full-width identity capability is required before keys are touched.
+      // ff || u128be(2^64 + 7), independently frozen membership-row hash.
+      hex(
+        call('logRowHash', [
+          new Uint8Array(32),
+          utf8('cnv_identity'),
+          num(1),
+          utf8('join'),
+          Uint8Array.of(255, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 7),
+          num(0),
+          utf8(''),
+          num(1234)
+        ])[0]
+      ) === '389c66526d5098d0ec2739ff8901bb28029a12932d4bc56218f1978700b6b832'
     )
   } catch {
     return false

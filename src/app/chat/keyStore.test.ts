@@ -2,15 +2,26 @@ import { expect } from 'chai'
 import { IDBFactory } from 'fake-indexeddb'
 import { describe, it } from 'mocha'
 
+import { utf8 } from '../../common/chatCrypto/bytes'
 import { newDeviceKeys } from '../../common/chatCrypto/keys'
-import { b64, type ChatKeyRecord, newRecord, recordToJson } from './keyRecord'
+import { userIdOfGumbo } from '../../common/userId'
+import legacyRecord from '../../test/legacyChatKeyRecord.json'
+import { type ChatKeysClient, ensureEnrolled } from './engine/links'
+import {
+  b64,
+  type ChatKeyRecord,
+  newRecord,
+  recordFromJson,
+  recordToJson,
+  UnreadableKeyRecordError
+} from './keyRecord'
 import { KEY_DATABASE, keyStore, webKeyStore } from './keyStore'
 
 /** U11: the browser's store, on an in-memory IndexedDB and Node's WebCrypto. */
 describe('chat key store in the browser', function () {
   const sample = (): ChatKeyRecord => ({
-    ...newRecord(12, 'cdv_web', newDeviceKeys()),
-    pins: { 3: 'AQID' }
+    ...newRecord(userIdOfGumbo(12), 'cdv_web', newDeviceKeys()),
+    pins: { [userIdOfGumbo(3)]: b64(new Uint8Array(32).fill(3)) }
   })
 
   /** Every value kept in `ts-chat`, by key. */
@@ -95,14 +106,14 @@ describe('chat key store in the browser', function () {
     const first = webKeyStore({ indexedDB: factory })
     const second = webKeyStore({ indexedDB: factory })
     await Promise.all([first.save(sample()), second.save(sample())])
-    expect((await first.load())?.userId).equals(12)
+    expect((await first.load())?.userId).equals(userIdOfGumbo(12))
     const wrap = await fingerprint((await raw(factory)).get('wrap'))
     await first.save(sample())
     expect(await fingerprint((await raw(factory)).get('wrap'))).equals(wrap)
-    expect((await second.load())?.userId).equals(12)
+    expect((await second.load())?.userId).equals(userIdOfGumbo(12))
   })
 
-  it('reads a damaged record as none', async function () {
+  it('preserves damaged ciphertext and blocks automatic enrollment', async function () {
     const factory = new IDBFactory()
     const store = webKeyStore({ indexedDB: factory })
     await store.save(sample())
@@ -123,7 +134,232 @@ describe('chat key store in the browser', function () {
       transaction.oncomplete = resolve
     })
     db.close()
-    expect(await store.load()).equals(undefined)
+    const before = await raw(factory)
+    const calls: string[] = []
+    const client = {
+      registerChatDevice: async () => {
+        calls.push('enroll')
+      }
+    } as unknown as ChatKeysClient
+    let failed: unknown
+    await ensureEnrolled({
+      client,
+      store,
+      userId: userIdOfGumbo(12),
+      device: { name: 'Test Browser', platform: 'web' }
+    }).catch((error: unknown) => {
+      failed = error
+    })
+    expect(failed).instanceOf(Error)
+    expect(calls).deep.equals([])
+    expect(await raw(factory)).deep.equals(before)
+    expect(await store.exists()).equals(true)
+  })
+
+  async function installJson(factory: IDBFactory, text: string): Promise<void> {
+    const store = webKeyStore({ indexedDB: factory })
+    await store.save(sample())
+    const wrap = (await raw(factory)).get('wrap') as CryptoKey
+    const iv = new Uint8Array(12)
+    const ciphertext = await globalThis.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: utf8('ts-chat/v1/key-record') },
+      wrap,
+      utf8(text)
+    )
+    const db = await new Promise<IDBDatabase>(resolve => {
+      const request = factory.open(KEY_DATABASE, 1)
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+    })
+    const transaction = db.transaction('keys', 'readwrite')
+    transaction.objectStore('keys').put({ iv, ciphertext }, 'record')
+    await new Promise(resolve => {
+      transaction.oncomplete = resolve
+    })
+    db.close()
+  }
+
+  it('preserves malformed persisted key bytes and blocks automatic enrollment', async () => {
+    for (const key of ['AA', '*'.repeat(43)]) {
+      const factory = new IDBFactory()
+      const rawRecord = structuredClone(legacyRecord)
+      rawRecord.device.box.secretKey = key
+      await installJson(factory, JSON.stringify(rawRecord))
+      const before = await raw(factory)
+      const store = webKeyStore({ indexedDB: factory })
+      const calls: string[] = []
+      const client = {
+        registerChatDevice: async () => {
+          calls.push('enroll')
+        }
+      } as unknown as ChatKeysClient
+      let failed: unknown
+      await ensureEnrolled({
+        client,
+        store,
+        userId: userIdOfGumbo(42),
+        device: { name: 'Test Browser', platform: 'web' }
+      }).catch((error: unknown) => {
+        failed = error
+      })
+      expect(failed).instanceOf(Error)
+      expect(calls).deep.equals([])
+      expect(await raw(factory)).deep.equals(before)
+      expect(await store.exists()).equals(true)
+    }
+  })
+
+  it('reads v1 under the original wrapping key and preserves it across a failed v2 save', async () => {
+    const factory = new IDBFactory()
+    const text = JSON.stringify(legacyRecord)
+    await installJson(factory, text)
+    const before = await raw(factory)
+    const store = webKeyStore({ indexedDB: factory })
+    const record = await store.load()
+    expect(record).deep.equals(recordFromJson(text))
+    const brokenSubtle = new Proxy(globalThis.crypto.subtle, {
+      get(target, key) {
+        if (key === 'encrypt')
+          return async () => {
+            throw new Error('Save denied')
+          }
+        const value = Reflect.get(target, key)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    let failed: unknown
+    await webKeyStore({ indexedDB: factory, subtle: brokenSubtle })
+      .save(record!)
+      .catch((error: unknown) => {
+        failed = error
+      })
+    expect(String(failed)).contains('Save denied')
+    expect(await raw(factory)).deep.equals(before)
+    expect(await store.load()).deep.equals(record)
+    await store.save(record!)
+    const after = await raw(factory)
+    expect(await fingerprint(after.get('wrap'))).equals(
+      await fingerprint(before.get('wrap'))
+    )
+    const saved = after.get('record')
+    const plain = await globalThis.crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: saved.iv,
+        additionalData: utf8('ts-chat/v1/key-record')
+      },
+      after.get('wrap'),
+      saved.ciphertext
+    )
+    expect(JSON.parse(Buffer.from(plain).toString()).version).equals(2)
+    expect(await store.load()).deep.equals(record)
+  })
+
+  it('keeps authenticated unknown JSON and a record with a missing wrapping key', async () => {
+    const factory = new IDBFactory()
+    await installJson(factory, JSON.stringify({ ...legacyRecord, version: 9 }))
+    const store = webKeyStore({ indexedDB: factory })
+    let failed: unknown
+    const before = await raw(factory)
+    await store.load().catch((error: unknown) => {
+      failed = error
+    })
+    expect(String(failed)).contains('Unknown chat key record version')
+    expect(failed).instanceOf(UnreadableKeyRecordError)
+    expect((failed as UnreadableKeyRecordError).reason).equals('unknownVersion')
+    expect(await raw(factory)).deep.equals(before)
+    const db = await new Promise<IDBDatabase>(resolve => {
+      const request = factory.open(KEY_DATABASE, 1)
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+    })
+    const transaction = db.transaction('keys', 'readwrite')
+    transaction.objectStore('keys').delete('wrap')
+    await new Promise(resolve => {
+      transaction.oncomplete = resolve
+    })
+    db.close()
+    failed = undefined
+    await store.load().catch((error: unknown) => {
+      failed = error
+    })
+    expect(String(failed)).contains('wrapping key is missing')
+    expect((failed as UnreadableKeyRecordError).reason).equals(
+      'wrappingKeyMissing'
+    )
+    expect((await raw(factory)).get('record')).deep.equals(before.get('record'))
+  })
+
+  it('names why a kept record is unreadable, without its text, and keeps it', async () => {
+    const cases: Array<[string, (factory: IDBFactory) => Promise<void>]> = [
+      [
+        'invalid',
+        async factory => {
+          await installJson(factory, '{"secret":"do-not-log"')
+        }
+      ],
+      [
+        'undecryptable',
+        async factory => {
+          await installJson(factory, JSON.stringify(legacyRecord))
+          const db = await new Promise<IDBDatabase>(resolve => {
+            const request = factory.open(KEY_DATABASE, 1)
+            request.onsuccess = () => {
+              resolve(request.result)
+            }
+          })
+          const transaction = db.transaction('keys', 'readwrite')
+          const keys = transaction.objectStore('keys')
+          const sealed = await new Promise<any>(resolve => {
+            const request = keys.get('record')
+            request.onsuccess = () => {
+              resolve(request.result)
+            }
+          })
+          const bytes = new Uint8Array(sealed.ciphertext as ArrayBuffer)
+          bytes[0] ^= 1
+          keys.put({ iv: sealed.iv, ciphertext: bytes.buffer }, 'record')
+          await new Promise(resolve => {
+            transaction.oncomplete = resolve
+          })
+          db.close()
+        }
+      ]
+    ]
+    for (const [reason, install] of cases) {
+      const factory = new IDBFactory()
+      await install(factory)
+      const before = await raw(factory)
+      const failed = await webKeyStore({ indexedDB: factory })
+        .load()
+        .catch((error: unknown) => error)
+      expect(failed, reason).instanceOf(UnreadableKeyRecordError)
+      expect((failed as UnreadableKeyRecordError).reason).equals(reason)
+      expect(String(failed)).not.contains('do-not-log')
+      expect(await raw(factory)).deep.equals(before)
+    }
+  })
+
+  it('does not call a store with no crypto to open it an unreadable record', async () => {
+    const factory = new IDBFactory()
+    await installJson(factory, JSON.stringify(legacyRecord))
+    const noDecrypt = new Proxy(globalThis.crypto.subtle, {
+      get(target, key) {
+        if (key === 'decrypt')
+          return async () => {
+            throw new TypeError('crypto.subtle is unavailable')
+          }
+        const value = Reflect.get(target, key)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const failed = await webKeyStore({ indexedDB: factory, subtle: noDecrypt })
+      .load()
+      .catch((error: unknown) => error)
+    expect(failed).instanceOf(TypeError)
+    expect(failed).not.instanceOf(UnreadableKeyRecordError)
   })
 
   it('says whether a record is kept, and makes no database to say so', async function () {
@@ -162,7 +398,7 @@ describe('chat key store in the browser', function () {
     try {
       expect(await keyStore.load()).equals(undefined)
       await keyStore.save(sample())
-      expect((await keyStore.load())?.userId).equals(12)
+      expect((await keyStore.load())?.userId).equals(userIdOfGumbo(12))
       await keyStore.wipe()
       expect(await keyStore.load()).equals(undefined)
     } finally {

@@ -22,7 +22,7 @@ import type { ChatScreenEngine } from './screenEngine'
 
 export interface ChatWorkspaceProps {
   engine: ChatScreenEngine
-  userId: number
+  userId: string
   state: ChatWorkspaceState
   listNavigation?: ChatListNavigationCapture
   conversationId?: string

@@ -6,6 +6,7 @@ import type {
   ChatPerson,
   TeamStationClient
 } from '../../common/api'
+import { asUserId } from '../../common/userId'
 import {
   Button,
   Card,
@@ -53,7 +54,7 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
   const [picked, setPicked] = useState<ChatPerson[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
-  const [adultsFor, setAdultsFor] = useState<number[] | undefined>(undefined)
+  const [adultsFor, setAdultsFor] = useState<string[] | undefined>(undefined)
 
   const asked = query.trim()
   useEffect(() => {
@@ -95,7 +96,7 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
     setPicked(current => [...current, person])
   }
 
-  const start = (extra: number[] = []): void => {
+  const start = (extra: string[] = []): void => {
     setBusy(true)
     setError(undefined)
     client
@@ -111,7 +112,7 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
           const details = (caught as { details?: { playerIds?: unknown } })
             .details
           const ids = Array.isArray(details?.playerIds)
-            ? details.playerIds.map(Number)
+            ? details.playerIds.map(asUserId)
             : picked.map(person => person.userId)
           setAdultsFor(ids)
           return

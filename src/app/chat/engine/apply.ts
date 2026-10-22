@@ -22,13 +22,13 @@ import { resolveQuote } from './reply'
 export interface ReactionView {
   emoji: string
   /** Who reacted with it, in the order they did. */
-  userIds: number[]
+  userIds: string[]
   mine: boolean
 }
 
 export interface QuoteView {
   id: string
-  authorId: number
+  authorId: string
   authorName: string | undefined
   snippet: string
   status?: MessageStatus | 'unavailable'
@@ -50,7 +50,7 @@ export interface MessageView {
   id: string
   seq: number
   epoch: number
-  senderUserId: number
+  senderUserId: string
   /** Undefined for someone no longer in the chat. */
   senderName: string | undefined
   mine: boolean
@@ -59,7 +59,7 @@ export interface MessageView {
   removedBy: 'author' | 'moderator' | undefined
   /** The latest wording; empty unless `ok`. */
   body: string
-  mentions: number[]
+  mentions: string[]
   quote: QuoteView | undefined
   attachments: AttachmentRef[]
   edited: boolean
@@ -67,7 +67,7 @@ export interface MessageView {
   editIds: string[]
   reactions: ReactionView[]
   /** Other members whose read cursor has reached it. */
-  readBy: number[]
+  readBy: string[]
   /** Signed by an identity the sender has since replaced. */
   sentBeforeSafetyNumberChange: boolean
 }
@@ -76,8 +76,8 @@ export interface FoldInput {
   /** Every envelope read, in any order. */
   envelopes: Iterable<ChatMessage>
   opened: Map<string, Opened>
-  me: number
-  names: Map<number, string>
+  me: string
+  names: Map<string, string>
   reads: ChatRead[]
 }
 
@@ -109,7 +109,7 @@ function remove(post: MessageView, by: 'author' | 'moderator'): void {
 export function foldMessages(input: FoldInput): MessageView[] {
   const envelopes = [...input.envelopes].sort((a, b) => a.seq - b.seq)
   const posts = new Map<string, MessageView>()
-  const reactions = new Map<string, Map<string, Set<number>>>()
+  const reactions = new Map<string, Map<string, Set<string>>>()
   for (const envelope of envelopes) {
     if (envelope.kind !== 'post') continue
     const opened = input.opened.get(envelope.id)

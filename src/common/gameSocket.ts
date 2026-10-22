@@ -9,6 +9,7 @@ import {
 
 import type { TeamLineups } from './api'
 import { asLiteral } from './asLiteral'
+import { asUserId } from './userId'
 import type { WalkUpSong } from './walkUpSong'
 
 /**
@@ -167,7 +168,7 @@ export type ChatSocketFrame =
       at: string
     }
   | { type: 'chatUser'; kind: ChatUserHintKind }
-  | { type: 'chatTyping'; conversationId: string; userId: number }
+  | { type: 'chatTyping'; conversationId: string; userId: string }
   /** Hints may have been missed: read every conversation again. */
   | { type: 'resync' }
 
@@ -340,7 +341,7 @@ const asChatFrame: Cleaner<ChatSocketFrame> = asEither(
   asObject({
     type: asLiteral('chatTyping'),
     conversationId: asString,
-    userId: asNumber
+    userId: asUserId
   }),
   asObject({ type: asLiteral('resync') })
 )

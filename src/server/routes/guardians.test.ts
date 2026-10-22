@@ -7,7 +7,6 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -23,6 +22,7 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { guardiansOf, linkGuardian, unlinkGuardian } from '../people/guardians'
+import { mintUserId } from '../users/mintUserId'
 import { guardianRoutes } from './guardians'
 import { inviteRoutes } from './invites'
 import { manageRoutes } from './manage'
@@ -68,7 +68,7 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
     if (db == null) throw new Error('no database')
     return db
   }
-  const id = (key: string): number => {
+  const id = (key: string): string => {
     const person = seed.people[key]
     if (person == null) throw new Error(`nobody called ${key}`)
     return person.userId
@@ -199,7 +199,7 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
   }
 
   async function membership(
-    userId: number,
+    userId: string,
     teamId = hawks
   ): Promise<{ id: string; granted_by_link_id: string | null } | undefined> {
     return await database()
@@ -302,7 +302,7 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
       })
       expect(answer.status).equals(201)
       expect(
-        answer.body.guardians.map((g: { userId: number }) => g.userId)
+        answer.body.guardians.map((g: { userId: string }) => g.userId)
       ).deep.equals([id('B')])
       expect(await membership(id('B'))).deep.equals(before)
 
@@ -443,13 +443,11 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
     it('finds and removes a link made to a row since closed into the player', async function () {
       // A roster import's row for R, linked to D2 before it was merged into
       // R: a merge leaves the link on the row it was made for.
-      const made = mintUserId(() => false)
-      const placeholder = made.userId
+      const placeholder = mintUserId()
       await database()
         .insertInto('users')
         .values({
           id: placeholder,
-          legacyId: made.legacyId,
           display_name: 'Riley placeholder'
         })
         .execute()
@@ -553,7 +551,7 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
         displayName: 'Ava Aunt'
       })
       expect(joined).deep.include({ createdAccount: true, granted: true })
-      const aunt = joined?.userId ?? 0
+      const aunt = joined!.userId
       const link = await database()
         .selectFrom('user_links')
         .select(['id', 'kind'])
@@ -650,7 +648,7 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
       const answer = await call('Ha', 'GET', `/manage/team/${hawks}`)
       expect(answer.status).equals(200)
       const grant = (key: string): { isPlayer?: boolean } =>
-        answer.body.people.find((p: { userId: number }) => p.userId === id(key))
+        answer.body.people.find((p: { userId: string }) => p.userId === id(key))
           .teams[0]
       expect(grant('P').isPlayer).equals(true)
       expect(grant('A').isPlayer).equals(false)
@@ -774,12 +772,15 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
   })
 
   describe('the full name', function () {
-    it('is for a guardian, never for a family member', async function () {
+    it('is available through guardian and family links but not to an unrelated member', async function () {
       expect(
         await mayEditName(database(), id('G1'), id('P'), { isAdmin: false })
       ).equals(true)
       expect(
         await mayEditName(database(), id('C'), id('P'), { isAdmin: false })
+      ).equals(true)
+      expect(
+        await mayEditName(database(), id('B'), id('P'), { isAdmin: false })
       ).equals(false)
     })
   })

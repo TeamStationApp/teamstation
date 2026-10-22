@@ -544,6 +544,10 @@ export const enUs = {
   chat_new_message: 'New message',
   chat_loading: 'Opening chat…',
   chat_cannot_load: 'Chat could not be opened.',
+  chat_keys_unreadable:
+    'The chat keys saved on this device cannot be read. Resetting chat on this device removes them, then sets this device up for chat again.',
+  chat_keys_newer:
+    'A newer version of TeamStation saved the chat keys on this device. Update the app to open chat.',
   chat_core_needs_webassembly: 'Chat needs WebAssembly',
   chat_core_no_webassembly:
     'This browser has WebAssembly turned off, or does not have it. On an iPhone, iPad or Mac, Lockdown Mode turns it off in Safari.',

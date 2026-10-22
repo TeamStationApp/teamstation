@@ -12,9 +12,11 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   CHAT2_SCENARIOS,
   type Chat2Fixture,
+  type Chat2Message,
   fixtureClient
 } from '../../test/chat2Fixture.e2e'
 import {
@@ -328,8 +330,8 @@ describe('chat sender runs and spotlight bounds', function () {
     const messages = [
       message({ id: 'msg_a' }),
       message({ id: 'msg_b' }),
-      message({ id: 'msg_c', senderUserId: 3 }),
-      message({ id: 'msg_d', senderUserId: 3, mine: true }),
+      message({ id: 'msg_c', senderUserId: userIdOfGumbo(3) }),
+      message({ id: 'msg_d', senderUserId: userIdOfGumbo(3), mine: true }),
       message({ id: 'msg_e' }),
       message({ id: 'msg_f', sentAt: '2027-04-02T17:00:00.000Z' })
     ]
@@ -2808,7 +2810,8 @@ describe('chat native adapter compatibility', function () {
   function editable(
     mode = 'capped',
     initial = 'B',
-    attached = false
+    attached = false,
+    complete = false
   ): {
     actual: Chat2UI
     calls: string[]
@@ -2824,7 +2827,7 @@ describe('chat native adapter compatibility', function () {
     let sentinelTyped = false
     let choosing = false
     const emptyName = (): string =>
-      mode === 'dynamic-empty-name' || mode === 'raw-empty-name'
+      mode === 'dynamic-empty-name' || mode === 'raw-empty-name' || complete
         ? 'Message Message'
         : mode === 'unrelated-empty-name'
           ? 'Another field'
@@ -2886,6 +2889,7 @@ describe('chat native adapter compatibility', function () {
           })
         )
       if (
+        complete ||
         mode === 'raw' ||
         mode === 'raw-empty-name' ||
         (mode === 'literal-placeholder-after' &&
@@ -2895,8 +2899,14 @@ describe('chat native adapter compatibility', function () {
         nodes.push(
           node(2, 'TextView', {
             identifier: 'chat-composer',
-            label: value === '' ? emptyName() : 'Message',
-            placeholderValue: 'Message',
+            label:
+              value === '' ||
+              (mode === 'retained-aggregated-placeholder' &&
+                value === 'Message Message')
+                ? emptyName()
+                : 'Message',
+            ...(complete ? {} : { placeholderValue: 'Message' }),
+            rect: field().bounds,
             value: value.trim() !== '' ? value.trim() : undefined
           })
         )
@@ -2993,6 +3003,8 @@ describe('chat native adapter compatibility', function () {
         if (sentinelTyped && mode === 'retained-sentinel-name') value = '777'
         else if (sentinelTyped && mode === 'literal-placeholder-after')
           value = 'Message'
+        else if (sentinelTyped && mode === 'retained-aggregated-placeholder')
+          value = 'Message Message'
         else if (!['retained-text', 'retained-placeholder'].includes(mode))
           value = selected ? '' : value.slice(0, -1)
         selected = false
@@ -3006,7 +3018,10 @@ describe('chat native adapter compatibility', function () {
       calls.push('type:' + String(args.text))
       value += String(args.text)
       if (mode.startsWith('mention-') && value === '@') choosing = true
-      if (args.text === '7777') sentinelTyped = true
+      if (args.text === '7777') {
+        sentinelTyped = true
+        if (mode === 'stale-sentinel') value = '777'
+      }
     }
     actual.device.screenshot = async () => captureImages[0]
     actual.device.eraseText = async () => {
@@ -3049,6 +3064,92 @@ describe('chat native adapter compatibility', function () {
     })
     expect(model.value()).equals('')
     expect(proof.outcome).equals('passed')
+  })
+  it('proves a complete raw empty editor with omitted value and placeholder only after the exact disjoint sentinel is deleted', async () => {
+    const model = editable('dynamic-empty-name', '', false, true)
+    await model.actual.replaceDraft('')
+    const proof = model.actual.steps.find(
+      step => step.name === 'Observed iOS editor replacement'
+    )!
+    expect(proof.before).deep.includes({
+      index: 2,
+      label: 'Message Message',
+      value: undefined,
+      placeholderValue: undefined
+    })
+    expect(proof.sentinel).deep.includes({
+      index: 2,
+      label: 'Message',
+      value: '7777',
+      text: '7777'
+    })
+    expect(proof.after).deep.includes({
+      index: 2,
+      label: 'Message Message',
+      value: undefined,
+      text: 'Message Message'
+    })
+    expect(proof.revalidated).deep.equals(proof.after)
+    expect(proof.allowedEmptyLabels).deep.equals(['Message', 'Message Message'])
+    expect((proof.actionReads as unknown[]).length).greaterThan(0)
+    expect(proof.send).deep.includes({ enabled: false })
+    expect(proof.outcome).equals('passed')
+    expect(model.value()).equals('')
+    expect(model.calls.filter(call => call === 'type:7777')).has.length(1)
+    expect(model.calls.filter(call => call === 'point:270,470')).has.length(2)
+    expect(model.calls).not.includes('erase-ACK')
+  })
+  for (const mode of [
+    'retained-aggregated-placeholder',
+    'retained-sentinel-name',
+    'stale-sentinel',
+    'moved-editor',
+    'missing-delete'
+  ])
+    it('rejects complete raw empty-editor proof with ' + mode, async () => {
+      const model = editable(mode, '', false, true)
+      const failure = await captureFailure(model.actual.replaceDraft(''))
+      const proof = model.actual.steps.find(
+        step => step.name === 'Observed iOS editor replacement'
+      )!
+      expect(proof.outcome).equals('failed')
+      if (mode === 'retained-aggregated-placeholder') {
+        expect(proof.afterCandidate).deep.includes({
+          index: 2,
+          label: 'Message Message',
+          value: 'Message Message',
+          text: 'Message Message'
+        })
+        expect(String(failure)).includes(
+          'Fresh editor must expose empty placeholder'
+        )
+      }
+      if (mode === 'retained-sentinel-name')
+        expect(proof.afterCandidate).deep.includes({ value: '777' })
+      if (mode === 'stale-sentinel')
+        expect(String(failure)).includes('Fresh exact sentinel')
+      if (mode === 'moved-editor')
+        expect(String(failure)).includes('Same editor geometry')
+      if (mode === 'missing-delete')
+        expect(String(failure)).includes('Observed Delete key')
+    })
+  it('keeps exact known nonempty replacement strict for complete raw snapshots', async () => {
+    const model = editable('dynamic-empty-name', '', false, true)
+    await model.actual.replaceDraft('Fresh\nsecond line')
+    expect(model.value()).equals('Fresh\nsecond line')
+    expect(model.calls).not.includes('type:7777')
+    const ambiguous = editable(
+      'retained-aggregated-placeholder',
+      '',
+      false,
+      true
+    )
+    await captureFailure(ambiguous.actual.replaceDraft('Message Message'))
+    expect(
+      ambiguous.actual.steps.find(
+        step => step.name === 'Observed iOS editor replacement'
+      )?.outcome
+    ).equals('failed')
   })
   it('uses the raw placeholder as the base for an already aggregated empty name', async () => {
     const model = editable('raw-empty-name', '')
@@ -3749,7 +3850,7 @@ describe('chat native adapter compatibility', function () {
     const target = {
       id: 'synthetic-old',
       body: 'Older synthetic post',
-      authorId: 2,
+      authorId: userIdOfGumbo(2),
       seq: 1
     }
     page.window.document.body.innerHTML =
@@ -3989,7 +4090,7 @@ describe('chat native adapter compatibility', function () {
     }
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 1,
+      viewerId: userIdOfGumbo(1),
       observations: []
     }) as Scenarios
     expect(await scenario.pickThumbsUp()).equals('👍️')
@@ -4014,21 +4115,21 @@ describe('chat native adapter compatibility', function () {
     const current = message({
       id: 'run-first',
       seq: 1,
-      senderUserId: 2,
+      senderUserId: userIdOfGumbo(2),
       mine: true,
       body: 'First incoming row'
     })
     const end = message({
       id: 'run-last',
       seq: 2,
-      senderUserId: 2,
+      senderUserId: userIdOfGumbo(2),
       mine: true,
       body: 'Final incoming row'
     })
     const boundary = message({
       id: 'own-boundary',
       seq: 3,
-      senderUserId: 1,
+      senderUserId: userIdOfGumbo(1),
       mine: false,
       body: 'Different sender boundary'
     })
@@ -4041,7 +4142,7 @@ describe('chat native adapter compatibility', function () {
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       group: 'conversation',
-      viewerId: 1,
+      viewerId: userIdOfGumbo(1),
       observations: []
     }) as Scenarios
     scenario.protocolPeer = async () =>
@@ -4104,7 +4205,7 @@ describe('chat native adapter compatibility', function () {
       id: 'run-first',
       seq: 1,
       body: 'First incoming row',
-      authorId: 2
+      authorId: userIdOfGumbo(2)
     })
     expect(reservation.width).equals(32)
     expect(calls).not.includes('chat-avatar-lane-run-first')
@@ -4148,7 +4249,7 @@ describe('chat native adapter compatibility', function () {
         id: 'run-first',
         seq: 1,
         body: 'First row',
-        authorId: 2
+        authorId: userIdOfGumbo(2)
       })
     )
     const model = incomingModel()
@@ -4156,7 +4257,7 @@ describe('chat native adapter compatibility', function () {
       id: 'run-first',
       seq: 1,
       body: 'First row',
-      authorId: 2
+      authorId: userIdOfGumbo(2)
     })
     await captureFailure(
       model.scenario.incomingRunEndAvatar([{ ...reserved, width: 4 }])
@@ -4573,7 +4674,7 @@ describe('chat native adapter compatibility', function () {
       tapped.push(args)
     }
     await actual.iosMenuAction('Copy')
-    expect(tapped).deep.equals([{ point: '110,40' }])
+    expect(tapped).deep.equals([{ x: 110, y: 40 }])
     try {
       await actual.iosMenuAction('Paste')
       throw Error('Unexpected success')
@@ -4595,7 +4696,7 @@ describe('chat native adapter compatibility', function () {
       tapped.push(args)
     }
     await actual.deleteBackward()
-    expect(tapped).deep.equals([{ point: '270,470' }])
+    expect(tapped).deep.equals([{ x: 270, y: 470 }])
   })
   it('rejects an absent or disabled Delete key without issuing BACKSPACE', async () => {
     for (const nodes of [
@@ -4749,7 +4850,7 @@ describe('chat native adapter compatibility', function () {
       ui: actual,
       f: { messages: { target: { id: 'synthetic-target' } } },
       group: 'synthetic',
-      viewerId: 1
+      viewerId: userIdOfGumbo(1)
     }) as Scenarios
     scenario.check = async (name, work) => {
       if (name.startsWith('E5 movement before hold')) await work()
@@ -4764,7 +4865,7 @@ describe('chat native adapter compatibility', function () {
             messages: [
               {
                 id: 'synthetic-target',
-                reactions: [{ emoji: '👍', userIds: [1] }]
+                reactions: [{ emoji: '👍', userIds: [userIdOfGumbo(1)] }]
               }
             ]
           })
@@ -4781,8 +4882,8 @@ describe('chat native adapter compatibility', function () {
   })
   it('does not accept a different raw reaction glyph or another viewer reaction', async () => {
     for (const reaction of [
-      { emoji: '👍️', userIds: [1] },
-      { emoji: '👍', userIds: [2] }
+      { emoji: '👍️', userIds: [userIdOfGumbo(1)] },
+      { emoji: '👍', userIds: [userIdOfGumbo(2)] }
     ]) {
       const actual = ui([])
       actual.absent = async () => {}
@@ -4792,7 +4893,7 @@ describe('chat native adapter compatibility', function () {
         ui: actual,
         f: { messages: { target: { id: 'synthetic-target' } } },
         group: 'synthetic',
-        viewerId: 1
+        viewerId: userIdOfGumbo(1)
       }) as Scenarios
       scenario.check = async (name, work) => {
         if (name.startsWith('E5 movement before hold')) await work()
@@ -5175,22 +5276,24 @@ describe('chat native adapter compatibility', function () {
     }
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 9,
+      viewerId: userIdOfGumbo(9),
       f: {
         members: [
-          { userId: 1, name: 'Same', role: '' },
-          { userId: 2, name: 'Same', role: '' },
-          { userId: 3, name: 'Unique', role: 'Member' }
+          { userId: userIdOfGumbo(1), name: 'Same', role: '' },
+          { userId: userIdOfGumbo(2), name: 'Same', role: '' },
+          { userId: userIdOfGumbo(3), name: 'Unique', role: 'Member' }
         ]
       },
       observations: []
     }) as Scenarios
     const selected = await scenario.showInfoMember()
-    expect(selected.userId).equals(3)
-    expect(selectors[0]).deep.equals({ text: '^Safety number with Unique$' })
+    expect(selected.userId).equals(userIdOfGumbo(3))
+    expect(selectors[0]).deep.equals({
+      id: 'chat-info-member-' + userIdOfGumbo(3)
+    })
     expect(selectors[1]).deep.equals([
       {
-        text: '^Safety number with Unique$',
+        id: 'chat-info-member-' + userIdOfGumbo(3),
         childOf: { id: 'chat-info-members' }
       },
       'Button'
@@ -5312,7 +5415,9 @@ describe('chat native adapter compatibility', function () {
     writeFileSync(sessionFile, JSON.stringify({ token: 'TEST_TOKEN' }))
     const fixture = {
       apiUrl: 'https://fixture.example.test/api/v1',
-      actors: { viewer: { userId: 1, provider: { sessionFile } } }
+      actors: {
+        viewer: { userId: userIdOfGumbo(1), provider: { sessionFile } }
+      }
     }
     const original = globalThis.fetch
     let observed: AbortSignal | null | undefined
@@ -5601,17 +5706,19 @@ describe('chat native adapter compatibility', function () {
     })
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 9,
-      f: { members: [{ userId: 3, name: 'Unique', role: 'Member' }] },
+      viewerId: userIdOfGumbo(9),
+      f: {
+        members: [{ userId: userIdOfGumbo(3), name: 'Unique', role: 'Member' }]
+      },
       observations: []
     }) as Scenarios
     const selected = await scenario.showInfoMember()
-    expect(selected.userId).equals(3)
+    expect(selected.userId).equals(userIdOfGumbo(3))
     expect(gestures).deep.equals([])
     expect(scenario.observations[0]).deep.includes({
       infoMemberFraming: {
-        userId: 3,
-        selector: { text: '^Safety number with Unique$' },
+        userId: userIdOfGumbo(3),
+        selector: { id: 'chat-info-member-' + userIdOfGumbo(3) },
         bounds: { x: 20, y: 400, width: 280, height: 56 },
         unobscuredBand: { top: 82, bottom: 632 },
         expectedRole: 'Member'
@@ -5677,8 +5784,10 @@ describe('chat native adapter compatibility', function () {
     ]
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 9,
-      f: { members: [{ userId: 3, name: 'Unique', role: 'Member' }] },
+      viewerId: userIdOfGumbo(9),
+      f: {
+        members: [{ userId: userIdOfGumbo(3), name: 'Unique', role: 'Member' }]
+      },
       observations: []
     }) as Scenarios
     try {
@@ -6645,4 +6754,973 @@ describe('positive Android IME observations', function () {
         ).equals('failed')
       })
     })
+})
+
+describe('compatibility harness route and coordinate boundaries', () => {
+  it('opens only the exact I3 bench route and retains ordinary chat navigation', async () => {
+    const calls: unknown[] = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      scenario: 'I3',
+      native: false,
+      surface: 'web-narrow',
+      dom: async (script: string) => {
+        calls.push(script)
+        return {}
+      }
+    }) as Chat2UI
+    await ui.open('/dev/chat-bench')
+    await ui.open('/chat/example')
+    expect(calls).has.length(2)
+    for (const scenario of ['I1', 'I2', 'E1', 'capture']) {
+      Object.assign(ui, { scenario })
+      await captureFailure(ui.open('/dev/chat-bench'))
+    }
+    Object.assign(ui, { scenario: 'I3' })
+    for (const path of [
+      '/dev/other',
+      '/dev/chat-bench/',
+      '/dev/chat-bench?x=1',
+      '/dev/chat-bench#x',
+      'https://example.test/dev/chat-bench'
+    ])
+      await captureFailure(ui.open(path))
+    expect(calls).has.length(2)
+    Object.assign(ui, {
+      native: true,
+      surface: 'android',
+      fixture: { scheme: 'teamstation' },
+      device: {
+        openLink: async (args: unknown) => {
+          calls.push(args)
+        }
+      }
+    })
+    await ui.open('/dev/chat-bench')
+    expect(calls[2]).deep.equals({ link: 'teamstation://dev/chat-bench' })
+  })
+  it('passes an observed center as bounded numeric coordinates instead of a percentage point string', async () => {
+    const calls: Array<Record<string, unknown>> = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      device: {
+        tapOnPoint: async (
+          args: Record<string, unknown>,
+          options: { signal: AbortSignal }
+        ) => {
+          expect(options.signal).instanceOf(AbortSignal)
+          expect(options.signal.aborted).equals(false)
+          calls.push(args)
+        }
+      }
+    }) as Chat2UI
+    await ui.tapObserved({ bounds: { x: 17, y: 499, width: 341, height: 56 } })
+    expect(calls).deep.equals([{ x: 188, y: 527 }])
+  })
+})
+
+describe('identity safety row ownership', () => {
+  function model(
+    mode = 'normal',
+    native = false,
+    surface = native ? 'android' : 'web-narrow'
+  ): {
+    scenario: Scenarios
+    expected: string
+    calls: unknown[]
+    close: () => void
+  } {
+    const peer = userIdOfGumbo(2)
+    const other = userIdOfGumbo(3)
+    const viewer = userIdOfGumbo(1)
+    const expected = '12345'.repeat(12)
+    const calls: unknown[] = []
+    let opened = false
+    let coachY = mode === 'below-footer' ? 770 : 180
+    let memberY = 100
+    let pendingScroll = mode === 'moving-row'
+    const finishScroll = (): void => {
+      if (!pendingScroll) return
+      pendingScroll = false
+      coachY += 80
+      memberY += 80
+    }
+    const document = new JSDOM(
+      `<div data-testid="chat-info-members"><button data-testid="chat-info-member-${other}" aria-label="Safety number with Kyle Tucker, Member"><span>Kyle Tucker</span><span>Member</span></button><button data-testid="chat-info-member-${peer}" aria-label="Safety number with Kyle Tucker, Coach, Moderator"><span>Kyle Tucker</span><span>Coach</span></button></div>`,
+      { runScripts: 'outside-only' }
+    )
+    const buttons = Array.from(
+      document.window.document.querySelectorAll('button')
+    )
+    for (const [index, button] of buttons.entries())
+      button.getBoundingClientRect = () =>
+        new document.window.DOMRect(10, index === 0 ? memberY : coachY, 380, 60)
+    document.window.document.elementFromPoint = (x, y) =>
+      buttons.find(button => {
+        const b = button.getBoundingClientRect()
+        return x >= b.x && x < b.right && y >= b.y && y < b.bottom
+      })?.lastElementChild ?? null
+    if (mode === 'ambiguous-dom')
+      document.window.document
+        .querySelector('[data-testid]')!
+        .append(buttons[1].cloneNode(true))
+    const ordinary = (): PublicNode[] => [
+      {
+        text: 'Back',
+        type: 'Button',
+        bounds: { x: 0, y: 0, width: 80, height: 40 }
+      },
+      {
+        text: 'Home',
+        type: 'Button',
+        bounds: { x: 0, y: 740, width: 80, height: 50 }
+      },
+      {
+        id: 'chat-info-member-' + other,
+        text: 'Safety number with Kyle Tucker, Member',
+        type: surface === 'android' ? 'android.view.View' : 'Button',
+        bounds: { x: 10, y: 100, width: 380, height: 60 }
+      },
+      {
+        text: 'Member',
+        type: 'TextView',
+        bounds: { x: 80, y: 130, width: 120, height: 20 }
+      },
+      {
+        id: 'chat-info-member-' + peer,
+        text:
+          mode === 'wrong-spoken-role'
+            ? 'Safety number with Kyle Tucker, Member'
+            : 'Safety number with Kyle Tucker, Coach, Moderator',
+        type: surface === 'android' ? 'android.view.View' : 'Button',
+        bounds: { x: 10, y: coachY, width: 380, height: 60 }
+      },
+      {
+        text: 'Coach',
+        type: 'TextView',
+        bounds: { x: 80, y: coachY + 30, width: 120, height: 20 }
+      }
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native,
+      surface,
+      metrics: () => ({ width: 400, height: 800 }),
+      nodes: async () =>
+        opened
+          ? Array.from({ length: 12 }, (_, i) => ({
+              id: 'chat-safety-group-' + i,
+              text: mode === 'wrong-digits' && i === 0 ? '54321' : '12345'
+            }))
+          : ordinary().filter(node => !native || node.type !== 'TextView'),
+      dom: async (script: string) =>
+        document.window.eval('(()=>{' + script + '})()'),
+      text: async (label: string) => {
+        calls.push(label)
+      },
+      shot: async (kind: string) => {
+        calls.push(kind)
+      },
+      device: {
+        platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
+        scrollUntilVisible: async (args: unknown) => {
+          calls.push(args)
+        },
+        scroll: async (args: unknown) => {
+          calls.push(args)
+          coachY = 180
+        },
+        tapOnPoint: async (args: { x: number; y: number }) => {
+          calls.push(args)
+          finishScroll()
+          const hit = document.window.document.elementFromPoint(args.x, args.y)
+          expect(hit?.closest('button')?.getAttribute('data-testid')).equals(
+            'chat-info-member-' + peer,
+            'A stale coordinate must not open another member'
+          )
+          opened = true
+        },
+        tapOn: async (
+          args: { id: string },
+          options: { signal: AbortSignal }
+        ) => {
+          calls.push(args)
+          expect(options.signal).instanceof(AbortSignal)
+          finishScroll()
+          const button = buttons.find(
+            node => node.getAttribute('data-testid') === args.id
+          )
+          expect(button, 'Exact observed peer selector required').not.equals(
+            undefined
+          )
+          const b = button!.getBoundingClientRect()
+          const hit = document.window.document.elementFromPoint(
+            b.x + b.width / 2,
+            b.y + b.height / 2
+          )
+          expect(hit?.closest('button')).equals(buttons[1])
+          opened = true
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerId: viewer,
+      ui,
+      observations: [],
+      f: {
+        members: [
+          { userId: peer, name: 'Kyle Tucker', role: 'Coach' },
+          {
+            userId: other,
+            name: 'Kyle Tucker',
+            role: mode === 'ambiguous-role' ? 'Coach' : 'Member'
+          }
+        ]
+      },
+      openInfo: async () => {
+        calls.push('Info')
+      },
+      openGroup: async () => {
+        calls.push('Group')
+      }
+    }) as Scenarios
+    return {
+      scenario,
+      expected,
+      calls,
+      close: () => {
+        document.window.close()
+      }
+    }
+  }
+  for (const native of [false, true])
+    it(
+      'opens the role-qualified peer among duplicate names with exact safety digits: ' +
+        (native ? 'Android View hierarchy model' : 'real DOM model'),
+      async () => {
+        const actual = model('normal', native)
+        try {
+          await actual.scenario.identitySafety(
+            userIdOfGumbo(2),
+            actual.expected
+          )
+          expect(actual.calls).deep.includes(
+            native
+              ? { x: 200, y: 210 }
+              : { id: 'chat-info-member-' + userIdOfGumbo(2) }
+          )
+          expect(actual.calls).includes('identity-safety')
+          expect(actual.calls).includes('Done')
+          expect(actual.calls).includes('Group')
+        } finally {
+          actual.close()
+        }
+      }
+    )
+  it('uses the exact iOS row and its spoken role when descendant role text is absent from accessibility', async () => {
+    const actual = model('normal', true, 'ios')
+    try {
+      await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      expect(actual.calls).deep.includes({ x: 200, y: 210 })
+      expect(actual.calls).deep.includes({
+        element: { id: 'chat-info-member-' + userIdOfGumbo(2) },
+        direction: 'DOWN',
+        timeout: 15000
+      })
+    } finally {
+      actual.close()
+    }
+  })
+  it('rejects the exact native row if its spoken role belongs to a different member', async () => {
+    const actual = model('wrong-spoken-role', true, 'ios')
+    try {
+      const failure = await captureFailure(
+        actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      )
+      expect(String(failure)).includes(
+        'Exact peer short name and visible role required'
+      )
+      expect(actual.calls).not.includes('identity-safety')
+    } finally {
+      actual.close()
+    }
+  })
+  it('scrolls the observed peer clear of the footer before its exact selector tap', async () => {
+    const actual = model('below-footer')
+    try {
+      await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      expect(actual.calls).deep.includes({ direction: 'DOWN' })
+      expect(actual.calls).deep.includes({
+        id: 'chat-info-member-' + userIdOfGumbo(2)
+      })
+    } finally {
+      actual.close()
+    }
+  })
+  it('keeps the exact browser peer when queued scrolling moves another member under the observed point', async () => {
+    const actual = model('moving-row')
+    try {
+      await actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+      expect(actual.calls).deep.includes({
+        id: 'chat-info-member-' + userIdOfGumbo(2)
+      })
+      expect(actual.calls).not.deep.includes({ x: 200, y: 210 })
+      expect(actual.calls).includes('identity-safety')
+      expect(actual.calls).includes('Done')
+    } finally {
+      actual.close()
+    }
+  })
+  for (const mode of ['ambiguous-role', 'ambiguous-dom', 'wrong-digits'])
+    it(
+      'rejects ' + mode + ' without claiming successful safety verification',
+      async () => {
+        const actual = model(mode)
+        try {
+          const failure = await captureFailure(
+            actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
+          )
+          expect(String(failure)).includes(
+            mode === 'wrong-digits'
+              ? 'Actual installed safety digits must match'
+              : mode === 'ambiguous-dom'
+                ? 'Unique actual name and role'
+                : 'Unique public safety name and role'
+          )
+          expect(actual.calls).not.includes('identity-safety')
+        } finally {
+          actual.close()
+        }
+      }
+    )
+})
+
+describe('native installed legacy reply navigation', () => {
+  const directories: string[] = []
+  afterEach(() => {
+    for (const directory of directories.splice(0))
+      rmSync(directory, { recursive: true, force: true })
+  })
+  function model(
+    mode = 'resolved',
+    native = true,
+    surface = 'ios'
+  ): {
+    scenario: Scenarios
+    baseline: { text: Chat2Message; reply: Chat2Message }
+    calls: unknown[]
+  } {
+    const viewer = userIdOfGumbo(1)
+    const baseline = {
+      text: {
+        id: 'msg_original',
+        seq: 5,
+        body: 'Original legacy text.',
+        authorId: viewer
+      },
+      reply: {
+        id: 'msg_reply',
+        seq: 236,
+        body: 'Preserved legacy reply.',
+        authorId: userIdOfGumbo(2)
+      }
+    }
+    const calls: unknown[] = []
+    const runDir = mkdtempSync(join(tmpdir(), 'legacy-scoped-read-'))
+    directories.push(runDir)
+    const clipped = mode.startsWith('clipped-')
+    const row = {
+      x: clipped ? 126 : 20,
+      y: clipped
+        ? mode === 'clipped-above'
+          ? 0
+          : mode === 'clipped-indeterminate'
+            ? 700
+            : 2543
+        : mode === 'float-edge'
+          ? 178.66664632161456
+          : mode === 'occluded-edge'
+            ? 170.1666717529297
+            : ['above-header', 'no-progress'].includes(mode)
+              ? -131
+              : mode === 'below-composer'
+                ? 650
+                : 200,
+      width: clipped ? 672 : 340,
+      height: clipped ? -143 : mode === 'tall-file' ? 900 : 240
+    }
+    const quote = { x: 40, y: 220, width: 300, height: 80 }
+    interface Tree extends PublicNode {
+      children?: Tree[]
+    }
+    const hierarchy = (): Tree => {
+      const label =
+        mode === 'unavailable'
+          ? 'Jump to message from Former member: Message unavailable'
+          : 'Jump to message from You: Original legacy text.'
+      const currentQuote: Tree = {
+        type: mode === 'wrong-type' ? 'Other' : 'Button',
+        text: mode === 'wrong-label' ? 'Another quote' : label,
+        bounds:
+          mode === 'outside-row'
+            ? { ...quote, y: 100 }
+            : mode === 'offscreen'
+              ? { ...quote, x: -10 }
+              : mode === 'nonfinite'
+                ? { ...quote, width: NaN }
+                : quote
+      }
+      return {
+        type: 'ScrollView',
+        bounds: { x: 0, y: 0, width: 400, height: 800 },
+        children: [
+          {
+            id: 'chat-message-msg_other',
+            type: 'ViewGroup',
+            bounds: { x: 20, y: 20, width: 340, height: 160 },
+            children: [
+              {
+                type: 'Button',
+                text: label,
+                bounds: { x: 40, y: 30, width: 300, height: 60 }
+              },
+              {
+                type: 'TextView',
+                text: baseline.reply.body,
+                bounds: { x: 40, y: 100, width: 300, height: 40 }
+              }
+            ]
+          },
+          {
+            id:
+              mode === 'wrong-row'
+                ? 'chat-message-msg_wrong'
+                : 'chat-message-msg_reply',
+            type: 'ViewGroup',
+            bounds: { ...row },
+            children: [
+              ...(mode === 'unresolved' || mode === 'wrong-parent'
+                ? []
+                : [currentQuote]),
+              ...(mode === 'ambiguous'
+                ? [{ ...currentQuote, bounds: { ...quote, y: 305 } }]
+                : []),
+              {
+                id: 'chat-message-body-msg_reply',
+                type: 'ViewGroup',
+                bounds: {
+                  x: row.x + 20,
+                  y: row.y + 120,
+                  width: row.width - 40,
+                  height: 40
+                },
+                children: [
+                  {
+                    type: 'TextView',
+                    text:
+                      mode === 'wrong-body'
+                        ? baseline.reply.body.toUpperCase()
+                        : baseline.reply.body,
+                    bounds: {
+                      x: row.x + 20,
+                      y: row.y + 120,
+                      width: row.width - 40,
+                      height: 40
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          ...(mode === 'wrong-parent' ? [currentQuote] : [])
+        ]
+      }
+    }
+    const read = (): Tree => {
+      calls.push({ nativeHierarchy: surface })
+      if (mode === 'transport') throw Error('Actual native transport failure')
+      return hierarchy()
+    }
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native,
+      surface,
+      runDir,
+      iosRaw: async () => {
+        const nodes: unknown[] = []
+        const visit = (node: Tree, parentIndex?: number): void => {
+          const index = nodes.length
+          nodes.push({
+            index,
+            parentIndex,
+            type:
+              node.type === 'TextView'
+                ? 'StaticText'
+                : node.type === 'ViewGroup'
+                  ? 'Other'
+                  : node.type,
+            identifier: node.id,
+            label: node.text,
+            rect: node.bounds
+          })
+          for (const child of node.children ?? []) visit(child, index)
+        }
+        visit(read())
+        return Buffer.from(JSON.stringify({ nodes }))
+      },
+      visible: async () => true,
+      id: async (id: string) => {
+        calls.push({ latest: id })
+      },
+      present: async (id: string) => {
+        calls.push({ present: id })
+      },
+      device: {
+        assertVisible: async (selector: { id?: string; text?: string }) => {
+          calls.push(selector)
+          return {
+            element: {
+              found: true,
+              id: 'e16',
+              bounds: { x: 0, y: 0, width: 0, height: 0 }
+            }
+          }
+        },
+        hierarchy: async () => read(),
+        platformInfo: async () => ({
+          screenWidth: clipped ? 1080 : 400,
+          screenHeight: clipped ? 2400 : 800
+        }),
+        swipe: async (args: unknown) => {
+          calls.push({ swipe: args })
+          if (clipped && mode !== 'clipped-no-progress') {
+            row.y = 700
+            row.height = 410
+          } else if (
+            !['no-progress', 'occluded-edge', 'clipped-no-progress'].includes(
+              mode
+            )
+          )
+            row.y = mode === 'tall-file' ? 116 : 200
+        },
+        tapOnPoint: async (args: unknown) => {
+          calls.push({ tap: args })
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerId: viewer,
+      ui,
+      observations: [],
+      readingBand: async () =>
+        clipped
+          ? { top: 432, bottom: 1929 }
+          : ['float-edge', 'occluded-edge'].includes(mode)
+            ? { top: 170.6666717529297, bottom: 700.6666870117188 }
+            : { top: 100, bottom: 700 },
+      targetBounds: async () => ({ ...row }),
+      anchor: async (target: Chat2Message) => {
+        calls.push({ anchor: target.id })
+      }
+    }) as Scenarios
+    return { scenario, baseline, calls }
+  }
+  for (const surface of ['ios', 'android'])
+    for (const mode of ['resolved', 'unavailable'])
+      it(
+        'uses the exact recent reply and its observed ' +
+          mode +
+          ' quote among duplicate global labels on ' +
+          surface,
+        async () => {
+          const actual = model(mode, true, surface)
+          await actual.scenario.identityLegacyAnchor(
+            actual.baseline.text,
+            actual.baseline
+          )
+          expect(actual.calls[0]).deep.equals({ latest: 'chat-jump-latest' })
+          expect(actual.calls[1]).deep.equals({ anchor: 'msg_reply' })
+          expect(actual.calls).deep.includes({ tap: { x: 190, y: 260 } })
+          expect(actual.calls.at(-1)).deep.equals({
+            present: 'chat-bubble-msg_original'
+          })
+          const proof = actual.scenario.observations.find(
+            p => p.kind === 'quote'
+          )
+          expect((proof?.element as PublicNode).text).equals(
+            mode === 'resolved'
+              ? 'Jump to message from You: Original legacy text.'
+              : 'Jump to message from Former member: Message unavailable'
+          )
+          expect(
+            actual.calls.some(
+              call => typeof call === 'object' && call != null && 'text' in call
+            )
+          ).equals(false)
+        }
+      )
+  for (const mode of ['above-header', 'below-composer', 'tall-file'])
+    it(
+      'frames the actual ' +
+        mode +
+        ' region with a vertical measured gesture before scoped body verification',
+      async () => {
+        const actual = model(mode)
+        await actual.scenario.identityLegacyBody(actual.baseline.reply)
+        const swipe = actual.calls.find(
+          call => typeof call === 'object' && call != null && 'swipe' in call
+        ) as {
+          swipe: { startX: number; endX: number; startY: number; endY: number }
+        }
+        expect(swipe.swipe.startX).equals(swipe.swipe.endX)
+        expect(
+          mode === 'above-header'
+            ? swipe.swipe.endY > swipe.swipe.startY
+            : swipe.swipe.endY < swipe.swipe.startY
+        ).equals(true)
+        const proof = actual.scenario.observations.find(p => p.kind === 'body')
+        expect((proof?.element as PublicNode).text).equals(
+          'Preserved legacy reply.'
+        )
+      }
+    )
+  for (const mode of ['no-progress', 'wrong-body'])
+    it(
+      'rejects native ' + mode + ' instead of claiming the exact readable body',
+      async () => {
+        const actual = model(mode)
+        const failure = await captureFailure(
+          actual.scenario.identityLegacyBody(actual.baseline.reply)
+        )
+        expect(String(failure)).includes(
+          mode === 'no-progress'
+            ? 'native legacy reader progress'
+            : 'Exact native legacy body required'
+        )
+        if (mode === 'no-progress') {
+          expect(actual.calls).has.length(1)
+          expect(
+            actual.calls.every(
+              call =>
+                typeof call === 'object' && call != null && 'swipe' in call
+            )
+          ).equals(true)
+        }
+      }
+    )
+  it('accepts the observed fractional top edge without issuing a spurious native gesture', async () => {
+    const actual = model('float-edge')
+    await actual.scenario.identityLegacyBody(actual.baseline.reply)
+    expect(
+      actual.calls.some(
+        call => typeof call === 'object' && call != null && 'swipe' in call
+      )
+    ).equals(false)
+    expect(actual.scenario.observations.some(p => p.kind === 'body')).equals(
+      true
+    )
+  })
+  it('still rejects actual header occlusion when a normal measured gesture makes no progress', async () => {
+    const actual = model('occluded-edge')
+    const failure = await captureFailure(
+      actual.scenario.identityLegacyBody(actual.baseline.reply)
+    )
+    expect(String(failure)).includes('native legacy reader progress')
+    expect(actual.calls).has.length(1)
+    expect(actual.scenario.observations.some(p => p.kind === 'body')).equals(
+      false
+    )
+  })
+  it('retains the exact browser body regex without native framing', async () => {
+    const actual = model('resolved', false)
+    await actual.scenario.identityLegacyBody(actual.baseline.reply)
+    expect(actual.calls).deep.equals([{ text: '^Preserved legacy reply\\.$' }])
+  })
+  it('retains browser navigation without native controls or quote queries', async () => {
+    const actual = model('resolved', false)
+    await actual.scenario.identityLegacyAnchor(
+      actual.baseline.text,
+      actual.baseline
+    )
+    expect(actual.calls).deep.equals([{ anchor: 'msg_original' }])
+  })
+  it('returns to latest before revealing the recent reply or file from an old reader position', async () => {
+    const actual = model()
+    const file = { ...actual.baseline.reply, id: 'msg_file', seq: 239 }
+    for (const target of [actual.baseline.reply, file])
+      await actual.scenario.identityLegacyAnchor(target, actual.baseline)
+    expect(actual.calls).deep.equals([
+      { latest: 'chat-jump-latest' },
+      { anchor: 'msg_reply' },
+      { latest: 'chat-jump-latest' },
+      { anchor: 'msg_file' }
+    ])
+  })
+  for (const mode of [
+    'wrong-row',
+    'wrong-label',
+    'wrong-type',
+    'outside-row',
+    'offscreen',
+    'nonfinite',
+    'unresolved',
+    'ambiguous',
+    'wrong-parent',
+    'transport'
+  ])
+    it(
+      'rejects ' + mode + ' without a quote tap or original-message claim',
+      async () => {
+        const actual = model(mode)
+        await captureFailure(
+          actual.scenario.identityLegacyAnchor(
+            actual.baseline.text,
+            actual.baseline
+          )
+        )
+        expect(
+          actual.calls.some(
+            call =>
+              typeof call === 'object' &&
+              call != null &&
+              ('tap' in call || 'present' in call)
+          )
+        ).equals(false)
+        if (mode === 'transport') expect(actual.calls).has.length(3)
+      }
+    )
+  for (const mode of ['wrong-parent', 'ambiguous', 'wrong-body'])
+    it(
+      'rejects Android scoped ' +
+        mode +
+        ' with no dependency on assertVisible return text',
+      async () => {
+        const actual = model(mode, true, 'android')
+        await captureFailure(
+          actual.scenario.identityLegacyAnchor(
+            actual.baseline.text,
+            actual.baseline
+          )
+        )
+        expect(
+          actual.calls.some(
+            call =>
+              typeof call === 'object' &&
+              call != null &&
+              ('tap' in call || 'present' in call)
+          )
+        ).equals(false)
+      }
+    )
+  for (const mode of ['clipped-below', 'clipped-above'])
+    it(
+      'reveals observed Android ' +
+        mode +
+        ' bounds before requiring positive dimensions and exact text',
+      async () => {
+        const actual = model(mode, true, 'android')
+        await actual.scenario.identityLegacyBody(actual.baseline.reply)
+        const proof = actual.scenario.observations.find(
+          p => p.legacyBody === 'msg_reply'
+        )!
+        const samples = proof.samples as Array<{
+          height?: number
+          clipped?: boolean
+        }>
+        expect(samples[0]).includes({ height: -143, clipped: true })
+        expect(
+          samples.some(
+            sample => sample.height === 410 && sample.clipped === false
+          )
+        ).equals(true)
+        expect(
+          actual.scenario.observations.some(p => p.kind === 'body')
+        ).equals(true)
+        const gesture = (
+          actual.calls[0] as { swipe: { startY: number; endY: number } }
+        ).swipe
+        expect(
+          mode === 'clipped-below'
+            ? gesture.endY < gesture.startY
+            : gesture.endY > gesture.startY
+        ).equals(true)
+      }
+    )
+  for (const mode of ['clipped-no-progress', 'clipped-indeterminate'])
+    it(
+      'rejects Android ' +
+        mode +
+        ' without accepting clipped geometry as visible',
+      async () => {
+        const actual = model(mode, true, 'android')
+        const failure = await captureFailure(
+          actual.scenario.identityLegacyBody(actual.baseline.reply)
+        )
+        expect(String(failure)).includes(
+          mode === 'clipped-no-progress'
+            ? 'native legacy reader progress'
+            : 'observed offscreen direction'
+        )
+        expect(
+          actual.scenario.observations.some(p => p.kind === 'body')
+        ).equals(false)
+        expect(actual.calls).has.length(mode === 'clipped-no-progress' ? 1 : 0)
+      }
+    )
+})
+
+describe('I3 iOS bench cold-link lifecycle', () => {
+  async function run(surface: string, fault?: string): Promise<unknown[]> {
+    const calls: unknown[] = []
+    const ui = {
+      surface,
+      fixture: { appId: 'app.example.test' },
+      step: async (_name: string, action: () => Promise<void>) => {
+        await action()
+      },
+      open: async (path: string) => {
+        calls.push({ open: path })
+      },
+      text: async (text: string) => {
+        calls.push({ tap: text })
+      },
+      shot: async () => {
+        calls.push('storage-shot')
+      },
+      device: {
+        stopApp: async (args: unknown) => {
+          calls.push({ stop: args })
+          if (fault === 'stop') throw Error('Actual stop failed')
+        },
+        assertVisible: async (args: { text: string }) => {
+          calls.push({ visible: args.text })
+          if (fault === 'heading' && args.text === '^Chat crypto bench$')
+            throw Error('Actual bench heading absent')
+        },
+        assertNotVisible: async (args: { text: string }) => {
+          calls.push({ absent: args.text })
+        }
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+    if (fault == null) await scenario.I3()
+    else {
+      const error = await captureFailure(scenario.I3())
+      expect(String(error)).includes(
+        fault === 'stop' ? 'Actual stop failed' : 'Actual bench heading absent'
+      )
+    }
+    return calls
+  }
+  it('stops iOS before opening the bench link and requires its heading before unchanged storage checks', async () => {
+    const calls = await run('ios')
+    expect(calls.slice(0, 5)).deep.equals([
+      { stop: { appId: 'app.example.test' } },
+      { open: '/dev/chat-bench' },
+      { visible: '^Chat crypto bench$' },
+      { visible: '^vectors ok$' },
+      { tap: 'Check saved chat compatibility' }
+    ])
+    expect(calls).deep.includes({ visible: '^identity storage ok$' })
+    expect(calls).deep.includes({ absent: '^identity storage failed$' })
+    expect(calls.at(-1)).equals('storage-shot')
+  })
+  for (const surface of ['android', 'web-wide'])
+    it('retains the existing warm navigation on ' + surface, async () => {
+      const calls = await run(surface)
+      expect(calls.slice(0, 2)).deep.equals([
+        { open: '/dev/chat-bench' },
+        { visible: '^vectors ok$' }
+      ])
+      expect(
+        calls.some(
+          call => typeof call === 'object' && call != null && 'stop' in call
+        )
+      ).equals(false)
+    })
+  for (const fault of ['stop', 'heading'])
+    it(
+      'does not claim vectors or storage readiness after an iOS ' +
+        fault +
+        ' failure',
+      async () => {
+        const calls = await run('ios', fault)
+        expect(calls).not.deep.includes({ visible: '^vectors ok$' })
+        expect(calls).not.includes('storage-shot')
+        if (fault === 'stop') expect(calls).has.length(1)
+      }
+    )
+})
+
+describe('I2 mixed-account legacy reply selection', () => {
+  async function selection(
+    surface: string,
+    wrongAuthor = false
+  ): Promise<{
+    selected: Chat2Message[]
+    target: Chat2Message
+    error: unknown
+    stopped: Error
+  }> {
+    const peerId = userIdOfGumbo(5)
+    const target: Chat2Message = {
+      id: 'msg-pre-upgrade-peer',
+      seq: 231,
+      body: 'Practice update: bring water.',
+      authorId: wrongAuthor ? userIdOfGumbo(6) : peerId
+    }
+    const distantOriginal: Chat2Message = {
+      id: 'msg-installed-profile-original',
+      seq: 6,
+      body: 'Earlier note from an installed profile.',
+      authorId: userIdOfGumbo(7)
+    }
+    const selected: Chat2Message[] = []
+    const stopped = Error('Reply target boundary observed')
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerKey: 'Fresh',
+      viewerId: 'usr_11112LJ7YLqvVc8DmhwPNw',
+      ui: { surface },
+      f: {
+        identityCompatibility: {
+          fullWidthActors: ['Fresh'],
+          legacy: { [surface]: { text: distantOriginal } }
+        },
+        actors: { Fresh: { provider: {} } },
+        messages: { target }
+      },
+      check: async (_name: string, action: () => Promise<void>) => {
+        await action()
+      },
+      client: async () => ({
+        whoAmI: async () => ({ gumboId: null }),
+        myChatKeys: async () => ({ identity: { id: 'cid-original' } })
+      }),
+      signIn: async () => {},
+      openGroup: async () => {},
+      protocolPeer: async () => ({
+        client: { whoAmI: async () => ({ id: peerId }) }
+      }),
+      reply: async (message: Chat2Message) => {
+        selected.push(message)
+        throw stopped
+      }
+    }) as Scenarios
+    const error = await captureFailure(scenario.I2())
+    return { selected, target, error, stopped }
+  }
+
+  for (const surface of ['web-wide', 'web-narrow', 'ios', 'android'])
+    it('replies to the prepared legacy peer post on ' + surface, async () => {
+      const actual = await selection(surface)
+      expect(actual.error).equals(actual.stopped)
+      expect(actual.selected).deep.equals([actual.target])
+    })
+
+  it('refuses a prepared target authored by another account before opening Reply', async () => {
+    const actual = await selection('android', true)
+    expect(String(actual.error)).includes(
+      'Prepared legacy peer reply target required'
+    )
+    expect(actual.selected).deep.equals([])
+  })
 })

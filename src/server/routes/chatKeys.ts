@@ -5,7 +5,7 @@ import type { Kysely } from 'kysely'
 import { asLiteral } from '../../common/asLiteral'
 import { isIdentityId } from '../../common/chatCrypto/messageIds'
 import { notFound } from '../../common/errors'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   approveLink,
   chatCaller,
@@ -141,7 +141,9 @@ export function chatKeyRoutes(
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.deviceId)
-      const device = await revokeDevice(db, caller, id, clock())
+      const device = await revokeDevice(db, caller, id, clock(), {
+        keepSession: req.query.keepSession === 'true'
+      })
       setAudit(res.locals, {
         entityType: 'chatDevice',
         entityId: id,
@@ -241,7 +243,7 @@ export function chatKeyRoutes(
     requireActor,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
-      let userId: number
+      let userId: string
       try {
         userId = asUserId(req.params.userId)
       } catch {

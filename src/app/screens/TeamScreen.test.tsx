@@ -12,7 +12,9 @@ import {
   type TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
+import type { GameListOpenOptions } from './gameListOptions'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
 
 /**
@@ -99,13 +101,13 @@ const schedule: ScheduleEntry[] = [
 
 const staff: StaffEntry[] = [
   {
-    userId: 11,
+    userId: userIdOfGumbo(11),
     shortName: 'Harper H',
     avatarUrl: null,
     roles: ['admin']
   },
   {
-    userId: 12,
+    userId: userIdOfGumbo(12),
     shortName: 'Hank C',
     avatarUrl: null,
     roles: ['coach', 'scorekeeper']
@@ -114,7 +116,7 @@ const staff: StaffEntry[] = [
 
 const roster = [
   asRosterEntry({
-    userId: 11,
+    userId: userIdOfGumbo(11),
     shortName: 'Harper H',
     jersey: null,
     positions: [],
@@ -126,7 +128,18 @@ const roster = [
     inheritedFrom: null
   }),
   asRosterEntry({
-    userId: 21,
+    userId: userIdOfGumbo(12),
+    shortName: 'Hank C',
+    jersey: null,
+    positions: [],
+    isPlayer: false,
+    role: 'member',
+    section: 'staff',
+    staffRoles: ['coach', 'scorekeeper'],
+    inheritedFrom: null
+  }),
+  asRosterEntry({
+    userId: userIdOfGumbo(21),
     shortName: 'Pat P',
     jersey: '7',
     positions: ['SS'],
@@ -141,8 +154,8 @@ const roster = [
 
 interface Calls {
   asked: string[]
-  follows: string[]
-  unfollows: string[]
+  follows: Array<{ kind: string; id: string }>
+  unfollows: Array<{ kind: string; id: string }>
 }
 
 function fakeClient(patch: Record<string, unknown> = {}): {
@@ -169,22 +182,39 @@ function fakeClient(patch: Record<string, unknown> = {}): {
         awayTeamName: 'Owls',
         seasonId: 'sea_1',
         startAt: '2027-04-03T17:00:00.000Z',
-        venue: null,
+        venue: 'Northpoint Field 1',
         status: 'final',
         homeScore: 6,
         awayScore: 3,
         ingestStatus: 'ok',
         videoCount: 1
+      }),
+      asGameSummary({
+        id: 'gam_next',
+        homeTeamId: 'tem_owls',
+        awayTeamId: 'tem_hawks',
+        homeTeamName: 'Owls',
+        awayTeamName: 'Hawks',
+        seasonId: 'sea_1',
+        startAt: '2027-04-17T17:00:00.000Z',
+        venue: null,
+        status: 'scheduled',
+        homeScore: null,
+        awayScore: null,
+        ingestStatus: 'ok',
+        videoCount: 0
       })
     ]),
     teamStats: asked('teamStats', []),
+    teamPitchingStats: asked('teamPitchingStats', []),
     standings: asked('standings', []),
-    follow: async (teamId: string) => {
-      calls.follows.push(teamId)
+    follows: asked('follows', [{ kind: 'team', id: hawks.id }]),
+    follow: async (group: { kind: string; id: string }) => {
+      calls.follows.push(group)
       return true
     },
-    unfollow: async (teamId: string) => {
-      calls.unfollows.push(teamId)
+    unfollow: async (group: { kind: string; id: string }) => {
+      calls.unfollows.push(group)
       return false
     },
     ...patch
@@ -200,75 +230,93 @@ describe('TeamScreen for a fan', function () {
     root = undefined
   })
 
-  it('shows only the Schedule and Team tabs, and asks for nothing else', async function () {
+  it('opens public games without playback and keeps player pages and figures private', async function () {
     const { client, calls } = fakeClient()
     const opened: string[] = []
     const tabsSaid: Array<[string, boolean | undefined]> = []
+    const options: Array<GameListOpenOptions | undefined> = []
     await render(
       <TeamScreen
         client={client}
+        nonMemberView
         team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
         initialTab="videos"
         onTab={(tab, correcting) => {
           tabsSaid.push([tab, correcting])
         }}
-        onOpenGame={gameId => {
+        onOpenGame={(gameId, _title, request) => {
           opened.push(gameId)
+          options.push(request)
         }}
         onOpenPlayer={() => {
           opened.push('player')
         }}
       />
     )
-    expect(tabs()).deep.equals(['Schedule', 'Team'])
-    // An address that asked for Videos is answered with the schedule.
-    expect(tabsSaid).deep.equals([['schedule', true]])
+    expect(tabs()).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+    expect(tabsSaid).deep.equals([])
     expect([...calls.asked].sort()).deep.equals([
+      'follows',
       'roster',
-      'teamSchedule',
-      'teamStaff'
+      'standings',
+      'teamGames'
     ])
 
-    // The schedule: dates and opponents, and cards that open nothing.
+    await press('Hawks vs Owls')
+    expect(opened).deep.equals(['gam_final'])
+    expect(options).deep.equals([{ tab: 'watch', autoPlay: false }])
+    await press('Schedule')
+    // Published games open without private RSVP controls or playback.
     expect(text()).contains('2 games')
     expect(text()).contains('vs Owls')
     expect(text()).contains('@ Owls')
     expect(text()).contains('Northpoint Field 1')
-    expect(control('Hawks vs Owls')).equals(undefined)
-    expect(control('Hawks @ Owls')).equals(undefined)
+    await press('vs Owls')
+    expect(opened).deep.equals(['gam_final', 'gam_final'])
+    expect(options[1]).deep.equals({ autoPlay: false })
+    expect(control('RSVP')).equals(undefined)
 
     // The team: the staff with their roles, then the players.
     await press('Team')
     expect(text()).contains('Harper H')
-    expect(text()).contains('Admin')
+    expect(text()).contains('ADMINS')
     expect(text()).contains('Coach · Scorekeeper')
     expect(text()).contains('Pat P')
     expect(text()).contains('#7')
     // Nobody's name opens a player page the fan cannot read.
     expect(control('Pat P')).equals(undefined)
-    expect(opened).deep.equals([])
+    expect(opened).deep.equals(['gam_final', 'gam_final'])
+    await press('Stats')
+    expect(text()).contains(
+      'You need to be a member of this team to see individual player stats.'
+    )
+    expect(text()).not.contains('BATTING')
+    expect(text()).not.contains('PITCHING')
     expect([...calls.asked].sort()).deep.equals([
+      'follows',
       'roster',
-      'teamSchedule',
-      'teamStaff'
+      'standings',
+      'teamGames'
     ])
   })
 
   it('opens on the Team tab when the address says roster', async function () {
     const { client } = fakeClient({
       teamSchedule: async () => [],
+      teamGames: async () => [],
       roster: async () => [],
       teamStaff: async () => []
     })
     await render(
       <TeamScreen
         client={client}
+        nonMemberView
         team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
         initialTab="roster"
         onOpenGame={() => undefined}
       />
     )
-    expect(text()).contains('No players have been added to this team yet.')
+    expect(text()).contains('Nobody has been added to this team yet.')
     await press('Schedule')
     expect(text()).contains('No games scheduled.')
   })
@@ -279,6 +327,7 @@ describe('TeamScreen for a fan', function () {
     await render(
       <TeamScreen
         client={client}
+        nonMemberView
         team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
         onOpenGame={() => undefined}
         chats={[{ id: 'cnv_fans', title: 'Hawks Fans' }]}
@@ -289,25 +338,27 @@ describe('TeamScreen for a fan', function () {
     expect(opened).deep.equals(['cnv_fans'])
   })
 
-  it('turns Following back into Follow, and says why when it cannot', async function () {
+  it('turns Following back into Follow and follows the same group again', async function () {
     const { client, calls } = fakeClient()
     await render(
       <TeamScreen
         client={client}
+        nonMemberView
         team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
         onOpenGame={() => undefined}
       />
     )
-    await press('Following Hawks')
-    expect(calls.unfollows).deep.equals(['tem_hawks'])
+    await press('Unfollow Hawks')
+    expect(calls.unfollows).deep.equals([{ kind: 'team', id: 'tem_hawks' }])
     expect(control('Follow Hawks')).not.equals(undefined)
     await press('Follow Hawks')
-    expect(calls.follows).deep.equals(['tem_hawks'])
-    expect(control('Following Hawks')).not.equals(undefined)
+    expect(calls.follows).deep.equals([{ kind: 'team', id: 'tem_hawks' }])
+    expect(control('Unfollow Hawks')).not.equals(undefined)
   })
 
-  it('shows a failed follow and keeps the button as it was', async function () {
+  it('keeps a failed follow available without falsely showing Following', async function () {
     const { client } = fakeClient({
+      follows: async () => [],
       follow: async () => {
         throw new HttpError('notFound', 'Not found')
       }
@@ -315,13 +366,14 @@ describe('TeamScreen for a fan', function () {
     await render(
       <TeamScreen
         client={client}
+        nonMemberView
         team={{ ...hawks, access: 'member', following: false, onTeam: false }}
         onOpenGame={() => undefined}
       />
     )
     await press('Follow Hawks')
-    expect(text()).contains('Not found')
     expect(control('Follow Hawks')).not.equals(undefined)
+    expect(control('Unfollow Hawks')).equals(undefined)
   })
 })
 
@@ -359,7 +411,7 @@ describe('staffSubtitle', function () {
     expect(staffSubtitle(staff[1])).equals('Coach · Scorekeeper')
     expect(
       staffSubtitle({
-        userId: 1,
+        userId: userIdOfGumbo(1),
         shortName: 'V',
         avatarUrl: null,
         roles: ['songkeeper', 'videographer']

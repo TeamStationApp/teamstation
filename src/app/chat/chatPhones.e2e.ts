@@ -40,6 +40,9 @@ import { join, resolve } from 'node:path'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { chatRowText } from '../../test/chatRows'
+import { readSeedTable } from '../../test/chatSeedTable'
+
 interface Device {
   launchApp: (options: object) => Promise<unknown>
   tapOn: (options: object) => Promise<unknown>
@@ -82,14 +85,7 @@ function required(key: string): string {
 function people(
   run: string
 ): Record<string, { email: string; password: string }> {
-  const found: Record<string, { email: string; password: string }> = {}
-  for (const line of readFileSync(join(run, 'seed.txt'), 'utf8').split('\n')) {
-    const person = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-    if (person != null) {
-      found[person[1]] = { email: person[3], password: person[4] }
-    }
-  }
-  return found
+  return readSeedTable(readFileSync(join(run, 'seed.txt'), 'utf8'))
 }
 
 async function until<T>(
@@ -120,6 +116,18 @@ async function browserOf(
   await page.setViewport({ width: 1280, height: 900 })
   await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
   return { browser, page }
+}
+
+/**
+ * The Hawks Members row in the Chat tab's list. iOS names a row by all it
+ * shows (`Hawks Members, hello 🎉, 1 unread`), so it is matched by its
+ * title as the leading part of that name; Android keeps the title's own text.
+ */
+function membersRow(): string {
+  return chatRowText(
+    'Hawks Members',
+    process.env.CHAT_PLATFORM === 'android' ? 'android' : 'ios'
+  )
 }
 
 async function bodyText(page: Page): Promise<string> {
@@ -171,7 +179,7 @@ async function typeIn(
 
 /**
  * Opens the Chat tab with a tap on its glyph in the floating capsule, and
- * waits for `expect`.
+ * waits for `expect`, a maestro text pattern.
  *
  * Right after a password sign-in, iOS's own "Save Password?" sheet can still
  * be over the app (it comes up a moment after Home, and is not always gone
@@ -224,8 +232,9 @@ async function signIn(
     // iOS offers to save the password; nothing here needs it.
     await m.tapOn({ text: 'Not Now', optional: true, timeout: 5000 })
     try {
-      // Signed in: Home, which a signed-out app never draws.
-      await m.assertVisible({ text: 'Follow a team', timeout: 20000 })
+      // Signed in: the header's Notifications button, which a signed-out
+      // app never draws (chat2.e2e reads the same chrome).
+      await m.assertVisible({ text: 'Notifications', timeout: 20000 })
       return
     } catch {
       console.log(`Sign-in typed as ${pieces} did not take; again`)
@@ -249,8 +258,8 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
     const who = process.env.CHAT_P1_PERSON ?? 'N'
     assert(seed[who] != null, `${who} is not in the seed`)
     await signIn(m, seed[who])
-    await chatTab(m, 'Hawks Members')
-    await m.tapOn({ text: 'Hawks Members' })
+    await chatTab(m, membersRow())
+    await m.tapOn({ text: membersRow() })
     // Hc's open page grants N the history; then the composer opens.
     await m.assertNotVisible({
       text: 'Waiting for history to unlock…',
@@ -400,8 +409,8 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
     )
     await approve.click()
 
-    await m.assertVisible({ text: 'Hawks Members', timeout: 60000 })
-    await m.tapOn({ text: 'Hawks Members' })
+    await m.assertVisible({ text: membersRow(), timeout: 60000 })
+    await m.tapOn({ text: membersRow() })
     await m.assertVisible({ text: 'hello 🎉', timeout: 60000 })
     await m.takeScreenshot({ path: join(shots, 'p2-3-phone-history') })
     console.log(

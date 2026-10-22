@@ -55,8 +55,8 @@ interface ConversationRow {
 export async function chatPeople(
   db: Kysely<Database>,
   space: MediaContext['space'],
-  userIds: number[]
-): Promise<Map<number, ChatPerson & { names: string[] }>> {
+  userIds: string[]
+): Promise<Map<string, ChatPerson & { names: string[] }>> {
   const ids = [...new Set(userIds)]
   if (ids.length === 0) return new Map()
   const rows = await db
@@ -95,7 +95,7 @@ export function nameMatches(names: string[], query: string): boolean {
 export async function conversationsFor(
   db: Kysely<Database>,
   media: MediaContext,
-  userId: number,
+  userId: string,
   isAdmin: boolean,
   now: Date = new Date()
 ): Promise<ChatConversation[]> {
@@ -129,7 +129,7 @@ export async function conversationFor(
   db: Kysely<Database>,
   media: MediaContext,
   conversationId: string,
-  userId: number,
+  userId: string,
   isAdmin: boolean
 ): Promise<ChatConversation> {
   const row = await db
@@ -145,7 +145,7 @@ async function describe(
   db: Kysely<Database>,
   media: MediaContext,
   rows: ConversationRow[],
-  userId: number,
+  userId: string,
   isAdmin: boolean
 ): Promise<ChatConversation[]> {
   const ids = rows.map(row => row.id)
@@ -308,12 +308,12 @@ async function dmPeople(
   db: Kysely<Database>,
   space: MediaContext['space'],
   conversationIds: string[],
-  userId: number
+  userId: string
 ): Promise<Map<string, ChatDmPerson[]>> {
   if (conversationIds.length === 0) return new Map()
   const { rows } = await sql<{
     conversationId: string
-    userId: number | string
+    userId: string
     left: boolean
   }>`
     select m.conversation_id as "conversationId", m.user_id as "userId",
@@ -337,7 +337,7 @@ async function dmPeople(
       'last_name as lastName',
       'avatar_path as avatarPath'
     ])
-    .where('id', 'in', [userId, ...rows.map(row => Number(row.userId))])
+    .where('id', 'in', [userId, ...rows.map(row => row.userId)])
     .execute()
   const userOf = new Map(users.map(user => [user.id, user]))
   const byConversation = new Map<string, typeof rows>()
@@ -348,18 +348,16 @@ async function dmPeople(
   }
   const result = new Map<string, ChatDmPerson[]>()
   for (const [conversationId, list] of byConversation) {
-    const named = [userId, ...list.map(row => Number(row.userId))].flatMap(
-      id => {
-        const user = userOf.get(id)
-        return user == null ? [] : [user]
-      }
-    )
+    const named = [userId, ...list.map(row => row.userId)].flatMap(id => {
+      const user = userOf.get(id)
+      return user == null ? [] : [user]
+    })
     const names = shortNames(named)
     result.set(
       conversationId,
       list
         .map(row => {
-          const id = Number(row.userId)
+          const id = row.userId
           return {
             userId: id,
             shortName:
@@ -384,7 +382,7 @@ async function dmPeople(
 async function keyState(
   db: Kysely<Database>,
   conversationIds: string[],
-  userId: number
+  userId: string
 ): Promise<Map<string, { locked: boolean; noHolder: boolean }>> {
   const { rows } = await sql<{
     conversationId: string
@@ -431,15 +429,15 @@ async function keyState(
 export async function moderatorsOf(
   db: Kysely<Database>,
   conversation: { kind: ChatKind; scope_id: string | null },
-  memberIds: number[]
-): Promise<Set<number>> {
+  memberIds: string[]
+): Promise<Set<string>> {
   const scopeId = conversation.scope_id
   if (conversation.kind === 'dm' || scopeId == null) return new Set()
-  let raw: number[] = []
+  let raw: string[] = []
   if (conversation.kind.startsWith('team')) {
     // `hasRole(admin | coach)` on the team, read for everybody at once: the
     // team's own, its seasons' and their leagues', and site administrators.
-    const { rows } = await sql<{ userId: number }>`
+    const { rows } = await sql<{ userId: string }>`
       with seasons as (
         select s.id, s.league_id
         from season_teams st join seasons s on s.id = st.season_id
@@ -456,9 +454,9 @@ export async function moderatorsOf(
       where team_id = ${scopeId} and role in ('owner', 'manager')
       union
       select id from users
-      where is_admin and id = any(${memberIds}::bigint[])
+      where is_admin and id = any(${memberIds}::text[])
     `.execute(db)
-    raw = rows.map(row => Number(row.userId))
+    raw = rows.map(row => row.userId)
   } else if (conversation.kind.startsWith('season')) {
     raw = await seasonStaffIds(db, [scopeId])
   } else {
@@ -482,7 +480,7 @@ export async function moderatorsOf(
 export async function isApprover(
   db: Kysely<Database>,
   conversation: { kind: ChatKind; scope_id: string | null },
-  userId: number
+  userId: string
 ): Promise<boolean> {
   if (!MODERATED_APPROVALS.includes(conversation.kind)) return true
   return (await moderatorsOf(db, conversation, [userId])).has(userId)
@@ -504,16 +502,16 @@ async function labelsOf(
     scope_type: string | null
     scope_id: string | null
   },
-  memberIds: number[],
+  memberIds: string[],
   now: Date
-): Promise<Map<number, string>> {
-  const parts = new Map<number, string[]>(memberIds.map(id => [id, []]))
-  const add = (id: number | undefined, part: string): void => {
+): Promise<Map<string, string>> {
+  const parts = new Map<string, string[]>(memberIds.map(id => [id, []]))
+  const add = (id: string | undefined, part: string): void => {
     if (id == null) return
     const list = parts.get(id)
     if (list != null && !list.includes(part)) list.push(part)
   }
-  const resolve = async <R extends { user_id: number }>(
+  const resolve = async <R extends { user_id: string }>(
     rows: R[],
     part: (row: R) => string
   ): Promise<void> => {
@@ -778,7 +776,7 @@ export async function logOf(
 export async function readsOf(
   db: Kysely<Database>,
   conversationId: string
-): Promise<Array<{ userId: number; seq: number }>> {
+): Promise<Array<{ userId: string; seq: number }>> {
   const rows = await db
     .selectFrom('chat_read_cursors')
     .innerJoin('chat_members', join =>

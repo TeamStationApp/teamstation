@@ -59,7 +59,7 @@ interface Device {
 
 /** One user's keys as their linked devices hold them. */
 interface Keys {
-  userId: number
+  userId: string
   identityId: string
   identity: KeyPair
   /** By generation: `puks[0]` is generation 1. */
@@ -341,7 +341,7 @@ describe('chat devices, identities and keys (U6)', function () {
   ): number => (x.conversationId < y.conversationId ? -1 : 1)
 
   async function openRequests(
-    userId: number
+    userId: string
   ): Promise<Array<{ conversationId: string; reset: boolean }>> {
     const rows = await db
       .selectFrom('chat_grant_requests')
@@ -1192,6 +1192,68 @@ describe('chat devices, identities and keys (U6)', function () {
       ok(await call('L', 'DELETE', `/chat/devices/${pending.id}`))
       expect(await needsRotation(org)).equals(false)
     })
+
+    it('keeps the session only for the device bound to it, when asked', async function () {
+      await fixture.person('Rk')
+      const { device, keys } = await enrolled('Rk')
+      const second = await linked('Rk', keys, device)
+      const other = await register(await session('Rk'))
+
+      // Another device's session always ends with it, holder or not.
+      refused(
+        await call(
+          'Rk',
+          'DELETE',
+          `/chat/devices/${second.id}?keepSession=true`
+        ),
+        403,
+        'notThisDevice'
+      )
+      refused(
+        await call(
+          other.who,
+          'DELETE',
+          `/chat/devices/${device.id}?keepSession=true`
+        ),
+        403,
+        'notThisDevice'
+      )
+      expect(
+        ok(await call('Rk', 'GET', '/chat/devices')).filter(
+          (row: { revokedAt: string | null }) => row.revokedAt != null
+        )
+      ).deep.equals([])
+
+      // Its own: revoked, unbound, and the session stays signed in.
+      const revoked = ok(
+        await call(
+          second.who,
+          'DELETE',
+          `/chat/devices/${second.id}?keepSession=true`
+        )
+      )
+      expect(revoked.revokedAt).not.equals(null)
+      expect(revoked.current).equals(false)
+      const mine = ok(await call(second.who, 'GET', '/chat/me/keys'))
+      expect(mine.deviceId).equals(null)
+      expect(mine.pukNeedsRotation).equals(true)
+      const kept = await db
+        .selectFrom('auth_sessions')
+        .select(['revoked_at'])
+        .where('id', '=', fixture.sessionOf(second.who))
+        .executeTakeFirstOrThrow()
+      expect(kept.revoked_at).equals(null)
+      // The same session registers a new device, which the server does not
+      // count as linked.
+      const fresh = await register(second.who)
+      const listed = ok(await call(second.who, 'GET', '/chat/devices'))
+      expect(
+        listed.find((row: { id: string }) => row.id === fresh.id)
+      ).to.include({ current: true, linked: false })
+      expect(
+        listed.find((row: { id: string }) => row.id === second.id)
+      ).to.include({ linked: false })
+    })
   })
 
   describe('identity reset', function () {
@@ -1325,7 +1387,7 @@ describe('chat devices, identities and keys (U6)', function () {
       )
       expect(
         listedMembers.find(
-          (row: { userId: number }) => row.userId === keys.userId
+          (row: { userId: string }) => row.userId === keys.userId
         )
       ).to.include({
         identityKey: b(fresh.keys.identity.publicKey),
@@ -1369,7 +1431,7 @@ describe('chat devices, identities and keys (U6)', function () {
       expect(
         ok(
           await call('Ha', 'GET', `/chat/conversations/${staff}/members`)
-        ).find((row: { userId: number }) => row.userId === keys.userId)
+        ).find((row: { userId: string }) => row.userId === keys.userId)
       ).to.include({ eligible: false })
     })
 

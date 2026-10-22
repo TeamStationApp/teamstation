@@ -4,12 +4,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { type Database, makeDatabase } from '../db/database'
 import { guardiansOf } from '../people/guardians'
+import { mintUserId } from '../users/mintUserId'
 import { closeInto } from './people'
 
 /**
@@ -24,11 +24,8 @@ const adminUrl = testDatabaseUrl
 const name = `teamstation_close_into_${Date.now()}_${process.pid}`
 const url = adminUrl.replace(/\/[^/]*$/, `/${name}`)
 
-const taken = new Set<number>()
-function mint(): { id: number; legacyId: string } {
-  const made = mintUserId(id => taken.has(id))
-  taken.add(made.userId)
-  return { id: made.userId, legacyId: made.legacyId }
+function mint(): { id: string } {
+  return { id: mintUserId() }
 }
 
 describe('closeInto keeps sign-ins and follows, and leaves links where they are', function () {
@@ -80,10 +77,9 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
           [both, 'Both', 'hash-kept'],
           [bothClosed, 'Both', 'hash-closed']
         ].map(([user, displayName, hash]) => {
-          const row = user as { id: number; legacyId: string }
+          const row = user as { id: string }
           return {
             id: row.id,
-            legacyId: row.legacyId,
             display_name: displayName as string,
             password_hash: (hash as string | undefined) ?? null
           }
@@ -127,8 +123,8 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
       .execute()
 
     const link = async (
-      from: number,
-      to: number,
+      from: string,
+      to: string,
       kind: 'guardian' | 'family' | 'other',
       canManage = kind === 'guardian'
     ): Promise<string> => {

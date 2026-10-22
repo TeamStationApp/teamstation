@@ -150,7 +150,7 @@ describe('personal chat preferences and pins', function () {
     const reads = await fixture.call('Hc', 'GET', `${path()}/reads`)
     expect(
       reads.body.find(
-        (read: { userId: number }) => read.userId === fixture.id('Hc')
+        (read: { userId: string }) => read.userId === fixture.id('Hc')
       ).seq
     ).equals(seq)
     await engine.markRead(conversationId)

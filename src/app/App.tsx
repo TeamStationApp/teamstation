@@ -27,7 +27,7 @@ import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import { ChatCoreGate } from './chat/ChatCoreGate'
-import { chatCoreLog } from './chat/chatCoreLog'
+import { chatCoreLog, chatStartLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
 import { ChatGate } from './chat/ChatGate'
 import { ChatInfoScreen } from './chat/ChatInfoScreen'
@@ -55,8 +55,8 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
-import { ChoiceSheet } from './components/ChoiceSheet'
 import { FLOATING_HEIGHT_REM } from './components/AppNav'
+import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
@@ -449,6 +449,10 @@ function Shell(props: AppProps): React.ReactElement {
   /** Why chat's crypto core is not here, to the console and the server's log. */
   const reportChatCore = useMemo(
     () => chatCoreLog(apiBaseUrl, Platform.OS),
+    [apiBaseUrl]
+  )
+  const reportChatStart = useMemo(
+    () => chatStartLog(apiBaseUrl, Platform.OS),
     [apiBaseUrl]
   )
   /**
@@ -1744,7 +1748,12 @@ function Shell(props: AppProps): React.ReactElement {
   const gated = (screen: React.ReactNode): React.ReactNode =>
     chatEngine == null || session == null ? null : (
       <ChatCoreGate onUnavailable={reportChatCore}>
-        <ChatGate engine={chatEngine} client={client} userId={session.user.id}>
+        <ChatGate
+          engine={chatEngine}
+          client={client}
+          userId={session.user.id}
+          onFailure={reportChatStart}
+        >
           {screen}
         </ChatGate>
       </ChatCoreGate>
@@ -2070,7 +2079,7 @@ function Shell(props: AppProps): React.ReactElement {
       gated(
         <ChatWorkspace
           engine={chatEngine!}
-          userId={session?.user.id ?? 0}
+          userId={signedInAs!}
           state={chatWorkspaceState}
           listNavigation={chatListNavigation}
           conversationId={
@@ -2627,7 +2636,7 @@ function Shell(props: AppProps): React.ReactElement {
           engine={chatEngine!}
           client={client}
           conversationId={top.conversationId}
-          userId={session?.user.id ?? 0}
+          userId={signedInAs!}
           onLeft={() => {
             // Out of the chat and its members, back to the list.
             setStacks(current => ({

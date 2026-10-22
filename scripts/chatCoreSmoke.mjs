@@ -38,7 +38,7 @@ function seedRow(text, key) {
     .map(line => line.trim().split(/\s+/))
     .find(cells => cells[0] === key)
   if (row == null) throw new Error(`${key} is not in the seed table`)
-  return { userId: Number(row[3]), email: row[4], password: row[5] }
+  return { userId: row[3], email: row[4], password: row[5] }
 }
 
 async function enrol(api, person, key, tamper) {

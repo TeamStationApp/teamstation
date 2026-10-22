@@ -1,13 +1,15 @@
+import type { UserId } from '../userId'
 import { equalBytes, utf8 } from './bytes'
 import { call } from './core'
 import { num } from './coreCall'
+import { actorIdentityBytes, identityBytes } from './userId'
 
 /**
  * The hash chain over a conversation's membership log.
  *
  * Each `chat_membership_log` row's `hash` is
  * `SHA-256(prev_hash ‖ lp(conversationId) ‖ u64(seq) ‖ lp(event) ‖
- * u64(userId) ‖ u64(actorUserId or 0) ‖ lp(reason) ‖ u64(at in ms))`, and the
+ * identity(userId) ‖ identity(actorUserId or 0) ‖ lp(reason) ‖ u64(at in ms))`, and the
  * first row's `prev_hash` is 32 zero bytes. A row with no reason hashes
  * `lp("")`. The server writes it and every client checks it from the first
  * row, so a rewritten, dropped or reordered row shows. The chat crypto core
@@ -20,8 +22,8 @@ export interface LogRow {
   conversationId: string
   seq: number
   event: LogEvent
-  userId: number
-  actorUserId: number | null
+  userId: UserId
+  actorUserId: UserId | null
   reason: string | null
   /** When it happened, as a date or milliseconds since the epoch. */
   at: Date | number
@@ -38,8 +40,8 @@ export function logRowHash(prevHash: Uint8Array, row: LogRow): Uint8Array {
     utf8(row.conversationId),
     num(row.seq),
     utf8(row.event),
-    num(row.userId),
-    num(row.actorUserId ?? 0),
+    identityBytes(row.userId),
+    actorIdentityBytes(row.actorUserId),
     utf8(row.reason ?? ''),
     num(at)
   ])[0]

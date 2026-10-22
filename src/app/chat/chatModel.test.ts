@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { contentTypeOf, safeFileName } from './chatFileTypes'
 import {
   actionsFor,
@@ -22,7 +23,7 @@ import type { GrantApproval, MemberView } from './engine/engine'
 
 /** U13: what the chat screens decide without drawing anything. */
 
-const member = (userId: number, shortName: string): MemberView => ({
+const member = (userId: string, shortName: string): MemberView => ({
   userId,
   shortName,
   avatarUrl: null,
@@ -158,9 +159,9 @@ describe('the chat list’s grouping', function () {
 
 describe('read ticks', function () {
   const members = [
-    member(1, 'Hank C'),
-    member(2, 'Blair B'),
-    member(3, 'Casey C')
+    member(userIdOfGumbo(1), 'Hank C'),
+    member(userIdOfGumbo(2), 'Blair B'),
+    member(userIdOfGumbo(3), 'Casey C')
   ]
 
   it('says Sent before anyone has read it', function () {
@@ -170,7 +171,10 @@ describe('read ticks', function () {
   })
 
   it('names who has read it in a chat of up to 20, and in a DM', function () {
-    const read = message({ mine: true, readBy: [2, 3, 9] })
+    const read = message({
+      mine: true,
+      readBy: [userIdOfGumbo(2), userIdOfGumbo(3), userIdOfGumbo(9)]
+    })
     expect(
       readLine(read, chat({ memberCount: 20 }), members, 'Former member')
     ).deep.equals({
@@ -185,7 +189,7 @@ describe('read ticks', function () {
   it('counts them above 20 members', function () {
     expect(
       readLine(
-        message({ mine: true, readBy: [2, 3] }),
+        message({ mine: true, readBy: [userIdOfGumbo(2), userIdOfGumbo(3)] }),
         chat({ memberCount: 21 }),
         members,
         'F'
@@ -361,7 +365,7 @@ describe('approvals', function () {
   const asking = (
     requestId: number,
     conversationId: string,
-    userId: number
+    userId: string
   ): GrantApproval => ({
     requestId,
     conversationId,
@@ -374,16 +378,16 @@ describe('approvals', function () {
 
   it('lists one chat’s, never the person’s own', function () {
     const all = [
-      asking(1, 'cnv_a', 7),
-      asking(2, 'cnv_a', 3),
-      asking(3, 'cnv_b', 7)
+      asking(1, 'cnv_a', userIdOfGumbo(7)),
+      asking(2, 'cnv_a', userIdOfGumbo(3)),
+      asking(3, 'cnv_b', userIdOfGumbo(7))
     ]
-    expect(approvalsIn(all, 'cnv_a', 3).map(one => one.requestId)).deep.equals([
-      1
-    ])
-    expect(approvalsIn(all, 'cnv_b', 3).map(one => one.requestId)).deep.equals([
-      3
-    ])
-    expect(approvalsIn(all, 'cnv_b', 7)).deep.equals([])
+    expect(
+      approvalsIn(all, 'cnv_a', userIdOfGumbo(3)).map(one => one.requestId)
+    ).deep.equals([1])
+    expect(
+      approvalsIn(all, 'cnv_b', userIdOfGumbo(3)).map(one => one.requestId)
+    ).deep.equals([3])
+    expect(approvalsIn(all, 'cnv_b', userIdOfGumbo(7))).deep.equals([])
   })
 })
