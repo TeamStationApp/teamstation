@@ -24,6 +24,7 @@ import {
   ROSTER_NOT_ASKED,
   systemPrompt,
   UNDO,
+  UNDO_NOT_ASKED,
   withTags
 } from './interpreter'
 
@@ -852,6 +853,343 @@ describe('dictation interpreter, a ball in play sent without its result', functi
     ])
     await new Interpretation(config(whole.fetch), 'ctx', 'Single.').start()
     expect(whole.sent).to.have.length(1)
+  })
+
+  it('keeps one ball in play when it is said again before its result, the later words winning', async function () {
+    const stub = provider(
+      [
+        call('c1', 'ballInPlay', {
+          contact: 'swing',
+          trajectory: 'ground_ball',
+          depth: 'infield'
+        }),
+        call('c2', 'ballInPlay', { contact: 'swing', trajectory: 'chopper' }),
+        // A piece of the same ball, with no contact of its own.
+        call('c3', 'ballInPlay', {})
+      ],
+      // Asked for the result, the model takes its calls back and sends it.
+      [call('u1', 'undo', {}), call('c3', 'result', { eventType: 'single' })]
+    )
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        'ctx',
+        'Chopper over the mound, single.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'chopper',
+          depth: 'infield'
+        },
+        { type: 'result', eventType: 'single' }
+      ],
+      dropped: []
+    })
+    // A ball after its result is the next batter's.
+    const two = provider([
+      single,
+      call('c2', 'result', { eventType: 'single' }),
+      call('c3', 'ballInPlay', { contact: 'bunt' }),
+      call('c4', 'result', { eventType: 'sac_bunt' })
+    ])
+    const turn = await new Interpretation(
+      config(two.fetch),
+      'ctx',
+      'Single. Then a sacrifice bunt.'
+    ).start()
+    expect(
+      turn.kind === 'actions' &&
+        turn.actions.filter(action => action.type === 'ballInPlay')
+    ).to.have.length(2)
+  })
+
+  it('tells a model once that undo is not for its own calls, and keeps what it sends next', async function () {
+    const stub = provider(
+      [single],
+      // Asked for the result, the model takes its calls back.
+      [call('u1', 'undo', {})],
+      [call('c2', 'result', { eventType: 'single' })]
+    )
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        'ctx',
+        'Line drive single to left.'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+        { type: 'result', eventType: 'single' }
+      ],
+      dropped: []
+    })
+    expect(stub.sent).to.have.length(3)
+    expect(stub.sent[2].body.messages.at(-1)).deep.equals({
+      role: 'tool',
+      tool_call_id: 'u1',
+      content: UNDO_NOT_ASKED
+    })
+    // Only once.
+    const twice = provider(
+      [single],
+      [call('u1', 'undo', {})],
+      [call('u2', 'undo', {})]
+    )
+    await new Interpretation(config(twice.fetch), 'ctx', 'Single.').start()
+    expect(twice.sent).to.have.length(3)
+  })
+
+  it('replaces what a model sends again after taking back its own calls', async function () {
+    const ball = (id: string, fielder?: string): object =>
+      call(id, 'ballInPlay', {
+        contact: 'swing',
+        trajectory: 'ground_ball',
+        ...(fielder == null ? {} : { fielder })
+      })
+    // Asked for the result, it takes its calls back and sends them again,
+    // and, told they stand, sends the result a second time: one of each.
+    const stub = provider(
+      [ball('c1')],
+      [
+        call('u1', 'undo', {}),
+        ball('c2'),
+        call('r1', 'result', { eventType: 'single' })
+      ],
+      [call('r2', 'result', { eventType: 'single' })]
+    )
+    expect(
+      await new Interpretation(config(stub.fetch), 'ctx', 'Single.').start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'ground_ball' },
+        { type: 'result', eventType: 'single' }
+      ],
+      dropped: []
+    })
+    // An undo before any call of its own is only dropped, and not answered:
+    // the same calls sent again are a second plate appearance's only if new.
+    const first = provider([
+      call('u1', 'undo', {}),
+      ball('c1'),
+      call('r1', 'result', { eventType: 'single' })
+    ])
+    const leading = await new Interpretation(
+      config(first.fetch),
+      'ctx',
+      'Single.'
+    ).start()
+    expect(first.sent).to.have.length(1)
+    expect(leading.kind === 'actions' && leading.actions).to.have.length(2)
+    // Told its calls stand, the same ball and result sent again are the
+    // same play.
+    const again = provider(
+      [
+        ball('a'),
+        call('ra', 'result', { eventType: 'single' }),
+        call('u1', 'undo', {})
+      ],
+      [ball('b'), call('rb', 'result', { eventType: 'single' })]
+    )
+    const same = await new Interpretation(
+      config(again.fetch),
+      'ctx',
+      'Line drive single to left.'
+    ).start()
+    expect(same.kind === 'actions' && same.actions).deep.equals([
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'ground_ball' },
+      { type: 'result', eventType: 'single' }
+    ])
+    // One undo and one pitch take back the last pitch.
+    const pitches = provider([
+      call('p1', 'pitch', { call: 'B' }),
+      call('p2', 'pitch', { call: 'F' }),
+      call('u1', 'undo', {}),
+      call('p3', 'pitch', { call: 'S' })
+    ])
+    const counted = await new Interpretation(
+      config(pitches.fetch),
+      'ctx',
+      'Ball, then a swinging strike.'
+    ).start()
+    expect(counted.kind === 'actions' && counted.actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'S' }
+    ])
+    // After its own undo, a second batter in a later reply is his own.
+    const next = provider(
+      [
+        ball('a'),
+        call('ra', 'result', { eventType: 'single' }),
+        call('u1', 'undo', {})
+      ],
+      [
+        call('b', 'ballInPlay', { contact: 'swing', trajectory: 'fly_ball' }),
+        call('rb', 'result', { eventType: 'field_out', outBy: 'catch' })
+      ]
+    )
+    const two = await new Interpretation(
+      config(next.fetch),
+      'ctx',
+      'Smith singles. Jones flies out.'
+    ).start()
+    expect(two.kind === 'actions' && two.actions).deep.equals([
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'ground_ball' },
+      { type: 'result', eventType: 'single' },
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'fly_ball' },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' }
+    ])
+    // A ball corrected, then taken back and sent a third time: the third.
+    const thrice = provider([
+      ball('c1'),
+      call('c2', 'ballInPlay', { contact: 'swing', trajectory: 'chopper' }),
+      call('r1', 'result', { eventType: 'single' }),
+      call('u1', 'undo', {}),
+      call('c3', 'ballInPlay', { contact: 'swing', trajectory: 'line_drive' }),
+      call('r2', 'result', { eventType: 'single' })
+    ])
+    const third = await new Interpretation(
+      config(thrice.fetch),
+      'ctx',
+      'Single.'
+    ).start()
+    expect(third.kind === 'actions' && third.actions).deep.equals([
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+      { type: 'result', eventType: 'single' }
+    ])
+    // In one reply: the play, an undo, and the play again is one play, its
+    // pitch too; a batter after it is the next one.
+    const once = provider([
+      call('p1', 'pitch', { call: 'B' }),
+      ball('c1'),
+      call('r1', 'result', { eventType: 'single' }),
+      call('u1', 'undo', {}),
+      call('p2', 'pitch', { call: 'B' }),
+      call('c2', 'ballInPlay', { contact: 'swing', trajectory: 'line_drive' }),
+      call('r2', 'result', { eventType: 'single' }),
+      call('c3', 'ballInPlay', { contact: 'swing', trajectory: 'fly_ball' }),
+      call('r3', 'result', { eventType: 'double' })
+    ])
+    const turn = await new Interpretation(
+      config(once.fetch),
+      'ctx',
+      'Single.'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+      { type: 'result', eventType: 'single' },
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'fly_ball' },
+      { type: 'result', eventType: 'double' }
+    ])
+  })
+
+  it("keeps two batters apart when their balls come before their results, and drops a corrected ball's old place", async function () {
+    const two = provider([
+      call('a', 'ballInPlay', { contact: 'swing', trajectory: 'line_drive' }),
+      call('b', 'ballInPlay', { contact: 'swing', trajectory: 'fly_ball' }),
+      call('ra', 'result', { eventType: 'single' }),
+      call('rb', 'result', { eventType: 'double' })
+    ])
+    const turn = await new Interpretation(
+      config(two.fetch),
+      'ctx',
+      'Single. Then a double.'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'fly_ball' },
+      { type: 'result', eventType: 'single' },
+      { type: 'result', eventType: 'double' }
+    ])
+    // Two singles are two batters', whichever order they come in.
+    const ball = (id: string, trajectory: string): object =>
+      call(id, 'ballInPlay', { contact: 'swing', trajectory })
+    const single = (id: string): object =>
+      call(id, 'result', { eventType: 'single' })
+    for (const replies of [
+      [
+        [
+          ball('a', 'line_drive'),
+          ball('b', 'fly_ball'),
+          single('ra'),
+          single('rb')
+        ]
+      ],
+      [
+        [ball('a', 'line_drive'), ball('b', 'fly_ball')],
+        [single('ra'), single('rb')]
+      ],
+      [
+        [
+          single('ra'),
+          ball('a', 'line_drive'),
+          single('rb'),
+          ball('b', 'fly_ball')
+        ]
+      ]
+    ]) {
+      const singles = await new Interpretation(
+        config(provider(...replies).fetch),
+        'ctx',
+        'Smith singles to left, Jones singles to right.'
+      ).start()
+      const actions = singles.kind === 'actions' ? singles.actions : []
+      expect(
+        actions.filter(action => action.type === 'ballInPlay'),
+        JSON.stringify(actions)
+      ).to.have.length(2)
+      expect(
+        actions.filter(action => action.type === 'result'),
+        JSON.stringify(actions)
+      ).to.have.length(2)
+    }
+    // The same over two replies: two balls, then, asked, their results.
+    const later = provider(
+      [
+        call('a', 'ballInPlay', { contact: 'swing', trajectory: 'line_drive' }),
+        call('b', 'ballInPlay', { contact: 'swing', trajectory: 'fly_ball' })
+      ],
+      [
+        call('ra', 'result', { eventType: 'single' }),
+        call('rb', 'result', { eventType: 'double' })
+      ]
+    )
+    const split = await new Interpretation(
+      config(later.fetch),
+      'ctx',
+      'Single. Then a double.'
+    ).start()
+    expect(split.kind === 'actions' && split.actions).deep.equals([
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'line_drive' },
+      { type: 'ballInPlay', contact: 'swing', trajectory: 'fly_ball' },
+      { type: 'result', eventType: 'single' },
+      { type: 'result', eventType: 'double' }
+    ])
+    const moved = provider([
+      call('a', 'ballInPlay', {
+        contact: 'swing',
+        direction: 'left',
+        location: { x: -30, z: -60 }
+      }),
+      call('b', 'ballInPlay', { contact: 'swing', direction: 'right' }),
+      call('r', 'result', { eventType: 'single' })
+    ])
+    const fixed = await new Interpretation(
+      config(moved.fetch),
+      'ctx',
+      'Single to right.'
+    ).start()
+    expect(fixed.kind === 'actions' && fixed.actions[0]).deep.equals({
+      type: 'ballInPlay',
+      contact: 'swing',
+      direction: 'right'
+    })
   })
 
   it('does not ask when the result came first, and adds it to a follow-up', async function () {
@@ -2076,6 +2414,98 @@ describe('dictation interpreter, player tags', function () {
         { label: 'Double steal: Joe B. and Ian K.' },
         { label: 'No, stays' }
       ]
+    })
+  })
+
+  it("replaces a runner's move the model sent again after its own undo", async function () {
+    const stub = provider([
+      call('m1', 'runnerMovement', { runner: tagOf(4), to: '2B' }),
+      call('u1', 'undo', {}),
+      call('m2', 'runnerMovement', { runner: tagOf(4), to: '3B' })
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      GAME,
+      'He goes first to third'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'runnerMovement', runner: 4, to: '3B' }
+    ])
+  })
+
+  it('keeps a relay to the fielding side when GAME lists the whole defense', async function () {
+    const positions = ['P', 'C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF']
+    const whole = `At bat: Alex L. #1 ${writtenTag(1)}.\nFielders: ${positions
+      .map(
+        (position, index) =>
+          `${position} F${index} #${index} ${writtenTag(10 + index)}`
+      )
+      .join(', ')}.`
+    const move = (): object =>
+      call('m', 'runnerMovement', {
+        runner: tagOf(1),
+        to: '1B',
+        fielders: [tagOf(15), tagOf(1), tagOf(12)]
+      })
+    const turn = await new Interpretation(
+      config(provider([move()]).fetch),
+      whole,
+      'The batter is safe at first'
+    ).start()
+    // A relay with a player off the defense is none: the screen finds it.
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'runnerMovement', runner: 1, to: '1B' }
+    ])
+    // A fielding play keeps its fielders when none of them is a defender.
+    const play = await new Interpretation(
+      config(
+        provider([
+          call('f', 'fieldingPlay', { fielders: [tagOf(1)], error: tagOf(1) })
+        ]).fetch
+      ),
+      whole,
+      'Error'
+    ).start()
+    expect(play.kind === 'actions' && play.actions).deep.equals([
+      { type: 'fieldingPlay', fielders: [1], error: 1 }
+    ])
+    // With part of the defense, the relay is the model's.
+    const part = await new Interpretation(
+      config(
+        provider([
+          call('m', 'runnerMovement', {
+            runner: tagOf(4),
+            to: '2B',
+            fielders: [tagOf(14), tagOf(3), tagOf(15)]
+          })
+        ]).fetch
+      ),
+      GAME,
+      'He is safe at second'
+    ).start()
+    expect(part.kind === 'actions' && part.actions).deep.equals([
+      { type: 'runnerMovement', runner: 4, to: '2B', fielders: [14, 3, 15] }
+    ])
+  })
+
+  it('reads a player the model wrote by his whole name as his tag', async function () {
+    const stub = provider([
+      steal('ian k.', '2B'),
+      call('f', 'fieldingPlay', { fielders: ['Noah D.', tagOf(15)] })
+    ])
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        GAME,
+        'He steals second, short to third'
+      ).start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' },
+        { type: 'fieldingPlay', fielders: [14, 15] }
+      ],
+      dropped: []
     })
   })
 
