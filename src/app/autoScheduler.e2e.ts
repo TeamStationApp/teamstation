@@ -20,6 +20,7 @@ import {
   api,
   type AutoSchedulerFixture,
   autoSchedulerFixture,
+  bookSecondGame,
   FIELD_ONE_HOURS,
   G1,
   seedThrough
@@ -481,11 +482,159 @@ async function e3(run: Run): Promise<void> {
   )
 }
 
+/**
+ * E4: G1 is put on Field 1 through Game Settings; a second game right after
+ * it in the other size collides with the size switch, and both games warn
+ * under their address and tell both teams' staff.
+ */
+async function e4(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const venueId = run.state.venueId!
+  await api(fx, 101, 'PUT', `/venues/${venueId}`, { sizeSwitchMinutes: 30 })
+  const admin = await run.session('autoScheduler-e4', 101)
+  await run.visit(admin, `/games/${G1}/settings`)
+  await contains(admin.page, 'Swap home and away')
+  await tapLabel(admin, 'Field: none chosen')
+  await contains(admin.page, 'Choose field')
+  await admin.m.tapOn({ text: 'Example Park', timeout: 15000 })
+  await admin.m.tapOn({ text: 'Field 1', timeout: 15000 })
+  await tapLabel(admin, 'Use 50/70')
+  await admin.page.waitForFunction(
+    () =>
+      document.querySelector(
+        '[aria-label="Field: Example Park, Field 1, 50/70"]'
+      ) != null,
+    { timeout: 15000 }
+  )
+  await venueInView(admin)
+  await capture(admin.m, artifacts, 'game-settings-venue-after.png')
+  await tapLast(admin, 'Save')
+  await admin.page.waitForFunction(
+    (game: string) => location.pathname === `/games/${game}`,
+    { timeout: 15000 },
+    G1
+  )
+  const g1 = await fx.f.h.db
+    .selectFrom('games')
+    .select(['field_id', 'field_size', 'venue', 'address'])
+    .where('id', '=', G1)
+    .executeTakeFirstOrThrow()
+  expect(g1).include({
+    field_id: run.state.fieldId,
+    field_size: '50/70',
+    venue: 'Example Park',
+    address: '1 Example Way, Demo City'
+  })
+  const second = await bookSecondGame(fx, run.state.fieldId!)
+  await run.visit(admin, `/games/${G1}?tab=info`)
+  await contains(admin.page, 'too close to this one to change the field’s size')
+  await admin.page.evaluate(() => {
+    const warning = document.querySelector(
+      '[data-testid="event-field-warnings"]'
+    )
+    if (warning !== null) warning.scrollIntoView({ block: 'center' })
+  })
+  await capture(admin.m, artifacts, 'game-info-venue-after.png')
+  expect(
+    await admin.page.evaluate(() => {
+      const row = document.querySelector('[data-testid="event-directions"]')
+      return row === null ? '' : String(row.getAttribute('aria-label'))
+    })
+  ).equals('Open directions')
+  await run.visit(admin, `/games/${second}?tab=info`)
+  await contains(admin.page, 'too close to this one to change the field’s size')
+  await run.visit(admin, '/notifications')
+  await contains(admin.page, 'Field warning: Demo Hawks at Demo Owls')
+  await showText(admin, 'Field warning: Demo Hawks at Demo Owls')
+  await capture(admin.m, artifacts, 'notifications-field-warning.png')
+  const owls = await api<{ items: Array<{ type: string; gameId?: string }> }>(
+    fx,
+    101,
+    'GET',
+    '/me/notifications'
+  )
+  expect(
+    owls.items
+      .filter(item => item.type === 'fieldWarning')
+      .map(i => i.gameId ?? '')
+      .sort((a, b) => a.localeCompare(b))
+  ).deep.equals([G1, second].sort((a, b) => a.localeCompare(b)))
+  await run.pass(
+    'E4',
+    'G1 linked to Field 1 in Game Settings, venue and address filled and locked; a second game across the 30-minute size switch warns on both games and in both teams’ staff inboxes'
+  )
+}
+
+/**
+ * E5: Field 1's Saturday closes at 11:00, so G1 warns that the field is not
+ * open for it, while a completed game on the field warns of nothing.
+ */
+async function e5(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const venueId = run.state.venueId!
+  const fieldId = run.state.fieldId!
+  await fx.f.h.db
+    .insertInto('games')
+    .values({
+      id: 'gam_autoSchedulerDone',
+      home_team_id: fx.teams.Foxes,
+      away_team_id: fx.teams.Rockets,
+      season_id: fx.f.seasonA,
+      start_at: new Date('2026-10-10T14:00:00.000Z'),
+      end_at: new Date('2026-10-10T16:00:00.000Z'),
+      timezone: 'America/New_York',
+      venue: 'Example Park',
+      address: '1 Example Way, Demo City',
+      latitude: 40.02,
+      longitude: -75.22,
+      field_id: fieldId,
+      field_size: '50/70',
+      status: 'final'
+    })
+    .execute()
+  const admin = await run.session('autoScheduler-e5', 101)
+  await run.visit(admin, `/venues/${venueId}/fields/${fieldId}`)
+  await tapLabel(admin, 'Field hours: Saturday, 8:00 AM – 6:00 PM')
+  await tapLabel(admin, 'Closes 6:00 PM')
+  await tapLabel(admin, 'Hour 11')
+  await tapLabel(admin, 'Period AM')
+  await admin.m.tapOn({ text: 'Use time', timeout: 15000 })
+  await admin.m.tapOn({ text: 'Done', timeout: 15000 })
+  await contains(admin.page, '8:00 AM – 11:00 AM')
+  await run.visit(admin, `/games/${G1}?tab=info`)
+  await contains(admin.page, 'is not open for all of this game')
+  await admin.page.evaluate(() => {
+    const warning = document.querySelector(
+      '[data-testid="event-field-warnings"]'
+    )
+    if (warning !== null) warning.scrollIntoView({ block: 'center' })
+  })
+  await capture(admin.m, artifacts, 'game-info-availability-warning.png')
+  await run.visit(admin, '/games/gam_autoSchedulerDone?tab=info')
+  await contains(admin.page, 'Example Park')
+  await absent(admin.page, 'is not open for all of this game')
+  await admin.page.evaluate(() => {
+    const card = document.querySelector('[data-testid="event-location"]')
+    if (card !== null) card.scrollIntoView({ block: 'center' })
+  })
+  await capture(admin.m, artifacts, 'game-info-completed-no-warning.png')
+  // Restored, as the next scenarios expect.
+  await api(fx, 101, 'PUT', `/venues/${venueId}/fields/${fieldId}`, {
+    hours: FIELD_ONE_HOURS
+  })
+  await run.pass(
+    'E5',
+    'Saturday hours cut to 11:00: the upcoming G1 warns that Field 1 is not open for it; the completed game on the field warns of nothing'
+  )
+}
+
 const SCENARIOS: Record<string, (run: Run) => Promise<void>> = {
   E0: e0,
   E1: e1,
   E2: e2,
-  E3: e3
+  E3: e3,
+  E4: e4,
+  E5: e5
 }
 
 async function main(): Promise<void> {

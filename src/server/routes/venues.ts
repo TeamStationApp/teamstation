@@ -17,6 +17,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { serverConfig } from '../serverConfig'
+import { refreshFieldWarnings } from '../venues/fieldWarnings'
 import {
   asNear,
   claimPlace,
@@ -80,6 +81,13 @@ export function venueRoutes(
   } = {}
 ): Router {
   const router = Router()
+  // Edits that change a field's hours, dates, sizes or switch time, or delete
+  // it, look at its games' warnings again.
+  const fieldsChanged: FieldsChanged =
+    options.fieldsChanged ??
+    (async (trx, fieldIds) => {
+      await refreshFieldWarnings(trx, fieldIds, options.clock)
+    })
   const services: VenueServices = {
     places: options.places,
     media,
@@ -176,7 +184,7 @@ export function venueRoutes(
           param(req.params.venueId),
           clean(asVenueChanges, req.body),
           services,
-          options.fieldsChanged
+          fieldsChanged
         )
       )
     })
@@ -262,7 +270,7 @@ export function venueRoutes(
           param(req.params.fieldId),
           clean(raw => asFieldChanges(raw, false), req.body),
           services,
-          options.fieldsChanged
+          fieldsChanged
         )
       )
     })
@@ -278,7 +286,7 @@ export function venueRoutes(
           param(req.params.venueId),
           param(req.params.fieldId),
           services,
-          options.fieldsChanged
+          fieldsChanged
         )
       )
     })

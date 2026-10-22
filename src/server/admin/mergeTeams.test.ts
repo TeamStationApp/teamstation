@@ -111,6 +111,36 @@ describe('merging two rows that are one team', function () {
         status: 'scheduled'
       })
       .execute()
+    // The filmed record was linked to a registry field and warned about it.
+    await db
+      .insertInto('venues')
+      .values({
+        id: 'ven_merge',
+        google_place_id: 'place-merge',
+        name: 'Demo Park',
+        latitude: 40,
+        longitude: -75,
+        timezone: 'America/New_York'
+      })
+      .execute()
+    await db
+      .insertInto('venue_fields')
+      .values({
+        id: 'fld_merge',
+        venue_id: 'ven_merge',
+        name: 'Field 1',
+        sizes: ['50/70']
+      })
+      .execute()
+    await db
+      .updateTable('games')
+      .set({ field_id: 'fld_merge', field_size: '50/70' })
+      .where('id', '=', filmedGame)
+      .execute()
+    await db
+      .insertInto('game_field_warnings')
+      .values({ game_id: filmedGame, kind: 'outsideAvailability' })
+      .execute()
     await db
       .insertInto('videos')
       .values({
@@ -194,6 +224,12 @@ describe('merging two rows that are one team', function () {
       .where('id', '=', videoId)
       .executeTakeFirstOrThrow()
     expect(video.game_id, 'the video followed').equals(scoredGame)
+    // The field went with the fixture, and the retired game's warning with
+    // the retired game.
+    expect([game.field_id, game.field_size]).deep.equals(['fld_merge', '50/70'])
+    expect(
+      await db.selectFrom('game_field_warnings').select('game_id').execute()
+    ).deep.equals([])
 
     const gone = await db
       .selectFrom('games')

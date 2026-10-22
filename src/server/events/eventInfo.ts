@@ -27,6 +27,7 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, TeamEventsTable } from '../db/database'
+import { type Clock, realClock } from '../groups/requests'
 import { canScheduleFor, currentActor } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
@@ -34,6 +35,7 @@ import type { ScheduleRow } from '../routes/seasons'
 import { mayScheduleIn, scheduleRights } from '../schedule/scheduleGames'
 import { noteScopeChange } from '../socket/syncRevision'
 import { recheckUmpireAssignments } from '../umpires/assignments'
+import { refreshFieldWarnings } from '../venues/fieldWarnings'
 
 type ResolvedEvent = Omit<EventInfo, 'attendees' | 'replyUserIds'> & {
   teamIds: string[]
@@ -579,7 +581,8 @@ export async function updateEventInfo(
   db: Kysely<Database>,
   actor: Actor,
   id: string,
-  raw: unknown
+  raw: unknown,
+  clock: Clock = realClock
 ): Promise<void> {
   if (!isRecord(raw)) throw new TypeError('Enter event details')
   await atomic(db, async trx => {
@@ -611,6 +614,26 @@ export async function updateEventInfo(
         'Use game scheduling to change game time, venue or participants'
       )
     const fields = asEventLocationFields(raw, startAt)
+    // A game on a registry field takes its address from the field.
+    const onField =
+      event.eventKind === 'game'
+        ? ((
+            await trx
+              .selectFrom('games')
+              .select('field_id')
+              .where('id', '=', id)
+              .executeTakeFirst()
+          )?.field_id ?? null)
+        : null
+    if (
+      onField != null &&
+      (fields.address !== undefined ||
+        fields.latitude !== undefined ||
+        fields.longitude !== undefined)
+    )
+      throw new TypeError(
+        "Clear the field in the game's settings to type an address"
+      )
     const end = fields.endAt === undefined ? event.endAt : fields.endAt
     if (end != null && Date.parse(end) <= Date.parse(startAt))
       throw new TypeError('End time must be after start time')
@@ -648,6 +671,8 @@ export async function updateEventInfo(
         .execute()
       await recheckUmpireAssignments(trx, id)
       noteScopeChange(trx, { gameId: id })
+      if (onField != null && fields.endAt !== undefined)
+        await refreshFieldWarnings(trx, [onField], clock, [id])
     } else {
       const askedType =
         raw.eventType === undefined

@@ -51,6 +51,17 @@ export function gameApprovalPaths(
                 startAt: { type: 'string', format: 'date-time' },
                 venue: { type: ['string', 'null'] },
                 outsideTournament: { type: ['string', 'null'] },
+                fieldId: {
+                  type: ['string', 'null'],
+                  description:
+                    'A registry field. Left out, an edit keeps the game’s field; null clears it. Setting one copies its venue, address and pin onto the game.'
+                },
+                fieldSize: {
+                  type: ['string', 'null'],
+                  enum: ['46/60', '50/70', '55/80', '60/90', null],
+                  description:
+                    'The size the field is set up in; its only size when left out.'
+                },
                 status: { type: 'string', enum: ['scheduled', 'cancelled'] },
                 exhibition: { type: 'boolean', default: false },
                 timezone: {

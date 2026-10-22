@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import { type Kysely, type Selectable, sql } from 'kysely'
 
 import {
   badRequest,
@@ -32,6 +32,8 @@ import { type ImageKind, storeImage, UnreadableImage } from '../media/images'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { spaceConfigured } from '../media/spacesHls'
+import { notifyGameChange } from '../socket/gameChanges'
+import { noteScopeChange } from '../socket/syncRevision'
 import { asPictureBody } from '../teams/storeTeamPictures'
 import {
   type ClaimRow,
@@ -555,6 +557,40 @@ export type FieldsChanged = (
   fieldIds: string[]
 ) => Promise<void>
 
+/**
+ * Gives the upcoming scheduled games on these fields the place they take
+ * from the registry: the venue's name and address, and the field's pin (or
+ * the venue's), as linking a game to its field does.
+ */
+async function placeFieldGames(
+  trx: Kysely<Database>,
+  fieldIds: string[],
+  clock: Clock
+): Promise<void> {
+  if (fieldIds.length === 0) return
+  const now = clock.now()
+  const moved = await sql<{ id: string }>`update games g set
+      venue = v.name,
+      address = v.address,
+      latitude = coalesce(f.pin_latitude, v.latitude),
+      longitude = coalesce(f.pin_longitude, v.longitude),
+      updated_at = ${now}
+    from venue_fields f join venues v on v.id = f.venue_id
+    where g.field_id = f.id
+      and f.id in (${sql.join(fieldIds)})
+      and g.status = 'scheduled'
+      and g.start_at > ${now}
+      and (g.venue is distinct from v.name
+        or g.address is distinct from v.address
+        or g.latitude is distinct from coalesce(f.pin_latitude, v.latitude)
+        or g.longitude is distinct from coalesce(f.pin_longitude, v.longitude))
+    returning g.id`.execute(trx)
+  for (const game of moved.rows) {
+    await notifyGameChange(trx, { game: game.id, kind: 'game' })
+    noteScopeChange(trx, { gameId: game.id })
+  }
+}
+
 /** Changes the venue's details, defaults, switch time or photo. */
 export async function updateVenue(
   db: Kysely<Database>,
@@ -597,6 +633,19 @@ export async function updateVenue(
       })
       .where('id', '=', venueId)
       .execute()
+    // Renamed, its upcoming games show the new name.
+    if (changes.name != null)
+      await placeFieldGames(
+        trx,
+        (
+          await trx
+            .selectFrom('venue_fields')
+            .select('id')
+            .where('venue_id', '=', venueId)
+            .execute()
+        ).map(row => row.id),
+        clock
+      )
     if (
       fieldsChanged != null &&
       (changes.sizeSwitchMinutes != null ||
@@ -744,6 +793,8 @@ export async function updateField(
       })
       .where('id', '=', fieldId)
       .execute()
+    // A pin moved moves its upcoming games' place on the map.
+    if (changes.pin !== undefined) await placeFieldGames(trx, [fieldId], clock)
     if (
       fieldsChanged != null &&
       (changes.sizes != null ||

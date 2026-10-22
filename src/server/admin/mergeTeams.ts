@@ -7,6 +7,7 @@ import { requireDirectAdmin } from '../groups/adminGuard'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
+import { refreshFieldWarnings } from '../venues/fieldWarnings'
 
 /**
  * Joining two rows that are one real team.
@@ -299,7 +300,9 @@ export async function mergeTeams(
         arrival_time_delta = coalesce(target.arrival_time_delta, source.arrival_time_delta),
         latitude = case when target.address is null then source.latitude else target.latitude end,
         longitude = case when target.address is null then source.longitude else target.longitude end,
-        end_at = coalesce(target.end_at, source.end_at)
+        end_at = coalesce(target.end_at, source.end_at),
+        field_id = case when target.field_id is null then source.field_id else target.field_id end,
+        field_size = case when target.field_id is null then source.field_size else target.field_size end
         from games source where target.id = ${fixture.keptGameId} and source.id = ${fixture.retiredGameId}`.execute(
         trx
       )
@@ -325,10 +328,23 @@ export async function mergeTeams(
         join games g on g.id=${fixture.keptGameId} join seasons s on s.id=g.season_id
         where n.game_id=${fixture.retiredGameId} and t.league_id=s.league_id
         on conflict do nothing`.execute(trx)
+      // Its warnings go with it (they cascade); the kept game's field is
+      // looked at again once the retired game is gone.
+      const fields = await trx
+        .selectFrom('games')
+        .select('field_id')
+        .where('id', 'in', [fixture.keptGameId, fixture.retiredGameId])
+        .execute()
       await trx
         .deleteFrom('games')
         .where('id', '=', fixture.retiredGameId)
         .execute()
+      await refreshFieldWarnings(
+        trx,
+        fields.map(row => row.field_id),
+        undefined,
+        [fixture.keptGameId]
+      )
     }
 
     await trx

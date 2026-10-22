@@ -21,6 +21,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { serverConfig } from '../serverConfig'
+import { gameFieldWarnings } from '../venues/fieldWarnings'
 
 const param = (value: unknown): string => {
   if (typeof value !== 'string' || value === '') throw notFound()
@@ -65,17 +66,23 @@ export function eventInfoRoutes(
       const teamId = req.query.teamId
       if (teamId !== undefined && (typeof teamId !== 'string' || teamId === ''))
         throw badRequest('Choose one attendance team')
-      res
-        .set('Cache-Control', 'no-store')
-        .json(
-          await readEventInfo(
-            db,
-            req.actor,
-            param(req.params.id),
-            media,
-            teamId
-          )
-        )
+      const info = await readEventInfo(
+        db,
+        req.actor,
+        param(req.params.id),
+        media,
+        teamId
+      )
+      res.set('Cache-Control', 'no-store').json(
+        info.eventKind === 'game'
+          ? {
+              ...info,
+              fieldWarnings: (await gameFieldWarnings(db, info.id)).map(
+                warning => ({ kind: warning.kind, message: warning.message })
+              )
+            }
+          : info
+      )
     })
   )
   router.get(

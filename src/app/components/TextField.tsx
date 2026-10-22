@@ -20,6 +20,11 @@ export interface TextFieldProps {
   onSubmitEditing?: () => void
   onFocus?: () => void
   disabled?: boolean
+  /**
+   * Read-only because something else sets the value: drawn dimmed, with no
+   * clear button, so it doesn't look editable.
+   */
+  locked?: boolean
   multiline?: boolean
   maxLength?: number
   leadingIcon?: IconName
@@ -93,7 +98,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           ref={props.inputRef}
           accessibilityLabel={label}
           value={value}
-          editable={props.disabled !== true}
+          editable={props.disabled !== true && props.locked !== true}
           multiline={props.multiline}
           maxLength={props.maxLength}
           onChangeText={onChangeText}
@@ -139,10 +144,11 @@ export function TextField(props: TextFieldProps): React.ReactElement {
             },
             value !== '' && styles.inputWithClear,
             focused && styles.inputFocused,
-            error != null && styles.inputError
+            error != null && styles.inputError,
+            props.locked === true && styles.inputLocked
           ]}
         />
-        {value !== '' && (
+        {value !== '' && props.locked !== true && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Clear ${label}`}
@@ -221,6 +227,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   inputError: {
     borderColor: theme.dangerColor
+  },
+  inputLocked: {
+    color: theme.secondaryTextColor,
+    borderStyle: 'dashed' as const
   },
   error: {
     fontFamily: theme.regularTextFont,

@@ -311,6 +311,9 @@ export interface GamesTable {
   lineups_digest: string | null
   created_at: Timestamp
   updated_at: Timestamp
+  /** The registry field the game is on, and the size it is set up in. */
+  field_id: Generated<string | null>
+  field_size: Generated<string | null>
 }
 
 /**
@@ -959,6 +962,14 @@ export interface VenueFieldsTable {
   updated_at: Generated<Date>
 }
 
+/** A warning about a game's field, once it has been announced. */
+export interface GameFieldWarningsTable {
+  game_id: string
+  kind: 'conflict' | 'outsideAvailability' | 'fieldDeleted' | 'sizeRemoved'
+  other_ref: Generated<string>
+  notified_at: Generated<Date>
+}
+
 /** A league's claim on a venue, or its request to co-own one. */
 export interface VenueClaimsTable {
   id: string
@@ -1024,6 +1035,7 @@ export interface Database {
   events: EventsTable
   external_ids: ExternalIdsTable
   games: GamesTable
+  game_field_warnings: GameFieldWarningsTable
   game_player_stats: GamePlayerStatsTable
   game_stats_state: GameStatsStateTable
   invite_redemptions: InviteRedemptionsTable

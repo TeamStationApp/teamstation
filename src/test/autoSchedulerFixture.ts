@@ -208,5 +208,68 @@ export async function seedThrough(
   const venueId = await seedClaimedPark(fx)
   if (order < 3) return { venueId }
   const fieldId = await seedFields(fx, venueId)
+  if (order < 5) return { venueId, fieldId }
+  await seedGamesOnField(fx, venueId, fieldId)
   return { venueId, fieldId }
+}
+
+/** The second game E4 books: noon on G1's Saturday, in the other size. */
+export const SECOND_START = '2027-04-10T16:00:00.000Z'
+export const SECOND_END = '2027-04-10T18:00:00.000Z'
+
+/**
+ * E4's state: a 30-minute size switch, G1 on Field 1 at 50/70, and a second
+ * game right after it at 46/60.
+ */
+export async function seedGamesOnField(
+  fx: AutoSchedulerFixture,
+  venueId: string,
+  fieldId: string
+): Promise<string> {
+  await api(fx, 101, 'PUT', `/venues/${venueId}`, { sizeSwitchMinutes: 30 })
+  const g1 = await api<{ game: Record<string, unknown>; version: string }>(
+    fx,
+    101,
+    'GET',
+    `/games/${G1}/scheduling`
+  )
+  await api(fx, 101, 'POST', '/game-requests', {
+    sender: { kind: 'team', id: fx.teams.Hawks },
+    gameId: G1,
+    expected: g1.version,
+    game: { ...g1.game, fieldId, fieldSize: '50/70' },
+    idempotencyKey: 'seed-g1-field'
+  })
+  return await bookSecondGame(fx, fieldId)
+}
+
+/** The second game, booked through the API as the season. */
+export async function bookSecondGame(
+  fx: AutoSchedulerFixture,
+  fieldId: string
+): Promise<string> {
+  const sent = await api<{ gameId: string }>(
+    fx,
+    101,
+    'POST',
+    '/game-requests',
+    {
+      sender: { kind: 'season', id: fx.f.seasonA },
+      game: {
+        homeTeamId: fx.teams.Comets,
+        awayTeamId: fx.teams.Bears,
+        seasonId: fx.f.seasonA,
+        startAt: SECOND_START,
+        endAt: SECOND_END,
+        timezone: SEASON_TIMEZONE,
+        venue: null,
+        outsideTournament: null,
+        status: 'scheduled',
+        fieldId,
+        fieldSize: '46/60'
+      },
+      idempotencyKey: 'seed-second-game'
+    }
+  )
+  return sent.gameId
 }

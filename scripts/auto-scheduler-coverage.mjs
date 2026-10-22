@@ -60,7 +60,15 @@ const tsSuites = [
   'src/server/jsonBody.test.ts',
   'src/common/api.venues.test.ts',
   // M3: the Field Manager, venue and field screens.
-  'src/app/platform/currentPosition.test.ts'
+  'src/app/platform/currentPosition.test.ts',
+  // M4: games on fields, warnings and notifications.
+  'src/migrate/migrations/078gameFields.test.ts',
+  'src/server/venues/gameFields.test.ts',
+  'src/server/admin/mergeTeams.test.ts',
+  'src/server/schedule/gameApprovals.test.ts',
+  'src/server/events/eventInfo.test.ts',
+  'src/server/routes/schedule.test.ts',
+  'src/app/screens/gameDraft.fields.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -72,7 +80,13 @@ const appSuites = [
   'src/app/screens/FieldScreen.test.tsx',
   'src/app/components/PinMap.test.tsx',
   'src/app/components/WeeklyHoursEditor.test.tsx',
-  'src/app/platform/currentPosition.native.test.tsx'
+  'src/app/platform/currentPosition.native.test.tsx',
+  // M4: the game form's Field row and the Info tab's warnings.
+  'src/app/screens/GameFormScreen.fieldPicker.test.tsx',
+  'src/app/screens/EventInfoTab.test.tsx',
+  'src/app/screens/GameFormScreen.create.test.tsx',
+  'src/app/screens/GameFormScreen.edit.test.tsx',
+  'src/app/components/EventVenueFields.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

@@ -12,9 +12,13 @@ import {
   type GroupRef,
   isRecord
 } from './groupCreation'
+import { asFieldSizeChoice } from './venues'
 const nullableText = (raw: unknown): string | null =>
   raw == null ? null : asString(raw)
-export const asGameIntent = withEventMetadata(
+/** A missing key stays missing; `null` stays `null`, which clears the field. */
+const fieldKey = (raw: unknown): string | null | undefined =>
+  raw === undefined ? undefined : raw === null ? null : asString(raw)
+const asGameIntentBase = withEventMetadata(
   asObject({
     homeTeamId: asString,
     awayTeamId: asString,
@@ -27,13 +31,53 @@ export const asGameIntent = withEventMetadata(
     status: asLiteral('scheduled', 'cancelled')
   })
 )
-export const asGameScheduling = asObject({
+/** A game as the API carries it, with its field when it has one. */
+export function asGameIntent(raw: unknown): ReturnType<
+  typeof asGameIntentBase
+> & {
+  fieldId?: string | null
+  fieldSize?: string | null
+} {
+  const game = asGameIntentBase(raw)
+  if (!isRecord(raw)) return game
+  const fieldId = fieldKey(raw.fieldId)
+  const fieldSize = fieldKey(raw.fieldSize)
+  return {
+    ...game,
+    ...(fieldId === undefined ? {} : { fieldId }),
+    ...(fieldSize === undefined ? {} : { fieldSize })
+  }
+}
+const asGameSchedulingBase = asObject({
   game: asGameIntent,
   version: asString,
   canPropose: asBoolean,
   withdrawTeamIds: asArray(asString),
   administeredTeamIds: asOptional(asArray(asString), () => [])
 })
+const asGameFieldSummary = asObject({
+  venueId: asString,
+  venueName: asString,
+  fieldId: asString,
+  fieldName: asString,
+  size: asString,
+  address: asString
+})
+/** A game's registry field, as its form names it. */
+export type GameFieldSummary = ReturnType<typeof asGameFieldSummary>
+/** A game's scheduling state, with its field when it has one. */
+export function asGameScheduling(raw: unknown): ReturnType<
+  typeof asGameSchedulingBase
+> & {
+  field?: GameFieldSummary | null
+} {
+  const scheduling = asGameSchedulingBase(raw)
+  if (!isRecord(raw) || raw.field === undefined) return scheduling
+  return {
+    ...scheduling,
+    field: raw.field === null ? null : asGameFieldSummary(raw.field)
+  }
+}
 export const asGameScheduleProposal = asObject({
   requestId: asString,
   gameId: nullableText,
@@ -57,6 +101,12 @@ export interface GameIntent extends EventLocationFields {
   exhibition?: boolean
   timezone?: string
   status: 'scheduled' | 'cancelled'
+  /**
+   * The registry field the game is on, and the size it is set up in. Left
+   * out, an edit keeps the game's field; `null` clears it.
+   */
+  fieldId?: string | null
+  fieldSize?: string | null
 }
 export interface GameProposal {
   sender: GroupRef
@@ -149,6 +199,15 @@ export function asGameProposal(raw: unknown): GameProposal {
     throw new TypeError('Choose scheduled or cancelled')
   if (raw.game.exhibition != null && typeof raw.game.exhibition !== 'boolean')
     throw new TypeError('Exhibition must be true or false')
+  const fieldId = raw.game.fieldId
+  if (fieldId !== undefined && fieldId !== null && typeof fieldId !== 'string')
+    throw new TypeError('Choose a field')
+  const fieldSize =
+    raw.game.fieldSize === undefined || raw.game.fieldSize === null
+      ? raw.game.fieldSize
+      : asFieldSizeChoice(raw.game.fieldSize)
+  if (fieldId === null && fieldSize != null)
+    throw new TypeError('A field size needs a field')
   const result: GameProposal = {
     sender,
     game: {
@@ -165,7 +224,13 @@ export function asGameProposal(raw: unknown): GameProposal {
         : { exhibition: raw.game.exhibition }),
       ...(raw.game.timezone == null
         ? {}
-        : { timezone: asGameTimezone(raw.game.timezone) })
+        : { timezone: asGameTimezone(raw.game.timezone) }),
+      ...(fieldId === undefined ? {} : { fieldId }),
+      ...(fieldSize === undefined
+        ? fieldId === null
+          ? { fieldSize: null }
+          : {}
+        : { fieldSize })
     },
     idempotencyKey: raw.idempotencyKey
   }
