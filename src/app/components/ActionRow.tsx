@@ -1,7 +1,13 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  cacheStyles,
+  ScopedThemeProvider,
+  type Theme,
+  useTheme
+} from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
 import { CardDivider } from './Card'
 import { Icon } from './Icon'
 import { ListCard } from './ListCard'
@@ -71,7 +77,26 @@ export function ActionRow({
   )
 }
 
-/** Long lists have no bounding card; a short settings list can share one. */
+const cardThemes = new WeakMap<Theme, Theme>()
+
+/** Some themes use a light card surface with light canvas text. */
+function cardThemeOf(theme: Theme): Theme {
+  if (theme.primaryTextColor !== theme.cardBackgroundColor) return theme
+  let cardTheme = cardThemes.get(theme)
+  if (cardTheme == null) {
+    cardTheme = {
+      ...theme,
+      primaryTextColor: theme.secondaryTextColor,
+      activeColor: theme.secondaryTextColor,
+      containerBackgroundColor: theme.clearButtonColor,
+      dangerColor: tsBallpark.dangerColor
+    }
+    cardThemes.set(theme, cardTheme)
+  }
+  return cardTheme
+}
+
+/** A bounded list's rows share one card; an unbounded list has none. */
 export function ActionList({
   children,
   bounded = false,
@@ -81,7 +106,13 @@ export function ActionList({
   bounded?: boolean
   testID?: string
 }): React.ReactElement {
-  if (bounded) return <ListCard testID={testID}>{children}</ListCard>
+  const theme = useTheme()
+  if (bounded)
+    return (
+      <ScopedThemeProvider theme={cardThemeOf(theme)}>
+        <ListCard testID={testID}>{children}</ListCard>
+      </ScopedThemeProvider>
+    )
   return (
     <View testID={testID}>
       {React.Children.toArray(children).map((child, index) => (

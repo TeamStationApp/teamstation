@@ -12,7 +12,9 @@ import {
   type PublicGroup
 } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { rowLeaf, rowTextColor } from '../../test/gameFormDom'
+import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
 
@@ -140,6 +142,146 @@ function render(
 }
 
 describe('the league page', () => {
+  for (const count of [0, 1, 2]) {
+    it(`shares one team card with dividers only between its ${count} rows`, async () => {
+      const api = new TeamStationClient({ baseUrl: '/api/v1' })
+      const hawks = team('team_hawks', 'Demo Hawks')
+      const owls = team('team_owls', 'Demo Owls', true)
+      api.group = async () => ({
+        ...detail,
+        children: count === 0 ? [] : [hawks],
+        // A kept team can also be a child: show it only once.
+        keptTeams: count === 0 ? [] : count === 1 ? [hawks] : [owls, hawks]
+      })
+      await mount(render(api, []))
+      await press('Teams')
+      const cards = document.querySelectorAll<HTMLElement>(
+        '[data-testid="league-teams-card"]'
+      )
+      expect(cards).length(1)
+      const card = cards[0]
+      const rows = card.querySelectorAll<HTMLElement>(
+        '[data-testid="relationship-action-row"]'
+      )
+      expect(rows).length(count)
+      expect(card.children).length(Math.max(0, count * 2 - 1))
+      if (count === 0) {
+        expect(getComputedStyle(card).backgroundColor).equals(
+          'rgba(0, 0, 0, 0)'
+        )
+        expect(document.body.textContent).includes(
+          'No teams in this league yet.'
+        )
+      } else {
+        expect(getComputedStyle(card).backgroundColor).equals(
+          'rgb(255, 255, 255)'
+        )
+        expect(getComputedStyle(card).padding).equals('0px')
+        expect(
+          parseFloat(getComputedStyle(card).borderTopLeftRadius)
+        ).greaterThan(0)
+        expect(rows[0].textContent).includes('Demo Hawks')
+        for (const row of rows) {
+          expect(row.parentElement).equals(card)
+          expect(getComputedStyle(row).backgroundColor).equals(
+            'rgba(0, 0, 0, 0)'
+          )
+        }
+        if (count === 2) {
+          expect(rows[1].textContent).includes('Demo Owls')
+          expect(rows[1].textContent).includes('Placeholder team')
+          expect(button('Leave Demo Owls from Demo League')).equals(undefined)
+          expect(getComputedStyle(card.children[1]).height).equals('1px')
+        }
+        expect(card.contains(button('Add team')!)).equals(false)
+        expect(card.contains(button('Create team')!)).equals(false)
+      }
+    })
+  }
+  it('shows team locality and opens the selected team from its identity', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => ({
+      ...detail,
+      children: [
+        {
+          ...team('team_hawks', 'Demo Hawks'),
+          locality: {
+            city: 'Demo City',
+            region: 'Demo Region',
+            country: 'Demo Country',
+            placeId: null,
+            timezone: 'America/Los_Angeles'
+          }
+        }
+      ]
+    })
+    const opened: GroupRef[] = []
+    await mount(render(api, opened))
+    await press('Teams')
+    const card = document.querySelector('[data-testid="league-teams-card"]')!
+    expect(card.textContent).includes('Demo City, Demo Region, Demo Country')
+    await press('Open Demo Hawks')
+    expect(opened).deep.equals([{ kind: 'team', id: 'team_hawks' }])
+  })
+  it('keeps dark-theme team names readable on the shared surface', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        {render(api, [])}
+      </ScopedThemeProvider>
+    )
+    await press('Teams')
+    const card = document.querySelector<HTMLElement>(
+      '[data-testid="league-teams-card"]'
+    )!
+    const title = rowLeaf('Demo Hawks')
+    expect(getComputedStyle(title).color).equals('rgb(31, 36, 24)')
+    const seasonLabel = rowLeaf('Demo Spring')
+    const leaveLabel = rowLeaf('Leave')
+    expect(getComputedStyle(seasonLabel).color).equals('rgb(31, 36, 24)')
+    expect(getComputedStyle(leaveLabel).color).equals('rgb(186, 26, 26)')
+    const seasonButton = button('Open Demo Spring')!
+    await act(async () => {
+      seasonButton.focus()
+      seasonButton.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+    expect(getComputedStyle(seasonButton).backgroundColor).equals(
+      'rgb(196, 212, 184)'
+    )
+    expect(getComputedStyle(seasonLabel).color).equals('rgb(31, 36, 24)')
+    await act(async () => {
+      seasonButton.dispatchEvent(
+        new window.KeyboardEvent('keyup', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+    expect(getComputedStyle(seasonButton).backgroundColor).equals(
+      'rgba(0, 0, 0, 0)'
+    )
+    expect(getComputedStyle(title).color).not.equals(
+      getComputedStyle(card).backgroundColor
+    )
+  })
+  it('keeps dark-theme season names readable on the shared surface', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        {render(api, [])}
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor('Demo Spring')).equals('rgb(31, 36, 24)')
+  })
   it('lists seasons newest first by time frame, with no schedule', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail
@@ -335,6 +477,15 @@ describe('the league page', () => {
     await press('Teams')
     expect(button('Create team')).equals(undefined)
     expect(button('More for Demo Hawks')).equals(undefined)
+    expect(button('Leave Demo Hawks from Demo League')).equals(undefined)
+    expect(
+      document.querySelector('[data-testid="relationship-action-divider"]')
+    ).equals(null)
+    expect(
+      getComputedStyle(
+        document.querySelector('[data-testid="league-teams-card"]')!
+      ).backgroundColor
+    ).equals('rgb(255, 255, 255)')
   })
 })
 
