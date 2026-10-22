@@ -24,7 +24,7 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -42,6 +42,8 @@ jobs:
       TS_TEST_REDIS_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -66,6 +68,7 @@ jobs:
       - name: Configure the synthetic test environment
         run: |
           echo "$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin" >> "$GITHUB_PATH"
+          echo "TS_FFMPEG=$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
           node -e 'require("fs").writeFileSync("serverConfig.json", JSON.stringify({ffmpegPath: process.cwd() + "/.test-tools/ffmpeg/bin/ffmpeg", ffmpegVersion: "9.0.1"}))'
           .test-tools/ffmpeg/bin/ffmpeg -version
           .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx264
@@ -84,6 +87,8 @@ jobs:
       BUNDLE_FROZEN: 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

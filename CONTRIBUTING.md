@@ -113,7 +113,8 @@ create their own repositories safely. Allow about twenty minutes for the
 full suite. It needs Node 24,
 FFmpeg 9.0.1 (with libx264/libx265), Redis, and PostgreSQL 18 with permission
 to create disposable test databases. Set `ffmpegPath` in the gitignored
-`serverConfig.json` to that executable and put its directory on PATH. Tests
+`serverConfig.json` to that executable, set `TS_FFMPEG` to the same path
+for the standalone media fixtures, and put its directory on PATH. Tests
 use `TS_TEST_DATABASE_URL` or
 `postgres://localhost:5433/postgres`; use a dedicated local test cluster.
 Redis uses `TS_TEST_REDIS_URL` or `redis://127.0.0.1:6379/15`; reserve that
