@@ -13,7 +13,7 @@ import {
   gumboIdOf,
   insertUser
 } from '../../server/users/insertUser'
-import { migrateDown, migrateUp } from '../runner'
+import { migrateUp } from '../runner'
 import { testDatabaseUrl } from '../testDatabase'
 import { migration070PlayerGumboIds } from './070playerGumboIds'
 import { migrations } from './index'
@@ -52,10 +52,8 @@ describe('070 scoring identities only when needed', function () {
     await admin.query(`create database ${name}`)
     const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
     pool = new Pool({ connectionString: url })
-    await migrateUp(
-      pool,
-      migrations.filter(m => m.name <= migration070PlayerGumboIds.name)
-    )
+    // Current account merging also reads tables introduced after migration 070.
+    await migrateUp(pool, migrations)
     db = makeDatabase(url)
     await db
       .insertInto('teams')
@@ -271,7 +269,8 @@ describe('070 scoring identities only when needed', function () {
       .execute()
     let failure: unknown
     try {
-      await migrateDown(pool, [migration070PlayerGumboIds])
+      // Exercise this migration's refusal, not whichever migration is latest.
+      await pool.query(migration070PlayerGumboIds.down)
     } catch (error) {
       failure = error
     }

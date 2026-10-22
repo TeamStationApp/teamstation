@@ -40,6 +40,8 @@ describe('a still from the Space', function () {
 
   const ffmpegPath = serverConfig.ffmpegPath
   let workDir = ''
+  let scratchRoot = ''
+  const originalTemp = process.env.TMPDIR
   let ready = false
   let server: Server | undefined
   let port = 0
@@ -68,6 +70,10 @@ describe('a still from the Space', function () {
       return
     }
     workDir = await mkdtemp(join(tmpdir(), 'tsSpaceStill-'))
+    scratchRoot = await mkdtemp(join(workDir, 'scratch-'))
+    // The cleanup assertion owns its temp root, even during concurrent suites.
+    process.env.TMPDIR = scratchRoot
+    await writeFile(join(workDir, 'ts-still-foreign'), 'foreign fixture')
 
     // Half a minute, so the remux writes several fragments and second 20 is
     // deep inside one of the later ones.
@@ -154,6 +160,8 @@ describe('a still from the Space', function () {
 
   after(async function () {
     server?.close()
+    if (originalTemp == null) delete process.env.TMPDIR
+    else process.env.TMPDIR = originalTemp
     if (workDir !== '') await rm(workDir, { recursive: true, force: true })
   })
 
@@ -274,9 +282,11 @@ describe('a still from the Space', function () {
     expect(puts).equals(before)
   })
 
-  it('leaves nothing on this machine once the still is kept', async function () {
-    const names = await readdir(tmpdir())
-    expect(names.filter(name => name.startsWith('ts-still-'))).deep.equals([])
+  it('removes its own scratch files and leaves unrelated files alone', async function () {
+    expect(await readdir(scratchRoot)).deep.equals([])
+    expect(await readFile(join(workDir, 'ts-still-foreign'), 'utf8')).equals(
+      'foreign fixture'
+    )
   })
 
   it('has nothing to offer for a moment past the end, and keeps nothing', async function () {

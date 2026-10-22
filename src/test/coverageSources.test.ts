@@ -14,6 +14,9 @@ describe('coverage source enumeration', () => {
       execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
     try {
       git('init', '-q', '-b', 'master')
+      git('config', 'user.name', 'Demo Developer')
+      git('config', 'user.email', 'developer@example.com')
+      git('config', 'commit.gpgSign', 'false')
       mkdirSync(join(dir, 'src/app'), { recursive: true })
       for (const name of [
         'deleted.ts',
@@ -59,6 +62,9 @@ describe('coverage source enumeration', () => {
       execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
     try {
       git('init', '-q', '-b', 'master')
+      git('config', 'user.name', 'Demo Developer')
+      git('config', 'user.email', 'developer@example.com')
+      git('config', 'commit.gpgSign', 'false')
       mkdirSync(join(dir, 'old/app'), { recursive: true })
       mkdirSync(join(dir, 'src'), { recursive: true })
       const body = Array.from(

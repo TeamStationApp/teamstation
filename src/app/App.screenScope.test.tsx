@@ -55,6 +55,7 @@ describe('the scope the visible route holds', () => {
         isAdmin: false
       })
     api.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    api.umpireLeagues = async () => []
     api.hasNotifications = async () => false
     api.teams = async () => {
       reads.push('teams')

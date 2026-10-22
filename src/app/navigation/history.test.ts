@@ -141,7 +141,10 @@ describe('clearing a tab drops only a straight-line suffix', function () {
     expect(frameMatchesPath({ name: 'player' }, '/players/id')).equals(false)
     expect(frameMatchesPath({ name: 'season' }, '/seasons/sea_1')).equals(false)
     expect(
-      frameMatchesPath({ name: 'group', kind: 'league' }, '/groups/league/a%2Fb')
+      frameMatchesPath(
+        { name: 'group', kind: 'league' },
+        '/groups/league/a%2Fb'
+      )
     ).equals(false)
     expect(
       frameMatchesPath({ name: 'group', id: 'a/b' }, '/groups/league/a%2Fb')

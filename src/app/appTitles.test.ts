@@ -67,15 +67,24 @@ describe('app titles', function () {
 
   it('hands the game card up as the card itself goes under', function () {
     const game = readFileSync(join(__dirname, 'screens/GameScreen.tsx'), 'utf8')
-    // Measured across the block the card shares with the pills, the score only
-    // arrived once the pills had gone under too — long after the thing it is a
-    // copy of had left the screen. So: the card alone.
-    expect(game).contains('ref={handoff.ref}>')
-    expect(game).contains('{scoreboard}')
-    // And it has to survive Android's view flattening, which folds away a view
-    // that only groups its children — leaving nothing with a position to hand
-    // anything over from.
-    expect(game).contains('collapsable={false} ref={handoff.ref}')
+    // Watch and the other sections now delegate measurement to pinned bands.
+    expect(game).contains('head={scoreboard}')
+    expect(game).contains(
+      '<CardBand part={pinned.cardBand}>{scoreboard}</CardBand>'
+    )
+    for (const layout of [
+      'GameWatchLayout.tsx',
+      'GameWatchLayout.native.tsx'
+    ]) {
+      const source = readFileSync(join(__dirname, 'screens', layout), 'utf8')
+      expect(source).match(
+        /ref=\{pinned\.cardBand\.ref\}[\s\S]*?onLayout=\{pinned\.cardBand\.handleLayout\}[\s\S]*?\{short \? null : head\}/
+      )
+      // The pills have their own measured band, after the card's band.
+      expect(source.indexOf('{short ? null : head}')).lessThan(
+        source.indexOf('ref={pinned.pillBand.ref}')
+      )
+    }
   })
 
   it('keeps the pane keyed, so a breakpoint cannot remount the player', function () {

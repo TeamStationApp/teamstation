@@ -38,3 +38,52 @@ describe('scoring layering', function () {
     ])
   })
 })
+
+describe('scoring read-only import boundary', function () {
+  it('allows types and audited readers, but not mutators hidden by import syntax', async () => {
+    const { checkLayering, main } = (await import(
+      resolve('scripts/checkScoringLayering.mjs')
+    )) as {
+      checkLayering: (root: string) => string[]
+      main: (root: string) => number
+    }
+    const root = mkdtempSync(join(tmpdir(), 'layering-readers-'))
+    mkdirSync(join(root, 'src/common/scoring'), { recursive: true })
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    mkdirSync(join(root, 'src/server'), { recursive: true })
+    const file = join(root, 'src/app/readers.ts')
+    const prefix = '../common/scoring/'
+    for (const source of [
+      `import { ordinal, begun as started } from '${prefix}lineup'`,
+      `import { confirmedSides, revealedSides } from '${prefix}lineupHistory'`,
+      `import type { BoardLine } from '${prefix}boardLineTypes'`,
+      `import { type Lineup } from '${prefix}lineupHistory'`,
+      `export type { Lineup } from '${prefix}lineupHistory'`,
+      `export { ordinal as position } from '${prefix}lineup'`,
+      `import type State = require('${prefix}state')`,
+      "export { outside } from 'example'; export { local }; const x = import(name)",
+      "import { ordinary } from './ordinary'; import React from 'react'"
+    ]) {
+      writeFileSync(file, source)
+      expect(checkLayering(root), source).deep.equals([])
+    }
+    expect(main(root)).equals(0)
+    for (const source of [
+      `import { updateDefense as ordinal } from '${prefix}lineup'`,
+      `import { ordinal, startAppearance } from '${prefix}lineup'`,
+      `import * as lineup from '${prefix}lineup'`,
+      `import lineup, { ordinal } from '${prefix}lineup'`,
+      `import '${prefix}lineup'`,
+      `const x = import('${prefix}lineup')`,
+      `const x = require('${prefix}lineup')`,
+      `import x = require('${prefix}lineup')`,
+      `export * from '${prefix}lineup'`,
+      `export { updateDefense as ordinal } from '${prefix}lineup'`,
+      `import { documentOf } from '${prefix}document'`
+    ]) {
+      writeFileSync(file, source)
+      expect(checkLayering(root), source).has.length(1)
+    }
+    expect(main(root)).equals(1)
+  })
+})

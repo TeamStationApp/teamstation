@@ -62,6 +62,7 @@ coverage/
 /deployConfig.json
 /.bundle/
 /vendor/bundle/
+/.test-tools/
 /fastlane/report.xml
 /fastlane/README.md
 /fastlane/Preview.html

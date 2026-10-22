@@ -57,8 +57,9 @@ function columnOf(container: HTMLElement): HTMLElement {
 }
 
 function frameOf(container: HTMLElement): HTMLElement {
-  const marked = container.querySelector('[aria-label="Play"]')
-  const frame = marked?.parentElement
+  // The row owns the button; its poster's play glyph is decorative.
+  const duration = leaf(container, '1:30:00')
+  const frame = duration?.parentElement
   if (frame == null) throw new Error('no poster frame')
   return frame
 }
@@ -129,14 +130,14 @@ describe('GameRow thumbnail', function () {
         first="Badgers"
         second="@ Sox"
         detail="Sun, Oct 4 · 4:45 PM"
-        venue="Poway National Little League"
+        venue="Demo Field"
         posterUrl="https://example.com/poster.jpg"
         length="1:30:00"
         onPress={() => undefined}
       />
     )
     const column = columnOf(container)
-    const venue = leaf(container, 'Poway National Little League')
+    const venue = leaf(container, 'Demo Field')
     if (venue == null) throw new Error('no venue')
     expect(column.contains(venue)).equals(false)
     await reportHeight(column, 72)

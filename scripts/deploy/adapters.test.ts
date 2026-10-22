@@ -832,6 +832,10 @@ describe('Native build and signing adapters', () => {
       ).certificates[0],
       profile.certificates[0]
     )
+  })
+  it('reads a real application plist with the macOS system utility', async function () {
+    if (process.platform !== 'darwin') this.skip()
+    Processes.prototype.run = original
     const appPath = appTree(path.join(root, 'Real.app'))
     // The real system plist reader is exercised with a generated scalar-only plist.
     writeFileSync(
