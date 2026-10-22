@@ -125,7 +125,9 @@ Browser/device `*.e2e.ts` and external-model `*.integration.ts` scenarios
 require their own environments and are not part of this command.
 
 `npm run test:portable` adds the event-control, deployment, hosting and
-coverage-provenance contracts. Deployment tests need the locked Ruby bundle:
+coverage-provenance contracts. Hosting tests need Caddy 2.11 or newer; set
+`CADDY_BINARY` to its executable path (the default is Homebrew's Apple Silicon
+path). Deployment tests need the locked Ruby bundle:
 
 ```sh
 # Use Ruby 4 and Bundler 4.0.3 on PATH.
@@ -135,7 +137,9 @@ BUNDLE_FROZEN=true bundle install
 npm run test:portable
 ```
 
-Real signing, Mason and hosting integration checks remain opt-in; a pending
+The system plist-reader check runs on macOS; Linux reports it as pending
+while still running the Ruby profile and Xcode-project checks. Real signing,
+Mason and hosting integration checks remain opt-in; a pending
 case is not evidence that its external environment passed. GitHub Actions
 runs `Test baseline` and `Portable contracts` on pushes and on the PR merge
 result. Require both checks in the master ruleset, with branches up to date:

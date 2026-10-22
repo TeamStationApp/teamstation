@@ -97,6 +97,14 @@ jobs:
         with:
           ruby-version: '4.0.1'
           bundler: '4.0.3'
+      - name: Install the pinned Caddy test binary
+        run: |
+          curl --fail --location --retry 3 https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz -o "$RUNNER_TEMP/caddy.tar.gz"
+          echo "a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7  $RUNNER_TEMP/caddy.tar.gz" | sha512sum --check
+          mkdir -p .test-tools/caddy
+          tar -xzf "$RUNNER_TEMP/caddy.tar.gz" -C .test-tools/caddy caddy
+          echo "CADDY_BINARY=$GITHUB_WORKSPACE/.test-tools/caddy/caddy" >> "$GITHUB_ENV"
+          .test-tools/caddy/caddy version
       - run: npm ci
       - run: npm run prepare
       - run: bundle install
