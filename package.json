@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "Paul Puey <paul@teamstation.app>",
-  "description": "TeamStation — a platform for youth sports team management, scoring, and video streaming",
+  "description": "TeamStation \u2014 a platform for youth sports team management, scoring, and video streaming",
   "engines": {
     "node": ">=24.9.0"
   },
@@ -39,7 +39,7 @@
     "camera-sweep": "node -r sucrase/register src/server/dev/cameraSweep.ts",
     "clean": "rimraf lib",
     "coverage.tags": "node scripts/event-tags-coverage.mjs",
-    "coverage": "npm run coverage.scripts && npm run coverage.app && npm run coverage.server && npm run coverage.changed.server",
+    "coverage": "npm run coverage.scripts && npm run coverage.app && npm run coverage.server && npm run coverage.changed.server && npm run coverage.umpires",
     "coverage.uiTweaks": "node scripts/ui-tweaks-coverage.mjs",
     "coverage.sync": "node scripts/sync-changed-coverage.mjs",
     "coverage.lineupQr": "node scripts/lineup-qr-coverage.mjs",
@@ -103,7 +103,10 @@
     "coverage.scoreboardEventLog": "node scripts/scoreboard-coverage.mjs",
     "coverage.userIds": "node scripts/user-id-coverage.mjs",
     "coverage.playerLayouts": "node scripts/player-layouts-coverage.mjs",
-    "test.playerNative": "node scripts/build-player-native-tests.mjs"
+    "test.playerNative": "node scripts/build-player-native-tests.mjs",
+    "coverage.umpires": "node scripts/umpire-coverage.mjs",
+    "coverage.umpires.server": "node scripts/umpire-server-coverage.mjs",
+    "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",

@@ -142,7 +142,8 @@ describe('a navbar press clears that tab', () => {
       })
     proto.playerHighlights = async () => ({
       highlights: [],
-      nextBefore: null
+      nextBefore: null,
+      withoutVideo: 0
     })
     proto.discoverGroups = async () => [league]
     proto.group = async ref =>

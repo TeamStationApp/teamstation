@@ -17,6 +17,8 @@ export interface MaestroHandle {
   assertNotVisible: (args: Record<string, unknown>) => Promise<unknown>
   openBrowser: (args: Record<string, unknown>) => Promise<unknown>
   openLink: (args: Record<string, unknown>) => Promise<unknown>
+  scroll: (args: Record<string, unknown>) => Promise<unknown>
+  evalBrowserScript: (args: Record<string, unknown>) => Promise<unknown>
   scrollUntilVisible: (args: Record<string, unknown>) => Promise<unknown>
   swipe: (args: Record<string, unknown>) => Promise<unknown>
   hideKeyboard: () => Promise<unknown>
