@@ -1,3 +1,4 @@
+import Foundation
 import DirectorPipeline
 import DirectorUI
 import Testing
@@ -79,5 +80,20 @@ struct DebugHUDLinesTests {
     let lines = DebugHUDLines.make(TelemetrySnapshot()).flatMap { $0 }
     #expect(!lines.contains { $0.id == "hud-discovery-status" })
     #expect(lines.contains { $0.id == "hud-source-available" && $0.text == "live=0" })
+  }
+
+  @Test("The programme composer's time, drops and test delay reach the panel and dump-state")
+  func programmeComposeTelemetry() throws {
+    var snapshot = TelemetrySnapshot()
+    snapshot.programmeComposeMillisecondsAverage = 1.24
+    snapshot.programmeComposeMillisecondsMax = 21.5
+    snapshot.programmeComposeDropped = 42
+    snapshot.programmeComposeDelayMilliseconds = 20
+    #expect(snapshot.programmeComposeSummary == "1.2 avg · 21.5 max ms")
+    let json = try #require(String(data: try JSONEncoder().encode(snapshot), encoding: .utf8))
+    #expect(json.contains("\"programmeComposeDropped\":42"))
+    #expect(json.contains("\"programmeComposeMillisecondsMax\":21.5"))
+    #expect(json.contains("\"programmeComposeMillisecondsAverage\":1.24"))
+    #expect(json.contains("\"programmeComposeDelayMilliseconds\":20"))
   }
 }

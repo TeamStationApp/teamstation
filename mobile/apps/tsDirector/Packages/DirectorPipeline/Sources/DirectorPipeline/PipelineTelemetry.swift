@@ -637,6 +637,16 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var programmeSkippedPictures: UInt64 = 0
   /// Programme pictures left out because the compositor could not make one.
   public var programmeComposeMisses: UInt64 = 0
+  /// Programme pictures dropped because the compositor was behind. The camera on air hands its
+  /// pictures over and never waits, so a slow compositor costs the programme these instead.
+  public var programmeComposeDropped: UInt64 = 0
+  /// How long a programme picture takes from the camera handing it over to the compositor finishing
+  /// it: the worst over the last second or so and the running average, in milliseconds. A picture
+  /// that takes longer than its share of the live delay arrives late and is not shown.
+  public var programmeComposeMillisecondsMax: Double = 0
+  public var programmeComposeMillisecondsAverage: Double = 0
+  /// The test harness's artificial compose delay, so a dump says when one is on. Zero in use.
+  public var programmeComposeDelayMilliseconds: Double = 0
   /// Fades into silence and silence emitted in each mix, over every source.
   public var audioMixFades: UInt64 = 0
   public var audioMixConcealedSeconds: Double = 0
@@ -771,6 +781,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var recordingSeconds: Int {
     guard dvr.isRecording, let startedAt = dvr.recordingStartedAt else { return 0 }
     return max(0, Int(clockSeconds - startedAt))
+  }
+
+  /// The Performance panel's compose time: running average and worst over the last second or so.
+  public var programmeComposeSummary: String {
+    String(format: "%.1f avg · %.1f max ms", programmeComposeMillisecondsAverage, programmeComposeMillisecondsMax)
   }
 }
 
