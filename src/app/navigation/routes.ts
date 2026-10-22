@@ -82,6 +82,13 @@ export type CreationRoute =
     }
   | { name: 'notifications' }
   | { name: 'notification'; id: string }
+  /** A league's Auto-Scheduler, and its Field Manager. */
+  | { name: 'autoScheduler'; leagueId: string }
+  | { name: 'fieldManager'; leagueId: string }
+  /** A venue in the registry, or a Google place not yet in it. */
+  | { name: 'venue'; venueId: string }
+  | { name: 'venuePlace'; placeId: string }
+  | { name: 'venueField'; venueId: string; fieldId: string }
 
 export function isCreationRoute(route: {
   name: string
@@ -107,7 +114,12 @@ export function isCreationRoute(route: {
     'notification',
     'promoteExternal',
     'createGame',
-    'gameSettings'
+    'gameSettings',
+    'autoScheduler',
+    'fieldManager',
+    'venue',
+    'venuePlace',
+    'venueField'
   ].includes(route.name)
 }
 function groupKind(value: string | null | undefined): value is GroupKind {
@@ -396,6 +408,10 @@ export function parseRoute(path: string, search = ''): Route {
           return { name: 'groupLocation', kind: id, id: groupId, ...context }
         return { name: 'groupSettings', kind: id, id: groupId, ...context }
       }
+      if (parts[3] === 'scheduler' && id === 'league')
+        return parts[4] === 'fields'
+          ? { name: 'fieldManager', leagueId: groupId }
+          : { name: 'autoScheduler', leagueId: groupId }
       if (parts[3] === 'invite-administrator' && id === 'team')
         return { name: 'promoteExternal', id: groupId }
       if (parts[3] === 'create-game' && id !== 'league')
@@ -509,6 +525,19 @@ export function parseRoute(path: string, search = ''): Route {
             ? undefined
             : whenOf(query.get('when'), 'past')
       }
+    case 'venues':
+      if (id == null) return { name: 'home' }
+      if (id === 'place')
+        return parts[2] == null
+          ? { name: 'home' }
+          : { name: 'venuePlace', placeId: decodeURIComponent(parts[2]) }
+      if (parts[2] === 'fields' && parts[3] != null)
+        return {
+          name: 'venueField',
+          venueId: decodeURIComponent(id),
+          fieldId: decodeURIComponent(parts[3])
+        }
+      return { name: 'venue', venueId: decodeURIComponent(id) }
     case 'leagues':
       if (id == null) return { name: 'home' }
       if (parts[2] != null) return peopleRoute('league', id, parts)
@@ -661,6 +690,16 @@ export function routePath(route: Route): string {
       return settingsChildPath(route, 'invites')
     case 'groupLocation':
       return settingsChildPath(route, 'location')
+    case 'autoScheduler':
+      return `/groups/league/${encodeURIComponent(route.leagueId)}/scheduler`
+    case 'fieldManager':
+      return `/groups/league/${encodeURIComponent(route.leagueId)}/scheduler/fields`
+    case 'venue':
+      return `/venues/${encodeURIComponent(route.venueId)}`
+    case 'venuePlace':
+      return `/venues/place/${encodeURIComponent(route.placeId)}`
+    case 'venueField':
+      return `/venues/${encodeURIComponent(route.venueId)}/fields/${encodeURIComponent(route.fieldId)}`
     case 'groupLink':
       return `/groups/${route.kind}/${encodeURIComponent(route.id)}/link?target=${route.targetKind}&relationship=${route.relationship}&direction=${route.direction}`
     case 'createGroup': {

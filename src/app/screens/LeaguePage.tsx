@@ -11,6 +11,7 @@ import {
   Emblem,
   HandoffView,
   initialsOf,
+  ListRow,
   PillTabs,
   SectionHeader,
   SettingsGear,
@@ -39,6 +40,8 @@ export interface LeaguePageProps {
   onSettings: (group: GroupRef) => void
   onLink: (choice: GroupLinkChoice) => void
   onCreateExternal?: (custodian: GroupRef) => void
+  /** Opens the league's Auto-Scheduler; offered to its admins. */
+  onAutoScheduler?: (league: GroupRef) => void
   /** A player on the People tab, opened on their page. */
   onOpenPlayer?: (userId: string, name: string) => void
   /** Anybody else on the People tab, as their profile. */
@@ -166,6 +169,16 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               ? 'Location not set'
               : localityLabel(group.locality)}
           </Text>
+          {detail.canManage && props.onAutoScheduler != null && (
+            <ListRow
+              title="Auto-Scheduler"
+              subtitle="Fields, season settings and schedules"
+              emblemIcon="event"
+              onPress={() => {
+                props.onAutoScheduler?.(league)
+              }}
+            />
+          )}
         </Card>
       }
       sections={

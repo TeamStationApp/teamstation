@@ -84,10 +84,13 @@ import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { AutoSchedulerScreen } from './screens/AutoSchedulerScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
 import { EventSettingsScreen } from './screens/EventSettingsScreen'
+import { FieldManagerScreen } from './screens/FieldManagerScreen'
+import { FieldScreen } from './screens/FieldScreen'
 import {
   GameFormScreen,
   type GameSettingsResult
@@ -115,6 +118,7 @@ import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
+import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
@@ -1802,6 +1806,45 @@ function Shell(props: AppProps): React.ReactElement {
           pop()
         }}
       />
+    ) : top.name === 'autoScheduler' ? (
+      <AutoSchedulerScreen
+        key={top.leagueId}
+        onFieldManager={() => {
+          push({ name: 'fieldManager', leagueId: top.leagueId })
+        }}
+      />
+    ) : top.name === 'fieldManager' ? (
+      <FieldManagerScreen
+        key={top.leagueId}
+        client={client}
+        onOpenVenue={venueId => {
+          push({ name: 'venue', venueId })
+        }}
+        onOpenPlace={placeId => {
+          push({ name: 'venuePlace', placeId })
+        }}
+      />
+    ) : top.name === 'venue' || top.name === 'venuePlace' ? (
+      <VenueScreen
+        key={top.name === 'venue' ? top.venueId : top.placeId}
+        client={client}
+        venueId={top.name === 'venue' ? top.venueId : undefined}
+        placeId={top.name === 'venuePlace' ? top.placeId : undefined}
+        onOpenField={(venueId, fieldId) => {
+          push({ name: 'venueField', venueId, fieldId })
+        }}
+        onClaimed={venueId => {
+          replace({ name: 'venue', venueId })
+        }}
+      />
+    ) : top.name === 'venueField' ? (
+      <FieldScreen
+        key={`${top.venueId}:${top.fieldId}`}
+        client={client}
+        venueId={top.venueId}
+        fieldId={top.fieldId}
+        onGone={pop}
+      />
     ) : top.name === 'groupLocation' ? (
       <GroupLocationPage
         key={`${top.kind}:${top.id}`}
@@ -1875,6 +1918,9 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onCreateExternal={custodian => {
           push({ name: 'createGroup', kind: 'team', custodian })
+        }}
+        onAutoScheduler={league => {
+          push({ name: 'autoScheduler', leagueId: league.id })
         }}
         onCreateGame={group => {
           if (group.kind !== 'league')
@@ -2108,6 +2154,26 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         onOpen={id => {
           push({ name: 'notification', id })
+        }}
+        onOpenTarget={notice => {
+          if (notice.venueId != null)
+            push({ name: 'venue', venueId: notice.venueId })
+          else if (notice.gameId != null)
+            push({
+              name: 'game',
+              gameId: notice.gameId,
+              title: '',
+              tab: 'info'
+            })
+          else if (notice.leagueId != null)
+            push({ name: 'autoScheduler', leagueId: notice.leagueId })
+          else if (notice.seasonId != null)
+            push({
+              name: 'group',
+              kind: 'season',
+              id: notice.seasonId,
+              tab: 'schedule'
+            })
         }}
         onUpload={gameId => {
           push({ name: 'game', gameId, title: '', tab: 'watch' })
@@ -2816,6 +2882,27 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   if (route.name === 'gameSettings')
     return { [tab]: [gameUnder(route.gameId), route] }
+  if (route.name === 'autoScheduler' || route.name === 'fieldManager') {
+    const league = {
+      name: 'group' as const,
+      kind: 'league' as const,
+      id: route.leagueId
+    }
+    const scheduler = {
+      name: 'autoScheduler' as const,
+      leagueId: route.leagueId
+    }
+    return {
+      [tab]:
+        route.name === 'autoScheduler'
+          ? [league, scheduler]
+          : [league, scheduler, route]
+    }
+  }
+  if (route.name === 'venueField')
+    return {
+      [tab]: [{ name: 'venue' as const, venueId: route.venueId }, route]
+    }
   if (
     route.name === 'groupLocation' ||
     route.name === 'groupAddPeople' ||

@@ -58,11 +58,22 @@ const tsSuites = [
   'src/server/media/images.test.ts',
   'src/server/openapi.test.ts',
   'src/server/jsonBody.test.ts',
-  'src/common/api.venues.test.ts'
+  'src/common/api.venues.test.ts',
+  // M3: the Field Manager, venue and field screens.
+  'src/app/platform/currentPosition.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
-const appSuites = []
+const appSuites = [
+  // M3: the Field Manager, venue and field screens.
+  'src/app/App.fieldManager.test.tsx',
+  'src/app/screens/FieldManagerScreen.test.tsx',
+  'src/app/screens/VenueScreen.test.tsx',
+  'src/app/screens/FieldScreen.test.tsx',
+  'src/app/components/PinMap.test.tsx',
+  'src/app/components/WeeklyHoursEditor.test.tsx',
+  'src/app/platform/currentPosition.native.test.tsx'
+]
 
 const base = process.env.TS_COVERAGE_BASE
 if (base == null)
@@ -138,6 +149,7 @@ for (const [index, suite] of appSuites.entries()) {
       'react-native-webview': './src/test/eventWebViewStub.tsx',
       'react-native-maps': './src/test/eventNativeMapStub.tsx',
       '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',
+      '@react-native-community/geolocation': './src/test/geolocationStub.ts',
       '@react-native/assets-registry/registry':
         'react-native-web/dist/modules/AssetRegistry'
     },

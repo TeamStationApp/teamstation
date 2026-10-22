@@ -2,6 +2,7 @@ import React from 'react'
 
 export let webViewProps: {
   source?: { html: string; baseUrl: string }
+  onMessage?: (event: { nativeEvent: { data: string } }) => void
   userAgent?: string
   onShouldStartLoadWithRequest?: (request: {
     url: string

@@ -4,7 +4,11 @@ import { Pressable, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
-import { type Notification, RECORDING_UPLOAD } from '../../common/notifications'
+import {
+  isSchedulingNews,
+  type Notification,
+  RECORDING_UPLOAD
+} from '../../common/notifications'
 import { Button, Card, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -33,11 +37,17 @@ const isReminder = (item: Notification): boolean =>
 export function NotificationsScreen({
   client,
   onOpen,
+  onOpenTarget,
   onUpload,
   onDismissed
 }: {
   client: TeamStationClient
   onOpen: (id: string) => void
+  /**
+   * A scheduling notice opens what it names: a venue, a game, a league's
+   * Auto-Scheduler or a season. It is marked read first.
+   */
+  onOpenTarget?: (notice: Notification) => void
   /** Opens the reminder's game on its Videos tab, where Upload Recording is. */
   onUpload?: (gameId: string) => void
   /** A reminder was dismissed, so the header's pending dot is asked again. */
@@ -264,7 +274,10 @@ export function NotificationsScreen({
               accessibilityRole="button"
               accessibilityLabel={item.title}
               onPress={() => {
-                onOpen(item.requestId)
+                if (onOpenTarget != null && isSchedulingNews(item.type)) {
+                  client.viewNotification(item.id).catch(() => undefined)
+                  onOpenTarget(item)
+                } else onOpen(item.requestId)
               }}
             >
               <Card style={styles.card}>
