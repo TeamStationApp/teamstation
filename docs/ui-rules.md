@@ -65,6 +65,9 @@ and every text column at the same left edge, regardless of the number of lines.
   teams, seasons or leagues in one `ListCard`, with padded rows and hairline
   dividers. Relationship lists with independent actions use `ActionList bounded`
   and `GroupRelationshipRow`. Each category may have its own shared card.
+  League Teams, including kept placeholder teams, is one such collection:
+  keep its heading, count and Add/Create actions outside the shared card,
+  even when the list is large. An empty collection has no empty card shell.
 
 Navigation and a trailing action such as Follow remain separate touch targets.
 Do not nest the action inside the navigation button. Empty, loading and error
