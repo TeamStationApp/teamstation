@@ -13,6 +13,7 @@ import {
 import { MAX_BODY } from '../../common/chatContent'
 import { AppHeader } from '../components/AppHeader'
 import { Button } from '../components/Button'
+import { TextField } from '../components/TextField'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { ChatOverlayHost } from './ChatOverlayHost'
@@ -1093,5 +1094,115 @@ describe('mention send/edit and draft compatibility', function () {
     )
     setNativeComposerSelection(undefined, { start: 0, end: 0 })
     expect(values).deep.equals([{ selection: { start: 3, end: 3 } }])
+  })
+})
+
+describe('mention search controlled input commit', function () {
+  function insert(field: HTMLInputElement, text: string): void {
+    const start = field.selectionStart!
+    const end = field.selectionEnd!
+    const next = field.value.slice(0, start) + text + field.value.slice(end)
+    // Use the actual DOM value setter, without replacing it or calling React props.
+    Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(field, next)
+    field.setSelectionRange(start + text.length, start + text.length)
+    field.dispatchEvent(
+      new window.InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: text
+      })
+    )
+  }
+  function rapidSearch(field: HTMLInputElement): void {
+    const original = field
+    let expected = ''
+    for (const character of 'Bobby') {
+      expected += character
+      insert(field, character)
+      expect(
+        field.value,
+        'Search retains each ordinary input immediately'
+      ).equals(expected)
+      expect(labelled('Search members'), 'Same connected Search node').equals(
+        original
+      )
+      expect(field.isConnected).equals(true)
+      expect(document.activeElement).equals(original)
+      expect(field.selectionStart).equals(expected.length)
+      expect(field.selectionEnd).equals(expected.length)
+    }
+  }
+  it('retains unwaited per-key query, caret and exact duplicate filtering through the real host and chooser', async function () {
+    const selected: number[] = []
+    await render(
+      <MentionPicker
+        members={[
+          member(2, 'Bobby Witt Jr.', { label: 'Coach' }),
+          member(3, 'Bobby Witt Jr.', { label: 'Guardian' }),
+          member(4, 'Aaron Judge', { label: 'Player' })
+        ]}
+        onSelect={id => selected.push(id)}
+        onClose={() => {}}
+      />
+    )
+    const search = labelled('Search members') as HTMLInputElement
+    // Intentionally outside act and without waits/flushSync between native DOM
+    // events: act-flushing each character would wait for passive publication.
+    rapidSearch(search)
+    await act(async () => {
+      await wait()
+    })
+    expect(search.value).equals('Bobby')
+    expect(
+      [...host!.querySelectorAll('[data-testid^="chat-mention-member-"]')].map(
+        node => node.getAttribute('data-testid')
+      )
+    ).deep.equals(['chat-mention-member-2', 'chat-mention-member-3'])
+    search.setSelectionRange(2, 2)
+    insert(search, 'x')
+    expect(search.value).equals('Boxbby')
+    expect(search.selectionStart).equals(3)
+    expect(search.selectionEnd).equals(3)
+    await act(async () => {
+      await wait()
+    })
+    expect(
+      host!.querySelectorAll('[data-testid^="chat-mention-member-"]')
+    ).length(0)
+    expect(host!.textContent).contains('No members found.')
+    search.setSelectionRange(2, 3)
+    insert(search, '')
+    expect(search.value).equals('Bobby')
+    expect(search.selectionStart).equals(2)
+    expect(document.activeElement).equals(search)
+    await act(async () => {
+      await wait()
+    })
+    await choose(3)
+    expect(selected).deep.equals([3])
+  })
+  it('keeps the same unwaited controlled editing contract without the overlay bridge', async function () {
+    function DirectField(): React.ReactElement {
+      const [value, setValue] = useState('')
+      return (
+        <TextField
+          label="Search members"
+          value={value}
+          onChangeText={setValue}
+          autoFocus
+        />
+      )
+    }
+    await render(<DirectField />)
+    const search = labelled('Search members') as HTMLInputElement
+    rapidSearch(search)
+    await act(async () => {
+      await wait()
+    })
+    expect(search.value).equals('Bobby')
+    expect(document.activeElement).equals(search)
   })
 })

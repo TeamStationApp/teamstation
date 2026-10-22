@@ -1,5 +1,6 @@
 /** Native focus/back are handled by accessible views and BackHandler. */
 import type { ChatBounds } from './chatInteractionModel'
+export { useEffect as useChatOverlayCommit } from 'react'
 export function readDocumentActive(): boolean {
   return true
 }

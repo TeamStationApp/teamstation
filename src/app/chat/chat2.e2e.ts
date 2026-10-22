@@ -3914,6 +3914,7 @@ export class Scenarios {
           await client.pinChatMessage(this.group, oldest.id, true)
           await ui.coldOpen('/chat/' + this.group)
           await this.anchor()
+          if (!ui.native) await this.ownWebReader(this.f.messages.target)
           await ui.replaceDraft('Keep pin retry draft')
           if (ui.native) await ui.hideKeyboard()
           const before = await this.targetBounds(
@@ -3948,6 +3949,7 @@ export class Scenarios {
           assert.equal(await ui.draft(), 'Keep pin retry draft')
           await ui.coldOpen('/chat/' + this.group)
           await this.anchor()
+          if (!ui.native) await this.ownWebReader(this.f.messages.target)
           await ui.replaceDraft('Keep pin cancellation draft')
           if (ui.native) await ui.hideKeyboard()
           const deferred = Number(this.snapshot(this.group).lastEvent)
@@ -4040,7 +4042,76 @@ export class Scenarios {
           'Duplicate-name current members required'
         )
         await ui.text('Search members')
+        const webSearch = !ui.native
+          ? async (): Promise<Json> => {
+              const selector =
+                '[data-testid="chat-picker-content"] input[aria-label="Search members"]'
+              const state = await ui.dom(
+                'const fields=document.querySelectorAll(' +
+                  JSON.stringify(selector) +
+                  ');const n=fields[0];return {count:fields.length,value:n?.value,focused:document.activeElement===n,connected:n?.isConnected,start:n?.selectionStart,end:n?.selectionEnd}'
+              )
+              assert.equal(
+                state.count,
+                1,
+                'Unique actual member Search required'
+              )
+              assert.equal(
+                state.focused,
+                true,
+                'Member Search must retain focus'
+              )
+              assert.equal(
+                state.connected,
+                true,
+                'Member Search must remain connected'
+              )
+              const session = need(
+                ui.cdp,
+                'Owned browser inspection session required'
+              )
+              const { root } = await session.send('DOM.getDocument', {
+                depth: 0
+              })
+              const { nodeId } = await session.send('DOM.querySelector', {
+                nodeId: root.nodeId,
+                selector
+              })
+              assert(nodeId > 0, 'Actual member Search DOM node required')
+              const { node } = await session.send('DOM.describeNode', {
+                nodeId
+              })
+              return { ...state, backendNodeId: node.backendNodeId }
+            }
+          : undefined
+        const beforeSearch = await webSearch?.()
         await ui.append(first.search)
+        if (webSearch != null) {
+          const afterSearch = await webSearch()
+          assert.equal(
+            afterSearch.value,
+            first.search,
+            'Search must retain the exact typed member query'
+          )
+          assert.equal(
+            afterSearch.start,
+            first.search.length,
+            'Search caret must follow the complete query'
+          )
+          assert.equal(
+            afterSearch.end,
+            first.search.length,
+            'Search selection must remain collapsed'
+          )
+          assert.equal(
+            afterSearch.backendNodeId,
+            beforeSearch!.backendNodeId,
+            'Typing must retain the same actual Search node'
+          )
+          this.observations.push({
+            actualMemberSearch: { before: beforeSearch, after: afterSearch }
+          })
+        }
         await ui.present('chat-mention-member-' + first.userId)
         await ui.shot(
           'mentions',
@@ -4502,6 +4573,7 @@ export class Scenarios {
         }
         await this.openGroup(loop.conversationId)
         await this.anchor(loop.readerAnchor)
+        if (!ui.native) await this.ownWebReader(loop.readerAnchor)
         await ui.replaceDraft('Synthetic typing transport probe')
         await ui.replaceDraft('')
         if (ui.native) await ui.hideKeyboard()
@@ -5049,7 +5121,43 @@ export class Scenarios {
           await ui.present(this.controlId('attentionLoading'))
           await ui.replaceDraft('Keep cancelled verification draft')
           if (ui.native) await ui.hideKeyboard()
-          await ui.back()
+          if (ui.native) await ui.back()
+          else {
+            const back = await ui.dom(`
+              const selector='[role="button"][aria-label="Back"]';
+              return {path:location.pathname,controls:[...document.querySelectorAll(selector)].map(n=>{
+                const b=n.getBoundingClientRect(),s=getComputedStyle(n),x=b.x+b.width/2,y=b.y+b.height/2;
+                const hit=document.elementFromPoint(x,y);
+                return {connected:n.isConnected,enabled:n.getAttribute('aria-disabled')!=='true',visible:s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)>0,width:b.width,height:b.height,centerVisible:x>=0&&y>=0&&x<innerWidth&&y<innerHeight,centerHit:hit===n||n.contains(hit)};
+              })};
+            `)
+            assert.equal(back.path, '/chat/' + conversation)
+            const controls = back.controls as Json[]
+            assert.equal(
+              controls.length,
+              1,
+              'Unique actual app-header Back required'
+            )
+            const control = controls[0]
+            for (const key of [
+              'connected',
+              'enabled',
+              'visible',
+              'centerVisible',
+              'centerHit'
+            ])
+              assert.equal(
+                control[key],
+                true,
+                'Usable actual app-header Back required: ' + key
+              )
+            assert(Number(control.width) > 0 && Number(control.height) > 0)
+            await ui.device.tapOn({
+              css: '[role="button"][aria-label="Back"]',
+              enabled: true
+            })
+            this.observations.push({ actualAppHeaderBack: back })
+          }
           await ui.present('chat-conversation-list')
           fixtureControl(this.f, 'clear-fault')
           await ui.present('chat-conversation-list')
