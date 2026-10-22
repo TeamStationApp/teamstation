@@ -3,7 +3,7 @@ import { BackHandler, Linking, Platform } from 'react-native'
 
 import { appOrigin } from '../native/config'
 import { routeOfUrl } from './deepLink'
-import { makeHistory } from './history'
+import { type ClearedFrame, makeHistory } from './history'
 import { type Route, routePath } from './routes'
 
 /**
@@ -59,6 +59,14 @@ export function currentRoute(): Route {
  */
 export function showRoute(route: Route, replace = false): void {
   history.show(route, replace)
+}
+
+/** Drops a straight-line suffix of `frames` when what remains is `rootPath`. */
+export function dropRouteSuffix(
+  frames: readonly ClearedFrame[],
+  rootPath: string
+): void {
+  history.dropSuffix(frames, rootPath)
 }
 
 /**

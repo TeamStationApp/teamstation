@@ -1,5 +1,10 @@
 import { useEffect } from 'react'
 
+import {
+  type ClearedFrame,
+  frameMatchesPath,
+  suffixDropCount
+} from './history'
 import { parseRoute, type Route, routePath } from './routes'
 
 let guard:
@@ -11,6 +16,16 @@ let guard:
     }
   | undefined
 let position = 0
+/** The addresses `showRoute` has written, beside `position`. */
+let trail: string[] = []
+
+function locationPath(): string {
+  return window.location.pathname + window.location.search
+}
+
+function noteTrail(path: string): void {
+  trail[position] = path
+}
 
 export function setNavigationGuard(
   check: () => Promise<boolean>,
@@ -102,11 +117,22 @@ export function showRoute(route: Route, replace = false): void {
     (route.name === 'player' || route.name === 'person') &&
     path ===
       routePath(parseRoute(window.location.pathname, window.location.search))
-  )
+  ) {
+    noteTrail(path)
     return
-  if (path === window.location.pathname + window.location.search) return
-  if (replace) window.history.replaceState({ tsRouteIndex: position }, '', path)
-  else window.history.pushState({ tsRouteIndex: ++position }, '', path)
+  }
+  if (path === locationPath()) {
+    noteTrail(path)
+    return
+  }
+  if (replace) {
+    window.history.replaceState({ tsRouteIndex: position }, '', path)
+    noteTrail(path)
+  } else {
+    window.history.pushState({ tsRouteIndex: ++position }, '', path)
+    noteTrail(path)
+    trail.length = position + 1
+  }
 }
 
 /**
@@ -122,6 +148,33 @@ export function popRoute(): void {
 
 /** Where a step back taken by `stepBackTo` is to land, until it has. */
 let landing: Route | null = null
+
+/**
+ * Drops a straight-line history suffix of `frames` when what remains is the
+ * tab root. A mirror that disagrees with the address bar drops nothing, and
+ * so does a suffix that would uncover a different screen: the address effect
+ * pushes the root instead.
+ */
+export function dropRouteSuffix(
+  frames: readonly ClearedFrame[],
+  rootPath: string
+): void {
+  if (typeof window === 'undefined') return
+  initializeHistory()
+  if (trail[position] !== locationPath()) return
+  const count = suffixDropCount(
+    trail.slice(0, position + 1),
+    path => frames.some(frame => frameMatchesPath(frame, path)),
+    rootPath
+  )
+  if (count <= 0) return
+  const queryAt = rootPath.indexOf('?')
+  landing =
+    queryAt < 0
+      ? parseRoute(rootPath, '')
+      : parseRoute(rootPath.slice(0, queryAt), rootPath.slice(queryAt))
+  window.history.go(-count)
+}
 
 /**
  * Back to the step this one was pushed over, with `route` as its address: a
@@ -170,11 +223,10 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
         const route = landing
         landing = null
         position = indexOfHistory() ?? position - 1
-        window.history.replaceState(
-          { tsRouteIndex: position },
-          '',
-          routePath(route)
-        )
+        const path = routePath(route)
+        noteTrail(path)
+        trail.length = position + 1
+        window.history.replaceState({ tsRouteIndex: position }, '', path)
         return
       }
       if (restoring != null) {
@@ -191,6 +243,7 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
       const held = guard
       if (held == null || held.allow?.(currentRoute()) === true) {
         position = indexOfHistory() ?? position
+        noteTrail(locationPath())
         onRoute(currentRoute())
         return
       }

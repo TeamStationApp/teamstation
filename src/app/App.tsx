@@ -59,6 +59,7 @@ import { stacksAfterTabPress } from './navigation/tabPress'
 import {
   backFromScoringPlayer,
   currentRoute,
+  dropRouteSuffix,
   popRoute,
   scoringOriginHistory,
   showRoute,
@@ -812,7 +813,7 @@ function Shell(props: AppProps): React.ReactElement {
   )
   useBrowserBack(goToRoute)
 
-  /** The tab, or — pressed on the tab you are already on — a step out of it. */
+  /** The tab, or — pressed on the tab already showing — that tab's root. */
   const selectTab = (next: NavTabId): void => {
     if (scoringVisit.current != null) {
       afterScoringLeave(() => {
@@ -820,6 +821,8 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
+    if (next === tab && stacks[tab].length > 0)
+      dropRouteSuffix(stacks[tab], routePath(routeOf(tab, undefined, filters)))
     setTab(next)
     setStacks(current => stacksAfterTabPress(current, tab, next))
     if (session == null || props.fieldPreview === true) {
