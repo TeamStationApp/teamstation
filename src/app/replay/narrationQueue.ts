@@ -177,6 +177,23 @@ export class NarrationQueue<C> {
     })().catch(() => undefined)
   }
 
+  /**
+   * Stops the sentence being read, as a rewind does, and leaves the
+   * announcer on: the next step shown is read as usual.
+   */
+  interrupt(): void {
+    this.turn++
+    this.current = null
+    // A sentence waiting out a pause lets go and sees its turn is over; its
+    // clip, no longer the one being read, goes with the next list ahead.
+    const resume = this.resumed
+    this.resumed = null
+    resume?.()
+    this.output.stop()
+    this.clearCap()
+    this.setSpeaking(false)
+  }
+
   /** Stops everything for good, as the replay closes. */
   dispose(): void {
     this.setMuted(true)

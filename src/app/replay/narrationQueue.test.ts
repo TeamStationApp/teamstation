@@ -305,6 +305,69 @@ describe('the announcer’s queue', function () {
     expect(output.aborted).includes('0-2')
   })
 
+  it('stops the sentence being read on a rewind, and reads the next one shown', async function () {
+    const { narration, output, timers, speaking } = queue()
+    narration.setMuted(false)
+    narration.upcoming([{ key: '0-1', count: 1 }])
+    narration.speak({ key: '0-0', count: 1 })
+    output.answer('0-0')
+    await settle()
+    expect(output.played).deep.equals(['clip:0-0'])
+    const before = output.calls.length
+    narration.interrupt()
+    await settle()
+    expect(output.calls.slice(before)).deep.equals(['stop'])
+    expect(speaking).deep.equals([true, false])
+    // The interrupted clip is freed once its play settles.
+    expect(output.released).deep.equals(['clip:0-0'])
+    // Its hold is gone with it.
+    timers.advance(SPEECH_CAP_MS)
+    expect(speaking).deep.equals([true, false])
+    // Still on: the next step shown is read.
+    narration.speak({ key: '0-1', count: 1 })
+    output.answer('0-1')
+    await settle()
+    expect(output.played).deep.equals(['clip:0-0', 'clip:0-1'])
+    expect(speaking).deep.equals([true, false, true])
+  })
+
+  it('never plays a sentence that arrives after the rewind that stopped it', async function () {
+    const { narration, output, speaking } = queue()
+    narration.setMuted(false)
+    narration.speak({ key: '0-0', count: 1 })
+    narration.interrupt()
+    output.answer('0-0')
+    await settle()
+    expect(output.played).deep.equals([])
+    expect(speaking).deep.equals([true, false])
+    // A list of steps ahead drops what it no longer holds, as before.
+    narration.upcoming([{ key: '0-2', count: 1 }])
+    expect(output.loads).deep.equals(['0-0', '0-2'])
+  })
+
+  it('lets go of a sentence waiting out a pause when a rewind stops it', async function () {
+    const { narration, output } = queue()
+    narration.setMuted(false)
+    narration.speak({ key: '0-0', count: 1 })
+    narration.setPaused(true)
+    output.answer('0-0')
+    await settle()
+    expect(output.played).deep.equals([])
+    narration.interrupt()
+    narration.setPaused(false)
+    await settle()
+    // Let go rather than left waiting: never played, and its clip freed by
+    // the next list of steps ahead, which no longer holds it.
+    expect(output.played).deep.equals([])
+    narration.upcoming([{ key: '0-1', count: 1 }])
+    expect(output.released).deep.equals(['clip:0-0'])
+    // The next sentence shown plays as usual.
+    narration.speak({ key: '0-1', count: 1 })
+    output.answer('0-1')
+    await settle()
+    expect(output.played).deep.equals(['clip:0-1'])
+  })
+
   it('frees audio that comes back after its step was dropped', async function () {
     const output = new FakeOutput()
     const narration = new NarrationQueue<string>(output, {

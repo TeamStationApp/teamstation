@@ -1,4 +1,9 @@
 import { narrateTimeline, type Narration } from '../../common/replay/narration'
+import {
+  rewindLabel,
+  rewindTarget,
+  stateBefore
+} from '../../common/replay/replayRewind'
 import type {
   ReplayStep,
   ReplayStepKind,
@@ -46,6 +51,12 @@ export const CATCH_UP_MS = 600
 export const CATCH_UP_QUEUE = 3
 /** How long the scoreboard's home-run lights run (as on the scoring screen). */
 export const CELEBRATION_MS = 6000
+/** How long a rewind's words hold on the card before they fade. */
+export const REWIND_NOTICE_HOLD_MS = 1400
+/** How long they take to fade. */
+export const REWIND_NOTICE_FADE_MS = 600
+/** A rewind's words, held and faded; the first step after it waits as long. */
+export const REWIND_NOTICE_MS = REWIND_NOTICE_HOLD_MS + REWIND_NOTICE_FADE_MS
 
 export type ReplayMode = 'replay' | 'live'
 
@@ -89,6 +100,15 @@ export interface ReplayState {
   gameOver: boolean
   /** A live view behind the scorer, hurrying until it has nearly caught up. */
   hurrying: boolean
+  /**
+   * The view was opened live. Rewound, it watches at replay pace until it
+   * has caught up, then follows the scorer again.
+   */
+  follows: boolean
+  /** How many rewinds the view has taken: each one's id, never repeated. */
+  rewinds: number
+  /** Where the last rewind went, written on the card until `endsAt`. */
+  notice: { id: number; text: string; endsAt: number } | null
 }
 
 export type ReplayEvent =
@@ -99,6 +119,12 @@ export type ReplayEvent =
   | { type: 'SPEAKING'; speaking: boolean }
   | { type: 'CHANGED'; change: TimelineChange }
   | { type: 'GAME_OVER' }
+  | {
+      type: 'REWIND'
+      now: number
+      /** "Rewind to top of %s", "Rewind to bottom of %s". */
+      words: { top: string; bottom: string }
+    }
 
 /** Nothing drawn and nothing moving: the next step may start. */
 export function replayIdle(state: ScoringState): boolean {
@@ -148,7 +174,10 @@ function liveAt(timeline: ReplayTimeline, changed: boolean): ReplayState {
     pausedCelebration: null,
     final: timeline.end.final,
     gameOver: timeline.end.final,
-    hurrying: false
+    hurrying: false,
+    follows: true,
+    rewinds: 0,
+    notice: null
   }
 }
 
@@ -162,7 +191,8 @@ function snapped(state: ReplayState, timeline: ReplayTimeline): ReplayState {
   return {
     ...next,
     paused: state.paused,
-    gameOver: next.gameOver || state.gameOver
+    gameOver: next.gameOver || state.gameOver,
+    rewinds: state.rewinds
   }
 }
 
@@ -198,7 +228,10 @@ export function startReplay(
     pausedCelebration: null,
     final: false,
     gameOver: timeline.end.final || over,
-    hurrying: false
+    hurrying: false,
+    follows: false,
+    rewinds: 0,
+    notice: null
   }
 }
 
@@ -221,15 +254,17 @@ function playNext(state: ReplayState, now: number): ReplayState {
   })
   const live = state.mode === 'live'
   if (after.session === before.session && next.actions.length > 0)
-    // The game would not take the step. Live, it has changed under this
-    // view; a finished game goes to how it ended.
-    return live
+    // The game would not take the step. Followed live, even rewound, it has
+    // changed under this view; a finished game goes to how it ended.
+    return live || state.follows
       ? snapped(state, state.timeline)
       : {
           ...liveAt(state.timeline, false),
           mode: 'replay',
           paused: state.paused,
-          gameOver: state.gameOver
+          gameOver: state.gameOver,
+          follows: false,
+          rewinds: state.rewinds
         }
   const slot = catchUp
     ? CATCH_UP_MS
@@ -242,6 +277,9 @@ function playNext(state: ReplayState, now: number): ReplayState {
   }
   return {
     ...state,
+    // A rewound live view that has caught up follows the scorer again.
+    mode: state.follows && rest.length === 0 ? 'live' : state.mode,
+    notice: null,
     scoring: trimmed({ ...after, presentationEnabled: true }),
     queue: rest,
     applied,
@@ -268,6 +306,9 @@ export function catchingUp(state: ReplayState): boolean {
 
 function tick(state: ReplayState, now: number): ReplayState {
   let next = state
+  // A rewind's words go when their time is up, paused or not.
+  if (next.notice != null && now >= next.notice.endsAt)
+    next = { ...next, notice: null }
   const celebration = next.scoring.celebration
   if (celebration == null) {
     if (next.celebrationEndsAt != null)
@@ -336,6 +377,67 @@ function changed(state: ReplayState, change: TimelineChange): ReplayState {
   }
 }
 
+/**
+ * Back to the start of a half inning (`rewindTarget`): the game as it stood
+ * there, every step from there queued again, and the card saying where the
+ * view went. A paused view stays paused; a finished one plays again; a live
+ * one watches the rewound steps at replay pace.
+ */
+function rewound(
+  state: ReplayState,
+  now: number,
+  words: { top: string; bottom: string }
+): ReplayState {
+  const { timeline } = state
+  const shown = state.shown
+  // By key: every newer copy of the game makes new step objects.
+  const shownIndex =
+    shown == null
+      ? -1
+      : timeline.steps.findIndex(step => step.key === shown.key)
+  const target = rewindTarget(timeline, shownIndex)
+  if (target == null) return state
+  const fresh = initialScoringState(stateBefore(timeline, target.index), true, {
+    watching: true
+  })
+  const applied: Record<string, number> = {}
+  for (const step of timeline.steps.slice(0, target.index))
+    applied[step.key] = step.actions.length
+  const before = target.index > 0 ? timeline.steps[target.index - 1] : null
+  const rewinds = state.rewinds + 1
+  return {
+    ...state,
+    mode: 'replay',
+    // Field callbacks for what was on screen carry an older generation.
+    scoring: trimmed({
+      ...fresh,
+      generation: state.scoring.generation + 1
+    }),
+    queue: timeline.steps
+      .slice(target.index)
+      .map(step => ({ step, actions: step.actions })),
+    applied,
+    shown: before,
+    shownCount: before?.actions.length ?? 0,
+    changed: false,
+    speaking: false,
+    slotEndsAt: state.paused ? null : now + REWIND_NOTICE_MS,
+    pausedSlot: state.paused ? REWIND_NOTICE_MS : null,
+    // Nothing is drawn or moving on the field it stands up.
+    idleSince: now,
+    celebrationEndsAt: null,
+    pausedCelebration: null,
+    final: false,
+    hurrying: false,
+    rewinds,
+    notice: {
+      id: rewinds,
+      text: rewindLabel(target.half, words),
+      endsAt: now + REWIND_NOTICE_MS
+    }
+  }
+}
+
 export function replayReducer(
   state: ReplayState,
   event: ReplayEvent
@@ -384,6 +486,8 @@ export function replayReducer(
       return changed(state, event.change)
     case 'GAME_OVER':
       return state.gameOver ? state : { ...state, gameOver: true }
+    case 'REWIND':
+      return rewound(state, event.now, event.words)
   }
 }
 
@@ -410,12 +514,23 @@ export function replayCard(
     changed: string
   }
 ): { line: string; detail: string } {
+  const detail = state.paused ? words.paused : situationOf(state)
+  // A rewind's words stand alone until they fade.
+  if (state.notice != null) return { line: state.notice.text, detail }
   const line =
     state.shown == null
       ? state.mode === 'replay'
         ? words.playBall
         : words.waiting
       : lastSaid(state, state.shown.key)
+  return {
+    line: state.changed ? `${words.changed}. ${line}` : line,
+    detail
+  }
+}
+
+/** Where the game stands: the count, the outs and who is on. */
+function situationOf(state: ReplayState): string {
   const linescore = state.scoring.session.liveData.linescore
   const offense = linescore.offense
   const runners = [
@@ -423,7 +538,7 @@ export function replayCard(
     offense.second == null ? null : '2nd',
     offense.third == null ? null : '3rd'
   ].filter((base): base is string => base != null)
-  const situation = state.scoring.session.final
+  return state.scoring.session.final
     ? ''
     : [
         // A play decided but not yet closed by the scorer (strike three,
@@ -438,9 +553,4 @@ export function replayCard(
       ]
         .filter((part): part is string => part != null)
         .join(' · ')
-  const detail = state.paused ? words.paused : situation
-  return {
-    line: state.changed ? `${words.changed}. ${line}` : line,
-    detail
-  }
 }

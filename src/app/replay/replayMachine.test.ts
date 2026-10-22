@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { halvesOf, stateBefore } from '../../common/replay/replayRewind'
 import {
   extendTimeline,
   type ReplayTimeline,
@@ -10,11 +11,13 @@ import { allowedAngle } from '../../common/scoring/rules'
 import {
   correctedGame,
   finalGame,
+  firstActionOfHalf,
   inProgressGame,
   replayActions,
   replayContext,
   scored
 } from '../../test/replayGameFixture'
+import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
 import {
   CATCH_UP_MS,
   catchingUp,
@@ -27,6 +30,7 @@ import {
   replayIdle,
   replayReducer,
   type ReplayState,
+  REWIND_NOTICE_MS,
   SLOT_MS,
   startReplay
 } from './replayMachine'
@@ -629,6 +633,281 @@ describe('replay machine', function () {
       expect(again.final).equals(true)
       const over = startReplay('live', await timelineOf(finalGame()))
       expect(over.final).equals(true)
+    })
+  })
+
+  describe('rewind', function () {
+    const REWIND = {
+      top: 'Rewind to top of %s',
+      bottom: 'Rewind to bottom of %s'
+    }
+
+    /** The first step index of each half, in order. */
+    function halfStarts(timeline: ReplayTimeline): number[] {
+      const halves = halvesOf(timeline)
+      return halves.flatMap((half, index) =>
+        index === 0 ||
+        half.inning !== halves[index - 1].inning ||
+        half.isTop !== halves[index - 1].isTop
+          ? [index]
+          : []
+      )
+    }
+
+    function rewind(state: ReplayState, now: number): ReplayState {
+      return replayReducer(state, { type: 'REWIND', now, words: REWIND })
+    }
+
+    /** A replay run until the step at `index` is the one shown. */
+    function shownAt(
+      timeline: ReplayTimeline,
+      index: number
+    ): { state: ReplayState; now: number } {
+      const key = timeline.steps[index].key
+      const reached = run(
+        startReplay('replay', timeline),
+        state => state.shown?.key === key
+      )
+      return { state: reached.state, now: reached.now }
+    }
+
+    it('stands the field where the scoring screen stood at the start of each half', async function () {
+      const timeline = await timelineOf(finalGame())
+      for (const index of halfStarts(timeline)) {
+        let state = initialScoringState(timeline.start, false, {
+          watching: true
+        })
+        for (const step of timeline.steps.slice(0, index))
+          state = scoringReducer(state, {
+            type: 'REPLAYED',
+            actions: step.actions
+          })
+        const reducer = state.session.liveData.linescore
+        const rebuilt = stateBefore(timeline, index).liveData.linescore
+        expect(rebuilt.currentInning).equals(reducer.currentInning)
+        expect(rebuilt.isTopInning).equals(reducer.isTopInning)
+        expect(rebuilt.outs).equals(reducer.outs)
+        expect(rebuilt.teams).deep.equals(reducer.teams)
+        expect(rebuilt.offense.first ?? null).deep.equals(
+          reducer.offense.first ?? null
+        )
+      }
+    })
+
+    it('goes back to the start of the half after two of its steps, and plays on from there', async function () {
+      const timeline = await timelineOf(finalGame())
+      const top2 = halfStarts(timeline)[2]
+      const { state: at, now } = shownAt(timeline, top2 + 1)
+      const back = rewind(at, now)
+      expect(back.queue[0].step.key).equals(timeline.steps[top2].key)
+      expect(back.queue).length(timeline.steps.length - top2)
+      expect(Object.keys(back.applied)).length(top2)
+      expect(back.applied[timeline.steps[top2].key]).equals(undefined)
+      expect(back.shown?.key).equals(timeline.steps[top2 - 1].key)
+      const line = back.scoring.session.liveData.linescore
+      expect([line.currentInning, line.isTopInning, line.outs]).deep.equals([
+        2,
+        true,
+        0
+      ])
+      expect(back.scoring.generation).greaterThan(at.scoring.generation)
+      expect(back.notice).deep.equals({
+        id: 1,
+        text: 'Rewind to top of second',
+        endsAt: now + REWIND_NOTICE_MS
+      })
+      expect(replayCard(back, WORDS)).deep.equals({
+        line: 'Rewind to top of second',
+        detail: '0–0 · 0 outs'
+      })
+      let next = replayReducer(back, {
+        type: 'TICK',
+        now: now + REWIND_NOTICE_MS - 100
+      })
+      expect(next.shown?.key).equals(timeline.steps[top2 - 1].key)
+      expect(next.notice).not.equals(null)
+      next = replayReducer(next, { type: 'TICK', now: now + REWIND_NOTICE_MS })
+      expect(next.shown?.key).equals(timeline.steps[top2].key)
+      expect(next.notice).equals(null)
+      // The rest of the game plays to the same end.
+      const done = run(next, state => state.final, now + REWIND_NOTICE_MS)
+      expect(done.state.scoring.session.liveData.linescore.teams).deep.equals(
+        timeline.end.liveData.linescore.teams
+      )
+    })
+
+    it('goes one half further back on a second tap, and to the first pitch from the first half', async function () {
+      const timeline = await timelineOf(finalGame())
+      const [, bottom1, top2] = halfStarts(timeline)
+      const { state: at, now } = shownAt(timeline, top2 + 1)
+      const once = rewind(at, now)
+      const twice = rewind(once, now + 300)
+      expect(twice.notice?.text).equals('Rewind to bottom of first')
+      expect(twice.notice?.id).equals(2)
+      expect(twice.rewinds).equals(2)
+      expect(twice.queue[0].step.key).equals(timeline.steps[bottom1].key)
+      const third = rewind(twice, now + 600)
+      expect(third.notice?.text).equals('Rewind to top of first')
+      expect(third.queue[0].step.key).equals(timeline.steps[0].key)
+      expect(third.shown).equals(null)
+      const fourth = rewind(third, now + 900)
+      expect(fourth.notice?.text).equals('Rewind to top of first')
+      expect(fourth.queue).length(timeline.steps.length)
+      // The ids never repeat, even after the words have gone.
+      const cleared = replayReducer(fourth, {
+        type: 'TICK',
+        now: now + 900 + REWIND_NOTICE_MS
+      })
+      expect(cleared.notice).equals(null)
+      expect(rewind(cleared, now + 5000).notice?.id).equals(5)
+    })
+
+    it('rewinds from "Play ball!" to the first pitch', async function () {
+      const timeline = await timelineOf(finalGame())
+      const start = startReplay('replay', timeline)
+      const back = rewind(start, 50)
+      expect(back.notice?.text).equals('Rewind to top of first')
+      expect(back.shown).equals(null)
+      expect(back.queue).length(timeline.steps.length)
+      expect(back.slotEndsAt).equals(50 + REWIND_NOTICE_MS)
+    })
+
+    it('stays paused, lets the words fade, and waits again on play', async function () {
+      const timeline = await timelineOf(finalGame())
+      const top2 = halfStarts(timeline)[2]
+      const { state: at, now } = shownAt(timeline, top2 + 2)
+      const paused = replayReducer(at, { type: 'PAUSE', now })
+      const back = rewind(paused, now + 100)
+      expect(back.paused).equals(true)
+      expect(back.pausedSlot).equals(REWIND_NOTICE_MS)
+      expect(back.slotEndsAt).equals(null)
+      expect(replayCard(back, WORDS)).deep.equals({
+        line: 'Rewind to top of second',
+        detail: 'Paused'
+      })
+      let next = replayReducer(back, {
+        type: 'TICK',
+        now: now + 100 + REWIND_NOTICE_MS
+      })
+      expect(next.notice).equals(null)
+      expect(next.shown?.key).equals(timeline.steps[top2 - 1].key)
+      expect(replayCard(next, WORDS).detail).equals('Paused')
+      const played = now + 10000
+      next = replayReducer(next, { type: 'PLAY', now: played })
+      next = replayReducer(next, {
+        type: 'TICK',
+        now: played + REWIND_NOTICE_MS - 100
+      })
+      expect(next.shown?.key).equals(timeline.steps[top2 - 1].key)
+      next = replayReducer(next, {
+        type: 'TICK',
+        now: played + REWIND_NOTICE_MS
+      })
+      expect(next.shown?.key).equals(timeline.steps[top2].key)
+    })
+
+    it('plays the last half again after the end, and ends again', async function () {
+      const timeline = await timelineOf(finalGame())
+      const top3 = halfStarts(timeline)[4]
+      const done = run(startReplay('replay', timeline), state => state.final)
+      const back = rewind(done.state, done.now)
+      expect(back.final).equals(false)
+      expect(back.gameOver).equals(true)
+      expect(back.notice?.text).equals('Rewind to top of third')
+      expect(back.queue[0].step.key).equals(timeline.steps[top3].key)
+      const paused = replayReducer(back, { type: 'PAUSE', now: done.now })
+      expect(paused.paused).equals(true)
+      const again = run(
+        replayReducer(paused, { type: 'PLAY', now: done.now }),
+        state => state.final,
+        done.now
+      )
+      expect(again.state.final).equals(true)
+    })
+
+    it('clears the home-run lights and anything drawn', async function () {
+      const timeline = await timelineOf(finalGame())
+      const lit = run(
+        startReplay('replay', timeline),
+        state => state.scoring.celebration != null
+      )
+      const back = rewind(lit.state, lit.now)
+      expect(back.scoring.celebration ?? null).equals(null)
+      expect(back.scoring.presentation).equals(null)
+      expect(back.celebrationEndsAt).equals(null)
+    })
+
+    it('does nothing with no steps to go back to', async function () {
+      const empty = startReplay('live', await timelineOf(scored([])))
+      expect(rewind(empty, 100)).equals(empty)
+    })
+
+    it('watches a rewound live game at replay pace, then follows the scorer again', async function () {
+      const actions = replayActions()
+      // Three pitches into the bottom of the first.
+      const cut = firstActionOfHalf(actions, 1, 'bottom') + 3
+      const before = await timelineOf(scored(actions.slice(0, cut)))
+      let state = startReplay('live', before)
+      expect(state.follows).equals(true)
+      // A newer copy makes new step objects: the rewind still finds the
+      // step shown by its key.
+      const same = extendTimeline(
+        before,
+        await scored(actions.slice(0, cut)),
+        context
+      )
+      state = replayReducer(state, { type: 'CHANGED', change: same })
+      const back = rewind(state, 1000)
+      expect(back.mode).equals('replay')
+      expect(back.follows).equals(true)
+      expect(back.notice?.text).equals('Rewind to bottom of first')
+      expect(back.queue.length).greaterThan(1)
+      expect(catchingUp(back)).equals(false)
+      // The scorer goes on meanwhile: the new steps queue after the rest.
+      const grown = extendTimeline(
+        same.timeline,
+        await scored(actions.slice(0, cut + 3)),
+        context
+      )
+      const queued = replayReducer(back, { type: 'CHANGED', change: grown })
+      expect(queued.queue.length).greaterThan(back.queue.length)
+      const played = run(queued, next => next.queue.length === 0, 1000)
+      // Pitches at replay pace, not hurried.
+      const starts = [...played.started.values()]
+      const gaps = starts.slice(1).map((at, i) => at - starts[i])
+      expect(Math.min(...gaps)).greaterThanOrEqual(SLOT_MS.pitch)
+      expect(played.state.mode).equals('live')
+      // Live again: the next step takes a live slot.
+      const more = extendTimeline(
+        grown.timeline,
+        await scored(actions.slice(0, cut + 4)),
+        context
+      )
+      let live = replayReducer(played.state, { type: 'CHANGED', change: more })
+      let at = played.now
+      let slot: number | null = null
+      while (live.queue.length > 0 && at < played.now + 60000) {
+        at += 100
+        const queued = live.queue.length
+        live = field(replayReducer(live, { type: 'TICK', now: at }))
+        if (live.queue.length < queued) slot = live.slotEndsAt! - at
+      }
+      expect(live.mode).equals('live')
+      expect(slot).lessThanOrEqual(LIVE_SLOT_MS.inPlay + LIVE_HALF_MS)
+    })
+
+    it('snaps a rewound live view to a corrected game', async function () {
+      const actions = replayActions()
+      const before = await timelineOf(scored(actions.slice(0, 20)))
+      const back = rewind(startReplay('live', before), 1000)
+      const corrected = await timelineOf(correctedGame())
+      const snapped = replayReducer(back, {
+        type: 'CHANGED',
+        change: { kind: 'rewrite', timeline: corrected }
+      })
+      expect(snapped.mode).equals('live')
+      expect(snapped.rewinds).equals(1)
+      expect(snapped.queue).length(0)
     })
   })
 })
