@@ -80,10 +80,14 @@ function measuredCounts(text, manifest) {
       path == null ||
       found == null ||
       hit == null ||
-      found !== Object.keys(lines).length ||
-      hit !== Object.values(lines).filter(n => n > 0).length
+      hit > found ||
+      (found > 0 && Object.keys(lines).length === 0)
     )
       throw new Error('Incomplete or inconsistent LLVM line record')
+    // LLVM's LF/LH sum function-group summaries; DA lists unique file lines.
+    // Closures can overlap, so the summaries cannot prove DA completeness.
+    // Keep only measured DA counters; source/report hashes bind provenance.
+    // llvm/tools/llvm-cov/{CoverageExporterLcov,CoverageReport}.cpp
     const kept = (counts[path] ??= {})
     for (const [line, count] of Object.entries(lines))
       kept[line] = Math.max(kept[line] ?? 0, count)

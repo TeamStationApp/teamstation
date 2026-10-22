@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { FollowableTeam, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -307,7 +308,7 @@ describe('following a team in the app', function () {
       asked.push(`${method} ${path}`)
       if (path === '/auth/me')
         return Response.json({
-          id: 100,
+          id: userIdOfGumbo(100),
           displayName: 'Drew Dalton',
           isAdmin: false
         })

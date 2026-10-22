@@ -198,6 +198,7 @@ function playerClient(
   } = {}
 ): TeamStationClient {
   return {
+    guardians: async () => [],
     player: async () =>
       asPlayerDetail({
         userId: userIdOfGumbo(7),

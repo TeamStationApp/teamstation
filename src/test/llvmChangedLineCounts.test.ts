@@ -24,7 +24,7 @@ const {
 } = require('../../scripts/llvm-changed-line-counts.cjs')
 const gate = require('../../scripts/changed-line-check.cjs')
 
-function fixture(): {
+function fixture(source = 'fn value() {\n  let x = 1;\n  x\n}\n'): {
   root: string
   git: (args: string[]) => string
   manifest: ReturnType<typeof snapshot>
@@ -47,7 +47,7 @@ function fixture(): {
     'Fixture baseline'
   ])
   mkdirSync(join(root, 'src'))
-  writeFileSync(join(root, 'src/a.rs'), 'fn value() {\n  let x = 1;\n  x\n}\n')
+  writeFileSync(join(root, 'src/a.rs'), source)
   writeFileSync(join(root, 'Cargo.toml'), '[package]\nname="example"\n')
   const manifest = snapshot(root, ['src', 'Cargo.toml'])
   const record = (rows = 'DA:1,2\nDA:2,0\nLF:2\nLH:1'): string =>
@@ -59,6 +59,33 @@ function fixture(): {
 }
 
 describe('measured LLVM changed-line counters', function () {
+  it('reads actual overlapping-function LLVM counters without inventing summary lines', function () {
+    const f = fixture(readFileSync('crates/chat-crypto/src/ops.rs', 'utf8'))
+    const text = readFileSync(
+      'src/test/fixtures/coverage/llvm-overlap.lcov',
+      'utf8'
+    )
+    expect(measuredCounts(text, f.manifest)).deep.equals({
+      'src/a.rs': {
+        78: 1,
+        79: 1,
+        80: 1,
+        81: 1,
+        82: 1,
+        83: 1,
+        84: 1,
+        85: 33,
+        86: 1,
+        87: 33,
+        88: 1,
+        89: 8,
+        90: 8,
+        91: 1,
+        92: 1
+      }
+    })
+  })
+
   it('binds measured zero and positive counts to exact source and report bytes', function () {
     const f = fixture()
     const result = convert(f.manifest, f.lcov)
@@ -104,6 +131,71 @@ describe('measured LLVM changed-line counters', function () {
     ).deep.equals({ 'src/a.rs': { 1: 1 } })
   })
 
+  it('preserves measured zero counts even when aggregate summaries differ', function () {
+    const f = fixture()
+    writeFileSync(f.lcov, f.record('DA:1,0\nLF:2\nLH:1'))
+    utimesSync(f.lcov, new Date(), new Date(f.manifest.capturedAt + 10))
+    const result = convert(f.manifest, f.lcov)
+    expect(result.counts).deep.equals({ 'src/a.rs': { 1: 0 } })
+    const envelope = join(f.root, 'counts.json')
+    writeFileSync(envelope, JSON.stringify(result))
+    f.git(['add', 'src/a.rs'])
+    const log: string[] = []
+    expect(
+      gate.main(
+        [
+          '--base',
+          'HEAD',
+          '--counts',
+          envelope,
+          '--min',
+          '95',
+          '--ext',
+          '.rs',
+          'src'
+        ],
+        {
+          cwd: f.root,
+          run: (_file: string, args: string[]) => f.git(args),
+          log: (line: string) => {
+            log.push(line)
+          }
+        }
+      )
+    ).equals(1)
+    expect(log).includes('    uncovered: 1')
+  })
+
+  it('retains missing instrumentation and rejects a summary-only file beside measured code', function () {
+    const f = fixture()
+    writeFileSync(join(f.root, 'src/new.rs'), 'fn missing() {}\n')
+    const manifest = snapshot(f.root, ['src', 'Cargo.toml'])
+    expect(() =>
+      measuredCounts(
+        f.record() + 'SF:src/new.rs\nLF:1\nLH:1\nend_of_record\n',
+        manifest
+      )
+    ).throws('Incomplete')
+    utimesSync(f.lcov, new Date(), new Date(manifest.capturedAt + 10))
+    const envelope = join(f.root, 'counts.json')
+    writeFileSync(envelope, JSON.stringify(convert(manifest, f.lcov)))
+    f.git(['add', 'src'])
+    const log: string[] = []
+    expect(
+      gate.main(
+        ['--base', 'HEAD', '--counts', envelope, '--ext', '.rs', 'src'],
+        {
+          cwd: f.root,
+          run: (_file: string, args: string[]) => f.git(args),
+          log: (line: string) => {
+            log.push(line)
+          }
+        }
+      )
+    ).equals(1)
+    expect(log).includes('  src/new.rs: no coverage record')
+  })
+
   it('rejects incomplete, inconsistent, negative, nonfinite and duplicate measurements', function () {
     const f = fixture()
     for (const text of [
@@ -121,8 +213,8 @@ describe('measured LLVM changed-line counters', function () {
       f.record('DA:9007199254740992,1\nLF:1\nLH:1'),
       f.record('DA:99,1\nLF:1\nLH:1'),
       f.record('DA:1,1\nDA:1,1\nLF:1\nLH:1'),
-      f.record('DA:1,1\nLF:2\nLH:1'),
-      f.record('DA:1,0\nLF:1\nLH:1'),
+      f.record('DA:1,1\nLF:1\nLH:2'),
+      f.record('LF:1\nLH:1'),
       f.record('DA:1,1\nLF:1'),
       f.record('DA:1,1\nLH:1'),
       f.record('DA:1,1\nLF:1\nLF:1\nLH:1'),
