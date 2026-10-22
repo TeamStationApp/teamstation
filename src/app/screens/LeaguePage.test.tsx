@@ -242,6 +242,33 @@ describe('the league page', () => {
     )!
     expect(getComputedStyle(seasonLabel).color).equals('rgb(31, 36, 24)')
     expect(getComputedStyle(leaveLabel).color).equals('rgb(186, 26, 26)')
+    const seasonButton = button('Open Demo Spring')!
+    await act(async () => {
+      seasonButton.focus()
+      seasonButton.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+    expect(getComputedStyle(seasonButton).backgroundColor).equals(
+      'rgb(196, 212, 184)'
+    )
+    expect(getComputedStyle(seasonLabel).color).equals('rgb(31, 36, 24)')
+    await act(async () => {
+      seasonButton.dispatchEvent(
+        new window.KeyboardEvent('keyup', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+    expect(getComputedStyle(seasonButton).backgroundColor).equals(
+      'rgba(0, 0, 0, 0)'
+    )
     expect(getComputedStyle(title).color).not.equals(
       getComputedStyle(card).backgroundColor
     )

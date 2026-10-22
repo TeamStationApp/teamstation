@@ -77,6 +77,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
             ...theme,
             primaryTextColor: theme.secondaryTextColor,
             activeColor: theme.secondaryTextColor,
+            containerBackgroundColor: theme.clearButtonColor,
             dangerColor: tsBallpark.dangerColor
           }
         : theme,
