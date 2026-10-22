@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { depthOf } from '../../app/scoring/dictatedDepth'
 import { type ScoringAction, toolSchema } from '../../common/scoring/actions'
 import { writtenTag } from '../../common/scoring/playerTags'
 import {
@@ -10,6 +11,7 @@ import {
   rosterToolSchema,
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
+import { placePhrases } from '../../test/dictationPlacePhrases'
 import { choiceRelayPhrases } from '../../test/fieldersChoicePhrases'
 import { Interpretation, type Turn } from './interpreter'
 
@@ -1271,6 +1273,54 @@ const live = keys != null
       expect(name, JSON.stringify(roster)).to.include('jared')
       expect(name.includes('sol'), JSON.stringify(roster)).equals(false)
     })
+
+    // Where a ball and a pitch went: two sentences for every depth, foul
+    // place, pitch location and kind of pitch, the model's own calls. A
+    // depth is the one the play ends with: the words', when they say one,
+    // over the model's.
+    for (const example of placePhrases)
+      it(`says where it went: ${example.said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex }),
+            example.said
+          )
+        )
+        const dumped = JSON.stringify(actions)
+        if (example.kind === 'ball') {
+          const played = ball(actions)
+          if (example.depth != null)
+            expect(depthOf(example.said, played.depth), dumped).equals(
+              example.depth
+            )
+          if (example.distanceFeet != null)
+            expect(played.distanceFeet, dumped).equals(example.distanceFeet)
+          if (example.direction != null)
+            expect(played.direction, dumped).equals(example.direction)
+          return
+        }
+        const pitch = ofType(
+          actions.find(action => action.type === 'pitch'),
+          'pitch'
+        )
+        if (example.kind === 'foul') {
+          expect(actions.some(action => action.type === 'ballInPlay')).equals(
+            false
+          )
+          expect(pitch.call, dumped).equals('F')
+          expect(pitch.direction, dumped).equals(example.direction)
+          expect(depthOf(example.said, pitch.depth), dumped).equals(
+            example.depth
+          )
+          return
+        }
+        expect(pitch.call, dumped).equals(example.call)
+        if (example.location != null)
+          expect(pitch.pitchLocation, dumped).deep.include(example.location)
+        if (example.pitchType !== undefined)
+          expect(pitch.pitchType, dumped).equals(example.pitchType ?? undefined)
+      })
   }
 )
 

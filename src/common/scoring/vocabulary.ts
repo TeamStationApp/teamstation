@@ -62,7 +62,17 @@ export const DICTATION_TERMS: readonly string[] = [
   'beaned',
   'froze him',
   'whiffed',
-  'dotted'
+  'dotted',
+  // How far a ball went, and the kind of pitch.
+  'blooper',
+  'dribbler',
+  'warning track',
+  'off the wall',
+  'shallow',
+  'fastball',
+  'curveball',
+  'slider',
+  'changeup'
 ]
 
 /** What a phrase comes to, in the library's own vocabulary. */

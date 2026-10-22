@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { ACTION_TYPES, toolSchema } from '../../common/scoring/actions'
+import { PITCH_TYPE_NAMES } from '../../common/scoring/pitchType'
 import { tagOf, writtenTag } from '../../common/scoring/playerTags'
 import {
   ROSTER_COMMAND_TYPES,
@@ -9,6 +10,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
+import { placePhrases } from '../../test/dictationPlacePhrases'
 import {
   ASK_SCORER,
   asOpenAiTools,
@@ -27,6 +29,13 @@ import {
   UNDO_NOT_ASKED,
   withTags
 } from './interpreter'
+import {
+  BALL_PLACE_INSTRUCTIONS,
+  PITCH_INSTRUCTIONS,
+  PLACE_INSTRUCTIONS,
+  PLACE_KEYWORDS,
+  placeSections
+} from './placeInstructions'
 
 interface Sent {
   url: string
@@ -2595,5 +2604,129 @@ describe('dictation interpreter, player tags', function () {
     ).includes(
       `[{"type":"baseRunning","kind":"steal","runner":"${tagOf(3)}","to":"3B"},${JSON.stringify(said)}]`
     )
+  })
+})
+
+describe('where the ball went and the pitch, in the prompt', function () {
+  it('teaches a sentence only the sections its words call for', async function () {
+    const sent = async (transcript: string): Promise<string> => {
+      const stub = provider([call('c1', 'pitch', { call: 'B' })])
+      await new Interpretation(config(stub.fetch), 'ctx', transcript).start()
+      return stub.sent[0].body.messages
+        .map(message => message.content ?? '')
+        .join('\n')
+    }
+    expect(systemPrompt()).not.includes(PITCH_INSTRUCTIONS)
+    expect(systemPrompt()).not.includes(BALL_PLACE_INSTRUCTIONS)
+    const plain = await sent(
+      "Ground ball to the third baseman for a fielder's choice."
+    )
+    expect(plain).not.includes(PITCH_INSTRUCTIONS)
+    expect(plain).not.includes(BALL_PLACE_INSTRUCTIONS)
+    const ball = await sent('Bloop single to center.')
+    expect(ball).includes(BALL_PLACE_INSTRUCTIONS)
+    expect(ball).not.includes(PITCH_INSTRUCTIONS)
+    // Both, the pitch first, after the game and its rules.
+    const both = await sent('Slider, fouled deep down the line.')
+    expect(both.indexOf(PITCH_INSTRUCTIONS)).greaterThan(both.indexOf('GAME\n'))
+    expect(both.indexOf(BALL_PLACE_INSTRUCTIONS)).greaterThan(
+      both.indexOf(PITCH_INSTRUCTIONS)
+    )
+    // Every sentence the live tests place calls for its own section.
+    for (const example of placePhrases)
+      expect(placeSections(example.said), example.said).includes(
+        example.kind === 'pitch' ? PITCH_INSTRUCTIONS : BALL_PLACE_INSTRUCTIONS
+      )
+    // Every sentence a section works calls for that section.
+    for (const [section, lines] of [
+      [PITCH_INSTRUCTIONS, PITCH_INSTRUCTIONS],
+      [BALL_PLACE_INSTRUCTIONS, BALL_PLACE_INSTRUCTIONS]
+    ])
+      for (const [, line] of lines.matchAll(/"([^"]+[.!?])"/g))
+        expect(placeSections(line), line).includes(section)
+    // A ball in play, a throw or a change of players says nothing of a pitch.
+    for (const plain of [
+      'Single up the middle.',
+      'High fly ball to center, caught.',
+      'Low line drive to short, he snags it.',
+      'He misses the tag, safe at second.',
+      'The throw gets away, runner to third.',
+      'Casey tags up and takes third.',
+      'Pitching change, Remy comes in.',
+      'Lineup change: Sol bats for Remy.',
+      'Inside-the-park home run.',
+      'Highlight-reel catch by the center fielder.',
+      'Swinging bunt down the third base line, thrown out.',
+      'Pop up behind the plate, the catcher chases it down and makes the catch.',
+      'Grounder up the middle, missed by the shortstop, single.',
+      'Fly ball to center, Jones tags up, called safe at third.',
+      'Taken down the line, double.'
+    ])
+      expect(placeSections(plain), plain).not.includes(PITCH_INSTRUCTIONS)
+  })
+
+  it('offers where a ball and a pitch went only beside their sections', async function () {
+    const fields = async (
+      transcript: string
+    ): Promise<Record<string, string[]>> => {
+      const stub = provider([call('c1', 'pitch', { call: 'B' })])
+      await new Interpretation(config(stub.fetch), 'ctx', transcript).start()
+      const tools = stub.sent[0].body.tools as Array<{
+        function: { name: string; parameters: { properties?: object } }
+      }>
+      return Object.fromEntries(
+        tools
+          .filter(tool => ['pitch', 'ballInPlay'].includes(tool.function.name))
+          .map(tool => [
+            tool.function.name,
+            Object.keys(tool.function.parameters.properties ?? {})
+          ])
+      )
+    }
+    const plain = await fields("Pop fly to right center field, it's caught.")
+    for (const key of ['depth', 'distanceFeet', 'pitchType'])
+      expect(plain.ballInPlay, key).not.includes(key)
+    expect(plain.pitch).not.includes('depth')
+    expect(plain.pitch).not.includes('direction')
+    expect(plain.ballInPlay).includes('direction')
+    const ball = await fields('Bloop single to center.')
+    expect(ball.ballInPlay).includes('depth')
+    expect(ball.ballInPlay).includes('distanceFeet')
+    expect(ball.pitch).includes('depth')
+    expect(ball.pitch).not.includes('pitchType')
+    const pitch = await fields('Slider, fouled deep down the line.')
+    expect(pitch.pitch).includes('pitchType')
+    expect(pitch.ballInPlay).includes('pitchType')
+    expect(pitch.pitch).includes('direction')
+  })
+
+  it('works every word for distance, fouls, location and pitch type at least twice', function () {
+    const worked = [...PLACE_INSTRUCTIONS.matchAll(/"([^"]+)"/g)].map(match =>
+      match[1].toLowerCase()
+    )
+    for (const keyword of PLACE_KEYWORDS)
+      expect(
+        worked.filter(line => line.includes(keyword)).length,
+        keyword
+      ).at.least(2)
+    // Every depth, foul place and pitch type the tools take is taught.
+    for (const word of [
+      'depth dribbler',
+      'depth infield',
+      'depth shy_of_base',
+      'depth past_base',
+      'depth bloop',
+      'depth shallow',
+      'depth medium',
+      'depth deep',
+      'depth warning_track',
+      'depth wall',
+      'distanceFeet',
+      'pitchLocation',
+      ...PITCH_TYPE_NAMES.map(name => `pitchType ${name}`)
+    ])
+      expect(PLACE_INSTRUCTIONS, word).includes(word)
+    // No two-letter pitch code, which reads like a player tag.
+    expect(PLACE_INSTRUCTIONS).not.match(/pitchType\s+[A-Z]{2}\b/)
   })
 })

@@ -25,6 +25,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
+import { placeSections, placeTools } from './placeInstructions'
 
 /**
  * Turns what the scorer said into scoring actions, through an LLM.
@@ -1089,7 +1090,7 @@ export class Interpretation {
     const choiceRules = /\bfielder['’]?s? choice\b/i.test(transcript)
       ? `\n\nFIELDER CHOICE RELAYS\n${CHOICE_INSTRUCTIONS}`
       : ''
-    const game = `${gamePrompt(context)}${choiceRules}`
+    const game = `${gamePrompt(context)}${choiceRules}${placeSections(transcript)}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)
@@ -1697,7 +1698,9 @@ export class Interpretation {
         // One sentence is regularly several actions.
         parallel_tool_calls: true,
         tools: [
-          ...asOpenAiTools(this.config.tools ?? toolSchema()),
+          ...asOpenAiTools(
+            placeTools(this.config.tools ?? toolSchema(), this.transcript)
+          ),
           ...asOpenAiTools(this.config.rosterTools ?? []),
           ASK_SCORER,
           UNDO
@@ -1751,7 +1754,7 @@ export class Interpretation {
         // Any tool, and as many as the sentence needs.
         tool_choice: this.required ? { type: 'any' } : { type: 'auto' },
         tools: [
-          ...(this.config.tools ?? toolSchema()),
+          ...placeTools(this.config.tools ?? toolSchema(), this.transcript),
           ...(this.config.rosterTools ?? []),
           ...[ASK_SCORER, UNDO].map(tool => ({
             name: tool.function.name,
