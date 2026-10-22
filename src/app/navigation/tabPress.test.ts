@@ -12,17 +12,16 @@ const deep = (): Record<Tab, string[]> => ({
 })
 
 describe('a press on a destination', function () {
-  it('walks one step out of the tab you are already on', function () {
-    const once = stacksAfterTabPress(deep(), 'home', 'home')
-    expect(once.home).deep.equals(['team'])
-    const twice = stacksAfterTabPress(once, 'home', 'home')
-    expect(twice.home).deep.equals([])
-  })
-
-  it('leaves the other tabs exactly where they were', function () {
-    const after = stacksAfterTabPress(deep(), 'home', 'home')
-    expect(after.videos).deep.equals(['game'])
-    expect(after.schedule).deep.equals([])
+  it('clears the tab you are already on, in one press', function () {
+    const stacks = {
+      home: ['team', 'game', 'player'],
+      videos: ['game'],
+      schedule: []
+    }
+    const once = stacksAfterTabPress(stacks, 'home', 'home')
+    expect(once.home).deep.equals([])
+    expect(once.videos).deep.equals(['game'])
+    expect(once.schedule).deep.equals([])
   })
 
   it('changes nothing when the press is for another tab', function () {
