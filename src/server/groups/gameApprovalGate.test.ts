@@ -102,6 +102,12 @@ describe('game approval readiness matches Express route semantics', function () 
         f.teamB
       )
     ).equals(false)
+    // A guest outside the season still needs its own administrator's consent.
+    await f.h.db
+      .deleteFrom('season_teams')
+      .where('season_id', '=', f.seasonA)
+      .where('team_id', '=', f.teamB)
+      .execute()
     const sent = await f.h.request(
       'POST',
       '/GAME-REQUESTS/',
@@ -115,6 +121,27 @@ describe('game approval readiness matches Express route semantics', function () 
       gameId: string | null
     }
     expect(pending).includes({ status: 'pending', gameId: null })
+    expect(
+      (
+        await f.h.request(
+          'POST',
+          `/GAME-REQUESTS/${pending.id}/ACCEPT/`,
+          {},
+          103
+        )
+      ).status
+    ).equals(403)
+    const senderConsent = await f.h.request(
+      'POST',
+      `/GAME-REQUESTS/${pending.id}/ACCEPT/`,
+      {},
+      101
+    )
+    expect(senderConsent.status).equals(200)
+    expect(await senderConsent.json()).includes({
+      status: 'pending',
+      gameId: null
+    })
     const accepted = await f.h.request(
       'POST',
       `/GAME-REQUESTS/${pending.id}/ACCEPT/`,

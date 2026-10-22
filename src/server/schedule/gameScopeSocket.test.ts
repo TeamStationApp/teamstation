@@ -412,8 +412,14 @@ describe('private socket access follows approved game revisions', function () {
       suspended: false
     })
     expect(
-      (await f.h.request('GET', `/games/${accepted.gameId}`, undefined, 106))
-        .status
+      (
+        await f.h.request(
+          'GET',
+          `/games/${accepted.gameId}/box-score`,
+          undefined,
+          106
+        )
+      ).status
     ).equals(401)
     await socket.fanout.deliver(
       JSON.stringify({ game: accepted.gameId, kind: 'plays' })
