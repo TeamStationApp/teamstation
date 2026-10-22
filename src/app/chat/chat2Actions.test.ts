@@ -16,6 +16,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import {
   CHAT2_SCENARIOS,
   type Chat2Fixture,
+  type Chat2Message,
   fixtureClient
 } from '../../test/chat2Fixture.e2e'
 import {
@@ -5786,6 +5787,263 @@ describe('identity safety row ownership', () => {
         } finally {
           actual.close()
         }
+      }
+    )
+})
+
+describe('native installed legacy reply navigation', () => {
+  function model(
+    mode = 'resolved',
+    native = true
+  ): {
+    scenario: Scenarios
+    baseline: { text: Chat2Message; reply: Chat2Message }
+    calls: unknown[]
+  } {
+    const viewer = userIdOfGumbo(1)
+    const baseline = {
+      text: {
+        id: 'msg_original',
+        seq: 5,
+        body: 'Original legacy text.',
+        authorId: viewer
+      },
+      reply: {
+        id: 'msg_reply',
+        seq: 236,
+        body: 'Preserved legacy reply.',
+        authorId: userIdOfGumbo(2)
+      }
+    }
+    const calls: unknown[] = []
+    const row = { x: 20, y: 200, width: 340, height: 240 }
+    const quote = { x: 40, y: 220, width: 300, height: 80 }
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native,
+      surface: 'ios',
+      visible: async () => true,
+      id: async (id: string) => {
+        calls.push({ latest: id })
+      },
+      present: async (id: string) => {
+        calls.push({ present: id })
+      },
+      device: {
+        assertVisible: async (selector: { id?: string; text?: string }) => {
+          calls.push(selector)
+          if (selector.text === '^Preserved legacy reply\\.$') return {}
+          if (selector.id != null)
+            return {
+              element: {
+                found: true,
+                id: mode === 'wrong-row' ? 'msg_other' : selector.id,
+                bounds: row
+              }
+            }
+          if (mode === 'transport')
+            throw Error('Actual native transport failure')
+          if (
+            mode === 'ambiguous' ||
+            (mode === 'unavailable' &&
+              selector.text?.startsWith('Jump to message from You:') === true)
+          )
+            throw Object.assign(Error('No unique exact quote'), {
+              code: 'COMMAND_FAILED'
+            })
+          return {
+            element: {
+              found: mode !== 'unresolved',
+              text: mode === 'wrong-label' ? 'Another quote' : selector.text,
+              class: mode === 'wrong-type' ? 'Other' : 'Button',
+              bounds:
+                mode === 'outside-row'
+                  ? { ...quote, y: 100 }
+                  : mode === 'offscreen'
+                    ? { ...quote, x: -10 }
+                    : mode === 'nonfinite'
+                      ? { ...quote, width: NaN }
+                      : quote
+            }
+          }
+        },
+        platformInfo: async () => ({ screenWidth: 400, screenHeight: 800 }),
+        tapOnPoint: async (args: unknown) => {
+          calls.push({ tap: args })
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerId: viewer,
+      ui,
+      observations: [],
+      anchor: async (target: Chat2Message) => {
+        calls.push({ anchor: target.id })
+      }
+    }) as Scenarios
+    return { scenario, baseline, calls }
+  }
+  for (const mode of ['resolved', 'unavailable'])
+    it(
+      'uses the exact recent reply and its observed ' +
+        mode +
+        ' quote before requiring the original ID',
+      async () => {
+        const actual = model(mode)
+        await actual.scenario.identityLegacyAnchor(
+          actual.baseline.text,
+          actual.baseline
+        )
+        expect(actual.calls[0]).deep.equals({ latest: 'chat-jump-latest' })
+        expect(actual.calls[1]).deep.equals({ anchor: 'msg_reply' })
+        expect(actual.calls).deep.includes({ tap: { x: 190, y: 260 } })
+        expect(actual.calls.at(-1)).deep.equals({
+          present: 'chat-bubble-msg_original'
+        })
+        expect(actual.calls).deep.includes({
+          text:
+            mode === 'resolved'
+              ? 'Jump to message from You: Original legacy text.'
+              : 'Jump to message from Former member: Message unavailable',
+          timeout: 2000
+        })
+      }
+    )
+  it('retains browser navigation without native controls or quote queries', async () => {
+    const actual = model('resolved', false)
+    await actual.scenario.identityLegacyAnchor(
+      actual.baseline.text,
+      actual.baseline
+    )
+    expect(actual.calls).deep.equals([{ anchor: 'msg_original' }])
+  })
+  it('returns to latest before revealing the recent reply or file from an old reader position', async () => {
+    const actual = model()
+    const file = { ...actual.baseline.reply, id: 'msg_file', seq: 239 }
+    for (const target of [actual.baseline.reply, file])
+      await actual.scenario.identityLegacyAnchor(target, actual.baseline)
+    expect(actual.calls).deep.equals([
+      { latest: 'chat-jump-latest' },
+      { anchor: 'msg_reply' },
+      { latest: 'chat-jump-latest' },
+      { anchor: 'msg_file' }
+    ])
+  })
+  for (const mode of [
+    'wrong-row',
+    'wrong-label',
+    'wrong-type',
+    'outside-row',
+    'offscreen',
+    'nonfinite',
+    'unresolved',
+    'ambiguous',
+    'transport'
+  ])
+    it(
+      'rejects ' + mode + ' without a quote tap or original-message claim',
+      async () => {
+        const actual = model(mode)
+        await captureFailure(
+          actual.scenario.identityLegacyAnchor(
+            actual.baseline.text,
+            actual.baseline
+          )
+        )
+        expect(
+          actual.calls.some(
+            call =>
+              typeof call === 'object' &&
+              call != null &&
+              ('tap' in call || 'present' in call)
+          )
+        ).equals(false)
+        if (mode === 'transport') expect(actual.calls).has.length(5)
+      }
+    )
+})
+
+describe('I3 iOS bench cold-link lifecycle', () => {
+  async function run(surface: string, fault?: string): Promise<unknown[]> {
+    const calls: unknown[] = []
+    const ui = {
+      surface,
+      fixture: { appId: 'app.example.test' },
+      step: async (_name: string, action: () => Promise<void>) => {
+        await action()
+      },
+      open: async (path: string) => {
+        calls.push({ open: path })
+      },
+      text: async (text: string) => {
+        calls.push({ tap: text })
+      },
+      shot: async () => {
+        calls.push('storage-shot')
+      },
+      device: {
+        stopApp: async (args: unknown) => {
+          calls.push({ stop: args })
+          if (fault === 'stop') throw Error('Actual stop failed')
+        },
+        assertVisible: async (args: { text: string }) => {
+          calls.push({ visible: args.text })
+          if (fault === 'heading' && args.text === '^Chat crypto bench$')
+            throw Error('Actual bench heading absent')
+        },
+        assertNotVisible: async (args: { text: string }) => {
+          calls.push({ absent: args.text })
+        }
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+    if (fault == null) await scenario.I3()
+    else {
+      const error = await captureFailure(scenario.I3())
+      expect(String(error)).includes(
+        fault === 'stop' ? 'Actual stop failed' : 'Actual bench heading absent'
+      )
+    }
+    return calls
+  }
+  it('stops iOS before opening the bench link and requires its heading before unchanged storage checks', async () => {
+    const calls = await run('ios')
+    expect(calls.slice(0, 5)).deep.equals([
+      { stop: { appId: 'app.example.test' } },
+      { open: '/dev/chat-bench' },
+      { visible: '^Chat crypto bench$' },
+      { visible: '^vectors ok$' },
+      { tap: 'Check saved chat compatibility' }
+    ])
+    expect(calls).deep.includes({ visible: '^identity storage ok$' })
+    expect(calls).deep.includes({ absent: '^identity storage failed$' })
+    expect(calls.at(-1)).equals('storage-shot')
+  })
+  for (const surface of ['android', 'web-wide'])
+    it('retains the existing warm navigation on ' + surface, async () => {
+      const calls = await run(surface)
+      expect(calls.slice(0, 2)).deep.equals([
+        { open: '/dev/chat-bench' },
+        { visible: '^vectors ok$' }
+      ])
+      expect(
+        calls.some(
+          call => typeof call === 'object' && call != null && 'stop' in call
+        )
+      ).equals(false)
+    })
+  for (const fault of ['stop', 'heading'])
+    it(
+      'does not claim vectors or storage readiness after an iOS ' +
+        fault +
+        ' failure',
+      async () => {
+        const calls = await run('ios', fault)
+        expect(calls).not.deep.includes({ visible: '^vectors ok$' })
+        expect(calls).not.includes('storage-shot')
+        if (fault === 'stop') expect(calls).has.length(1)
       }
     )
 })

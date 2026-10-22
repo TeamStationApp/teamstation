@@ -3104,6 +3104,94 @@ export class Scenarios {
     await this.openGroup()
   }
 
+  /** Native I1 reaches the old post through its recent, authenticated reply. */
+  async identityLegacyAnchor(
+    target: Chat2Message,
+    baseline: { text: Chat2Message; reply: Chat2Message }
+  ): Promise<void> {
+    const ui = this.ui
+    if (!ui.native) {
+      await this.anchor(target)
+      return
+    }
+    if (await ui.visible({ id: 'chat-jump-latest' }, 1000))
+      await ui.id('chat-jump-latest')
+    if (target.id !== baseline.text.id) {
+      await this.anchor(target)
+      return
+    }
+    assert.equal(baseline.text.authorId, this.viewerId)
+    assert(Array.from(baseline.text.body).length <= 200)
+    await this.anchor(baseline.reply)
+    await ui.device.assertVisible({ text: exactText(baseline.reply.body) })
+    interface Element {
+      found?: boolean
+      id?: string
+      text?: string
+      class?: string
+      bounds?: PublicNode['bounds']
+    }
+    const proof: Json = { legacyQuoteJump: target.id, reply: baseline.reply.id }
+    this.observations.push(proof)
+    const read = async (selector: Json): Promise<Element> => {
+      const response = await ui.device.assertVisible(
+        { ...selector, timeout: 2000 },
+        { signal: AbortSignal.timeout(5000) }
+      )
+      proof.reads = [...((proof.reads as unknown[]) ?? []), response]
+      const element = (response as { element?: Element }).element
+      assert(element?.found === true, 'Actual resolved legacy element required')
+      return element
+    }
+    const rowId = 'chat-message-' + baseline.reply.id
+    const row = await read({ id: rowId })
+    assert.equal(row.id, rowId, 'Exact legacy reply row required')
+    const resolvedLabel = 'Jump to message from You: ' + baseline.text.body
+    let label = resolvedLabel
+    let quote: Element
+    try {
+      // A literal lets the native driver query beyond its capped global snapshot.
+      quote = await read({ text: label })
+    } catch (error) {
+      if (
+        error == null ||
+        typeof error !== 'object' ||
+        !('code' in error) ||
+        error.code !== 'COMMAND_FAILED'
+      )
+        throw error
+      label = 'Jump to message from Former member: Message unavailable'
+      quote = await read({ text: label })
+    }
+    assert.equal(quote.text, label, 'Exact rendered legacy quote required')
+    assert(
+      ui.surface !== 'ios' || quote.class === 'Button',
+      'Actual legacy quote Button required'
+    )
+    const bounds = need(quote.bounds, 'Actual legacy quote bounds required')
+    const parent = need(row.bounds, 'Actual legacy reply bounds required')
+    const screen = await ui.device.platformInfo()
+    const width = Number(screen.screenWidth)
+    const height = Number(screen.screenHeight)
+    assert(
+      [bounds, parent].every(
+        b =>
+          [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+          b.width > 0 &&
+          b.height > 0
+      ) &&
+        [width, height].every(v => Number.isFinite(v) && v > 0) &&
+        bounds.x >= Math.max(0, parent.x) &&
+        bounds.y >= Math.max(0, parent.y) &&
+        bounds.x + bounds.width <= Math.min(width, parent.x + parent.width) &&
+        bounds.y + bounds.height <= Math.min(height, parent.y + parent.height),
+      'Exact legacy quote must fit its observed reply row and screen'
+    )
+    await ui.tapObserved({ bounds })
+    await ui.present('chat-bubble-' + target.id)
+    proof.outcome = 'passed'
+  }
+
   async I1(): Promise<void> {
     await this.check(
       'I1 preserved installed legacy identity and encrypted history',
@@ -3145,11 +3233,11 @@ export class Scenarios {
         await this.signIn()
         await this.openGroup()
         for (const message of [baseline.text, baseline.reply]) {
-          await this.anchor(message)
+          await this.identityLegacyAnchor(message, baseline)
           await this.ui.device.assertVisible({ text: exactText(message.body) })
         }
         await this.ui.device.assertVisible({ text: '^Jump to message from .*' })
-        await this.anchor(baseline.file)
+        await this.identityLegacyAnchor(baseline.file, baseline)
         await until(
           async () => {
             try {
@@ -3368,7 +3456,14 @@ export class Scenarios {
     await this.check(
       'I3 isolated real platform persistence and injected adapter write refusal',
       async () => {
+        if (this.ui.surface === 'ios')
+          await this.ui.device.stopApp({ appId: this.ui.fixture.appId })
         await this.ui.open('/dev/chat-bench')
+        if (this.ui.surface === 'ios')
+          await this.ui.device.assertVisible({
+            text: exactText('Chat crypto bench'),
+            timeout: 30000
+          })
         await this.ui.device.assertVisible({
           text: exactText('vectors ok'),
           timeout: 30000
