@@ -1,6 +1,14 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+/** The venue the Auto-Scheduler's tests claim: an invented park. */
+export const EXAMPLE_PARK = {
+  id: 'example-park',
+  name: 'Example Park',
+  address: '1 Example Way, Demo City',
+  location: { latitude: 40.02, longitude: -75.22 }
+}
+
 export async function googlePlacesStub(): Promise<{
   baseUrl: string
   calls: Array<{ path: string; mask: string; key: string; body: unknown }>
@@ -65,13 +73,16 @@ export async function googlePlacesStub(): Promise<{
                   : {
                       status: 'OK',
                       timeZoneId:
-                        longitude > 100
-                          ? 'Asia/Singapore'
-                          : longitude > -10
-                            ? 'Europe/Lisbon'
-                            : latitude > 40
-                              ? 'America/Toronto'
-                              : 'America/Chicago'
+                        latitude === EXAMPLE_PARK.location.latitude &&
+                        longitude === EXAMPLE_PARK.location.longitude
+                          ? 'America/New_York'
+                          : longitude > 100
+                            ? 'Asia/Singapore'
+                            : longitude > -10
+                              ? 'Europe/Lisbon'
+                              : latitude > 40
+                                ? 'America/Toronto'
+                                : 'America/Chicago'
                     }
               )
             )
@@ -92,6 +103,22 @@ export async function googlePlacesStub(): Promise<{
             return
           }
           const query = (body as { textQuery: string }).textQuery
+          if (/example park/i.test(query)) {
+            res.end(
+              JSON.stringify({
+                places: [
+                  {
+                    id: EXAMPLE_PARK.id,
+                    displayName: { text: EXAMPLE_PARK.name },
+                    formattedAddress: EXAMPLE_PARK.address,
+                    primaryType: 'park',
+                    location: EXAMPLE_PARK.location
+                  }
+                ]
+              })
+            )
+            return
+          }
           res.end(
             JSON.stringify({
               places:
@@ -165,6 +192,36 @@ export async function googlePlacesStub(): Promise<{
         const id = new URL(req.url!, 'http://localhost').pathname
           .split('/')
           .at(-1)
+        if (id === EXAMPLE_PARK.id || id === 'harbor-field') {
+          if (controls.malformed) {
+            res.end('{}')
+            return
+          }
+          if (controls.invalidCoordinates) {
+            res.end(
+              JSON.stringify({ id, location: { latitude: 100, longitude: 0 } })
+            )
+            return
+          }
+          res.end(
+            JSON.stringify(
+              id === EXAMPLE_PARK.id
+                ? {
+                    id,
+                    displayName: { text: EXAMPLE_PARK.name },
+                    formattedAddress: EXAMPLE_PARK.address,
+                    location: EXAMPLE_PARK.location
+                  }
+                : {
+                    id,
+                    displayName: { text: 'Harbor Field' },
+                    formattedAddress: '1 Demo Way, Demo City',
+                    location: { latitude: 40.05, longitude: -75.18 }
+                  }
+            )
+          )
+          return
+        }
         if (
           ![
             'austin',

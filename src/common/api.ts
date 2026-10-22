@@ -148,6 +148,12 @@ import type {
 } from './umpireSchedule'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
+import {
+  asVenueDetail,
+  asVenueSummary,
+  type VenueDetail,
+  type VenueSummary
+} from './venues'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
 
@@ -2897,6 +2903,139 @@ export class TeamStationClient {
       'GET',
       `/locations?kind=${kind}&query=${encodeURIComponent(query)}`,
       asEventPlaces
+    )
+  }
+
+  /**
+   * Venues for the Field Manager: a search, a list near a point, or the
+   * venues some leagues own. See `GET /venues`.
+   */
+  async venues(
+    options: {
+      query?: string
+      near?: { latitude: number; longitude: number }
+      leagueIds?: string[]
+    } = {}
+  ): Promise<VenueSummary[]> {
+    const params = new URLSearchParams()
+    if (options.query != null && options.query.trim() !== '')
+      params.set('query', options.query.trim())
+    if (options.near != null)
+      params.set('near', `${options.near.latitude},${options.near.longitude}`)
+    for (const id of options.leagueIds ?? []) params.append('league', id)
+    const search = params.toString()
+    return (
+      await this.request(
+        'GET',
+        `/venues${search === '' ? '' : `?${search}`}`,
+        asObject({ items: asArray(asVenueSummary) })
+      )
+    ).items
+  }
+
+  /** The venue for a Google place: the registry's, or the place itself. */
+  async venueForPlace(placeId: string): Promise<VenueDetail> {
+    const [venue] = (
+      await this.request(
+        'GET',
+        `/venues?place=${encodeURIComponent(placeId)}`,
+        asObject({ items: asArray(asVenueDetail) })
+      )
+    ).items
+    if (venue == null) throw new HttpError('notFound', 'Not found')
+    return venue
+  }
+
+  async venue(venueId: string): Promise<VenueDetail> {
+    return await this.request(
+      'GET',
+      `/venues/${encodeURIComponent(venueId)}`,
+      asVenueDetail
+    )
+  }
+
+  /** Adds a Google place to the registry and claims it for a league. */
+  async claimPlace(placeId: string, leagueId: string): Promise<VenueDetail> {
+    return await this.request('POST', '/venues', asVenueDetail, {
+      placeId,
+      leagueId
+    })
+  }
+
+  /** Claims a venue, or asks to co-own it when it is claimed. */
+  async claimVenue(venueId: string, leagueId: string): Promise<VenueDetail> {
+    return await this.request(
+      'POST',
+      `/venues/${encodeURIComponent(venueId)}/claims`,
+      asVenueDetail,
+      { leagueId }
+    )
+  }
+
+  async decideVenueClaim(
+    venueId: string,
+    claimId: string,
+    decision: 'approve' | 'reject'
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'POST',
+      `/venues/${encodeURIComponent(venueId)}/claims/${encodeURIComponent(claimId)}/decisions`,
+      asVenueDetail,
+      { decision }
+    )
+  }
+
+  /** Leaves, withdraws or removes a claim. */
+  async endVenueClaim(venueId: string, claimId: string): Promise<VenueDetail> {
+    return await this.request(
+      'DELETE',
+      `/venues/${encodeURIComponent(venueId)}/claims/${encodeURIComponent(claimId)}`,
+      asVenueDetail
+    )
+  }
+
+  async updateVenue(
+    venueId: string,
+    changes: Record<string, unknown>
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'PUT',
+      `/venues/${encodeURIComponent(venueId)}`,
+      asVenueDetail,
+      changes
+    )
+  }
+
+  async createField(
+    venueId: string,
+    field: Record<string, unknown>
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'POST',
+      `/venues/${encodeURIComponent(venueId)}/fields`,
+      asVenueDetail,
+      field
+    )
+  }
+
+  async updateField(
+    venueId: string,
+    fieldId: string,
+    changes: Record<string, unknown>
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'PUT',
+      `/venues/${encodeURIComponent(venueId)}/fields/${encodeURIComponent(fieldId)}`,
+      asVenueDetail,
+      changes
+    )
+  }
+
+  async deleteField(venueId: string, fieldId: string): Promise<VenueDetail> {
+    return await this.request(
+      'DELETE',
+      `/venues/${encodeURIComponent(venueId)}/fields/${encodeURIComponent(fieldId)}`,
+      asVenueDetail
     )
   }
 

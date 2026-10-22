@@ -105,6 +105,24 @@ export interface RelationshipInvitation {
  */
 export const RECORDING_UPLOAD = 'recordingUpload'
 
+/**
+ * The Auto-Scheduler's notices: claims on a venue, a game's field warnings
+ * and the league's schedule. Each lights the bell until it is opened, and
+ * names what it opens.
+ */
+export const SCHEDULING_NEWS = [
+  'venueClaim',
+  'venueOwnerRequest',
+  'venueClaimDecided',
+  'fieldWarning',
+  'scheduleNeedsAttention',
+  'schedulePublished'
+] as const
+export type SchedulingNews = (typeof SCHEDULING_NEWS)[number]
+export function isSchedulingNews(type: string): type is SchedulingNews {
+  return (SCHEDULING_NEWS as readonly string[]).includes(type)
+}
+
 const cleanNotification = asObject({
   id: asString,
   requestId: asString,
@@ -143,16 +161,31 @@ const cleanNotification = asObject({
   ),
   /** On a `recordingUpload` reminder: the game and the angle's stream. */
   gameId: asOptional(asString),
-  liveStreamId: asOptional(asString)
+  liveStreamId: asOptional(asString),
+  /** On a scheduling notice: what it opens. */
+  venueId: asOptional(asString),
+  leagueId: asOptional(asString),
+  seasonId: asOptional(asString),
+  teamId: asOptional(asString)
 })
 type Cleaned = ReturnType<typeof cleanNotification>
 export type Notification = Omit<
   Cleaned,
-  'leave' | 'gameId' | 'liveStreamId'
+  | 'leave'
+  | 'gameId'
+  | 'liveStreamId'
+  | 'venueId'
+  | 'leagueId'
+  | 'seasonId'
+  | 'teamId'
 > & {
   leave?: Cleaned['leave']
   gameId?: string
   liveStreamId?: string
+  venueId?: string
+  leagueId?: string
+  seasonId?: string
+  teamId?: string
 }
 export const asNotification: (raw: unknown) => Notification = cleanNotification
 export const asNotificationPage = asObject({

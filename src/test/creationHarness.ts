@@ -26,6 +26,7 @@ import { seasonRoutes } from '../server/routes/seasons'
 import { statsRoutes } from '../server/routes/stats'
 import { teamMemberRoutes } from '../server/routes/teamMembers'
 import { userRoutes } from '../server/routes/users'
+import { venueRoutes } from '../server/routes/venues'
 import { walkUpSongRoutes } from '../server/routes/walkUpSongs'
 import {
   type AccountHarness,
@@ -106,6 +107,7 @@ export async function creationHarness(
         })
       )
       app.use('/api/v1', eventListRoutes(db, media))
+      app.use('/api/v1', venueRoutes(db, media, { places: cityLookup, clock }))
       app.use(
         '/api/v1',
         liveRoutes(db, {

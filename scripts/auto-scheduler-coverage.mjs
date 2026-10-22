@@ -19,8 +19,9 @@
 // A changed file no suite loaded fails.
 //
 // Migrations are measured: their up and down tests load them. Test code,
-// `src/test/**`, end-to-end files, fixtures and type-only declarations are
-// not. A milestone that adds a suite adds it here.
+// `src/test/**`, end-to-end files, fixtures, type-only declarations and the
+// server's entry point (`src/server/index.ts`) are not. A milestone that
+// adds a suite adds it here.
 import { spawnSync } from 'node:child_process'
 import {
   cpSync,
@@ -49,7 +50,15 @@ const tsSuites = [
   'src/migrate/migrations/077venues.test.ts',
   'src/common/fieldAvailability.test.ts',
   'src/common/venues.test.ts',
-  'src/server/venues/ownership.test.ts'
+  'src/server/venues/ownership.test.ts',
+  // M2: the venue API, photos and notifications.
+  'src/server/routes/venues.test.ts',
+  'src/server/notifications/venueNotifications.test.ts',
+  'src/server/location/googlePlaces.test.ts',
+  'src/server/media/images.test.ts',
+  'src/server/openapi.test.ts',
+  'src/server/jsonBody.test.ts',
+  'src/common/api.venues.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -110,6 +119,10 @@ const eligible = path =>
   !path.startsWith('src/test/') &&
   !path.startsWith('src/server/dev/') &&
   path !== 'src/server/db/database.ts' &&
+  // The server's entry point, which only a deployed server runs; the
+  // harnesses mount the same routers. coverage.changed.server leaves it out
+  // for the same reason.
+  path !== 'src/server/index.ts' &&
   hasExecutableSource(path)
 
 const changed = lines(git(['diff', '--name-only', '--diff-filter=d', base]))

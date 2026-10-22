@@ -111,7 +111,10 @@ async function main(): Promise<void> {
         placeId: 'springfield-il'
       }),
       eventPlaces: async () => [],
-      coordinates: async () => ({ latitude: 39.8, longitude: -89.6 })
+      coordinates: async () => ({ latitude: 39.8, longitude: -89.6 }),
+      venueDetails: async () => {
+        throw new Error('This suite looks up no venue')
+      }
     }
   )
   const d = await maestro(process.env.MAESTRO_D ?? `ui-tweaks-${suffix}`)

@@ -59,6 +59,22 @@ const LARGE_BODIES: ReadonlyArray<{
     path: /^\/api\/v1\/groups\/(league|season|team)\/[^/]+$/,
     parser: pictureBody
   },
+  // A venue's or field's photo.
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/venues\/[^/]+$/,
+    parser: pictureBody
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/v1\/venues\/[^/]+\/fields$/,
+    parser: pictureBody
+  },
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/venues\/[^/]+\/fields\/[^/]+$/,
+    parser: pictureBody
+  },
   {
     method: 'POST',
     path: /^\/api\/v1\/games\/[^/]+\/events$/,

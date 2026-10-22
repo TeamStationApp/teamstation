@@ -2,7 +2,12 @@ import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
 
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
-import { type Notification, RECORDING_UPLOAD } from '../../common/notifications'
+import {
+  isSchedulingNews,
+  type Notification,
+  RECORDING_UPLOAD,
+  SCHEDULING_NEWS
+} from '../../common/notifications'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
@@ -40,6 +45,10 @@ async function informationFor(
     scope?: GroupRef
     gameId?: string
     liveStreamId?: string
+    venueId?: string
+    leagueId?: string
+    seasonId?: string
+    teamId?: string
   }
   // A grant offers to leave the level it gave, for as long as they are in it.
   let leave: Notification['leave'] = null
@@ -68,6 +77,13 @@ async function informationFor(
     leave,
     ...(reminder
       ? { gameId: metadata.gameId, liveStreamId: metadata.liveStreamId }
+      : {}),
+    ...(isSchedulingNews(event.source_type)
+      ? Object.fromEntries(
+          (['gameId', 'venueId', 'leagueId', 'seasonId', 'teamId'] as const)
+            .filter(key => metadata[key] != null)
+            .map(key => [key, metadata[key]])
+        )
       : {})
   }
 }
@@ -92,7 +108,10 @@ function compareRows(
  * or a grant they have not opened yet, which lights the bell until they do.
  */
 function isNews(row: Notification): boolean {
-  return row.canAct || (row.type === 'grant' && !row.viewed)
+  return (
+    row.canAct ||
+    ((row.type === 'grant' || isSchedulingNews(row.type)) && !row.viewed)
+  )
 }
 
 export async function notificationFor(
@@ -406,9 +425,9 @@ export async function inbox(
     const row = await notificationFor(db, fresh, request, clock)
     if (row != null) projected.push(row)
   }
-  // History lists every piece of information; the other tabs read grants,
-  // which are news until opened, and undismissed upload reminders, which
-  // wait in Pending. Both light the bell.
+  // History lists every piece of information; the other tabs read grants and
+  // scheduling notices, which are news until opened, and undismissed upload
+  // reminders, which wait in Pending. All of them light the bell.
   const information = await db
     .selectFrom('notification_events')
     .selectAll()
@@ -417,6 +436,7 @@ export async function inbox(
       query.where(eb =>
         eb.or([
           eb('source_type', '=', 'grant'),
+          eb('source_type', 'in', [...SCHEDULING_NEWS]),
           eb.and([
             eb('source_type', '=', RECORDING_UPLOAD),
             eb.not(

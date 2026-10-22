@@ -86,6 +86,7 @@ import { teamRoutes } from './routes/teams'
 import { timeRoutes } from './routes/time'
 import { umpireRoutes } from './routes/umpires'
 import { userRoutes } from './routes/users'
+import { venueRoutes } from './routes/venues'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
 import { startScoreboard } from './scoreboard/scoreboardService'
@@ -602,6 +603,7 @@ function runWorker(): void {
       googlePlaces: placesProvider
     })
   )
+  app.use('/api/v1', venueRoutes(db, mediaContext, { places: placesProvider }))
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {

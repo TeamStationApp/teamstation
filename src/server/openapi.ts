@@ -22,6 +22,7 @@ import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 import { umpirePaths } from './umpires/openApi'
 import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
+import { venuePaths } from './venues/venuesOpenApi'
 
 const recordSchema = {
   type: 'object',
@@ -2339,6 +2340,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...creationPaths(errorResponse),
       ...gameApprovalPaths(errorResponse),
       ...umpirePaths(errorResponse),
+      ...venuePaths(errorResponse),
       ...eventInfoPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {

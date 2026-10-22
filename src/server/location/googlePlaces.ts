@@ -15,6 +15,18 @@ export interface GooglePlaces {
   locality: (id: string, session?: string) => Promise<Locality>
   eventPlaces: (query: string, kind: EventPlaceKind) => Promise<EventPlace[]>
   coordinates: (address: string) => Promise<Coordinates>
+  /** A place by its Google id: what the venue registry stores of it. */
+  venueDetails: (placeId: string) => Promise<VenuePlace>
+}
+
+/** A Google place as the venue registry takes it in. */
+export interface VenuePlace {
+  placeId: string
+  name: string
+  address: string
+  latitude: number
+  longitude: number
+  timezone: string
 }
 interface PredictionReply {
   suggestions?: Array<{
@@ -59,6 +71,12 @@ const details = asObject({
   addressComponents: asArray(
     asObject({ longText: asString, types: asArray(asString) })
   ),
+  location: asObject({ latitude: asNumber, longitude: asNumber })
+})
+const venuePlace = asObject({
+  id: asString,
+  displayName: asOptional(asObject({ text: asString })),
+  formattedAddress: asOptional(asString, ''),
   location: asObject({ latitude: asNumber, longitude: asNumber })
 })
 const eventPlace = asObject({
@@ -132,6 +150,42 @@ export function googlePlaces({
     }
   }
   return {
+    async venueDetails(placeId) {
+      let place: ReturnType<typeof venuePlace>
+      try {
+        place = venuePlace(
+          await request(
+            `/v1/places/${encodeURIComponent(placeId)}?languageCode=en`,
+            'id,displayName,formattedAddress,location'
+          )
+        )
+      } catch (error) {
+        if (error instanceof TypeError)
+          throw unavailable('Place lookup is unavailable')
+        throw error
+      }
+      const { latitude, longitude } = place.location
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        Math.abs(latitude) > 90 ||
+        Math.abs(longitude) > 180
+      )
+        throw unavailable('The map provider returned invalid coordinates')
+      const name = place.displayName?.text.trim() ?? ''
+      return {
+        placeId: place.id,
+        name: (name === '' ? place.formattedAddress : name).slice(0, 200),
+        address: place.formattedAddress.slice(0, 400),
+        latitude,
+        longitude,
+        timezone: await coordinateTimezone(latitude, longitude, {
+          apiKey,
+          baseUrl: timeZoneBaseUrl,
+          timeoutMs
+        })
+      }
+    },
     async eventPlaces(query, kind) {
       if (query.trim().length < 2) return []
       try {

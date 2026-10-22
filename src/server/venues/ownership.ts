@@ -79,13 +79,16 @@ export async function venueOwnership(
   return ownershipOf(await liveClaims(db, [venueId]), clock)
 }
 
-/** Writes down the claims whose seven days have passed: approved, by nobody. */
+/**
+ * Writes down the claims whose seven days have passed: approved, by nobody.
+ * Returns them, so they can be announced.
+ */
 export async function settleClaims(
   db: Kysely<Database>,
   venueId: string,
   clock: Clock = realClock
-): Promise<void> {
-  await db
+): Promise<ClaimRow[]> {
+  return await db
     .updateTable('venue_claims')
     .set(eb => ({
       status: 'approved',
@@ -94,6 +97,7 @@ export async function settleClaims(
     .where('venue_id', '=', venueId)
     .where('status', '=', 'pending')
     .where('approves_at', '<=', clock.now())
+    .returningAll()
     .execute()
 }
 

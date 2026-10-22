@@ -29,7 +29,7 @@ const run = promisify(execFile)
  */
 
 /** What a picture belongs to. The `users` case is the one holding faces. */
-export type ImageKind = 'team' | 'league' | 'user'
+export type ImageKind = 'team' | 'league' | 'user' | 'venue' | 'field'
 
 /**
  * The sizes stored, smallest first: a list tile and a profile.
@@ -39,7 +39,20 @@ export type ImageKind = 'team' | 'league' | 'user'
  * be a photograph.
  */
 export const IMAGE_SIZES = [96, 192] as const
-export type ImageSize = (typeof IMAGE_SIZES)[number]
+
+/**
+ * The widths of a venue's or field's photo, 16:9 and cover-cropped: a hero
+ * card and its full-width view. A photograph of a place reads wide, and a
+ * square tile would cut the field out of it.
+ */
+export const WIDE_IMAGE_SIZES = [640, 1280] as const
+export type ImageSize =
+  (typeof IMAGE_SIZES)[number] | (typeof WIDE_IMAGE_SIZES)[number]
+
+/** The sizes a kind of picture is stored at, smallest first. */
+export function sizesFor(kind: ImageKind): readonly ImageSize[] {
+  return kind === 'venue' || kind === 'field' ? WIDE_IMAGE_SIZES : IMAGE_SIZES
+}
 
 /** The most a picture may weigh before we refuse to believe it is one. */
 export const MAX_SOURCE_BYTES = 10 * 1024 * 1024
@@ -83,7 +96,8 @@ export function imageKey(prefix: string, size: ImageSize): string {
 }
 
 /**
- * Square, centre-cropped, at both sizes, as PNG.
+ * At the sizes its kind is stored at, as PNG: square for a face or a mark,
+ * 16:9 for a photograph of a place.
  *
  * A face is cropped rather than letterboxed: a tile with bars down the sides
  * looks broken in a list where its neighbours fill their circles. A mark is
@@ -108,7 +122,8 @@ export async function normaliseImage(options: {
     await writeFile(input, source)
 
     const bySize = new Map<ImageSize, Buffer>()
-    for (const size of IMAGE_SIZES) {
+    const sizes = sizesFor(kind)
+    for (const size of sizes) {
       const output = join(dir, `${size}.png`)
       await run(
         ffmpegPath,
@@ -139,7 +154,7 @@ export async function normaliseImage(options: {
       bySize.set(size, bytes)
     }
 
-    const largest = bySize.get(IMAGE_SIZES[IMAGE_SIZES.length - 1])
+    const largest = bySize.get(sizes[sizes.length - 1])
     if (largest == null) throw new UnreadableImage('No rendition was produced')
     return { sha256: sha256Of(largest), bySize }
   } finally {
@@ -162,6 +177,10 @@ function ffmpegStarted(error: unknown): boolean {
 }
 
 function filterFor(kind: ImageKind, size: ImageSize): string {
+  if (kind === 'venue' || kind === 'field') {
+    const height = (size * 9) / 16
+    return `scale=${size}:${height}:force_original_aspect_ratio=increase,crop=${size}:${height}`
+  }
   if (kind === 'user') {
     // Fill the square and cut the overflow: `increase` then a centred crop.
     return `scale=${size}:${size}:force_original_aspect_ratio=increase,crop=${size}:${size}`
