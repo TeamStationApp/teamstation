@@ -6542,3 +6542,77 @@ describe('I3 iOS bench cold-link lifecycle', () => {
       }
     )
 })
+
+describe('I2 mixed-account legacy reply selection', () => {
+  async function selection(
+    surface: string,
+    wrongAuthor = false
+  ): Promise<{
+    selected: Chat2Message[]
+    target: Chat2Message
+    error: unknown
+    stopped: Error
+  }> {
+    const peerId = userIdOfGumbo(5)
+    const target: Chat2Message = {
+      id: 'msg-pre-upgrade-peer',
+      seq: 231,
+      body: 'Practice update: bring water.',
+      authorId: wrongAuthor ? userIdOfGumbo(6) : peerId
+    }
+    const distantOriginal: Chat2Message = {
+      id: 'msg-installed-profile-original',
+      seq: 6,
+      body: 'Earlier note from an installed profile.',
+      authorId: userIdOfGumbo(7)
+    }
+    const selected: Chat2Message[] = []
+    const stopped = Error('Reply target boundary observed')
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerKey: 'Fresh',
+      viewerId: 'usr_11112LJ7YLqvVc8DmhwPNw',
+      ui: { surface },
+      f: {
+        identityCompatibility: {
+          fullWidthActors: ['Fresh'],
+          legacy: { [surface]: { text: distantOriginal } }
+        },
+        actors: { Fresh: { provider: {} } },
+        messages: { target }
+      },
+      check: async (_name: string, action: () => Promise<void>) => {
+        await action()
+      },
+      client: async () => ({
+        whoAmI: async () => ({ gumboId: null }),
+        myChatKeys: async () => ({ identity: { id: 'cid-original' } })
+      }),
+      signIn: async () => {},
+      openGroup: async () => {},
+      protocolPeer: async () => ({
+        client: { whoAmI: async () => ({ id: peerId }) }
+      }),
+      reply: async (message: Chat2Message) => {
+        selected.push(message)
+        throw stopped
+      }
+    }) as Scenarios
+    const error = await captureFailure(scenario.I2())
+    return { selected, target, error, stopped }
+  }
+
+  for (const surface of ['web-wide', 'web-narrow', 'ios', 'android'])
+    it('replies to the prepared legacy peer post on ' + surface, async () => {
+      const actual = await selection(surface)
+      expect(actual.error).equals(actual.stopped)
+      expect(actual.selected).deep.equals([actual.target])
+    })
+
+  it('refuses a prepared target authored by another account before opening Reply', async () => {
+    const actual = await selection('android', true)
+    expect(String(actual.error)).includes(
+      'Prepared legacy peer reply target required'
+    )
+    expect(actual.selected).deep.equals([])
+  })
+})

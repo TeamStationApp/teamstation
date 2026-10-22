@@ -3491,8 +3491,12 @@ export class Scenarios {
           gumboOfUserId(peerId) != null,
           'Mixed legacy/full-width accounts required'
         )
-        const target =
-          compatibility.legacy[this.ui.surface]?.text ?? this.f.messages.target
+        const target = this.f.messages.target
+        assert.equal(
+          target.authorId,
+          peerId,
+          'Prepared legacy peer reply target required'
+        )
         await this.reply(target)
         await this.ui.typeMentionTrigger()
         await this.ui.id('chat-mention-member-' + peerId)
