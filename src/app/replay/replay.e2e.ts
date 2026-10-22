@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { TeamStationClient } from '../../common/api'
+import { narrateTimeline } from '../../common/replay/narration'
 import {
   replayContextOf,
   replayTimelineOf
@@ -59,8 +60,29 @@ import {
  *   REPLAY_SCENARIO=noAnnouncer   (the server's `speech` removed)
  *     The replay offers no speaker.
  *
- * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
- * REPLAY_IMPORTED override them.
+ *   REPLAY_SCENARIO=controls REPLAY_PHASE=before|after
+ *     The replay paused at its first pitch at 402 x 874 and 1024 x 1366:
+ *     replay-controls-<phase>.png and box-score-centred-<phase>.png. `after`
+ *     expects the rewind button.
+ *
+ *   REPLAY_SCENARIO=rewind
+ *     Rewind in the final game's replay: from "Play ball!", after two
+ *     sentences paused (the card's height and the box score's place kept,
+ *     the box score back at the start) and playing, one sentence into the
+ *     bottom of the 1st, two into the top of the 2nd and again within the
+ *     words, paused, and after the end; the buttons' margins and the box
+ *     score centred at both sizes and with the imported-innings note.
+ *     Writes rewind-notice.png, rewind-fade.mp4 and rewind-e2e.log.
+ *
+ *   REPLAY_SCENARIO=rewindLive
+ *     A season member rewinds the game in progress while the scorer pitches:
+ *     the rewound half at replay pace, then live again. Writes
+ *     rewind-live.log.
+ *
+ *   REPLAY_SCENARIO=rewindAnnouncer   (the server's `speech` set)
+ *     A tap a second into a sentence stops it, and the rewound sentences are
+ *     read again. Writes rewind-announcer.log and what was heard,
+ *     rewind-announcer.mp3.
  */
 
 const FINAL = process.env.REPLAY_FINAL ?? 'gam_replaySeedFinal'
@@ -1039,6 +1061,688 @@ async function noAnnouncer(m: Device): Promise<void> {
   await shot(m, 'replay-no-announcer')
 }
 
+const MIXED = process.env.REPLAY_MIXED ?? 'gam_replaySeedMixed'
+
+/** A game's replay, or its live view, straight from its address. */
+async function openReplay(m: Device, gameId: string): Promise<void> {
+  await m.openBrowser({
+    url: `${required('REPLAY_WEB_URL')}/games/${gameId}/replay`
+  })
+  await m.assertVisible({ id: 'game-replay', timeout: 30000 })
+}
+
+interface Card {
+  t: number
+  text: string
+}
+
+const cards = async (m: Device): Promise<Card[]> =>
+  await evalJson<Card[]>(m, 'return window.__cards ?? []')
+
+/** A sentence of the game, not "Play ball!", a rewind's words or nothing. */
+const isEvent = (text: string): boolean =>
+  text !== '' && !text.startsWith('Play ball!') && !text.startsWith('Rewind to')
+
+/** Waits until `count` more game sentences have been shown, and returns the last. */
+async function eventsAfter(
+  m: Device,
+  from: number,
+  count: number,
+  ms = 120000
+): Promise<Card> {
+  const deadline = Date.now() + ms
+  for (;;) {
+    const seen = (await cards(m)).filter(
+      card => card.t > from && isEvent(card.text)
+    )
+    if (seen.length >= count) return seen[count - 1]
+    assert.ok(Date.now() < deadline, `fewer than ${count} sentences`)
+    await wait(200)
+  }
+}
+
+/** Taps rewind and returns the card's words and when they showed. */
+async function tapRewind(m: Device): Promise<Card> {
+  const tapped = Date.now()
+  await m.tapOn({ id: 'replay-rewind' })
+  const deadline = Date.now() + 5000
+  for (;;) {
+    const words = (await cards(m)).find(
+      card => card.t >= tapped - 50 && card.text.startsWith('Rewind to')
+    )
+    if (words != null) return words
+    assert.ok(Date.now() < deadline, 'the card never said where it went')
+    await wait(100)
+  }
+}
+
+/** The card's first line: the sentence or the rewind's words. */
+const LINE = `document.querySelector('[data-testid="replay-play-card-line"]')?.textContent ?? ''`
+
+/** The card and the box score's places, and the two buttons' margins. */
+const GEOMETRY = `
+  const rect = id => document.querySelector('[data-testid="' + id + '"]')?.getBoundingClientRect();
+  const card = rect('replay-play-card'), box = rect('replay-box-score');
+  const rewind = rect('replay-rewind'), pause = rect('replay-pause');
+  return {
+    cardHeight: card ? Math.round(card.height * 10) / 10 : null,
+    boxTop: box ? Math.round(box.top * 10) / 10 : null,
+    rewind: rewind ? [Math.round(rewind.left), Math.round(innerHeight - rewind.bottom), Math.round(rewind.width)] : null,
+    pause: pause ? [Math.round(innerWidth - pause.right), Math.round(innerHeight - pause.bottom), Math.round(pause.width)] : null
+  };
+`
+
+interface Geometry {
+  cardHeight: number | null
+  boxTop: number | null
+  rewind: number[] | null
+  pause: number[] | null
+}
+
+/**
+ * The drawn box score against the scrolling element's client box: the gap
+ * from its left edge to the leftmost cell and from the rightmost cell to its
+ * right edge, which leaves out the scrollbar.
+ */
+const CENTRING = `
+  const scroll = document.querySelector('[data-testid="replay-box-score"]');
+  const column = document.querySelector('[data-testid="replay-box-score-column"]');
+  const box = scroll.getBoundingClientRect();
+  const left = box.left + scroll.clientLeft, right = left + scroll.clientWidth;
+  const cells = [...column.querySelectorAll('[dir="auto"]')].map(n => n.getBoundingClientRect()).filter(r => r.width > 0);
+  const minLeft = Math.min(...cells.map(r => r.left)), maxRight = Math.max(...cells.map(r => r.right));
+  const note = [...scroll.querySelectorAll('[dir="auto"]')].find(n => (n.textContent ?? '').startsWith('Stats from'));
+  const noteRect = note?.getBoundingClientRect();
+  return {
+    left: Math.round((minLeft - left) * 10) / 10,
+    right: Math.round((right - maxRight) * 10) / 10,
+    note: noteRect ? { inColumn: column.contains(note), align: getComputedStyle(note).textAlign } : null
+  };
+`
+
+interface Centring {
+  left: number
+  right: number
+  note: { inColumn: boolean; align: string } | null
+}
+
+async function centred(m: Device, what: string): Promise<Centring> {
+  const measured = await evalJson<Centring>(m, CENTRING)
+  console.log(`${what}: gaps ${measured.left} / ${measured.right}`)
+  assert.ok(
+    Math.abs(measured.left - measured.right) <= 1,
+    `${what}: the box score is off centre, ${measured.left} against ${measured.right}`
+  )
+  return measured
+}
+
+/**
+ * The replay's controls and box score at the first pitch, paused, at a
+ * phone's size and a tablet's, before (`REPLAY_PHASE=before`, on the build
+ * without rewind) and after.
+ */
+async function controls(
+  daemon: Parameters<typeof attachWeb>[0]
+): Promise<void> {
+  const phase = required('REPLAY_PHASE')
+  for (const [size, name] of [
+    ['402x874', `replay-controls-${phase}`],
+    ['1024x1366', `box-score-centred-${phase}`]
+  ] as const) {
+    const m = await attachWeb(daemon, size, `controls${size}`)
+    try {
+      await signInWeb(m, LEAGUE)
+      await openReplay(m, FINAL)
+      await evalJson<boolean>(m, CARD_LOG)
+      await eventsAfter(m, 0, 1, 30000)
+      await m.tapOn({ id: 'replay-pause' })
+      await wait(1000)
+      await shot(m, name)
+      const has = await evalJson<boolean>(
+        m,
+        `return document.querySelector('[data-testid="replay-rewind"]') != null`
+      )
+      assert.equal(has, phase === 'after', `rewind button on ${phase}`)
+    } finally {
+      await m.detach()
+    }
+  }
+}
+
+async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
+  const out = await artifactsDir()
+  const log: string[] = [
+    '$ REPLAY_SCENARIO=rewind node -r sucrase/register src/app/replay/replay.e2e.ts'
+  ]
+  const started = Date.now()
+  const note = (line: string): void => {
+    const entry = `${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s  ${line}`
+    log.push(entry)
+    console.log(entry)
+  }
+  const m = await attachWeb(daemon, '402x874', 'rewind')
+  try {
+    await signInWeb(m, LEAGUE)
+    await openReplay(m, FINAL)
+    await evalJson<boolean>(m, CARD_LOG)
+    const boxAtStart = await evalJson<string>(
+      m,
+      `return document.querySelector('[data-testid="replay-box-score"]').textContent`
+    )
+    const geometry = await evalJson<Geometry>(m, GEOMETRY)
+    note(
+      `buttons: rewind [left, bottom, width] ${JSON.stringify(geometry.rewind)}, pause [right, bottom, width] ${JSON.stringify(geometry.pause)}`
+    )
+    // The same distance from the bottom and from their side, the same size.
+    assert.ok(geometry.rewind != null && geometry.pause != null)
+    assert.deepEqual(geometry.rewind, geometry.pause)
+    assert.equal(geometry.rewind[2], 56)
+    const phone = await centred(m, 'box score at 402 x 874')
+    note(`box score at 402: left gap ${phone.left}, right gap ${phone.right}`)
+
+    // R4: at "Play ball!", a tap starts the game again from its first pitch.
+    await cardUntil(
+      m,
+      'Play ball!',
+      text => text.startsWith('Play ball!'),
+      15000
+    )
+    let words = await tapRewind(m)
+    note(`R4 at Play ball!: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to top of first'))
+
+    // R13 and R1: paused after two sentences, a tap; the card keeps its
+    // height and the box score its place, and the box score is back to zero.
+    const second = await eventsAfter(m, words.t, 2)
+    note(`two sentences in: ${second.text}`)
+    await m.tapOn({ id: 'replay-pause' })
+    await wait(500)
+    const before = await evalJson<Geometry>(m, GEOMETRY)
+    words = await tapRewind(m)
+    const during = await evalJson<Geometry>(m, GEOMETRY)
+    note(`R13 paused tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to top of first'))
+    assert.ok(words.text.includes('Paused'))
+    await wait(2600)
+    const afterwards = await evalJson<Geometry>(m, GEOMETRY)
+    const line = await evalJson<string>(m, `return ${LINE}`)
+    note(
+      `R13 after the words: ${line}; card heights ${before.cardHeight} / ${during.cardHeight} / ${afterwards.cardHeight}; box tops ${before.boxTop} / ${during.boxTop} / ${afterwards.boxTop}`
+    )
+    assert.equal(line, 'Play ball!')
+    assert.equal(during.cardHeight, before.cardHeight)
+    assert.equal(afterwards.cardHeight, before.cardHeight)
+    assert.equal(during.boxTop, before.boxTop)
+    assert.equal(afterwards.boxTop, before.boxTop)
+    const boxNow = await evalJson<string>(
+      m,
+      `return document.querySelector('[data-testid="replay-box-score"]').textContent`
+    )
+    assert.equal(boxNow, boxAtStart, 'the box score is not back at the start')
+    await m.tapOn({ id: 'replay-pause' })
+
+    // R1 unpaused: the first pitch about two seconds after the tap.
+    await eventsAfter(m, Date.now(), 2)
+    words = await tapRewind(m)
+    const first = await eventsAfter(m, words.t, 1, 15000)
+    note(
+      `R1 tap: ${words.text}; then after ${first.t - words.t} ms: ${first.text}`
+    )
+    assert.ok(words.text.startsWith('Rewind to top of first'))
+    assert.ok(first.t - words.t >= 1700 && first.t - words.t <= 3500)
+
+    // R2: one sentence into the bottom of the 1st goes back to the top.
+    const bottom = await cardUntil(
+      m,
+      'the bottom of the 1st',
+      text => text.startsWith('Mookie B steps in'),
+      240000
+    )
+    note(`one sentence into the bottom: ${bottom}`)
+    words = await tapRewind(m)
+    note(`R2 tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to top of first'))
+
+    // R3: two sentences into the top of the 2nd, a tap, then another.
+    const ended = await cardUntil(
+      m,
+      'the end of the 1st',
+      text => text.includes('End of the 1st'),
+      480000
+    )
+    const endedAt = (await cards(m)).findLast(card => card.text === ended)!.t
+    await eventsAfter(m, endedAt, 2, 60000)
+    const recorder = screenRecorder(m)
+    words = await tapRewind(m)
+    note(`R3 tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to top of second'))
+    await shot(m, 'rewind-notice')
+    await wait(700)
+    words = await tapRewind(m)
+    note(`R3 second tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to bottom of first'))
+    const resumed = await eventsAfter(m, words.t, 1, 15000)
+    note(`then after ${resumed.t - words.t} ms: ${resumed.text}`)
+    await wait(1500)
+    await recorder.stop(join(out, 'rewind-fade.mp4'))
+
+    // R5: paused two sentences into the top of the 2nd, a tap; the words
+    // fade while paused, leaving the last sentence of the bottom of the 1st.
+    const endedAgain = await cardUntil(
+      m,
+      'the end of the 1st again',
+      text => text.includes('End of the 1st'),
+      240000
+    )
+    const endedAgainAt = (await cards(m)).findLast(
+      card => card.text === endedAgain
+    )!.t
+    await eventsAfter(m, endedAgainAt, 2, 60000)
+    await m.tapOn({ id: 'replay-pause' })
+    words = await tapRewind(m)
+    note(`R5 paused tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to top of second'))
+    await wait(2600)
+    const left = await evalJson<string>(m, `return ${CARD}`)
+    note(`R5 after the words: ${left}`)
+    assert.ok(left.includes('End of the 1st') && left.includes('Paused'))
+    // On play the detail turns from "Paused" back to the count; the next
+    // sentence comes after the words' two seconds.
+    const sentence = left.slice(0, left.lastIndexOf('Paused'))
+    const played = Date.now()
+    await m.tapOn({ id: 'replay-pause' })
+    const next = await cardUntil(
+      m,
+      'the next sentence',
+      text => isEvent(text) && !text.startsWith(sentence),
+      15000
+    )
+    const nextAt = Date.now()
+    note(`R5 play: after ${nextAt - played} ms: ${next}`)
+    assert.ok(nextAt - played >= 1700)
+
+    // R6: at the end, the pause button goes and rewind stays.
+    const deadline = Date.now() + 900000
+    while (
+      await evalJson<boolean>(
+        m,
+        `return document.querySelector('[data-testid="replay-pause"]') != null`
+      )
+    ) {
+      assert.ok(Date.now() < deadline, 'the replay never ended')
+      await wait(1000)
+    }
+    note(`R6 ended: ${await evalJson<string>(m, `return ${CARD}`)}`)
+    words = await tapRewind(m)
+    note(`R6 tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to top of third'))
+    await m.assertVisible({ id: 'replay-pause', timeout: 5000 })
+  } finally {
+    await m.detach()
+  }
+
+  // R13 at a tablet's size, on the final game and on the game with
+  // imported innings and its note.
+  const tablet = await attachWeb(daemon, '1024x1366', 'rewindTablet')
+  try {
+    await signInWeb(tablet, LEAGUE)
+    for (const gameId of [FINAL, MIXED]) {
+      await openReplay(tablet, gameId)
+      await evalJson<boolean>(tablet, CARD_LOG)
+      await eventsAfter(tablet, 0, 1, 30000)
+      const measured = await centred(tablet, `${gameId} at 1024 x 1366`)
+      note(
+        `${gameId} at 1024: left gap ${measured.left}, right gap ${measured.right}, note ${JSON.stringify(measured.note)}`
+      )
+      if (gameId === MIXED) {
+        assert.ok(measured.note != null, 'no imported-innings note')
+        assert.equal(measured.note.inColumn, false)
+        assert.equal(measured.note.align, 'center')
+      }
+      const geometry = await evalJson<Geometry>(tablet, GEOMETRY)
+      assert.deepEqual(geometry.rewind, geometry.pause)
+    }
+  } finally {
+    await tablet.detach()
+  }
+  await writeFile(join(out, 'rewind-e2e.log'), `${log.join('\n')}\n`)
+}
+
+async function rewindLive(
+  daemon: Parameters<typeof attachWeb>[0]
+): Promise<void> {
+  const out = await artifactsDir()
+  const log: string[] = [
+    '$ REPLAY_SCENARIO=rewindLive node -r sucrase/register src/app/replay/replay.e2e.ts'
+  ]
+  const started = Date.now()
+  const note = (line: string): void => {
+    const entry = `${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s  ${line}`
+    log.push(entry)
+    console.log(entry)
+  }
+  const viewer = await attachWeb(daemon, '402x874', 'rewindViewer')
+  const scorer = await attachWeb(daemon, '402x874', 'rewindScorer')
+  try {
+    await signInWeb(scorer, SCORER)
+    await scorer.openBrowser({
+      url: `${required('REPLAY_WEB_URL')}/games/${LIVE}/score`
+    })
+    await scorer.assertVisible({ text: 'Ball', timeout: 30000 })
+    await signInWeb(viewer, SEASON)
+    await openReplay(viewer, LIVE)
+    await evalJson<boolean>(viewer, CARD_LOG)
+    const opened = await cardUntil(
+      viewer,
+      'the card',
+      text => text !== '',
+      15000
+    )
+    note(`opened on: ${opened}`)
+    const words = await tapRewind(viewer)
+    note(`R7 tap: ${words.text}`)
+    assert.ok(words.text.startsWith('Rewind to bottom of second'))
+    // The scorer goes on meanwhile.
+    await tapButton(scorer, 'Ball')
+    const ballAt = Date.now()
+    note('the scorer throws a ball')
+    // The rewound steps at replay pace, then the scorer's ball.
+    const played: Card[] = []
+    const deadline = Date.now() + 300000
+    for (;;) {
+      const seen = (await cards(viewer)).filter(
+        card => card.t > words.t && isEvent(card.text)
+      )
+      played.splice(0, played.length, ...seen)
+      const last = seen.at(-1)
+      if (last != null && Date.now() - last.t > 8000) break
+      assert.ok(Date.now() < deadline, 'the rewound steps never ended')
+      await wait(500)
+    }
+    const gaps = played.slice(1).map((card, i) => card.t - played[i].t)
+    note(`R7: ${played.length} steps after the tap, gaps ${gaps.join(', ')} ms`)
+    for (const card of played) note(`  ${card.text}`)
+    // Replay pace: a lineup change's two seconds, a pitch's four and a half;
+    // never a live slot (a second and a half) or a hurried one.
+    assert.ok(Math.min(...gaps) >= 1900, 'the rewound steps were hurried')
+    assert.ok(Math.max(...gaps) >= 4000, 'no pitch took a replay slot')
+    assert.ok(played.at(-1)!.t > ballAt, "the scorer's ball never played")
+    // Live again: the next pitch within a live slot.
+    const before = await evalJson<string>(viewer, `return ${CARD}`)
+    await tapButton(scorer, 'Called Strike')
+    const tapped = Date.now()
+    const shown = await cardUntil(
+      viewer,
+      'the strike',
+      text => text !== before,
+      10000
+    )
+    note(`live again: the strike after ${Date.now() - tapped} ms: ${shown}`)
+    assert.ok(Date.now() - tapped < 3000)
+  } finally {
+    await viewer.detach()
+    await scorer.detach()
+  }
+  await writeFile(join(out, 'rewind-live.log'), `${log.join('\n')}\n`)
+}
+
+/**
+ * The played span of each sentence in a media log: from its play to its
+ * pause or end, by the card it was played for.
+ */
+function playedSpans(
+  events: readonly MediaEvent[]
+): Array<{ card: string; seconds: number | null }> {
+  const spans: Array<{ card: string; seconds: number | null }> = []
+  for (const [index, event] of events.entries()) {
+    if (event.type !== 'play') continue
+    const stop = events
+      .slice(index + 1)
+      .find(other => other.src === event.src && other.type !== 'play')
+    spans.push({
+      card: event.card,
+      seconds:
+        stop == null || stop.type === 'ended' ? null : (stop.t - event.t) / 1000
+    })
+  }
+  return spans
+}
+
+/** A game's timeline and the announcer's sentences, as the server reads them. */
+async function narratedGame(gameId: string): Promise<{
+  client: TeamStationClient
+  timeline: ReturnType<typeof replayTimelineOf>
+  narrations: ReturnType<typeof narrateTimeline>
+}> {
+  const token = await sessionFor(LEAGUE)
+  const client = new TeamStationClient({
+    baseUrl: required('REPLAY_API'),
+    token
+  })
+  const [game, stored] = await Promise.all([
+    client.game(gameId),
+    client.gameEvents(gameId)
+  ])
+  const context = replayContextOf(game, stored)
+  assert.ok(context != null, 'no context')
+  const timeline = replayTimelineOf(stored, context)
+  return { client, timeline, narrations: narrateTimeline(timeline) }
+}
+
+/** The audio heard, clip by clip, each cut where it was stopped. */
+async function heardAudio(
+  gameId: string,
+  spans: ReadonlyArray<{ card: string; seconds: number | null }>,
+  path: string
+): Promise<string[]> {
+  const { client, timeline, narrations } = await narratedGame(gameId)
+  const dir = await mkdtemp(join(tmpdir(), 'heard-'))
+  const files: string[] = []
+  const keys: string[] = []
+  for (const [index, span] of spans.entries()) {
+    const step = timeline.steps.find(candidate => {
+      const text = narrations.get(candidate.key)?.text ?? ''
+      return text !== '' && span.card.startsWith(text)
+    })
+    assert.ok(step != null, `no step reads ${span.card}`)
+    keys.push(step.key)
+    const whole = join(dir, `${index}-whole.mp3`)
+    await writeFile(
+      whole,
+      Buffer.from(
+        await (
+          await client.narrationAudio(gameId, {
+            key: step.key,
+            count: step.actions.length
+          })
+        ).arrayBuffer()
+      )
+    )
+    const cut = join(dir, `${index}.mp3`)
+    const made = spawnSync(
+      'ffmpeg',
+      [
+        '-nostdin',
+        '-loglevel',
+        'error',
+        '-i',
+        whole,
+        ...(span.seconds == null ? [] : ['-t', span.seconds.toFixed(2)]),
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '64k',
+        '-ar',
+        '24000',
+        '-ac',
+        '1',
+        '-y',
+        cut
+      ],
+      { stdio: 'inherit' }
+    )
+    assert.equal(made.status, 0, 'ffmpeg cut nothing')
+    files.push(cut)
+  }
+  const list = join(dir, 'list.txt')
+  await writeFile(list, files.map(file => `file '${file}'`).join('\n'))
+  const joined = spawnSync(
+    'ffmpeg',
+    [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      list,
+      '-c',
+      'copy',
+      '-y',
+      path
+    ],
+    { stdio: 'inherit' }
+  )
+  assert.equal(joined.status, 0, 'ffmpeg joined nothing')
+  return keys
+}
+
+/**
+ * Keeps every request the page makes in its resource timing buffer: the
+ * app's client holds its own copy of `fetch`, so a wrapper would see none.
+ */
+const RESOURCE_LOG = `
+  performance.setResourceTimingBufferSize(100000);
+  return true;
+`
+
+/** The page's narration requests so far: each step key and count, with its time. */
+const NARRATION_REQUESTS = `
+  return performance.getEntriesByType('resource')
+    .map(entry => ({ entry, found: /\\/narrations\\/([^?]+)\\?count=(\\d+)/.exec(entry.name) }))
+    .filter(({ found }) => found != null)
+    .map(({ entry, found }) => ({ t: Math.round(performance.timeOrigin + entry.startTime), key: found[1], count: Number(found[2]) }));
+`
+
+interface NarrationRequest {
+  t: number
+  key: string
+  count: number
+}
+
+async function rewindAnnouncer(m: Device): Promise<void> {
+  const out = await artifactsDir()
+  await signInWeb(m, LEAGUE)
+  await openReplay(m, FINAL)
+  await evalJson<boolean>(m, MEDIA_LOG)
+  await evalJson<boolean>(m, CARD_LOG)
+  await evalJson<boolean>(m, RESOURCE_LOG)
+  const started = Date.now()
+  await m.tapOn({ id: 'replay-speaker' })
+  await m.assertVisible({ text: 'Turn announcer off' })
+  // Through the 1st, read aloud, to two sentences into the top of the 2nd.
+  const ended = await cardUntil(
+    m,
+    'the end of the 1st',
+    text => text.includes('End of the 1st'),
+    480000
+  )
+  const endedAt = (await cards(m)).findLast(card => card.text === ended)!.t
+  const deadline = Date.now() + 120000
+  let second: MediaEvent | undefined
+  for (;;) {
+    const plays = (await mediaEvents(m)).filter(
+      event =>
+        event.type === 'play' &&
+        event.t > endedAt &&
+        !event.card.includes('End of the 1st')
+    )
+    if (plays.length >= 2) {
+      second = plays[1]
+      break
+    }
+    assert.ok(Date.now() < deadline, 'no second sentence in the 2nd')
+    await wait(100)
+  }
+  await wait(1000)
+  const words = await tapRewind(m)
+  assert.ok(words.text.startsWith('Rewind to top of second'), words.text)
+  // The rewound steps read again: three more sentences.
+  for (;;) {
+    const plays = (await mediaEvents(m)).filter(
+      event => event.type === 'play' && event.t > words.t
+    )
+    if (plays.length >= 3) break
+    assert.ok(Date.now() < deadline + 120000, 'nothing read after the tap')
+    await wait(200)
+  }
+  await m.tapOn({ id: 'replay-speaker' })
+  const events = await mediaEvents(m)
+  const requests = await evalJson<NarrationRequest[]>(m, NARRATION_REQUESTS)
+  assert.ok(
+    requests.some(request => request.t > words.t),
+    'no narration request seen after the tap'
+  )
+  const stopped = events.find(
+    event =>
+      event.type === 'pause' &&
+      event.src === second.src &&
+      event.t >= words.t - 100 &&
+      event.t <= words.t + 800
+  )
+  assert.ok(stopped != null, 'the tap did not stop the sentence')
+  const after = events.filter(
+    event => event.type === 'play' && event.t > words.t
+  )
+  const firstOfSecond = events.find(
+    event =>
+      event.type === 'play' &&
+      event.t > endedAt &&
+      !event.card.includes('End of the 1st')
+  )!
+  assert.equal(
+    after[0].card.split('·')[0].slice(0, 30),
+    firstOfSecond.card.split('·')[0].slice(0, 30),
+    'the half was not read again from its first sentence'
+  )
+  assert.ok(
+    after.every(event => !event.card.includes('End of the 1st')),
+    'the sentence before the half was read again'
+  )
+  const { timeline, narrations } = await narratedGame(FINAL)
+  const endKey = timeline.steps.find(step =>
+    (narrations.get(step.key)?.text ?? '').includes('End of the 1st')
+  )!.key
+  assert.ok(
+    requests.every(request => request.t <= words.t || request.key !== endKey),
+    'the sentence before the half was fetched again'
+  )
+  const spans = playedSpans(events.filter(event => event.t >= endedAt - 50))
+  const keys = await heardAudio(FINAL, spans, join(out, 'rewind-announcer.mp3'))
+  const at = (t: number): string =>
+    `${((t - started) / 1000).toFixed(2).padStart(7)}s`
+  const lines = [
+    '$ REPLAY_SCENARIO=rewindAnnouncer node -r sucrase/register src/app/replay/replay.e2e.ts',
+    `# the tap: ${at(words.t).trim()}, two sentences into the top of the 2nd: ${words.text}`,
+    `# the step before the half, the end of the 1st: ${endKey}; requested after the tap: no; read after the tap: no`,
+    "# the announcer's element:",
+    ...events.map(
+      event =>
+        `${at(event.t)}  ${event.type.padEnd(6)} ${event.src.slice(-8)}  card: ${event.card}`
+    ),
+    '# narration requests from the page (step key, count):',
+    ...requests.map(
+      request =>
+        `${at(request.t)}  GET narrations/${request.key}?count=${request.count}${request.t > words.t ? '   (after the tap)' : ''}`
+    ),
+    `# heard from the end of the 1st on, in order (cut where stopped): ${keys.map((key, i) => `${key}${spans[i].seconds == null ? '' : ` (${spans[i].seconds.toFixed(2)} s)`}`).join(' ')} -> rewind-announcer.mp3`
+  ]
+  await writeFile(join(out, 'rewind-announcer.log'), `${lines.join('\n')}\n`)
+  console.log(lines.slice(1, 3).concat(lines.slice(-1)).join('\n'))
+}
+
 async function main(): Promise<void> {
   const scenario = required('REPLAY_SCENARIO')
   const daemon = await connect()
@@ -1057,6 +1761,11 @@ async function main(): Promise<void> {
       await finalAnnouncer((m = await attachWeb(daemon)))
     else if (scenario === 'noAnnouncer')
       await noAnnouncer((m = await attachWeb(daemon)))
+    else if (scenario === 'controls') await controls(daemon)
+    else if (scenario === 'rewind') await rewind(daemon)
+    else if (scenario === 'rewindLive') await rewindLive(daemon)
+    else if (scenario === 'rewindAnnouncer')
+      await rewindAnnouncer((m = await attachWeb(daemon)))
     else assert.fail(`Unknown scenario ${scenario}`)
     console.log(`PASS: ${scenario}`)
   } finally {

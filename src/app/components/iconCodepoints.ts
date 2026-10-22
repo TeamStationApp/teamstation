@@ -19,6 +19,7 @@ export const iconCodepoints: Record<IconName, number> = {
   stadium: 0xeb90,
   play_circle: 0xe038,
   play_arrow: 0xe037,
+  skip_previous: 0xe045,
   format_list_bulleted: 0xe241,
   bookmark: 0xe866,
   share: 0xe80d,

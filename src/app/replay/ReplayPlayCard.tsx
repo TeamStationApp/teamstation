@@ -16,6 +16,8 @@ export interface ReplayPlayCardProps {
   height: number
   /** Where the card's bottom edge lands, for what is laid out below it. */
   onBottom?: (bottom: number) => void
+  /** How much of the line shows: a rewind's words fade out before they go. */
+  lineOpacity?: number
 }
 
 const CARD_WIDTH = 320
@@ -67,10 +69,12 @@ export function ReplayPlayCard(
       }}
     >
       <Text
+        testID="replay-play-card-line"
         style={{
           fontFamily: theme.semiBoldTextFont,
           color: theme.scoringInstructionText,
-          fontSize: 15
+          fontSize: 15,
+          opacity: props.lineOpacity ?? 1
         }}
       >
         {props.line}

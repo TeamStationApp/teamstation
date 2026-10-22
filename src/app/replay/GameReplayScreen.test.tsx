@@ -24,6 +24,8 @@ import {
   CONTROLS_WIDTH,
   DECK_SHARE,
   fieldTop,
+  FLOATING_BUTTON,
+  FLOATING_MARGIN,
   GameReplayScreen,
   type ReplayClient,
   replayLayout,
@@ -96,6 +98,37 @@ function find(
     if (inside != null) return inside
   }
   return undefined
+}
+
+/** The props of the element with `testID`, read from React's tree. */
+function propsOf(testID: string): Record<string, unknown> {
+  const key = Object.keys(container ?? {}).find(name =>
+    name.startsWith('__reactContainer$')
+  )
+  const host = (container as unknown as Record<string, Fiber>)[key ?? '']
+  const current =
+    (host as { stateNode?: { current?: Fiber } }).stateNode?.current ?? host
+  const seek = (fiber: Fiber | null | undefined): Fiber | undefined => {
+    for (let node = fiber; node != null; node = node.sibling) {
+      const props = node.memoizedProps as { testID?: unknown } | undefined
+      if (props?.testID === testID) return node
+      const inside = seek(node.child)
+      if (inside != null) return inside
+    }
+    return undefined
+  }
+  const found = seek(current)
+  if (found == null) throw new Error(`Nothing has the testID ${testID}`)
+  return found.memoizedProps as Record<string, unknown>
+}
+
+/** A style prop, arrays merged as React Native merges them. */
+function flat(style: unknown): Record<string, unknown> {
+  if (Array.isArray(style))
+    return Object.assign({}, ...style.map(item => flat(item)))
+  return style != null && typeof style === 'object'
+    ? (style as Record<string, unknown>)
+    : {}
 }
 
 /** The replay's props to the field, read from React's tree. */
@@ -505,6 +538,162 @@ describe('the replay screen', function () {
     await showCatcher()
     expect(card()).includes('Valley Pines win')
     expect(byLabel('Pause replay')).equals(undefined)
+  })
+
+  describe('rewind', function () {
+    const REWIND = 'Rewind half an inning'
+    const line = (): HTMLElement | null =>
+      document.querySelector('[data-testid="replay-play-card-line"]')
+
+    it("sits at the bottom left in the pause button's own look", async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      const rewind = byLabel(REWIND)
+      expect(rewind).not.equals(undefined)
+      expect(rewind?.textContent).equals('skip_previous')
+      const rewindStyle = flat(propsOf('replay-rewind').style)
+      const pauseStyle = flat(propsOf('replay-pause').style)
+      expect(rewindStyle).deep.equals({ ...FLOATING_BUTTON, left: 16 })
+      expect(pauseStyle).deep.equals({ ...FLOATING_BUTTON, right: 16 })
+      expect(FLOATING_MARGIN).equals(16)
+      expect(FLOATING_BUTTON.bottom).equals(FLOATING_MARGIN)
+    })
+
+    it('stays after the end, when pause has gone', async function () {
+      resize(402, 874)
+      await show(gameOf({ status: 'inProgress' }), finalGame())
+      await showCatcher()
+      expect(byLabel('Pause replay')).equals(undefined)
+      expect(byLabel(REWIND)).not.equals(undefined)
+    })
+
+    it('centres the box score, as wide as its widest row', async function () {
+      resize(1024, 1366)
+      await show(gameOf(), importedThenScoredGame())
+      const scroll = propsOf('replay-box-score')
+      expect(flat(scroll.contentContainerStyle).alignItems).equals('center')
+      // The line score and the tables centre apart, so a long game's line
+      // score that fills a phone leaves the tables centred.
+      for (const id of ['replay-box-score-line', 'replay-box-score-column'])
+        expect(flat(propsOf(id).style)).deep.equals({
+          alignSelf: 'center',
+          maxWidth: '100%'
+        })
+      const line = document.querySelector(
+        '[data-testid="replay-box-score-line"]'
+      )
+      const tables = document.querySelector(
+        '[data-testid="replay-box-score-column"]'
+      )
+      expect(line?.contains(tables)).equals(false)
+      expect(line?.textContent).includes('R')
+      expect(tables?.textContent).includes('batting')
+      // The imported-plays note spans the deck, centred, outside the column.
+      const note = [...document.querySelectorAll('div')].find(node =>
+        (node.textContent ?? '').startsWith('Stats from the')
+      )
+      expect(note).not.equals(undefined)
+      const column = document.querySelector(
+        '[data-testid="replay-box-score-column"]'
+      )
+      expect(column?.contains(note!)).equals(false)
+    })
+
+    it('writes where it went on the card, then plays on from there', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await firstPitch()
+      now = 2200 + 4600
+      await wait(250)
+      expect(card()).not.includes('Play ball!')
+      await press(REWIND)
+      expect(line()?.textContent).equals('Rewind to top of first')
+      expect(card()).includes('0–0 · 0 outs')
+      // The card is the same brown card; only its words changed.
+      expect(
+        document.querySelector('[data-testid="replay-play-card"]')
+      ).not.equals(null)
+      now += 2000 - 100
+      await wait(250)
+      expect(line()?.textContent).equals('Rewind to top of first')
+      now += 100
+      await wait(250)
+      expect(line()?.textContent).not.includes('Rewind')
+      expect(line()?.textContent).includes('steps in')
+    })
+
+    it('holds the words, then fades them, and starts again on the next tap', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await firstPitch()
+      await press('Pause replay')
+      const at = now
+      await press(REWIND)
+      const opacity = (): number => {
+        const value = line()?.style.opacity ?? ''
+        return value === '' ? 1 : Number(value)
+      }
+      expect(opacity()).equals(1)
+      now = at + 1400
+      await wait(100)
+      expect(opacity()).equals(1)
+      now = at + 1700
+      await wait(100)
+      expect(opacity()).closeTo(0.5, 0.01)
+      now = at + 1990
+      await wait(100)
+      expect(opacity()).lessThan(0.05)
+      // Paused, the words still go, and the card shows the game again.
+      now = at + 2000
+      await wait(150)
+      expect(line()?.textContent).not.includes('Rewind')
+      expect(card()).includes('Paused')
+      await press(REWIND)
+      await wait(100)
+      expect(opacity()).equals(1)
+      expect(line()?.textContent).equals('Rewind to top of first')
+    })
+
+    it('stops the announcer, and reads the rewound steps again', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press('Turn announcer on')
+      await firstPitch()
+      const freed: string[] = []
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: (url: string) => freed.push(url)
+      })
+      // The first sentence read to its end and its clip freed.
+      for (let i = 0; i < 40 && !freed.includes('blob:0-0'); i++) await wait(50)
+      expect(announcer.played).includes('0-0')
+      expect(freed).includes('blob:0-0')
+      const pauses: number[] = []
+      Object.defineProperty(window.HTMLMediaElement.prototype, 'pause', {
+        configurable: true,
+        value: () => pauses.push(1)
+      })
+      const asked = announcer.asked.length
+      await press(REWIND)
+      expect(pauses.length).greaterThan(0)
+      // During the words, before the first rewound step is shown, the half's
+      // first sentence, already read and freed, is fetched again; the second
+      // was fetched ahead before the tap and is kept.
+      await wait(100)
+      expect(line()?.textContent).equals('Rewind to top of first')
+      expect(announcer.asked.slice(asked)).deep.equals(['0-0'])
+      now += 2000
+      for (
+        let i = 0;
+        i < 40 && announcer.played.filter(key => key === '0-0').length < 2;
+        i++
+      )
+        await wait(50)
+      expect(announcer.played.filter(key => key === '0-0')).length(2)
+    })
   })
 
   describe('the announcer', function () {

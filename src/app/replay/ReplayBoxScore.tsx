@@ -165,12 +165,15 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
       contentContainerStyle={{
         paddingHorizontal: 12,
         paddingTop: 8,
-        paddingBottom: props.bottomInset ?? 88
+        paddingBottom: props.bottomInset ?? 88,
+        alignItems: 'center'
       }}
     >
       {box.from != null && (
         <Text
           style={{
+            alignSelf: 'stretch',
+            textAlign: 'center',
             color: surface.secondaryText,
             fontFamily: theme.regularTextFont,
             fontSize: 12,
@@ -180,28 +183,43 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
           {`Stats from the ${box.from.half} of the ${ordinal(box.from.inning)} — earlier innings were imported`}
         </Text>
       )}
+      {/*
+        The line score and the tables, each as wide as its widest row and
+        centred. A long game's line score can outgrow a phone; the tables
+        stay centred under it all the same.
+      */}
       <View
-        style={{
-          flexDirection: 'row',
-          borderBottomWidth: 1,
-          borderBottomColor: surface.divider,
-          paddingBottom: 3
-        }}
+        testID="replay-box-score-line"
+        style={{ alignSelf: 'center', maxWidth: '100%' }}
       >
-        {text('', { width: NAME })}
-        {Array.from({ length: innings }, (_, i) => (
-          <React.Fragment key={i}>
-            {text(i + 1, { color: surface.accent })}
-          </React.Fragment>
-        ))}
-        {text('R', { color: surface.accent })}
-        {text('H', { color: surface.accent })}
-        {text('E', { color: surface.accent })}
+        <View
+          style={{
+            flexDirection: 'row',
+            borderBottomWidth: 1,
+            borderBottomColor: surface.divider,
+            paddingBottom: 3
+          }}
+        >
+          {text('', { width: NAME })}
+          {Array.from({ length: innings }, (_, i) => (
+            <React.Fragment key={i}>
+              {text(i + 1, { color: surface.accent })}
+            </React.Fragment>
+          ))}
+          {text('R', { color: surface.accent })}
+          {text('H', { color: surface.accent })}
+          {text('E', { color: surface.accent })}
+        </View>
+        {lineRow(box.away)}
+        {lineRow(box.home)}
       </View>
-      {lineRow(box.away)}
-      {lineRow(box.home)}
-      {team(box.away)}
-      {team(box.home)}
+      <View
+        testID="replay-box-score-column"
+        style={{ alignSelf: 'center', maxWidth: '100%' }}
+      >
+        {team(box.away)}
+        {team(box.home)}
+      </View>
     </ScrollView>
   )
 }

@@ -26,6 +26,7 @@ export type IconName =
   | 'stadium'
   | 'play_circle'
   | 'play_arrow'
+  | 'skip_previous'
   | 'format_list_bulleted'
   | 'bookmark'
   | 'share'

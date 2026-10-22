@@ -438,6 +438,19 @@ function rewound(
   }
 }
 
+/**
+ * How much of a rewind's words still shows at `now`: all of it while they
+ * hold, then less and less until they clear.
+ */
+export function noticeOpacity(
+  notice: { endsAt: number } | null,
+  now: number
+): number {
+  if (notice == null) return 1
+  const left = notice.endsAt - now
+  return Math.max(0, Math.min(1, left / REWIND_NOTICE_FADE_MS))
+}
+
 export function replayReducer(
   state: ReplayState,
   event: ReplayEvent

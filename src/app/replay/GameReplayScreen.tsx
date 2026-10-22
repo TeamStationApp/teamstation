@@ -41,13 +41,14 @@ import { NarrationQueue, type NarrationStep, PREFETCH } from './narrationQueue'
 import { ReplayBoxScore } from './ReplayBoxScore'
 import {
   catchingUp,
+  noticeOpacity,
   replayCard,
   type ReplayEvent,
   type ReplayMode,
   replayReducer,
   startReplay
 } from './replayMachine'
-import { ReplayPlayCard } from './ReplayPlayCard'
+import { ReplayPlayCard, type ReplayPlayCardProps } from './ReplayPlayCard'
 
 /** The box score's column beside the field on a wide window. */
 export const SIDE_DECK_WIDTH = 360
@@ -56,6 +57,8 @@ export const DECK_SHARE = 0.45
 /** On a wide window, what the field leaves below the catcher for the card. */
 export const SIDE_CARD_ROOM = 150
 const TICK_MS = 100
+/** How often a fading rewind notice is drawn. */
+const FADE_FRAME_MS = 33
 /** While the socket is down, how often a live replay reads the game. */
 export const POLL_MS = 5000
 
@@ -86,6 +89,28 @@ export interface GameReplayScreenProps {
   /** The replay's clock; the screen's own in a test. */
   clock?: () => number
 }
+
+/** How far the rewind and pause buttons sit from the bottom and their side. */
+export const FLOATING_MARGIN = 16
+
+/** Rewind at the bottom left and pause at the bottom right: one look. */
+export const FLOATING_BUTTON = {
+  position: 'absolute',
+  bottom: FLOATING_MARGIN,
+  width: 56,
+  height: 56,
+  borderRadius: 28,
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: surface.active,
+  borderWidth: 2,
+  borderColor: surface.accent,
+  shadowColor: '#000000',
+  shadowOpacity: 0.4,
+  shadowRadius: 6,
+  shadowOffset: { width: 0, height: 2 },
+  elevation: 6
+} as const
 
 /** What Exit and the speaker take across, from the window's left edge. */
 export const CONTROLS_WIDTH = 16 + 76 + 10 + 44 + 8
@@ -119,7 +144,7 @@ export function replayLayout(
 /**
  * A game replayed in 3D, full screen and dark: the field, the play card
  * below the catcher, the box score below that, Exit and the speaker at the
- * top left and pause at the bottom right.
+ * top left, rewind at the bottom left and pause at the bottom right.
  */
 export function GameReplayScreen(
   props: GameReplayScreenProps
@@ -249,20 +274,45 @@ function ReplayView(props: {
   }, [narration, state.paused])
   const shownKey = state.shown?.key
   const { shownCount, narrations } = state
-  // A step is read when it has something to say that it has not said yet:
-  // a step that grows only by the scorer's close keeps its sentence, and is
-  // not read twice. A live view opens on the step the game stands at, which
+  // A step is read when it has something to say that it has not said since
+  // the last rewind: a step that grows only by the scorer's close keeps its
+  // sentence, and is not read twice, and every step a rewind queues again is
+  // read again. A live view opens on the step the game stands at, which
   // counts as said.
+  const { rewinds } = state
   const said = useRef(
-    new Map<string, string>(
-      shownKey == null ? [] : [[shownKey, narrations.get(shownKey)?.text ?? '']]
+    new Map<string, { text: string; rewinds: number }>(
+      shownKey == null
+        ? []
+        : [[shownKey, { text: narrations.get(shownKey)?.text ?? '', rewinds }]]
     )
   )
+  const saidSince = (key: string, text: string): boolean => {
+    const entry = said.current.get(key)
+    return entry?.text === text && entry.rewinds === rewinds
+  }
   const fresh = (key: string): boolean => {
     const text = narrations.get(key)?.text ?? ''
-    return text !== '' && said.current.get(key) !== text
+    return text !== '' && !saidSince(key, text)
   }
   const spoken = useRef(`${shownKey}#${shownCount}`)
+  // A rewind: the announcer stops, and the step before the half is not read
+  // on the way. Declared before the effect that reads the shown step, so it
+  // runs first.
+  const rewound = useRef(rewinds)
+  useEffect(() => {
+    if (rewound.current === rewinds) return
+    rewound.current = rewinds
+    narration.interrupt()
+    if (shownKey != null)
+      said.current.set(shownKey, {
+        text: narrations.get(shownKey)?.text ?? '',
+        rewinds
+      })
+    spoken.current = `${shownKey}#${shownCount}`
+    // Only a new rewind does this; the step shown is as it left it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narration, rewinds])
   const sentence =
     shownKey == null ? '' : (narrations.get(shownKey)?.text ?? '')
   // A live view hurrying to catch the scorer up reads only where it lands.
@@ -272,14 +322,16 @@ function ReplayView(props: {
     const id = `${shownKey}#${shownCount}`
     if (shownKey == null || spoken.current === id) return
     spoken.current = id
-    if (sentence === '' || said.current.get(shownKey) === sentence) return
-    said.current.set(shownKey, sentence)
+    if (sentence === '' || saidSince(shownKey, sentence)) return
+    said.current.set(shownKey, { text: sentence, rewinds })
     if (!hurrying) narration.speak({ key: shownKey, count: shownCount })
-  }, [narration, shownKey, shownCount, sentence, hurrying])
+    // `saidSince` reads `rewinds`, which the dependencies name.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narration, shownKey, shownCount, sentence, hurrying, rewinds])
   // A replay fetches the next two sentences; a live game all it has queued,
   // or, while it is catching up, the step it will land on.
   const upcoming: NarrationStep[] = (
-    props.mode === 'replay'
+    state.mode === 'replay'
       ? state.queue.slice(0, PREFETCH)
       : behind
         ? state.queue.slice(-1)
@@ -493,24 +545,7 @@ function ReplayView(props: {
       onPress={() => {
         dispatch({ type: state.paused ? 'PLAY' : 'PAUSE', now: clock() })
       }}
-      style={{
-        position: 'absolute',
-        right: 16,
-        bottom: 16,
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: surface.active,
-        borderWidth: 2,
-        borderColor: surface.accent,
-        shadowColor: '#000000',
-        shadowOpacity: 0.4,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-        elevation: 6
-      }}
+      style={[FLOATING_BUTTON, { right: FLOATING_MARGIN }]}
     >
       <Icon
         name={state.paused ? 'play_arrow' : 'pause'}
@@ -519,8 +554,31 @@ function ReplayView(props: {
       />
     </Pressable>
   )
+  const rewindButton =
+    state.timeline.steps.length === 0 ? null : (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={lstrings.replay_rewind}
+        testID="replay-rewind"
+        onPress={() => {
+          dispatch({
+            type: 'REWIND',
+            now: clock(),
+            words: {
+              top: lstrings.replay_rewind_top,
+              bottom: lstrings.replay_rewind_bottom
+            }
+          })
+        }}
+        style={[FLOATING_BUTTON, { left: FLOATING_MARGIN }]}
+      >
+        <Icon name="skip_previous" size={1.75} color={surface.activeText} />
+      </Pressable>
+    )
   const playCard = (
-    <ReplayPlayCard
+    <FadingPlayCard
+      notice={state.notice}
+      clock={clock}
       line={card.line}
       detail={unavailable ? lstrings.replay_announcer_unavailable : card.detail}
       catcher={catcher == null ? null : { ...catcher, y: catcher.y + offset }}
@@ -579,10 +637,38 @@ function ReplayView(props: {
         style={[{ position: 'absolute', inset: 0 }, surfaceStyle.safe]}
       >
         <View pointerEvents="box-none" style={{ flex: 1 }}>
+          {rewindButton}
           {pauseButton}
         </View>
       </View>
     </View>
+  )
+}
+
+/**
+ * The play card, redrawn on its own while a rewind's words fade, so the
+ * field and the box score are not drawn again with it.
+ */
+function FadingPlayCard(
+  props: Omit<ReplayPlayCardProps, 'lineOpacity'> & {
+    notice: { endsAt: number } | null
+    clock: () => number
+  }
+): React.ReactElement {
+  const { notice, clock, ...card } = props
+  const [, setFrame] = useState(0)
+  const up = notice != null
+  useEffect(() => {
+    if (!up) return
+    const timer = setInterval(() => {
+      setFrame(frame => frame + 1)
+    }, FADE_FRAME_MS)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [up])
+  return (
+    <ReplayPlayCard {...card} lineOpacity={noticeOpacity(notice, clock())} />
   )
 }
 
