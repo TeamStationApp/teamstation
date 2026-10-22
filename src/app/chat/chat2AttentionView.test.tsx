@@ -2370,3 +2370,155 @@ describe('attention unresolved arrivals after explicit navigation', function () 
     )
   })
 })
+
+describe('older pin navigation leaves newest following', function () {
+  for (const outcome of ['failed', 'empty'] as const)
+    it(`keeps a current end reader when an older pin returns ${outcome} and error chrome grows`, async function () {
+      const current = message({ id: 'msg_pin_current', seq: 300 })
+      const initial = view({
+        conversation: { ...view().conversation, lastSeq: 300 },
+        messages: [current],
+        historyBefore: 290,
+        hasEarlier: true,
+        pins: [
+          {
+            messageId: 'msg_pin_outside_page',
+            pinnedAt: '2027-04-01T00:00:00Z'
+          }
+        ]
+      })
+      const state = fixture(initial)
+      let finish!: (next: ConversationView) => void
+      let fail!: (error: Error) => void
+      state.setLoad(
+        async () =>
+          await new Promise((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const workspace = newChatWorkspaceState()
+      const draft = {
+        text: '@Aaron Judge keep terminal draft',
+        mentionTokens: [
+          { userId: 2, start: 0, end: 12, label: '@Aaron Judge' }
+        ],
+        picked: [],
+        scrollOffset: 0
+      }
+      workspace.drafts.set('cnv_1', draft)
+      const owner = new ChatDraftOwner(workspace)
+      const node = await render(screen(state.engine, owner))
+      const history = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-history"]'
+      )!
+      const frame = node.querySelector<HTMLElement>(
+        '[data-testid="chat-viewport"]'
+      )!
+      const row = node.querySelector<HTMLElement>(
+        `[data-testid="chat-message-row-${current.id}"]`
+      )!
+      const body = node.querySelector<HTMLElement>(
+        `[data-testid="chat-message-body-${current.id}"]`
+      )!
+      const composer = node.querySelector<HTMLElement>(
+        '[data-testid="chat-composer-band"]'
+      )!
+      let extent = 3000
+      let rowY = 2381
+      frame.getBoundingClientRect = () => rect(0, 844)
+      history.getBoundingClientRect = () => rect(0, 844)
+      row.getBoundingClientRect = () => rect(rowY - history.scrollTop, 619)
+      body.getBoundingClientRect = () => rect(rowY - history.scrollTop, 619)
+      Object.defineProperties(history, {
+        clientWidth: { configurable: true, value: 360 },
+        clientHeight: { configurable: true, value: 844 },
+        scrollHeight: { configurable: true, get: () => extent }
+      })
+      Object.defineProperty(row, 'measureLayout', {
+        configurable: true,
+        get:
+          () =>
+          (
+            _parent: unknown,
+            done: (x: number, y: number, width: number, height: number) => void
+          ) => {
+            done(0, rowY, 360, 619)
+          },
+        set: () => {}
+      })
+      const moves: number[] = []
+      history.scroll = options => {
+        const top = Math.min(
+          (options as ScrollToOptions).top ?? 0,
+          extent - 844
+        )
+        moves.push(top)
+        history.scrollTop = top
+      }
+      await layout(row, rowY, 619)
+      await layout(history, 0, 844)
+      await layout(composer, 0, 64)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(360, extent)
+        readingCallbacks(history).onScroll(nativeEvent(history.scrollTop))
+        await wait()
+      })
+      await until(() => owner.draft('cnv_1').followNewest === true)
+      expect(history.scrollTop).equals(2156)
+      expect(body.getBoundingClientRect().top).equals(225)
+      const reads = state.reads
+      const seen = [...owner.attention('cnv_1')!.seen]
+      await click('chat-pinned-summary')
+      await until(() => state.loads === 1)
+      if (outcome === 'failed') {
+        await act(async () => {
+          fail(new Error('Synthetic older page failure'))
+          await wait()
+        })
+      } else {
+        await act(async () => {
+          const terminal = { ...initial, hasEarlier: false, historyBefore: 1 }
+          // The empty page removes the ordinary paging header above this row.
+          rowY -= 48
+          extent -= 48
+          state.update(terminal)
+          finish(terminal)
+          await wait()
+        })
+        await layout(row, rowY, 619)
+        await act(async () => {
+          readingCallbacks(history).onContentSizeChange(360, extent)
+          await wait()
+        })
+      }
+      await until(
+        () =>
+          node.querySelector('[data-testid="chat-history-jump-retry"]') != null,
+        3000
+      )
+      // Actual error/Retry controls add 66px to the composer below the reader.
+      extent += 66
+      moves.length = 0
+      await layout(composer, 0, 130)
+      await act(async () => {
+        await wait(80)
+      })
+      expect(
+        body.getBoundingClientRect().top,
+        'Failed navigation must retain the leading message body'
+      ).equals(225)
+      expect(
+        moves,
+        'Error chrome must not follow the newest edge'
+      ).not.contains(extent - 844)
+      expect(owner.draft('cnv_1').followNewest).equals(false)
+      expect(owner.draft('cnv_1').text).equals(draft.text)
+      expect(owner.draft('cnv_1').mentionTokens).deep.equals(
+        draft.mentionTokens
+      )
+      expect(state.reads).equals(reads)
+      expect([...owner.attention('cnv_1')!.seen]).deep.equals(seen)
+      expect(state.loads).equals(1)
+    })
+})

@@ -1261,6 +1261,8 @@ export function ConversationScreen(
     measuringJump.current = generation
     setPinsOpen(false)
     setError(undefined)
+    // Explicit navigation owns the reader even if its target cannot be loaded.
+    scrolled.current.followNewest = false
     atBottom.current = false
     findOriginal(
       {

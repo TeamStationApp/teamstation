@@ -1,5 +1,6 @@
 /** DOM interactions belong to the browser twin; phones import no DOM code. */
 import type { ChatBounds } from './chatInteractionModel'
+export { useLayoutEffect as useChatOverlayCommit } from 'react'
 let restoringFocus = false
 export function readDocumentActive(): boolean {
   return (
