@@ -193,6 +193,31 @@ describe('the league page', () => {
       }
     })
   }
+  it('shows team locality and opens the selected team from its identity', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => ({
+      ...detail,
+      children: [
+        {
+          ...team('team_hawks', 'Demo Hawks'),
+          locality: {
+            city: 'Demo City',
+            region: 'Demo Region',
+            country: 'Demo Country',
+            placeId: null,
+            timezone: 'America/Los_Angeles'
+          }
+        }
+      ]
+    })
+    const opened: GroupRef[] = []
+    await mount(render(api, opened))
+    await press('Teams')
+    const card = document.querySelector('[data-testid="league-teams-card"]')!
+    expect(card.textContent).includes('Demo City, Demo Region, Demo Country')
+    await press('Open Demo Hawks')
+    expect(opened).deep.equals([{ kind: 'team', id: 'team_hawks' }])
+  })
   it('keeps dark-theme team names readable on the shared surface', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail
