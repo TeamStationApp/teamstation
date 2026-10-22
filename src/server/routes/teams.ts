@@ -74,6 +74,7 @@ import { gameStatsStatus } from '../statsBuilder/status'
 import { createTeam } from '../teams/createTeam'
 import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
+import { gameUmpires } from '../umpires/assignments'
 import {
   externalIdsAsked,
   schedulableSeasonIds,
@@ -593,6 +594,7 @@ export function teamRoutes(
       const availability = await gameAvailability(db, game)
       const answer = {
         id: game.id,
+        umpires: await gameUmpires(db, game.id, media),
         guests: availability.guests,
         unrostered: availability.unrostered,
         guestPlayers:

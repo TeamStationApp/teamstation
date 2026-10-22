@@ -77,6 +77,8 @@ export interface UserLinksTable {
 }
 
 export interface LeaguesTable {
+  umpire_management: Generated<boolean>
+  umpire_credits: Generated<boolean>
   id: string
   locality: Json | null
   picture_catalog_id: Generated<string | null>
@@ -114,8 +116,8 @@ export interface SeasonsTable {
   logo_updated_at: Timestamp | null
   year: number
   term: string | null
-  starts_on: string | null
-  ends_on: string | null
+  starts_on: string
+  ends_on: string
   /**
    * The innings a game here runs, which is what an ERA divides by. Set by hand
    * in the database; nothing writes it. Null takes the league's, and six where
@@ -882,7 +884,52 @@ export interface VideoWallAnchorsTable {
   corrected: Generated<boolean>
 }
 
+export interface LeagueUmpiresTable {
+  league_id: string
+  user_id: string
+  granted_by: string
+  granted_at: Generated<Date>
+}
+export interface UmpireLevelsTable {
+  id: string
+  league_id: string
+  name: string
+  position: number
+}
+export interface SeasonUmpireRequirementsTable {
+  season_id: string
+  level_id: string
+}
+export interface UmpireCertificationsTable {
+  user_id: string
+  level_id: string
+  type_id: string
+  enabled: Generated<boolean>
+}
+export interface UmpireAssignmentsTable {
+  game_id: string
+  slot: string
+  user_id: string
+  assigned_by: string
+  credit_team_id: string | null
+  created_at: Generated<Date>
+}
+
 export interface Database {
+  umpire_note_types: UmpireLevelsTable
+  game_umpire_notes: { game_id: string; note_type_id: string; value: string }
+  league_umpires: LeagueUmpiresTable
+  umpire_types: UmpireLevelsTable & { legacy_kind: Generated<string | null> }
+  season_umpire_type_requirements: {
+    season_id: string
+    type_id: string
+    required_count: number
+    optional_count: number
+  }
+  umpire_levels: UmpireLevelsTable
+  season_umpire_requirements: SeasonUmpireRequirementsTable
+  umpire_certifications: UmpireCertificationsTable
+  umpire_assignments: UmpireAssignmentsTable
   game_guest_details: {
     game_id: string
     user_id: string

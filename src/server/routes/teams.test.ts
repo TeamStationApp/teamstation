@@ -135,8 +135,16 @@ describe('teams by external id, and making one', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: force, name: 'Titan Force 2026', year: 2026 },
         {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: force,
+          name: 'Titan Force 2026',
+          year: 2026
+        },
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
           id: circuitSeason,
           name: 'Circuit 2026',
           year: 2026,
@@ -405,8 +413,20 @@ describe('teams by external id, and making one', function () {
       await db
         .insertInto('seasons')
         .values([
-          { id: bay, name: 'Bay 2026', year: 2026 },
-          { id: cove, name: 'Cove 2026', year: 2026 }
+          {
+            starts_on: `2026-03-01`,
+            ends_on: `2026-05-31`,
+            id: bay,
+            name: 'Bay 2026',
+            year: 2026
+          },
+          {
+            starts_on: `2026-03-01`,
+            ends_on: `2026-05-31`,
+            id: cove,
+            name: 'Cove 2026',
+            year: 2026
+          }
         ])
         .execute()
       await db
@@ -563,7 +583,13 @@ describe('teams by external id, and making one', function () {
       const db = database()
       await db
         .insertInto('seasons')
-        .values({ id: reef, name: 'Reef 2026', year: 2026 })
+        .values({
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: reef,
+          name: 'Reef 2026',
+          year: 2026
+        })
         .execute()
       await db
         .insertInto('season_teams')

@@ -66,6 +66,8 @@ describe('upgraded ownership reads and current competition projections', functio
           .insertInto('seasons')
           .values([
             {
+              starts_on: `2026-03-01`,
+              ends_on: `2026-05-31`,
               id: 'sea_demo_upgrade_a',
               name: 'Demo Legacy Regular',
               year: 2026
@@ -73,6 +75,8 @@ describe('upgraded ownership reads and current competition projections', functio
             ...(ambiguous
               ? [
                   {
+                    starts_on: '2026-03-01',
+                    ends_on: '2026-05-31',
                     id: 'sea_demo_upgrade_b',
                     name: 'Demo Legacy Other',
                     year: 2026

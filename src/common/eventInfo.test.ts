@@ -216,6 +216,15 @@ describe('event information contracts', () => {
       id: 'g',
       isGameLive: true
     })
+    expect(decode({ id: 'g', isUmpire: true })).deep.equals({
+      id: 'g',
+      isUmpire: true
+    })
+    expect(decode({ id: 'g', isUmpire: false })).deep.equals({
+      id: 'g',
+      isUmpire: false
+    })
+    expect(() => decode({ id: 'g', isUmpire: 'true' })).throws()
     expect(() => decode({ id: 'g', isGameLive: 'true' })).throws()
     expect(
       asEventLocation({

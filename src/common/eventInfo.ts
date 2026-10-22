@@ -107,6 +107,8 @@ export interface EventMetadata {
   hasScoringEvents?: boolean
   /** Server-authoritative game LIVE eligibility; distinct from a live camera. */
   isGameLive?: boolean
+  /** The authenticated viewer holds an umpire assignment on this game. */
+  isUmpire?: boolean
 }
 
 /** Preserve older answer shapes while decoding event fields when supplied. */
@@ -137,6 +139,7 @@ export function withEventMetadata<T>(
         fields.hasScoringEvents = asBoolean(raw.hasScoringEvents)
       if (raw.isGameLive !== undefined)
         fields.isGameLive = asBoolean(raw.isGameLive)
+      if (raw.isUmpire !== undefined) fields.isUmpire = asBoolean(raw.isUmpire)
     }
     return { ...answer, ...fields }
   }

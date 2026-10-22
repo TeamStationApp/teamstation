@@ -366,7 +366,13 @@ describe('the highlight routes', function () {
       .execute()
     await db
       .insertInto('seasons')
-      .values({ id: season, name: 'Summer 2026', year: 2026 })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: season,
+        name: 'Summer 2026',
+        year: 2026
+      })
       .execute()
     await db
       .updateTable('users')

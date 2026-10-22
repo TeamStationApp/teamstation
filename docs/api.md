@@ -43,6 +43,16 @@ Only for a new resource, or for an action that is not a read or a write of an
 existing one. `POST /teams/:teamId/games` takes a whole schedule and answers
 each row, which no write to one game does.
 
+## Personal umpire presence
+
+Schedule rows and public group games include `isUmpire` for the authenticated
+viewer's own current assignment, including merged account identities. Guests,
+other people's assignments, cancelled/withdrawn games and disabled league
+umpire management return false. This metadata never expands game visibility.
+Older responses may omit the flag; clients treat omission as false. Game detail
+umpire positions include an optional nullable `person.avatarUrl` alongside the
+canonical `userId` and abbreviated `name`.
+
 ## Game LIVE state
 
 Game detail, schedule rows and public group games return `isGameLive`, computed
@@ -92,3 +102,7 @@ not qualify. Guardian-linked children must be current players on either game
 team, or the one team for a practice/other event. Canonical merged identities
 are deduplicated and disabled people are excluded. Saves recheck the same
 policy; an old reply cannot keep a removed player eligible.
+
+## Umpire schedule timezones
+
+`GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query parameter. Clients send their local IANA timezone for row and conflict dates and weekday/time filtering. Invalid zones return400. When omitted, each game's stored timezone is used. Stored ISO instants and conflict intervals are unchanged.

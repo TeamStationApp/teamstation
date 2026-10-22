@@ -210,7 +210,9 @@ export async function seedReplay(
       id: REPLAY_SEED.seasonId,
       league_id: REPLAY_SEED.leagueId,
       name: 'Replay Season',
-      year: 2026
+      year: 2026,
+      starts_on: '2026-01-01',
+      ends_on: '2026-12-31'
     })
     .onConflict(oc => oc.column('id').doNothing())
     .execute()

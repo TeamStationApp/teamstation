@@ -93,7 +93,14 @@ describe('GET /games/:gameId/box-score stats', function () {
     const now = new Date()
     await db
       .insertInto('seasons')
-      .values({ id: season, name: 'Fall', year: 2026, era_innings: 6 })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: season,
+        name: 'Fall',
+        year: 2026,
+        era_innings: 6
+      })
       .execute()
     await db
       .insertInto('teams')

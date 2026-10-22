@@ -72,8 +72,13 @@ import { migration069UserIds } from './069userIds'
 import { migration070PlayerGumboIds } from './070playerGumboIds'
 import { migration071DeletedAccounts } from './071deletedAccounts'
 import { migration072NarrationAudio } from './072narrationAudio'
+import { migration072SeasonDates } from './072seasonDates'
 import { migration073SyncClock } from './073syncClock'
+import { migration073UmpireManagement } from './073umpireManagement'
+import { migration074OptionalUmpires } from './074optionalUmpires'
 import { migration074SyncIdempotency } from './074syncIdempotency'
+import { migration075UmpireTypes } from './075umpireTypes'
+import { migration076UmpireNotes } from './076umpireNotes'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -150,6 +155,11 @@ export const migrations: Migration[] = [
   migration070PlayerGumboIds,
   migration071DeletedAccounts,
   migration072NarrationAudio,
+  migration072SeasonDates,
   migration073SyncClock,
-  migration074SyncIdempotency
+  migration073UmpireManagement,
+  migration074OptionalUmpires,
+  migration074SyncIdempotency,
+  migration075UmpireTypes,
+  migration076UmpireNotes
 ]

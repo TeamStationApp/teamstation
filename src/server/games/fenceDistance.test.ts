@@ -111,8 +111,21 @@ describe('the fence a game is played to', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: season, league_id: league, name: 'S', year: 2026 },
-        { id: loose, name: 'Loose', year: 2026 }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: season,
+          league_id: league,
+          name: 'S',
+          year: 2026
+        },
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: loose,
+          name: 'Loose',
+          year: 2026
+        }
       ])
       .execute()
     await db

@@ -144,8 +144,20 @@ describe('GET /seasons', function () {
           ends_on: '2026-06-30',
           spectator_access: 'season'
         },
-        { id: bayside, name: 'Bayside League 2026', year: 2026 },
-        { id: inland, name: 'Inland League 2025', year: 2025 }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: bayside,
+          name: 'Bayside League 2026',
+          year: 2026
+        },
+        {
+          starts_on: `2025-03-01`,
+          ends_on: `2025-05-31`,
+          id: inland,
+          name: 'Inland League 2025',
+          year: 2025
+        }
       ])
       .execute()
     await db
@@ -314,8 +326,8 @@ describe('GET /seasons', function () {
           year: 2026,
           term: null,
           ageGroup: null,
-          startsOn: null,
-          endsOn: null,
+          startsOn: '2026-03-01',
+          endsOn: '2026-05-31',
           logoUrl: null,
           teams: 2,
           games: 1,
@@ -328,8 +340,8 @@ describe('GET /seasons', function () {
           year: 2025,
           term: null,
           ageGroup: null,
-          startsOn: null,
-          endsOn: null,
+          startsOn: '2025-03-01',
+          endsOn: '2025-05-31',
           logoUrl: null,
           teams: 1,
           games: 0,
@@ -338,7 +350,11 @@ describe('GET /seasons', function () {
       ].sort((a, b) => {
         const dateA = typeof a.startsOn === 'string' ? a.startsOn : ''
         const dateB = typeof b.startsOn === 'string' ? b.startsOn : ''
-        const dateOrder = dateB.localeCompare(dateA)
+        const startOrder = dateB.localeCompare(dateA)
+        const dateOrder =
+          startOrder !== 0
+            ? startOrder
+            : String(b.endsOn).localeCompare(String(a.endsOn))
         return dateOrder !== 0
           ? dateOrder
           : String(a.id).localeCompare(String(b.id))

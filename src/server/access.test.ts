@@ -172,9 +172,30 @@ describe('role flags', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: 'sea_a1', name: 'A1', year: 2026, league_id: 'lea_a' },
-        { id: 'sea_a2', name: 'A2', year: 2026, league_id: 'lea_a' },
-        { id: 'sea_b1', name: 'B1', year: 2026, league_id: 'lea_b' }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: 'sea_a1',
+          name: 'A1',
+          year: 2026,
+          league_id: 'lea_a'
+        },
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: 'sea_a2',
+          name: 'A2',
+          year: 2026,
+          league_id: 'lea_a'
+        },
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: 'sea_b1',
+          name: 'B1',
+          year: 2026,
+          league_id: 'lea_b'
+        }
       ])
       .execute()
     await db

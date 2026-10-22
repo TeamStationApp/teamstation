@@ -124,14 +124,28 @@ describe('every game somebody can see', function () {
       .values([
         // Open to everybody on its teams, as a schedule needs.
         {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
           id: spring,
           name: 'Spring 2026',
           year: 2026,
           spectator_access: 'season'
         },
-        { id: fall, name: 'Fall 2026', year: 2026 },
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: fall,
+          name: 'Fall 2026',
+          year: 2026
+        },
         // Left at `team`: each team's people see only their own games.
-        { id: summer, name: 'Summer 2026', year: 2026 }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: summer,
+          name: 'Summer 2026',
+          year: 2026
+        }
       ])
       .execute()
     await db
@@ -554,7 +568,14 @@ describe('whether a viewer may score a game', function () {
     await db.insertInto('leagues').values({ id: league, name: 'L' }).execute()
     await db
       .insertInto('seasons')
-      .values({ id: season, name: 'S', year: 2026, league_id: league })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: season,
+        name: 'S',
+        year: 2026,
+        league_id: league
+      })
       .execute()
     await db
       .insertInto('teams')

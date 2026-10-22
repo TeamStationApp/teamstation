@@ -49,7 +49,13 @@ export function statsDatabase(label: string): {
       .execute()
     await db
       .insertInto('seasons')
-      .values({ id: 'sea_demo', name: 'Demo Season', year: 2026 })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: 'sea_demo',
+        name: 'Demo Season',
+        year: 2026
+      })
       .execute()
     await db
       .insertInto('games')

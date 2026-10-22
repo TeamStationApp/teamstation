@@ -67,7 +67,22 @@ export async function personProfile(
   const manages = await canManagePeople(db, fresh, ref)
   const admin = manages && (await canAdminister(db, fresh, ref))
   if (!manages && !self) throw notFound()
-  if (!self && !(await onPeopleList(db, ref, userId))) throw notFound()
+  let editable = manages
+  if (!self && !(await onPeopleList(db, ref, userId))) {
+    const identity = await onePerson(db, userId)
+    const umpire =
+      ref.kind === 'league' && admin
+        ? await db
+            .selectFrom('league_umpires')
+            .select('user_id')
+            .where('league_id', '=', ref.id)
+            .where('user_id', 'in', identity.userIds)
+            .executeTakeFirst()
+        : undefined
+    if (umpire == null) throw notFound()
+    // Visibility alone does not authorize the people-list mutation routes.
+    editable = false
+  }
 
   const parts = [person.firstName, person.lastName].filter(
     part => part != null && part.trim() !== ''
@@ -86,8 +101,8 @@ export async function personProfile(
       canHoldRoles: await canHoldRoles(db, userId)
     },
     guardianOf: await guardianRows(db, space, ref, userId),
-    sections: await sections(db, ref, userId, manages),
-    viewer: { manages, admin }
+    sections: await sections(db, ref, userId, editable),
+    viewer: { manages: editable, admin: editable && admin }
   }
 }
 

@@ -50,6 +50,7 @@ import {
   noteScopeChange
 } from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
+import { recheckUmpireAssignments } from '../umpires/assignments'
 import { seasonGameConsent } from './seasonGameConsent'
 
 type GameRow = Selectable<GamesTable>
@@ -508,6 +509,7 @@ export async function finishGameRequest(
       .where('id', '=', gameId)
       .execute()
   }
+  await recheckUmpireAssignments(trx, gameId)
   await trx
     .updateTable('group_requests')
     .set({ status: 'accepted', game_id: gameId, resolved_at: clock.now() })

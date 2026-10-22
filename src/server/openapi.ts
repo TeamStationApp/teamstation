@@ -18,6 +18,7 @@ import {
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
+import { umpirePaths } from './umpires/openApi'
 import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 
 const recordSchema = {
@@ -2313,6 +2314,7 @@ export function openApiDocument(version: string): OpenApiDocument {
     paths: {
       ...creationPaths(errorResponse),
       ...gameApprovalPaths(errorResponse),
+      ...umpirePaths(errorResponse),
       ...eventInfoPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {
@@ -3884,7 +3886,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'False for members. ' +
             '`replayable` is whether anything TeamStation scored is stored ' +
             'for the game — a play carrying its `teamStation` record, or a ' +
-            'recorded at-bat in progress — so it can be replayed.',
+            'recorded at-bat in progress — so it can be replayed. ' +
+            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {

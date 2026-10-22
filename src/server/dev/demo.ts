@@ -82,6 +82,8 @@ async function main(): Promise<void> {
       .insertInto('seasons')
       .values([
         {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
           id: seasonId,
           league_id: leagueId,
           name: 'Demo Spring 2026',
@@ -90,6 +92,8 @@ async function main(): Promise<void> {
           term: 'Spring'
         },
         {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
           id: seasonBId,
           league_id: leagueId,
           name: 'Demo Summer 2026',

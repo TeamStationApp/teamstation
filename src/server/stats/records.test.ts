@@ -126,8 +126,20 @@ describe('team records, read from the games', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: spring, name: 'Spring', year: 2026 },
-        { id: fall, name: 'Fall', year: 2025 }
+        {
+          starts_on: `2026-03-01`,
+          ends_on: `2026-05-31`,
+          id: spring,
+          name: 'Spring',
+          year: 2026
+        },
+        {
+          starts_on: `2025-03-01`,
+          ends_on: `2025-05-31`,
+          id: fall,
+          name: 'Fall',
+          year: 2025
+        }
       ])
       .execute()
     await db
@@ -321,7 +333,13 @@ describe('team records, read from the games', function () {
       const [p, q, r, s] = ['P', 'Q', 'R', 'S'].map(() => makeId('team'))
       await db!
         .insertInto('seasons')
-        .values({ id: summer, name: 'Summer', year: 2024 })
+        .values({
+          starts_on: `2024-03-01`,
+          ends_on: `2024-05-31`,
+          id: summer,
+          name: 'Summer',
+          year: 2024
+        })
         .execute()
       await db!
         .insertInto('teams')

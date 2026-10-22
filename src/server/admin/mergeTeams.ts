@@ -309,11 +309,33 @@ export async function mergeTeams(
         on conflict(event_id, user_id) do update set
           response = excluded.response, updated_by = excluded.updated_by, updated_at = excluded.updated_at
         where game_rsvps.updated_at < excluded.updated_at`.execute(trx)
+      await sql`insert into umpire_assignments(game_id, slot, user_id, assigned_by, credit_team_id, created_at)
+        select ${fixture.keptGameId}, a.slot, a.user_id, a.assigned_by, a.credit_team_id, a.created_at
+        from umpire_assignments a join games g on g.id = ${fixture.keptGameId}
+        where a.game_id = ${fixture.retiredGameId}
+          and g.status <> 'cancelled' and g.withdrawn_at is null
+        on conflict do nothing`.execute(trx)
+      await trx
+        .deleteFrom('umpire_assignments')
+        .where('game_id', '=', fixture.retiredGameId)
+        .execute()
+      await sql`insert into game_umpire_notes(game_id, note_type_id, value)
+        select ${fixture.keptGameId}, n.note_type_id, n.value
+        from game_umpire_notes n join umpire_note_types t on t.id=n.note_type_id
+        join games g on g.id=${fixture.keptGameId} join seasons s on s.id=g.season_id
+        where n.game_id=${fixture.retiredGameId} and t.league_id=s.league_id
+        on conflict do nothing`.execute(trx)
       await trx
         .deleteFrom('games')
         .where('id', '=', fixture.retiredGameId)
         .execute()
     }
+
+    await trx
+      .updateTable('umpire_assignments')
+      .set({ credit_team_id: intoTeamId })
+      .where('credit_team_id', '=', fromTeamId)
+      .execute()
 
     await trx
       .updateTable('teams')
