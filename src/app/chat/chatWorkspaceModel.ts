@@ -216,13 +216,13 @@ export class ChatDraftOwner {
 
 const owners = new WeakMap<
   ChatWorkspaceState,
-  { engine: object; userId: number; owner: ChatDraftOwner }
+  { engine: object; userId: string; owner: ChatDraftOwner }
 >()
 
 export function chatDraftOwner(
   state: ChatWorkspaceState,
   engine: object,
-  userId: number
+  userId: string
 ): ChatDraftOwner {
   const previous = owners.get(state)
   if (previous?.engine === engine && previous.userId === userId)

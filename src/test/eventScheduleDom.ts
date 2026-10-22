@@ -8,6 +8,7 @@ if (
 )
   Object.defineProperty(window.HTMLElement.prototype, 'scroll', {
     configurable: true,
+    writable: true,
     value: function (
       this: HTMLElement,
       options?: ScrollToOptions | number

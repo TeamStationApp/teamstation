@@ -1,7 +1,9 @@
+import type { UserId } from '../userId'
 import { join, lp, u64, utf8 } from './bytes'
 import { call } from './core'
 import { num } from './coreCall'
 import { sign, verify } from './keys'
+import { identityBytes } from './userId'
 
 /**
  * The two key chains, which are why a later key opens everything before it,
@@ -15,8 +17,8 @@ import { sign, verify } from './keys'
  * - **Per-user keys.** PUK generation n carries `previous_keys_box`: every
  *   older private key, each `u64(generation) ‖ lp(privateKey)`, oldest first,
  *   sealed under `HKDF-SHA256(generation n private key, info =
- *   "ts-chat/v1/prev-puk")`, AAD `u64(userId) ‖ lp(identityId) ‖ u64(n)`. The
- *   identity signs `u64(userId) ‖ u64(generation) ‖ lp(publicKey)`.
+ *   "ts-chat/v1/prev-puk")`, AAD `identity(userId) ‖ lp(identityId) ‖ u64(n)`. The
+ *   identity signs `identity(userId) ‖ u64(generation) ‖ lp(publicKey)`.
  *
  * A box is `nonce ‖ ciphertext`, the nonce 24 random bytes. Neither HKDF has
  * a salt.
@@ -100,7 +102,7 @@ export interface OlderPuk {
 
 /** Generation n's `previous_keys_box`: every older private key, oldest first. */
 export function sealPreviousPukKeys(fields: {
-  userId: number
+  userId: UserId
   identityId: string
   generation: number
   privateKey: Uint8Array
@@ -112,7 +114,7 @@ export function sealPreviousPukKeys(fields: {
     ...sorted.flatMap(key => [u64(key.generation), lp(key.privateKey)])
   )
   return call('sealPreviousPukKeys', [
-    num(fields.userId),
+    identityBytes(fields.userId),
     utf8(fields.identityId),
     num(fields.generation),
     fields.privateKey,
@@ -123,7 +125,7 @@ export function sealPreviousPukKeys(fields: {
 
 /** The older private keys a generation carries, oldest first. */
 export function openPreviousPukKeys(fields: {
-  userId: number
+  userId: UserId
   identityId: string
   generation: number
   privateKey: Uint8Array
@@ -133,7 +135,7 @@ export function openPreviousPukKeys(fields: {
     throw new TypeError('Box is too short')
   }
   const plaintext = call('openPreviousPukKeys', [
-    num(fields.userId),
+    identityBytes(fields.userId),
     utf8(fields.identityId),
     num(fields.generation),
     fields.privateKey,
@@ -168,11 +170,15 @@ export function openPreviousPukKeys(fields: {
 
 /** What the identity signs for a PUK generation. */
 export function pukSignedBytes(fields: {
-  userId: number
+  userId: UserId
   generation: number
   publicKey: Uint8Array
 }): Uint8Array {
-  return join(u64(fields.userId), u64(fields.generation), lp(fields.publicKey))
+  return join(
+    identityBytes(fields.userId),
+    u64(fields.generation),
+    lp(fields.publicKey)
+  )
 }
 
 export function signPuk(

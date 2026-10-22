@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asChatDmPerson } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatAvatar } from './ChatAvatar'
 import { conversationIdentity } from './chatIdentityModel'
@@ -43,7 +44,7 @@ describe('chat identity presentation', function () {
     for (const count of [1, 2, 3, 5]) {
       const people = Array.from({ length: count }, (_, index) =>
         asChatDmPerson({
-          userId: index + 1,
+          userId: userIdOfGumbo(index + 1),
           shortName: index % 2 === 0 ? 'Aaron Judge' : 'Mookie Betts',
           left: false
         })

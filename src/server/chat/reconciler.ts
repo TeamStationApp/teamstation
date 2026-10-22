@@ -1,7 +1,9 @@
 import type { Kysely } from 'kysely'
 import { Client } from 'pg'
 
+import { compareUserIds } from '../../common/chatCrypto/userId'
 import { makeId } from '../../common/ids'
+import { asUserId } from '../../common/userId'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { survivors } from '../teams/teamStaff'
@@ -74,8 +76,8 @@ export interface Targets {
 
 export interface Reconciled {
   conversationId: string | null
-  joined: number[]
-  left: number[]
+  joined: string[]
+  left: string[]
 }
 
 /**
@@ -126,7 +128,7 @@ export async function reconcileScope(
     const current = await currentMembers(trx, conversation.id)
     const joined = [...audience]
       .filter(id => !current.includes(id))
-      .sort((a, b) => a - b)
+      .sort(compareUserIds)
     const left = current.filter(id => !audience.has(id))
     if (joined.length === 0 && left.length === 0) {
       return { conversationId: conversation.id, joined, left }
@@ -179,8 +181,12 @@ export async function targetsOf(
   const userSeasons = new Set<string>()
   const userLeagues = new Set<string>()
   for (const userText of marked('user')) {
-    const userId = Number(userText)
-    if (!Number.isSafeInteger(userId)) continue
+    let userId: string
+    try {
+      userId = asUserId(userText)
+    } catch {
+      continue
+    }
     const person = await onePerson(db, userId)
     const rows = [...new Set([userId, ...person.userIds])]
     const memberships = await db
@@ -476,7 +482,7 @@ async function marksFor(
     scope_type: string | null
     scope_id: string | null
   },
-  userId: number
+  userId: string
 ): Promise<DirtyMark[]> {
   const keys: DirtyMark[] = [{ scope_type: 'user', scope_id: String(userId) }]
   const scopeId = conversation.scope_id
@@ -543,7 +549,7 @@ async function marksFor(
 export async function memberNow(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number,
+  userId: string,
   now: Date = new Date()
 ): Promise<boolean> {
   const conversation = await db

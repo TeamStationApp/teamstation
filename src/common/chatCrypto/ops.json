@@ -98,7 +98,7 @@
         "conversationId",
         "epoch:u64",
         "messageId",
-        "senderUserId:u64",
+        "senderUserId:identity",
         "kind",
         "epochKey",
         "plaintext",
@@ -114,7 +114,7 @@
         "conversationId",
         "epoch:u64",
         "messageId",
-        "senderUserId:u64",
+        "senderUserId:identity",
         "kind",
         "nonce",
         "ciphertext",
@@ -130,7 +130,7 @@
         "conversationId",
         "epoch:u64",
         "messageId",
-        "senderUserId:u64",
+        "senderUserId:identity",
         "kind",
         "messageKey",
         "nonce",
@@ -211,7 +211,7 @@
       "id": 25,
       "name": "sealPreviousPukKeys",
       "args": [
-        "userId:u64",
+        "userId:identity",
         "identityId",
         "generation:u64",
         "privateKey",
@@ -224,7 +224,7 @@
       "id": 26,
       "name": "openPreviousPukKeys",
       "args": [
-        "userId:u64",
+        "userId:identity",
         "identityId",
         "generation:u64",
         "privateKey",
@@ -240,8 +240,8 @@
         "conversationId",
         "seq:u64",
         "event",
-        "userId:u64",
-        "actorUserId:u64",
+        "userId:identity",
+        "actorUserId:nullableIdentity",
         "reason",
         "at:u64"
       ],
@@ -250,7 +250,7 @@
     {
       "id": 28,
       "name": "safetyHalf",
-      "args": ["identityKey", "userId:u64"],
+      "args": ["identityKey", "userId:identity"],
       "results": ["digits"]
     },
     {

@@ -10,6 +10,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GuardiansModal } from './GuardiansModal'
 
@@ -65,7 +66,7 @@ const disabled = (label: string): boolean =>
 
 const roster = [
   asRosterEntry({
-    userId: 7,
+    userId: userIdOfGumbo(7),
     shortName: 'Pat P',
     jersey: null,
     positions: [],
@@ -74,7 +75,7 @@ const roster = [
     group: 'player'
   }),
   asRosterEntry({
-    userId: 20,
+    userId: userIdOfGumbo(20),
     shortName: 'Blair B',
     jersey: null,
     positions: [],
@@ -83,7 +84,7 @@ const roster = [
     group: 'follower'
   }),
   asRosterEntry({
-    userId: 21,
+    userId: userIdOfGumbo(21),
     shortName: 'Blake C',
     jersey: null,
     positions: [],
@@ -94,14 +95,14 @@ const roster = [
 ]
 
 interface Added {
-  who: { userId: number } | { email: string }
+  who: { userId: string } | { email: string }
   kind: RelativeKind
 }
 
 function fakeClient(
   start: Guardian[] | Error,
   added: Added[],
-  removed: number[]
+  removed: string[]
 ): TeamStationClient {
   let list = start instanceof Error ? [] : [...start]
   return {
@@ -113,7 +114,7 @@ function fakeClient(
     addGuardian: async (
       _teamId: string,
       _userId: number,
-      who: { userId: number } | { email: string },
+      who: { userId: string } | { email: string },
       kind: RelativeKind
     ) => {
       added.push({ who, kind })
@@ -146,7 +147,7 @@ function fakeClient(
       ]
       return { guardians: list }
     },
-    removeGuardian: async (_teamId: string, _userId: number, id: number) => {
+    removeGuardian: async (_teamId: string, _userId: string, id: string) => {
       removed.push(id)
       list = list.filter(guardian => guardian.userId !== id)
       return true
@@ -155,7 +156,7 @@ function fakeClient(
 }
 
 const g1: Guardian = {
-  userId: 11,
+  userId: userIdOfGumbo(11),
   name: 'Gale Guardian',
   email: 'g1@x',
   kind: 'guardian'
@@ -170,17 +171,25 @@ describe('GuardiansModal', function () {
   })
 
   it('lists guardians and family with their kind, and removes one', async function () {
-    const removed: number[] = []
+    const removed: string[] = []
     const changes: Guardian[][] = []
     await render(
       <GuardiansModal
         client={fakeClient(
-          [g1, { userId: 12, name: 'Fay Family', email: null, kind: 'family' }],
+          [
+            g1,
+            {
+              userId: userIdOfGumbo(12),
+              name: 'Fay Family',
+              email: null,
+              kind: 'family'
+            }
+          ],
           [],
           removed
         )}
         teamId="t1"
-        playerId={7}
+        playerId={userIdOfGumbo(7)}
         playerName="Pat P"
         onChanged={list => {
           changes.push(list)
@@ -193,9 +202,11 @@ describe('GuardiansModal', function () {
     expect(text()).includes('Fay Family')
     expect(text()).includes('Family')
     await press('Remove Gale Guardian')
-    expect(removed).deep.equals([11])
+    expect(removed).deep.equals([userIdOfGumbo(11)])
     expect(text()).not.includes('Gale Guardian')
-    expect(changes.at(-1)?.map(guardian => guardian.userId)).deep.equals([12])
+    expect(changes.at(-1)?.map(guardian => guardian.userId)).deep.equals([
+      userIdOfGumbo(12)
+    ])
   })
 
   it('adds by address, as the kind chosen, and says an invitation went', async function () {
@@ -204,7 +215,7 @@ describe('GuardiansModal', function () {
       <GuardiansModal
         client={fakeClient([], added, [])}
         teamId="t1"
-        playerId={7}
+        playerId={userIdOfGumbo(7)}
         playerName="Pat P"
         onClose={() => undefined}
       />
@@ -227,7 +238,7 @@ describe('GuardiansModal', function () {
       <GuardiansModal
         client={fakeClient([g1], added, [])}
         teamId="t1"
-        playerId={7}
+        playerId={userIdOfGumbo(7)}
         playerName="Pat P"
         onClose={() => undefined}
       />
@@ -240,7 +251,9 @@ describe('GuardiansModal', function () {
     expect(document.querySelector('[aria-label="Add Pat P"]')).equals(null)
     await type('E-mail address or name', 'bla')
     await press('Add Blair B')
-    expect(added).deep.equals([{ who: { userId: 20 }, kind: 'guardian' }])
+    expect(added).deep.equals([
+      { who: { userId: userIdOfGumbo(20) }, kind: 'guardian' }
+    ])
     expect(text()).includes('Blair B is linked.')
     await type('E-mail address or name', 'bla')
     expect(document.querySelector('[aria-label="Add Blair B"]')).equals(null)
@@ -254,7 +267,7 @@ describe('GuardiansModal', function () {
       <GuardiansModal
         client={fakeClient([], [], [])}
         teamId="t1"
-        playerId={7}
+        playerId={userIdOfGumbo(7)}
         playerName="Pat P"
         onClose={() => undefined}
       />
@@ -273,7 +286,7 @@ describe('GuardiansModal', function () {
       <GuardiansModal
         client={fakeClient(new Error('offline'), [], [])}
         teamId="t1"
-        playerId={7}
+        playerId={userIdOfGumbo(7)}
         playerName="Pat P"
         onClose={() => {
           closed += 1

@@ -1,5 +1,6 @@
 import { act } from 'react'
 
+import { userIdOfGumbo } from '../../common/userId'
 import type { MessageView } from './engine/apply'
 import type {
   ConversationListItem,
@@ -97,7 +98,7 @@ export function message(over: Partial<MessageView> = {}): MessageView {
     id: 'msg_1',
     seq: 1,
     epoch: 1,
-    senderUserId: 2,
+    senderUserId: userIdOfGumbo(2),
     senderName: 'Hank C',
     mine: false,
     sentAt: '2027-04-01T17:00:00.000Z',
@@ -117,7 +118,7 @@ export function message(over: Partial<MessageView> = {}): MessageView {
 }
 
 export function member(
-  userId: number,
+  userId: string,
   shortName: string,
   over: Partial<MemberView> = {}
 ): MemberView {
@@ -141,7 +142,10 @@ export function view(over: Partial<ConversationView> = {}): ConversationView {
   return {
     conversation: chat(),
     messages: [],
-    members: [member(1, 'Blair B'), member(2, 'Hank C')],
+    members: [
+      member(userIdOfGumbo(1), 'Blair B'),
+      member(userIdOfGumbo(2), 'Hank C')
+    ],
     typing: [],
     historyLocked: false,
     earlierLost: false,

@@ -1,6 +1,8 @@
+import type { UserId } from '../userId'
 import { join, lp, u64, utf8 } from './bytes'
 import { call } from './core'
 import type { KeyPair } from './keys'
+import { identityBytes } from './userId'
 
 export type { KeyPair } from './keys'
 
@@ -46,15 +48,15 @@ export function linkAad(fields: {
   return join(lp(fields.linkId), lp(fields.newDeviceId))
 }
 
-/** `puk`: `u64(userId) ‖ lp(identityId) ‖ u64(generation) ‖ lp(deviceId)`. */
+/** `puk`: `identity(userId) ‖ lp(identityId) ‖ u64(generation) ‖ lp(deviceId)`. */
 export function pukAad(fields: {
-  userId: number
+  userId: UserId
   identityId: string
   generation: number
   deviceId: string
 }): Uint8Array {
   return join(
-    u64(fields.userId),
+    identityBytes(fields.userId),
     lp(fields.identityId),
     u64(fields.generation),
     lp(fields.deviceId)
@@ -63,20 +65,20 @@ export function pukAad(fields: {
 
 /**
  * `epoch` and `grant`: `lp(conversationId) ‖ u64(epoch) ‖
- * u64(recipientUserId) ‖ lp(identityId) ‖ u64(generation)`, where the
+ * identity(recipientUserId) ‖ lp(identityId) ‖ u64(generation)`, where the
  * identity and generation are the recipient's PUK the key is wrapped to.
  */
 export function epochAad(fields: {
   conversationId: string
   epoch: number
-  recipientUserId: number
+  recipientUserId: UserId
   identityId: string
   generation: number
 }): Uint8Array {
   return join(
     lp(fields.conversationId),
     u64(fields.epoch),
-    u64(fields.recipientUserId),
+    identityBytes(fields.recipientUserId),
     lp(fields.identityId),
     u64(fields.generation)
   )

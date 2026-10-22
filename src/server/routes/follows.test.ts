@@ -8,7 +8,6 @@ import { Pool } from 'pg'
 import WebSocket from 'ws'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -23,6 +22,7 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { attachGameSocket, type GameSocketHandle } from '../socket/gameSocket'
+import { mintUserId } from '../users/mintUserId'
 import { followRoutes, seasonTitle } from './follows'
 import { mediaRoutes } from './media'
 import { playerRoutes } from './players'
@@ -33,8 +33,8 @@ import { teamRoutes } from './teams'
  * database, through the real routes.
  *
  * Fan F follows Hawks. Eagles parent D2 is on no Hawks roster and follows
- * nothing, so D2 sees nothing of Hawks until following it. Hawks coach Hc is
- * one of Hawks' own people.
+ * nothing; following adds the fan schedule/staff listing without granting
+ * membership or private statistics/media. Hawks coach Hc is a member.
  */
 
 const adminUrl = testDatabaseUrl
@@ -62,14 +62,14 @@ describe('following a team (U1)', function () {
   const ravens = makeId('team')
   const ravensTwo = makeId('team')
   const cancelled = makeId('game')
-  let stranger = 0
-  let mergedCoach = 0
+  let stranger = ''
+  let mergedCoach = ''
 
   const database = (): Kysely<Database> => {
     if (db == null) throw new Error('no database')
     return db
   }
-  const userId = (key: string): number => {
+  const userId = (key: string): string => {
     const person = seed.people[key]
     if (person == null) throw new Error(`nobody called ${key}`)
     return person.userId
@@ -96,27 +96,17 @@ describe('following a team (U1)', function () {
     })
 
     // Somebody tied to nothing, and a merged row that holds a coach role.
-    const taken = new Set(Object.values(seed.people).map(p => p.userId))
-    const mint = (): { userId: number; legacyId: string } => {
-      const made = mintUserId(id => taken.has(id))
-      taken.add(made.userId)
-      return made
-    }
-    const strangerRow = mint()
-    const mergedRow = mint()
-    stranger = strangerRow.userId
-    mergedCoach = mergedRow.userId
+    stranger = mintUserId()
+    mergedCoach = mintUserId()
     await db
       .insertInto('users')
       .values([
         {
-          id: strangerRow.userId,
-          legacyId: strangerRow.legacyId,
+          id: stranger,
           display_name: 'Sol Stranger'
         },
         {
-          id: mergedRow.userId,
-          legacyId: mergedRow.legacyId,
+          id: mergedCoach,
           display_name: 'Hank Coach (old)',
           merged_into: userId('Hc')
         }
@@ -124,8 +114,8 @@ describe('following a team (U1)', function () {
       .execute()
 
     const now = new Date()
-    const sessions: Array<[string, number]> = [
-      ...['F', 'D2', 'Hc', 'Z', 'E'].map((key): [string, number] => [
+    const sessions: Array<[string, string]> = [
+      ...['F', 'D2', 'Hc', 'Z', 'E'].map((key): [string, string] => [
         key,
         userId(key)
       ]),
@@ -271,7 +261,7 @@ describe('following a team (U1)', function () {
     }
   }
 
-  async function followRows(teamId: string): Promise<number[]> {
+  async function followRows(teamId: string): Promise<string[]> {
     const rows = await database()
       .selectFrom('team_follows')
       .select(['user_id'])
@@ -333,7 +323,7 @@ describe('following a team (U1)', function () {
         expect(answer).deep.equals({ status: 200, body: { following: true } })
       }
       expect(await followRows(ravens)).deep.equals([stranger])
-      const mine = await call('X', 'GET', '/me/follows')
+      const mine = await call('X', 'GET', '/me/team-follows')
       expect(mine.body).deep.equals([
         {
           id: ravens,
@@ -348,7 +338,7 @@ describe('following a team (U1)', function () {
         expect(answer).deep.equals({ status: 200, body: { following: false } })
       }
       expect(await followRows(ravens)).deep.equals([])
-      expect((await call('X', 'GET', '/me/follows')).body).deep.equals([])
+      expect((await call('X', 'GET', '/me/team-follows')).body).deep.equals([])
     })
 
     it('answers 404 for a missing, external or merged team, and 401 without a session', async function () {
@@ -363,12 +353,12 @@ describe('following a team (U1)', function () {
       expect(
         (await call(null, 'PUT', `/teams/${ravens}/follow`)).status
       ).equals(401)
-      expect((await call(null, 'GET', '/me/follows')).status).equals(401)
+      expect((await call(null, 'GET', '/me/team-follows')).status).equals(401)
       expect(await followRows(merged)).deep.equals([])
     })
 
-    it('lists only the full, unmerged teams followed in /me/follows', async function () {
-      const answer = await call('F', 'GET', '/me/follows')
+    it('lists only the full, unmerged teams followed in /me/team-follows', async function () {
+      const answer = await call('F', 'GET', '/me/team-follows')
       expect(answer.body.map((team: { id: string }) => team.id)).deep.equals([
         seed.teams.hawks
       ])
@@ -393,42 +383,37 @@ describe('following a team (U1)', function () {
       ).equals(false)
     })
 
-    it('lists the team in GET /teams as a fan, with no record', async function () {
+    it('keeps followed teams separate from member teams and their records', async function () {
       const fan = await call('F', 'GET', '/teams')
       expect(fan.status).equals(200)
-      expect(fan.body).length(1)
-      expect(fan.body[0]).deep.include({
-        id: seed.teams.hawks,
-        access: 'fan',
-        record: null,
-        following: true,
-        onTeam: false
-      })
+      expect(fan.body).deep.equals([])
+      expect(
+        (await call('F', 'GET', '/me/team-follows')).body.map(
+          (team: { id: string }) => team.id
+        )
+      ).deep.equals([seed.teams.hawks])
       const coach = await call('Hc', 'GET', '/teams')
       expect(coach.body).length(1)
       expect(coach.body[0]).deep.include({
         id: seed.teams.hawks,
-        access: 'member',
-        following: false,
-        onTeam: true
+        kind: 'full'
       })
       expect(coach.body[0].record).deep.include({ w: 1, l: 0 })
       const player = await call('E', 'GET', '/teams')
       expect(
-        player.body.map((team: { name: string; access: string }) => [
-          team.name,
-          team.access
-        ])
-      ).deep.equals([
-        ['Eagles', 'member'],
-        ['Hawks', 'fan']
-      ])
+        player.body.map((team: { name: string }) => team.name)
+      ).deep.equals(['Eagles'])
+      expect(
+        (await call('E', 'GET', '/me/team-follows')).body.map(
+          (team: { name: string }) => team.name
+        )
+      ).deep.equals(['Hawks'])
       expect((await call('X', 'GET', '/teams')).body).deep.equals([])
       const admin = await call('Z', 'GET', '/teams')
       const hawks = admin.body.find(
         (team: { id: string }) => team.id === seed.teams.hawks
       )
-      expect(hawks).deep.include({ access: 'member', onTeam: false })
+      expect(hawks).deep.include({ kind: 'full' })
     })
 
     it('reads the schedule with dates and opponents and nothing more', async function () {
@@ -472,32 +457,54 @@ describe('following a team (U1)', function () {
       ).not.to.include(cancelled)
     })
 
-    it('reads the roster without its followers, songs or whole names', async function () {
+    it('reads the current public roster sections while withholding private names and family links', async function () {
       const answer = await call('F', 'GET', `/teams/${seed.teams.hawks}/roster`)
       expect(answer.status).equals(200)
-      const groups = answer.body.map(
-        (entry: { group: string; shortName: string }) =>
-          `${entry.group} ${entry.shortName}`
+      expect(
+        answer.body.map((entry: { userId: string }) => entry.userId)
+      ).deep.equals(
+        [
+          'Ha',
+          'L',
+          'S',
+          'Hc',
+          'Hk',
+          'Hs',
+          'N',
+          'K',
+          'P',
+          'Q',
+          'R',
+          'T',
+          'G1',
+          'G2',
+          'A',
+          'B',
+          'C',
+          'E',
+          'F'
+        ].map(userId)
       )
-      expect(groups).deep.equals([
-        'coach Harper H',
-        'player Pat P',
-        'player Quilvio V',
-        'player Riley R',
-        'player Trea T'
-      ])
+      expect(
+        answer.body
+          .filter((entry: { section: string }) => entry.section === 'player')
+          .map((entry: { shortName: string }) => entry.shortName)
+      ).deep.equals(['Pat P', 'Quilvio V', 'Riley R', 'Trea T'])
       for (const entry of answer.body) {
-        expect(entry).not.to.have.property('walkUpSong')
+        expect(entry).not.to.have.property('nameDetails')
+        expect(entry).not.to.have.property('guardianOf')
+        if (!['admin', 'staff'].includes(entry.section))
+          expect(entry.avatarUrl).equals(null)
       }
       const coach = await call('Hc', 'GET', `/teams/${seed.teams.hawks}/roster`)
       const followers = coach.body.filter(
-        (entry: { group: string }) => entry.group === 'follower'
+        (entry: { section: string }) => entry.section === 'follower'
       )
-      // The parents, P's guardians and the team's role holders, who are
-      // members.
-      expect(followers.length).equals(9)
+      expect(
+        followers.map((entry: { userId: string }) => entry.userId)
+      ).deep.equals([userId('E'), userId('F')])
       const pat = coach.body.find(
-        (entry: { userId: number }) => entry.userId === userId('P')
+        (entry: { userId: string }) => entry.userId === userId('P')
       )
       expect(pat.walkUpSong).deep.include({ title: 'Song' })
     })
@@ -507,7 +514,7 @@ describe('following a team (U1)', function () {
       expect(answer.status).equals(200)
       expect(
         answer.body.map(
-          (entry: { shortName: string; roles: string[]; userId: number }) => [
+          (entry: { shortName: string; roles: string[]; userId: string }) => [
             entry.shortName,
             entry.roles
           ]
@@ -528,17 +535,25 @@ describe('following a team (U1)', function () {
       expect(owls.body).deep.equals([])
     })
 
-    it('answers 404 for the games, a game, its box score, stats, a player and a video', async function () {
-      const reads = [
+    it('allows current public game views but protects player details, statistics and playback', async function () {
+      const publicReads = [
         `/teams/${seed.teams.hawks}/games`,
-        `/games/${seed.games.hawksOwlsFinal}`,
+        `/games/${seed.games.hawksOwlsFinal}`
+      ]
+      for (const path of publicReads)
+        expect((await call('F', 'GET', path)).status, path).equals(200)
+      expect((await call('F', 'GET', `/players/${userId('P')}`)).status).equals(
+        404
+      )
+      const reads = [
         `/games/${seed.games.hawksOwlsFinal}/box-score`,
         `/teams/${seed.teams.hawks}/stats`,
-        `/players/${userId('P')}`,
         `/videos/${seed.videoId}/playback`
       ]
       for (const path of reads) {
-        expect((await call('F', 'GET', path)).status, path).equals(404)
+        const refused = await call('F', 'GET', path)
+        expect(refused.status, path).equals(403)
+        expect(refused.body.code, path).equals('membersOnly')
         // And they are there for the team's own people.
         expect((await call('Hc', 'GET', path)).status, path).not.equals(404)
       }
@@ -576,8 +591,11 @@ describe('following a team (U1)', function () {
   })
 
   describe('somebody who neither belongs nor follows', function () {
-    it('gets 404 from the schedule, roster and staff, until following', async function () {
-      const reads = ['schedule', 'roster', 'staff'].map(
+    it('retains the public roster and gains only the fan schedule/staff listing after following', async function () {
+      expect(
+        (await call('D2', 'GET', `/teams/${seed.teams.hawks}/roster`)).status
+      ).equals(200)
+      const reads = ['schedule', 'staff'].map(
         what => `/teams/${seed.teams.hawks}/${what}`
       )
       for (const path of reads) {
@@ -615,7 +633,7 @@ describe('following a team (U1)', function () {
         apply: true
       })
       expect(await followRows(ravens)).deep.equals(
-        [stranger, userId('F')].sort((a, b) => a - b)
+        [stranger, userId('F')].sort()
       )
       expect(await followRows(ravensTwo)).deep.equals([])
       // And the merged team can no longer be found or followed.

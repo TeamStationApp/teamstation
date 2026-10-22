@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { fromHex, hex, oracle, seed } from '../../test/chatCryptoOracle'
+import { userIdOfGumbo } from '../userId'
 import {
   epochSignedBytes,
   openPreviousEpochKey,
@@ -178,7 +179,7 @@ describe('chatCrypto chain', () => {
       { generation: 1, privateKey: seed('puk 1') }
     ]
     const box = sealPreviousPukKeys({
-      userId: 42,
+      userId: userIdOfGumbo(42),
       identityId: 'cid_1',
       generation: 3,
       privateKey: puk3,
@@ -189,7 +190,7 @@ describe('chatCrypto chain', () => {
       change: object = {}
     ): ReturnType<typeof openPreviousPukKeys> =>
       openPreviousPukKeys({
-        userId: 42,
+        userId: userIdOfGumbo(42),
         identityId: 'cid_1',
         generation: 3,
         privateKey: puk3,
@@ -240,7 +241,7 @@ describe('chatCrypto chain', () => {
 
     it('a generation with nothing older carries an empty list', () => {
       const empty = sealPreviousPukKeys({
-        userId: 42,
+        userId: userIdOfGumbo(42),
         identityId: 'cid_1',
         generation: 1,
         privateKey: puk3,
@@ -248,7 +249,7 @@ describe('chatCrypto chain', () => {
       })
       expect(
         openPreviousPukKeys({
-          userId: 42,
+          userId: userIdOfGumbo(42),
           identityId: 'cid_1',
           generation: 1,
           privateKey: puk3,
@@ -258,7 +259,7 @@ describe('chatCrypto chain', () => {
     })
 
     it('refuses another user, identity, generation, key or a changed byte', () => {
-      expect(() => open({ userId: 43 })).throws()
+      expect(() => open({ userId: userIdOfGumbo(43) })).throws()
       expect(() => open({ identityId: 'cid_2' })).throws()
       expect(() => open({ generation: 4 })).throws()
       expect(() => open({ privateKey: seed('puk 2') })).throws()
@@ -304,7 +305,7 @@ describe('chatCrypto chain', () => {
 
     it('the PUK signature: frozen vector', () => {
       const publicKey = deriveKeyPair(seed('recipient')).publicKey
-      const fields = { userId: 42, generation: 3, publicKey }
+      const fields = { userId: userIdOfGumbo(42), generation: 3, publicKey }
       expect(hex(pukSignedBytes(fields))).equals(
         '000000000000002a' + '0000000000000003' + '00000020' + hex(publicKey)
       )

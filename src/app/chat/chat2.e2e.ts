@@ -15,6 +15,7 @@ import emojiData from 'emojibase-data/en/compact.json'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { gumboOfUserId } from '../../common/userId'
 import {
   CHAT2_SCENARIOS,
   CHAT2_SURFACES,
@@ -1495,7 +1496,7 @@ export async function observeInfoCaptureReady(
 export class Scenarios {
   readonly group: string
   readonly viewerKey: string
-  readonly viewerId: number
+  readonly viewerId: string
   readonly peers = new Map<string, Peer>()
   readonly observations: Json[] = []
   get touchActions(): boolean {
@@ -1724,7 +1725,7 @@ export class Scenarios {
     return await fixtureClient(this.f, this.viewerKey)
   }
 
-  async run(name: Chat2Scenario): Promise<void> {
+  async run(name: Chat2Scenario | 'I1' | 'I2' | 'I3'): Promise<void> {
     await this[name]()
   }
 
@@ -1742,6 +1743,10 @@ export class Scenarios {
       if (await ui.visible({ text: exactText(actor.email) }, 2000))
         await ui.back()
       else {
+        if (['I1', 'I2'].includes(ui.scenario))
+          throw new Chat2Blocked(
+            'Compatibility requires its own prepared profile; account replacement is prohibited'
+          )
         requireAfterArchive(this.f)
         await m.scrollUntilVisible({
           element: { text: exactText('Sign out') },
@@ -1795,6 +1800,10 @@ export class Scenarios {
       )
     }
     if (await ui.visible({ text: 'Link this device' }, 500)) {
+      assert(
+        ui.scenario !== 'I1',
+        'The preserved legacy profile must not request another device link'
+      )
       const signal = ui.native
         ? undefined
         : AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
@@ -2276,7 +2285,7 @@ export class Scenarios {
 
   async peerMessage(
     body: string,
-    options: { quoteId?: string; mentions?: number[] } = {},
+    options: { quoteId?: string; mentions?: string[] } = {},
     conversation = this.group
   ): Promise<MessageView> {
     const peer = await this.protocolPeer()
@@ -2893,6 +2902,354 @@ export class Scenarios {
     } finally {
       fixtureControl(this.f, 'clear-fault')
     }
+  }
+
+  async identitySafety(peerId: string, expected: string): Promise<void> {
+    const member = need(
+      this.f.members.find(m => m.userId === peerId),
+      'Safety peer must be a current member'
+    )
+    assert.equal(
+      this.f.members.filter(m => m.name === member.name).length,
+      1,
+      'Unique public safety label required'
+    )
+    await this.openInfo()
+    const label = 'Safety number with ' + member.name
+    await this.ui.device.scrollUntilVisible({
+      element: { text: exactText(label) },
+      direction: 'DOWN',
+      timeout: 15000
+    })
+    await this.ui.text(label)
+    await until(
+      async () => {
+        const groups = (await this.ui.nodes()).filter(node =>
+          /^chat-safety-group-\d+$/.test(node.id ?? '')
+        )
+        if (groups.length !== 12) return undefined
+        const ordered = groups.sort(
+          (a, b) => Number(a.id!.slice(18)) - Number(b.id!.slice(18))
+        )
+        assert.equal(new Set(ordered.map(n => n.id)).size, 12)
+        assert(ordered.every(n => /^[0-9]{5}$/.test(n.text ?? '')))
+        assert.equal(
+          ordered.map(n => n.text).join(''),
+          expected,
+          'Actual installed safety digits must match the original public-key baseline'
+        )
+        return true
+      },
+      'actual safety digits',
+      15000
+    )
+    await this.ui.shot(
+      'identity-safety',
+      'Actual installed account safety digits matched the authenticated counterpart'
+    )
+    await this.ui.text('Done')
+    await this.openGroup()
+  }
+
+  async I1(): Promise<void> {
+    await this.check(
+      'I1 preserved installed legacy identity and encrypted history',
+      async () => {
+        const baseline = need(
+          need(
+            this.f.identityCompatibility,
+            'Identity compatibility descriptor required'
+          ).legacy[this.ui.surface],
+          'Legacy surface baseline required'
+        )
+        assert.equal(
+          this.viewerKey,
+          baseline.actor,
+          'Prepared legacy profile actor required'
+        )
+        assert(
+          gumboOfUserId(this.viewerId) != null,
+          'Legacy-derived canonical account required'
+        )
+        const client = await this.client()
+        const before = await client.myChatKeys()
+        const devices = (await client.chatDevices())
+          .map(d => [d.id, d.boxPublicKey, d.signPublicKey, d.revokedAt])
+          .sort((a, b) => a[0]!.localeCompare(b[0]!))
+        assert.equal(before.identity?.id, baseline.identityId)
+        assert.equal(before.identity?.publicKey, baseline.identityPublicKey)
+        assert(
+          before.generations.some(
+            p =>
+              p.generation === baseline.pukGeneration &&
+              p.publicKey === baseline.pukPublicKey
+          )
+        )
+        assert(
+          devices.some(d => d[0] === baseline.deviceId && d[3] == null),
+          'Original installed device required before reopen'
+        )
+        await this.signIn()
+        await this.openGroup()
+        for (const message of [baseline.text, baseline.reply]) {
+          await this.anchor(message)
+          await this.ui.device.assertVisible({ text: exactText(message.body) })
+        }
+        await this.ui.device.assertVisible({ text: '^Jump to message from .*' })
+        await this.anchor(baseline.file)
+        await until(
+          async () => {
+            try {
+              return await this.ui.renderedPhoto({
+                id: 'chat-bubble-' + baseline.file.id
+              })
+            } catch {
+              return undefined
+            }
+          },
+          'actual legacy encrypted attachment',
+          30000
+        )
+        const peer = await this.protocolPeer()
+        await this.peerTarget(peer, this.group, baseline.text.id)
+        await this.peerTarget(peer, this.group, baseline.reply.id)
+        const history = peer.engine.view(this.group)!
+        assert(
+          baseline.textMentions.length + baseline.replyMentions.length > 0,
+          'A real authenticated legacy numeric mention is required'
+        )
+        assert.deepEqual(
+          history.messages.find(m => m.id === baseline.text.id)?.mentions,
+          baseline.textMentions
+        )
+        assert.deepEqual(
+          history.messages.find(m => m.id === baseline.reply.id)?.mentions,
+          baseline.replyMentions
+        )
+        assert.equal(
+          history.messages.find(m => m.id === baseline.reply.id)?.quote
+            ?.authorId,
+          baseline.text.authorId
+        )
+        assert.equal(
+          history.messages.find(m => m.id === baseline.reply.id)?.quote?.id,
+          baseline.text.id
+        )
+        assert.equal(
+          await peer.engine.safetyNumber(this.viewerId),
+          baseline.safetyNumber
+        )
+        await this.identitySafety(
+          need(
+            (await peer.client.whoAmI())?.id,
+            'Safety peer session required'
+          ),
+          baseline.safetyNumber
+        )
+        const body = 'Legacy identity continuity ' + Date.now()
+        await this.ui.replaceDraft(body)
+        await this.ui.text('Send')
+        assert.equal((await this.delivered(body)).senderUserId, this.viewerId)
+        const after = await client.myChatKeys()
+        assert.deepEqual(after.identity, before.identity)
+        assert.deepEqual(
+          after.generations.map(({ box, ...p }) => p),
+          before.generations.map(({ box, ...p }) => p)
+        )
+        assert.deepEqual(
+          (await client.chatDevices())
+            .map(d => [d.id, d.boxPublicKey, d.signPublicKey, d.revokedAt])
+            .sort((a, b) => a[0]!.localeCompare(b[0]!)),
+          devices,
+          'Reopening must not enroll, revoke or replace a device'
+        )
+        this.observations.push({
+          legacyIdentityContinuous: true,
+          originalDeviceId: baseline.deviceId,
+          authenticatedNumericMentionsAndQuote: true,
+          legacyPhotoOpened: true,
+          safetyNumberUnchanged: true
+        })
+        await this.ui.shot(
+          'identity-legacy',
+          'Actual legacy profile after lossless database and saved-record upgrade'
+        )
+      }
+    )
+  }
+
+  async I2(): Promise<void> {
+    await this.check(
+      'I2 full-width account with mixed replies, mentions, files and linked-device rotation',
+      async () => {
+        const compatibility = need(
+          this.f.identityCompatibility,
+          'Identity compatibility descriptor required'
+        )
+        assert(
+          compatibility.fullWidthActors.includes(this.viewerKey),
+          'Explicit fresh full-width actor required'
+        )
+        assert.equal(gumboOfUserId(this.viewerId), null)
+        const client = await this.client()
+        assert.equal(
+          (await client.whoAmI())?.gumboId,
+          null,
+          'Fresh account must have no scoring mapping'
+        )
+        const original = need(
+          (await client.myChatKeys()).identity,
+          'Fresh full-width protocol provider must already be enrolled'
+        )
+        need(
+          this.f.actors[this.viewerKey].provider,
+          'Fresh actor requires its own pre-enrolled protocol provider'
+        )
+        await this.signIn()
+        await this.openGroup()
+        const peer = await this.protocolPeer()
+        const peerId = need(
+          (await peer.client.whoAmI())?.id,
+          'Legacy peer account required'
+        )
+        assert(
+          gumboOfUserId(peerId) != null,
+          'Mixed legacy/full-width accounts required'
+        )
+        const target =
+          compatibility.legacy[this.ui.surface]?.text ?? this.f.messages.target
+        await this.reply(target)
+        await this.ui.typeMentionTrigger()
+        await this.ui.id('chat-mention-member-' + peerId)
+        await this.ui.append(' mixed identity ' + Date.now())
+        const body = await this.ui.draft()
+        await this.attachPhoto()
+        await this.ui.text('Send')
+        const sent = await this.delivered(body)
+        assert.equal(sent.senderUserId, this.viewerId)
+        assert.deepEqual(sent.mentions, [peerId])
+        assert.equal(sent.quote?.id, target.id)
+        assert.equal(sent.quote?.authorId, target.authorId)
+        assert.equal(sent.attachments.length, 1)
+        const own = await this.protocolPeer(this.viewerKey)
+        const activeDevices = (await client.chatDevices()).filter(
+          d => d.revokedAt == null && d.linked
+        )
+        assert(
+          activeDevices.length >= 2,
+          'Actual linked application and protocol devices required'
+        )
+        const generation = await own.rotateUserKey()
+        await peer.engine.fillGrants()
+        const incoming = need(
+          await peer.engine.attach(
+            this.group,
+            [
+              {
+                bytes: new Uint8Array(
+                  readFileSync(
+                    need(this.f.files, 'Synthetic photo required').photo
+                  )
+                ),
+                contentType: 'image/png',
+                fileName: 'identity-fixture.png'
+              }
+            ],
+            'Mixed incoming identity ' + Date.now(),
+            { quoteId: sent.id, mentions: [this.viewerId] }
+          ),
+          'Verified mixed incoming file required'
+        )
+        await this.openGroup()
+        await this.anchor({
+          id: incoming.id,
+          seq: incoming.seq,
+          body: incoming.body,
+          authorId: peerId
+        })
+        await until(
+          async () => {
+            try {
+              return await this.ui.renderedPhoto({
+                id: 'chat-bubble-' + incoming.id
+              })
+            } catch {
+              return undefined
+            }
+          },
+          'actual mixed encrypted attachment after rotation',
+          30000
+        )
+        await own.engine.open(this.group)
+        const onSecond = need(
+          own.engine
+            .view(this.group)
+            ?.messages.find(message => message.id === incoming.id),
+          'The linked full-width protocol device must decrypt the incoming message'
+        )
+        assert.deepEqual(onSecond.mentions, [this.viewerId])
+        assert.equal(onSecond.quote?.authorId, this.viewerId)
+        const safety = need(
+          await own.engine.safetyNumber(peerId),
+          'Mixed safety digits required'
+        )
+        assert.equal(safety, await peer.engine.safetyNumber(this.viewerId))
+        await this.identitySafety(peerId, safety)
+        assert.deepEqual((await client.myChatKeys()).identity, original)
+        this.observations.push({
+          fullWidthId: this.viewerId,
+          noScoringMapping: true,
+          linkedDevices: activeDevices.map(d => d.id),
+          rotatedGeneration: generation,
+          mixedFileReplyMentionDelivered: true
+        })
+        await this.ui.shot(
+          'identity-mixed',
+          'Actual mixed account encrypted history after linked-device key rotation'
+        )
+      }
+    )
+  }
+
+  async I3(): Promise<void> {
+    await this.check(
+      'I3 isolated real platform persistence and injected adapter write refusal',
+      async () => {
+        await this.ui.open('/dev/chat-bench')
+        await this.ui.device.assertVisible({
+          text: exactText('vectors ok'),
+          timeout: 30000
+        })
+        await this.ui.text('Check saved chat compatibility')
+        await this.ui.device.assertVisible({
+          text: exactText('identity storage ok'),
+          timeout: 30000
+        })
+        await this.ui.device.assertNotVisible({
+          text: exactText('identity storage failed'),
+          timeout: 1000
+        })
+        for (const expected of [
+          '"enrollmentAttempts":0',
+          '"wipeAttempts":0',
+          '"cleanup":true',
+          'injected adapter write refusal'
+        ])
+          await this.ui.device.assertVisible({
+            text: '.*' + expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*'
+          })
+        await this.ui.shot(
+          'identity-storage',
+          'Actual dedicated synthetic platform store; failure is injected at the write adapter, and cleanup is verified'
+        )
+        this.observations.push({
+          isolatedStorageDiagnostic: true,
+          injectedAdapterRefusal: true,
+          protectedProfileMutation: false,
+          cleanupObserved: true
+        })
+      }
+    )
   }
 
   async E1(): Promise<void> {
@@ -5817,21 +6174,25 @@ async function main(): Promise<void> {
     command === 'capture' ||
       command === 'variants' ||
       command === 'surface' ||
-      CHAT2_SCENARIOS.includes(command as Chat2Scenario),
+      CHAT2_SCENARIOS.includes(command as Chat2Scenario) ||
+      ['I1', 'I2', 'I3'].includes(command),
     'Unknown chat2 scenario'
   )
   const ui = new Chat2UI(fixture, surface, command)
   const scenarios = new Scenarios(fixture, ui)
   let outcome: 'passed' | 'failed' | 'blocked' = 'failed'
   let failure: unknown
-  const completed: Chat2Scenario[] = []
+  const completed: string[] = []
   const allScenarios = [scenarios]
   try {
     fixtureControl(fixture, 'prepare', { surface, source: ui.binding.source })
     await ui.start()
     if (command === 'capture') await scenarios.capture()
     else if (command === 'variants') await scenarios.variants()
-    else {
+    else if (['I1', 'I2', 'I3'].includes(command)) {
+      await scenarios.run(command as 'I1' | 'I2' | 'I3')
+      completed.push(command)
+    } else {
       requireAfterArchive(fixture)
       await scenarios.signIn()
       for (const scenario of command === 'surface'

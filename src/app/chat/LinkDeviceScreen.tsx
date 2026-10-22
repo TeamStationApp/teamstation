@@ -22,7 +22,7 @@ export const LINK_POLL_MS = 2000
 
 export interface LinkDeviceScreenProps {
   client: ChatKeysClient
-  userId: number
+  userId: string
   /** This device's key store; the platform's own by default. */
   store?: ChatKeyStore
   /** How this device names itself; read from the platform by default. */

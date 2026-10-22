@@ -3,6 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatDropTarget } from './ChatDropTarget'
 import { ChatDropTarget as NativeDropTarget } from './ChatDropTarget.native'
@@ -445,7 +446,10 @@ class FakeEngine implements ChatScreenEngine {
           id,
           scopeName: id === 'cnv_aurora' ? 'Aurora' : 'Solstice'
         }),
-        members: [member(1, 'Mookie Betts'), member(2, 'Shohei Ohtani')],
+        members: [
+          member(userIdOfGumbo(1), 'Mookie Betts'),
+          member(userIdOfGumbo(2), 'Shohei Ohtani')
+        ],
         messages: [
           message({ senderName: 'Shohei Ohtani', body: 'Original body' })
         ]
@@ -564,7 +568,7 @@ async function screen(
       key={id}
       engine={engine}
       conversationId={id}
-      userId={1}
+      userId={userIdOfGumbo(1)}
       onMembers={() => {}}
       files={files}
       swipe={false}
@@ -605,7 +609,7 @@ async function showWorkspace(
     <ChatWorkspace
       engine={engine}
       state={state}
-      userId={1}
+      userId={userIdOfGumbo(1)}
       conversationId={conversationId}
       onOpen={() => {}}
       onMembers={() => {}}
@@ -1003,7 +1007,7 @@ describe('chat repeated offscreen announcements', function () {
     const workspace = (conversationId?: string): React.ReactElement => (
       <ChatWorkspace
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         state={state}
         conversationId={conversationId}
         onOpen={() => {}}

@@ -218,7 +218,7 @@ async function followableTeam(
 async function followable(
   db: Kysely<Database>,
   media: MediaContext,
-  userId: number,
+  userId: string,
   teams: Array<{ id: string; name: string; logoPath: string | null }>
 ): Promise<FollowableTeam[]> {
   if (teams.length === 0) return []

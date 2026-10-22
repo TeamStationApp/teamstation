@@ -1255,7 +1255,7 @@ export async function mayEditName(
 /** Legacy team-follow listing, separate from private team visibility. */
 export async function canReadFollowedTeam(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   teamId: string
 ): Promise<boolean> {
   const row = await db

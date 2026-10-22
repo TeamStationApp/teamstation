@@ -52,13 +52,13 @@ export interface Invite {
   forEmail: string | null
   requestId?: string | null
   /** Who made it, or null when nobody is recorded. */
-  createdBy: number | null
+  createdBy: string | null
   /**
    * The player whose guardian, or adult family member by `relativeKind`,
    * redeeming this makes somebody. Only the address it was made out to may
    * redeem it.
    */
-  guardianOfUserId: number | null
+  guardianOfUserId: string | null
   relativeKind: RelativeKind | null
 }
 
@@ -96,8 +96,8 @@ interface InviteFields {
   created_at: Date | string
   for_email: string | null
   request_id?: string | null
-  created_by: number | null
-  guardian_of_user_id: number | null
+  created_by: string | null
+  guardian_of_user_id: string | null
   relative_kind: RelativeKind | null
 }
 
@@ -260,7 +260,7 @@ export interface NewInvite {
   forEmail?: string
   requestId?: string
   /** For a team invite that makes its redeemer a relative of this player. */
-  guardianOf?: { userId: number; kind: RelativeKind }
+  guardianOf?: { userId: string; kind: RelativeKind }
 }
 
 export async function createInvite(
@@ -509,7 +509,7 @@ export async function redeemInvite(
 async function mustHoldInvitedAddress(
   db: Kysely<Database>,
   invite: Invite,
-  userId: number
+  userId: string
 ): Promise<void> {
   const wanted = (invite.forEmail ?? '').trim().toLowerCase()
   const held =

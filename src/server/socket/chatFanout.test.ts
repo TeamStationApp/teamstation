@@ -604,7 +604,7 @@ describe('chat on the socket (U9)', function () {
 
   describe('the fanout alone', function () {
     const subscriber = (
-      userId: number
+      userId: string
     ): ChatSubscriber & { sent: unknown[] } => {
       const sent: unknown[] = []
       return { userId, sent, send: frame => sent.push(frame) }

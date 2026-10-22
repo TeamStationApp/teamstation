@@ -10,8 +10,11 @@ import { asSessionUser, TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, find, mount, press, settle, unmount } from '../test/gameFormDom'
+import legacyChatRecord from '../test/legacyChatKeyRecord.json'
 import { nodeSqliteExecutor } from '../test/nodeSqliteExecutor'
 import { App } from './App'
+import { recordFromJson } from './chat/keyRecord'
+import { keyStore } from './chat/keyStore'
 import { showRoute } from './navigation/useAddressBar'
 import type { StoredUser } from './platform/storedUser'
 import {
@@ -328,27 +331,93 @@ describe('the phone shell offline', () => {
 
   it('asks before Sign Out loses what is queued: Cancel keeps it, Sign Out deletes it', async () => {
     await earlierLaunch()
-    showRoute({ name: 'account' }, true)
-    await mount(
-      <App
-        initialToken="token-one"
-        initialUser={BETTS}
-        documentCache={openCache}
-      />
-    )
-    await settle(100)
-    await press('Sign out')
-    expect(document.body.textContent).includes(
-      '1 change on this phone has not been sent and will be lost.'
-    )
-    await press('Cancel')
-    await settle(50)
-    expect(queuedOnDisk()).equals(1)
-    expect(find('Sign out'), 'still signed in').not.equals(undefined)
-    await press('Sign out')
-    await press('Sign Out')
-    await settle(100)
-    expect(queuedOnDisk(), 'the file is gone').equals(undefined)
+    const trace: string[] = []
+    const saved = JSON.stringify(legacyChatRecord)
+    let held: string | undefined = saved
+    let finishRevocation!: () => void
+    const revoking = new Promise<void>(resolve => {
+      finishRevocation = resolve
+    })
+    const original = {
+      exists: keyStore.exists,
+      load: keyStore.load,
+      wipe: keyStore.wipe
+    }
+    const originalRevoke = Object.getOwnPropertyDescriptor(
+      TeamStationClient.prototype,
+      'revokeChatDevice'
+    )!
+    keyStore.exists = async () => {
+      trace.push('exists')
+      return held != null
+    }
+    keyStore.load = async () => {
+      trace.push('load')
+      return held == null ? undefined : recordFromJson(held)
+    }
+    keyStore.wipe = async () => {
+      trace.push('wipe')
+      held = undefined
+    }
+    TeamStationClient.prototype.revokeChatDevice = async () => {
+      trace.push('revoke')
+      await revoking
+      throw new TypeError('Load failed')
+    }
+    try {
+      showRoute({ name: 'account' }, true)
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={BETTS}
+          documentCache={openCache}
+          onToken={token => {
+            if (token == null) trace.push('session cleared')
+          }}
+        />
+      )
+      await settle(100)
+      await press('Sign out')
+      expect(document.body.textContent).includes(
+        '1 change on this phone has not been sent and will be lost.'
+      )
+      await press('Cancel')
+      await settle(50)
+      expect(queuedOnDisk()).equals(1)
+      expect(held, 'all saved chat key bytes survive cancellation').equals(
+        saved
+      )
+      expect(
+        trace,
+        'cancellation neither reads, revokes nor wipes chat keys'
+      ).deep.equals([])
+      expect(find('Sign out'), 'still signed in').not.equals(undefined)
+      await press('Sign out')
+      await press('Sign Out')
+      await settle(50)
+      expect(trace).deep.equals(['exists', 'load', 'revoke'])
+      expect(held).equals(saved)
+      expect(queuedOnDisk()).equals(1)
+      finishRevocation()
+      await settle(100)
+      expect(queuedOnDisk(), 'the file is gone').equals(undefined)
+      expect(held).equals(undefined)
+      expect(trace).deep.equals([
+        'exists',
+        'load',
+        'revoke',
+        'wipe',
+        'session cleared'
+      ])
+    } finally {
+      finishRevocation()
+      Object.assign(keyStore, original)
+      Object.defineProperty(
+        TeamStationClient.prototype,
+        'revokeChatDevice',
+        originalRevoke
+      )
+    }
   })
   it('sends nothing of a refused person’s queue under the next person’s token, and sends it once they are back', async () => {
     await earlierLaunch()

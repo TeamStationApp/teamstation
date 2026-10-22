@@ -3,13 +3,14 @@ import { randomBytes } from 'node:crypto'
 import type { Kysely } from 'kysely'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { Role } from '../../common/roles'
 import { addEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
+import { atomic } from '../db/atomic'
 import { type Database, makeDatabase } from '../db/database'
 import { setFollow } from '../groups/follows'
 import { linkGuardian } from '../people/guardians'
+import { mintUserId } from '../users/mintUserId'
 
 /**
  * The chat fixture: QPLL, its Spring 2027 season, and Hawks, Eagles and Owls
@@ -215,7 +216,7 @@ export function birthMonthOf(
 
 export interface SeededPerson {
   key: string
-  userId: number
+  userId: string
   name: string
   email: string | null
   /** Null for the person with no way to sign in. */
@@ -248,7 +249,7 @@ export async function chatSeed(
   options: ChatSeedOptions = {}
 ): Promise<ChatSeed> {
   const now = options.now ?? new Date()
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     const leagueId = await upsertLeague(trx)
     const seasonId = await upsertSeason(trx, leagueId)
     const teams: Record<TeamKey, string> = {
@@ -554,7 +555,7 @@ async function upsertPerson(
   person: SeedPerson,
   password: string | null,
   now: Date
-): Promise<number> {
+): Promise<string> {
   const born = person.born == null ? undefined : birthMonthOf(now, person.born)
   const values = {
     display_name: `${person.firstName} ${person.lastName}`,
@@ -570,23 +571,16 @@ async function upsertPerson(
   }
   const held = await seeded(trx, 'user', person.key)
   if (held != null) {
-    await trx
-      .updateTable('users')
-      .set(values)
-      .where('id', '=', Number(held))
-      .execute()
-    return Number(held)
+    await trx.updateTable('users').set(values).where('id', '=', held).execute()
+    return held
   }
-  const taken = new Set(
-    (await trx.selectFrom('users').select('id').execute()).map(row => row.id)
-  )
-  const minted = mintUserId(id => taken.has(id))
+  const minted = mintUserId()
   await trx
     .insertInto('users')
-    .values({ id: minted.userId, legacyId: minted.legacyId, ...values })
+    .values({ id: minted, ...values })
     .execute()
   if (person.email != null) {
-    const added = await addEmail(trx, minted.userId, person.email, {
+    const added = await addEmail(trx, minted, person.email, {
       isPrimary: true,
       source: 'manual',
       verifiedAt: new Date()
@@ -597,8 +591,8 @@ async function upsertPerson(
       )
     }
   }
-  await remember(trx, 'user', person.key, String(minted.userId))
-  return minted.userId
+  await remember(trx, 'user', person.key, String(minted))
+  return minted
 }
 
 /** The fixture as a table to read the passwords off. */

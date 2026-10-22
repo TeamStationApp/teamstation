@@ -106,7 +106,7 @@ export interface ConversationScreenProps {
   engine: ChatScreenEngine
   conversationId: string
   /** The signed-in person, who is never asked to approve their own reset. */
-  userId: number
+  userId: string
   /** Conversation information and member security, from the identity. */
   onMembers: () => void
   /** The chat's title once it is known, for the header. */
@@ -1998,7 +1998,7 @@ export function ConversationScreen(
     }
   }
 
-  const chooseMention = (userId: number): void => {
+  const chooseMention = (userId: string): void => {
     const current = engine.view(conversationId)
     const member = current?.members.find(member => member.userId === userId)
     if (

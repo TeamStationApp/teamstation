@@ -13,10 +13,10 @@ export const ADULT_SEARCH_PAUSE_MS = 250
 export interface IncludeAdultSheetProps {
   client: Pick<TeamStationClient, 'includedAdults'>
   /** The covered players the server named in `adultRequired`. */
-  playerIds: number[]
+  playerIds: string[]
   busy?: boolean
   /** Start the conversation again with these adults in it as well. */
-  onSubmit: (userIds: number[]) => void
+  onSubmit: (userIds: string[]) => void
   onClose: () => void
   pauseMs?: number
 }

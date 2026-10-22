@@ -240,7 +240,7 @@ export interface MembershipsTable {
 
 /** A person following a team, which shows them its listing (050teamFollows). */
 export interface TeamFollowsTable {
-  user_id: number
+  user_id: string
   team_id: string
   created_at: Generated<Date>
 }
@@ -574,7 +574,7 @@ export interface InvitesTable {
    * The player whose guardian (or adult family member, by `relative_kind`)
    * redeeming this makes somebody. Both set together, on team invites only.
    */
-  guardian_of_user_id: Generated<number | null>
+  guardian_of_user_id: Generated<string | null>
   relative_kind: Generated<'guardian' | 'family' | null>
 }
 
@@ -1093,7 +1093,7 @@ export type ChatKind =
 /** A device holding chat keys, bound to the session it signed in with. */
 export interface ChatDevicesTable {
   id: string
-  user_id: number
+  user_id: string
   session_id: string | null
   name: string
   platform: 'web' | 'ios' | 'android'
@@ -1115,7 +1115,7 @@ export interface ChatResumeChallengesTable {
 /** A user's identity key; at most one per user is not `replaced_at`. */
 export interface ChatIdentitiesTable {
   id: string
-  user_id: number
+  user_id: string
   identity_public_key: Bytes
   created_at: Generated<Date>
   replaced_at: Timestamp | null
@@ -1123,7 +1123,7 @@ export interface ChatIdentitiesTable {
 
 /** One generation of a user's per-user key, signed by the identity. */
 export interface ChatUserKeysTable {
-  user_id: number
+  user_id: string
   identity_id: string
   generation: number
   public_key: Bytes
@@ -1134,7 +1134,7 @@ export interface ChatUserKeysTable {
 
 /** A per-user key generation, boxed to one of the user's devices. */
 export interface ChatUserKeyBoxesTable {
-  user_id: number
+  user_id: string
   identity_id: string
   generation: number
   device_id: string
@@ -1145,7 +1145,7 @@ export interface ChatUserKeyBoxesTable {
 /** A new device asking a linked one for the identity. */
 export interface ChatLinksTable {
   id: string
-  user_id: number
+  user_id: string
   new_device_id: string
   approved_by_device_id: string | null
   box: Bytes | null
@@ -1159,7 +1159,7 @@ export interface ChatConversationsTable {
   kind: ChatKind
   scope_type: 'team' | 'season' | 'league' | null
   scope_id: string | null
-  created_by: number | null
+  created_by: string | null
   needs_rotation: Generated<boolean>
   closed_at: Timestamp | null
   /** The last message's `seq`. */
@@ -1172,7 +1172,7 @@ export interface ChatConversationsTable {
 /** Who is in a chat, and who was (`left_at`). */
 export interface ChatMembersTable {
   conversation_id: string
-  user_id: number
+  user_id: string
   joined_at: Generated<Date>
   left_at: Timestamp | null
   created_at: Generated<Date>
@@ -1183,8 +1183,8 @@ export interface ChatMembershipLogTable {
   conversation_id: string
   seq: number
   event: 'join' | 'leave' | 'identityReset' | 'closed'
-  user_id: number
-  actor_user_id: number | null
+  user_id: string
+  actor_user_id: string | null
   reason: string | null
   prev_hash: Bytes
   hash: Bytes
@@ -1196,7 +1196,7 @@ export interface ChatMembershipLogTable {
 export interface ChatEpochsTable {
   conversation_id: string
   epoch: number
-  created_by_user_id: number
+  created_by_user_id: string
   identity_id: string
   /** Null on epoch 1 and on a chain break. */
   previous_key_box: Bytes | null
@@ -1209,11 +1209,11 @@ export interface ChatEpochsTable {
 export interface ChatEpochBoxesTable {
   conversation_id: string
   epoch: number
-  user_id: number
+  user_id: string
   identity_id: string
   generation: number
   box: Bytes
-  granted_by_user_id: number | null
+  granted_by_user_id: string | null
   created_at: Generated<Date>
 }
 
@@ -1221,7 +1221,7 @@ export interface ChatEpochBoxesTable {
 export interface ChatGrantRequestsTable {
   id: Generated<number>
   conversation_id: string
-  user_id: number
+  user_id: string
   identity_id: string
   generation: number
   identity_reset: Generated<boolean>
@@ -1237,7 +1237,7 @@ export interface ChatMessagesTable {
   conversation_id: string
   seq: number
   epoch: number
-  sender_user_id: number
+  sender_user_id: string
   sender_identity_id: string
   kind: 'post' | 'reaction' | 'edit' | 'delete' | 'moderatorDelete'
   /** Set on the two delete kinds only. */
@@ -1260,7 +1260,7 @@ export interface ChatMessageAttachmentsTable {
 export interface ChatAttachmentsTable {
   id: string
   conversation_id: string
-  uploader_user_id: number
+  uploader_user_id: string
   size: number
   object_key: string
   digest: Bytes
@@ -1271,7 +1271,7 @@ export interface ChatAttachmentsTable {
 /** How far a member has read. */
 export interface ChatReadCursorsTable {
   conversation_id: string
-  user_id: number
+  user_id: string
   seq: Generated<number>
   at: Generated<Date>
   created_at: Generated<Date>
@@ -1282,7 +1282,7 @@ export interface ChatReportsTable {
   id: string
   conversation_id: string
   message_id: string
-  reporter_user_id: number
+  reporter_user_id: string
   /** The message row as it stood when reported. */
   envelope: Json
   message_key: Bytes
@@ -1300,7 +1300,7 @@ export interface ChatDirtyTable {
 }
 
 export interface ChatConversationPreferencesTable {
-  user_id: number
+  user_id: string
   conversation_id: string
   pinned: Generated<boolean>
   muted: Generated<boolean>
@@ -1309,7 +1309,7 @@ export interface ChatConversationPreferencesTable {
 }
 
 export interface ChatMessagePinsTable {
-  user_id: number
+  user_id: string
   conversation_id: string
   message_id: string
   pinned_at: Generated<Date>

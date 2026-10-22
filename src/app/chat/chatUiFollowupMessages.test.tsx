@@ -6,6 +6,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
 import { ChatListScreen } from './ChatListScreen'
@@ -605,7 +606,7 @@ describe('chat follow-up message hold', function () {
       <MessageBubble
         message={safeMessage()}
         conversation={chat()}
-        members={[member(2, 'Shohei Ohtani')]}
+        members={[member(userIdOfGumbo(2), 'Shohei Ohtani')]}
         engine={{ openAttachment: async () => new Uint8Array() }}
         files={files}
         maxWidth={320}
@@ -712,7 +713,7 @@ describe('chat follow-up message hold', function () {
         kind === 'quote'
           ? {
               id: 'msg_original',
-              authorId: 2,
+              authorId: userIdOfGumbo(2),
               authorName: 'Shohei Ohtani',
               snippet: 'Original body',
               status: 'ok'
@@ -724,7 +725,7 @@ describe('chat follow-up message hold', function () {
         key={kind}
         message={value}
         conversation={chat()}
-        members={[member(2, 'Shohei Ohtani')]}
+        members={[member(userIdOfGumbo(2), 'Shohei Ohtani')]}
         engine={{
           openAttachment: async attachment => {
             fetches.push(attachment.id)
@@ -952,8 +953,8 @@ describe('chat follow-up reply and personal pin views', function () {
     pointer(true)
     const original = safeMessage({
       mine: true,
-      senderUserId: 1,
-      readBy: [2],
+      senderUserId: userIdOfGumbo(1),
+      readBy: [userIdOfGumbo(2)],
       edited: true,
       sentBeforeSafetyNumberChange: true
     })
@@ -962,7 +963,7 @@ describe('chat follow-up reply and personal pin views', function () {
       <MessageBubble
         message={original}
         conversation={chat()}
-        members={[member(2, 'Shohei Ohtani')]}
+        members={[member(userIdOfGumbo(2), 'Shohei Ohtani')]}
         engine={{ openAttachment: async () => new Uint8Array() }}
         files={files}
         maxWidth={320}
@@ -1012,13 +1013,17 @@ describe('chat follow-up reply and personal pin views', function () {
     const jumps: string[] = []
     const quote: QuoteView = {
       id: 'msg_original',
-      authorId: 2,
+      authorId: userIdOfGumbo(2),
       authorName: 'Shohei Ohtani',
       snippet: 'Edited wording',
       status: 'ok'
     }
     await render(
-      <ReplyQuote quote={quote} userId={1} onJump={id => jumps.push(id)} />
+      <ReplyQuote
+        quote={quote}
+        userId={userIdOfGumbo(1)}
+        onJump={id => jumps.push(id)}
+      />
     )
     const target = button('Jump to message from Shohei Ohtani: Edited wording')
     expect(target.textContent).equals('Shohei OhtaniEdited wording')
@@ -1030,8 +1035,8 @@ describe('chat follow-up reply and personal pin views', function () {
     expect(jumps).deep.equals(['msg_original'])
     await render(
       <ReplyQuote
-        quote={{ ...quote, authorId: 1 }}
-        userId={1}
+        quote={{ ...quote, authorId: userIdOfGumbo(1) }}
+        userId={userIdOfGumbo(1)}
         onJump={() => {}}
       />
     )
@@ -1041,7 +1046,7 @@ describe('chat follow-up reply and personal pin views', function () {
     await render(
       <ReplyQuote
         quote={{ ...quote, authorName: undefined }}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onJump={() => {}}
       />
     )
@@ -1055,7 +1060,7 @@ describe('chat follow-up reply and personal pin views', function () {
           status: 'unavailable',
           snippet: 'Message unavailable'
         }}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onJump={() => {}}
       />
     )
@@ -1155,7 +1160,10 @@ describe('chat follow-up reply and personal pin views', function () {
 class FakeEngine implements ChatScreenEngine {
   current = view({
     conversation: chat({ id: 'cnv_fixture', scopeName: 'Aurora' }),
-    members: [member(1, 'Mookie Betts'), member(2, 'Shohei Ohtani')],
+    members: [
+      member(userIdOfGumbo(1), 'Mookie Betts'),
+      member(userIdOfGumbo(2), 'Shohei Ohtani')
+    ],
     messages: [safeMessage()]
   })
 
@@ -1299,7 +1307,7 @@ async function screen(
       <ConversationScreen
         engine={engine}
         conversationId="cnv_fixture"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onMembers={() => {}}
         files={files}
         swipe={false}
@@ -1496,7 +1504,7 @@ describe('chat follow-up conversation message integration', function () {
             key="cnv_fixture"
             engine={engine}
             conversationId="cnv_fixture"
-            userId={1}
+            userId={userIdOfGumbo(1)}
             onMembers={() => {}}
             files={files}
             swipe={false}
@@ -1546,7 +1554,7 @@ describe('chat follow-up conversation message integration', function () {
           key="cnv_other"
           engine={other}
           conversationId="cnv_other"
-          userId={1}
+          userId={userIdOfGumbo(1)}
           onMembers={() => {}}
           files={files}
           swipe={false}
@@ -1587,7 +1595,7 @@ describe('chat follow-up conversation message integration', function () {
         <ConversationScreen
           engine={engine}
           conversationId="cnv_fixture"
-          userId={1}
+          userId={userIdOfGumbo(1)}
           onMembers={() => {}}
           files={{ ...files, pickFiles: async () => [prepared] }}
           swipe={false}
@@ -1682,7 +1690,7 @@ describe('chat follow-up conversation message integration', function () {
         <ConversationScreen
           engine={engine}
           conversationId="cnv_fixture"
-          userId={1}
+          userId={userIdOfGumbo(1)}
           onMembers={() => {}}
           files={files}
           swipe={false}
@@ -1786,7 +1794,7 @@ describe('chat follow-up conversation message integration', function () {
             key="cnv_fixture"
             engine={engine}
             conversationId="cnv_fixture"
-            userId={1}
+            userId={userIdOfGumbo(1)}
             onMembers={() => {}}
             files={files}
             swipe={false}
@@ -1823,7 +1831,7 @@ describe('chat follow-up conversation message integration', function () {
           key="cnv_other"
           engine={other}
           conversationId="cnv_other"
-          userId={1}
+          userId={userIdOfGumbo(1)}
           onMembers={() => {}}
           files={files}
           swipe={false}
@@ -1882,7 +1890,7 @@ describe('chat follow-up conversation message integration', function () {
           <ConversationScreen
             engine={engine}
             conversationId="cnv_fixture"
-            userId={1}
+            userId={userIdOfGumbo(1)}
             onMembers={() => {}}
             files={files}
             swipe={false}
@@ -1977,7 +1985,7 @@ describe('chat follow-up conversation message integration', function () {
         seq: 20,
         quote: {
           id: original.id,
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: undefined,
           snippet: 'Message unavailable',
           status: 'unavailable'
@@ -2179,7 +2187,7 @@ describe('chat follow-up conversation message integration', function () {
         seq: 2,
         quote: {
           id: original.id,
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: 'Shohei Ohtani',
           snippet: original.body,
           status: 'ok'
@@ -2237,7 +2245,7 @@ describe('chat follow-up conversation message integration', function () {
         seq: 2,
         quote: {
           id: original.id,
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: 'Shohei Ohtani',
           snippet: original.body,
           status: 'ok'
@@ -2298,7 +2306,7 @@ describe('chat follow-up conversation message integration', function () {
         seq: 3,
         quote: {
           id: original.id,
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: 'Shohei Ohtani',
           snippet: original.body,
           status: 'ok'
@@ -2373,7 +2381,7 @@ describe('chat follow-up conversation message integration', function () {
       body: 'Reply body',
       quote: {
         id: original.id,
-        authorId: 2,
+        authorId: userIdOfGumbo(2),
         authorName: 'Shohei Ohtani',
         snippet: 'Message unavailable',
         status: 'unavailable'
@@ -2475,7 +2483,7 @@ describe('chat follow-up conversation message integration', function () {
         seq: 20,
         quote: {
           id: 'msg_unavailable_original',
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: undefined,
           snippet: 'Message unavailable',
           status: 'unavailable'
@@ -2930,7 +2938,7 @@ describe('chat follow-up conversation message integration', function () {
           <ConversationScreen
             engine={engine}
             conversationId="cnv_fixture"
-            userId={1}
+            userId={userIdOfGumbo(1)}
             onMembers={() => {}}
             files={files}
             swipe={false}
@@ -3005,7 +3013,7 @@ describe('chat follow-up conversation message integration', function () {
         <ConversationScreen
           engine={engine}
           conversationId="cnv_fixture"
-          userId={1}
+          userId={userIdOfGumbo(1)}
           onMembers={() => {}}
           files={files}
           swipe={false}
@@ -3053,7 +3061,7 @@ describe('chat follow-up conversation message integration', function () {
       safeMessage({
         quote: {
           id: 'msg_missing',
-          authorId: 2,
+          authorId: userIdOfGumbo(2),
           authorName: undefined,
           snippet: 'Message unavailable',
           status: 'unavailable'
@@ -3264,7 +3272,9 @@ describe('chat follow-up conversation message integration', function () {
   it('toggles an existing reaction through the mobile quick reaction menu', async function () {
     const engine = new FakeEngine()
     engine.current.messages = [
-      safeMessage({ reactions: [{ emoji: '👍', mine: true, userIds: [1] }] })
+      safeMessage({
+        reactions: [{ emoji: '👍', mine: true, userIds: [userIdOfGumbo(1)] }]
+      })
     ]
     await screen(engine)
     pointer(false)

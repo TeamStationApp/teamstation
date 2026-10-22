@@ -3,7 +3,7 @@
  *
  * - `lp(x)`: a string as its UTF-8 bytes (or raw bytes as they are), prefixed
  *   with their length as a 4-byte big-endian integer.
- * - `u64(n)`: a whole number — a user id, an epoch, a generation, a `seq`,
+ * - `u64(n)`: a whole number — an epoch, a generation, a `seq`,
  *   milliseconds — as 8 bytes big-endian.
  * - `join(...)` (written `‖`) puts them end to end. Every AAD, KDF input
  *   and hash input in `chatCrypto` is such a join, so no two different inputs

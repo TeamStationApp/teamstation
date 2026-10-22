@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { ChatPin } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -243,7 +244,7 @@ describe('floating personal pin summary', function () {
         <ConversationScreen
           engine={state.engine}
           conversationId="cnv_1"
-          userId={1}
+          userId={userIdOfGumbo(1)}
           onMembers={() => {}}
           files={{ ...files, PICK_SOURCES: [] }}
         />
@@ -300,7 +301,7 @@ describe('floating personal pin summary', function () {
       <ConversationScreen
         engine={state.engine}
         conversationId="cnv_1"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onMembers={() => {}}
         files={{ ...files, PICK_SOURCES: [] }}
       />
@@ -345,7 +346,7 @@ describe('floating personal pin summary', function () {
       <ConversationScreen
         engine={state.engine}
         conversationId="cnv_1"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onMembers={() => {}}
         files={{ ...files, PICK_SOURCES: [] }}
       />

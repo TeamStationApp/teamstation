@@ -472,8 +472,8 @@ async function closedInto(
  */
 async function moveSignIns(
   db: Kysely<Database>,
-  closing: number,
-  keeping: number
+  closing: string,
+  keeping: string
 ): Promise<void> {
   const primary = await db
     .selectFrom('user_emails')
@@ -518,8 +518,8 @@ async function moveSignIns(
 /** The teams the closing row follows, followed by the survivor, once each. */
 async function moveFollows(
   db: Kysely<Database>,
-  closing: number,
-  keeping: number
+  closing: string,
+  keeping: string
 ): Promise<void> {
   const follows = await db
     .selectFrom('follows')

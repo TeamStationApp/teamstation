@@ -85,7 +85,7 @@ export interface ChatSetup {
   client: ChatKeysClient
   store: ChatKeyStore
   /** The signed-in user. */
-  userId: number
+  userId: string
   /** How this device names itself when it registers. */
   device: { name: string; platform: 'web' | 'ios' | 'android' }
 }

@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { ChatPreferences } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatListScreen } from './ChatListScreen'
@@ -259,7 +260,10 @@ class FakeEngine implements ChatScreenEngine {
       conversation.id,
       view({
         conversation,
-        members: [member(1, 'Trea Turner'), member(2, 'Mookie Betts')],
+        members: [
+          member(userIdOfGumbo(1), 'Trea Turner'),
+          member(userIdOfGumbo(2), 'Mookie Betts')
+        ],
         ...over
       })
     )
@@ -438,7 +442,7 @@ describe('chat UI follow-up workspace', function () {
     await render(
       <ChatWorkspace
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         state={state}
         conversationId="Aurora"
         onOpen={() => {}}
@@ -520,7 +524,7 @@ describe('chat UI follow-up workspace', function () {
     const workspace = (conversationId?: string): React.ReactElement => (
       <ChatWorkspace
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         state={state}
         conversationId={conversationId}
         onOpen={chat => {
@@ -585,7 +589,7 @@ describe('chat UI follow-up workspace', function () {
     const workspace = (conversationId?: string): React.ReactElement => (
       <ChatWorkspace
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         state={state}
         conversationId={conversationId}
         onOpen={() => {
@@ -635,7 +639,7 @@ describe('chat UI follow-up mounted reading session', function () {
       <ConversationScreen
         engine={engine}
         conversationId="Aurora"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         embedded
         paneHeader={paneHeader}
         readingSession={readingSession}
@@ -707,7 +711,7 @@ describe('chat UI follow-up mounted reading session', function () {
     await render(
       <ChatWorkspace
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         state={state}
         conversationId="Aurora"
         onOpen={() => {}}
@@ -833,7 +837,7 @@ describe('chat UI follow-up mounted reading session', function () {
       <ConversationScreen
         engine={engine}
         conversationId="Aurora"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         embedded
         active={false}
         readingSession={3}

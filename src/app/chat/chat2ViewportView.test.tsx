@@ -4,6 +4,7 @@ import React, { act, useEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Keyboard } from 'react-native'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { AppHeader } from '../components/AppHeader'
 import { AppNav } from '../components/AppNav'
 import { HeaderSlotProvider } from '../components/headerSlot'
@@ -356,7 +357,7 @@ describe('chat measured chrome and explicit focus', function () {
           <AppHeader title="Chats" handoff={handoff} contentHeight={height} />
           <ConversationScreen
             engine={engine}
-            userId={1}
+            userId={userIdOfGumbo(1)}
             conversationId={shown.conversation.id}
             active={props.active}
             paneHeader={props.pane}
@@ -401,7 +402,10 @@ describe('chat measured chrome and explicit focus', function () {
     expect(document.activeElement).equals(input)
     elsewhere.focus()
     await act(async () => {
-      shown = { ...shown, typing: [{ userId: 2, name: 'Aaron Judge' }] }
+      shown = {
+        ...shown,
+        typing: [{ userId: userIdOfGumbo(2), name: 'Aaron Judge' }]
+      }
       emit({ type: 'conversation', conversationId: shown.conversation.id })
     })
     expect(document.activeElement).equals(elsewhere)

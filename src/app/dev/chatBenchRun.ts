@@ -3,6 +3,7 @@ import { call } from '../../common/chatCrypto/core'
 import { num } from '../../common/chatCrypto/coreCall'
 import { epochAad } from '../../common/chatCrypto/hpke'
 import { openAttachment, sealAttachment } from '../../common/chatCrypto/stream'
+import { userIdOfGumbo } from '../../common/userId'
 
 /**
  * The chat crypto bench: the same work on a phone (`ChatBenchScreen`) and in
@@ -79,7 +80,7 @@ export function runChatBench(options: ChatBenchOptions = {}): ChatBenchResult {
   const aad = epochAad({
     conversationId: 'cnv_bench',
     epoch: 1,
-    recipientUserId: 1,
+    recipientUserId: userIdOfGumbo(1),
     identityId: 'cid_bench',
     generation: 1
   })

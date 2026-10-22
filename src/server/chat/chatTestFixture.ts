@@ -8,7 +8,7 @@ import type { Kysely } from 'kysely'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { asUserId } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import {
@@ -30,6 +30,7 @@ import { chatAttachmentRoutes } from '../routes/chatAttachments'
 import { chatEpochRoutes } from '../routes/chatEpochs'
 import { chatKeyRoutes } from '../routes/chatKeys'
 import { chatMessageRoutes } from '../routes/chatMessages'
+import { mintUserId } from '../users/mintUserId'
 import { spaceObjectStore } from './attachments'
 import { drainDirty } from './reconciler'
 
@@ -56,9 +57,9 @@ export interface ChatFixture {
   api: string
   /** Where attachment parts wait. */
   uploadsDir: string
-  id: (key: string) => number
+  id: (key: string) => string
   /** The seed key of a user id, or the id itself. */
-  keyOf: (userId: number) => string
+  keyOf: (userId: string) => string
   call: (
     who: string,
     method: string,
@@ -76,8 +77,12 @@ export interface ChatFixture {
   /** Makes a person (an account unless `account: false`) with a session. */
   person: (
     key: string,
-    options?: { account?: boolean; birth?: { year: number; month: number } }
-  ) => Promise<number>
+    options?: {
+      account?: boolean
+      birth?: { year: number; month: number }
+      userId?: string
+    }
+  ) => Promise<string>
   /** Takes and reconciles every mark. */
   drain: () => Promise<number>
   /** The attachment object keys the message routes deleted, in order. */
@@ -113,189 +118,213 @@ export async function openChatFixture(
   const adminPool = new Pool({ connectionString: testDatabaseUrl })
   try {
     await adminPool.query('select 1')
-  } catch {
+  } catch (error) {
     await adminPool.end()
+    if (process.env.TS_TEST_DATABASE_URL != null) throw error
     return undefined
   }
   const name = `teamstation_chat_${label}_${Date.now()}_${process.pid}`
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
   await adminPool.query(`create database ${name}`)
   const pool = new Pool({ connectionString: url })
-  await migrateUp(pool, migrations)
-  await pool.end()
-  const db = makeDatabase(url)
-  const start = options.now ?? new Date('2027-04-10T12:00:00Z')
-  const seed = await chatSeed(db, { password: 'pw', now: start })
-
-  const tokens = new Map<string, string>()
-  const keys = new Map<number, string>()
-  const sessions = new Map<string, string>()
-  const signIn = async (
-    key: string,
-    userId: number,
-    who = key
-  ): Promise<string> => {
-    const token = `tok_chat_${who}_${'0'.repeat(24)}`
-    tokens.set(who, token)
-    if (who === key) keys.set(userId, key)
-    const at = new Date()
-    const sessionId = makeId('authSession')
-    sessions.set(who, sessionId)
-    await db
-      .insertInto('auth_sessions')
-      .values({
-        id: sessionId,
-        user_id: userId,
-        token_hash: hashToken(token),
-        created_at: at,
-        expires_at: new Date(at.getTime() + 3_600_000)
-      })
-      .execute()
-    return sessionId
-  }
-  for (const person of Object.values(seed.people)) {
-    await signIn(person.key, person.userId)
-  }
-
-  const space = options.space ?? TEST_MEDIA.space
   const uploadsDir = join(tmpdir(), `${name}_uploads`)
-  const store = options.space == null ? undefined : spaceObjectStore(space)
-  const fixture: ChatFixture = {
-    db,
-    seed,
-    now: start,
-    url,
-    api: '',
-    uploadsDir,
-    id: key => {
-      const person = seed.people[key]
-      if (person != null) return person.userId
-      for (const [userId, held] of keys) if (held === key) return userId
-      throw new Error(`nobody called ${key}`)
-    },
-    keyOf: userId => keys.get(userId) ?? String(userId),
-    signIn: async (who, key) => await signIn(key, fixture.id(key), who),
-    apiToken: async (who, key) => {
-      const token = `tok_chat_${who}_${'1'.repeat(24)}`
-      tokens.set(who, token)
-      await db
-        .insertInto('api_tokens')
-        .values({
-          id: makeId('apiToken'),
-          user_id: fixture.id(key),
-          label: who,
-          token_hash: hashToken(token),
-          created_at: new Date()
-        })
-        .execute()
-    },
-    tokenOf: who => {
-      const token = tokens.get(who)
-      if (token == null) throw new Error(`no token called ${who}`)
-      return token
-    },
-    sessionOf: who => {
-      const sessionId = sessions.get(who)
-      if (sessionId == null) throw new Error(`no session called ${who}`)
-      return sessionId
-    },
-    call: async (who, method, path, body) => {
-      const headers: Record<string, string> = {}
-      const token = tokens.get(who)
-      if (token != null) headers.authorization = `Bearer ${token}`
-      if (body !== undefined) headers['content-type'] = 'application/json'
-      const response = await fetch(`${base}${path}`, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body)
-      })
-      return {
-        status: response.status,
-        body: await response.json().catch(() => null)
-      }
-    },
-    person: async (key, personOptions = {}) => {
-      const taken = new Set(
-        (await db.selectFrom('users').select('id').execute()).map(row => row.id)
-      )
-      const minted = mintUserId(id => taken.has(id))
-      const account = personOptions.account ?? true
-      await db
-        .insertInto('users')
-        .values({
-          id: minted.userId,
-          legacyId: minted.legacyId,
-          display_name: `${key} Person`,
-          first_name: key,
-          last_name: 'Person',
-          password_hash: null,
-          birth_year: personOptions.birth?.year ?? null,
-          birth_month: personOptions.birth?.month ?? null
-        })
-        .execute()
-      if (account) {
-        await addEmail(db, minted.userId, `${key.toLowerCase()}@extra.test`, {
-          isPrimary: true,
-          source: 'manual',
-          verifiedAt: new Date()
-        })
-      }
-      await signIn(key, minted.userId)
-      return minted.userId
-    },
-    drain: async () => await drainDirty(db, fixture.now),
-    deletedObjects: [],
-    close: async () => {
-      server.close()
-      await db.destroy()
-      await rm(uploadsDir, { recursive: true, force: true })
-      await dropScratchDatabase(adminPool, name)
-      await adminPool.end()
-    }
+  let closeDatabase = async (): Promise<void> => {
+    await pool.end()
   }
+  let closeServer: (() => Promise<void>) | undefined
+  try {
+    await migrateUp(pool, migrations)
+    await pool.end()
+    const db = makeDatabase(url)
+    closeDatabase = async () => {
+      await db.destroy()
+    }
+    const start = options.now ?? new Date('2027-04-10T12:00:00Z')
+    const seed = await chatSeed(db, { password: 'pw', now: start })
 
-  const app = express()
-  app.use(jsonBody)
-  app.use(withActor(db))
-  app.use(withAudit(db))
-  app.use(
-    '/api/v1',
-    chatRoutes(db, { ...TEST_MEDIA, space }, () => fixture.now)
-  )
-  app.use(
-    '/api/v1',
-    chatKeyRoutes(db, () => fixture.now)
-  )
-  app.use(
-    '/api/v1',
-    chatEpochRoutes(db, () => fixture.now)
-  )
-  app.use(
-    '/api/v1',
-    chatMessageRoutes(db, TEST_MEDIA, {
-      clock: () => fixture.now,
-      objects: {
-        deleteObjects: async keys => {
-          await store?.deleteObjects(keys)
-          fixture.deletedObjects.push(...keys)
-        }
-      }
-    })
-  )
-  app.use(
-    '/api/v1',
-    chatAttachmentRoutes(db, {
-      space,
+    const tokens = new Map<string, string>()
+    const keys = new Map<string, string>()
+    const sessions = new Map<string, string>()
+    const signIn = async (
+      key: string,
+      userId: string,
+      who = key
+    ): Promise<string> => {
+      const token = `tok_chat_${who}_${'0'.repeat(24)}`
+      tokens.set(who, token)
+      if (who === key) keys.set(userId, key)
+      const at = new Date()
+      const sessionId = makeId('authSession')
+      sessions.set(who, sessionId)
+      await db
+        .insertInto('auth_sessions')
+        .values({
+          id: sessionId,
+          user_id: userId,
+          token_hash: hashToken(token),
+          created_at: at,
+          expires_at: new Date(at.getTime() + 3_600_000)
+        })
+        .execute()
+      return sessionId
+    }
+    for (const person of Object.values(seed.people)) {
+      await signIn(person.key, person.userId)
+    }
+
+    const space = options.space ?? TEST_MEDIA.space
+    const store = options.space == null ? undefined : spaceObjectStore(space)
+    const fixture: ChatFixture = {
+      db,
+      seed,
+      now: start,
+      url,
+      api: '',
       uploadsDir,
-      clock: () => fixture.now
-    })
-  )
-  app.use(errorHandler)
-  const server = app.listen(0, '127.0.0.1')
-  await new Promise<void>(resolve => server.once('listening', resolve))
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
-  fixture.api = base
+      id: key => {
+        const person = seed.people[key]
+        if (person != null) return person.userId
+        for (const [userId, held] of keys) if (held === key) return userId
+        throw new Error(`nobody called ${key}`)
+      },
+      keyOf: userId => keys.get(userId) ?? String(userId),
+      signIn: async (who, key) => await signIn(key, fixture.id(key), who),
+      apiToken: async (who, key) => {
+        const token = `tok_chat_${who}_${'1'.repeat(24)}`
+        tokens.set(who, token)
+        await db
+          .insertInto('api_tokens')
+          .values({
+            id: makeId('apiToken'),
+            user_id: fixture.id(key),
+            label: who,
+            token_hash: hashToken(token),
+            created_at: new Date()
+          })
+          .execute()
+      },
+      tokenOf: who => {
+        const token = tokens.get(who)
+        if (token == null) throw new Error(`no token called ${who}`)
+        return token
+      },
+      sessionOf: who => {
+        const sessionId = sessions.get(who)
+        if (sessionId == null) throw new Error(`no session called ${who}`)
+        return sessionId
+      },
+      call: async (who, method, path, body) => {
+        const headers: Record<string, string> = {}
+        const token = tokens.get(who)
+        if (token != null) headers.authorization = `Bearer ${token}`
+        if (body !== undefined) headers['content-type'] = 'application/json'
+        const response = await fetch(`${base}${path}`, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body)
+        })
+        return {
+          status: response.status,
+          body: await response.json().catch(() => null)
+        }
+      },
+      person: async (key, personOptions = {}) => {
+        const minted =
+          personOptions.userId == null
+            ? mintUserId()
+            : asUserId(personOptions.userId)
+        const account = personOptions.account ?? true
+        await db
+          .insertInto('users')
+          .values({
+            id: minted,
+            display_name: `${key} Person`,
+            first_name: key,
+            last_name: 'Person',
+            password_hash: null,
+            birth_year: personOptions.birth?.year ?? null,
+            birth_month: personOptions.birth?.month ?? null
+          })
+          .execute()
+        if (account) {
+          await addEmail(db, minted, `${key.toLowerCase()}@extra.test`, {
+            isPrimary: true,
+            source: 'manual',
+            verifiedAt: new Date()
+          })
+        }
+        await signIn(key, minted)
+        return minted
+      },
+      drain: async () => await drainDirty(db, fixture.now),
+      deletedObjects: [],
+      close: async () => {
+        await closeServer?.()
+        await db.destroy()
+        await rm(uploadsDir, { recursive: true, force: true })
+        await dropScratchDatabase(adminPool, name)
+        await adminPool.end()
+      }
+    }
 
-  if (options.reconcile !== false) await fixture.drain()
-  return fixture
+    const app = express()
+    app.use(jsonBody)
+    app.use(withActor(db))
+    app.use(withAudit(db))
+    app.use(
+      '/api/v1',
+      chatRoutes(db, { ...TEST_MEDIA, space }, () => fixture.now)
+    )
+    app.use(
+      '/api/v1',
+      chatKeyRoutes(db, () => fixture.now)
+    )
+    app.use(
+      '/api/v1',
+      chatEpochRoutes(db, () => fixture.now)
+    )
+    app.use(
+      '/api/v1',
+      chatMessageRoutes(db, TEST_MEDIA, {
+        clock: () => fixture.now,
+        objects: {
+          deleteObjects: async keys => {
+            await store?.deleteObjects(keys)
+            fixture.deletedObjects.push(...keys)
+          }
+        }
+      })
+    )
+    app.use(
+      '/api/v1',
+      chatAttachmentRoutes(db, {
+        space,
+        uploadsDir,
+        clock: () => fixture.now
+      })
+    )
+    app.use(errorHandler)
+    const server = app.listen(0, '127.0.0.1')
+    closeServer = async () => {
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => {
+          if (error != null) reject(error)
+          else resolve()
+        })
+      )
+    }
+    await new Promise<void>(resolve => server.once('listening', resolve))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
+    fixture.api = base
+
+    if (options.reconcile !== false) await fixture.drain()
+    return fixture
+  } catch (error) {
+    await closeServer?.()
+    await closeDatabase()
+    await rm(uploadsDir, { recursive: true, force: true })
+    await dropScratchDatabase(adminPool, name)
+    await adminPool.end()
+    throw error
+  }
 }

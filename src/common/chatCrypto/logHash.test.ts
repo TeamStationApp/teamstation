@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../userId'
 import {
   GENESIS_HASH,
   type LogRow,
@@ -16,7 +17,7 @@ const first: LogRow = {
   conversationId: 'cnv_c1',
   seq: 1,
   event: 'join',
-  userId: 42,
+  userId: userIdOfGumbo(42),
   actorUserId: null,
   reason: null,
   at: 1790000000000
@@ -25,8 +26,8 @@ const second: LogRow = {
   conversationId: 'cnv_c1',
   seq: 2,
   event: 'leave',
-  userId: 42,
-  actorUserId: 7,
+  userId: userIdOfGumbo(42),
+  actorUserId: userIdOfGumbo(7),
   reason: 'notEligible',
   at: new Date(1790000001000)
 }
@@ -74,8 +75,8 @@ describe('chatCrypto logHash', () => {
       { conversationId: 'cnv_c2' },
       { seq: 3 },
       { event: 'closed' },
-      { userId: 43 },
-      { actorUserId: 8 },
+      { userId: userIdOfGumbo(43) },
+      { actorUserId: userIdOfGumbo(8) },
       { reason: 'other' },
       { at: 1790000001001 }
     ]
@@ -83,10 +84,13 @@ describe('chatCrypto logHash', () => {
     for (const change of changes) {
       expect(hex(logRowHash(h1, { ...second, ...change }))).not.equals(H2)
     }
-    // No actor and actor 0 are the same bytes, as no reason and "" are.
-    expect(hex(logRowHash(GENESIS_HASH, { ...first, actorUserId: 0 }))).equals(
-      H1
-    )
+    // A missing actor retains the old zero sentinel; an account ID cannot be zero.
+    expect(() =>
+      logRowHash(GENESIS_HASH, {
+        ...first,
+        actorUserId: 'usr_1111111111111111111111'
+      })
+    ).throws()
     expect(hex(logRowHash(GENESIS_HASH, { ...first, reason: '' }))).equals(H1)
   })
 
@@ -110,7 +114,10 @@ describe('chatCrypto logHash', () => {
 
     it('a changed user id stops at that row', () => {
       expect(
-        verifiedPrefix(GENESIS_HASH, [rows[0], { ...rows[1], userId: 99 }])
+        verifiedPrefix(GENESIS_HASH, [
+          rows[0],
+          { ...rows[1], userId: userIdOfGumbo(99) }
+        ])
       ).equals(1)
     })
 

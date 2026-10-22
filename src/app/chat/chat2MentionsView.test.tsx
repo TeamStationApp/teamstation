@@ -11,6 +11,7 @@ import {
 } from 'react-native'
 
 import { MAX_BODY } from '../../common/chatContent'
+import { userIdOfGumbo } from '../../common/userId'
 import { AppHeader } from '../components/AppHeader'
 import { Button } from '../components/Button'
 import { TextField } from '../components/TextField'
@@ -129,9 +130,9 @@ function fixture(): {
 } {
   let shown = view({
     members: [
-      member(1, 'Trea Turner'),
-      member(2, 'Aaron Judge', { label: 'Coach' }),
-      member(3, 'Aaron Judge', { label: 'Guardian' })
+      member(userIdOfGumbo(1), 'Trea Turner'),
+      member(userIdOfGumbo(2), 'Aaron Judge', { label: 'Coach' }),
+      member(userIdOfGumbo(3), 'Aaron Judge', { label: 'Guardian' })
     ]
   })
   const listeners = new Set<ChatEngineListener>()
@@ -210,13 +211,13 @@ const screen = (
   <ConversationScreen
     engine={engine}
     conversationId="cnv_1"
-    userId={1}
+    userId={userIdOfGumbo(1)}
     onMembers={() => {}}
     files={files}
     {...over}
   />
 )
-async function choose(id: number): Promise<void> {
+async function choose(id: string): Promise<void> {
   await click(
     host!.querySelector<HTMLElement>(
       `[data-testid="chat-mention-member-${id}"]`
@@ -286,11 +287,16 @@ function nativePicker(platform: 'ios' | 'android' = 'ios'): {
   }
 }
 
-const token = { userId: 2, start: 0, end: 12, label: '@Aaron Judge' }
+const token = {
+  userId: userIdOfGumbo(2),
+  start: 0,
+  end: 12,
+  label: '@Aaron Judge'
+}
 describe('current-member mention picker', function () {
   it('releases the native modal and competing Search before selecting after exit', async function () {
     const native = nativePicker()
-    const calls: Array<{ id: number; hidden: boolean; search: boolean }> = []
+    const calls: Array<{ id: string; hidden: boolean; search: boolean }> = []
     function Scene(): React.ReactElement {
       const [open, setOpen] = useState(true)
       return (
@@ -298,7 +304,7 @@ describe('current-member mention picker', function () {
           <input aria-label="Native composer" />
           {open && (
             <MentionPicker
-              members={[member(2, 'Aaron Judge')]}
+              members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
               onClose={() => {
                 setOpen(false)
               }}
@@ -318,7 +324,7 @@ describe('current-member mention picker', function () {
     }
     await render(<Scene />)
     expect(document.activeElement).equals(labelled('Search members'))
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     expect(
       calls,
       'Native selection must wait for Search unmount and the modal exit'
@@ -340,7 +346,9 @@ describe('current-member mention picker', function () {
     ).equals('none')
     expect(scene.getAttribute('aria-hidden')).equals('true')
     await native.finish()
-    expect(calls).deep.equals([{ id: 2, hidden: false, search: false }])
+    expect(calls).deep.equals([
+      { id: userIdOfGumbo(2), hidden: false, search: false }
+    ])
     expect(document.activeElement).equals(labelled('Native composer'))
     expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
   })
@@ -356,7 +364,7 @@ describe('current-member mention picker', function () {
               <input aria-label="Native composer" defaultValue="@" />
               {open && (
                 <MentionPicker
-                  members={[member(2, 'Aaron Judge')]}
+                  members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
                   onSelect={() => {
                     throw Error('Cancelled selection')
                   }}
@@ -424,7 +432,7 @@ describe('current-member mention picker', function () {
       )!
       await type(input, '@')
       const selected = host!.querySelector<HTMLElement>(
-        '[data-testid="chat-mention-member-3"]'
+        `[data-testid="chat-mention-member-${userIdOfGumbo(3)}"]`
       )!
       await act(async () => {
         selected.click()
@@ -442,7 +450,9 @@ describe('current-member mention picker', function () {
       expect(document.activeElement).equals(input)
       expect(owner.draft('cnv_1').replyTo?.id).equals('msg_original')
       expect(owner.draft('cnv_1').picked).deep.equals(draft.picked)
-      expect(owner.draft('cnv_1').mentionTokens?.[0].userId).equals(3)
+      expect(owner.draft('cnv_1').mentionTokens?.[0].userId).equals(
+        userIdOfGumbo(3)
+      )
       expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
       expect(state.calls).deep.equals([])
     })
@@ -462,7 +472,7 @@ describe('current-member mention picker', function () {
         '[data-testid="chat-composer"]'
       )!
       await type(input, '@')
-      await choose(2)
+      await choose(userIdOfGumbo(2))
       if (change === 'unmount') await render(<div />)
       else if (change === 'background')
         await render(screen(state.engine, { active: false }))
@@ -472,7 +482,7 @@ describe('current-member mention picker', function () {
             ...state.shown,
             ...(change === 'permission'
               ? { composer: 'locked' as const }
-              : { members: [member(1, 'Trea Turner')] })
+              : { members: [member(userIdOfGumbo(1), 'Trea Turner')] })
           })
           await wait()
         })
@@ -491,7 +501,7 @@ describe('current-member mention picker', function () {
       '[data-testid="chat-composer"]'
     )!
     await type(input, '@')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     await act(async () => {
       native.back()
       native.back()
@@ -516,7 +526,7 @@ describe('current-member mention picker', function () {
     )!
     await type(input, draft.text + '@')
     await type(labelled('Search members') as HTMLInputElement, 'Aaron')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
     await native.finish()
     const search = labelled('Search members') as HTMLInputElement
@@ -528,7 +538,7 @@ describe('current-member mention picker', function () {
     expect(input.value).equals(draft.text + '@')
     await type(input, '')
     await type(input, '@')
-    await choose(3)
+    await choose(userIdOfGumbo(3))
     await native.finish()
     expect(input.value).equals('@Aaron Judge ')
     expect(document.activeElement).equals(input)
@@ -540,7 +550,7 @@ describe('current-member mention picker', function () {
     const calls: boolean[] = []
     await render(
       <MentionPicker
-        members={[member(2, 'Aaron Judge')]}
+        members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
         onSelect={() => {
           calls.push(inPress)
         }}
@@ -552,7 +562,9 @@ describe('current-member mention picker', function () {
     await act(async () => {
       inPress = true
       host!
-        .querySelector<HTMLElement>('[data-testid="chat-mention-member-2"]')!
+        .querySelector<HTMLElement>(
+          `[data-testid="chat-mention-member-${userIdOfGumbo(2)}"]`
+        )!
         .click()
       button('Cancel').click()
       inPress = false
@@ -565,7 +577,7 @@ describe('current-member mention picker', function () {
     await render(
       <React.StrictMode>
         <MentionPicker
-          members={[member(2, 'Aaron Judge')]}
+          members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
           onSelect={() => {
             selections += 1
           }}
@@ -573,7 +585,7 @@ describe('current-member mention picker', function () {
         />
       </React.StrictMode>
     )
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     await native.finish()
     expect(selections).equals(1)
     await render(<div />)
@@ -630,7 +642,7 @@ describe('current-member mention picker', function () {
       let closed = 0
       const node = await render(
         <MentionPicker
-          members={[member(2, 'Aaron Judge')]}
+          members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
           onSelect={() => {}}
           onClose={() => {
             closed++
@@ -726,7 +738,7 @@ describe('current-member mention picker', function () {
         Object.defineProperty(Animated, 'timing', originalTiming)
       const node = await render(
         <MentionPicker
-          members={[member(2, 'Aaron Judge')]}
+          members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
           onSelect={() => {}}
           onClose={() => {}}
         />
@@ -742,7 +754,7 @@ describe('current-member mention picker', function () {
         node.querySelector('[data-testid="chat-picker-content"]')
       ).not.equals(null)
       const row = node.querySelector<HTMLElement>(
-        '[data-testid="chat-mention-member-2"]'
+        `[data-testid="chat-mention-member-${userIdOfGumbo(2)}"]`
       )!
       expect(parseFloat(getComputedStyle(row).minHeight)).at.least(48)
       expect(node.textContent)
@@ -767,12 +779,12 @@ describe('current-member mention picker', function () {
     })
 
   it('shows searchable rows with avatars and role detail; keyboard arrows skip the search clear control', async function () {
-    const picked: number[] = []
+    const picked: string[] = []
     await render(
       <MentionPicker
         members={[
-          member(3, 'Aaron Judge', { label: 'Guardian' }),
-          member(2, 'Aaron Judge', { label: 'Coach' })
+          member(userIdOfGumbo(3), 'Aaron Judge', { label: 'Guardian' }),
+          member(userIdOfGumbo(2), 'Aaron Judge', { label: 'Coach' })
         ]}
         onSelect={id => picked.push(id)}
         onClose={() => {}}
@@ -823,7 +835,7 @@ describe('current-member mention picker', function () {
       })
     )
     expect(document.activeElement?.getAttribute('data-testid')).equals(
-      'chat-mention-member-2'
+      `chat-mention-member-${userIdOfGumbo(2)}`
     )
     document.dispatchEvent(
       new window.KeyboardEvent('keydown', {
@@ -833,10 +845,10 @@ describe('current-member mention picker', function () {
       })
     )
     expect(document.activeElement?.getAttribute('data-testid')).equals(
-      'chat-mention-member-3'
+      `chat-mention-member-${userIdOfGumbo(3)}`
     )
-    await choose(3)
-    expect(picked).deep.equals([3])
+    await choose(userIdOfGumbo(3))
+    expect(picked).deep.equals([userIdOfGumbo(3)])
     await type(search, 'not a member')
     expect(host!.textContent).contains('No members found.')
     const cancel = [
@@ -862,13 +874,13 @@ describe('current-member mention picker', function () {
     expect(document.activeElement).equals(input)
     await type(input, '')
     await type(input, '@')
-    await choose(3)
+    await choose(userIdOfGumbo(3))
     expect(input.value).equals('@Aaron Judge ')
     expect(document.activeElement).equals(input)
     expect(input.selectionStart).equals(13)
     await click(button('Send'))
     expect(state.calls).deep.equals([
-      ['text', 'cnv_1', '@Aaron Judge', { mentions: [3] }]
+      ['text', 'cnv_1', '@Aaron Judge', { mentions: [userIdOfGumbo(3)] }]
     ])
   })
 
@@ -887,11 +899,14 @@ describe('current-member mention picker', function () {
       {}
     ])
     await type(input, '@')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     await act(async () => {
       state.update({
         ...state.shown,
-        members: [member(1, 'Trea Turner'), member(2, 'Renamed Member')]
+        members: [
+          member(userIdOfGumbo(1), 'Trea Turner'),
+          member(userIdOfGumbo(2), 'Renamed Member')
+        ]
       })
       await wait()
     })
@@ -901,12 +916,15 @@ describe('current-member mention picker', function () {
       'text',
       'cnv_1',
       '@Aaron Judge',
-      { mentions: [2] }
+      { mentions: [userIdOfGumbo(2)] }
     ])
     await type(input, '@')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     await act(async () => {
-      state.update({ ...state.shown, members: [member(1, 'Trea Turner')] })
+      state.update({
+        ...state.shown,
+        members: [member(userIdOfGumbo(1), 'Trea Turner')]
+      })
       await wait()
     })
     await click(button('Send'))
@@ -944,7 +962,7 @@ describe('current-member mention picker', function () {
       '[data-testid="chat-composer"]'
     )!
     await type(input, draft.text + '@')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     expect(host!.textContent).contains(
       'This mention would make the message too long.'
     )
@@ -962,7 +980,7 @@ describe('mention send/edit and draft compatibility', function () {
         id: 'msg_original',
         mine: true,
         body: '@Aaron Judge',
-        mentions: [2]
+        mentions: [userIdOfGumbo(2)]
       })
       const draft = {
         ...emptyChatDraft(),
@@ -993,7 +1011,7 @@ describe('mention send/edit and draft compatibility', function () {
           'cnv_1',
           'msg_original',
           '@Aaron Judge',
-          [2]
+          [userIdOfGumbo(2)]
         ])
       else
         expect(state.calls[0]).deep.equals([
@@ -1001,7 +1019,7 @@ describe('mention send/edit and draft compatibility', function () {
           'cnv_1',
           draft.picked,
           '@Aaron Judge',
-          { quoteId: 'msg_original', mentions: [2] }
+          { quoteId: 'msg_original', mentions: [userIdOfGumbo(2)] }
         ])
     }
   })
@@ -1014,7 +1032,7 @@ describe('mention send/edit and draft compatibility', function () {
       '[data-testid="chat-composer"]'
     )!
     await type(input, '@')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     await click(button('Send'))
     expect(host!.textContent).contains('That did not send. Try again.')
     expect(input.value).equals('@Aaron Judge ')
@@ -1028,7 +1046,7 @@ describe('mention send/edit and draft compatibility', function () {
     await click(button('Send'))
     await type(input, '')
     await type(input, '@')
-    await choose(3)
+    await choose(userIdOfGumbo(3))
     await act(async () => {
       complete(undefined)
       await wait()
@@ -1039,7 +1057,7 @@ describe('mention send/edit and draft compatibility', function () {
       'text',
       'cnv_1',
       '@Aaron Judge',
-      { mentions: [3] }
+      { mentions: [userIdOfGumbo(3)] }
     ])
   })
 
@@ -1052,7 +1070,7 @@ describe('mention send/edit and draft compatibility', function () {
       '[data-testid="chat-composer"]'
     )!
     await type(input, '@')
-    await choose(2)
+    await choose(userIdOfGumbo(2))
     await act(async () => {
       root!.unmount()
     })
@@ -1075,7 +1093,7 @@ describe('mention send/edit and draft compatibility', function () {
       'text',
       'cnv_1',
       '@Aaron Judge',
-      { mentions: [2] }
+      { mentions: [userIdOfGumbo(2)] }
     ])
   })
 
@@ -1136,13 +1154,13 @@ describe('mention search controlled input commit', function () {
     }
   }
   it('retains unwaited per-key query, caret and exact duplicate filtering through the real host and chooser', async function () {
-    const selected: number[] = []
+    const selected: string[] = []
     await render(
       <MentionPicker
         members={[
-          member(2, 'Bobby Witt Jr.', { label: 'Coach' }),
-          member(3, 'Bobby Witt Jr.', { label: 'Guardian' }),
-          member(4, 'Aaron Judge', { label: 'Player' })
+          member(userIdOfGumbo(2), 'Bobby Witt Jr.', { label: 'Coach' }),
+          member(userIdOfGumbo(3), 'Bobby Witt Jr.', { label: 'Guardian' }),
+          member(userIdOfGumbo(4), 'Aaron Judge', { label: 'Player' })
         ]}
         onSelect={id => selected.push(id)}
         onClose={() => {}}
@@ -1160,7 +1178,10 @@ describe('mention search controlled input commit', function () {
       [...host!.querySelectorAll('[data-testid^="chat-mention-member-"]')].map(
         node => node.getAttribute('data-testid')
       )
-    ).deep.equals(['chat-mention-member-2', 'chat-mention-member-3'])
+    ).deep.equals([
+      `chat-mention-member-${userIdOfGumbo(2)}`,
+      `chat-mention-member-${userIdOfGumbo(3)}`
+    ])
     search.setSelectionRange(2, 2)
     insert(search, 'x')
     expect(search.value).equals('Boxbby')
@@ -1181,8 +1202,8 @@ describe('mention search controlled input commit', function () {
     await act(async () => {
       await wait()
     })
-    await choose(3)
-    expect(selected).deep.equals([3])
+    await choose(userIdOfGumbo(3))
+    expect(selected).deep.equals([userIdOfGumbo(3)])
   })
   it('keeps the same unwaited controlled editing contract without the overlay bridge', async function () {
     function DirectField(): React.ReactElement {

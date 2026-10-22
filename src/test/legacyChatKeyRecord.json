@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "userId": 42,
+  "deviceId": "cdv_legacy",
+  "device": {
+    "box": {
+      "secretKey": "sdm6U5lfpKpIIaCZoY2BcDkt10A4X4XT_g6ZfqXJR_4",
+      "publicKey": "Kwd_50zzs8YJa92Q4GY8TixC-Ds3aHDdo4mbsKk7yHs"
+    },
+    "sign": {
+      "secretKey": "MrGfXiUBYg3Nijvfjidvsxz1JhWslPazWCJotmTbstM",
+      "publicKey": "5Ain5-62o4Yz2AuqCmV-UxnwVPpYZMup_leikypffoE"
+    }
+  },
+  "identity": {
+    "id": "cid_legacy",
+    "keys": {
+      "secretKey": "aJ9qYnOEx9yy3MFIflQCI-d7353NDYvooybtplsM6aQ",
+      "publicKey": "FHJAGbQfIQk3BuZ81OSUm6NaSn6CEjJFU6RL-aYRYdE"
+    }
+  },
+  "puks": [
+    {
+      "generation": 2,
+      "keys": {
+        "secretKey": "_F0y6Jp_C-MaF6YrVyYxooEPVsovMdQBk4QaQ1nL9pI",
+        "publicKey": "85CPShe1vYmMIYOIDEWUFnICLsWTRfJz7gbM8C7okiA"
+      }
+    }
+  ],
+  "pendingLinkId": "clk_pending_legacy",
+  "pins": {
+    "7": "9brmUB752ucvIZOwSYbvtnFOzD3YhsaK4voS2m845sk",
+    "42": "FHJAGbQfIQk3BuZ81OSUm6NaSn6CEjJFU6RL-aYRYdE"
+  },
+  "previousPins": {
+    "7": "pyCgfkY-YiLwIWD9eCPNZ5SFuQcyBmbw2tO6Cj9cN1A"
+  },
+  "epochKeys": {
+    "cnv_legacy": {
+      "8": "jchEaajS9TKi4XPwpmTV68wrzYxcq7dCpIRL4dgGvIo"
+    }
+  },
+  "logs": {
+    "cnv_legacy": {
+      "seq": 5,
+      "hash": "fVRzgBiGvP3NupIH3zkrYaNamsWOPCOyelfVy5CCs5c",
+      "members": [
+        7,
+        42
+      ],
+      "resets": [
+        {
+          "userId": 7,
+          "seq": 4,
+          "at": 1234
+        }
+      ],
+      "broken": false
+    }
+  }
+}

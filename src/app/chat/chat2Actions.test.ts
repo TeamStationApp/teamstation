@@ -12,6 +12,7 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   CHAT2_SCENARIOS,
   type Chat2Fixture,
@@ -328,8 +329,8 @@ describe('chat sender runs and spotlight bounds', function () {
     const messages = [
       message({ id: 'msg_a' }),
       message({ id: 'msg_b' }),
-      message({ id: 'msg_c', senderUserId: 3 }),
-      message({ id: 'msg_d', senderUserId: 3, mine: true }),
+      message({ id: 'msg_c', senderUserId: userIdOfGumbo(3) }),
+      message({ id: 'msg_d', senderUserId: userIdOfGumbo(3), mine: true }),
       message({ id: 'msg_e' }),
       message({ id: 'msg_f', sentAt: '2027-04-02T17:00:00.000Z' })
     ]
@@ -2889,7 +2890,7 @@ describe('chat native adapter compatibility', function () {
     const target = {
       id: 'synthetic-old',
       body: 'Older synthetic post',
-      authorId: 2,
+      authorId: userIdOfGumbo(2),
       seq: 1
     }
     page.window.document.body.innerHTML =
@@ -3031,7 +3032,7 @@ describe('chat native adapter compatibility', function () {
     }
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 1,
+      viewerId: userIdOfGumbo(1),
       observations: []
     }) as Scenarios
     expect(await scenario.pickThumbsUp()).equals('👍️')
@@ -3056,21 +3057,21 @@ describe('chat native adapter compatibility', function () {
     const current = message({
       id: 'run-first',
       seq: 1,
-      senderUserId: 2,
+      senderUserId: userIdOfGumbo(2),
       mine: true,
       body: 'First incoming row'
     })
     const end = message({
       id: 'run-last',
       seq: 2,
-      senderUserId: 2,
+      senderUserId: userIdOfGumbo(2),
       mine: true,
       body: 'Final incoming row'
     })
     const boundary = message({
       id: 'own-boundary',
       seq: 3,
-      senderUserId: 1,
+      senderUserId: userIdOfGumbo(1),
       mine: false,
       body: 'Different sender boundary'
     })
@@ -3083,7 +3084,7 @@ describe('chat native adapter compatibility', function () {
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       group: 'conversation',
-      viewerId: 1,
+      viewerId: userIdOfGumbo(1),
       observations: []
     }) as Scenarios
     scenario.protocolPeer = async () =>
@@ -3146,7 +3147,7 @@ describe('chat native adapter compatibility', function () {
       id: 'run-first',
       seq: 1,
       body: 'First incoming row',
-      authorId: 2
+      authorId: userIdOfGumbo(2)
     })
     expect(reservation.width).equals(32)
     expect(calls).not.includes('chat-avatar-lane-run-first')
@@ -3190,7 +3191,7 @@ describe('chat native adapter compatibility', function () {
         id: 'run-first',
         seq: 1,
         body: 'First row',
-        authorId: 2
+        authorId: userIdOfGumbo(2)
       })
     )
     const model = incomingModel()
@@ -3198,7 +3199,7 @@ describe('chat native adapter compatibility', function () {
       id: 'run-first',
       seq: 1,
       body: 'First row',
-      authorId: 2
+      authorId: userIdOfGumbo(2)
     })
     await captureFailure(
       model.scenario.incomingRunEndAvatar([{ ...reserved, width: 4 }])
@@ -3791,7 +3792,7 @@ describe('chat native adapter compatibility', function () {
       ui: actual,
       f: { messages: { target: { id: 'synthetic-target' } } },
       group: 'synthetic',
-      viewerId: 1
+      viewerId: userIdOfGumbo(1)
     }) as Scenarios
     scenario.check = async (name, work) => {
       if (name.startsWith('E5 movement before hold')) await work()
@@ -3806,7 +3807,7 @@ describe('chat native adapter compatibility', function () {
             messages: [
               {
                 id: 'synthetic-target',
-                reactions: [{ emoji: '👍', userIds: [1] }]
+                reactions: [{ emoji: '👍', userIds: [userIdOfGumbo(1)] }]
               }
             ]
           })
@@ -3823,8 +3824,8 @@ describe('chat native adapter compatibility', function () {
   })
   it('does not accept a different raw reaction glyph or another viewer reaction', async () => {
     for (const reaction of [
-      { emoji: '👍️', userIds: [1] },
-      { emoji: '👍', userIds: [2] }
+      { emoji: '👍️', userIds: [userIdOfGumbo(1)] },
+      { emoji: '👍', userIds: [userIdOfGumbo(2)] }
     ]) {
       const actual = ui([])
       actual.absent = async () => {}
@@ -3834,7 +3835,7 @@ describe('chat native adapter compatibility', function () {
         ui: actual,
         f: { messages: { target: { id: 'synthetic-target' } } },
         group: 'synthetic',
-        viewerId: 1
+        viewerId: userIdOfGumbo(1)
       }) as Scenarios
       scenario.check = async (name, work) => {
         if (name.startsWith('E5 movement before hold')) await work()
@@ -4067,18 +4068,18 @@ describe('chat native adapter compatibility', function () {
     }
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 9,
+      viewerId: userIdOfGumbo(9),
       f: {
         members: [
-          { userId: 1, name: 'Same', role: '' },
-          { userId: 2, name: 'Same', role: '' },
-          { userId: 3, name: 'Unique', role: 'Member' }
+          { userId: userIdOfGumbo(1), name: 'Same', role: '' },
+          { userId: userIdOfGumbo(2), name: 'Same', role: '' },
+          { userId: userIdOfGumbo(3), name: 'Unique', role: 'Member' }
         ]
       },
       observations: []
     }) as Scenarios
     const selected = await scenario.showInfoMember()
-    expect(selected.userId).equals(3)
+    expect(selected.userId).equals(userIdOfGumbo(3))
     expect(selectors[0]).deep.equals({ text: '^Safety number with Unique$' })
     expect(selectors[1]).deep.equals([
       {
@@ -4204,7 +4205,9 @@ describe('chat native adapter compatibility', function () {
     writeFileSync(sessionFile, JSON.stringify({ token: 'TEST_TOKEN' }))
     const fixture = {
       apiUrl: 'https://fixture.example.test/api/v1',
-      actors: { viewer: { userId: 1, provider: { sessionFile } } }
+      actors: {
+        viewer: { userId: userIdOfGumbo(1), provider: { sessionFile } }
+      }
     }
     const original = globalThis.fetch
     let observed: AbortSignal | null | undefined
@@ -4493,16 +4496,18 @@ describe('chat native adapter compatibility', function () {
     })
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 9,
-      f: { members: [{ userId: 3, name: 'Unique', role: 'Member' }] },
+      viewerId: userIdOfGumbo(9),
+      f: {
+        members: [{ userId: userIdOfGumbo(3), name: 'Unique', role: 'Member' }]
+      },
       observations: []
     }) as Scenarios
     const selected = await scenario.showInfoMember()
-    expect(selected.userId).equals(3)
+    expect(selected.userId).equals(userIdOfGumbo(3))
     expect(gestures).deep.equals([])
     expect(scenario.observations[0]).deep.includes({
       infoMemberFraming: {
-        userId: 3,
+        userId: userIdOfGumbo(3),
         selector: { text: '^Safety number with Unique$' },
         bounds: { x: 20, y: 400, width: 280, height: 56 },
         unobscuredBand: { top: 82, bottom: 632 },
@@ -4569,8 +4574,10 @@ describe('chat native adapter compatibility', function () {
     ]
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      viewerId: 9,
-      f: { members: [{ userId: 3, name: 'Unique', role: 'Member' }] },
+      viewerId: userIdOfGumbo(9),
+      f: {
+        members: [{ userId: userIdOfGumbo(3), name: 'Unique', role: 'Member' }]
+      },
       observations: []
     }) as Scenarios
     try {

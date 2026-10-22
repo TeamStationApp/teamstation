@@ -298,7 +298,7 @@ export function swipeReplies(translationX: number): boolean {
 export function approvalsIn(
   approvals: GrantApproval[],
   conversationId: string,
-  userId: number
+  userId: string
 ): GrantApproval[] {
   return approvals.filter(
     approval =>

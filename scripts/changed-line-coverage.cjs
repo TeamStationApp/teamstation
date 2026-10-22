@@ -102,12 +102,13 @@ function lineReportFromCounts(
   changes,
   counts,
   executable,
-  { newFiles = [], newFileMin = 90, min = 90 } = {}
+  { newFiles = [], newFileMin = 90, min = 90, perFileMin } = {}
 ) {
   const added = new Set(newFiles)
   const files = {}
   const missing = []
   const newFileReport = {}
+  const shortFiles = []
   let total = 0
   let covered = 0
   for (const [path, changed] of Object.entries(changes)) {
@@ -127,10 +128,19 @@ function lineReportFromCounts(
       } else files[path].uncovered.push(line)
     }
     if (added.has(path)) {
-      const own = files[path].covered.length + files[path].uncovered.length
+      const own = Object.values(lines)
       newFileReport[path] =
-        own === 0 ? 100 : (100 * files[path].covered.length) / own
+        own.length === 0
+          ? 100
+          : (100 * own.filter(count => count > 0).length) / own.length
     }
+    const ownChanged = files[path].covered.length + files[path].uncovered.length
+    if (
+      perFileMin != null &&
+      ownChanged > 0 &&
+      (100 * files[path].covered.length) / ownChanged < perFileMin
+    )
+      shortFiles.push(path)
   }
   const percent = total === 0 ? 100 : (100 * covered) / total
   const shortNewFiles = Object.entries(newFileReport)
@@ -144,7 +154,12 @@ function lineReportFromCounts(
     files,
     newFiles: newFileReport,
     shortNewFiles,
-    pass: missing.length === 0 && percent >= min && shortNewFiles.length === 0
+    shortFiles,
+    pass:
+      missing.length === 0 &&
+      percent >= min &&
+      shortNewFiles.length === 0 &&
+      shortFiles.length === 0
   }
 }
 

@@ -31,6 +31,7 @@ import {
 } from '../../common/chatCrypto/keys'
 import { linkCode } from '../../common/chatCrypto/linkCode'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { AccountScreen } from '../screens/AccountScreen'
@@ -149,7 +150,7 @@ class MemoryStore implements ChatKeyStore {
   }
 }
 
-const USER = 7
+const USER = userIdOfGumbo(7)
 
 /**
  * The key routes, for one user and one session, as far as these screens
@@ -804,6 +805,7 @@ describe('the account screen’s chat', function () {
     expiresAt: '',
     user: {
       id: USER,
+      gumboId: 7,
       displayName: 'Blair B',
       email: undefined,
       isAdmin: false,
@@ -1117,7 +1119,9 @@ describe('chat devices in the app', function () {
       if (path === '/chat/conversations') return list
       if (path === '/chat/grants') return []
       if (path === '/chat/dm-candidates') {
-        return [{ userId: 8, shortName: 'Pat P', avatarUrl: null }]
+        return [
+          { userId: userIdOfGumbo(8), shortName: 'Pat P', avatarUrl: null }
+        ]
       }
       if (path === '/chat/dms' && method === 'POST') return list[0]
       const parts = path.split('/')

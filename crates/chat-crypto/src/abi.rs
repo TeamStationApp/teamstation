@@ -13,7 +13,7 @@
 use zeroize::Zeroize;
 
 use crate::error::{Refusal, Result};
-use crate::{chain, digits, hpke, keys, ops, prim, random, seal, stream};
+use crate::{chain, digits, hpke, keys, ops, prim, random, seal, stream, user_id};
 
 struct Args<'a> {
     fields: Vec<&'a [u8]>,
@@ -53,6 +53,10 @@ impl<'a> Args<'a> {
 
     fn number(&self, index: usize) -> Result<u64> {
         Ok(u64::from_be_bytes(self.fields[index].try_into().map_err(|_| Refusal::Malformed)?))
+    }
+
+    fn identity(&self, index: usize, nullable: bool) -> Result<u128> {
+        user_id::parse(self.fields[index], nullable)
     }
 
     fn flag(&self, index: usize) -> Result<bool> {
@@ -208,20 +212,20 @@ pub fn dispatch(op: u32, input: &[u8]) -> Result<Vec<Vec<u8>>> {
         }
         ops::SEAL_PREVIOUS_PUK_KEYS => {
             a.count(6)?;
-            Ok(vec![chain::seal_previous_puk_keys(a.number(0)?, a.bytes(1), a.number(2)?, a.bytes(3), a.bytes(4), a.optional(5))?])
+            Ok(vec![chain::seal_previous_puk_keys(a.identity(0, false)?, a.bytes(1), a.number(2)?, a.bytes(3), a.bytes(4), a.optional(5))?])
         }
         ops::OPEN_PREVIOUS_PUK_KEYS => {
             a.count(5)?;
-            Ok(vec![chain::open_previous_puk_keys(a.number(0)?, a.bytes(1), a.number(2)?, a.bytes(3), a.bytes(4))?])
+            Ok(vec![chain::open_previous_puk_keys(a.identity(0, false)?, a.bytes(1), a.number(2)?, a.bytes(3), a.bytes(4))?])
         }
         ops::LOG_ROW_HASH => {
             a.count(8)?;
-            let hash = digits::log_row_hash(a.bytes(0), a.bytes(1), a.number(2)?, a.bytes(3), a.number(4)?, a.number(5)?, a.bytes(6), a.number(7)?)?;
+            let hash = digits::log_row_hash(a.bytes(0), a.bytes(1), a.number(2)?, a.bytes(3), a.identity(4, false)?, a.identity(5, true)?, a.bytes(6), a.number(7)?)?;
             Ok(vec![hash.to_vec()])
         }
         ops::SAFETY_HALF => {
             a.count(2)?;
-            Ok(vec![digits::safety_half(a.bytes(0), a.number(1)?).into_bytes()])
+            Ok(vec![digits::safety_half(a.bytes(0), a.identity(1, false)?).into_bytes()])
         }
         ops::LINK_CODE => {
             a.count(2)?;
@@ -244,7 +248,7 @@ fn message_fields<'a>(a: &Args<'a>) -> Result<seal::Fields<'a>> {
         conversation_id: a.bytes(0),
         epoch: a.number(1)?,
         message_id: a.bytes(2),
-        sender_user_id: a.number(3)?,
+        sender_user_id: a.identity(3, false)?,
         kind: a.bytes(4),
     })
 }

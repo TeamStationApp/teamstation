@@ -3,6 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatInfoScreen, type ChatInfoScreenProps } from './ChatInfoScreen'
@@ -26,7 +27,10 @@ class InfoEngine implements EngineContract {
         manualUnreadRevision: 7
       }
     }),
-    members: [member(1, 'Trea Turner'), member(2, 'Aaron Judge')]
+    members: [
+      member(userIdOfGumbo(1), 'Trea Turner'),
+      member(userIdOfGumbo(2), 'Aaron Judge')
+    ]
   })
 
   listeners = new Set<ChatEngineListener>()
@@ -119,7 +123,7 @@ async function render(
         <ChatInfoScreen
           engine={engine}
           client={{ leaveDm: async () => ({ closed: false }) }}
-          userId={1}
+          userId={userIdOfGumbo(1)}
           conversationId="cnv_1"
           onLeft={() => {}}
           {...over}
@@ -248,7 +252,10 @@ describe('conversation information', function () {
     expect(node.textContent).contains('Chat could not be opened.')
     engine.current = view({
       conversation: chat({ scopeName: 'Harbor' }),
-      members: [member(1, 'Trea Turner'), member(2, 'Aaron Judge')]
+      members: [
+        member(userIdOfGumbo(1), 'Trea Turner'),
+        member(userIdOfGumbo(2), 'Aaron Judge')
+      ]
     })
     await press('Try again')
     expect(node.querySelector('[data-testid="chat-info-hero"]')).not.equals(
@@ -303,7 +310,7 @@ describe('conversation information', function () {
               engine={engine}
               client={{ leaveDm: async () => ({ closed: false }) }}
               conversationId="cnv_1"
-              userId={1}
+              userId={userIdOfGumbo(1)}
               onLeft={() => {}}
             />
           </HeaderSlotProvider>
@@ -323,7 +330,7 @@ describe('conversation information', function () {
     await act(async () => {
       engine.current = {
         ...engine.current!,
-        members: [member(1, 'Trea Turner')]
+        members: [member(userIdOfGumbo(1), 'Trea Turner')]
       }
       engine.emit({ type: 'conversation', conversationId: 'cnv_1' })
     })

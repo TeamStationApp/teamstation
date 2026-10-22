@@ -20,6 +20,7 @@ pub mod prim;
 pub mod random;
 pub mod seal;
 pub mod stream;
+pub mod user_id;
 
 #[cfg(feature = "node")]
 mod node;

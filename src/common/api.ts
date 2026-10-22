@@ -611,7 +611,7 @@ export interface ChatEpochPublication {
   epoch: number
   previousKeyBox: string | null
   signature: string
-  boxes: Array<{ userId: number; pukGeneration: number; box: string }>
+  boxes: Array<{ userId: string; pukGeneration: number; box: string }>
 }
 
 export const asChatEpochMade = asObject({
@@ -643,7 +643,7 @@ export type ChatGrantRequest = ReturnType<typeof asChatGrantRequest>
 export interface ChatGrantBox {
   conversationId: string
   epoch: number
-  userId: number
+  userId: string
   identityId: string
   pukGeneration: number
   box: string
@@ -4492,10 +4492,7 @@ export class TeamStationClient {
   }
 
   /** A player's guardians and adult family members, guardians first. */
-  async guardians(
-    teamId: string,
-    userId: number | string
-  ): Promise<Guardian[]> {
+  async guardians(teamId: string, userId: string): Promise<Guardian[]> {
     return await this.request(
       'GET',
       guardiansPath(teamId, userId),
@@ -4509,8 +4506,8 @@ export class TeamStationClient {
    */
   async addGuardian(
     teamId: string,
-    userId: number | string,
-    who: { userId: number } | { email: string },
+    userId: string,
+    who: { userId: string } | { email: string },
     kind: RelativeKind = 'guardian'
   ): Promise<AddedGuardian> {
     return await this.request(
@@ -4526,8 +4523,8 @@ export class TeamStationClient {
   /** Unlinks a guardian or family member, with what the link granted. */
   async removeGuardian(
     teamId: string,
-    userId: number | string,
-    guardianId: number
+    userId: string,
+    guardianId: string
   ): Promise<boolean> {
     const answer = await this.request(
       'DELETE',
@@ -4542,7 +4539,7 @@ export class TeamStationClient {
    * null. Answers the month as `YYYY-MM`, or null.
    */
   async setBirthMonth(
-    userId: number | string,
+    userId: string,
     birth: { year: number; month: number } | null
   ): Promise<string | null> {
     const answer = await this.request(
@@ -4647,7 +4644,7 @@ export class TeamStationClient {
    * asks: suggestions without a query, every match with one.
    */
   async includedAdults(
-    playerIds: number[],
+    playerIds: string[],
     query = ''
   ): Promise<IncludedAdult[]> {
     const ids = playerIds.map(id => encodeURIComponent(id)).join(',')
@@ -4663,7 +4660,7 @@ export class TeamStationClient {
    * there. A refusal carries `details.reason`: `notCandidate`, or
    * `adultRequired` with `playerIds`.
    */
-  async createDm(userIds: number[]): Promise<ChatConversation> {
+  async createDm(userIds: string[]): Promise<ChatConversation> {
     return await this.request('POST', '/chat/dms', asChatConversation, {
       userIds
     })
@@ -4672,8 +4669,8 @@ export class TeamStationClient {
   /** Adds people to a DM the caller is in; answers who was added. */
   async addDmMembers(
     conversationId: string,
-    userIds: number[]
-  ): Promise<number[]> {
+    userIds: string[]
+  ): Promise<string[]> {
     const answer = await this.request(
       'POST',
       `/chat/dms/${encodeURIComponent(conversationId)}/members`,
@@ -4779,7 +4776,7 @@ export class TeamStationClient {
   }
 
   /** Another user's current identity and PUK. */
-  async chatUserKeys(userId: number): Promise<ChatUserKeys> {
+  async chatUserKeys(userId: string): Promise<ChatUserKeys> {
     return await this.request(
       'GET',
       `/chat/users/${encodeURIComponent(userId)}/keys`,

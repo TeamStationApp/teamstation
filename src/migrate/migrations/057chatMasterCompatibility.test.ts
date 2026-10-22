@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../migrations'
 import { migrateUp } from '../runner'
 import { testDatabaseUrl } from '../testDatabase'
@@ -15,7 +15,7 @@ const subjectMigrations = migrations.filter(
 describe('057 preserves and synchronizes existing team follows', function () {
   this.timeout(60000)
   const name = `teamstation_chat_master_${Date.now()}`
-  const person = mintUserId(() => false)
+  const person = { userId: 42, legacyId: userIdOfGumbo(42) }
   let admin: Pool
   let pool: Pool
   before(async () => {

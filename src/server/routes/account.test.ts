@@ -613,7 +613,10 @@ describe('account settings HTTP API', function () {
       .set({ password_hash: await hashPassword('still mine 102') })
       .where('id', '=', userIdOfGumbo(102))
       .execute()
-    await h.db.deleteFrom('user_emails').where('user_id', '=', userIdOfGumbo(102)).execute()
+    await h.db
+      .deleteFrom('user_emails')
+      .where('user_id', '=', userIdOfGumbo(102))
+      .execute()
     const first = await requestEmail('first@example.com', undefined, 102)
     expect((await confirm(first, 102)).status).equals(200)
     const state = asAccountSettings(
@@ -625,7 +628,7 @@ describe('account settings HTTP API', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: null })
-      .where('id', '=', 102)
+      .where('id', '=', userIdOfGumbo(102))
       .execute()
   })
   it('the public client serializes each account operation', async () => {
