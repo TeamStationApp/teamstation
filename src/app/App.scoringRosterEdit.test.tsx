@@ -211,6 +211,10 @@ describe('actual App scoring player Settings return', function () {
         async () => {
           await press('Open scoring menu')
           await press('Set Team Rosters')
+          await waitFor(
+            () =>
+              document.querySelector('[aria-label="Remove Mookie B"]') != null
+          )
           expect(
             document.querySelector('[aria-label="Remove Mookie B"]')
           ).not.equals(null)
@@ -768,6 +772,12 @@ describe('actual App scoring player Settings return', function () {
       await press('Mookie Betts,')
       fixture.rosterFailure(true)
       await press('Back')
+      await waitFor(
+        () =>
+          document.body.textContent?.includes(
+            'Unable to refresh the roster.'
+          ) === true
+      )
       expect(document.body.textContent).includes(
         'Unable to refresh the roster.'
       )
