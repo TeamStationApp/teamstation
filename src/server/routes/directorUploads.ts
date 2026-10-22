@@ -14,6 +14,7 @@ import {
 } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { canFilm, roleScopes } from '../access'
+import { atomic } from '../db/atomic'
 import type { Database, DirectorUploadsTable } from '../db/database'
 import {
   assembleParts,
@@ -40,6 +41,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { settleRecordingReminder } from '../notifications/recordingReminders'
+import { noteGameFigures } from '../socket/syncRevision'
 
 /**
  * Where TS Director sends the recording it made.
@@ -648,6 +650,19 @@ export async function replaceLiveRecording(
   if (named != null) {
     return await replaceNamedStream(db, gameId, uploadedId, named)
   }
+  // Read and hidden in one transaction, which tells the game's event last.
+  return await atomic(
+    db,
+    async trx => await replaceCovered(trx, gameId, uploadedId)
+  )
+}
+
+/** The coverage rule's half of `replaceLiveRecording`, on its transaction. */
+async function replaceCovered(
+  db: Kysely<Database>,
+  gameId: string,
+  uploadedId: string
+): Promise<string[]> {
   const videos = await db
     .selectFrom('videos')
     .select([
@@ -688,6 +703,8 @@ export async function replaceLiveRecording(
     })
     .where('id', 'in', replaced)
     .execute()
+  // The game's videos changed, which its season's row counts.
+  await noteGameFigures(db, gameId)
   return replaced
 }
 
@@ -717,9 +734,10 @@ async function replaceNamedStream(
     // Never on the air, so nothing to hide: the upload is all there is of
     // this angle, and it settles the angle as a replacement would.
     const now = new Date()
-    await db.transaction().execute(async trx => {
+    await atomic(db, async trx => {
       if (await claimAsUploaded(trx, stream.id, now)) {
         await settleRecordingReminder(trx, stream.id, now)
+        await noteGameFigures(trx, gameId)
       }
     })
     return []
@@ -743,7 +761,7 @@ async function replaceNamedStream(
   }
 
   const now = new Date()
-  const replaced = await db.transaction().execute(async trx => {
+  const replaced = await atomic(db, async trx => {
     // Revoked, so the next take on this angle asks for a fresh stream and
     // video rather than this one, whose copy is now the upload. First, and
     // only while it is still neither publishing nor replaced: the phone may
@@ -768,6 +786,7 @@ async function replaceNamedStream(
       .where('id', '=', uploadedId)
       .execute()
     await settleRecordingReminder(trx, stream.id, now)
+    await noteGameFigures(trx, gameId)
     return true
   })
   return replaced ? [live.id] : []

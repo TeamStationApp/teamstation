@@ -3,9 +3,11 @@ import { join } from 'node:path'
 
 import type { Kysely } from 'kysely'
 
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import type { SpaceSettings } from '../media/spacesHls'
 import { deleteVideoFromSpace } from '../media/spacesVideo'
+import { noteGameFigures } from '../socket/syncRevision'
 
 /**
  * Recordings that were replaced, once their month is up.
@@ -118,12 +120,21 @@ export async function purgeReplacedRecordings(options: {
       }).catch((error: unknown) => {
         log?.(`purge ${videoId}: its work directory stayed: ${String(error)}`)
       })
-      await db
-        .updateTable('live_streams')
-        .set({ video_id: null, updated_at: now })
-        .where('video_id', '=', videoId)
-        .execute()
-      await db.deleteFrom('videos').where('id', '=', videoId).execute()
+      // The row goes in one transaction that tells the game's event last.
+      await atomic(db, async trx => {
+        await trx
+          .updateTable('live_streams')
+          .set({ video_id: null, updated_at: now })
+          .where('video_id', '=', videoId)
+          .execute()
+        const deleted = await trx
+          .deleteFrom('videos')
+          .where('id', '=', videoId)
+          .returning('game_id as gameId')
+          .executeTakeFirst()
+        // One video fewer on its season's row: Home's lists are told.
+        if (deleted?.gameId != null) await noteGameFigures(trx, deleted.gameId)
+      })
       gone.push(videoId)
       log?.(`purged ${videoId}, replaced and a month old`)
     } catch (error) {

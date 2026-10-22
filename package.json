@@ -41,6 +41,7 @@
     "coverage.tags": "node scripts/event-tags-coverage.mjs",
     "coverage": "npm run coverage.scripts && npm run coverage.app && npm run coverage.server && npm run coverage.changed.server",
     "coverage.uiTweaks": "node scripts/ui-tweaks-coverage.mjs",
+    "coverage.sync": "node scripts/sync-changed-coverage.mjs",
     "coverage.lineupQr": "node scripts/lineup-qr-coverage.mjs",
     "coverage.app": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
     "coverage.changed.app": "c8 --reporter=json --report-dir coverage/changedApp --include 'src/app/player/**/*.ts' --exclude '**/*.test.ts' --exclude '**/*.e2e.ts' --exclude '**/*.integration.ts' mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/app/player/**/*.test.ts' && node scripts/changed-line-check.cjs --coverage coverage/changedApp/coverage-final.json --ext .ts --allow-empty src/app/player",
@@ -105,9 +106,11 @@
     "test.playerNative": "node scripts/build-player-native-tests.mjs"
   },
   "dependencies": {
+    "@op-engineering/op-sqlite": "^18.2.5",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-clipboard/clipboard": "^1.16.3",
     "@react-native-community/geolocation": "3.4.0",
+    "@react-native-community/netinfo": "^12.0.1",
     "@react-native-picker/picker": "^2.11.4",
     "@react-three/fiber": "9.7.0",
     "@sentry/core": "10.75.2",

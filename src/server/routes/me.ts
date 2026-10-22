@@ -8,6 +8,7 @@ import type { Database } from '../db/database'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { activeHuman } from '../oauth/provider'
+import { withRevision } from '../socket/syncRevision'
 
 /**
  * What the signed-in person may do, for the few buttons no other answer
@@ -37,7 +38,7 @@ export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
   router.get(
     '/me/roles',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)

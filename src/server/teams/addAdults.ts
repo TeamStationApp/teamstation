@@ -14,8 +14,10 @@ import { guardiansOf, guardiansWhoCanAct } from '../access'
 import { lockPlayerEdits, onePerson, survivorsOf } from '../admin/people'
 import { addEmail } from '../auth/emails'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey } from '../db/externalIds'
+import { noteScopeChange } from '../socket/syncRevision'
 import { isDeleted } from '../users/deleted'
 import {
   claimExternalId,
@@ -55,7 +57,7 @@ export async function addAdults(
   rows: TeamAdultRow[],
   caller: { userId: string; isAdmin: boolean }
 ): Promise<TeamAdultsResponse> {
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     // Share the player import's ordering before either batch claims memberships.
     await lockKeys(trx, [`teamRoster:${teamId}`])
@@ -323,6 +325,7 @@ async function joinTeam(
     .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
     .returning('id')
     .executeTakeFirst()
+  if (made != null) noteScopeChange(trx, { userId, teamId })
   return made != null
 }
 
@@ -392,7 +395,12 @@ async function linkGuardian(
         oc.columns(['user_id', 'related_user_id', 'kind']).doNothing()
       )
       .executeTakeFirst()
-    if (Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0) made += 1
+    if (Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0) {
+      made += 1
+      // Each one's home lists whom the guardian looks after.
+      noteScopeChange(trx, { userId })
+      noteScopeChange(trx, { userId: playerId })
+    }
   }
   return { made, missing, refused }
 }
@@ -423,5 +431,6 @@ async function addStaffRoles(
       .executeTakeFirst()
     if (Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0) added.push(role)
   }
+  if (added.length > 0) noteScopeChange(trx, { userId, teamId })
   return added
 }

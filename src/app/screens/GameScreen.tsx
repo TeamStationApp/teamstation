@@ -8,16 +8,18 @@ import {
   View
 } from 'react-native'
 
-import type {
-  BoxScore as BoxScoreData,
-  GameDetail,
-  Highlight,
-  LineScoreSide,
-  Playback,
-  TeamStationClient,
-  TeamSummary,
-  VideoSummary
+import {
+  asGameDetail,
+  type BoxScore as BoxScoreData,
+  type GameDetail,
+  type Highlight,
+  type LineScoreSide,
+  type Playback,
+  type TeamStationClient,
+  type TeamSummary,
+  type VideoSummary
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
@@ -52,6 +54,7 @@ import {
 import { useScreenBottom } from '../components/Screen'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
@@ -97,6 +100,7 @@ import {
 import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
+import { gameKey } from '../sync/documentKeys'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
@@ -393,14 +397,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [])
   const gameRequest = useRef(0)
+  /** Whether this game has been shown since it was opened. */
+  const shown = useRef(false)
   const videoHints = useRef({ onTitle, initialVideoId })
   videoHints.current = { onTitle, initialVideoId }
-  const refreshGame = useCallback(async (): Promise<void> => {
-    if (live.current && currentGameId.current === gameId)
-      setLocalTimezone(viewerTimezone())
-    const request = ++gameRequest.current
-    try {
-      const found = await client.game(gameId)
+  /** Shows `found`, unless a newer read of this game has started since. */
+  const showGame = useCallback(
+    (found: GameDetail, request: number): void => {
       if (
         !live.current ||
         currentGameId.current !== gameId ||
@@ -408,6 +411,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         return
       setGame(found)
+      shown.current = true
       setError(undefined)
       videoHints.current.onTitle?.(
         eventName(found) ?? `${found.awayTeamName} @ ${found.homeTeamName}`
@@ -419,6 +423,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               item => item.id === videoHints.current.initialVideoId
             ) ?? openingVideo(found.videos))
       )
+    },
+    [gameId]
+  )
+  const refreshGame = useCallback(async (): Promise<void> => {
+    if (live.current && currentGameId.current === gameId)
+      setLocalTimezone(viewerTimezone())
+    const request = ++gameRequest.current
+    try {
+      showGame(await client.game(gameId), request)
     } catch (error) {
       if (
         live.current &&
@@ -427,8 +440,38 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         throw error
     }
-  }, [client, gameId])
-  useForegroundRefresh(refreshGame)
+  }, [client, gameId, showGame])
+  /** The game as the phone last stored it, until the read returns. */
+  const paintGame = useCallback(async (): Promise<void> => {
+    const request = ++gameRequest.current
+    const stored = await client.cached(gameKey(gameId), asGameDetail)
+    if (stored != null) showGame(stored, request)
+  }, [client, gameId, showGame])
+  /**
+   * `refreshGame` once the event's scope allows: after its acknowledgement
+   * when there is a socket, at once for a visitor with none. Failing before
+   * the game was ever shown, the game is not found. Failing after, the
+   * screen keeps what it shows through no signal or a server error, but not
+   * the server saying the game is gone (404) or no longer this person's
+   * (403): the phone's stored copy goes with it (`CachingClient`).
+   */
+  const loadGame = useCallback(async (): Promise<void> => {
+    try {
+      await refreshGame()
+    } catch (error: unknown) {
+      if (!live.current || currentGameId.current !== gameId) return
+      const gone =
+        error instanceof HttpError &&
+        (error.code === 'notFound' || error.code === 'forbidden')
+      if (!shown.current || gone) setError(lstrings.common_not_found)
+    }
+  }, [refreshGame, gameId])
+  const readGame = useScreenScope(loadGame, client, paintGame)
+  // A new game is read again from scratch; a socket arriving (a sign-in) is
+  // not a new game.
+  const readLatest = useRef(readGame)
+  readLatest.current = readGame
+  useForegroundRefresh(readGame)
   useEffect(() => {
     if (game == null) return
     if (game.eventKind === 'event') setTab('info')
@@ -467,7 +510,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           (event.type === 'change' &&
             (event.kind === 'plays' || event.kind === 'game'))
         ) {
-          refreshGame().catch(() => undefined)
+          // A play body is news of its own: read now, as before, without
+          // waiting on the event's scope. The answer counts for the scope,
+          // so its notice of the same commit reads the game no second time.
+          readLatest.current.alongside(refreshGame).catch(() => undefined)
           setBox(undefined)
         }
       })
@@ -730,17 +776,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const startedFromLink = useRef(false)
 
   useEffect(() => {
-    let active = true
     setGame(undefined)
     setVideo(undefined)
     setBox(undefined)
     setError(undefined)
     startedFromLink.current = false
-    refreshGame().catch(() => {
-      if (active) setError(lstrings.common_not_found)
-    })
+    shown.current = false
+    readLatest.current().catch(() => undefined)
     return () => {
-      active = false
       gameRequest.current++
     }
   }, [refreshGame])

@@ -15,6 +15,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -535,8 +536,13 @@ describe('the live stream stepping aside for a better copy', function () {
     // A 107-second bench recording uploaded to a game hid its two-hour live
     // recording and dated it for deletion. The upload's claim is that it is a
     // better copy of the same game; this one is not a copy of it at all.
+    const notices = await listenScreenScopes(db)
+    const mark = notices.mark()
     const replaced = await replaceLiveRecording(db, 'gam_one', 'vid_clip')
     expect(replaced).deep.equals([])
+    // Nothing hidden, nothing told.
+    expect(await notices.since(mark)).deep.equals([])
+    await notices.close()
     const live = await db
       .selectFrom('videos')
       .select(['hidden', 'purge_after'])
@@ -548,8 +554,16 @@ describe('the live stream stepping aside for a better copy', function () {
 
   it('hides the live recording, and dates it for deletion', async function () {
     if (db == null) this.skip()
+    const notices = await listenScreenScopes(db)
+    const mark = notices.mark()
     const replaced = await replaceLiveRecording(db, 'gam_one', 'vid_upload')
     expect(replaced).deep.equals(['vid_live'])
+    // The game's event lists one recording fewer, and the upload landing
+    // moves what its teams' Home lists count.
+    await notices.named(mark, { gameId: 'gam_one' })
+    await notices.named(mark, { teamId: 'tem_a' })
+    await notices.named(mark, { teamId: 'tem_b' })
+    await notices.close()
 
     const row = await db
       .selectFrom('videos')

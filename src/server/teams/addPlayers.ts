@@ -13,8 +13,10 @@ import type {
 import { asUserId } from '../../common/userId'
 import { lockPlayerEdits, survivorsOf } from '../admin/people'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey, recordExternalId } from '../db/externalIds'
+import { noteScopeChange } from '../socket/syncRevision'
 import { insertUser } from '../users/insertUser'
 
 /** Who holds an external id, as far as a person's row is concerned. */
@@ -160,7 +162,7 @@ export async function addPlayers(
   teamId: string,
   rows: TeamPlayerRow[]
 ): Promise<TeamPlayersResponse> {
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     // Adult and player batches can reach the same memberships through aliases.
     await lockKeys(trx, [`teamRoster:${teamId}`])
@@ -307,6 +309,7 @@ async function makePlayer(
         joined_at: new Date()
       })
       .execute()
+    noteScopeChange(trx, { userId, teamId })
     return true
   }
   const fillJersey = membership.jersey == null && jersey != null
@@ -316,6 +319,7 @@ async function makePlayer(
     .set({ is_player: true, jersey: membership.jersey ?? jersey })
     .where('id', '=', membership.id)
     .execute()
+  noteScopeChange(trx, { userId, teamId })
   return !membership.is_player
 }
 
@@ -328,9 +332,11 @@ async function makePlayer(
 export async function createRosterPlayer(
   db: Kysely<Database>,
   teamId: string,
-  player: NewRosterPlayer
+  player: NewRosterPlayer,
+  /** Told the new user id last, in the transaction that made it. */
+  made?: (trx: Transaction<Database>, userId: string) => Promise<void>
 ): Promise<string> {
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     const handed = player.bats != null || player.throws != null
     const userId = await insertRosterUser(trx, {
       displayName: displayNameOf(player.firstName, player.lastName, 'Player'),
@@ -342,6 +348,7 @@ export async function createRosterPlayer(
       ...(handed ? { batsSource: 'manual' as const } : {})
     })
     await makePlayer(trx, teamId, userId, player.jersey, player.positions)
+    await made?.(trx, userId)
     return userId
   })
 }

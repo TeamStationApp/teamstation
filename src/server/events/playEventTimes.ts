@@ -9,6 +9,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import { notifyGameChange } from '../socket/gameChanges'
+import { noteScopeChange } from '../socket/syncRevision'
 import { withoutDescriptions } from './eventWrite'
 
 /**
@@ -204,6 +205,7 @@ export async function addPlayEvents(
       .where('id', '=', gameId)
       .execute()
     await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+    noteScopeChange(trx, { gameId })
     return {
       plays: writes.length,
       events: body.plays.reduce((sum, play) => sum + play.playEvents.length, 0)

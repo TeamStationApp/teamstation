@@ -13,7 +13,9 @@ import {
 import { formatDateRange } from '../../common/seasonTimeFrames'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { canAdminister, currentActor } from './rights'
 
 interface Graph {
@@ -328,7 +330,12 @@ export async function applyParents(
         .values({ team_id: effect.child.id, season_id: effect.parent.id })
         .onConflict(oc => oc.columns(['season_id', 'team_id']).doNothing())
         .execute()
+    // Who sees which team moved: told to those who see either side.
+    for (const effect of current.effects)
+      noteScopeChange(trx, {
+        ...groupScopeIds(effect.parent.kind, effect.parent.id),
+        ...groupScopeIds(effect.child.kind, effect.child.id)
+      })
   }
-  if (db.isTransaction) await run(db)
-  else await db.transaction().execute(run)
+  await atomic(db, run)
 }

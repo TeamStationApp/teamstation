@@ -32,6 +32,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import type { ScheduleRow } from '../routes/seasons'
 import { mayScheduleIn, scheduleRights } from '../schedule/scheduleGames'
+import { noteScopeChange } from '../socket/syncRevision'
 
 type ResolvedEvent = Omit<EventInfo, 'attendees' | 'replyUserIds'> & {
   teamIds: string[]
@@ -558,6 +559,7 @@ export async function createTeamEvent(
         status: body.status
       })
       .execute()
+    noteScopeChange(trx, { teamId: body.teamId })
     await trx
       .insertInto('creation_idempotency')
       .values({
@@ -643,6 +645,7 @@ export async function updateEventInfo(
         .set(location)
         .where('id', '=', id)
         .execute()
+      noteScopeChange(trx, { gameId: id })
     } else {
       const askedType =
         raw.eventType === undefined
@@ -690,6 +693,7 @@ export async function updateEventInfo(
         })
         .where('id', '=', id)
         .execute()
+      noteScopeChange(trx, { teamId: event.teamId })
     }
   })
 }

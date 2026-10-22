@@ -60,6 +60,7 @@ import {
   ScoreboardUnavailable
 } from '../scoreboard/scoreboardStore'
 import { highlightSettings } from '../settings'
+import { withRevision, withRevisionThen } from '../socket/syncRevision'
 import {
   battingLines,
   battingRates,
@@ -116,7 +117,7 @@ export function teamRoutes(
   router.get(
     '/teams',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
@@ -133,12 +134,18 @@ export function teamRoutes(
       // belongs to, as `GET /seasons/:seasonId/teams` lists them. A season the
       // caller can neither see nor schedule in is not there.
       if (seasonsAsked != null) {
-        await mustSeeSeasons(seasonsAsked, actor.userId, actor.isAdmin, scopes)
+        await mustSeeSeasons(
+          db,
+          seasonsAsked,
+          actor.userId,
+          actor.isAdmin,
+          scopes
+        )
       }
       const inSeasons =
         seasonsAsked == null
           ? undefined
-          : await seasonTeamIds(seasonsAsked, kind)
+          : await seasonTeamIds(db, seasonsAsked, kind)
 
       // Otherwise external teams are opponents, not teams anybody belongs
       // to: they appear on a game and nowhere else, admin or not.
@@ -294,6 +301,7 @@ export function teamRoutes(
 
   /** Refuses, as not there, a season the caller can neither see nor schedule. */
   async function mustSeeSeasons(
+    db: Kysely<Database>,
     seasonIds: string[],
     userId: string,
     isAdmin: boolean,
@@ -318,6 +326,7 @@ export function teamRoutes(
    * the team it was merged into, and each is listed once.
    */
   async function seasonTeamIds(
+    db: Kysely<Database>,
     seasonIds: string[],
     kind: TeamKindAsked
   ): Promise<string[]> {
@@ -448,14 +457,16 @@ export function teamRoutes(
 
   router.get(
     '/games/:gameId',
-    withAsync(async (req, res) => {
+    // The scoreboard is asked of Redis after the reads have committed, so
+    // the transaction does not hold a connection through that call.
+    withRevisionThen(db, async (db, req, res) => {
       const actor = req.actor
       const gameId = pathParam(req.params.gameId)
       const event =
         actor == null ? null : await teamEventDetail(db, actor, gameId)
       if (event != null) {
         res.json(event)
-        return
+        return async () => undefined
       }
       const scopes =
         actor == null
@@ -580,7 +591,7 @@ export function teamRoutes(
           ? undefined
           : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
       const availability = await gameAvailability(db, game)
-      res.json({
+      const answer = {
         id: game.id,
         guests: availability.guests,
         unrostered: availability.unrostered,
@@ -665,13 +676,7 @@ export function teamRoutes(
         // Whether anything TeamStation scored is stored, so it can be
         // replayed: a recorded play, or a recorded at-bat in progress.
         replayable: await hasRecordedPlays(db, gameId, game.currentPlay),
-        scoreboard: nonMemberView
-          ? null
-          : await scoreboardOf(store, mayOverride, {
-              startAt: new Date(game.start_at).getTime(),
-              status: game.status,
-              gameId
-            }),
+        scoreboard: null as Awaited<ReturnType<typeof scoreboardOf>>,
         videos: videos.map(video => ({
           id: video.id,
           numCameras: video.num_cameras,
@@ -691,7 +696,16 @@ export function teamRoutes(
           height: video.height,
           codecs: video.codecs
         }))
-      })
+      }
+      return async () => {
+        if (!nonMemberView)
+          answer.scoreboard = await scoreboardOf(store, mayOverride, {
+            startAt: new Date(game.start_at).getTime(),
+            status: game.status,
+            gameId
+          })
+        res.json(answer)
+      }
     })
   )
 
@@ -793,7 +807,7 @@ export function teamRoutes(
   router.get(
     '/teams/:teamId/roster',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)

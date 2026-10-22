@@ -16,6 +16,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { closeInto } from '../admin/people'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { addPlayEvents } from '../events/playEventTimes'
 import { postGamePlays, readPlays } from '../events/postPlays'
@@ -1086,7 +1087,8 @@ describe('account merges preserve distinct physical scoring roles', function () 
         const released = new Promise<void>(resolve => {
           release = resolve
         })
-        const one = fixture.db.transaction().execute(async trx => {
+        // `atomic`, as a caller of either writer opens its transaction.
+        const one = atomic(fixture.db, async trx => {
           if (first === 'write') await write(trx)
           else await closeInto(trx, userIdOfGumbo(102), userIdOfGumbo(101))
           held()

@@ -14,6 +14,7 @@ import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { addPerson } from '../../test/scoreboardKit'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
@@ -288,8 +289,21 @@ describe('the end of a live stream', function () {
       published: false
     })
 
+    const notices = await listenScreenScopes(db!)
+    const mark = notices.mark()
     await finishStream(options, 'liv_unused', 'the stream window closed')
     await settleLiveWork()
+    // The stream ending, then its placeholder going: each tells the game.
+    const heard = await notices.since(mark)
+    await notices.close()
+    expect(
+      heard.filter(payload => payload.gameId != null).map(p => p.gameId)
+    ).deep.equals(['gam_liv_unused', 'gam_liv_unused'])
+    // A video ending or going changes its season's count, so the game's
+    // teams are told with it.
+    expect(
+      heard.filter(payload => payload.teamId != null).map(p => p.teamId)
+    ).include.members(['tem_home_liv_unused', 'tem_away_liv_unused'])
 
     const video = await db
       ?.selectFrom('videos')
@@ -315,14 +329,27 @@ describe('the end of a live stream', function () {
     })
     const dir = await recordSomething('vid_played')
 
+    const notices = await listenScreenScopes(db!)
+    const mark = notices.mark()
     await finishStream(options, 'liv_played', 'the stream window closed')
     // The writer never closes a playlist; the end of the stream does, after
-    // its last segment.
+    // its last segment. Read before anything else waits: the packing behind
+    // it rewrites the playlist.
     const closed = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
     expect(closed.trimEnd().split('\n').slice(-2)).deep.equals([
       'seg000002.m4s',
       '#EXT-X-ENDLIST'
     ])
+    const heard = await notices.since(mark)
+    await notices.close()
+    expect(
+      heard.filter(payload => payload.gameId != null).map(p => p.gameId)
+    ).deep.equals(['gam_liv_played', 'gam_liv_played'])
+    // The recording lands on its season's count: the game's teams are
+    // told with it.
+    expect(
+      heard.filter(payload => payload.teamId != null).map(p => p.teamId)
+    ).include.members(['tem_home_liv_played', 'tem_away_liv_played'])
     // The video is watchable the moment the stream ends; the packing and the
     // upload happen behind it.
     const ready = await db

@@ -9,6 +9,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import type { AddedNotice } from '../email/sendMail'
 import { grantInformation, roleList } from '../notifications/requestInformation'
+import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { addToScope, rolesAt } from './people'
 
 /**
@@ -137,6 +138,8 @@ export async function grantAt(
           oc.columns(['user_id', 'scope_type', 'scope_id', 'role']).doNothing()
         )
         .execute()
+    if (roles.length > 0)
+      noteScopeChange(trx, { userId, ...groupScopeIds(ref.kind, ref.id) })
     return [...(joined && !before.member ? ['member' as const] : []), ...roles]
   })
 }

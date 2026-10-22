@@ -5,7 +5,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { App } from '../App'
 import { seedRoute } from '../navigation/useAddressBar'
-import { loadToken, saveToken } from '../platform/sessionStore'
+import {
+  loadToken,
+  loadUser,
+  saveToken,
+  saveUser
+} from '../platform/sessionStore'
+import type { StoredUser } from '../platform/storedUser'
+import { openDocumentCache } from '../sync/cache'
 import { getTheme } from '../theme/ThemeContext'
 import { apiBaseUrl } from './config'
 
@@ -29,7 +36,9 @@ import { apiBaseUrl } from './config'
  * and sends it by itself; a phone has no cookie jar, which the server already
  * knows — `server/auth/tokens.ts` reads an `Authorization` header first and
  * says so. The token from the last launch is read here and handed to the
- * client before it asks anybody who it is.
+ * client before it asks anybody who it is, with who it last said that was:
+ * with no signal at launch, that stored user is the session, and their
+ * cached documents are what the app shows.
  *
  * Neither answer is available synchronously, so nothing is drawn until both
  * are. That is one frame of the launch screen, which is already on screen and
@@ -37,22 +46,23 @@ import { apiBaseUrl } from './config'
  */
 export function Root(): React.ReactElement {
   const theme = getTheme()
-  const [opened, setOpened] = useState<{ token?: string } | undefined>(
-    undefined
-  )
+  const [opened, setOpened] = useState<
+    { token?: string; user?: StoredUser } | undefined
+  >(undefined)
 
   useEffect(() => {
     let live = true
     const settle = async (): Promise<void> => {
       // Both at once: neither waits on the other, and a slow storage read
       // should not hold up an address that is already in hand.
-      const [url, token] = await Promise.all([
+      const [url, token, user] = await Promise.all([
         Linking.getInitialURL().catch(() => null),
-        loadToken()
+        loadToken(),
+        loadUser()
       ])
       if (!live) return
       seedRoute(url)
-      setOpened({ token })
+      setOpened({ token, user })
     }
     settle().catch(() => {
       if (live) setOpened({})
@@ -79,9 +89,14 @@ export function Root(): React.ReactElement {
           <App
             apiBaseUrl={apiBaseUrl}
             initialToken={opened.token}
+            initialUser={opened.user}
             onToken={token => {
               saveToken(token).catch(() => undefined)
             }}
+            onUser={user => {
+              saveUser(user).catch(() => undefined)
+            }}
+            documentCache={openDocumentCache}
           />
         )}
       </GestureHandlerRootView>

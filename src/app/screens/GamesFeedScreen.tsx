@@ -1,7 +1,12 @@
+import { asArray } from 'cleaners'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
-import type { SeasonGame, TeamStationClient } from '../../common/api'
+import {
+  asSeasonGame,
+  type SeasonGame,
+  type TeamStationClient
+} from '../../common/api'
 import {
   Card,
   GameRow,
@@ -23,8 +28,11 @@ import {
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
+import { gamesKey } from '../sync/documentKeys'
+import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -106,6 +114,9 @@ export function GamesFeedScreen(
       [mode, progress, styles.headerPills, styles.headerTitle]
     )
   )
+  // The phone's copy of a stream that was live cannot be played offline:
+  // no playback address or video is kept.
+  const offline = usePhoneOffline(client)
   const [games, setGames] = useState<SeasonGame[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -142,7 +153,21 @@ export function GamesFeedScreen(
       if (current()) setLoading(false)
     }
   }, [client, mode, when, beginGames])
-  useForegroundRefresh(loadGames)
+  /** The list as the phone last stored it, until the read returns. */
+  const paintGames = useCallback(async (): Promise<void> => {
+    const current = beginGames()
+    const stored = await client.cached(
+      gamesKey(mode === 'schedule' ? when : 'all'),
+      asArray(asSeasonGame)
+    )
+    if (current() && stored != null) {
+      setGames(stored)
+      setLoading(false)
+    }
+  }, [client, mode, when, beginGames])
+  // Schedule waits for its scope's acknowledgement before it reads. Videos
+  // takes no scope, so it reads at once.
+  useForegroundRefresh(useScreenScope(loadGames, client, paintGames))
 
   // Videos offers no filter. Nothing that has not been played can have a
   // recording, so `Upcoming` was always empty and `Past` was always the whole
@@ -206,7 +231,12 @@ export function GamesFeedScreen(
         <View style={styles.grid}>
           {sorted.map(game => {
             const lines = matchupLines(game)
-            const options = gameListOptions(game, mode)
+            const unplayable = offline && game.isLive
+            const listed = gameListOptions(game, mode)
+            const options =
+              listed == null || !unplayable
+                ? listed
+                : { ...listed, autoPlay: false }
             return (
               <View
                 key={game.id}
@@ -267,14 +297,16 @@ export function GamesFeedScreen(
                           ? 'Pending approval'
                           : game.status === 'cancelled'
                             ? 'Canceled'
-                            : game.isLive
-                              ? 'live'
-                              : game.awayScore == null
-                                ? undefined
-                                : `${game.awayScore}–${game.homeScore}`
+                            : unplayable
+                              ? OFFLINE_UNPLAYABLE
+                              : game.isLive
+                                ? 'live'
+                                : game.awayScore == null
+                                  ? undefined
+                                  : `${game.awayScore}–${game.homeScore}`
                       }
                       badgeTone={
-                        game.isLive && !game.pendingApproval
+                        game.isLive && !game.pendingApproval && !unplayable
                           ? 'live'
                           : 'neutral'
                       }

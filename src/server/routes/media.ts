@@ -11,6 +11,7 @@ import {
   unauthorized
 } from '../../common/errors'
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { VIDEO_FILE } from '../media/ffmpeg'
 import { locateVideo, videoFrameSource } from '../media/locations'
@@ -41,6 +42,7 @@ import { readWallTimeline } from '../media/wallTimeline'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { noteGameFigures } from '../socket/syncRevision'
 
 /**
  * Playback URLs, and the check behind them.
@@ -417,30 +419,37 @@ export function mediaRoutes(
       const local = join(mediaRoot, 'work', 'videos', videoId)
       await rm(local, { recursive: true, force: true })
 
-      // The cameras keep their rows — they are the record that a key existed —
-      // and simply stop pointing at a video that is gone.
-      if (cameras.length > 0) {
-        await db
-          .updateTable('live_streams')
-          .set({ video_id: null, updated_at: new Date() })
-          .where('video_id', '=', videoId)
+      // The rows change together, and the game's event hears of it from the
+      // transaction's last statements.
+      const restored = await atomic(db, async trx => {
+        // The cameras keep their rows — they are the record that a key
+        // existed — and simply stop pointing at a video that is gone.
+        if (cameras.length > 0) {
+          await trx
+            .updateTable('live_streams')
+            .set({ video_id: null, updated_at: new Date() })
+            .where('video_id', '=', videoId)
+            .execute()
+        }
+        // Anything this video displaced comes back. A recording is hidden
+        // and dated for deletion only because something better took its
+        // place, so deleting that something takes the reason away with it —
+        // and without this, undoing a bad upload quietly destroys the
+        // recording the upload pushed aside, which is the opposite of what
+        // deleting it was for. The foreign key clears the pointer; the
+        // hiding and the purge date are ours to undo.
+        const back = await trx
+          .updateTable('videos')
+          .set({ hidden: false, purge_after: null, updated_at: new Date() })
+          .where('replaced_by', '=', videoId)
+          .returning('id')
           .execute()
-      }
-      // Anything this video displaced comes back. A recording is hidden and
-      // dated for deletion only because something better took its place, so
-      // deleting that something takes the reason away with it — and without
-      // this, undoing a bad upload quietly destroys the recording the upload
-      // pushed aside, which is the opposite of what deleting it was for.
-      // The foreign key clears the pointer; the hiding and the purge date are
-      // ours to undo.
-      const restored = await db
-        .updateTable('videos')
-        .set({ hidden: false, purge_after: null, updated_at: new Date() })
-        .where('replaced_by', '=', videoId)
-        .returning('id')
-        .execute()
 
-      await db.deleteFrom('videos').where('id', '=', videoId).execute()
+        await trx.deleteFrom('videos').where('id', '=', videoId).execute()
+        // One video fewer on its season's row: Home's lists are told.
+        if (video.gameId != null) await noteGameFigures(trx, video.gameId)
+        return back
+      })
 
       setAudit(res.locals, {
         entityType: 'video',

@@ -7,18 +7,21 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { angleLabels } from '../../app/player/multiCam/takes'
+import { REVISION_HEADER } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { readSyncClock } from '../socket/syncRevision'
 import { liveRoutes } from './live'
 import { mediaRoutes } from './media'
 
@@ -592,8 +595,13 @@ describe('a game’s stream key over the API', function () {
       .where('id', '=', videoId ?? '')
       .execute()
 
+    const notices = await listenScreenScopes(db)
+    const mark = notices.mark()
     const gone = await ask(`/videos/${videoId ?? ''}`, MANAGER, 'DELETE')
     expect(gone.status).equals(200)
+    // One transaction, and the game's event is told as it commits.
+    await notices.named(mark, { gameId: 'gam_11' })
+    await notices.close()
 
     const row = await db
       ?.selectFrom('videos')
@@ -825,6 +833,13 @@ describe('a game’s stream key over the API', function () {
       expect(live[0].homeTeamName).equals('Demo Home')
       expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
+    // Home's scope gates this read, so it answers the revision its rows
+    // were read at, as the other reads of Home's load do.
+    const read = await fetch(`${base}/live`, {
+      headers: { authorization: `Bearer ${MANAGER}` }
+    })
+    expect(read.status).equals(200)
+    expect(read.headers.get(REVISION_HEADER)).equals(await readSyncClock(db))
   })
 
   it('stores a camera name on the stream and on its video', async function () {

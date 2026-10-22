@@ -1,17 +1,22 @@
+import { asArray } from 'cleaners'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
-import type {
-  LiveNow,
-  SeasonGame,
-  SeasonSummary,
-  TeamStationClient,
-  TeamSummary,
-  UserMatch
+import {
+  asSeasonGame,
+  asSeasonSummary,
+  asTeamSummary,
+  asUserMatch,
+  type LiveNow,
+  type SeasonGame,
+  type SeasonSummary,
+  type TeamStationClient,
+  type TeamSummary,
+  type UserMatch
 } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
-import type { PublicGroup } from '../../common/publicGroups'
+import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
 import {
@@ -29,6 +34,16 @@ import {
 import { CreationCard } from '../components/CreationCard'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useScreenScope } from '../hooks/useScreenScope'
+import {
+  HOME_FOLLOWS,
+  HOME_GROUPS,
+  HOME_GUARDED,
+  HOME_RECENT,
+  HOME_SEASONS,
+  HOME_TEAMS
+} from '../sync/documentKeys'
+import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
@@ -49,6 +64,8 @@ export interface HomeScreenProps {
    * career rather than one team's part of it.
    */
   onOpenPlayer?: (userId: string, title: string) => void
+  /** Home's lists loaded: the phone reads ahead what it needs offline. */
+  onLoaded?: () => void
 }
 
 /**
@@ -64,6 +81,8 @@ export interface HomeScreenProps {
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
   const styles = getStyles(useTheme())
+  // Offline, the phone has no stream to play: what was live is not offered.
+  const offline = usePhoneOffline(client)
 
   const [players, setPlayers] = useState<UserMatch[]>([])
   const [teams, setTeams] = useState<TeamSummary[]>([])
@@ -103,7 +122,15 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         setRecentError(caught instanceof Error ? caught.message : 'Cannot load')
     }
   }, [client, beginRecent])
-  useForegroundRefresh(refreshRecent)
+  /** The recent game as the phone last stored it, until the read returns. */
+  const paintRecent = useCallback(async (): Promise<void> => {
+    const current = beginRecent()
+    const stored = await client.cached(HOME_RECENT, asArray(asSeasonGame))
+    if (current() && stored != null) setRecent(stored[0])
+  }, [client, beginRecent])
+  // Each of Home's three loads waits for the home scope's acknowledgement,
+  // and reads again when that scope moves past what it read.
+  useForegroundRefresh(useScreenScope(refreshRecent, client, paintRecent))
 
   /**
    * The recent game's own video, so the card moves rather than sitting there.
@@ -172,11 +199,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
    * is happening is the only thing on this screen that will not still be true
    * in an hour.
    */
-  useEffect(() => {
-    let cancelled = false
-    const look = async (): Promise<void> => {
+  const beginLook = useLatestRequest()
+  const look = useCallback(async (): Promise<void> => {
+    const current = beginLook()
+    try {
       const now = await client.liveNow()
-      if (cancelled) return
+      if (!current()) return
       setLive(now)
       const first = now[0]
       if (first == null) {
@@ -190,64 +218,103 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       // again, every half minute, in front of somebody watching.
       if (playing.current === first.videoId) return
       const playback = await client.playback(first.videoId)
-      if (cancelled || playback.url == null) return
+      if (!current() || playback.url == null) return
       playing.current = first.videoId
       setLiveUrl(playback.url)
+    } catch {
+      // Nothing is live, as far as this screen can tell.
     }
-    look().catch(() => undefined)
+  }, [client, beginLook])
+  const lookLive = useScreenScope(look, client)
+  useEffect(() => {
+    lookLive().catch(() => undefined)
     // A game starts while somebody has the page open — which is the whole
     // point of a live block — so it is looked at again on a slow timer rather
     // than only when the screen is opened.
     const timer = setInterval(() => {
-      look().catch(() => undefined)
+      lookLive().catch(() => undefined)
     }, 30_000)
     return () => {
-      cancelled = true
       clearInterval(timer)
     }
-  }, [client])
+  }, [lookLive])
 
-  // Whether Home can open a player at all, not which function opens one: the
-  // shell hands over a new one whenever it renders, and that is no reason to
-  // read everything again.
+  // Whether Home can open a player or a group at all, not which function
+  // opens one: the shell hands over a new one whenever it renders, and that
+  // is no reason to read everything again.
   const opensPlayers = props.onOpenPlayer != null
-  useEffect(() => {
-    let cancelled = false
-    const load = async (): Promise<void> => {
+  const opensGroups = props.onOpenGroup != null
+  const loaded = useRef(props.onLoaded)
+  loaded.current = props.onLoaded
+  const beginLists = useLatestRequest()
+  const loadLists = useCallback(async (): Promise<void> => {
+    const current = beginLists()
+    try {
       const [loadedTeams, loadedSeasons, ownGroups, follows, guarded] =
         await Promise.all([
           client.teams(),
           client.seasons(),
-          props.onOpenGroup == null ? Promise.resolve([]) : client.ownGroups(),
+          opensGroups ? client.ownGroups() : Promise.resolve([]),
           // Following is a nicety: Home still opens when it cannot be read.
-          props.onOpenGroup == null
-            ? Promise.resolve([])
-            : client.follows().catch(() => []),
+          opensGroups ? client.follows().catch(() => []) : Promise.resolve([]),
           // So is the list of the players one guards: Home opens without it.
           opensPlayers
             ? client.guardedPlayers().catch(() => [])
             : Promise.resolve([])
         ])
-      if (cancelled) return
+      if (!current()) return
       setPlayers(guarded)
       setTeams(loadedTeams)
       setSeasons(loadedSeasons)
       setGroups(ownGroups)
       setFollowed(follows)
+      setError(undefined)
+      loaded.current?.()
+    } catch (caught: unknown) {
+      if (current())
+        setError(caught instanceof Error ? caught.message : 'Cannot load')
+    } finally {
+      if (current()) setLoading(false)
     }
-    load()
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          setError(caught instanceof Error ? caught.message : 'Cannot load')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [client, props.onOpenGroup, opensPlayers])
+  }, [client, opensGroups, opensPlayers, beginLists])
+  /**
+   * Home's lists as the phone last stored them, painted before the scope is
+   * acknowledged. The web stores none, and stays on its loading state.
+   */
+  const paintLists = useCallback(async (): Promise<void> => {
+    const current = beginLists()
+    const [storedTeams, storedSeasons, ownGroups, follows, guarded] =
+      await Promise.all([
+        client.cached(HOME_TEAMS, asArray(asTeamSummary)),
+        client.cached(HOME_SEASONS, asArray(asSeasonSummary)),
+        opensGroups
+          ? client.cached(HOME_GROUPS, asArray(asPublicGroup))
+          : undefined,
+        opensGroups
+          ? client.cached(HOME_FOLLOWS, asArray(asPublicGroup))
+          : undefined,
+        opensPlayers
+          ? client.cached(HOME_GUARDED, asArray(asUserMatch))
+          : undefined
+      ])
+    if (!current() || storedTeams == null || storedSeasons == null) return
+    setTeams(storedTeams)
+    setSeasons(storedSeasons)
+    setGroups(ownGroups ?? [])
+    setFollowed(follows ?? [])
+    setPlayers(guarded ?? [])
+    setLoading(false)
+  }, [client, opensGroups, opensPlayers, beginLists])
+  // A play names its game alone: the lists show no game, so they let it
+  // pass, and the recent game and what is live take it. A write that moves
+  // what the lists count (a game going final, a video, a new game) names
+  // the game's teams and season too, and those the lists read.
+  const refreshLists = useScreenScope(loadLists, client, paintLists, {
+    passGameNotices: true
+  })
+  useEffect(() => {
+    refreshLists().catch(() => undefined)
+  }, [refreshLists])
 
   if (loading) {
     return (
@@ -367,7 +434,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       {error != null && <Text style={styles.error}>{error}</Text>}
       {recentError != null && <Text style={styles.error}>{recentError}</Text>}
       {showEmptyHero && creationCards(missingKinds)}
-      {live.length > 0 && (
+      {live.length > 0 && !offline && (
         <View style={styles.section}>
           <SectionHeader title="Live now" />
           <Card style={styles.gameCard}>
@@ -466,8 +533,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               awayLogoUrl={recent.awayLogoUrl}
               homeLogoUrl={recent.homeLogoUrl}
               posterUrl={recent.posterUrl}
-              videoUrl={recentUrl}
-              videoLive={recentLive}
+              videoUrl={offline ? undefined : recentUrl}
+              videoLive={recentLive && !offline}
             />
             {/*
               Two buttons, not one. There was no way to reach a box score from
@@ -475,7 +542,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               nothing to press.
             */}
             <View style={styles.actions}>
-              {recent.videoCount > 0 && (
+              {recent.videoCount > 0 && offline && recent.isLive && (
+                <Text style={styles.muted}>{OFFLINE_UNPLAYABLE}</Text>
+              )}
+              {recent.videoCount > 0 && !(offline && recent.isLive) && (
                 <Button
                   label="Watch"
                   icon="play_arrow"

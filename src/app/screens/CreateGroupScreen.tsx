@@ -18,6 +18,7 @@ import { Button, Card, ListCard, Screen, TextField } from '../components'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { LocationRow } from '../components/LocationRow'
+import { offlineCreateFailure } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { LocationScreen } from './LocationScreen'
 import { type ParentChoice, ParentChooser } from './ParentChooser'
@@ -201,9 +202,10 @@ export function CreateGroupScreen({
       onCreated({ kind, id: created.id })
     } catch (error) {
       setError(
-        error instanceof Error
-          ? error.message
-          : 'The group could not be created. Retry.'
+        offlineCreateFailure(client, error) ??
+          (error instanceof Error
+            ? error.message
+            : 'The group could not be created. Retry.')
       )
     } finally {
       locked.current = false

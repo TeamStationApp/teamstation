@@ -1,5 +1,7 @@
 import type { RequestHandler } from 'express'
 
+import { REVISION_HEADER } from '../socket/syncRevision'
+
 /**
  * Lets the app call the API from its own origin during development, and from
  * wherever it is served in production.
@@ -21,10 +23,13 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
       // of this applies; in development they are :8080 and :9100.
       res.setHeader('access-control-allow-credentials', 'true')
       res.setHeader('vary', 'origin')
+      // A queued write names itself with `idempotency-key`, and a screen
+      // reads the revision its documents were taken at from the response.
       res.setHeader(
         'access-control-allow-headers',
-        'authorization,content-type'
+        'authorization,content-type,idempotency-key'
       )
+      res.setHeader('access-control-expose-headers', REVISION_HEADER)
       res.setHeader(
         'access-control-allow-methods',
         'GET,POST,PATCH,PUT,DELETE,OPTIONS'

@@ -12,6 +12,7 @@ import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { asScheduleGamesBody } from '../../common/scheduleGames'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import { canAdminister, currentActor } from '../groups/rights'
@@ -24,6 +25,7 @@ import {
   scheduleGames,
   scheduleRights
 } from '../schedule/scheduleGames'
+import { noteScopeChange } from '../socket/syncRevision'
 
 /**
  * A team's schedule, and a game's field, written through the API.
@@ -130,7 +132,8 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
       // same transaction that stores them. The game row is locked first, as
       // a post locks it, and its plays read after, so a post that stored
       // some while this waited is seen.
-      const updated = await db.transaction().execute(async trx => {
+      // `atomic`: its last statements tell the game's screens.
+      const updated = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
         const current = await trx
           .selectFrom('users')
@@ -164,7 +167,7 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
           )
         if (await gameHasPlays(trx, gameId))
           throw conflict('The fence is fixed once a game has plays')
-        return await trx
+        const set = await trx
           .updateTable('games')
           .set({
             fence_distance_ft: body.fenceDistanceFt,
@@ -173,6 +176,8 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
           .where('id', '=', gameId)
           .returning(resolvedFenceDistance.as('resolved'))
           .executeTakeFirstOrThrow()
+        noteScopeChange(trx, { gameId })
+        return set
       })
 
       setAudit(res.locals, {

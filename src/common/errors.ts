@@ -37,7 +37,12 @@ export const asErrorCode = asLiteral(
   'internal',
   /** A service the answer depends on is away for now; ask again later. */
   'unavailable',
-  'invalidLocation'
+  'invalidLocation',
+  /**
+   * An `Idempotency-Key` already sent with a different request: not a
+   * refusal of the change, which may well have landed under that key.
+   */
+  'idempotencyKeyReused'
 )
 export type ErrorCode = ReturnType<typeof asErrorCode>
 
@@ -78,7 +83,8 @@ export const errorStatus: Record<ErrorCode, number> = {
   membersOnly: 403,
   internal: 500,
   unavailable: 503,
-  invalidLocation: 422
+  invalidLocation: 422,
+  idempotencyKeyReused: 409
 }
 
 /**

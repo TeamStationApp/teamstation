@@ -1467,6 +1467,29 @@ export type Health = Omit<ReturnType<typeof asHealth>, 'narration'> & {
   narration?: boolean
 }
 
+/** The response header a screen's read carries its revision in. */
+export const REVISION_HEADER = 'x-teamstation-revision'
+
+/**
+ * The request header a queued write is sent with: the same request with
+ * the same key is answered once and written once.
+ */
+export const IDEMPOTENCY_HEADER = 'idempotency-key'
+
+/** One response's revision, as a screen's load collects them. */
+export interface RevisionRead {
+  path: string
+  /** `x-teamstation-revision`, a decimal string: compare with `BigInt`. */
+  revision: string
+}
+
+/** How one call to the API is made, beside its method, path and body. */
+export interface RequestOptions {
+  /** Whether a screen's load collects the answer's revision. */
+  collect?: boolean
+  headers?: Record<string, string>
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -1767,6 +1790,45 @@ export class TeamStationClient {
    */
   private askedSignIn?: string
   token: string | undefined
+  /**
+   * Set when the last request failed to leave the device, and cleared when
+   * one reaches the server. Each change is told to `subscribeOffline`'s
+   * listeners, so the phone's banner comes and goes without a reload.
+   */
+  get offline(): boolean {
+    return this.unreachable
+  }
+
+  set offline(value: boolean) {
+    if (value === this.unreachable) return
+    this.unreachable = value
+    for (const listener of [...this.offlineListeners]) listener(value)
+  }
+
+  /** Tells `listener` each time `offline` changes, until unsubscribed. */
+  subscribeOffline(listener: (offline: boolean) => void): () => void {
+    this.offlineListeners.add(listener)
+    return () => {
+      this.offlineListeners.delete(listener)
+    }
+  }
+
+  private unreachable = false
+  private readonly offlineListeners = new Set<(offline: boolean) => void>()
+  /**
+   * Told when a call answers 401: the session is no good. A sign-in attempt
+   * refused (`POST /auth/...`) is not that.
+   */
+  onSessionRefused?: () => void
+  /** The revision each path last answered with. */
+  private readonly revisions = new Map<string, string>()
+  /**
+   * Where the screen loads now running collect the revisions they read. Home
+   * runs three at once, and an answer cannot say which load asked for it, so
+   * each running load collects every answer: the least of them is never
+   * newer than the least of its own.
+   */
+  private readonly collectors = new Set<RevisionRead[]>()
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -1775,6 +1837,25 @@ export class TeamStationClient {
     this.passwordTargetMs = options.passwordTargetMs
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
+  }
+
+  /** The revision the last answer from `path` carried, if any did. */
+  revisionFor(path: string): string | undefined {
+    return this.revisions.get(path)
+  }
+
+  /**
+   * Collects `{ path, revision }` from every answer that carries one, until
+   * `stopCollecting`. A screen's load sets this around the calls it makes,
+   * and holds the least of them as the revision of what it shows.
+   */
+  collectRevisions(collector: RevisionRead[]): void {
+    this.collectors.add(collector)
+  }
+
+  /** Stops collecting into `collector`. */
+  stopCollecting(collector: RevisionRead[]): void {
+    this.collectors.delete(collector)
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -2597,8 +2678,14 @@ export class TeamStationClient {
   async whoAmI(): Promise<SessionUser | null> {
     try {
       return await this.request('GET', '/auth/me', asSessionUser)
-    } catch {
-      return null
+    } catch (error: unknown) {
+      // Not knowing is not the same answer as nobody: no signal, a server
+      // restarting (5xx), too many requests or an answer that cannot be read
+      // all throw, and a phone keeps the session it has. Only the server's
+      // 401 says the session is over.
+      if (error instanceof HttpError && error.code === 'unauthorized')
+        return null
+      throw error
     }
   }
 
@@ -3567,13 +3654,30 @@ export class TeamStationClient {
     return await this.request('GET', '/me/roles', asMyRoles)
   }
 
-  private async request<T>(
+  /**
+   * A document this client keeps on the device, read without the network:
+   * what the last answer for `key` stored, or nothing. The web keeps none.
+   */
+  async cached<T>(_key: string, _cleaner: Cleaner<T>): Promise<T | undefined> {
+    return undefined
+  }
+
+  /**
+   * Every call to the API. `collect: false` keeps the answer's revision out
+   * of the screen loads now collecting, as a prefetch's is. `headers` are
+   * sent beside the usual ones: a queued write's `Idempotency-Key`.
+   */
+  protected async request<T>(
     method: string,
     path: string,
     cleaner: Cleaner<T>,
-    body?: unknown
+    body?: unknown,
+    options: RequestOptions = {}
   ): Promise<T> {
-    const headers: Record<string, string> = { accept: 'application/json' }
+    const headers: Record<string, string> = {
+      ...options.headers,
+      accept: 'application/json'
+    }
     if (body !== undefined) headers['content-type'] = 'application/json'
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
@@ -3596,11 +3700,18 @@ export class TeamStationClient {
         body: body === undefined ? undefined : JSON.stringify(body)
       })
     } catch (caught: unknown) {
+      this.offline = true
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
+    this.offline = false
+    if (
+      response.status === 401 &&
+      !(method === 'POST' && path.startsWith('/auth/'))
+    )
+      this.onSessionRefused?.()
 
     // The connection can drop after the answer starts, while its body is
     // read. The status has arrived by then: a refusal is still the server's
@@ -3617,6 +3728,13 @@ export class TeamStationClient {
       )
     }
     if (!response.ok) throw errorFrom(response.status, text)
+    const revision = revisionOf(response)
+    if (revision != null) {
+      this.revisions.set(path, revision)
+      if (options.collect !== false)
+        for (const collector of this.collectors)
+          collector.push({ path, revision })
+    }
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -3631,6 +3749,12 @@ export class TeamStationClient {
 
 function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
+}
+
+/** The answer's revision. A stand-in response may carry no headers. */
+function revisionOf(response: Response): string | null {
+  const headers = (response as Partial<Response>).headers
+  return headers == null ? null : headers.get(REVISION_HEADER)
 }
 
 /** For the endpoints whose body carries nothing a caller needs. */

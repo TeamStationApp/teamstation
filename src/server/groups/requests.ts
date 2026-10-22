@@ -31,6 +31,7 @@ import type { Database, GroupRequestsTable } from '../db/database'
 import { grantAt, notifyGrant } from '../invites/grants'
 import { snapshotRequestInformation } from '../notifications/requestInformation'
 import { seasonGameConsent } from '../schedule/seasonGameConsent'
+import { noteScopeChange } from '../socket/syncRevision'
 import { authorizePersonChange } from './adminGuard'
 import { checkGuardianLimits, isGuardianRequest } from './guardianLimits'
 import { applyParents, previewParents } from './relationships'
@@ -1071,6 +1072,7 @@ export async function finishRelationshipRequest(
         oc.columns(['season_id', 'team_id']).doUpdateSet({ active: true })
       )
       .execute()
+    noteScopeChange(db, { teamId: terms.teamId, seasonId: terms.seasonId })
   } else if (terms.kind === 'membership') {
     const approval = sides.find(side => side.scope_type === 'team')!
     const scope = { kind: 'team' as const, id: terms.teamId }
@@ -1162,6 +1164,9 @@ export async function finishRelationshipRequest(
         oc.columns(['user_id', 'related_user_id', 'kind']).doNothing()
       )
       .execute()
+    // The guardian's home lists the players they look after.
+    noteScopeChange(db, { userId: guardian })
+    noteScopeChange(db, { userId: player.userId })
   } else {
     if (
       (
@@ -1218,6 +1223,10 @@ export async function finishRelationshipRequest(
       .where('id', '!=', requestId)
       .where(sql<string>`terms->>'teamId'`, '=', terms.teamId)
       .execute()
+    noteScopeChange(db, {
+      userId: terms.recipientUserId,
+      teamId: terms.teamId
+    })
   }
   await db
     .updateTable('group_requests')

@@ -8,6 +8,7 @@ import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
 import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import { playerRoutes } from '../routes/players'
 import { addAdults } from '../teams/addAdults'
 import { addPlayers } from '../teams/addPlayers'
@@ -551,7 +552,8 @@ describe('roster writes concurrent with an account merge', function () {
       }
       let pending: Promise<unknown> | undefined
       try {
-        await db.transaction().execute(async trx => {
+        // `atomic`, as a caller of `closeInto` opens its transaction.
+        await atomic(db, async trx => {
           // Pause the real merge at its user-row barrier, after acquiring
           // exactly the advisory locks it takes before reaching that barrier.
           await lockKeys(trx, [

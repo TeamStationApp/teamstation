@@ -11,6 +11,7 @@ import {
   type PersonChangeAuthority,
   requireDirectAdmin
 } from '../groups/adminGuard'
+import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import type { InviteScopeType } from './invites'
 
 /**
@@ -565,6 +566,8 @@ export async function removeFromScope(
       removed ||= gone != null
     }
     await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
+    if (removed)
+      noteScopeChange(trx, { userId, ...groupScopeIds(scopeType, scopeId) })
     return { removed }
   })
 }
@@ -596,6 +599,9 @@ async function refusePlayer(
  * season or league row as `member`, which reaches every team below it. A row
  * they already have, however strong, is left as it is; `added` says whether
  * one was written.
+ *
+ * It owns no transaction: it notes the change on the caller's, and the
+ * function that opened that one bumps the clock after its last write.
  */
 export async function addToScope(
   db: Kysely<Database>,
@@ -615,6 +621,7 @@ export async function addToScope(
       .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
       .returning(['id'])
       .executeTakeFirst()
+    if (made != null) noteScopeChange(db, { userId, teamId: scopeId })
     return { added: made != null }
   }
   if (scopeType === 'season') {
@@ -630,6 +637,7 @@ export async function addToScope(
       .onConflict(oc => oc.columns(['user_id', 'season_id']).doNothing())
       .returning(['id'])
       .executeTakeFirst()
+    if (made != null) noteScopeChange(db, { userId, seasonId: scopeId })
     return { added: made != null }
   }
   const made = await db
@@ -644,6 +652,7 @@ export async function addToScope(
     .onConflict(oc => oc.columns(['user_id', 'league_id']).doNothing())
     .returning(['id'])
     .executeTakeFirst()
+  if (made != null) noteScopeChange(db, { userId })
   return { added: made != null }
 }
 
@@ -715,6 +724,7 @@ export async function setScopeRoles(
       .where('user_id', '=', userId)
     if (roles.length > 0) gone = gone.where('role', 'not in', roles)
     await gone.execute()
+    noteScopeChange(trx, { userId, ...groupScopeIds(scopeType, scopeId) })
     if (roles.length === 0) {
       await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
       return

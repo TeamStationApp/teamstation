@@ -8,9 +8,11 @@ import { makeId } from '../../common/ids'
 import { catalogPicture } from '../../common/pictureCatalog'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { storeGroupPhoto } from './groupPhoto'
 import { currentActor, requireGroupAdmin } from './rights'
 
@@ -28,7 +30,7 @@ export async function createGroup(
   media: MediaContext
 ): Promise<CreatedGroup> {
   const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex')
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     await lockKeys(trx, [
       'creation:parent-graph',
       `creation:${actor.userId}:${body.idempotencyKey}`
@@ -158,6 +160,11 @@ export async function createGroup(
         { kind: body.kind, id },
         body.picture.image
       )
+    // The creator's home lists what they made.
+    noteScopeChange(trx, {
+      userId: fresh.userId,
+      ...groupScopeIds(body.kind, id)
+    })
     const result: CreatedGroup = {
       id,
       kind: body.kind,
