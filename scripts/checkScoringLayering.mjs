@@ -12,8 +12,8 @@ import ts from 'typescript'
  * stored play. `scoreboardOf` reads what a game's scoreboard shows, so the
  * scorer's field scoreboard and the public one agree; it changes nothing.
  * `startingSetup` makes the lineups a game starts from, `rosterCommands`
- * changes a draft of the lineups, never the game, and `playerTags` names a
- * player to a dictation model.
+ * changes a draft of the lineups, never the game, `playerTags` names a
+ * player to a dictation model, and `depth` names how far a ball went.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -24,7 +24,9 @@ export const APP_MAY_IMPORT = [
   'scoreboardOf',
   'startingSetup',
   'rosterCommands',
-  'playerTags'
+  'playerTags',
+  'depth',
+  'pitchType'
 ]
 const LIBRARY = 'src/common/scoring'
 

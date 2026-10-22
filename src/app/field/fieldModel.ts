@@ -62,7 +62,7 @@ const DRAWN_FIELDER_SCALE = 3.2 * 1.15
 /** Shoulder-joint span of a drawn fielder, in field metres. */
 const SHOULDER_LENGTH = 1.12 * DRAWN_FIELDER_SCALE
 /** Outer edge of the skinned infield, where dirt meets outfield grass. */
-const DIRT_EDGE = 47.5
+export const DIRT_EDGE = 47.5
 /** One shoulder closer to second, then straight back onto the dirt edge. */
 function middleInfield(side: 1 | -1): [number, number] {
   const fromX = side * 15

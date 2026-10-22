@@ -7,6 +7,8 @@ import type {
   ScoringAction
 } from '../../common/scoring/actions'
 import { destinationBase, RUNNER_REASONS } from '../../common/scoring/actions'
+import { type Depth, FOUL_DEPTHS } from '../../common/scoring/depth'
+import { pitchTypeSaid } from '../../common/scoring/pitchType'
 import {
   type Decision,
   forcedFrom,
@@ -14,10 +16,30 @@ import {
   runnerDecisionError
 } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
-import { type GameState, POSITIONS } from '../../common/scoring/state'
+import {
+  fenceOf,
+  type GameState,
+  type Position,
+  POSITIONS
+} from '../../common/scoring/state'
 import { fieldingLocation } from '../field/fieldingLocation'
 import { BASES } from '../field/fieldModel'
-import { directionPoint, foulFielder, foulPoint } from './dictatedGeometry'
+import { OUTFIELD_RADIUS } from '../field/stadiumBoundary'
+import { baseSaid, depthOf, depthSaid } from './dictatedDepth'
+import {
+  BASE_BEARING,
+  type BaseName,
+  bearingOf,
+  depthPoint,
+  depthUnits,
+  directionPoint,
+  FOUL_ANGLE,
+  foulPoint,
+  foulSide,
+  positionOf,
+  SPRAY,
+  unitsOfFeet
+} from './dictatedGeometry'
 import { fieldPlayersFor } from './fieldAdapter'
 import { scoringDefensiveRoute, scoringFieldPlayers } from './scoringMotion'
 import type { DictationQuestion } from './scoringTypes'
@@ -325,6 +347,97 @@ const OUTFIELDER: Record<Direction, 'LF' | 'CF' | 'RF'> = {
   right_center: 'CF',
   right: 'RF'
 }
+/** Who takes a ball a direction that never reached the outfield. */
+const INFIELDER: Record<Direction, Position> = {
+  left: '3B',
+  left_center: 'SS',
+  center: 'SS',
+  right_center: '2B',
+  right: '1B'
+}
+/** "Into the right field seats", "down the left side". */
+const FIELD_SIDE = /\b(left|right)(?:[\s-]field\b| side\b)/i
+/** "An inside-the-park home run", "an inside-the-parker", "in park". */
+const INSIDE_THE_PARK =
+  /\b(?:inside|in)[\s-]the[\s-]park(?:er)?\b|\bin[\s-]park\b/i
+
+function isFoulDepth(depth: Depth): depth is (typeof FOUL_DEPTHS)[number] {
+  return (FOUL_DEPTHS as readonly Depth[]).includes(depth)
+}
+
+/** The positions on the infield, the pitcher and catcher among them. */
+const INFIELD: ReadonlySet<Position> = new Set([
+  'P',
+  'C',
+  '1B',
+  '2B',
+  '3B',
+  'SS'
+])
+/** How deep an infielder goes for a ball in the air: into shallow. */
+const INFIELD_REACH: ReadonlySet<Depth> = new Set([
+  'shy_of_base',
+  'dribbler',
+  'infield',
+  'past_base',
+  'bloop',
+  'shallow'
+])
+/** Depths a ball never gets out of the infield at. */
+const NEAR: ReadonlySet<Depth> = new Set([
+  'shy_of_base',
+  'dribbler',
+  'infield',
+  'past_base'
+])
+/** Depths a foul is the corner outfielder's at, not the corner infielder's. */
+const OUTFIELD_FOUL: ReadonlySet<Depth> = new Set([
+  'shallow',
+  'medium',
+  'deep',
+  'warning_track',
+  'wall'
+])
+
+/**
+ * The side of the field a foul went to: the side its direction or its
+ * base says, then the side the words say of the foul, then `foulSide`.
+ */
+function foulSign(
+  game: GameState,
+  direction: Direction | undefined,
+  base: BaseName | undefined,
+  said: '1B' | '3B' | undefined,
+  fielder: number | undefined
+): 1 | -1 {
+  if (direction === 'left' || direction === 'left_center') return -1
+  if (direction === 'right' || direction === 'right_center') return 1
+  if (base === 'first') return 1
+  if (base === 'third') return -1
+  if (said != null) return said === '1B' ? 1 : -1
+  return foulSide(game, fielder)
+}
+
+/**
+ * The bearing of a fair ball placed by its depth: its direction, the base
+ * its depth phrase names, the fielder who took it — the catcher and the
+ * pitcher are in front of the plate, toward the mound — else straight away.
+ */
+function fairBearing(
+  game: GameState,
+  ball: BallInPlayAction,
+  base: BaseName | undefined
+): number {
+  if (ball.direction != null) return SPRAY[ball.direction]
+  if (base != null) return BASE_BEARING[base]
+  const position =
+    ball.fielder == null ? undefined : positionOf(game, ball.fielder)
+  if (position == null || position === 'C' || position === 'P') return 0
+  const standing = fieldPlayersFor(game).find(
+    player => player.team === 'defense' && player.playerId === ball.fielder
+  )?.position
+  return standing == null ? 0 : bearingOf(standing)
+}
 
 /**
  * Each fielder as the words name him, and the base an infielder is named by
@@ -526,6 +639,10 @@ export function playDefaults(
     id => !carried.has(id)
   )
   const side = saidSide(game, transcript)
+  // A foul's side as the words give it: a base, or the field's side.
+  const field = FIELD_SIDE.exec(transcript)?.[1]?.toLowerCase()
+  const foulSaid =
+    side ?? (field === 'right' ? '1B' : field === 'left' ? '3B' : undefined)
   const batter = game.liveData.plays.currentPlay?.matchup.batter.id
   const result = sentence.find(
     (action): action is ResultAction => action.type === 'result'
@@ -535,7 +652,41 @@ export function playDefaults(
     result?.eventType === 'field_out' && (result.outBy === 'catch' || foul)
   const oneBall =
     sentence.filter(action => action.type === 'ballInPlay').length === 1
-  const filled = sentence.flatMap((action, index): ScoringAction[] => {
+  // One foul and no ball in play: what the words say of a foul is its.
+  const oneFoul =
+    sentence.every(action => action.type !== 'ballInPlay') &&
+    sentence.filter(action => action.type === 'pitch' && action.call === 'F')
+      .length === 1
+  // A kind of pitch the words do not name is the model's guess: a breaking
+  // ball is no slider.
+  const typed = sentence.map((action): ScoringAction => {
+    if (
+      (action.type !== 'pitch' && action.type !== 'ballInPlay') ||
+      action.pitchType == null ||
+      pitchTypeSaid(action.pitchType, transcript)
+    )
+      return action
+    const { pitchType: _guess, ...rest } = action
+    return rest
+  })
+  const filled = typed.flatMap((action, index): ScoringAction[] => {
+    if (action.type === 'pitch' && action.call === 'F' && oneFoul) {
+      const next = { ...action }
+      // The depth the words say, when the model gave none or one of theirs.
+      const depth = depthOf(transcript, next.depth)
+      if (depth != null && isFoulDepth(depth)) next.depth = depth
+      if (next.direction == null && next.depth != null) {
+        const base = baseSaid(transcript)
+        const direction =
+          base === 'first' || foulSaid === '1B'
+            ? 'right'
+            : base === 'third' || foulSaid === '3B'
+              ? 'left'
+              : undefined
+        if (direction != null) next.direction = direction
+      }
+      return [next]
+    }
     if (action.type === 'result') {
       if (action.foulCaught === true && action.outBy == null)
         return [{ ...action, outBy: 'catch' }]
@@ -549,6 +700,56 @@ export function playDefaults(
       const ownFoul = own?.eventType === 'field_out' && own.foulCaught === true
       const ownCatch =
         own?.eventType === 'field_out' && (own.outBy === 'catch' || ownFoul)
+      // How far it went, when the words say so: the deepest they say, when
+      // the model gave none or one of theirs.
+      if (oneBall) {
+        const depth = depthOf(transcript, next.depth)
+        if (depth != null) next.depth = depth
+      }
+      // An infielder's ball is no deeper than he can reach: a ground ball
+      // stays on the infield, and a pop or a liner short of medium depth.
+      const grounder =
+        next.contact === 'bunt' ||
+        next.trajectory === 'ground_ball' ||
+        next.trajectory === 'chopper'
+      const fieldedBy =
+        next.fielder == null
+          ? groundFielder(transcript)
+          : POSITIONS.find(place => defense[place]?.id === next.fielder)
+      const reach = grounder ? NEAR : INFIELD_REACH
+      if (
+        next.depth != null &&
+        !reach.has(next.depth) &&
+        fieldedBy != null &&
+        INFIELD.has(fieldedBy)
+      ) {
+        // The words' depth, or the model's, when it is within his reach:
+        // "deep short" is the infield.
+        const within = [
+          oneBall ? depthSaid(transcript) : undefined,
+          action.depth
+        ].find(depth => depth != null && reach.has(depth))
+        if (within != null) next.depth = within
+        else delete next.depth
+      }
+      // A ball caught at the wall was caught on the track, never off it.
+      if (next.depth === 'wall' && ownCatch) next.depth = 'warning_track'
+      // A fielder who is not in the field, and whom the words do not name,
+      // is the model's guess: the play finds its own.
+      if (
+        next.fielder != null &&
+        !POSITIONS.some(place => defense[place]?.id === next.fielder) &&
+        !namedFielder(game, transcript, next.fielder)
+      )
+        delete next.fielder
+      // A home run inside the park is said so; any other is over the fence.
+      if (
+        own?.eventType === 'home_run' &&
+        next.homeRunKind === 'in-park' &&
+        !INSIDE_THE_PARK.test(transcript)
+      )
+        next.homeRunKind = 'out-of-park'
+      const base = oneBall ? baseSaid(transcript) : undefined
       if (next.trajectory == null && next.launchAngle == null) {
         if (ownFoul) next.trajectory = 'popup'
         else if (own != null && HITS.has(own.eventType))
@@ -556,19 +757,23 @@ export function playDefaults(
       }
       if (ownCatch && next.fielder == null) {
         // A foul is caught on its side — by its direction, or the words
-        // said of the foul, or away from the batter.
-        const foulSide =
-          next.direction === 'left' || next.direction === 'left_center'
-            ? '3B'
-            : next.direction === 'right' || next.direction === 'right_center'
-              ? '1B'
-              : side
+        // said of the foul, or away from the batter — by the corner
+        // infielder, or out in the outfield by the corner outfielder.
+        const sign = foulSign(game, next.direction, base, foulSaid, undefined)
+        const outfield = next.depth != null && OUTFIELD_FOUL.has(next.depth)
+        const near = next.depth != null && NEAR.has(next.depth)
         const fielder = ownFoul
-          ? foulSide != null
-            ? defense[foulSide]?.id
-            : foulFielder(game)
+          ? defense[
+              outfield ? (sign === 1 ? 'RF' : 'LF') : sign === 1 ? '1B' : '3B'
+            ]?.id
           : next.direction != null
-            ? defense[OUTFIELDER[next.direction]]?.id
+            ? defense[
+                near
+                  ? next.depth === 'dribbler' && next.direction === 'center'
+                    ? 'P'
+                    : INFIELDER[next.direction]
+                  : OUTFIELDER[next.direction]
+              ]?.id
             : undefined
         // Only when the words do not say someone else caught it: one they
         // name but the model left out is asked for.
@@ -598,8 +803,40 @@ export function playDefaults(
         )
           next.fielder = center
       }
+      // A spot on the plate is a model's placeholder, not where a ball went.
+      if (
+        next.location != null &&
+        Math.hypot(next.location.x, next.location.z) < 1
+      )
+        delete next.location
       if (next.location == null) {
-        if (ownFoul) next.location = foulPoint(game, next.fielder)
+        const fence = fenceOf(game)
+        const units =
+          next.distanceFeet != null && next.distanceFeet > 0
+            ? unitsOfFeet(next.distanceFeet, fence)
+            : next.depth != null
+              ? depthUnits(next.depth, fence)
+              : undefined
+        // Nearly every home run is called deep: its depth places nothing,
+        // and only a distance said past the fence moves it.
+        const homer = own?.eventType === 'home_run'
+        const placed =
+          units != null &&
+          (!homer || (next.distanceFeet != null && units > OUTFIELD_RADIUS))
+        if (ownFoul)
+          next.location =
+            units == null
+              ? foulPoint(game, next.fielder)
+              : depthPoint(
+                  foulSign(game, next.direction, base, foulSaid, next.fielder) *
+                    FOUL_ANGLE,
+                  Math.min(units, OUTFIELD_RADIUS)
+                )
+        else if (placed)
+          next.location = depthPoint(
+            fairBearing(game, next, base),
+            homer ? units : Math.min(units, OUTFIELD_RADIUS)
+          )
         else if (next.direction != null)
           next.location = directionPoint(
             next.direction,

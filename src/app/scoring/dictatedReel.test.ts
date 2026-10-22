@@ -1112,6 +1112,46 @@ describe('a dictated sentence on the field', function () {
   })
 
   describe('the geometry it makes up', function () {
+    it('throws a ball off the wall from its carom, where the fielder played it', function () {
+      let state = spoken(
+        game({ first: 5 }),
+        'Off the wall in left, double, the left fielder throws home, out.',
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'line_drive',
+          fielder: F.LF,
+          direction: 'left'
+        },
+        { type: 'result', eventType: 'double' },
+        {
+          type: 'runnerMovement',
+          runner: 5,
+          to: 'home',
+          out: true,
+          fielders: [F.LF, F.C]
+        }
+      )
+      let carom: { x: number; z: number } | undefined
+      let from: { x: number; z: number } | undefined
+      for (let step = 0; step < 40 && from == null; step++) {
+        const sequence = state.presentation
+        if (sequence?.kind === 'hit') carom ??= sequence.carom
+        if (sequence?.kind === 'throw' && sequence.thrower === F.LF)
+          from = sequence.from
+        if (sequence != null) state = finishPicture(state)
+        else {
+          const motion = state.motions.find(m => !m.complete && m.held !== true)
+          if (motion == null) break
+          state = finishMotion(state, motion.playerId)
+        }
+      }
+      // From the thrower's hand at the carom, 8 u short of the wall.
+      expect(carom).not.equals(undefined)
+      expect(from).not.equals(undefined)
+      expect(Math.hypot(from!.x - carom!.x, from!.z - carom!.z)).lessThan(4)
+    })
+
     const session = game().session
     const inPlay = (
       more: Partial<BallInPlayAction> = {}

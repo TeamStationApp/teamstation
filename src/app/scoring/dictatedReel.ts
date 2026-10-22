@@ -7,6 +7,7 @@ import type {
 } from '../../common/scoring/actions'
 import { allowedAngle, closesFirst, inPlay } from '../../common/scoring/rules'
 import { upcoming } from '../../common/scoring/session'
+import { fenceOf } from '../../common/scoring/state'
 import { fieldingLocation } from '../field/fieldingLocation'
 import {
   BASES,
@@ -14,7 +15,12 @@ import {
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
 import { homeRunLanding } from '../field/stadiumBoundary'
-import { foulFielder } from './dictatedGeometry'
+import {
+  depthUnits,
+  foulFielder,
+  foulPlace,
+  unitsOfFeet
+} from './dictatedGeometry'
 import { fieldPlayersFor } from './fieldAdapter'
 import type { Outcome } from './scoringContract'
 import { basePath, homeQueuePoint, scoringFieldPlayers } from './scoringMotion'
@@ -86,6 +92,10 @@ export function outcomeOf(result: ResultAction | undefined): Outcome {
   return HIT_OUTCOMES[result.eventType] ?? 'Single'
 }
 
+/** Where a ball off the wall meets it, and how far back it comes. */
+const WALL_HEIGHT = 3
+const CAROM_UNITS = 8
+
 /**
  * The hit a finger would have drawn: the ball goes where the named fielder
  * stands, at the angle of the trajectory the LLM gave.
@@ -121,7 +131,31 @@ export function hitGeometry(
       x: (aim.x / length) * 140,
       z: (aim.z / length) * 140
     })
-  } else location = fieldingLocation(outcome, aim)
+  } else
+    location = fieldingLocation(
+      outcome,
+      aim,
+      // A distance said with no depth is played to the wall when it is out
+      // there, deep or past.
+      action.depth ??
+        (action.distanceFeet != null &&
+        unitsOfFeet(action.distanceFeet, fenceOf(state.session)) >=
+          depthUnits('deep', fenceOf(state.session))
+          ? 'deep'
+          : undefined)
+    )
+  // Off the wall: it meets the fence above the ground, drops, and is played
+  // off the carom in front of the wall.
+  // A ball caught at the wall is caught there, never played off it.
+  const wall =
+    action.depth === 'wall' && homeRunKind == null && outcome !== 'Ball Caught'
+  const carom = wall
+    ? (() => {
+        const radius = Math.max(1, Math.hypot(location.x, location.z))
+        const scale = (radius - CAROM_UNITS) / radius
+        return { x: location.x * scale, z: location.z * scale }
+      })()
+    : undefined
   const raw =
     action.launchAngle ??
     (action.contact === 'bunt'
@@ -140,6 +174,7 @@ export function hitGeometry(
       fielder,
       location,
       homeRunKind,
+      ...(carom == null ? {} : { landingHeight: WALL_HEIGHT, carom }),
       trajectoryAccepted: true
     },
     angle: allowedAngle(raw, outcome, homeRunKind)
@@ -275,7 +310,14 @@ export class ReelBuilder {
         this.defenderPoints.clear()
         this.hitOpen = false
         this.batterRun = null
-        this.open('pitch', pitchPresentation(state, PITCH_KINDS[action.call]))
+        this.open(
+          'pitch',
+          pitchPresentation(
+            state,
+            PITCH_KINDS[action.call],
+            foulPlace(state.session, action)
+          )
+        )
         return
       case 'ballInPlay': {
         this.finishSafeRelay(state)
@@ -317,7 +359,11 @@ export class ReelBuilder {
         this.hitBeat = this.current
         this.hitResultSeen = false
         this.hitCaught = pending.outcome === 'Ball Caught'
-        this.landing = { fielder: pending.fielder, point: pending.location! }
+        // Off the wall, the fielder plays it off the carom, and throws from there.
+        this.landing = {
+          fielder: pending.fielder,
+          point: pending.carom ?? pending.location!
+        }
         if (pending.outcome === 'Home Run')
           this.homeRunKind = pending.homeRunKind ?? 'in-park'
         return

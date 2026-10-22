@@ -72,6 +72,11 @@ export interface PendingPlay {
   contactKind?: ContactKind
   homeRunKind?: HomeRunKind
   landingHeight?: number
+  /**
+   * Where a ball off the wall comes to after meeting the fence in the air,
+   * for the fielder to play.
+   */
+  carom?: GroundPoint
   ballHolder?: number
   ballLocation?: GroundPoint
   batterPoint?: GroundPoint

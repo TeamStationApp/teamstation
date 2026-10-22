@@ -33,6 +33,8 @@ export interface PitchSequence {
   from: Point3
   plate: Point3
   glove: Point3
+  /** Where a foul the scorer placed came down; the ball flies there. */
+  foul?: GroundPoint
 }
 export const PITCH_TIMING = {
   release: 650,
@@ -41,9 +43,20 @@ export const PITCH_TIMING = {
   finish: 1500,
   foulFinish: 1750
 } as const
+/** The longest a placed foul is in the air: a deep one, into the seats. */
+export const FOUL_FLIGHT_MAX_MS = 2000
+/** How long a placed foul is in the air, by how far it went. */
+export function foulFlightMs(foul: GroundPoint): number {
+  // Its distance at a fly ball's pace, up to a deep fly's time in the air.
+  return Math.min(
+    FOUL_FLIGHT_MAX_MS,
+    Math.max(900, (Math.hypot(foul.x, foul.z) / 20) * 1000)
+  )
+}
 export function pitchPresentation(
   state: ScoringState,
-  kind: PitchKind
+  kind: PitchKind,
+  foul?: GroundPoint
 ): PitchSequence {
   const session = state.session
   const play = session.liveData.plays.currentPlay!
@@ -60,7 +73,13 @@ export function pitchPresentation(
     stage: 'delivery',
     kind: 'pitch',
     pitch: kind,
-    durationMs: kind === 'foul' ? PITCH_TIMING.foulFinish : PITCH_TIMING.finish,
+    durationMs:
+      kind !== 'foul'
+        ? PITCH_TIMING.finish
+        : foul == null
+          ? PITCH_TIMING.foulFinish
+          : PITCH_TIMING.plate + foulFlightMs(foul) + 400,
+    ...(kind === 'foul' && foul != null ? { foul: { ...foul } } : {}),
     players,
     pitcher,
     catcher,
@@ -82,6 +101,11 @@ export interface HitSequence {
   contactKind?: ContactKind
   outOfPark?: boolean
   fielderTarget?: GroundPoint
+  /**
+   * A ball off the wall: after its flight it drops from the wall to here,
+   * where the fielder plays it.
+   */
+  carom?: GroundPoint
   id: string
   generation: number
   stage: 'swing' | 'flight'
@@ -289,6 +313,9 @@ export function throwPresentation(
     final
   })
 }
+/** How long a ball off the wall takes to drop and come back. */
+export const CAROM_MS = 600
+
 export function hitPresentation(
   state: ScoringState,
   angle: number
@@ -305,7 +332,9 @@ export function hitPresentation(
   )
   const flightEndMs = 450 + flight
   const caught = pending.outcome === 'Ball Caught' || pending.fielder == null
-  const fielderEndMs = 450 + flight / (caught ? 1 : 0.8)
+  const carom = pending.carom
+  const fielderEndMs =
+    450 + flight / (caught ? 1 : 0.8) + (carom == null ? 0 : CAROM_MS)
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:hit`,
     generation: state.generation,
@@ -314,13 +343,16 @@ export function hitPresentation(
     contactKind: pending.contactKind ?? 'swing',
     outOfPark: pending.homeRunKind === 'out-of-park',
     fielderTarget:
-      pending.homeRunKind === 'out-of-park'
-        ? clampToField(target)
-        : { ...target },
+      carom != null
+        ? { ...carom }
+        : pending.homeRunKind === 'out-of-park'
+          ? clampToField(target)
+          : { ...target },
+    ...(carom == null ? {} : { carom: { ...carom } }),
     durationMs:
       pending.fielder == null
-        ? flightEndMs
-        : Math.max(flightEndMs, fielderEndMs),
+        ? flightEndMs + (carom == null ? 0 : CAROM_MS)
+        : Math.max(flightEndMs + (carom == null ? 0 : CAROM_MS), fielderEndMs),
     flightEndMs,
     fielderStartMs: 450,
     fielderEndMs,
