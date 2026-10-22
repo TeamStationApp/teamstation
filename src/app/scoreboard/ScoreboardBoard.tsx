@@ -17,9 +17,9 @@ import { type ScoreboardTheme, scoreboardTheme } from './scoreboardTheme'
 /**
  * The scoreboard as OBS and TS Director draw it over video: 1.0's
  * `src/client/Scoreboard.tsx` at 25f9496e, copied. The same React Native components,
- * drawn on the web by react-native-web as 1.0's were, with 1.0's style
- * sheet, fonts and gradients unchanged, and its theme values copied into
- * `scoreboardTheme`.
+ * drawn on the web by react-native-web as 1.0's were, with its theme values
+ * copied into `scoreboardTheme`. The pitch-speed font is smaller so two wide
+ * digits and MPH fit without changing the board's width.
  *
  * It draws the `state` prop, where 1.0 kept its own socket and state. 1.0's
  * demo switch and its "waiting for game data" card are gone: it draws the
@@ -677,7 +677,8 @@ export const getStyles = (theme: ScoreboardTheme) => {
     },
     pitchSpeedNumber: {
       color: theme.primaryTextColor,
-      fontSize: theme.rem(2.75),
+      // Two wide digits plus MPH fit beneath the bases without widening the board.
+      fontSize: theme.rem(2.125),
       fontWeight: 'bold',
       lineHeight: theme.rem(2.75),
       fontFamily: theme.secondaryTextFont
