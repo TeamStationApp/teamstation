@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import type { ChatMessage } from '../../../common/api'
 import type { AttachmentRef, ChatContent } from '../../../common/chatContent'
+import { userIdOfGumbo } from '../../../common/userId'
 import { message, view } from '../chatViews.test.helpers'
 import { foldMessages, type MessageView, type QuoteView } from './apply'
 import type { Opened } from './decrypt'
@@ -10,7 +11,7 @@ import { findOriginal, replyExcerpt, resolveQuote } from './reply'
 
 const quote: QuoteView = {
   id: 'msg_original',
-  authorId: 7,
+  authorId: userIdOfGumbo(7),
   authorName: 'Cached sender',
   snippet: 'Untrusted cached text'
 }
@@ -30,7 +31,7 @@ describe('chat reply authority and excerpts', function () {
   it('uses only the current original sender and edited body, without a nested quote', function () {
     const original = message({
       id: quote.id,
-      senderUserId: 2,
+      senderUserId: userIdOfGumbo(2),
       senderName: 'Shohei Ohtani',
       body: 'Edited wording',
       quote: { ...quote, id: 'msg_nested', snippet: 'Nested quote' }
@@ -38,7 +39,7 @@ describe('chat reply authority and excerpts', function () {
     expect(resolveQuote(quote, new Map([[original.id, original]]))).deep.equals(
       {
         id: quote.id,
-        authorId: 2,
+        authorId: userIdOfGumbo(2),
         authorName: 'Shohei Ohtani',
         snippet: 'Edited wording',
         status: 'ok'
@@ -73,7 +74,7 @@ describe('chat reply authority and excerpts', function () {
     }
     expect(resolveQuote(quote, new Map())).deep.equals({
       id: quote.id,
-      authorId: 7,
+      authorId: userIdOfGumbo(7),
       authorName: undefined,
       snippet: 'Message unavailable',
       status: 'unavailable'
@@ -123,7 +124,7 @@ describe('chat reply authority and excerpts', function () {
     const add = (
       id: string,
       seq: number,
-      senderUserId: number,
+      senderUserId: string,
       kind: ChatMessage['kind'],
       content?: ChatContent,
       targetIds: string[] | null = null
@@ -147,20 +148,20 @@ describe('chat reply authority and excerpts', function () {
       if (content != null)
         opened.set(id, { status: 'ok', content, replacedIdentity: false })
     }
-    add(quote.id, 1, 2, 'post', {
+    add(quote.id, 1, userIdOfGumbo(2), 'post', {
       type: 'text',
       body: 'Original wording',
       mentions: [],
       attachments: []
     })
-    add('msg_reply', 2, 1, 'post', {
+    add('msg_reply', 2, userIdOfGumbo(1), 'post', {
       type: 'text',
       body: 'Reply body',
       mentions: [],
       attachments: [],
       quote
     })
-    add('msg_edit', 3, 2, 'edit', {
+    add('msg_edit', 3, userIdOfGumbo(2), 'edit', {
       type: 'edit',
       targetId: quote.id,
       body: 'Edited wording',
@@ -170,15 +171,15 @@ describe('chat reply authority and excerpts', function () {
       foldMessages({
         envelopes,
         opened,
-        me: 1,
+        me: userIdOfGumbo(1),
         names: new Map([
-          [1, 'Mookie Betts'],
-          [2, 'Shohei Ohtani']
+          [userIdOfGumbo(1), 'Mookie Betts'],
+          [userIdOfGumbo(2), 'Shohei Ohtani']
         ]),
         reads: []
       })
     expect(fold()[1].quote?.snippet).equals('Edited wording')
-    add('msg_delete', 4, 2, 'delete', undefined, [quote.id])
+    add('msg_delete', 4, userIdOfGumbo(2), 'delete', undefined, [quote.id])
     expect(fold()[1].quote?.snippet).equals('Message deleted')
     expect(fold()[1].quote?.status).equals('removed')
   })

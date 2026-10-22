@@ -113,11 +113,11 @@ describe('chat epochs and grants (U7)', function () {
   async function memberRow(
     who: string,
     conversationId: string,
-    userId: number
+    userId: string
   ): Promise<{ eligible: boolean; hasIdentity: boolean }> {
     const members = ok(
       await call(who, 'GET', `/chat/conversations/${conversationId}/members`)
-    ) as Array<{ userId: number; eligible: boolean; hasIdentity: boolean }>
+    ) as Array<{ userId: string; eligible: boolean; hasIdentity: boolean }>
     const member = members.find(row => row.userId === userId)
     if (member == null) throw new Error(`${userId} is not a member`)
     return member
@@ -125,7 +125,7 @@ describe('chat epochs and grants (U7)', function () {
 
   async function openRequests(
     conversationId: string
-  ): Promise<Array<{ userId: number; reset: boolean; generation: number }>> {
+  ): Promise<Array<{ userId: string; reset: boolean; generation: number }>> {
     const rows = await db
       .selectFrom('chat_grant_requests')
       .select(['user_id', 'identity_reset', 'generation'])
@@ -145,11 +145,11 @@ describe('chat epochs and grants (U7)', function () {
   async function grantRequest(
     who: string,
     conversationId: string,
-    userId: number
+    userId: string
   ): Promise<any> {
     const requests = ok(await call(who, 'GET', '/chat/grants')) as Array<{
       conversationId: string
-      userId: number
+      userId: string
     }>
     return requests.find(
       row => row.conversationId === conversationId && row.userId === userId
@@ -638,7 +638,7 @@ describe('chat epochs and grants (U7)', function () {
         )
       ])
       expect(
-        answers.map(answer => answer.status).sort((x, y) => x - y)
+        answers.map(answer => answer.status).sort((a, b) => a - b)
       ).deep.equals([201, 409])
       const lost = answers.find(answer => answer.status === 409)
       expect(lost?.body.details.reason).equals('epochTaken')
@@ -851,7 +851,7 @@ describe('chat epochs and grants (U7)', function () {
         'notApprover'
       )
       expect((await openRequests(members)).map(row => row.userId)).deep.equals(
-        [held.A.keys.userId, held.B.keys.userId].sort((x, y) => x - y)
+        [held.A.keys.userId, held.B.keys.userId].sort()
       )
 
       expect(

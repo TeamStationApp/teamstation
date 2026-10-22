@@ -103,19 +103,15 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
       try {
         const sealed = await read<Sealed>(db, RECORD)
         const key = await read<CryptoKey>(db, WRAP)
-        if (sealed == null || key == null) return undefined
-        try {
-          const plain = await subtle().decrypt(
-            { name: 'AES-GCM', iv: sealed.iv, additionalData: AAD },
-            key,
-            sealed.ciphertext
-          )
-          return recordFromJson(fromUtf8(new Uint8Array(plain)))
-        } catch {
-          // Sealed under a key that is gone, or not a record at all: as good
-          // as no record. Enrolment starts this device again.
-          return undefined
-        }
+        if (sealed == null) return undefined
+        if (key == null)
+          throw new Error('The saved chat wrapping key is missing')
+        const plain = await subtle().decrypt(
+          { name: 'AES-GCM', iv: sealed.iv, additionalData: AAD },
+          key,
+          sealed.ciphertext
+        )
+        return recordFromJson(fromUtf8(new Uint8Array(plain)))
       } finally {
         db.close()
       }

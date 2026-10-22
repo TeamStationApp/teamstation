@@ -41,7 +41,7 @@ import { b64 } from './wire'
 export const MAX_GRANTS = 500
 
 export interface EpochBox {
-  userId: number
+  userId: string
   pukGeneration: number
   box: Uint8Array
 }
@@ -56,7 +56,7 @@ export interface EpochBody {
 export interface GrantBox {
   conversationId: string
   epoch: number
-  userId: number
+  userId: string
   identityId: string
   pukGeneration: number
   box: Uint8Array
@@ -64,7 +64,7 @@ export interface GrantBox {
 
 export interface EpochView {
   epoch: number
-  createdByUserId: number
+  createdByUserId: string
   identityId: string
   previousKeyBox: string | null
   chainBreak: boolean
@@ -77,7 +77,7 @@ export interface EpochBoxView {
   identityId: string
   pukGeneration: number
   box: string
-  grantedByUserId: number | null
+  grantedByUserId: string | null
 }
 
 export interface EpochsView {
@@ -97,7 +97,7 @@ export interface GrantRequestView {
   conversationId: string
   /** The epoch to box: the conversation's latest. */
   epoch: number
-  userId: number
+  userId: string
   identityId: string
   identityKey: string
   pukGeneration: number
@@ -115,7 +115,7 @@ export interface GrantRequestView {
 
 export interface GrantSkip {
   conversationId: string
-  userId: number
+  userId: string
   identityId: string
   pukGeneration: number
   /** `notOpen`: filled, superseded, or the requester left; `staleEpoch`: a newer epoch exists. */
@@ -126,7 +126,7 @@ const iso = (at: Date | string): string => new Date(at).toISOString()
 
 /** Where a current member with a chat identity stands on keys. */
 interface Standing {
-  userId: number
+  userId: string
   identityId: string
   generation: number
   /** Not waiting for approval after an identity reset. */
@@ -137,9 +137,9 @@ interface Standing {
 async function standingsOf(
   db: Kysely<Database>,
   conversationId: string
-): Promise<Map<number, Standing>> {
+): Promise<Map<string, Standing>> {
   const { rows } = await sql<{
-    userId: number
+    userId: string
     identityId: string
     generation: number
     waiting: boolean
@@ -160,9 +160,9 @@ async function standingsOf(
   `.execute(db)
   return new Map(
     rows.map(row => [
-      Number(row.userId),
+      row.userId,
       {
-        userId: Number(row.userId),
+        userId: row.userId,
         identityId: row.identityId,
         generation: row.generation,
         eligible: !row.waiting
@@ -189,9 +189,9 @@ async function holdersOf(
   db: Kysely<Database>,
   conversationId: string,
   epoch: number
-): Promise<Set<number>> {
+): Promise<Set<string>> {
   if (epoch < 1) return new Set()
-  const { rows } = await sql<{ userId: number }>`
+  const { rows } = await sql<{ userId: string }>`
     select distinct b.user_id as "userId"
     from chat_epoch_boxes b
     join chat_identities i
@@ -202,7 +202,7 @@ async function holdersOf(
       and m.left_at is null
     where b.conversation_id = ${conversationId} and b.epoch = ${epoch}
   `.execute(db)
-  return new Set(rows.map(row => Number(row.userId)))
+  return new Set(rows.map(row => row.userId))
 }
 
 /** The conversation's row, locked until the transaction ends; 404 when missing. */
@@ -229,7 +229,7 @@ export async function lockConversation(
 async function isMember(
   db: Kysely<Database>,
   conversationId: string,
-  userId: number
+  userId: string
 ): Promise<boolean> {
   const row = await db
     .selectFrom('chat_members')
@@ -450,7 +450,7 @@ export async function createEpoch(
       await sql`
         update chat_grant_requests r set filled_at = ${now}
         from unnest(
-          ${expected.map(standing => standing.userId)}::bigint[],
+          ${expected.map(standing => standing.userId)}::text[],
           ${expected.map(standing => standing.identityId)}::text[],
           ${expected.map(standing => standing.generation)}::int[]
         ) as boxed (user_id, identity_id, generation)
@@ -504,7 +504,7 @@ export async function grantsFor(
     kind: ChatKind
     scopeId: string | null
     epoch: number
-    userId: number
+    userId: string
     identityId: string
     identityKey: Uint8Array
     generation: number
@@ -541,7 +541,7 @@ export async function grantsFor(
   const views: GrantRequestView[] = []
   for (const row of rows) {
     let canApprove = true
-    if (row.identityReset && Number(row.userId) === caller.userId) {
+    if (row.identityReset && row.userId === caller.userId) {
       // Nobody approves their own history: a reset identity holds no key,
       // so only another member can open it for them.
       canApprove = false
@@ -561,7 +561,7 @@ export async function grantsFor(
       id: Number(row.id),
       conversationId: row.conversationId,
       epoch: row.epoch,
-      userId: Number(row.userId),
+      userId: row.userId,
       identityId: row.identityId,
       identityKey: b64(row.identityKey),
       pukGeneration: row.generation,

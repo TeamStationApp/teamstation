@@ -18,13 +18,18 @@ import {
 } from 'cleaners'
 
 import { ChatEngine } from '../app/chat/engine/engine'
-import { approveLink, ensureEnrolled } from '../app/chat/engine/links'
+import {
+  approveLink,
+  ensureEnrolled,
+  rotatePuk
+} from '../app/chat/engine/links'
 import {
   type ChatKeyStore,
   recordFromJson,
   recordToJson
 } from '../app/chat/keyRecord'
 import { TeamStationClient } from '../common/api'
+import { asUserId } from '../common/userId'
 
 export const CHAT2_SURFACES = [
   'web-wide',
@@ -63,7 +68,7 @@ export function need<T>(value: T | undefined, description: string): T {
 }
 
 const asActor = asObject({
-  userId: asNumber,
+  userId: asUserId,
   email: asString,
   password: asString,
   accountLabel: asString,
@@ -78,7 +83,26 @@ const asMessage = asObject({
   id: asString,
   seq: asNumber,
   body: asString,
-  authorId: asNumber
+  authorId: asUserId
+})
+export const asIdentityCompatibility = asObject({
+  legacy: asObject(
+    asObject({
+      actor: asString,
+      deviceId: asString,
+      identityId: asString,
+      identityPublicKey: asString,
+      pukGeneration: asNumber,
+      pukPublicKey: asString,
+      safetyNumber: asString,
+      text: asMessage,
+      reply: asMessage,
+      file: asMessage,
+      textMentions: asArray(asUserId),
+      replyMentions: asArray(asUserId)
+    })
+  ),
+  fullWidthActors: asArray(asString)
 })
 const asDevice = asObject({
   id: asString,
@@ -135,6 +159,7 @@ const asFixture = asObject({
   peer: asString,
   sameUserPeer: asOptional(asString),
   scenarioPeers: asOptional(asObject(asString), {}),
+  identityCompatibility: asOptional(asIdentityCompatibility),
   lockedViewer: asOptional(asString),
   readOnlyViewer: asOptional(asString),
   lockedCases: asOptional(
@@ -151,7 +176,7 @@ const asFixture = asObject({
   formerActor: asOptional(asString),
   controls: asOptional(asObject(asString), {}),
   authorization: asOptional(
-    asObject({ playerIds: asArray(asNumber), acceptedAdult: asNumber })
+    asObject({ playerIds: asArray(asUserId), acceptedAdult: asUserId })
   ),
   avatarProbe: asOptional(
     asObject({
@@ -238,7 +263,7 @@ const asFixture = asObject({
   members: asOptional(
     asArray(
       asObject({
-        userId: asNumber,
+        userId: asUserId,
         name: asString,
         role: asString,
         search: asString
@@ -445,7 +470,7 @@ export function loadChat2Fixture(path: string): Chat2Fixture {
   )
   for (const actor of Object.values(fixture.actors)) {
     assert(
-      Number.isSafeInteger(actor.userId) && actor.userId > 0,
+      asUserId(actor.userId) === actor.userId,
       'Synthetic user ID required'
     )
     assert(
@@ -633,6 +658,7 @@ export async function fixturePeer(
   client: TeamStationClient
   engine: ChatEngine
   approvePending: () => Promise<void>
+  rotateUserKey: () => Promise<number>
   close: () => void
 }> {
   const actor = need(fixture.actors[key], 'Synthetic peer missing')
@@ -670,14 +696,30 @@ export async function fixturePeer(
     throw new Chat2Blocked(
       'Existing synthetic peer is not ready; preserve its keys'
     )
-  const engine = new ChatEngine(setup)
+  let engine = new ChatEngine(setup)
   assert(
     (await engine.start()) === 'ready',
     'Existing protocol peer must be ready'
   )
   return {
     client,
-    engine,
+    get engine() {
+      return engine
+    },
+    rotateUserKey: async () => {
+      engine.stop()
+      const current = need(
+        await store.load(),
+        'Existing provider record required'
+      )
+      const rotated = await rotatePuk(setup, current)
+      engine = new ChatEngine(setup)
+      assert(
+        (await engine.start()) === 'ready',
+        'Rotated provider must be ready'
+      )
+      return need(rotated.puks.at(-1), 'Rotated generation required').generation
+    },
     approvePending: async () => {
       for (const link of await client.chatLinks()) {
         signal?.throwIfAborted()

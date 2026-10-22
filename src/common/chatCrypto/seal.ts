@@ -1,7 +1,9 @@
+import type { UserId } from '../userId'
 import { join, lp, u64, utf8 } from './bytes'
 import { call } from './core'
 import { num, readFlag, readNumber } from './coreCall'
 import { sha256 } from './hash'
+import { identityBytes } from './userId'
 
 /**
  * One message, sealed and signed, on the chat crypto core.
@@ -12,7 +14,7 @@ import { sha256 } from './hash'
  *   without the epoch's.
  * - The cipher is XChaCha20-Poly1305 with a random 24-byte nonce, over the
  *   content padded to its bucket (`bucketSize`), with AAD
- *   `lp(conversationId) ‖ u64(epoch) ‖ lp(messageId) ‖ u64(senderUserId) ‖
+ *   `lp(conversationId) ‖ u64(epoch) ‖ lp(messageId) ‖ identity(senderUserId) ‖
  *   lp(kind)`.
  * - The sender's identity key signs `SHA-256(aad ‖ nonce ‖ ciphertext)`.
  */
@@ -34,7 +36,7 @@ export interface MessageFields {
   conversationId: string
   epoch: number
   messageId: string
-  senderUserId: number
+  senderUserId: UserId
   kind: EnvelopeKind
 }
 
@@ -64,7 +66,7 @@ export function messageAad(fields: MessageFields): Uint8Array {
     lp(fields.conversationId),
     u64(fields.epoch),
     lp(fields.messageId),
-    u64(fields.senderUserId),
+    identityBytes(fields.senderUserId),
     lp(fields.kind)
   )
 }
@@ -74,7 +76,7 @@ const fieldArgs = (fields: MessageFields): Uint8Array[] => [
   utf8(fields.conversationId),
   num(fields.epoch),
   utf8(fields.messageId),
-  num(fields.senderUserId),
+  identityBytes(fields.senderUserId),
   utf8(fields.kind)
 ]
 

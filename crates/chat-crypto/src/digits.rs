@@ -4,14 +4,15 @@
 use crate::bytes::{join, lp, u64be};
 use crate::error::{Refusal, Result};
 use crate::prim;
+use crate::user_id;
 use crate::random;
 
 /// A membership log row's hash: `SHA-256(prev_hash ‖ lp(conversationId) ‖
-/// u64(seq) ‖ lp(event) ‖ u64(userId) ‖ u64(actorUserId or 0) ‖ lp(reason) ‖
+/// u64(seq) ‖ lp(event) ‖ identity(userId) ‖ identity(actorUserId or 0) ‖ lp(reason) ‖
 /// u64(at in ms))`. The first row's `prev_hash` is 32 zero bytes, and a row
 /// with no reason hashes `lp("")`.
 #[allow(clippy::too_many_arguments)]
-pub fn log_row_hash(prev_hash: &[u8], conversation_id: &[u8], seq: u64, event: &[u8], user_id: u64, actor_user_id: u64, reason: &[u8], at: u64) -> Result<[u8; 32]> {
+pub fn log_row_hash(prev_hash: &[u8], conversation_id: &[u8], seq: u64, event: &[u8], user_id: u128, actor_user_id: u128, reason: &[u8], at: u64) -> Result<[u8; 32]> {
     if prev_hash.len() != 32 {
         return Err(Refusal::Malformed);
     }
@@ -20,8 +21,8 @@ pub fn log_row_hash(prev_hash: &[u8], conversation_id: &[u8], seq: u64, event: &
         &lp(conversation_id),
         &u64be(seq),
         &lp(event),
-        &u64be(user_id),
-        &u64be(actor_user_id),
+        &user_id::encode(user_id),
+        &user_id::encode(actor_user_id),
         &lp(reason),
         &u64be(at),
     ])))
@@ -30,11 +31,11 @@ pub fn log_row_hash(prev_hash: &[u8], conversation_id: &[u8], seq: u64, event: &
 const SAFETY_ITERATIONS: usize = 5200;
 
 /// One person's 30 digits: SHA-512 applied 5,200 times, starting from
-/// `0x00 ‖ lp(identityKey) ‖ u64(userId)`, and the first 30 bytes of the
+/// `0x00 ‖ lp(identityKey) ‖ identity(userId)`, and the first 30 bytes of the
 /// result read as six 5-digit groups (each 5 bytes as a big-endian number,
 /// mod 100,000, zero-padded).
-pub fn safety_half(identity_key: &[u8], user_id: u64) -> String {
-    let mut hash = join(&[&[0u8], &lp(identity_key), &u64be(user_id)]);
+pub fn safety_half(identity_key: &[u8], user_id: u128) -> String {
+    let mut hash = join(&[&[0u8], &lp(identity_key), &user_id::encode(user_id)]);
     for _ in 0..SAFETY_ITERATIONS {
         hash = prim::sha512(&hash).to_vec();
     }

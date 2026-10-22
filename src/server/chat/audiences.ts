@@ -85,9 +85,9 @@ export function isUnder13(
  */
 export async function eligibleSurvivors(
   db: Kysely<Database>,
-  userIds: Iterable<number>,
+  userIds: Iterable<string>,
   now: Date
-): Promise<Set<number>> {
+): Promise<Set<string>> {
   const survivorOf = await survivors(db, [...userIds])
   const ids = [...new Set(survivorOf.values())]
   if (ids.length === 0) return new Set()
@@ -109,7 +109,7 @@ export async function eligibleSurvivors(
 /** Whether one user (as they are, not their survivor) is eligible now. */
 export async function isEligible(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   now: Date
 ): Promise<boolean> {
   const row = await db
@@ -159,7 +159,7 @@ export async function seasonFullTeams(
 export async function teamStaffIds(
   db: Kysely<Database>,
   teamIds: string[]
-): Promise<number[]> {
+): Promise<string[]> {
   if (teamIds.length === 0) return []
   const roles = await db
     .selectFrom('scope_roles')
@@ -181,7 +181,7 @@ export async function teamStaffIds(
 export async function leagueRoleIds(
   db: Kysely<Database>,
   leagueIds: string[]
-): Promise<number[]> {
+): Promise<string[]> {
   if (leagueIds.length === 0) return []
   const rows = await db
     .selectFrom('scope_roles')
@@ -196,7 +196,7 @@ export async function leagueRoleIds(
 export async function seasonStaffIds(
   db: Kysely<Database>,
   seasonIds: string[]
-): Promise<number[]> {
+): Promise<string[]> {
   if (seasonIds.length === 0) return []
   const roles = await db
     .selectFrom('scope_roles')
@@ -223,7 +223,7 @@ export async function seasonStaffIds(
 async function teamMemberIds(
   db: Kysely<Database>,
   teamIds: string[]
-): Promise<number[]> {
+): Promise<string[]> {
   if (teamIds.length === 0) return []
   const people = await db
     .selectFrom('memberships')
@@ -252,7 +252,7 @@ async function teamMemberIds(
 export async function teamGuardianRows(
   db: Kysely<Database>,
   teamIds: string[]
-): Promise<number[]> {
+): Promise<string[]> {
   if (teamIds.length === 0) return []
   const players = await db
     .selectFrom('memberships')
@@ -280,8 +280,8 @@ export async function teamGuardianRows(
 /** Survivors who hold an `is_player` membership on any team. */
 async function playersAmong(
   db: Kysely<Database>,
-  survivorIds: number[]
-): Promise<Set<number>> {
+  survivorIds: string[]
+): Promise<Set<string>> {
   if (survivorIds.length === 0) return new Set()
   // Every row of these people, so a closed row's place still counts.
   const rows = await db
@@ -314,7 +314,7 @@ export async function audienceOf(
   kind: ScopeKind,
   scopeId: string,
   now: Date
-): Promise<Set<number>> {
+): Promise<Set<string>> {
   switch (kind) {
     case 'teamStaff': {
       const teams = await fullTeams(db, [scopeId])

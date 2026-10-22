@@ -58,7 +58,7 @@ export interface MessageBubbleProps {
   onToggleReaction: (message: MessageView, emoji: string, mine: boolean) => void
   onReact?: (message: MessageView) => void
   onJump?: (id: string) => void
-  userId?: number
+  userId?: string
   actions?: MessageAction[]
   pinned?: boolean
   highlighted?: boolean
@@ -380,7 +380,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             {message.quote != null && (
               <ReplyQuote
                 quote={message.quote}
-                userId={props.userId ?? -1}
+                userId={props.userId}
                 onJump={props.selected === true ? undefined : props.onJump}
                 messageGesture={messageGesture}
               />

@@ -5,12 +5,13 @@
 //!   and a reporter can hand the server that one key without the epoch's.
 //! - The cipher is XChaCha20-Poly1305 with a random 24-byte nonce, over the
 //!   content padded to its bucket, with AAD `lp(conversationId) ‖ u64(epoch)
-//!   ‖ lp(messageId) ‖ u64(senderUserId) ‖ lp(kind)`.
+//!   ‖ lp(messageId) ‖ identity(senderUserId) ‖ lp(kind)`.
 //! - The sender's identity key signs `SHA-256(aad ‖ nonce ‖ ciphertext)`.
 
 use crate::bytes::{join, lp, pad, u64be, unpad};
 use crate::error::{Refusal, Result};
 use crate::prim;
+use crate::user_id;
 use crate::random;
 use zeroize::Zeroizing;
 
@@ -18,7 +19,7 @@ pub struct Fields<'a> {
     pub conversation_id: &'a [u8],
     pub epoch: u64,
     pub message_id: &'a [u8],
-    pub sender_user_id: u64,
+    pub sender_user_id: u128,
     pub kind: &'a [u8],
 }
 
@@ -28,7 +29,7 @@ impl Fields<'_> {
             &lp(self.conversation_id),
             &u64be(self.epoch),
             &lp(self.message_id),
-            &u64be(self.sender_user_id),
+            &user_id::encode(self.sender_user_id),
             &lp(self.kind),
         ])
     }

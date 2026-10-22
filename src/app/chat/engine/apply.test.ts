@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import type { ChatMessage } from '../../../common/api'
 import type { ChatContent } from '../../../common/chatContent'
+import { userIdOfGumbo } from '../../../common/userId'
 import { foldMessages } from './apply'
 import type { Opened } from './decrypt'
 
@@ -12,7 +13,7 @@ describe('chat engine fold', function () {
 
   function envelope(
     seq: number,
-    sender: number,
+    sender: string,
     kind: ChatMessage['kind'],
     targetIds: string[] | null = null,
     clearedAt: string | null = null
@@ -37,7 +38,7 @@ describe('chat engine fold', function () {
 
   function fold(
     rows: Array<[ChatMessage, Opened | ChatContent | undefined]>,
-    reads: Array<{ userId: number; seq: number }> = []
+    reads: Array<{ userId: string; seq: number }> = []
   ): ReturnType<typeof foldMessages> {
     const opened = new Map<string, Opened>()
     for (const [row, content] of rows) {
@@ -52,10 +53,10 @@ describe('chat engine fold', function () {
     return foldMessages({
       envelopes: rows.map(([row]) => row).reverse(),
       opened,
-      me: 1,
+      me: userIdOfGumbo(1),
       names: new Map([
-        [1, 'Me'],
-        [2, 'Bo']
+        [userIdOfGumbo(1), 'Me'],
+        [userIdOfGumbo(2), 'Bo']
       ]),
       reads
     })
@@ -70,22 +71,27 @@ describe('chat engine fold', function () {
 
   it('applies the author’s edits in order and ignores anyone else’s', function () {
     const [post] = fold([
-      [envelope(1, 2, 'post'), text('hello')],
+      [envelope(1, userIdOfGumbo(2), 'post'), text('hello')],
       [
-        envelope(2, 2, 'edit'),
-        { type: 'edit', targetId: id(1), body: 'hello there', mentions: [1] }
+        envelope(2, userIdOfGumbo(2), 'edit'),
+        {
+          type: 'edit',
+          targetId: id(1),
+          body: 'hello there',
+          mentions: [userIdOfGumbo(1)]
+        }
       ],
       [
-        envelope(3, 1, 'edit'),
+        envelope(3, userIdOfGumbo(1), 'edit'),
         { type: 'edit', targetId: id(1), body: 'forged', mentions: [] }
       ],
       [
-        envelope(4, 2, 'edit'),
+        envelope(4, userIdOfGumbo(2), 'edit'),
         { type: 'edit', targetId: id(9), body: 'nowhere', mentions: [] }
       ]
     ])
     expect(post.body).equals('hello there')
-    expect(post.mentions).deep.equals([1])
+    expect(post.mentions).deep.equals([userIdOfGumbo(1)])
     expect(post.edited).equals(true)
     expect(post.editIds).deep.equals([id(2)])
     expect(post.senderName).equals('Bo')
@@ -94,68 +100,71 @@ describe('chat engine fold', function () {
 
   it('counts one reaction per person and emoji, the latest standing', function () {
     const [post] = fold([
-      [envelope(1, 1, 'post'), text('hi')],
+      [envelope(1, userIdOfGumbo(1), 'post'), text('hi')],
       [
-        envelope(2, 2, 'reaction'),
+        envelope(2, userIdOfGumbo(2), 'reaction'),
         { type: 'reaction', targetId: id(1), emoji: '👍', remove: false }
       ],
       [
-        envelope(3, 1, 'reaction'),
+        envelope(3, userIdOfGumbo(1), 'reaction'),
         { type: 'reaction', targetId: id(1), emoji: '👍', remove: false }
       ],
       [
-        envelope(4, 1, 'reaction'),
+        envelope(4, userIdOfGumbo(1), 'reaction'),
         { type: 'reaction', targetId: id(1), emoji: '👍', remove: true }
       ],
       [
-        envelope(5, 1, 'reaction'),
+        envelope(5, userIdOfGumbo(1), 'reaction'),
         { type: 'reaction', targetId: id(1), emoji: '🎉', remove: false }
       ],
       [
-        envelope(6, 2, 'reaction'),
+        envelope(6, userIdOfGumbo(2), 'reaction'),
         { type: 'reaction', targetId: id(1), emoji: '🎉', remove: false }
       ],
       [
-        envelope(7, 2, 'reaction'),
+        envelope(7, userIdOfGumbo(2), 'reaction'),
         { type: 'reaction', targetId: id(1), emoji: '😢', remove: true }
       ],
       [
-        envelope(8, 2, 'reaction'),
+        envelope(8, userIdOfGumbo(2), 'reaction'),
         { type: 'reaction', targetId: id(9), emoji: '👍', remove: false }
       ],
-      [envelope(9, 2, 'reaction'), { status: 'locked' }]
+      [envelope(9, userIdOfGumbo(2), 'reaction'), { status: 'locked' }]
     ])
     expect(post.reactions).deep.equals([
-      { emoji: '👍', userIds: [2], mine: false },
-      { emoji: '🎉', userIds: [1, 2], mine: true }
+      { emoji: '👍', userIds: [userIdOfGumbo(2)], mine: false },
+      { emoji: '🎉', userIds: [userIdOfGumbo(1), userIdOfGumbo(2)], mine: true }
     ])
   })
 
   it('removes a post its author deletes, and shows a moderator’s removal', function () {
     const views = fold([
       [
-        envelope(1, 2, 'post', null, '2027-04-10T12:01:00Z'),
+        envelope(1, userIdOfGumbo(2), 'post', null, '2027-04-10T12:01:00Z'),
         { status: 'cleared' }
       ],
       [
-        envelope(2, 2, 'edit', null, '2027-04-10T12:01:00Z'),
+        envelope(2, userIdOfGumbo(2), 'edit', null, '2027-04-10T12:01:00Z'),
         { status: 'cleared' }
       ],
-      [envelope(3, 2, 'post'), text('second')],
-      [envelope(4, 1, 'post'), text('mine')],
-      [envelope(5, 1, 'post'), text('kept')],
+      [envelope(3, userIdOfGumbo(2), 'post'), text('second')],
+      [envelope(4, userIdOfGumbo(1), 'post'), text('mine')],
+      [envelope(5, userIdOfGumbo(1), 'post'), text('kept')],
       [
-        envelope(6, 2, 'delete', [id(1), id(2)]),
+        envelope(6, userIdOfGumbo(2), 'delete', [id(1), id(2)]),
         { type: 'delete', targetId: id(1) }
       ],
-      [envelope(7, 1, 'moderatorDelete', [id(3)]), { status: 'locked' }],
-      [envelope(8, 1, 'moderatorDelete', [id(4)]), undefined],
-      [envelope(9, 2, 'delete', [id(5)]), undefined],
       [
-        envelope(10, 2, 'reaction'),
+        envelope(7, userIdOfGumbo(1), 'moderatorDelete', [id(3)]),
+        { status: 'locked' }
+      ],
+      [envelope(8, userIdOfGumbo(1), 'moderatorDelete', [id(4)]), undefined],
+      [envelope(9, userIdOfGumbo(2), 'delete', [id(5)]), undefined],
+      [
+        envelope(10, userIdOfGumbo(2), 'reaction'),
         { type: 'reaction', targetId: id(3), emoji: '👍', remove: false }
       ],
-      [envelope(11, 2, 'delete', [id(99)]), undefined]
+      [envelope(11, userIdOfGumbo(2), 'delete', [id(99)]), undefined]
     ])
     const byId = new Map(views.map(view => [view.id, view]))
     expect(byId.get(id(1))).include({ status: 'removed', removedBy: 'author' })
@@ -182,30 +191,33 @@ describe('chat engine fold', function () {
     }
     const views = fold(
       [
-        [envelope(1, 2, 'post'), text('first')],
+        [envelope(1, userIdOfGumbo(2), 'post'), text('first')],
         [
-          envelope(2, 1, 'post'),
+          envelope(2, userIdOfGumbo(1), 'post'),
           {
             type: 'text',
             body: 'reply',
             mentions: [],
-            quote: { id: id(1), authorId: 2, snippet: 'first' },
+            quote: { id: id(1), authorId: userIdOfGumbo(2), snippet: 'first' },
             attachments: [attachment]
           }
         ],
-        [envelope(3, 2, 'post'), { status: 'locked' }],
-        [envelope(4, 2, 'post'), { status: 'lost' }],
-        [envelope(5, 3, 'post'), { status: 'invalid', reason: 'signature' }],
-        [envelope(6, 2, 'post'), undefined],
+        [envelope(3, userIdOfGumbo(2), 'post'), { status: 'locked' }],
+        [envelope(4, userIdOfGumbo(2), 'post'), { status: 'lost' }],
         [
-          envelope(7, 2, 'post'),
+          envelope(5, userIdOfGumbo(3), 'post'),
+          { status: 'invalid', reason: 'signature' }
+        ],
+        [envelope(6, userIdOfGumbo(2), 'post'), undefined],
+        [
+          envelope(7, userIdOfGumbo(2), 'post'),
           { status: 'ok', content: text('old key'), replacedIdentity: true }
         ]
       ],
       [
-        { userId: 1, seq: 7 },
-        { userId: 2, seq: 2 },
-        { userId: 3, seq: 1 }
+        { userId: userIdOfGumbo(1), seq: 7 },
+        { userId: userIdOfGumbo(2), seq: 2 },
+        { userId: userIdOfGumbo(3), seq: 1 }
       ]
     )
     expect(views.map(view => view.status)).deep.equals([
@@ -219,14 +231,14 @@ describe('chat engine fold', function () {
     ])
     expect(views[1].quote).deep.equals({
       id: id(1),
-      authorId: 2,
+      authorId: userIdOfGumbo(2),
       snippet: 'first',
       authorName: 'Bo',
       status: 'ok'
     })
     expect(views[1].attachments).deep.equals([attachment])
-    expect(views[0].readBy).deep.equals([1, 3])
-    expect(views[1].readBy).deep.equals([2])
+    expect(views[0].readBy).deep.equals([userIdOfGumbo(1), userIdOfGumbo(3)])
+    expect(views[1].readBy).deep.equals([userIdOfGumbo(2)])
     expect(views[4].senderName).equals(undefined)
     expect(views[6].sentBeforeSafetyNumberChange).equals(true)
     expect(views[0].sentBeforeSafetyNumberChange).equals(false)

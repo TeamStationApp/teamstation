@@ -98,6 +98,39 @@ function check(
 }
 
 describe('the changed-line check', function () {
+  it('enforces an explicit unit or combined minimum per file and overall', function () {
+    const files = { 'src/a.ts': 100, 'src/b.ts': 20 }
+    const counts = countsOf(files, { 'src/b.ts': 2 })
+    const args = ['--counts', counts, '--ext', '.ts', 'src']
+    expect(check([...args, '--min', '90'], diffOf(files)).code).equals(0)
+    const stricter = check([...args, '--min', '95'], diffOf(files))
+    expect(stricter.code).equals(1)
+    expect(stricter.log).includes(
+      '  src/b.ts: changed lines under 95% on their own'
+    )
+    // The existing aggregate-only default remains compatible for other callers.
+    expect(check(args, diffOf(files)).code).equals(0)
+    expect(
+      check([...args, '--min', '95'], diffOf(files), ['src/b.ts']).log
+    ).includes('  src/b.ts: a new file under 95% on its own')
+    const good = countsOf(files, { 'src/b.ts': 1 })
+    expect(
+      check(
+        ['--counts', good, '--min', '95', '--ext', '.ts', 'src'],
+        diffOf(files)
+      ).code
+    ).equals(0)
+  })
+  it('checks all measured lines of a new file, not only a partial hunk', function () {
+    const counts = countsOf({ 'src/new.ts': 20 }, { 'src/new.ts': 2 })
+    const result = check(
+      ['--counts', counts, '--min', '95', '--ext', '.ts', 'src'],
+      linesDiffOf({ 'src/new.ts': [20] }),
+      ['src/new.ts']
+    )
+    expect(result.code).equals(1)
+    expect(result.log).includes('  src/new.ts: a new file under 95% on its own')
+  })
   it('writes the actual changed-line report and refuses a missing preserved ref', function () {
     const report = join(
       mkdtempSync(join(tmpdir(), 'changed-line-report-')),
@@ -434,7 +467,16 @@ describe('the changed-line check', function () {
       ['--jacoco', 'x', '--ext', '.kt', 'src'],
       ['--counts', 'x', '--source-root', 'y', '--ext', '.ts', 'src'],
       ['--jacoco', 'x', '--counts', 'y', '--source-root', 'z', '--ext', '.kt'],
-      ['--jacoco', 'x', '--ext', '.kt', '--source-root']
+      ['--jacoco', 'x', '--ext', '.kt', '--source-root'],
+      ...['', '-1', '101', 'NaN', 'Infinity', '--ext'].map(value => [
+        '--counts',
+        'x',
+        '--ext',
+        '.ts',
+        '--min',
+        value
+      ]),
+      ['--counts', 'x', '--ext', '.ts', '--min']
     ]) {
       const run = check(argv, '')
       expect(run.code, argv.join(' ')).equals(2)

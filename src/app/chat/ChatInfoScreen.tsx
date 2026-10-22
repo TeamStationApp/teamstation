@@ -40,7 +40,7 @@ export interface ChatInfoScreenProps {
   client: Pick<TeamStationClient, 'leaveDm'>
   conversationId: string
   /** The signed-in person. */
-  userId: number
+  userId: string
   /** Left the conversation (a DM): back to the list. */
   onLeft: () => void
   /** Legacy member links reveal the member section of the information page. */

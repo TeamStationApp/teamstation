@@ -12,6 +12,7 @@ import {
   type TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
 
@@ -99,13 +100,13 @@ const schedule: ScheduleEntry[] = [
 
 const staff: StaffEntry[] = [
   {
-    userId: 11,
+    userId: userIdOfGumbo(11),
     shortName: 'Harper H',
     avatarUrl: null,
     roles: ['admin']
   },
   {
-    userId: 12,
+    userId: userIdOfGumbo(12),
     shortName: 'Hank C',
     avatarUrl: null,
     roles: ['coach', 'scorekeeper']
@@ -114,7 +115,7 @@ const staff: StaffEntry[] = [
 
 const roster = [
   asRosterEntry({
-    userId: 11,
+    userId: userIdOfGumbo(11),
     shortName: 'Harper H',
     jersey: null,
     positions: [],
@@ -126,7 +127,7 @@ const roster = [
     inheritedFrom: null
   }),
   asRosterEntry({
-    userId: 21,
+    userId: userIdOfGumbo(21),
     shortName: 'Pat P',
     jersey: '7',
     positions: ['SS'],
@@ -359,7 +360,7 @@ describe('staffSubtitle', function () {
     expect(staffSubtitle(staff[1])).equals('Coach · Scorekeeper')
     expect(
       staffSubtitle({
-        userId: 1,
+        userId: userIdOfGumbo(1),
         shortName: 'V',
         avatarUrl: null,
         roles: ['songkeeper', 'videographer']

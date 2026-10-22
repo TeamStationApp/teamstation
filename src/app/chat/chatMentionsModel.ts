@@ -1,9 +1,10 @@
 import { MAX_BODY } from '../../common/chatContent'
+import { asUserId } from '../../common/userId'
 import type { MessageView } from './engine/apply'
 import type { MemberView } from './engine/engine'
 
 export interface MentionToken {
-  userId: number
+  userId: string
   start: number
   end: number
   label: string
@@ -108,8 +109,7 @@ export function validMentionTokens(
   const valid = tokens
     .filter(
       token =>
-        Number.isSafeInteger(token.userId) &&
-        token.userId > 0 &&
+        validUserId(token.userId) &&
         Number.isInteger(token.start) &&
         Number.isInteger(token.end) &&
         token.start >= 0 &&
@@ -233,7 +233,7 @@ export function mentionIds(
   tokens: readonly MentionToken[] | undefined,
   members: ReadonlyArray<Pick<MemberView, 'userId'>>,
   editing?: MessageView
-): number[] {
+): string[] {
   const current = new Set(members.map(member => member.userId))
   // A legacy edit with untouched text may retain its authenticated IDs without guessing ranges.
   const ids =
@@ -241,4 +241,13 @@ export function mentionIds(
       ? editing.mentions
       : validMentionTokens(text, tokens).map(token => token.userId)
   return [...new Set(ids)].filter(id => current.has(id))
+}
+
+function validUserId(value: unknown): boolean {
+  try {
+    asUserId(value)
+    return true
+  } catch {
+    return false
+  }
 }

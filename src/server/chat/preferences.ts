@@ -15,7 +15,7 @@ export const defaultPreferences = (): ChatPreferences => ({
 
 export async function preferencesFor(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   conversationIds: string[]
 ): Promise<Map<string, ChatPreferences>> {
   if (conversationIds.length === 0) return new Map()
@@ -40,7 +40,7 @@ export async function preferencesFor(
 
 export async function updatePreferences(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   conversationId: string,
   patch: Partial<Pick<ChatPreferences, 'pinned' | 'muted' | 'manualUnread'>>
 ): Promise<ChatPreferences> {
@@ -86,7 +86,7 @@ export async function updatePreferences(
 
 async function lockMember(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   conversationId: string
 ): Promise<void> {
   const member = await db
@@ -102,7 +102,7 @@ async function lockMember(
 
 export async function pinsFor(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   conversationId: string
 ): Promise<ChatPin[]> {
   const rows = await db
@@ -121,7 +121,7 @@ export async function pinsFor(
 
 export async function setMessagePin(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   conversationId: string,
   messageId: string,
   pinned: boolean
@@ -167,7 +167,7 @@ export async function setMessagePin(
 /** A stale read request must never clear a newer deliberate mark-unread. */
 export async function clearManualUnread(
   trx: Kysely<Database>,
-  userId: number,
+  userId: string,
   conversationId: string,
   revision: number | undefined
 ): Promise<void> {

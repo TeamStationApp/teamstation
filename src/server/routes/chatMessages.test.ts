@@ -752,7 +752,7 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
 
       const reads = ok(
         await call('A', 'GET', `/chat/conversations/${members}/reads`)
-      ) as Array<{ userId: number; seq: number }>
+      ) as Array<{ userId: string; seq: number }>
       expect(
         Object.fromEntries(
           reads.map(row => [fixture.keyOf(row.userId), row.seq])

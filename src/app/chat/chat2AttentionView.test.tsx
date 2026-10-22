@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import {
   ScopedThemeProvider,
@@ -178,7 +179,7 @@ function screen(
   return (
     <ConversationScreen
       engine={engine}
-      userId={1}
+      userId={userIdOfGumbo(1)}
       conversationId="cnv_1"
       onMembers={() => {}}
       active={active}
@@ -371,8 +372,8 @@ describe('attention controls and synchronized reading visits', function () {
   })
   it('counts below-body targets, consumes actual leading bodies once, excludes occluded bodies and retains the chevron at zero', async function () {
     const targets = [
-      message({ id: 'msg_one', seq: 210, mentions: [1] }),
-      message({ id: 'msg_two', seq: 220, mentions: [1] })
+      message({ id: 'msg_one', seq: 210, mentions: [userIdOfGumbo(1)] }),
+      message({ id: 'msg_two', seq: 220, mentions: [userIdOfGumbo(1)] })
     ]
     const state = fixture(view({ ownReadSeq: 200, messages: targets }))
     const workspace = newChatWorkspaceState()
@@ -412,7 +413,7 @@ describe('attention controls and synchronized reading visits', function () {
       seq: 220,
       quote: {
         id: 'msg_original',
-        authorId: 1,
+        authorId: userIdOfGumbo(1),
         authorName: 'Aaron Judge',
         snippet: '',
         status: 'unavailable'
@@ -446,7 +447,12 @@ describe('attention controls and synchronized reading visits', function () {
       hasEarlier: false,
       historyBefore: 20,
       messages: [
-        message({ id: 'msg_original', seq: 20, mine: true, senderUserId: 1 }),
+        message({
+          id: 'msg_original',
+          seq: 20,
+          mine: true,
+          senderUserId: userIdOfGumbo(1)
+        }),
         photo,
         reply
       ]
@@ -658,7 +664,7 @@ describe('changed chat surfaces in scoped light and dark themes', function () {
         <ChatInfoScreen
           engine={state.engine}
           client={{ leaveDm: async () => ({ closed: false }) }}
-          userId={1}
+          userId={userIdOfGumbo(1)}
           conversationId="cnv_1"
           onLeft={() => {}}
         />,
@@ -761,7 +767,11 @@ describe('attention gestures, long quotes and retry intent', function () {
     restorePlatform = () => {
       Object.defineProperty(Platform, 'OS', saved)
     }
-    const target = message({ id: 'msg_native', seq: 220, mentions: [1] })
+    const target = message({
+      id: 'msg_native',
+      seq: 220,
+      mentions: [userIdOfGumbo(1)]
+    })
     const state = fixture(view({ ownReadSeq: 200, messages: [target] }))
     const owner = new ChatDraftOwner(newChatWorkspaceState())
     const node = await render(screen(state.engine, owner))
@@ -803,7 +813,7 @@ describe('attention gestures, long quotes and retry intent', function () {
       const original = message({
         id: 'msg_original',
         seq: 20,
-        senderUserId: 1,
+        senderUserId: userIdOfGumbo(1),
         mine: true
       })
       const target = message({
@@ -811,7 +821,7 @@ describe('attention gestures, long quotes and retry intent', function () {
         seq: 220,
         quote: {
           id: original.id,
-          authorId: 1,
+          authorId: userIdOfGumbo(1),
           authorName: 'Aaron Judge',
           snippet: 'A long verified quote',
           status: 'ok'
@@ -1042,12 +1052,12 @@ describe('attention cancellation preserves the current follow intent', function 
         const current = message({
           id: 'msg_initial_reader',
           seq: 290,
-          mentions: [1]
+          mentions: [userIdOfGumbo(1)]
         })
         const tail = message({
           id: 'msg_initial_tail',
           seq: 300,
-          senderUserId: 1
+          senderUserId: userIdOfGumbo(1)
         })
         const initial = view({
           conversation: { ...view().conversation, lastSeq: 300 },
@@ -1228,7 +1238,7 @@ describe('attention cancellation preserves the current follow intent', function 
       conversation: { ...initial.conversation, lastSeq: 301 },
       messages: [
         ...initial.messages,
-        message({ id: 'msg_arrival', seq: 301, mentions: [1] })
+        message({ id: 'msg_arrival', seq: 301, mentions: [userIdOfGumbo(1)] })
       ]
     }
     await act(async () => {
@@ -1263,7 +1273,7 @@ describe('new web reader initial follow acknowledgement', function () {
     const current = message({
       id: 'msg_short_current',
       seq: 220,
-      mentions: [1]
+      mentions: [userIdOfGumbo(1)]
     })
     const initial = view({
       messages: [current],
@@ -1319,10 +1329,18 @@ describe('new web reader initial follow acknowledgement', function () {
       const current = message({
         id: 'msg_cold_current',
         seq: 290,
-        mentions: [1]
+        mentions: [userIdOfGumbo(1)]
       })
-      const end = message({ id: 'msg_cold_end', seq: 299, mentions: [1] })
-      const tail = message({ id: 'msg_cold_tail', seq: 300, senderUserId: 1 })
+      const end = message({
+        id: 'msg_cold_end',
+        seq: 299,
+        mentions: [userIdOfGumbo(1)]
+      })
+      const tail = message({
+        id: 'msg_cold_tail',
+        seq: 300,
+        senderUserId: userIdOfGumbo(1)
+      })
       const empty = view({
         conversation: { ...view().conversation, lastSeq: 300 },
         ownReadSeq: 200,
@@ -1439,7 +1457,7 @@ describe('new web reader initial follow acknowledgement', function () {
                   message({
                     id: 'msg_cold_original',
                     seq: 190,
-                    senderUserId: 1
+                    senderUserId: userIdOfGumbo(1)
                   }),
                   ...populated.messages
                 ]
@@ -1495,7 +1513,11 @@ describe('new web reader initial follow acknowledgement', function () {
             historyBefore: 190,
             hasEarlier: false,
             messages: [
-              message({ id: 'msg_cold_original', seq: 190, senderUserId: 1 }),
+              message({
+                id: 'msg_cold_original',
+                seq: 190,
+                senderUserId: userIdOfGumbo(1)
+              }),
               ...populated.messages
             ]
           }
@@ -1582,14 +1604,14 @@ describe('conversation information navigation reader ownership', function () {
               engine={state.engine}
               client={{ leaveDm: async () => ({ closed: false }) }}
               conversationId="cnv_1"
-              userId={1}
+              userId={userIdOfGumbo(1)}
               onLeft={() => {}}
             />
           </>
         ) : (
           <ChatWorkspace
             engine={state.engine}
-            userId={1}
+            userId={userIdOfGumbo(1)}
             state={workspace}
             conversationId="cnv_1"
             onOpen={() => {}}
@@ -2080,7 +2102,11 @@ describe('conversation width reflow reader ownership', function () {
 
 describe('attention public browser scroll ordering', function () {
   it('retains manual pass intent when capturing wheel and bubbling ScrollView notifications describe the same offset', async function () {
-    const first = message({ id: 'msg_web_pass', seq: 220, mentions: [1] })
+    const first = message({
+      id: 'msg_web_pass',
+      seq: 220,
+      mentions: [userIdOfGumbo(1)]
+    })
     const state = fixture(view({ ownReadSeq: 200, messages: [first] }))
     const workspace = newChatWorkspaceState()
     workspace.drafts.set('cnv_1', {
@@ -2133,7 +2159,11 @@ describe('attention public browser scroll ordering', function () {
     )
     expect(owner.draft('cnv_1').text).equals('Keep the web draft')
     // A programmatic skip alone cannot claim that its leading body was viewed.
-    const next = message({ id: 'msg_programmatic', seq: 230, mentions: [1] })
+    const next = message({
+      id: 'msg_programmatic',
+      seq: 230,
+      mentions: [userIdOfGumbo(1)]
+    })
     await act(async () => {
       history.scrollTop = 0
       state.update(view({ ownReadSeq: 230, messages: [next] }))
@@ -2164,7 +2194,11 @@ describe('attention public browser scroll ordering', function () {
 
 describe('attention composer overlay visibility', function () {
   it('keeps an exposed target unseen while emoji covers the conversation and consumes it after ordinary dismissal', async function () {
-    const target = message({ id: 'msg_overlay', seq: 220, mentions: [1] })
+    const target = message({
+      id: 'msg_overlay',
+      seq: 220,
+      mentions: [userIdOfGumbo(1)]
+    })
     const state = fixture(view({ ownReadSeq: 200, messages: [target] }))
     const workspace = newChatWorkspaceState()
     workspace.drafts.set('cnv_1', {
@@ -2309,10 +2343,10 @@ describe('attention unresolved arrivals after explicit navigation', function () 
     const reply = message({
       id: 'msg_new_reply',
       seq: 301,
-      mentions: [1],
+      mentions: [userIdOfGumbo(1)],
       quote: {
         id: 'msg_old_original',
-        authorId: 1,
+        authorId: userIdOfGumbo(1),
         authorName: 'Aaron Judge',
         snippet: '',
         status: 'unavailable'
@@ -2347,7 +2381,7 @@ describe('attention unresolved arrivals after explicit navigation', function () 
             id: 'msg_old_original',
             seq: 20,
             mine: true,
-            senderUserId: 1
+            senderUserId: userIdOfGumbo(1)
           }),
           ...arrived.messages
         ]
@@ -2401,7 +2435,7 @@ describe('older pin navigation leaves newest following', function () {
       const draft = {
         text: '@Aaron Judge keep terminal draft',
         mentionTokens: [
-          { userId: 2, start: 0, end: 12, label: '@Aaron Judge' }
+          { userId: userIdOfGumbo(2), start: 0, end: 12, label: '@Aaron Judge' }
         ],
         picked: [],
         scrollOffset: 0

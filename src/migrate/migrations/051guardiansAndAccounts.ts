@@ -1,3 +1,4 @@
+import { chatUserIdBootstrap } from '../chatUserIdBootstrap'
 import type { Migration } from '../runner'
 
 /**
@@ -28,9 +29,9 @@ import type { Migration } from '../runner'
  */
 export const migration051GuardiansAndAccounts: Migration = {
   name: '051guardiansAndAccounts',
-  up: `
+  up: chatUserIdBootstrap(`
 alter table invites
-  add column guardian_of_user_id bigint references users (id),
+  add column guardian_of_user_id __chat_user_id_type__ references users (id),
   add column relative_kind text
     check (relative_kind in ('guardian', 'family')),
   add constraint invites_guardian_of_team check (
@@ -48,7 +49,7 @@ alter table users
 alter table leagues
   add column safesport_lao boolean not null default false;
 
-create function login_enabled_for(uid bigint, pw text, merged bigint)
+create function login_enabled_for(uid __chat_user_id_type__, pw text, merged __chat_user_id_type__)
 returns boolean
 language sql stable as $$
   select merged is null and (
@@ -57,7 +58,7 @@ language sql stable as $$
   )
 $$;
 
-create function refresh_login_enabled(uid bigint) returns void
+create function refresh_login_enabled(uid __chat_user_id_type__) returns void
 language sql as $$
   update users u
   set login_enabled = login_enabled_for(u.id, u.password_hash, u.merged_into)
@@ -101,14 +102,14 @@ update users
 set login_enabled = login_enabled_for(id, password_hash, merged_into)
 where login_enabled is distinct from
   login_enabled_for(id, password_hash, merged_into);
-`,
-  down: `
+`),
+  down: chatUserIdBootstrap(`
 drop trigger user_emails_login_enabled on user_emails;
 drop function user_emails_login_enabled();
 drop trigger users_login_enabled on users;
 drop function users_login_enabled();
-drop function refresh_login_enabled(bigint);
-drop function login_enabled_for(bigint, text, bigint);
+drop function refresh_login_enabled(__chat_user_id_type__);
+drop function login_enabled_for(__chat_user_id_type__, text, __chat_user_id_type__);
 alter table leagues drop column safesport_lao;
 alter table users
   drop constraint users_birth_month_both,
@@ -118,5 +119,5 @@ alter table invites
   drop constraint invites_guardian_of_team,
   drop column relative_kind,
   drop column guardian_of_user_id;
-`
+`)
 }

@@ -114,7 +114,7 @@ export class KeyHolder {
 export interface EngineContext {
   client: ChatEngineClient
   /** The signed-in user. */
-  userId: number
+  userId: string
   memory: ChatMemory
   keys: KeyHolder
   identities: IdentityCache

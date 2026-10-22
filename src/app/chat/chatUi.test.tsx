@@ -10,6 +10,7 @@ import type {
 } from '../../common/api'
 import type { AttachmentRef } from '../../common/chatContent'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AttachmentView } from './AttachmentView'
 import {
@@ -355,9 +356,9 @@ class FakeEngine implements ChatScreenEngine {
     return 0
   }
 
-  async safetyNumber(userId: number): Promise<string | undefined> {
-    if (userId === 404) throw new Error('offline')
-    return userId === 0 ? undefined : SAFETY
+  async safetyNumber(userId: string): Promise<string | undefined> {
+    if (userId === userIdOfGumbo(404)) throw new Error('offline')
+    return userId === userIdOfGumbo(405) ? undefined : SAFETY
   }
 }
 
@@ -476,20 +477,25 @@ describe('the chat list', function () {
     engine.list = [
       dm(
         'd1',
-        dmTitle(1, undefined, [{ userId: 2, shortName: 'Eli C', left: true }])
+        dmTitle(userIdOfGumbo(1), undefined, [
+          { userId: userIdOfGumbo(2), shortName: 'Eli C', left: true }
+        ])
       ),
       dm(
         'd2',
         dmTitle(
-          1,
-          [member(1, 'Dana D')],
+          userIdOfGumbo(1),
+          [member(userIdOfGumbo(1), 'Dana D')],
           [
-            { userId: 3, shortName: 'Blair B', left: true },
-            { userId: 4, shortName: 'Hank C', left: true }
+            { userId: userIdOfGumbo(3), shortName: 'Blair B', left: true },
+            { userId: userIdOfGumbo(4), shortName: 'Hank C', left: true }
           ]
         )
       ),
-      dm('d3', dmTitle(1, [member(1, 'Dana D')], []))
+      dm(
+        'd3',
+        dmTitle(userIdOfGumbo(1), [member(userIdOfGumbo(1), 'Dana D')], [])
+      )
     ]
     const opened: string[] = []
     await render(
@@ -556,7 +562,7 @@ describe('the chat gate', function () {
   it('shows the screen once the device is ready', async function () {
     const engine = new FakeEngine()
     await render(
-      <ChatGate engine={engine} client={unusedClient} userId={1}>
+      <ChatGate engine={engine} client={unusedClient} userId={userIdOfGumbo(1)}>
         <span>inside</span>
       </ChatGate>
     )
@@ -567,7 +573,7 @@ describe('the chat gate', function () {
     const engine = new FakeEngine()
     engine.startAs = 'fail'
     await render(
-      <ChatGate engine={engine} client={unusedClient} userId={1}>
+      <ChatGate engine={engine} client={unusedClient} userId={userIdOfGumbo(1)}>
         <span>inside</span>
       </ChatGate>
     )
@@ -589,7 +595,12 @@ describe('the chat gate', function () {
       }
     }
     await render(
-      <ChatGate engine={engine} client={client as never} userId={1} pollMs={50}>
+      <ChatGate
+        engine={engine}
+        client={client as never}
+        userId={userIdOfGumbo(1)}
+        pollMs={50}
+      >
         <span>inside</span>
       </ChatGate>
     )
@@ -618,7 +629,7 @@ describe('a conversation', function () {
     await render(
       <ConversationScreen
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         conversationId={shown.conversation.id}
         onMembers={over.onMembers ?? (() => {})}
         onTitle={title => titles.push(title)}
@@ -845,11 +856,24 @@ describe('a conversation', function () {
     await open(
       view({
         conversation: chat({ memberCount: 12 }),
-        members: [member(5, 'Blair B'), member(6, 'Casey C')],
+        members: [
+          member(userIdOfGumbo(5), 'Blair B'),
+          member(userIdOfGumbo(6), 'Casey C')
+        ],
         messages: [
-          message({ id: 'msg_1', mine: true, body: 'one', readBy: [5, 6] }),
+          message({
+            id: 'msg_1',
+            mine: true,
+            body: 'one',
+            readBy: [userIdOfGumbo(5), userIdOfGumbo(6)]
+          }),
           message({ id: 'msg_2', mine: true, seq: 2, body: 'two' }),
-          message({ id: 'msg_3', seq: 3, body: 'three', readBy: [5] })
+          message({
+            id: 'msg_3',
+            seq: 3,
+            body: 'three',
+            readBy: [userIdOfGumbo(5)]
+          })
         ]
       })
     )
@@ -862,7 +886,13 @@ describe('a conversation', function () {
     await open(
       view({
         conversation: chat({ memberCount: 21 }),
-        messages: [message({ mine: true, body: 'big', readBy: [5, 6, 7] })]
+        messages: [
+          message({
+            mine: true,
+            body: 'big',
+            readBy: [userIdOfGumbo(5), userIdOfGumbo(6), userIdOfGumbo(7)]
+          })
+        ]
       })
     )
     expect(text()).contains('✓✓ Seen by 3')
@@ -877,7 +907,7 @@ describe('a conversation', function () {
         requestId: 7,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
-        userId: 9,
+        userId: userIdOfGumbo(9),
         name: 'Drew D',
         oldSafetyNumber: SAFETY,
         newSafetyNumber: SAFETY
@@ -887,7 +917,7 @@ describe('a conversation', function () {
         requestId: 6,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
-        userId: 1,
+        userId: userIdOfGumbo(1),
         name: 'Ari A',
         oldSafetyNumber: SAFETY,
         newSafetyNumber: SAFETY
@@ -898,8 +928,10 @@ describe('a conversation', function () {
         unverified: true,
         earlierLost: true,
         hasEarlier: true,
-        typing: [{ userId: 3, name: 'Blair B' }],
-        safetyChanges: [{ userId: 9, name: 'Drew D', seq: 4, at: now - 1000 }],
+        typing: [{ userId: userIdOfGumbo(3), name: 'Blair B' }],
+        safetyChanges: [
+          { userId: userIdOfGumbo(9), name: 'Drew D', seq: 4, at: now - 1000 }
+        ],
         messages: [
           message({ id: 'msg_lost', status: 'lost', body: '' }),
           message({
@@ -910,11 +942,17 @@ describe('a conversation', function () {
             sentBeforeSafetyNumberChange: true,
             quote: {
               id: 'msg_x',
-              authorId: 2,
+              authorId: userIdOfGumbo(2),
               authorName: undefined,
               snippet: 'what was said'
             },
-            reactions: [{ emoji: '👍', userIds: [1, 3], mine: true }],
+            reactions: [
+              {
+                emoji: '👍',
+                userIds: [userIdOfGumbo(1), userIdOfGumbo(3)],
+                mine: true
+              }
+            ],
             edited: true
           }),
           message({ id: 'msg_3', seq: 3, status: 'invalid', body: '' })
@@ -954,8 +992,8 @@ describe('a conversation', function () {
       'cnv_1',
       view({
         typing: [
-          { userId: 3, name: 'Blair B' },
-          { userId: 4, name: undefined }
+          { userId: userIdOfGumbo(3), name: 'Blair B' },
+          { userId: userIdOfGumbo(4), name: undefined }
         ]
       })
     )
@@ -976,7 +1014,7 @@ describe('a conversation', function () {
     await render(
       <ConversationScreen
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         conversationId="cnv_1"
         onMembers={() => {}}
         files={fakeFiles([])}
@@ -1000,7 +1038,7 @@ describe('a conversation', function () {
     await render(
       <ConversationScreen
         engine={engine}
-        userId={1}
+        userId={userIdOfGumbo(1)}
         conversationId="cnv_nope"
         onMembers={() => {}}
         files={fakeFiles([])}
@@ -1029,12 +1067,12 @@ describe('a conversation', function () {
           scopeName: null,
           memberCount: 1,
           title: dmTitle(
-            1,
-            [member(1, 'Trea Turner')],
-            [{ userId: 2, shortName: 'Aaron Judge', left: true }]
+            userIdOfGumbo(1),
+            [member(userIdOfGumbo(1), 'Trea Turner')],
+            [{ userId: userIdOfGumbo(2), shortName: 'Aaron Judge', left: true }]
           )
         }),
-        members: [member(1, 'Trea Turner')]
+        members: [member(userIdOfGumbo(1), 'Trea Turner')]
       })
     )
     expect(titles.at(-1)).equals('Aaron Judge (left)')
@@ -1235,16 +1273,16 @@ describe('starting a direct message', function () {
 
   class FakeDms {
     calls: string[] = []
-    adultsFor: number[] | undefined
+    adultsFor: string[] | undefined
     refuse: string | undefined
     people: ChatPerson[] = [
-      { userId: 7, shortName: 'Pat P', avatarUrl: null },
-      { userId: 8, shortName: 'Frankie F', avatarUrl: null }
+      { userId: userIdOfGumbo(7), shortName: 'Pat P', avatarUrl: null },
+      { userId: userIdOfGumbo(8), shortName: 'Frankie F', avatarUrl: null }
     ]
 
     adults: IncludedAdult[] = [
-      { userId: 20, shortName: 'Glen G', label: 'Guardian' },
-      { userId: 21, shortName: 'Hank C', label: 'Coach · Hawks' }
+      { userId: userIdOfGumbo(20), shortName: 'Glen G', label: 'Guardian' },
+      { userId: userIdOfGumbo(21), shortName: 'Hank C', label: 'Coach · Hawks' }
     ]
 
     async dmCandidates(query = ''): Promise<ChatPerson[]> {
@@ -1255,7 +1293,7 @@ describe('starting a direct message', function () {
     }
 
     async includedAdults(
-      playerIds: number[],
+      playerIds: string[],
       query = ''
     ): Promise<IncludedAdult[]> {
       this.calls.push(`adults ${playerIds.join(',')} ${query}`)
@@ -1264,7 +1302,7 @@ describe('starting a direct message', function () {
         : this.adults.filter(adult => adult.shortName.startsWith(query))
     }
 
-    async createDm(userIds: number[]): Promise<ChatConversation> {
+    async createDm(userIds: string[]): Promise<ChatConversation> {
       this.calls.push(`create ${userIds.join(',')}`)
       if (this.refuse != null) {
         throw new HttpError('forbidden', 'no', { reason: this.refuse })
@@ -1326,7 +1364,7 @@ describe('starting a direct message', function () {
     await press('Pick Frankie F')
     await press('Start conversation')
     await until('the conversation', () => created.length === 1)
-    expect(dms.calls).includes('create 8')
+    expect(dms.calls).includes(`create ${userIdOfGumbo(8)}`)
     expect(engine.calls).includes('refresh')
     await typeInto('Name', 'zzz')
     await until('nobody', () => text().includes('Nobody matches.'))
@@ -1334,7 +1372,7 @@ describe('starting a direct message', function () {
 
   it('opens Include another adult on adultRequired and starts again with them', async function () {
     const dms = new FakeDms()
-    dms.adultsFor = [7]
+    dms.adultsFor = [userIdOfGumbo(7)]
     const created: string[] = []
     await render(
       <NewDmScreen
@@ -1351,7 +1389,7 @@ describe('starting a direct message', function () {
     await until('the suggestions', () => text().includes('Glen G'))
     expect(text()).contains('Suggested')
     expect(text()).contains('Coach · Hawks')
-    expect(dms.calls).includes('adults 7 ')
+    expect(dms.calls).includes(`adults ${userIdOfGumbo(7)} `)
     await typeInto('Search for an adult', 'Eddie')
     await until('no match', () => text().includes('Nobody matches that name.'))
     expect(text()).contains('Matches')
@@ -1366,13 +1404,15 @@ describe('starting a direct message', function () {
     await press('Include Glen G')
     await press('Start with them')
     await until('the conversation', () => created.length === 1)
-    expect(dms.calls).includes('create 7,21,20')
+    expect(dms.calls).includes(
+      `create ${[7, 21, 20].map(userIdOfGumbo).join(',')}`
+    )
   })
 
   it('says who cannot be named, holds a DM to twenty, and closes the sheet', async function () {
     const dms = new FakeDms()
     dms.people = Array.from({ length: 22 }, (_, index) => ({
-      userId: 100 + index,
+      userId: userIdOfGumbo(100 + index),
       shortName: `Person ${index}`,
       avatarUrl: null
     }))
@@ -1400,12 +1440,12 @@ describe('starting a direct message', function () {
       text().includes('The conversation could not be started.')
     )
     dms.refuse = undefined
-    dms.adultsFor = [100]
+    dms.adultsFor = [userIdOfGumbo(100)]
   })
 
   it('cancels the sheet', async function () {
     const dms = new FakeDms()
-    dms.adultsFor = [7]
+    dms.adultsFor = [userIdOfGumbo(7)]
     dms.includedAdults = async () => {
       throw new Error('offline')
     }
@@ -1441,12 +1481,12 @@ describe('members, approvals and safety numbers', function () {
       'cnv_1',
       view({
         members: [
-          member(1, 'Blair B'),
-          member(2, 'Hank C', {
+          member(userIdOfGumbo(1), 'Blair B'),
+          member(userIdOfGumbo(2), 'Hank C', {
             label: 'Coach · Guardian',
             isModerator: true
           }),
-          member(9, 'Drew D', { safetyNumberChanged: true })
+          member(userIdOfGumbo(9), 'Drew D', { safetyNumberChanged: true })
         ]
       })
     )
@@ -1455,7 +1495,7 @@ describe('members, approvals and safety numbers', function () {
         requestId: 7,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
-        userId: 9,
+        userId: userIdOfGumbo(9),
         name: 'Drew D',
         oldSafetyNumber: '1'.repeat(60),
         newSafetyNumber: '2'.repeat(60)
@@ -1464,7 +1504,7 @@ describe('members, approvals and safety numbers', function () {
         requestId: 8,
         conversationId: 'cnv_other',
         conversationTitle: 'Elsewhere',
-        userId: 9,
+        userId: userIdOfGumbo(9),
         name: 'Drew D',
         oldSafetyNumber: undefined,
         newSafetyNumber: '3'.repeat(60)
@@ -1474,7 +1514,7 @@ describe('members, approvals and safety numbers', function () {
         requestId: 6,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
-        userId: 1,
+        userId: userIdOfGumbo(1),
         name: 'Blair B',
         oldSafetyNumber: '4'.repeat(60),
         newSafetyNumber: '5'.repeat(60)
@@ -1486,7 +1526,7 @@ describe('members, approvals and safety numbers', function () {
         engine={engine}
         client={{ leaveDm: async () => ({ closed: false }) }}
         conversationId="cnv_1"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onLeft={() => {}}
       />
     )
@@ -1546,7 +1586,7 @@ describe('members, approvals and safety numbers', function () {
         requestId: 99,
         conversationId: 'cnv_dm',
         conversationTitle: 'Pat P',
-        userId: 9,
+        userId: userIdOfGumbo(9),
         name: undefined,
         oldSafetyNumber: undefined,
         newSafetyNumber: '2'.repeat(60)
@@ -1565,7 +1605,7 @@ describe('members, approvals and safety numbers', function () {
           }
         }}
         conversationId="cnv_dm"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onLeft={() => (left += 1)}
       />
     )
@@ -1588,7 +1628,7 @@ describe('members, approvals and safety numbers', function () {
         engine={engine}
         client={{ leaveDm: async () => ({ closed: false }) }}
         conversationId="cnv_missing"
-        userId={1}
+        userId={userIdOfGumbo(1)}
         onLeft={() => {}}
       />
     )
@@ -1603,7 +1643,7 @@ describe('members, approvals and safety numbers', function () {
     await render(
       <SafetyNumberScreen
         engine={engine}
-        userId={5}
+        userId={userIdOfGumbo(5)}
         name="Blair B"
         onDone={() => (done += 1)}
       />
@@ -1622,7 +1662,7 @@ describe('members, approvals and safety numbers', function () {
     await render(
       <SafetyNumberScreen
         engine={engine}
-        userId={0}
+        userId={userIdOfGumbo(405)}
         name="Riley R"
         onDone={() => {}}
       />
@@ -1636,7 +1676,7 @@ describe('members, approvals and safety numbers', function () {
     await render(
       <SafetyNumberScreen
         engine={engine}
-        userId={404}
+        userId={userIdOfGumbo(404)}
         name="X"
         onDone={() => {}}
       />

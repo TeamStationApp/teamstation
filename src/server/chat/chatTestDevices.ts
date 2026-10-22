@@ -46,7 +46,7 @@ export interface TestDevice {
 
 /** One user's keys as their linked devices hold them. */
 export interface TestKeys {
-  userId: number
+  userId: string
   identityId: string
   identity: KeyPair
   /** By generation: `puks[0]` is generation 1. */
@@ -55,7 +55,7 @@ export interface TestKeys {
 
 /** A member to box an epoch key to, at their current PUK. */
 export interface Recipient {
-  userId: number
+  userId: string
   identityId: string
   generation: number
   publicKey: Uint8Array
@@ -260,7 +260,7 @@ export class ChatDevices {
         'GET',
         `/chat/conversations/${conversationId}/members`
       )
-    ) as Array<{ userId: number; eligible: boolean; hasIdentity: boolean }>
+    ) as Array<{ userId: string; eligible: boolean; hasIdentity: boolean }>
     const recipients: Recipient[] = []
     for (const member of members) {
       if (!member[which]) continue
@@ -313,7 +313,7 @@ export class ChatDevices {
     epoch: number
     previousKeyBox: string | null
     signature: string
-    boxes: Array<{ userId: number; pukGeneration: number; box: string }>
+    boxes: Array<{ userId: string; pukGeneration: number; box: string }>
   } {
     const previousKeyBox =
       fields.previousEpochKey == null
@@ -374,7 +374,7 @@ export class ChatDevices {
       identityId: string
       pukGeneration: number
       box: string
-      grantedByUserId: number | null
+      grantedByUserId: string | null
     }>) {
       expect(box.identityId).equals(keys.identityId)
       opened.set(

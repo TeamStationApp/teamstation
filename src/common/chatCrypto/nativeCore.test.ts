@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { utf8 } from './bytes'
 import { call as nodeCall } from './core'
 import { encodeArgs } from './coreCall'
 import { OP } from './coreOps'
@@ -37,6 +38,39 @@ describe('the chat crypto core on a phone', () => {
   it('is noNativeModule without the module', () => {
     expect(coreOf(null)).deep.equals({
       status: { ready: false, reason: 'noNativeModule' },
+      call: undefined
+    })
+  })
+
+  it('refuses a legacy-only native ABI before exposing any callable core', () => {
+    const real = addon()
+    let legacyCalls = 0
+    let fullWidthRefusals = 0
+    const legacy = {
+      call: (op: number, input: object): object => {
+        const bytes = new Uint8Array(input as ArrayBuffer)
+        if (op === OP.logRowHash) {
+          const view = new DataView(
+            bytes.buffer,
+            bytes.byteOffset,
+            bytes.byteLength
+          )
+          let at = 0
+          for (let slot = 0; slot < 4; slot++) at += 4 + view.getUint32(at)
+          if (view.getUint32(at) === 17) {
+            fullWidthRefusals += 1
+            return Uint8Array.of(1, ...utf8('malformed')).buffer
+          }
+        }
+        legacyCalls += 1
+        return real.call(op, input)
+      }
+    }
+    const core = coreOf(legacy)
+    expect(legacyCalls).above(0)
+    expect(fullWidthRefusals).equals(1)
+    expect(core).deep.equals({
+      status: { ready: false, reason: 'selfTestFailed' },
       call: undefined
     })
   })

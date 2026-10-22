@@ -4,7 +4,6 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import {
@@ -14,6 +13,7 @@ import {
 import { type Database, makeDatabase } from '../db/database'
 import type { MediaContext } from '../media/mediaContext'
 import { sendError } from '../middleware/withErrors'
+import { mintUserId } from '../users/mintUserId'
 import { followRoutes } from './follows'
 import { groupRoutes } from './groups'
 
@@ -21,7 +21,7 @@ import { groupRoutes } from './groups'
 describe('concurrent public and legacy team-follow APIs', function () {
   this.timeout(30000)
   const name = `teamstation_follow_concurrency_${Date.now()}`
-  const person = mintUserId(() => false)
+  const person = mintUserId()
   const teamId = 'tem_follow_concurrency'
   const barrier = 570031
   let admin: Pool
@@ -50,8 +50,8 @@ describe('concurrent public and legacy team-follow APIs', function () {
     pool = new Pool({ connectionString: connection })
     await migrateUp(pool, migrations)
     await pool.query(
-      'insert into users (id, "legacyId", display_name, password_hash) values ($1, $2, $3, $4)',
-      [person.userId, person.legacyId, 'Example Follower', 'fixture']
+      'insert into users (id, display_name, password_hash) values ($1, $2, $3)',
+      [person, 'Example Follower', 'fixture']
     )
     await pool.query('insert into teams (id, name) values ($1, $2)', [
       teamId,
@@ -64,7 +64,7 @@ describe('concurrent public and legacy team-follow APIs', function () {
     db = makeDatabase(connection)
     const app = express()
     app.use((req, _res, next) => {
-      req.actor = { userId: person.userId, isAdmin: false, scopes: [] }
+      req.actor = { userId: person, isAdmin: false, scopes: [] }
       next()
     })
     app.use('/api/v1', groupRoutes(db, media))
@@ -151,13 +151,13 @@ describe('concurrent public and legacy team-follow APIs', function () {
     const canonical = (
       await pool.query(
         'select count(*)::int as n from follows where user_id=$1 and group_type=$2 and group_id=$3',
-        [person.userId, 'team', teamId]
+        [person, 'team', teamId]
       )
     ).rows[0].n
     const legacy = (
       await pool.query(
         'select count(*)::int as n from team_follows where user_id=$1 and team_id=$2',
-        [person.userId, teamId]
+        [person, teamId]
       )
     ).rows[0].n
     expect(canonical).equals(method === 'PUT' ? 1 : 0)

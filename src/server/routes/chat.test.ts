@@ -6,6 +6,7 @@ import { base64url } from 'rfc4648'
 
 import { verifiedPrefix } from '../../common/chatCrypto/logHash'
 import { makeId } from '../../common/ids'
+import { userIdOfValue } from '../../common/userId'
 import { closeInto } from '../admin/people'
 import {
   type Answer,
@@ -119,7 +120,7 @@ describe('chat routes and the DM rules (U5)', function () {
     key: string,
     team: 'hawks' | 'eagles' | 'owls',
     birth?: { year: number; month: number }
-  ): Promise<number> {
+  ): Promise<string> {
     const userId = await fixture.person(key, { birth })
     await db
       .insertInto('memberships')
@@ -236,7 +237,7 @@ describe('chat routes and the DM rules (U5)', function () {
       )
       expect(answer.status).equals(200)
       const byKey = Object.fromEntries(
-        (answer.body as Array<{ userId: number }>).map(m => [
+        (answer.body as Array<{ userId: string }>).map(m => [
           fixture.keyOf(m.userId),
           m
         ])
@@ -273,7 +274,7 @@ describe('chat routes and the DM rules (U5)', function () {
       const labels = Object.fromEntries(
         (
           all.body as Array<{
-            userId: number
+            userId: string
             label: string
             isApprover: boolean
           }>
@@ -342,8 +343,8 @@ describe('chat routes and the DM rules (U5)', function () {
       const rows = answer.body as Array<{
         seq: number
         event: 'join'
-        userId: number
-        actorUserId: number | null
+        userId: string
+        actorUserId: string | null
         reason: string | null
         prevHash: string
         hash: string
@@ -469,6 +470,63 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(second.body.id).equals(first.body.id)
     })
 
+    it('reuses one exact full-width pair for reversed and concurrent creators without a scoring mapping', async function () {
+      const a = await fixture.person('fullA', {
+        userId: userIdOfValue((1n << 127n) + 7n)
+      })
+      const b = await fixture.person('fullB', {
+        userId: userIdOfValue((1n << 127n) + 58n)
+      })
+      try {
+        for (const userId of [a, b]) {
+          await db
+            .insertInto('memberships')
+            .values({
+              id: makeId('membership'),
+              user_id: userId,
+              team_id: fixture.seed.teams.hawks,
+              role: 'member'
+            })
+            .execute()
+        }
+        await fixture.drain()
+        const made = await Promise.all([
+          dm('fullA', ['fullB']),
+          dm('fullB', ['fullA'])
+        ])
+        expect(
+          made.map(answer => answer.status).sort((a, b) => a - b)
+        ).deep.equals([200, 201])
+        expect(made[0].body.id).equals(made[1].body.id)
+        for (const [who, other] of [
+          ['fullA', 'fullB'],
+          ['fullB', 'fullA']
+        ]) {
+          const again = await dm(who, [other])
+          expect(again.status).equals(200)
+          expect(again.body.id).equals(made[0].body.id)
+        }
+        expect(await memberKeys(made[0].body.id)).deep.equals([
+          'fullA',
+          'fullB'
+        ])
+        expect(
+          await db
+            .selectFrom('gumbo_ids')
+            .select('user_id')
+            .where('user_id', 'in', [a, b])
+            .execute()
+        ).deep.equals([])
+      } finally {
+        await db
+          .deleteFrom('memberships')
+          .where('team_id', '=', fixture.seed.teams.hawks)
+          .where('user_id', 'in', [a, b])
+          .execute()
+        await fixture.drain()
+      }
+    })
+
     it('keeps the pair rule on adds', async function () {
       const hcP = (await dm('Hc', ['P'])).body.id as string
       refusedAs(
@@ -494,7 +552,7 @@ describe('chat routes and the DM rules (U5)', function () {
           `/chat/dm-candidates?q=${encodeURIComponent(q)}`
         )
         expect(answer.status).equals(200)
-        return (answer.body as Array<{ userId: number }>)
+        return (answer.body as Array<{ userId: string }>)
           .map(person => fixture.keyOf(person.userId))
           .sort()
       }
@@ -664,7 +722,7 @@ describe('chat routes and the DM rules (U5)', function () {
         'GET',
         `/chat/conversations/${id}/members`
       )
-      const ha2 = (members.body as Array<{ userId: number }>).find(
+      const ha2 = (members.body as Array<{ userId: string }>).find(
         m => m.userId === fixture.id('Ha')
       )
       expect(ha2).to.include({
@@ -719,7 +777,7 @@ describe('chat routes and the DM rules (U5)', function () {
         id: string
         kind: string
         memberCount: number
-        people: Array<{ userId: number; shortName: string; left: boolean }>
+        people: Array<{ userId: string; shortName: string; left: boolean }>
       }>
       const peopleOf = async (
         who: string,
@@ -733,7 +791,7 @@ describe('chat routes and the DM rules (U5)', function () {
         expect(created.status, JSON.stringify(created.body)).equals(201)
         const id = created.body.id as string
         expect(
-          (created.body.people as Array<{ userId: number }>)
+          (created.body.people as Array<{ userId: string }>)
             .map(person => fixture.keyOf(person.userId))
             .sort()
         ).deep.equals(['A', 'Hc'])
@@ -902,7 +960,7 @@ describe('chat routes and the DM rules (U5)', function () {
           `/chat/included-adults?playerIds=${fixture.id('P')}&q=${encodeURIComponent(q)}`
         )
         expect(answer.status, JSON.stringify(answer.body)).equals(200)
-        return (answer.body as Array<{ userId: number; label: string }>)
+        return (answer.body as Array<{ userId: string; label: string }>)
           .map(adult => `${fixture.keyOf(adult.userId)} ${adult.label}`)
           .sort()
       }
@@ -1153,7 +1211,7 @@ describe('chat routes and the DM rules (U5)', function () {
       const p4Listed = (
         (await call('P4', 'GET', '/chat/conversations')).body as Array<{
           id: string
-          people: Array<{ userId: number; left: boolean }>
+          people: Array<{ userId: string; left: boolean }>
         }>
       ).find(chat => chat.id === bc)
       expect(p4Listed?.people.map(person => person.userId)).deep.equals([

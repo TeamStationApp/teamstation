@@ -17,7 +17,7 @@ export interface GuardiansModalProps {
   client: TeamStationClient
   /** The team the player is on, whose staff the caller is. */
   teamId: string
-  playerId: number | string
+  playerId: string
   playerName: string
   onClose: () => void
   /** Told the list as it stands after each change. */

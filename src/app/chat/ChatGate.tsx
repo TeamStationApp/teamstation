@@ -13,7 +13,7 @@ import type { ChatScreenEngine } from './screenEngine'
 export interface ChatGateProps {
   engine: Pick<ChatScreenEngine, 'start'>
   client: ChatKeysClient
-  userId: number
+  userId: string
   /** The key store the engine uses; the platform's own by default. */
   store?: ChatKeyStore
   device?: { name: string; platform: 'web' | 'ios' | 'android' }

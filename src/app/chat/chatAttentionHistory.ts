@@ -25,7 +25,7 @@ export class ChatHistoryCoordinator {
 /** A bounded scan may pass the unread boundary to verify a reply's original. */
 export async function discoverAttentionHistory(options: {
   conversationId: string
-  userId: number
+  userId: string
   session: ChatAttentionSession
   view: (id: string) => ConversationView | undefined
   loadEarlier: (id: string) => Promise<ConversationView>

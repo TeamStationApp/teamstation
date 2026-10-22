@@ -29,6 +29,7 @@ import { type ChatMyKeys, TeamStationClient } from '../../common/api'
 import type { ChatCoreStatus } from '../../common/chatCrypto/coreCall'
 import { newDeviceKeys } from '../../common/chatCrypto/keys'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
 
 /**
@@ -83,6 +84,43 @@ describe('chat keys on the device', function () {
     new TeamStationClient({ baseUrl: f().api, token: f().tokenOf(who) })
 
   const devices = new Map<string, ChatSetup & { store: MemoryStore }>()
+
+  it('opens an actually enrolled saved numeric record as the same migrated device without wiping or enrolling', async () => {
+    await f().person('legacy', { userId: userIdOfGumbo(42) })
+    const setup = deviceOf('legacy', 'legacy')
+    const enrolled = await ensureEnrolled(setup)
+    expect(enrolled.state).equals('ready')
+    const before = recordToJson(enrolled.record)
+    const raw = JSON.parse(before)
+    raw.version = 1
+    raw.userId = 42
+    // This device enrolled before the account cutover, with its same keys.
+    setup.store.text = JSON.stringify(raw)
+    const counts = async (): Promise<{
+      devices: Array<{ id: string }>
+      identities: unknown[]
+    }> => ({
+      devices: await f()
+        .db.selectFrom('chat_devices')
+        .select('id')
+        .where('user_id', '=', userIdOfGumbo(42))
+        .execute(),
+      identities: await f()
+        .db.selectFrom('chat_identities')
+        .selectAll()
+        .where('user_id', '=', userIdOfGumbo(42))
+        .execute()
+    })
+    const saved = await counts()
+    const reopened = await ensureEnrolled(setup)
+    expect(reopened.state).equals('ready')
+    expect(recordToJson(reopened.record)).equals(before)
+    expect(setup.store.wipes).equals(0)
+    expect(await counts()).deep.equals(saved)
+    expect((await setup.store.load())?.deviceId).equals(
+      enrolled.record.deviceId
+    )
+  })
 
   /**
    * One device: a session (`who`) of `key`, with a store. The same `who`
@@ -588,7 +626,7 @@ describe('chat keys on the device', function () {
   })
 
   it('has nothing to approve or move on without an identity', async function () {
-    const empty = newRecord(1, 'cdv', newDeviceKeys())
+    const empty = newRecord(userIdOfGumbo(1), 'cdv', newDeviceKeys())
     const one = deviceOf('A', 'A')
     expect(await rotatePuk(one, empty)).equals(empty)
     const error = await refusal(

@@ -54,7 +54,7 @@ export const CHALLENGE_LIFETIME_MS = 2 * 60_000
 
 /** A signed-in caller of the chat key routes. */
 export interface ChatCaller {
-  userId: number
+  userId: string
   sessionId: string
 }
 
@@ -166,14 +166,14 @@ export interface MyKeysView {
 }
 
 export interface UserKeysView {
-  userId: number
+  userId: string
   identity: { id: string; publicKey: string; createdAt: string } | null
   puk: { generation: number; publicKey: string; signature: string } | null
 }
 
 export interface IdentityView {
   id: string
-  userId: number
+  userId: string
   publicKey: string
   createdAt: string
   replacedAt: string | null
@@ -191,7 +191,7 @@ const refuse = (reason: string, message: string): Error =>
   forbidden(message, { reason })
 
 /** Serialises every key change of one user. */
-async function lockUser(trx: Kysely<Database>, userId: number): Promise<void> {
+async function lockUser(trx: Kysely<Database>, userId: string): Promise<void> {
   await sql`select pg_advisory_xact_lock(hashtextextended(${`chatKeys:${userId}`}, 0))`.execute(
     trx
   )
@@ -214,7 +214,7 @@ async function boundDevice(
 /** The user's current identity and its latest PUK generation. */
 async function currentKeys(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<CurrentKeys | undefined> {
   const row = await db
     .selectFrom('chat_identities')
@@ -243,7 +243,7 @@ async function currentKeys(
 /** The user's linked devices: unrevoked, with a box at `keys.generation`. */
 async function linkedDeviceIds(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   keys: CurrentKeys | undefined
 ): Promise<string[]> {
   if (keys == null) return []
@@ -299,7 +299,7 @@ async function requireBoundDevice(
 /** Every conversation the user is in now, by id. */
 async function conversationIdsOf(
   trx: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<string[]> {
   const rows = await trx
     .selectFrom('chat_members')
@@ -327,7 +327,7 @@ async function flagRotation(
 async function openRequestsIn(
   trx: Kysely<Database>,
   conversationIds: string[],
-  userId: number,
+  userId: string,
   identityReset = false
 ): Promise<number> {
   let opened = 0
@@ -338,7 +338,7 @@ async function openRequestsIn(
 }
 
 function checkPukSignature(
-  userId: number,
+  userId: string,
   generation: number,
   publicKey: Uint8Array,
   signature: Uint8Array,
@@ -383,7 +383,7 @@ async function revokeDevices(
 /** Writes a new identity with PUK generation 1 boxed to `deviceId`. */
 async function writeIdentity(
   trx: Kysely<Database>,
-  userId: number,
+  userId: string,
   deviceId: string,
   body: IdentityBody,
   now: Date
@@ -1002,8 +1002,8 @@ export async function myKeys(
  */
 async function reaches(
   db: Kysely<Database>,
-  callerId: number,
-  userId: number
+  callerId: string,
+  userId: string
 ): Promise<boolean> {
   if (callerId === userId) return true
   const row = await db
@@ -1025,8 +1025,8 @@ async function reaches(
 /** `GET /chat/users/:userId/keys`: a reachable user's current identity and PUK. */
 export async function userKeys(
   db: Kysely<Database>,
-  callerId: number,
-  userId: number
+  callerId: string,
+  userId: string
 ): Promise<UserKeysView> {
   if (!(await reaches(db, callerId, userId))) throw notFound()
   const keys = await currentKeys(db, userId)
@@ -1061,7 +1061,7 @@ export async function userKeys(
 /** `GET /chat/identities/:identityId`: any identity, current or replaced, of a reachable user. */
 export async function identityById(
   db: Kysely<Database>,
-  callerId: number,
+  callerId: string,
   identityId: string
 ): Promise<IdentityView> {
   const row = await db

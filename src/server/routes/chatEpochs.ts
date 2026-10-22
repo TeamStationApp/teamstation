@@ -4,7 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { isIdentityId } from '../../common/chatCrypto/messageIds'
 import { notFound } from '../../common/errors'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   createEpoch,
   epochsFor,
@@ -109,7 +109,7 @@ export function chatEpochRoutes(
 
   const mustBeMember = async (
     conversationId: string,
-    userId: number
+    userId: string
   ): Promise<void> => {
     if (!(await memberNow(db, conversationId, userId, clock()))) {
       throw notFound()

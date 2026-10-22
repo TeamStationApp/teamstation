@@ -234,7 +234,9 @@ describe('a navbar press clears that tab', () => {
     }
   }
 
-  async function openPlayer(from: 'home' | 'videos' | 'schedule'): Promise<void> {
+  async function openPlayer(
+    from: 'home' | 'videos' | 'schedule'
+  ): Promise<void> {
     if (from === 'videos') await pressNav('Videos', 350)
     if (from === 'schedule') await pressNav('Schedule', 350)
     if (from === 'home') {

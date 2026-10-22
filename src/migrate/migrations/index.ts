@@ -72,6 +72,7 @@ import { migration064MembershipRequests } from './064membershipRequests'
 import { migration065RadarReadings } from './065radarReadings'
 import { migration066GameGuests } from './066gameGuests'
 import { migration067GameUnroster } from './067gameUnroster'
+import { migration068ChatUserIdBridge } from './068chatUserIdBridge'
 import { migration068GumboIds } from './068gumboIds'
 import { migration069UserIds } from './069userIds'
 import { migration070PlayerGumboIds } from './070playerGumboIds'
@@ -82,6 +83,7 @@ import { migration073SyncClock } from './073syncClock'
 import { migration073UmpireManagement } from './073umpireManagement'
 import { migration074OptionalUmpires } from './074optionalUmpires'
 import { migration074SyncIdempotency } from './074syncIdempotency'
+import { migration075ChatCanonicalUserIds } from './075chatCanonicalUserIds'
 import { migration075UmpireTypes } from './075umpireTypes'
 import { migration076UmpireNotes } from './076umpireNotes'
 
@@ -160,6 +162,7 @@ export const migrations: Migration[] = [
   migration065RadarReadings,
   migration066GameGuests,
   migration067GameUnroster,
+  migration068ChatUserIdBridge,
   migration068GumboIds,
   migration069UserIds,
   migration070PlayerGumboIds,
@@ -170,6 +173,7 @@ export const migrations: Migration[] = [
   migration073UmpireManagement,
   migration074OptionalUmpires,
   migration074SyncIdempotency,
+  migration075ChatCanonicalUserIds,
   migration075UmpireTypes,
   migration076UmpireNotes
 ]

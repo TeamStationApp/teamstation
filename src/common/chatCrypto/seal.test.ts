@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { hex, oracle, seed } from '../../test/chatCryptoOracle'
+import { userIdOfGumbo } from '../userId'
 import { utf8 } from './bytes'
 import { signingPublicKey } from './keys'
 import {
@@ -26,7 +27,7 @@ const fields: MessageFields = {
   conversationId: 'cnv_c1',
   epoch: 7,
   messageId: 'msg_aaaaaaaaaaaaaaaaaaaaaaaaaa',
-  senderUserId: 42,
+  senderUserId: userIdOfGumbo(42),
   kind: 'post'
 }
 const plaintext = utf8(
@@ -229,7 +230,7 @@ describe('chatCrypto seal', () => {
       const changes: Array<Partial<MessageFields>> = [
         { conversationId: 'cnv_c2' },
         { epoch: 8 },
-        { senderUserId: 43 },
+        { senderUserId: userIdOfGumbo(43) },
         { kind: 'edit' },
         { messageId: 'msg_baaaaaaaaaaaaaaaaaaaaaaaaa' }
       ]

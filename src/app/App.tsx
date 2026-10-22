@@ -51,8 +51,8 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
-import { ChoiceSheet } from './components/ChoiceSheet'
 import { FLOATING_HEIGHT_REM } from './components/AppNav'
+import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
@@ -1943,7 +1943,7 @@ function Shell(props: AppProps): React.ReactElement {
       gated(
         <ChatWorkspace
           engine={chatEngine!}
-          userId={session?.user.id ?? 0}
+          userId={signedInAs!}
           state={chatWorkspaceState}
           listNavigation={chatListNavigation}
           conversationId={
@@ -2402,7 +2402,7 @@ function Shell(props: AppProps): React.ReactElement {
           engine={chatEngine!}
           client={client}
           conversationId={top.conversationId}
-          userId={session?.user.id ?? 0}
+          userId={signedInAs!}
           onLeft={() => {
             // Out of the chat and its members, back to the list.
             setStacks(current => ({

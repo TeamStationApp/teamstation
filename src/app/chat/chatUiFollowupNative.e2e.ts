@@ -107,8 +107,8 @@ interface Fixture {
   initialMessagePinned?: boolean
   initialPreferences?: { pinned: boolean; muted: boolean }
   orientationPolicy: 'portrait-only' | 'rotate'
-  actor: { userId: number; email: string; password: string }
-  peers?: Array<{ userId: number }>
+  actor: { userId: string; email: string; password: string }
+  peers?: Array<{ userId: string }>
 }
 
 function required(key: string): string {
@@ -1182,7 +1182,7 @@ async function main(): Promise<void> {
         readFileSync(required('CHAT_UI_NATIVE_LIST_TERMINAL_FIXTURE'), 'utf8')
       ) as {
         synthetic: true
-        actorUserId: number
+        actorUserId: string
         zeroRows: [string, string]
         membersConversationId: string
         membersHeading: string
@@ -4408,7 +4408,7 @@ async function main(): Promise<void> {
         selfReplyBody: string
         pinnedBeforeDelete: boolean
         synthetic: boolean
-        authorUserId: number
+        authorUserId: string
         preparePersonalPin?: boolean
       }
       assert(

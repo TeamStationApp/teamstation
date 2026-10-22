@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asChatConversation, asChatDmPerson } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { teamTint } from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import { conversationIdentity, memberIdentity } from './chatIdentityModel'
@@ -64,31 +65,42 @@ describe('chat identities', function () {
   it('uses current DM participants in stable ID order, independently of display-name ties and departed profiles', function () {
     const people = [
       asChatDmPerson({
-        userId: 9,
+        userId: userIdOfGumbo(9),
         shortName: 'Aaron Judge',
         left: false,
         avatarUrl: 'https://media.example.test/nine.png'
       }),
-      asChatDmPerson({ userId: 2, shortName: 'Aaron Judge', left: false }),
       asChatDmPerson({
-        userId: 1,
+        userId: userIdOfGumbo(2),
+        shortName: 'Aaron Judge',
+        left: false
+      }),
+      asChatDmPerson({
+        userId: userIdOfGumbo(1),
         shortName: 'Mookie Betts',
         left: true,
         avatarUrl: 'https://media.example.test/former.png'
       }),
-      asChatDmPerson({ userId: 2, shortName: 'Aaron Judge', left: false })
+      asChatDmPerson({
+        userId: userIdOfGumbo(2),
+        shortName: 'Aaron Judge',
+        left: false
+      })
     ]
     const before = [...people]
     const identity = conversationIdentity(
       chat({ kind: 'dm', scope: null, people })
     )
-    expect(identity.tiles.map(tile => tile.key)).deep.equals(['2', '9'])
+    expect(identity.tiles.map(tile => tile.key)).deep.equals([
+      userIdOfGumbo(2),
+      userIdOfGumbo(9)
+    ])
     expect(identity.tiles.map(tile => tile.uri)).deep.equals([
       null,
       'https://media.example.test/nine.png'
     ])
     expect(identity.tiles[0]).deep.equals(
-      memberIdentity(member(2, 'Aaron Judge')).tiles[0]
+      memberIdentity(member(userIdOfGumbo(2), 'Aaron Judge')).tiles[0]
     )
     expect(people).deep.equals(before)
     expect(
@@ -106,13 +118,13 @@ describe('chat identities', function () {
 
   it('keeps a single DM person, legacy images, just-you and missing-scope identities distinct', function () {
     const person = asChatDmPerson({
-      userId: 2,
+      userId: userIdOfGumbo(2),
       shortName: 'Mookie Betts',
       left: false
     })
     expect(
       conversationIdentity(chat({ kind: 'dm', scope: null, people: [person] }))
-    ).deep.equals(memberIdentity(member(2, 'Mookie Betts')))
+    ).deep.equals(memberIdentity(member(userIdOfGumbo(2), 'Mookie Betts')))
     const legacy = chat({
       kind: 'dm',
       scope: null,
@@ -128,7 +140,7 @@ describe('chat identities', function () {
     ).equals('Conversation')
     expect(
       memberIdentity(
-        member(7, 'Aaron Judge', {
+        member(userIdOfGumbo(7), 'Aaron Judge', {
           avatarUrl: 'https://media.example.test/current.png'
         })
       ).tiles[0].uri
@@ -148,8 +160,11 @@ describe('chat identities', function () {
     expect(next.avatarName).equals('Harbor')
     expect(next.avatarUrl).equals('https://media.example.test/harbor.png')
     expect(
-      asChatDmPerson({ userId: 2, shortName: 'Aaron Judge', left: false })
-        .avatarUrl
+      asChatDmPerson({
+        userId: userIdOfGumbo(2),
+        shortName: 'Aaron Judge',
+        left: false
+      }).avatarUrl
     ).equals(null)
   })
 })

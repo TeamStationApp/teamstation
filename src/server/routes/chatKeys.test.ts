@@ -59,7 +59,7 @@ interface Device {
 
 /** One user's keys as their linked devices hold them. */
 interface Keys {
-  userId: number
+  userId: string
   identityId: string
   identity: KeyPair
   /** By generation: `puks[0]` is generation 1. */
@@ -341,7 +341,7 @@ describe('chat devices, identities and keys (U6)', function () {
   ): number => (x.conversationId < y.conversationId ? -1 : 1)
 
   async function openRequests(
-    userId: number
+    userId: string
   ): Promise<Array<{ conversationId: string; reset: boolean }>> {
     const rows = await db
       .selectFrom('chat_grant_requests')
@@ -1325,7 +1325,7 @@ describe('chat devices, identities and keys (U6)', function () {
       )
       expect(
         listedMembers.find(
-          (row: { userId: number }) => row.userId === keys.userId
+          (row: { userId: string }) => row.userId === keys.userId
         )
       ).to.include({
         identityKey: b(fresh.keys.identity.publicKey),
@@ -1369,7 +1369,7 @@ describe('chat devices, identities and keys (U6)', function () {
       expect(
         ok(
           await call('Ha', 'GET', `/chat/conversations/${staff}/members`)
-        ).find((row: { userId: number }) => row.userId === keys.userId)
+        ).find((row: { userId: string }) => row.userId === keys.userId)
       ).to.include({ eligible: false })
     })
 
