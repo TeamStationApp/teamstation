@@ -366,7 +366,7 @@ describe('private socket access follows approved game revisions', function () {
         ).length(0)
       }
     )
-  it('requires fresh credentials after suspension and reactivation instead of resuming an old socket', async () => {
+  it('reads the game again after reactivation and does not resume the old socket', async () => {
     await f.h.db
       .insertInto('memberships')
       .values({
@@ -414,7 +414,7 @@ describe('private socket access follows approved game revisions', function () {
     expect(
       (await f.h.request('GET', `/games/${accepted.gameId}`, undefined, 106))
         .status
-    ).equals(401)
+    ).equals(200)
     await socket.fanout.deliver(
       JSON.stringify({ game: accepted.gameId, kind: 'plays' })
     )

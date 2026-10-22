@@ -344,13 +344,17 @@ describe('the non-member view', function () {
       expect(body.nonMemberView).equals(false)
     })
 
+    it('answers a game page without a session', async function () {
+      const { status } = await call(`/games/${game}`, null)
+      expect(status).equals(200)
+    })
+
     it('answers every private read 401', async function () {
       for (const path of [
         `/teams/${f.teamA}/roster`,
         `/teams/${f.teamA}/games`,
         `/teams/${f.teamA}/stats`,
         `/seasons/${f.seasonA}/standings`,
-        `/games/${game}`,
         `/games/${game}/box-score`,
         `/videos/${video}/playback`,
         `/videos/${video}/still?t=60`

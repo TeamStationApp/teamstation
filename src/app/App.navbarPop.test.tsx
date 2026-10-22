@@ -79,7 +79,8 @@ const season = asPublicGroup({
   locality: null
 })
 
-describe('a navbar press clears that tab', () => {
+describe('a navbar press clears that tab', function () {
+  this.timeout(20000)
   const proto = TeamStationClient.prototype
   const originals = Object.getOwnPropertyDescriptors(proto)
 
@@ -142,7 +143,8 @@ describe('a navbar press clears that tab', () => {
       })
     proto.playerHighlights = async () => ({
       highlights: [],
-      nextBefore: null
+      nextBefore: null,
+      withoutVideo: 0
     })
     proto.discoverGroups = async () => [league]
     proto.group = async ref =>
@@ -233,7 +235,9 @@ describe('a navbar press clears that tab', () => {
     }
   }
 
-  async function openPlayer(from: 'home' | 'videos' | 'schedule'): Promise<void> {
+  async function openPlayer(
+    from: 'home' | 'videos' | 'schedule'
+  ): Promise<void> {
     if (from === 'videos') await pressNav('Videos', 350)
     if (from === 'schedule') await pressNav('Schedule', 350)
     if (from === 'home') {

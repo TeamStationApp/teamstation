@@ -1,4 +1,4 @@
-import { globSync, mkdirSync } from 'node:fs'
+import { globSync, mkdirSync, readFileSync } from 'node:fs'
 
 import { build } from 'esbuild'
 
@@ -34,6 +34,24 @@ const entries = [
 for (const entry of entries)
   await build({
     ...webSettings,
+    plugins: [
+      ...webSettings.plugins,
+      {
+        // The native initials test injects layout through a stand-in Text.
+        // The component imports react-native, so the rewrite is the only way
+        // that stand-in is the Text it renders.
+        name: 'native-initials-measurement-unit',
+        setup(build) {
+          build.onLoad({ filter: /FittedInitials\.native\.tsx$/ }, args => ({
+            contents: readFileSync(args.path, 'utf8').replace(
+              "from 'react-native'",
+              "from '../../test/nativeInitialsTextStub'"
+            ),
+            loader: 'tsx'
+          }))
+        }
+      }
+    ],
     // Native SVG adapter tests use the package's web renderer and web asset registry.
     alias: {
       ...webSettings.alias,

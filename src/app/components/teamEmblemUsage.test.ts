@@ -9,7 +9,7 @@ describe('team identity composition boundaries', () => {
     ['components/GameHeroCard.tsx', '<TeamEmblem'],
     ['screens/TeamScreen.tsx', '<TeamEmblem'],
     ['screens/SeasonStandings.tsx', '<TeamEmblem'],
-    ['screens/DiscoverScreen.tsx', "group.kind === 'team'"],
+    ['components/GroupSearchCard.tsx', "group.kind === 'team'"],
     ['screens/TeamSelectorScene.tsx', 'teamName={row.name}'],
     ['screens/GameFormScreen.tsx', 'teamName={choice.group.name}'],
     ['screens/HomeScreen.tsx', 'teamName={team.name}'],
@@ -17,8 +17,8 @@ describe('team identity composition boundaries', () => {
     ['screens/GroupSettingsScreen.tsx', "team={kind === 'team'}"],
     ['screens/CreateGroupScreen.tsx', "team={kind === 'team'}"],
     ['screens/PlaceholderTeamForm.tsx', 'team\n'],
-    ['screens/LeaguePage.tsx', 'kind="team"'],
-    ['screens/SeasonPresentation.tsx', 'kind="team"']
+    ['screens/LeaguePage.tsx', "onOpen({ kind: 'team', id: team.id })"],
+    ['screens/SeasonPresentation.tsx', "kind: 'team'"]
   ])
     it(`${file} uses its explicit team identity boundary`, () => {
       expect(readFileSync(`src/app/${file}`, 'utf8')).includes(mode)

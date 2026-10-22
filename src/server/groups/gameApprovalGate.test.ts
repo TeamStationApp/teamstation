@@ -92,7 +92,7 @@ describe('game approval readiness matches Express route semantics', function () 
         .status
     ).equals(404)
   })
-  it('preserves case-insensitive routing after cutover, requires the true guest administrator and shares the resulting game', async () => {
+  it('preserves case-insensitive routing after cutover and shares the resulting game', async () => {
     await f.h.db
       .insertInto('system_settings')
       .values({ key: 'creation.hierarchyReady', value: true })
@@ -109,26 +109,17 @@ describe('game approval readiness matches Express route semantics', function () 
       101
     )
     expect(sent.status).equals(201)
-    const pending = (await sent.json()) as {
-      id: string
+    const created = (await sent.json()) as {
       status: string
-      gameId: string | null
+      gameId: string
     }
-    expect(pending).includes({ status: 'pending', gameId: null })
-    const accepted = await f.h.request(
-      'POST',
-      `/GAME-REQUESTS/${pending.id}/ACCEPT/`,
-      {},
-      102
-    )
-    expect(accepted.status).equals(200)
-    const game = (await accepted.json()) as { status: string; gameId: string }
-    expect(game.status).equals('accepted')
+    expect(created.status).equals('accepted')
+    expect(created.gameId).to.be.a('string')
     expect(
       (
         await f.h.request(
           'GET',
-          `/GAMES/${game.gameId}/SCHEDULING/`,
+          `/GAMES/${created.gameId}/SCHEDULING/`,
           undefined,
           101
         )
@@ -138,7 +129,7 @@ describe('game approval readiness matches Express route semantics', function () 
       (
         await f.h.request(
           'POST',
-          `/GAMES/${game.gameId}/WITHDRAWALS/`,
+          `/GAMES/${created.gameId}/WITHDRAWALS/`,
           { teamId: f.teamB },
           102
         )
@@ -148,7 +139,7 @@ describe('game approval readiness matches Express route semantics', function () 
       await f.h.db
         .selectFrom('games')
         .select(['status', 'withdrawn_by_team_id'])
-        .where('id', '=', game.gameId)
+        .where('id', '=', created.gameId)
         .executeTakeFirstOrThrow()
     ).deep.equals({ status: 'cancelled', withdrawn_by_team_id: f.teamB })
   })

@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import type * as AddressBar from './useAddressBar'
 import { dropRouteSuffix, showRoute } from './useAddressBar'
 
 const frames = [
@@ -21,8 +22,8 @@ function showHomeLine(): void {
   showRoute({ name: 'player', userId: 'id' })
 }
 
-function nextPop(ms = 1000): Promise<void> {
-  return new Promise((resolve, reject) => {
+async function nextPop(ms = 1000): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error('no popstate'))
     }, ms)
@@ -90,8 +91,8 @@ describe('a navbar clear in the address bar', function () {
     showRoute({ name: 'game', gameId: 'gam_demo' })
     expect(window.history.state.tsRouteIndex >= 2).equals(true)
     const addressPath = require.resolve('./useAddressBar.ts')
-    delete require.cache[addressPath]
-    const fresh = require('./useAddressBar.ts') as typeof import('./useAddressBar')
+    Reflect.deleteProperty(require.cache, addressPath)
+    const fresh = require('./useAddressBar.ts') as typeof AddressBar
     fresh.showRoute(fresh.currentRoute(), true)
     expect(() => {
       fresh.dropRouteSuffix([{ name: 'game', gameId: 'gam_demo' }], '/')
@@ -102,8 +103,8 @@ describe('a navbar clear in the address bar', function () {
   it('does not throw when Forward lands on a slot the mirror truncated', async function () {
     window.history.replaceState(null, '', '/')
     const addressPath = require.resolve('./useAddressBar.ts')
-    delete require.cache[addressPath]
-    const fresh = require('./useAddressBar.ts') as typeof import('./useAddressBar')
+    Reflect.deleteProperty(require.cache, addressPath)
+    const fresh = require('./useAddressBar.ts') as typeof AddressBar
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)

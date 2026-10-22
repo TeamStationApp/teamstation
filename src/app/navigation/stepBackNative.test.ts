@@ -1,14 +1,44 @@
+import Module from 'node:module'
+
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import {
+import type * as AddressBar from './useAddressBar.native'
+
+type AddressBarModule = typeof AddressBar
+
+/**
+ * Loads the phone history against a stand-in `react-native`. The module only
+ * touches BackHandler, Linking and Platform from a hook these tests never
+ * call, and the real package is Flow, which sucrase cannot load.
+ */
+function load(): AddressBarModule {
+  const reactNative = require.resolve('react-native')
+  const file = require.resolve('./useAddressBar.native')
+  const original = require.cache[reactNative]
+  const prior = require.cache[file]
+  const replacement = new Module(reactNative)
+  replacement.exports = {}
+  require.cache[reactNative] = replacement
+  Reflect.deleteProperty(require.cache, file)
+  try {
+    return require('./useAddressBar.native') as AddressBarModule
+  } finally {
+    if (original == null) Reflect.deleteProperty(require.cache, reactNative)
+    else require.cache[reactNative] = original
+    if (prior == null) Reflect.deleteProperty(require.cache, file)
+    else require.cache[file] = prior
+  }
+}
+
+const {
   currentRoute,
   dropRouteSuffix,
   scoringOriginHistory,
   seedRoute,
   showRoute,
   stepBackTo
-} from './useAddressBar.native'
+} = load()
 
 describe('closing the full-screen player on a phone (U12)', function () {
   it('goes back to the step it was opened over, with the address it has now', function () {

@@ -67,15 +67,12 @@ describe('app titles', function () {
 
   it('hands the game card up as the card itself goes under', function () {
     const game = readFileSync(join(__dirname, 'screens/GameScreen.tsx'), 'utf8')
-    // Measured across the block the card shares with the pills, the score only
-    // arrived once the pills had gone under too — long after the thing it is a
-    // copy of had left the screen. So: the card alone.
-    expect(game).contains('ref={handoff.ref}>')
-    expect(game).contains('{scoreboard}')
-    // And it has to survive Android's view flattening, which folds away a view
-    // that only groups its children — leaving nothing with a position to hand
-    // anything over from.
-    expect(game).contains('collapsable={false} ref={handoff.ref}')
+    // The scoreboard is the card band. The pills are the band under it, so
+    // the name is measured on the card and arrives when that card goes under.
+    expect(game).contains(
+      '<CardBand part={pinned.cardBand}>{scoreboard}</CardBand>'
+    )
+    expect(game).contains('<PillBand part={pinned.pillBand}>')
   })
 
   it('keeps the pane keyed, so a breakpoint cannot remount the player', function () {

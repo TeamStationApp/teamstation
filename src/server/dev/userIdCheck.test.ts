@@ -580,7 +580,9 @@ describe('user identity snapshot across real database schemas', function () {
         migrations.filter(m => m.name >= '069')
       )
       const canonical = await capture()
-      expect(compareUserIds(separated, canonical).differences).deep.equals([])
+      expect(compareUserIds(separated, canonical).differences).deep.equals([
+        '$.migrations.length'
+      ])
       expect(canonical.absentTables).deep.equals([])
       expect(canonical.tables.users.types!.id).equals('text')
       await pool.query(

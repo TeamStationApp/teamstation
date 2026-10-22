@@ -57,8 +57,10 @@ function columnOf(container: HTMLElement): HTMLElement {
 }
 
 function frameOf(container: HTMLElement): HTMLElement {
-  const marked = container.querySelector('[aria-label="Play"]')
-  const frame = marked?.parentElement
+  // The row is the button. The play glyph is decorative, and the length is
+  // drawn in the frame.
+  const time = leaf(container, '1:30:00')
+  const frame = time?.parentElement
   if (frame == null) throw new Error('no poster frame')
   return frame
 }

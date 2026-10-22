@@ -1,9 +1,5 @@
-# Lint before every commit.
-#
-# This is here because it was not: the 1.0 package owned the hook, and when
-# that package went the hook went with it. Nothing else runs eslint — there is
-# no CI — so the count drifted to 98 problems before anybody counted.
-#
-# Lint only. A typecheck and the test suite are another twenty-five seconds,
-# which is the kind of wait people learn to pass with --no-verify.
+# Lint, typecheck, and the unit suite before every commit.
+# A hook inherits the index of the commit in progress. Tests that build their
+# own repository need a normal checkout.
+unset $(git rev-parse --local-env-vars)
 npm run precommit

@@ -1,10 +1,6 @@
 import { useEffect } from 'react'
 
-import {
-  type ClearedFrame,
-  frameMatchesPath,
-  suffixDropCount
-} from './history'
+import { type ClearedFrame, frameMatchesPath, suffixDropCount } from './history'
 import { parseRoute, type Route, routePath } from './routes'
 
 let guard:
@@ -17,7 +13,7 @@ let guard:
   | undefined
 let position = 0
 /** The addresses `showRoute` has written, beside `position`. */
-let trail: string[] = []
+const trail: string[] = []
 
 function locationPath(): string {
   return window.location.pathname + window.location.search

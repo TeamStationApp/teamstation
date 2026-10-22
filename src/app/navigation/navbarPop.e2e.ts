@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- Browser callbacks are serialized without compiler helpers. */
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -47,9 +46,7 @@ async function main(): Promise<void> {
   // The player's own Videos pill is also a tab. The navbar is the tablist
   // with no name of its own.
   const tapTab = async (label: string): Promise<void> => {
-    await tapCss(
-      `[role="tablist"]:not([aria-label]) [aria-label="${label}"]`
-    )
+    await tapCss(`[role="tablist"]:not([aria-label]) [aria-label="${label}"]`)
   }
   const settle = async (text: string): Promise<void> => {
     await contains(page, text)
@@ -119,7 +116,7 @@ async function main(): Promise<void> {
     ).results[0]
     assert.equal(scheduled.result, 'created', JSON.stringify(scheduled))
     const gameId = scheduled.gameId
-    assert.ok(gameId)
+    assert.equal(gameId != null, true)
     const now = f.clock.now()
     await f.h.db
       .insertInto('videos')
@@ -197,14 +194,20 @@ async function main(): Promise<void> {
     await settle('Game videos')
     await openPlayerFromGame()
     if (before) await shot('videos-deep-before.png')
-    else await popped('Videos', '/videos', 'Game videos', 'videos-root-after.png')
+    else
+      await popped('Videos', '/videos', 'Game videos', 'videos-root-after.png')
 
     await tapTab('Schedule')
     await settle('Schedule')
     await openPlayerFromGame()
     if (before) await shot('schedule-deep-before.png')
     else
-      await popped('Schedule', '/schedule', 'Schedule', 'schedule-root-after.png')
+      await popped(
+        'Schedule',
+        '/schedule',
+        'Schedule',
+        'schedule-root-after.png'
+      )
 
     await tapTab('Search')
     await settle('Discover')

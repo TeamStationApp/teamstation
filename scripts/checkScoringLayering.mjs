@@ -11,7 +11,9 @@ import { fileURLToPath } from 'node:url'
  * scorer's field scoreboard and the public one agree; it changes nothing.
  * `startingSetup` makes the lineups a game starts from, `rosterCommands`
  * changes a draft of the lineups, never the game, and `playerTags` names a
- * player to a dictation model.
+ * player to a dictation model. `lineup` and `lineupHistory` say who is
+ * batting and what a saved lineup showed. `boardLineTypes` is the line
+ * score the box draws.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -22,7 +24,10 @@ export const APP_MAY_IMPORT = [
   'scoreboardOf',
   'startingSetup',
   'rosterCommands',
-  'playerTags'
+  'playerTags',
+  'lineup',
+  'lineupHistory',
+  'boardLineTypes'
 ]
 const LIBRARY = 'src/common/scoring'
 

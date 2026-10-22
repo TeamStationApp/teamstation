@@ -15,7 +15,6 @@ import {
 } from '../../server/users/insertUser'
 import { migrateDown, migrateUp } from '../runner'
 import { testDatabaseUrl } from '../testDatabase'
-import { migration070PlayerGumboIds } from './070playerGumboIds'
 import { migrations } from './index'
 
 describe('070 scoring identities only when needed', function () {
@@ -268,7 +267,7 @@ describe('070 scoring identities only when needed', function () {
       .execute()
     let failure: unknown
     try {
-      await migrateDown(pool, [migration070PlayerGumboIds])
+      await migrateDown(pool, migrations)
     } catch (error) {
       failure = error
     }
