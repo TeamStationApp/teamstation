@@ -1553,7 +1553,13 @@ describe('members, approvals and safety numbers', function () {
     )
     expect(engine.calls).includes('approve 7')
 
-    await press('Safety number with Hank C')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(
+          `[data-testid="chat-info-member-${userIdOfGumbo(2)}"]`
+        )!
+        .click()
+    })
     await until('the digits', () =>
       text().includes('Safety number with Hank C')
     )

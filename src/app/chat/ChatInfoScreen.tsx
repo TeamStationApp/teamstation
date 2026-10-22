@@ -365,15 +365,20 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
               <View key={member.userId}>
                 {index > 0 && <View style={shared.divider} />}
                 <Pressable
+                  testID={`chat-info-member-${member.userId}`}
                   accessibilityRole="button"
-                  accessibilityLabel={
+                  accessibilityLabel={[
                     me
-                      ? member.shortName
+                      ? `${member.shortName} (${lstrings.chat_you})`
                       : sprintf(
                           lstrings.chat_safety_number_with,
                           member.shortName
-                        )
-                  }
+                        ),
+                    member.label,
+                    member.isModerator ? lstrings.chat_moderator : ''
+                  ]
+                    .filter(part => part !== '')
+                    .join(', ')}
                   disabled={me}
                   onPress={() => {
                     setSafety(member)

@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { userIdOfGumbo } from '../../common/userId'
+import { userIdOfGumbo, userIdOfValue } from '../../common/userId'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatInfoScreen, type ChatInfoScreenProps } from './ChatInfoScreen'
@@ -76,7 +76,7 @@ class InfoEngine implements EngineContract {
     return 0
   }
 
-  async safetyNumber(): Promise<string> {
+  async safetyNumber(_userId: string): Promise<string> {
     return '12345'.repeat(12)
   }
 
@@ -154,7 +154,69 @@ async function press(label: string): Promise<void> {
   })
 }
 
+async function pressMember(userId: string): Promise<void> {
+  const button = host!.querySelector<HTMLElement>(
+    `[data-testid="chat-info-member-${userId}"]`
+  )
+  expect(button, 'Exact current member row').not.equals(null)
+  await act(async () => {
+    button!.click()
+    await new Promise(resolve => setTimeout(resolve, 30))
+  })
+}
+
 describe('conversation information', function () {
+  it('exposes distinct short-name roles and canonical row identities before opening the exact peer safety digits', async function () {
+    const engine = new InfoEngine()
+    const coach = userIdOfValue((1n << 127n) + 29n)
+    engine.current = view({
+      members: [
+        member(userIdOfGumbo(1), 'Aaron J', { label: 'Member' }),
+        member(userIdOfGumbo(2), 'Aaron J', { label: 'Member' }),
+        member(coach, 'Aaron J', { label: 'Coach', isModerator: true }),
+        member(userIdOfGumbo(4), 'Mookie Betts', { label: '' })
+      ]
+    })
+    const called: string[] = []
+    const digits = '01234'.repeat(12)
+    engine.safetyNumber = async id => {
+      called.push(id)
+      return id === coach ? digits : '98765'.repeat(12)
+    }
+    const node = await render(engine)
+    expect(
+      node.querySelectorAll(
+        '[role="button"][aria-label="Safety number with Aaron J"]'
+      )
+    ).has.length(0)
+    const row = (id: string): HTMLElement =>
+      node.querySelector<HTMLElement>(`[data-testid="chat-info-member-${id}"]`)!
+    expect(row(userIdOfGumbo(1)).getAttribute('aria-label')).equals(
+      'Aaron J (You), Member'
+    )
+    expect(row(userIdOfGumbo(1)).getAttribute('aria-disabled')).equals('true')
+    expect(row(userIdOfGumbo(2)).getAttribute('aria-label')).equals(
+      'Safety number with Aaron J, Member'
+    )
+    expect(row(coach).getAttribute('aria-label')).equals(
+      'Safety number with Aaron J, Coach, Moderator'
+    )
+    expect(row(userIdOfGumbo(4)).getAttribute('aria-label')).equals(
+      'Safety number with Mookie Betts'
+    )
+    await pressMember(userIdOfGumbo(1))
+    expect(called).deep.equals([])
+    await pressMember(coach)
+    expect(called).deep.equals([coach])
+    const groups = [
+      ...node.querySelectorAll('[data-testid^="chat-safety-group-"]')
+    ]
+    expect(groups).has.length(12)
+    expect(
+      groups.every(group => /^[0-9]{5}$/.test(group.textContent ?? ''))
+    ).equals(true)
+    expect(groups.map(group => group.textContent).join('')).equals(digits)
+  })
   it('shows scope identity, personal mute and rounded current members without fixed-group editing controls', async function () {
     const engine = new InfoEngine()
     const node = await render(engine)
@@ -234,7 +296,7 @@ describe('conversation information', function () {
       'Could not update this conversation. Try again.'
     )
     expect(
-      node.querySelector('[aria-label="Safety number with Aaron Judge"]')
+      node.querySelector(`[data-testid="chat-info-member-${userIdOfGumbo(2)}"]`)
     ).not.equals(null)
     engine.current = undefined
     await press('Mute')
@@ -261,7 +323,7 @@ describe('conversation information', function () {
     expect(node.querySelector('[data-testid="chat-info-hero"]')).not.equals(
       null
     )
-    await press('Safety number with Aaron Judge')
+    await pressMember(userIdOfGumbo(2))
     expect(
       node.querySelector('[aria-label="Safety number with Aaron Judge"]')
         ?.children.length
@@ -318,7 +380,7 @@ describe('conversation information', function () {
       )
       await new Promise(resolve => setTimeout(resolve, 30))
     })
-    await press('Safety number with Aaron Judge')
+    await pressMember(userIdOfGumbo(2))
     expect(overrides.at(-1)).a('function')
     await act(async () => {
       overrides.at(-1)!()
@@ -326,7 +388,7 @@ describe('conversation information', function () {
     expect(node.querySelector('[data-testid="chat-info-hero"]')).not.equals(
       null
     )
-    await press('Safety number with Aaron Judge')
+    await pressMember(userIdOfGumbo(2))
     await act(async () => {
       engine.current = {
         ...engine.current!,
