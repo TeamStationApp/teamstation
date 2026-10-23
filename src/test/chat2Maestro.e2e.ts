@@ -3430,6 +3430,25 @@ export class Chat2UI {
       )
       return
     }
+    await this.openNativeLink(path)
+    // A link sent while a just-relaunched app is still starting can be
+    // dropped; the app then stays on Home. Send it once more, recorded.
+    const routed =
+      path === '/chat' ? 'chat-conversation-list' : 'chat-message-history'
+    if (
+      (path === '/chat' || /^\/chat\/cnv_[^/]+$/.test(path)) &&
+      !(await this.visible({ id: routed }, 15000))
+    ) {
+      this.steps.push({
+        name: 'Native chat link resent after an unrouted first delivery',
+        path,
+        outcome: 'passed'
+      })
+      await this.openNativeLink(path)
+    }
+  }
+
+  private async openNativeLink(path: string): Promise<void> {
     await this.device.openLink({
       link: this.native
         ? this.fixture.scheme + ':/' + path
