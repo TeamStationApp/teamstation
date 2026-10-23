@@ -3,7 +3,10 @@ import type { Kysely } from 'kysely'
 import type { SeasonResult, SeasonTeam } from '../../common/seasonStandings'
 import type { Database } from '../db/database'
 
-/** Owned children, competition members and committed participants share one read-only list. */
+/**
+ * Owned children, competition members and committed participants share one
+ * read-only list. A team's `exhibition` flag is the one its season admin set.
+ */
 export async function seasonParticipants(
   db: Kysely<Database>,
   seasonId: string
@@ -12,6 +15,8 @@ export async function seasonParticipants(
     SeasonTeam & {
       activeMember: boolean
       parentMember: boolean
+      /** Flagged as an exhibition team in this season. */
+      exhibition: boolean
       seasonCategory: 'inSeason' | 'exhibition' | 'unscheduled'
     }
   >
@@ -28,6 +33,16 @@ export async function seasonParticipants(
     .select('team_id')
     .where('season_id', '=', seasonId)
     .execute()
+  const flagged = new Set(
+    (
+      await db
+        .selectFrom('season_team_flags')
+        .select('team_id')
+        .where('season_id', '=', seasonId)
+        .where('exhibition', '=', true)
+        .execute()
+    ).map(row => row.team_id)
+  )
   const games = await db
     .selectFrom('games')
     .select([
@@ -81,11 +96,16 @@ export async function seasonParticipants(
         ...team,
         activeMember: membership.some(row => row.team_id === team.id),
         parentMember: parents.some(row => row.team_id === team.id),
-        seasonCategory: scheduled.some(game => !game.exhibition)
-          ? 'inSeason'
-          : scheduled.length > 0
-            ? 'exhibition'
-            : 'unscheduled'
+        exhibition: flagged.has(team.id),
+        // A flagged team is listed with the exhibition teams whatever its
+        // games.
+        seasonCategory: flagged.has(team.id)
+          ? 'exhibition'
+          : scheduled.some(game => !game.exhibition)
+            ? 'inSeason'
+            : scheduled.length > 0
+              ? 'exhibition'
+              : 'unscheduled'
       }
     })
   }

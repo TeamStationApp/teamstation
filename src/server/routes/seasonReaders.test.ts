@@ -122,6 +122,34 @@ describe('season reader projections and privacy', function () {
         .execute()
     ).deep.equals([])
   })
+  it('lists a flagged team with the exhibition teams whatever its games, and an unflagged one by its games', async () => {
+    await f.h.db
+      .insertInto('season_team_flags')
+      .values([
+        { season_id: f.seasonA, team_id: f.teamA, exhibition: true },
+        { season_id: f.seasonA, team_id: idle, exhibition: false }
+      ])
+      .execute()
+    try {
+      const rows = await get(`/seasons/${f.seasonA}/teams`)
+      const category = (id: string): any =>
+        rows.find((row: any) => row.id === id)
+      expect(category(f.teamA)).deep.include({
+        exhibition: true,
+        seasonCategory: 'exhibition'
+      })
+      expect(category(idle)).deep.include({
+        exhibition: false,
+        seasonCategory: 'unscheduled'
+      })
+      expect(category(f.teamB)).deep.include({
+        exhibition: false,
+        seasonCategory: 'inSeason'
+      })
+    } finally {
+      await f.h.db.deleteFrom('season_team_flags').execute()
+    }
+  })
   it('preserves a newly created season-owned child as Unscheduled without competition membership or games', async () => {
     const response = await f.h.request(
       'POST',

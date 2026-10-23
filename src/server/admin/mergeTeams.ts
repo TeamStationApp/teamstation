@@ -1,4 +1,4 @@
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -7,6 +7,7 @@ import { requireDirectAdmin } from '../groups/adminGuard'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
+import { refreshFieldWarnings } from '../venues/fieldWarnings'
 
 /**
  * Joining two rows that are one real team.
@@ -82,6 +83,48 @@ function fixtureKey(game: GameRow): string {
   return `${game.season_id ?? ''}|${game.start_at.toISOString()}|${pair}`
 }
 
+/**
+ * Merges the source team's exhibition flags into the kept team's, season by
+ * season. Where both take part (a `season_teams` or `season_team_parents`
+ * row), the kept team is an exhibition team only if both were, so it stays a
+ * participant if either side was one; a missing flag row reads as not an
+ * exhibition team. Where the kept team does not take part, the source's
+ * flag moves to it. Where only the kept team takes part, its flag stays.
+ */
+async function mergeSeasonFlags(
+  trx: Kysely<Database>,
+  fromTeamId: string,
+  intoTeamId: string
+): Promise<void> {
+  const takesPart = (teamId: string): RawBuilder<unknown> =>
+    sql`select season_id from season_teams where team_id = ${teamId}
+      union select season_id from season_team_parents where team_id = ${teamId}`
+  await sql`with both_part as (
+      (${takesPart(fromTeamId)}) intersect (${takesPart(intoTeamId)})
+    )
+    insert into season_team_flags (season_id, team_id, exhibition)
+    select b.season_id, ${intoTeamId},
+      coalesce(t.exhibition, false) and coalesce(s.exhibition, false)
+    from both_part b
+    left join season_team_flags t on t.season_id = b.season_id and t.team_id = ${intoTeamId}
+    left join season_team_flags s on s.season_id = b.season_id and s.team_id = ${fromTeamId}
+    where t.season_id is not null or s.season_id is not null
+    on conflict (season_id, team_id) do update set exhibition = excluded.exhibition`.execute(
+    trx
+  )
+  await sql`insert into season_team_flags (season_id, team_id, exhibition)
+    select s.season_id, ${intoTeamId}, s.exhibition from season_team_flags s
+    where s.team_id = ${fromTeamId}
+      and s.season_id not in (${takesPart(intoTeamId)})
+    on conflict (season_id, team_id) do update set exhibition = excluded.exhibition`.execute(
+    trx
+  )
+  await trx
+    .deleteFrom('season_team_flags')
+    .where('team_id', '=', fromTeamId)
+    .execute()
+}
+
 export async function mergeTeams(
   db: Kysely<Database>,
   input: MergeTeamsInput
@@ -121,11 +164,14 @@ export async function mergeTeams(
   // by the stats builder, which each moved game is sent to below.
   const references: Array<[string, string]> = [
     ['season_teams', 'team_id'],
+    ['season_team_flags', 'team_id'],
     ['memberships', 'team_id'],
     ['team_events', 'team_id'],
     ['games', 'home_team_id'],
     ['games', 'away_team_id'],
     ['games', 'withdrawn_by_team_id'],
+    ['schedule_preview_games', 'home_team_id'],
+    ['schedule_preview_games', 'away_team_id'],
     ['events', 'battingTeamId'],
     ['event_players', 'team_id']
   ]
@@ -160,6 +206,9 @@ export async function mergeTeams(
       // does the reverse here. Finish those writers before moving their rows.
       'users.closeInto'
     ])
+    // The exhibition flags first, while both teams' seasons still read as
+    // they were: `mergeParents` is about to move the source's parent rows.
+    await mergeSeasonFlags(trx, fromTeamId, intoTeamId)
     await mergeParents(trx, fromTeamId, intoTeamId, true)
     // Merge overlapping rows before repointing, so unique constraints remain valid.
     await sql`update memberships target set
@@ -299,7 +348,10 @@ export async function mergeTeams(
         arrival_time_delta = coalesce(target.arrival_time_delta, source.arrival_time_delta),
         latitude = case when target.address is null then source.latitude else target.latitude end,
         longitude = case when target.address is null then source.longitude else target.longitude end,
-        end_at = coalesce(target.end_at, source.end_at)
+        end_at = coalesce(target.end_at, source.end_at),
+        field_id = case when target.field_id is null then source.field_id else target.field_id end,
+        field_size = case when target.field_id is null then source.field_size else target.field_size end,
+        schedule_preview_id = coalesce(target.schedule_preview_id, source.schedule_preview_id)
         from games source where target.id = ${fixture.keptGameId} and source.id = ${fixture.retiredGameId}`.execute(
         trx
       )
@@ -325,10 +377,29 @@ export async function mergeTeams(
         join games g on g.id=${fixture.keptGameId} join seasons s on s.id=g.season_id
         where n.game_id=${fixture.retiredGameId} and t.league_id=s.league_id
         on conflict do nothing`.execute(trx)
+      // A game the Auto-Scheduler published is the kept game now.
+      await trx
+        .updateTable('schedule_preview_games')
+        .set({ game_id: fixture.keptGameId })
+        .where('game_id', '=', fixture.retiredGameId)
+        .execute()
+      // Its warnings go with it (they cascade); the kept game's field is
+      // looked at again once the retired game is gone.
+      const fields = await trx
+        .selectFrom('games')
+        .select('field_id')
+        .where('id', 'in', [fixture.keptGameId, fixture.retiredGameId])
+        .execute()
       await trx
         .deleteFrom('games')
         .where('id', '=', fixture.retiredGameId)
         .execute()
+      await refreshFieldWarnings(
+        trx,
+        fields.map(row => row.field_id),
+        undefined,
+        [fixture.keptGameId]
+      )
     }
 
     await trx

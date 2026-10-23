@@ -44,7 +44,8 @@ import {
   asGroupRef,
   type CreateGroup,
   type GroupKind,
-  type GroupRef
+  type GroupRef,
+  isRecord
 } from './groupCreation'
 import {
   asParentPreview,
@@ -98,6 +99,16 @@ import {
   type SearchRow
 } from './publicGroups'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import {
+  type AddedGame,
+  asGameToReschedule,
+  asPublication,
+  asSchedulePreview,
+  type GameToReschedule,
+  type PreviewRequest,
+  type Publication,
+  type SchedulePreview
+} from './schedulePreviews'
 import { asScoreboardState, type ScoreboardState } from './scoreboard'
 import {
   cleanAction,
@@ -120,6 +131,13 @@ import {
 } from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import {
+  asScheduleSetup,
+  asSeasonScheduleSettings,
+  type ScheduleSettings,
+  type ScheduleSetup,
+  type SeasonScheduleSettings
+} from './seasonScheduling'
 import {
   asUmpireLeaderboard,
   asUmpireLeagues,
@@ -148,6 +166,12 @@ import type {
 } from './umpireSchedule'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
+import {
+  asVenueDetail,
+  asVenueSummary,
+  type VenueDetail,
+  type VenueSummary
+} from './venues'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
 
@@ -215,6 +239,18 @@ export const asTeamSummary = asObject({
   kind: asOptional(asEither(asLiteral('full'), asLiteral('external')), 'full')
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
+
+/**
+ * A team on a season's list: `exhibition` is set, and true, when the
+ * season's admin flagged it as an exhibition team. Older servers omit it.
+ */
+export type SeasonTeamSummary = TeamSummary & { exhibition?: true }
+function asSeasonTeamSummary(raw: unknown): SeasonTeamSummary {
+  const team = asTeamSummary(raw)
+  return isRecord(raw) && raw.exhibition === true
+    ? { ...team, exhibition: true }
+    : team
+}
 
 export const asGameSummary = withEventMetadata(
   asObject({
@@ -2900,6 +2936,248 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Venues for the Field Manager: a search, a list near a point, or the
+   * venues some leagues own. See `GET /venues`.
+   */
+  async venues(
+    options: {
+      query?: string
+      near?: { latitude: number; longitude: number }
+      leagueIds?: string[]
+    } = {}
+  ): Promise<VenueSummary[]> {
+    const params = new URLSearchParams()
+    if (options.query != null && options.query.trim() !== '')
+      params.set('query', options.query.trim())
+    if (options.near != null)
+      params.set('near', `${options.near.latitude},${options.near.longitude}`)
+    for (const id of options.leagueIds ?? []) params.append('league', id)
+    const search = params.toString()
+    return (
+      await this.request(
+        'GET',
+        `/venues${search === '' ? '' : `?${search}`}`,
+        asObject({ items: asArray(asVenueSummary) })
+      )
+    ).items
+  }
+
+  /** The league's Auto-Scheduler setup: its seasons, fields and choices. */
+  async scheduleSetup(leagueId: string): Promise<ScheduleSetup> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-setup`,
+      asScheduleSetup
+    )
+  }
+
+  /** Builds a preview of the league's schedule. See `PreviewRequest`. */
+  async buildSchedulePreview(
+    leagueId: string,
+    request: PreviewRequest
+  ): Promise<SchedulePreview> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
+      asSchedulePreview,
+      request
+    )
+  }
+
+  async schedulePreview(previewId: string): Promise<SchedulePreview> {
+    return await this.request(
+      'GET',
+      `/schedule-previews/${encodeURIComponent(previewId)}`,
+      asSchedulePreview
+    )
+  }
+
+  /** Rejects and adds games of one option of a preview. */
+  async editSchedulePreview(
+    previewId: string,
+    edits: {
+      option: number
+      rejectedGameKeys?: string[]
+      addedGames?: AddedGame[]
+    }
+  ): Promise<SchedulePreview> {
+    return await this.request(
+      'PUT',
+      `/schedule-previews/${encodeURIComponent(previewId)}`,
+      asSchedulePreview,
+      edits
+    )
+  }
+
+  async publishSchedulePreview(
+    previewId: string,
+    option: number
+  ): Promise<Publication> {
+    return await this.request(
+      'POST',
+      `/schedule-previews/${encodeURIComponent(previewId)}/publications`,
+      asPublication,
+      { option }
+    )
+  }
+
+  /** The league's published games that need rescheduling. */
+  async gamesToReschedule(leagueId: string): Promise<GameToReschedule[]> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(leagueId)}/games-to-reschedule`,
+        asObject({ items: asArray(asGameToReschedule) })
+      )
+    ).items
+  }
+
+  /** Chooses the seasons and fields of the league's next schedule. */
+  async saveScheduleSetup(
+    leagueId: string,
+    choice: { seasonIds: string[]; fieldIds: string[] }
+  ): Promise<ScheduleSetup> {
+    return await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-setup`,
+      asScheduleSetup,
+      choice
+    )
+  }
+
+  async saveScheduleSettings(
+    seasonId: string,
+    settings: ScheduleSettings
+  ): Promise<SeasonScheduleSettings> {
+    return await this.request(
+      'PUT',
+      `/seasons/${encodeURIComponent(seasonId)}/schedule-settings`,
+      asSeasonScheduleSettings,
+      settings
+    )
+  }
+
+  /** Flags a team in a season as an exhibition team, or not. */
+  async setExhibitionTeam(
+    seasonId: string,
+    teamId: string,
+    exhibition: boolean
+  ): Promise<void> {
+    await this.request(
+      'PUT',
+      `/seasons/${encodeURIComponent(seasonId)}/memberships/${encodeURIComponent(teamId)}`,
+      asObject({ exhibition: asBoolean }),
+      { exhibition }
+    )
+  }
+
+  /** The venue for a Google place: the registry's, or the place itself. */
+  async venueForPlace(placeId: string): Promise<VenueDetail> {
+    const [venue] = (
+      await this.request(
+        'GET',
+        `/venues?place=${encodeURIComponent(placeId)}`,
+        asObject({ items: asArray(asVenueDetail) })
+      )
+    ).items
+    if (venue == null) throw new HttpError('notFound', 'Not found')
+    return venue
+  }
+
+  async venue(venueId: string): Promise<VenueDetail> {
+    return await this.request(
+      'GET',
+      `/venues/${encodeURIComponent(venueId)}`,
+      asVenueDetail
+    )
+  }
+
+  /** Adds a Google place to the registry and claims it for a league. */
+  async claimPlace(placeId: string, leagueId: string): Promise<VenueDetail> {
+    return await this.request('POST', '/venues', asVenueDetail, {
+      placeId,
+      leagueId
+    })
+  }
+
+  /** Claims a venue, or asks to co-own it when it is claimed. */
+  async claimVenue(venueId: string, leagueId: string): Promise<VenueDetail> {
+    return await this.request(
+      'POST',
+      `/venues/${encodeURIComponent(venueId)}/claims`,
+      asVenueDetail,
+      { leagueId }
+    )
+  }
+
+  async decideVenueClaim(
+    venueId: string,
+    claimId: string,
+    decision: 'approve' | 'reject'
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'POST',
+      `/venues/${encodeURIComponent(venueId)}/claims/${encodeURIComponent(claimId)}/decisions`,
+      asVenueDetail,
+      { decision }
+    )
+  }
+
+  /** Leaves, withdraws or removes a claim. */
+  async endVenueClaim(venueId: string, claimId: string): Promise<VenueDetail> {
+    return await this.request(
+      'DELETE',
+      `/venues/${encodeURIComponent(venueId)}/claims/${encodeURIComponent(claimId)}`,
+      asVenueDetail
+    )
+  }
+
+  async updateVenue(
+    venueId: string,
+    changes: Record<string, unknown>
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'PUT',
+      `/venues/${encodeURIComponent(venueId)}`,
+      asVenueDetail,
+      changes
+    )
+  }
+
+  async createField(
+    venueId: string,
+    field: Record<string, unknown>
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'POST',
+      `/venues/${encodeURIComponent(venueId)}/fields`,
+      asVenueDetail,
+      field
+    )
+  }
+
+  async updateField(
+    venueId: string,
+    fieldId: string,
+    changes: Record<string, unknown>
+  ): Promise<VenueDetail> {
+    return await this.request(
+      'PUT',
+      `/venues/${encodeURIComponent(venueId)}/fields/${encodeURIComponent(fieldId)}`,
+      asVenueDetail,
+      changes
+    )
+  }
+
+  async deleteField(venueId: string, fieldId: string): Promise<VenueDetail> {
+    return await this.request(
+      'DELETE',
+      `/venues/${encodeURIComponent(venueId)}/fields/${encodeURIComponent(fieldId)}`,
+      asVenueDetail
+    )
+  }
+
   /** The seasons this person can see, which is what home leads with. */
   async seasons(): Promise<SeasonSummary[]> {
     return await this.request('GET', '/seasons', asArray(asSeasonSummary))
@@ -2993,11 +3271,11 @@ export class TeamStationClient {
     return games[0] ?? null
   }
 
-  async seasonTeams(seasonId: string): Promise<TeamSummary[]> {
+  async seasonTeams(seasonId: string): Promise<SeasonTeamSummary[]> {
     return await this.request(
       'GET',
       `/seasons/${encodeURIComponent(seasonId)}/teams`,
-      asArray(asTeamSummary)
+      asArray(asSeasonTeamSummary)
     )
   }
 

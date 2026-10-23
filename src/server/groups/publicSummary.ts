@@ -212,6 +212,13 @@ export async function publicGames(
       'withdrawn.name as withdrawnName'
     ])
     .select(hasScoringEventsSql.as('hasScoringEvents'))
+    // Games the Auto-Scheduler took away leave the schedules.
+    .where(eb =>
+      eb.or([
+        eb('games.cancellation_reason', 'is', null),
+        eb('games.cancellation_reason', '!=', 'rescheduled')
+      ])
+    )
   if (ref.kind === 'team')
     query = query.where(eb =>
       eb.or([

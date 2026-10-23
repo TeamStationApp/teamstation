@@ -22,10 +22,13 @@ import { onboardingRoutes } from '../server/routes/onboarding'
 import { peopleRoutes } from '../server/routes/people'
 import { pictureRoutes } from '../server/routes/pictures'
 import { scheduleRoutes } from '../server/routes/schedule'
+import { schedulePreviewRoutes } from '../server/routes/schedulePreviews'
+import { schedulingSetupRoutes } from '../server/routes/schedulingSetup'
 import { seasonRoutes } from '../server/routes/seasons'
 import { statsRoutes } from '../server/routes/stats'
 import { teamMemberRoutes } from '../server/routes/teamMembers'
 import { userRoutes } from '../server/routes/users'
+import { venueRoutes } from '../server/routes/venues'
 import { walkUpSongRoutes } from '../server/routes/walkUpSongs'
 import {
   type AccountHarness,
@@ -106,6 +109,9 @@ export async function creationHarness(
         })
       )
       app.use('/api/v1', eventListRoutes(db, media))
+      app.use('/api/v1', venueRoutes(db, media, { places: cityLookup, clock }))
+      app.use('/api/v1', schedulingSetupRoutes(db, { clock }))
+      app.use('/api/v1', schedulePreviewRoutes(db, { clock }))
       app.use(
         '/api/v1',
         liveRoutes(db, {

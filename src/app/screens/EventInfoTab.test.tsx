@@ -219,6 +219,43 @@ describe('event Info location and family controls', () => {
       window.open = open
     }
   })
+  it('shows a field-linked game’s warnings under its address, and none without them', async () => {
+    const client = clientFor({
+      ...initial(),
+      venue: 'Example Park',
+      address: '1 Example Way, Demo City',
+      fieldWarnings: [
+        {
+          kind: 'conflict',
+          message:
+            'Another game is booked on Field 1 at Example Park at the same time.'
+        }
+      ]
+    })
+    client.eventLocation = async () => ({
+      latitude: 40,
+      longitude: -75,
+      tileUrl: 'https://example.test/{z}/{x}/{y}'
+    })
+    await render(client)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(
+      document.querySelector('[data-testid="event-field-warnings"]')
+        ?.textContent
+    ).equals(
+      'Another game is booked on Field 1 at Example Park at the same time.'
+    )
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    await render(
+      clientFor({ ...initial(), venue: 'Demo Park', fieldWarnings: [] })
+    )
+    expect(
+      document.querySelector('[data-testid="event-field-warnings"]')
+    ).equals(null)
+  })
   it('keeps date/time in the hero and renders no duplicate beneath tabs', async () => {
     await render(clientFor())
     expect(document.body.textContent)

@@ -21,14 +21,18 @@ export function EventVenueFields({
   client,
   value,
   onChange,
-  disabled = false
+  disabled = false,
+  placeLocked = false
 }: {
   client: TeamStationClient
   value: EventVenueDraft
   onChange: (value: EventVenueDraft) => void
   disabled?: boolean
+  /** The venue and address come from a chosen field; notes stay editable. */
+  placeLocked?: boolean
 }): React.ReactElement {
   const styles = getStyles(useTheme())
+  const placeDisabled = disabled || placeLocked
   const generation = useRef(0)
   const [request, setRequest] = useState<{
     kind: EventPlaceKind
@@ -50,7 +54,7 @@ export function EventVenueFields({
     const current = ++generation.current
     if (
       request == null ||
-      disabled ||
+      placeDisabled ||
       request.query.trim().length < 2 ||
       request.query.length > 120
     )
@@ -79,7 +83,7 @@ export function EventVenueFields({
       generation.current++
       clearTimeout(timer)
     }
-  }, [client, request, retry, disabled])
+  }, [client, request, retry, placeDisabled])
   const edit = (kind: EventPlaceKind, text: string): void => {
     invalidate()
     onChange({ ...value, [kind === 'venue' ? 'venue' : 'address']: text })
@@ -93,7 +97,7 @@ export function EventVenueFields({
             key={place.id}
             accessibilityRole="button"
             accessibilityLabel={`Choose ${place.name ?? place.address}`}
-            disabled={disabled}
+            disabled={placeDisabled}
             onPress={() => {
               onChange({
                 ...value,
@@ -121,7 +125,7 @@ export function EventVenueFields({
             onPress={() => {
               setRetry(v => v + 1)
             }}
-            disabled={disabled}
+            disabled={placeDisabled}
           />
         )}
         {attribution !== '' && (
@@ -147,6 +151,7 @@ export function EventVenueFields({
         label="Venue name (optional)"
         value={value.venue}
         disabled={disabled}
+        locked={placeLocked}
         onChangeText={text => {
           edit('venue', text)
         }}
@@ -159,6 +164,7 @@ export function EventVenueFields({
         label="Venue address (optional)"
         value={value.address}
         disabled={disabled}
+        locked={placeLocked}
         onChangeText={text => {
           edit('address', text)
         }}
@@ -167,6 +173,11 @@ export function EventVenueFields({
         }}
       />
       {suggestions('address')}
+      {placeLocked && (
+        <Text style={styles.lockedNote}>
+          The venue and address come from the chosen field.
+        </Text>
+      )}
       <TextField
         label="Notes (optional)"
         value={value.notes}
@@ -187,6 +198,11 @@ export function EventVenueFields({
 const getStyles = cacheStyles((theme: Theme) => ({
   body: { gap: theme.rem(1) },
   results: { gap: theme.rem(0.5) },
+  lockedNote: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.8125),
+    color: theme.secondaryTextColor
+  },
   option: {
     padding: theme.rem(0.75),
     borderWidth: 1,

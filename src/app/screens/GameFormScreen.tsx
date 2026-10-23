@@ -4,6 +4,7 @@ import { Pressable, Switch, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
+import { type FieldSize, fieldSizeLabel } from '../../common/venues'
 import { Button, Card, Screen, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
 import { EventArrivalField } from '../components/EventArrivalField'
@@ -16,6 +17,7 @@ import { useLatestRequest } from '../hooks/useLatestRequest'
 import { offlineCreateFailure } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { type EventCreationRetry, EventDetailsForm } from './EventDetailsForm'
+import { FieldPickerScene } from './FieldPickerScene'
 import {
   choosesExhibition,
   chooseTeam,
@@ -99,6 +101,7 @@ export function GameFormScreen({
   const eventRetry = useRef<EventCreationRetry | undefined>(undefined)
   const arrivalTouched = useRef(false)
   const [choosing, setChoosing] = useState<Side>()
+  const [choosingField, setChoosingField] = useState(false)
   // The groups this person administers, once; `failed` when they could not
   // load, which is not the same as having none.
   const [administered, setAdministered] = useState<
@@ -527,6 +530,41 @@ export function GameFormScreen({
                 }}
                 disabled={inert}
               />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  draft.field == null
+                    ? 'Field: none chosen'
+                    : `Field: ${draft.field.venueName}, ${draft.field.fieldName}, ${fieldSizeLabel(draft.field.size as FieldSize)}`
+                }
+                disabled={inert}
+                onPress={() => {
+                  setChoosingField(true)
+                }}
+                style={({ pressed }) => [
+                  styles.fieldRow,
+                  pressed && styles.pressed,
+                  inert && styles.inert
+                ]}
+              >
+                <Text style={styles.fieldLabel}>FIELD (OPTIONAL)</Text>
+                <Text style={styles.fieldValue}>
+                  {draft.field == null
+                    ? 'Choose a field from the registry'
+                    : `${draft.field.venueName} · ${draft.field.fieldName} · ${fieldSizeLabel(draft.field.size as FieldSize)}`}
+                </Text>
+              </Pressable>
+              {draft.field != null && (
+                <Button
+                  label="Clear field"
+                  kind="text"
+                  small
+                  disabled={inert}
+                  onPress={() => {
+                    change({ field: null })
+                  }}
+                />
+              )}
               <EventVenueFields
                 client={client}
                 value={{
@@ -535,6 +573,7 @@ export function GameFormScreen({
                   notes: draft.notes
                 }}
                 disabled={inert}
+                placeLocked={draft.field != null}
                 onChange={value => {
                   change(value)
                 }}
@@ -700,6 +739,22 @@ export function GameFormScreen({
           </>
         )}
       </View>
+      {choosingField && (
+        <FieldPickerScene
+          client={client}
+          onChoose={field => {
+            setChoosingField(false)
+            change({
+              field,
+              venue: field.venueName,
+              address: field.address
+            })
+          }}
+          onClose={() => {
+            setChoosingField(false)
+          }}
+        />
+      )}
       {choosing != null && (
         <TeamSelectorScene
           client={client}
@@ -740,6 +795,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont
   },
   card: { gap: theme.rem(1) },
+  fieldRow: {
+    gap: theme.rem(0.375),
+    minHeight: theme.rem(3),
+    justifyContent: 'center' as const
+  },
+  fieldLabel: {
+    fontFamily: theme.boldTextFont,
+    fontSize: theme.rem(0.75),
+    letterSpacing: 0.5,
+    color: theme.primaryTextColor
+  },
+  fieldValue: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(1),
+    color: theme.linkTextColor
+  },
   section: {
     fontSize: theme.rem(1.125),
     color: theme.primaryTextColor,

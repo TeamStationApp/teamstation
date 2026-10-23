@@ -17,11 +17,14 @@ import {
   CLIP_MIN_MS,
   WALK_UP_PROVIDERS
 } from '../common/walkUpSong'
+import { schedulePreviewPaths } from './autoScheduler/schedulePreviewsOpenApi'
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
+import { schedulingSetupPaths } from './scheduler/schedulingSetupOpenApi'
 import { umpirePaths } from './umpires/openApi'
 import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
+import { venuePaths } from './venues/venuesOpenApi'
 
 const recordSchema = {
   type: 'object',
@@ -2339,6 +2342,9 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...creationPaths(errorResponse),
       ...gameApprovalPaths(errorResponse),
       ...umpirePaths(errorResponse),
+      ...venuePaths(errorResponse),
+      ...schedulingSetupPaths(errorResponse),
+      ...schedulePreviewPaths(errorResponse),
       ...eventInfoPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {

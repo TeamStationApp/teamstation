@@ -111,6 +111,112 @@ describe('merging two rows that are one team', function () {
         status: 'scheduled'
       })
       .execute()
+    // The filmed record was linked to a registry field and warned about it.
+    await db
+      .insertInto('venues')
+      .values({
+        id: 'ven_merge',
+        google_place_id: 'place-merge',
+        name: 'Demo Park',
+        latitude: 40,
+        longitude: -75,
+        timezone: 'America/New_York'
+      })
+      .execute()
+    await db
+      .insertInto('venue_fields')
+      .values({
+        id: 'fld_merge',
+        venue_id: 'ven_merge',
+        name: 'Field 1',
+        sizes: ['50/70']
+      })
+      .execute()
+    await db
+      .updateTable('games')
+      .set({ field_id: 'fld_merge', field_size: '50/70' })
+      .where('id', '=', filmedGame)
+      .execute()
+    await db
+      .insertInto('game_field_warnings')
+      .values({ game_id: filmedGame, kind: 'outsideAvailability' })
+      .execute()
+    // And the Auto-Scheduler had published it.
+    const planner = mintUserId(() => false)
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(planner.userId),
+      legacyId: planner.legacyId,
+      display_name: 'Demo Planner',
+      created_at: new Date(),
+      updated_at: new Date()
+    })
+    await db
+      .insertInto('leagues')
+      .values({
+        id: 'lea_merge',
+        name: 'Demo League',
+        created_at: new Date(),
+        updated_at: new Date()
+      })
+      .execute()
+    await db
+      .insertInto('seasons')
+      .values({
+        id: 'sea_merge',
+        name: 'Demo Season',
+        year: 2026,
+        starts_on: '2026-03-01',
+        ends_on: '2026-05-31',
+        created_at: new Date(),
+        updated_at: new Date()
+      })
+      .execute()
+    await db
+      .insertInto('schedule_previews')
+      .values({
+        id: 'spv_merge',
+        league_id: 'lea_merge',
+        created_by: userIdOfGumbo(planner.userId),
+        mode: 'full',
+        input: '{}'
+      })
+      .execute()
+    await db
+      .updateTable('games')
+      .set({ schedule_preview_id: 'spv_merge' })
+      .where('id', '=', filmedGame)
+      .execute()
+    await db
+      .insertInto('schedule_preview_games')
+      .values({
+        preview_id: 'spv_merge',
+        game_key: 'game-1',
+        season_id: 'sea_merge',
+        home_team_id: widows,
+        away_team_id: hawks,
+        game_id: filmedGame
+      })
+      .execute()
+    // Two of its games name the team merged away: one still to reschedule.
+    await db
+      .insertInto('schedule_preview_games')
+      .values([
+        {
+          preview_id: 'spv_merge',
+          game_key: 'game-2',
+          season_id: 'sea_merge',
+          home_team_id: houser,
+          away_team_id: widows
+        },
+        {
+          preview_id: 'spv_merge',
+          game_key: 'game-3',
+          season_id: 'sea_merge',
+          home_team_id: widows,
+          away_team_id: houser
+        }
+      ])
+      .execute()
     await db
       .insertInto('videos')
       .values({
@@ -194,6 +300,42 @@ describe('merging two rows that are one team', function () {
       .where('id', '=', videoId)
       .executeTakeFirstOrThrow()
     expect(video.game_id, 'the video followed').equals(scoredGame)
+    // The field went with the fixture, and the retired game's warning with
+    // the retired game.
+    expect([game.field_id, game.field_size]).deep.equals(['fld_merge', '50/70'])
+    // So did its place in the schedule it was published from.
+    expect(game.schedule_preview_id).equals('spv_merge')
+    expect(
+      await db
+        .selectFrom('schedule_preview_games')
+        .select(['game_key', 'game_id', 'home_team_id', 'away_team_id'])
+        .orderBy('game_key')
+        .execute()
+    ).deep.equals([
+      {
+        game_key: 'game-1',
+        game_id: scoredGame,
+        home_team_id: widows,
+        away_team_id: hawks
+      },
+      // The teams it names follow the merge, so the games to reschedule are
+      // the kept team's.
+      {
+        game_key: 'game-2',
+        game_id: null,
+        home_team_id: hawks,
+        away_team_id: widows
+      },
+      {
+        game_key: 'game-3',
+        game_id: null,
+        home_team_id: widows,
+        away_team_id: hawks
+      }
+    ])
+    expect(
+      await db.selectFrom('game_field_warnings').select('game_id').execute()
+    ).deep.equals([])
 
     const gone = await db
       .selectFrom('games')

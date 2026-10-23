@@ -6,6 +6,30 @@ export function viewerTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC'
 }
 
+/** A zone's short name at an instant, such as "EDT". */
+export function zoneName(instant: string, timezone: string): string {
+  return (
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'short'
+    })
+      .formatToParts(new Date(instant))
+      .find(part => part.type === 'timeZoneName')?.value ?? timezone
+  )
+}
+
+/**
+ * A zone's short name when it is not the viewer's own zone, so a time read
+ * in another zone says so; '' otherwise.
+ */
+export function foreignZoneName(
+  instant: string,
+  timezone: string,
+  viewer = viewerTimezone()
+): string {
+  return timezone === viewer ? '' : zoneName(instant, timezone)
+}
+
 export function effectiveEventEnd(
   startAt: string,
   endAt?: string | null

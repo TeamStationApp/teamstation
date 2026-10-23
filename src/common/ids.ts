@@ -26,6 +26,7 @@ export const idPrefixes = {
   membership: 'mem',
   rateEvent: 'rte',
   scopeRole: 'rol',
+  schedulePreview: 'spv',
   season: 'sea',
   seasonMember: 'smb',
   team: 'tem',
@@ -36,6 +37,9 @@ export const idPrefixes = {
   user: 'usr',
   userEmail: 'uem',
   userLink: 'lnk',
+  venue: 'ven',
+  venueClaim: 'vcl',
+  venueField: 'fld',
   video: 'vid'
 } as const
 

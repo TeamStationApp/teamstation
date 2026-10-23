@@ -347,7 +347,14 @@ const asInfo = asObject({
   attendees: asArray(asEventAttendee),
   replyUserIds: asArray(asUserId)
 })
+/** Something wrong with a game's field, for its Info tab. */
+export interface EventFieldWarning {
+  kind: 'conflict' | 'outsideAvailability' | 'fieldDeleted' | 'sizeRemoved'
+  message: string
+}
 export interface EventInfo extends ReturnType<typeof asInfo> {
+  /** On a game linked to a registry field: what is wrong with it. */
+  fieldWarnings?: EventFieldWarning[]
   notes?: string | null
   arrivalTimeDelta?: number | null
   eventType?: EventType
@@ -362,6 +369,18 @@ export const asEventInfo: Cleaner<EventInfo> = raw => {
     if (raw.eventType !== undefined)
       answer.eventType = asEventType(raw.eventType)
   }
+  if (isRecord(raw) && raw.fieldWarnings !== undefined)
+    answer.fieldWarnings = asArray(
+      asObject({
+        kind: asLiteral(
+          'conflict',
+          'outsideAvailability',
+          'fieldDeleted',
+          'sizeRemoved'
+        ),
+        message: asString
+      })
+    )(raw.fieldWarnings)
   if (isRecord(raw) && raw.attendanceTeams !== undefined)
     answer.attendanceTeams = asArray(
       asObject({

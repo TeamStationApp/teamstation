@@ -55,6 +55,7 @@ for (const entry of entries)
       'react-native-webview': './src/test/eventWebViewStub.tsx',
       'react-native-maps': './src/test/eventNativeMapStub.tsx',
       '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',
+      '@react-native-community/geolocation': './src/test/geolocationStub.ts',
       '@react-native/assets-registry/registry':
         'react-native-web/dist/modules/AssetRegistry'
     },

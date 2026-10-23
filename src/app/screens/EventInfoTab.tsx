@@ -314,6 +314,22 @@ export function EventInfoTab({
                 {info.notes}
               </Text>
             )}
+            {(info.fieldWarnings ?? []).length > 0 && (
+              <View
+                testID="event-field-warnings"
+                accessibilityRole="alert"
+                style={styles.fieldWarnings}
+              >
+                {info.fieldWarnings!.map(warning => (
+                  <Text
+                    key={`${warning.kind}:${warning.message}`}
+                    style={styles.fieldWarning}
+                  >
+                    {warning.message}
+                  </Text>
+                ))}
+              </View>
+            )}
           </Card>
         </>
       )}
@@ -428,6 +444,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   location: { padding: theme.rem(0.75), gap: theme.rem(0.75) },
+  // Solid yellow with dark text in every theme, like the warning sheet.
+  fieldWarnings: {
+    backgroundColor: '#FFD54F',
+    borderRadius: theme.rem(0.75),
+    padding: theme.rem(0.75),
+    gap: theme.rem(0.375)
+  },
+  fieldWarning: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.9375),
+    color: '#211B00'
+  },
   addressRow: {
     flexDirection: 'row',
     alignItems: 'center',

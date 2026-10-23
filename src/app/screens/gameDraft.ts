@@ -4,7 +4,11 @@ import {
   eventScheduleValue,
   newEventSchedule
 } from '../../common/eventSchedule'
-import type { GameIntent, GameProposal } from '../../common/gameApprovals'
+import type {
+  GameFieldSummary,
+  GameIntent,
+  GameProposal
+} from '../../common/gameApprovals'
 import type { PublicGroup } from '../../common/publicGroups'
 import type { TeamChoice } from './PlaceholderTeamForm'
 import type { TeamSelectorAnchor } from './TeamSelectorScene'
@@ -29,6 +33,11 @@ export interface GameDraft {
   /** The season a season page's game is in; a team page's game has none. */
   season?: PublicGroup
   outsideTournament: string
+  /**
+   * The registry field the game is on. While one is chosen, the venue and
+   * address come from it.
+   */
+  field?: GameFieldSummary | null
 }
 
 /** A game being changed, as the scheduling route answered it. */
@@ -37,6 +46,7 @@ export interface LoadedGame {
   version: string
   withdrawTeamIds: string[]
   canPropose: boolean
+  field?: GameFieldSummary | null
 }
 
 export const otherSide = (side: Side): Side =>
@@ -109,7 +119,8 @@ export function loadedGameDraft(
     notes: game.notes ?? '',
     arrival: game.arrivalTimeDelta == null ? '' : String(game.arrivalTimeDelta),
     exhibition: game.exhibition ?? false,
-    outsideTournament: game.outsideTournament ?? ''
+    outsideTournament: game.outsideTournament ?? '',
+    field: loaded.field ?? null
   }
 }
 
@@ -234,7 +245,8 @@ export function gameProposalFields(
           : {}),
         timezone,
         exhibition: draft.exhibition,
-        venue
+        venue,
+        ...fieldOf(draft, loaded.game.fieldId ?? null)
       }
     }
   }
@@ -263,6 +275,7 @@ export function gameProposalFields(
       timezone,
       exhibition: source.kind === 'team' ? true : draft.exhibition,
       venue,
+      ...fieldOf(draft, null),
       outsideTournament:
         source.kind === 'season' || draft.outsideTournament.trim() === ''
           ? null
@@ -270,4 +283,18 @@ export function gameProposalFields(
       status: 'scheduled'
     }
   }
+}
+
+/**
+ * The field keys a proposal carries: the chosen field, `null` to clear the
+ * one the game had, or nothing when the field is unchanged.
+ */
+function fieldOf(
+  draft: GameDraft,
+  had: string | null
+): { fieldId?: string | null; fieldSize?: string | null } {
+  const field = draft.field ?? null
+  if (field == null)
+    return had == null ? {} : { fieldId: null, fieldSize: null }
+  return { fieldId: field.fieldId, fieldSize: field.size }
 }

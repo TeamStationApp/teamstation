@@ -18,8 +18,10 @@ import {
   putObjectFile,
   putObjectMultipart,
   sha256Of,
+  sizesFor,
   storeImage,
-  UnreadableImage
+  UnreadableImage,
+  WIDE_IMAGE_SIZES
 } from './images'
 
 const run = promisify(execFile)
@@ -103,6 +105,24 @@ describe('stored images', function () {
         height: size
       })
     }
+  })
+
+  it('stores a place 16:9 and cover-cropped at the wide sizes, whatever its shape', async function () {
+    for (const kind of ['venue', 'field'] as const) {
+      expect(sizesFor(kind)).deep.equals([...WIDE_IMAGE_SIZES])
+      const image = await normaliseImage({
+        ffmpegPath: FFMPEG,
+        source: await makeSource(dir, 300, 300),
+        kind
+      })
+      expect([...image.bySize.keys()]).deep.equals([...WIDE_IMAGE_SIZES])
+      for (const size of WIDE_IMAGE_SIZES)
+        expect(pngSize(image.bySize.get(size)!)).deep.equals({
+          width: size,
+          height: (size * 9) / 16
+        })
+    }
+    expect(sizesFor('team')).deep.equals([...IMAGE_SIZES])
   })
 
   it('hashes the same picture the same way twice', async function () {

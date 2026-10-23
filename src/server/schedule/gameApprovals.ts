@@ -13,15 +13,21 @@ import {
   asEventLocationFields,
   type EventLocationFields
 } from '../../common/eventInfo'
-import type {
-  GameIntent,
-  GameProposal,
-  GameRequestTerms
+import {
+  asGameTimezone,
+  type GameFieldSummary,
+  type GameIntent,
+  type GameProposal,
+  type GameRequestTerms,
+  systemCancelled
 } from '../../common/gameApprovals'
-import { asGameTimezone } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import type { Actor } from '../auth/sessions'
+import {
+  gameNeedsAttention,
+  requestNeedsAttention
+} from '../autoScheduler/attention'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
@@ -51,6 +57,7 @@ import {
 } from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
 import { recheckUmpireAssignments } from '../umpires/assignments'
+import { refreshFieldWarnings } from '../venues/fieldWarnings'
 import { seasonGameConsent } from './seasonGameConsent'
 
 type GameRow = Selectable<GamesTable>
@@ -97,7 +104,12 @@ export function materialGame(game: GameRow): GameIntent {
     outsideTournament: game.outside_tournament,
     exhibition: game.exhibition,
     timezone: game.timezone,
-    status: game.status === 'cancelled' ? 'cancelled' : 'scheduled'
+    status: game.status === 'cancelled' ? 'cancelled' : 'scheduled',
+    // Only a game on a field carries one, so a game without keeps the
+    // version it always had.
+    ...(game.field_id == null
+      ? {}
+      : { fieldId: game.field_id, fieldSize: game.field_size })
   }
 }
 export function gameVersion(game: GameIntent): string {
@@ -202,6 +214,117 @@ function noteProposedGame(db: Kysely<Database>, terms: GameRequestTerms): void {
   ])
   for (const seasonId of seasons) noteScopeChange(db, { seasonId })
 }
+/**
+ * The field a proposal leaves the game on. Left out of the proposal, the
+ * game keeps its field; `null` clears it.
+ */
+function preservedField(
+  game: GameIntent,
+  old: GameRow | null | undefined
+): { fieldId?: string | null; fieldSize?: string | null } {
+  if (game.fieldId === undefined)
+    return old?.field_id == null
+      ? {}
+      : { fieldId: old.field_id, fieldSize: old.field_size }
+  if (game.fieldId === null) return { fieldId: null, fieldSize: null }
+  return { fieldId: game.fieldId, fieldSize: game.fieldSize ?? null }
+}
+
+interface FieldPlace {
+  sizes: string[]
+  deleted: boolean
+  venue: string
+  address: string
+  latitude: number
+  longitude: number
+}
+
+/** Where a field is: its venue's name and address, and its pin. */
+async function fieldPlace(
+  db: Kysely<Database>,
+  fieldId: string
+): Promise<FieldPlace | null> {
+  const field = await db
+    .selectFrom('venue_fields')
+    .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')
+    .select([
+      'venue_fields.sizes',
+      'venue_fields.deleted_at',
+      'venue_fields.pin_latitude',
+      'venue_fields.pin_longitude',
+      'venues.name',
+      'venues.address',
+      'venues.latitude',
+      'venues.longitude'
+    ])
+    .where('venue_fields.id', '=', fieldId)
+    .executeTakeFirst()
+  return field == null
+    ? null
+    : {
+        sizes: field.sizes,
+        deleted: field.deleted_at != null,
+        venue: field.name,
+        address: field.address,
+        latitude: field.pin_latitude ?? field.latitude,
+        longitude: field.pin_longitude ?? field.longitude
+      }
+}
+
+/**
+ * Checks a field a proposal sets or changes, and what the game takes from
+ * it: the size it is set up in (its only one when not chosen), the venue's
+ * name and address, and where the pin is.
+ */
+async function placeOnField(
+  db: Kysely<Database>,
+  fieldId: string,
+  fieldSize: string | null | undefined
+): Promise<{
+  fieldSize: string
+  venue: string
+  address: string
+  latitude: number
+  longitude: number
+}> {
+  const field = await fieldPlace(db, fieldId)
+  if (field == null || field.deleted)
+    throw badRequest('Choose a field that is still in the registry')
+  const size =
+    fieldSize ?? (field.sizes.length === 1 ? field.sizes[0] : undefined)
+  if (size == null)
+    throw badRequest('Choose the size the field is set up in for this game')
+  if (!field.sizes.includes(size))
+    throw badRequest(`That field cannot be set up as ${size}`)
+  return {
+    fieldSize: size,
+    venue: field.venue,
+    address: field.address,
+    latitude: field.latitude,
+    longitude: field.longitude
+  }
+}
+
+/** Refreshes the warnings around a game: its field's, and its own. */
+async function refreshAroundGame(
+  trx: Transaction<Database>,
+  gameId: string,
+  clock: Clock,
+  otherFieldIds: Array<string | null | undefined> = []
+): Promise<void> {
+  const game = await trx
+    .selectFrom('games')
+    .select('field_id')
+    .where('id', '=', gameId)
+    .executeTakeFirst()
+  await refreshFieldWarnings(
+    trx,
+    [game?.field_id, ...otherFieldIds],
+    clock,
+    game == null ? [] : [gameId]
+  )
+}
+
 async function validateGame(
   db: Kysely<Database>,
   intent: GameIntent
@@ -386,6 +509,8 @@ export async function finishGameRequest(
   await validateGame(trx, terms.game)
   // The game's teams and season before a change moved it, to tell both.
   let before: GameFigureIds | undefined
+  let previousFieldId: string | null = null
+  let cancelsSchedulerGame = false
   let gameId = terms.gameId
   if (gameId == null) {
     if (terms.replacesGameId != null) {
@@ -418,7 +543,10 @@ export async function finishGameRequest(
         exhibition: terms.game.exhibition ?? false,
         timezone:
           terms.game.timezone ?? (await gameTimezone(trx, terms.game.seasonId)),
-        status: terms.game.status
+        status: terms.game.status,
+        field_id: terms.game.fieldId ?? null,
+        field_size: terms.game.fieldId == null ? null : terms.game.fieldSize,
+        schedule_preview_id: terms.schedulePreviewId ?? null
       })
       .execute()
   } else {
@@ -442,10 +570,7 @@ export async function finishGameRequest(
       throw conflict(
         'An original team administrator must authorize changes to this game'
       )
-    if (
-      current.cancellation_reason === 'withdrawal' ||
-      current.cancellation_reason === 'replacement'
-    )
+    if (systemCancelled(current.cancellation_reason))
       throw conflict(
         'A withdrawn game cannot be restored by a scheduling proposal'
       )
@@ -486,6 +611,11 @@ export async function finishGameRequest(
         )
     }
     await requireEditableTeams(trx, current, terms.game)
+    previousFieldId = current.field_id
+    cancelsSchedulerGame =
+      current.schedule_preview_id != null &&
+      current.status !== 'cancelled' &&
+      terms.game.status === 'cancelled'
     await trx
       .updateTable('games')
       .set({
@@ -498,6 +628,13 @@ export async function finishGameRequest(
         outside_tournament: terms.game.outsideTournament,
         exhibition: terms.game.exhibition ?? current.exhibition,
         timezone: terms.game.timezone ?? current.timezone,
+        ...(terms.game.fieldId === undefined
+          ? {}
+          : {
+              field_id: terms.game.fieldId,
+              field_size:
+                terms.game.fieldId == null ? null : terms.game.fieldSize
+            }),
         status:
           terms.game.status === 'cancelled'
             ? 'cancelled'
@@ -524,9 +661,19 @@ export async function finishGameRequest(
       .where('game_id', '=', gameId)
       .where('id', '!=', id)
       .execute()
+  // A scheduler game's row is known once it exists.
+  await trx
+    .updateTable('schedule_preview_games')
+    .set({ game_id: gameId })
+    .where('request_id', '=', id)
+    .execute()
+  await refreshAroundGame(trx, gameId, clock, [previousFieldId])
   await notifyGameChange(trx, { game: gameId, kind: 'game' })
   // Published or changed: its season's row and its teams' lists.
   await noteGameFigures(trx, gameId, before)
+  // A rainout entered in Game Settings.
+  if (cancelsSchedulerGame)
+    await gameNeedsAttention(trx, gameId, 'cancelled', request.sender_id)
   return true
 }
 
@@ -570,7 +717,9 @@ export async function proposeGame(
   actor: Actor,
   body: GameProposal,
   clock: Clock = realClock,
-  resumingRequestId?: string
+  resumingRequestId?: string,
+  /** Server-only: the Auto-Scheduler preview publishing this game. */
+  options: { schedulePreviewId?: string } = {}
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
     await lockKeys(trx, [
@@ -656,16 +805,35 @@ export async function proposeGame(
           old?.timezone ??
           (await gameTimezone(trx, body.game.seasonId))
       ),
-      exhibition: body.game.exhibition ?? old?.exhibition ?? false
+      exhibition: body.game.exhibition ?? old?.exhibition ?? false,
+      ...preservedField(body.game, old)
+    }
+    // A field set or changed is checked, and the game takes its venue and
+    // place. A field kept from the stored game is not checked again, but
+    // the game still takes its place from it: a field-linked game's venue
+    // and address are the field's.
+    if (game.fieldId != null) {
+      if (old?.field_id !== game.fieldId || old.field_size !== game.fieldSize)
+        Object.assign(
+          game,
+          await placeOnField(trx, game.fieldId, game.fieldSize)
+        )
+      else {
+        const kept = await fieldPlace(trx, game.fieldId)
+        if (kept != null)
+          Object.assign(game, {
+            venue: kept.venue,
+            address: kept.address,
+            latitude: kept.latitude,
+            longitude: kept.longitude
+          })
+      }
     }
     await validateGame(trx, game)
     if (body.sender.kind === 'season' && body.sender.id !== game.seasonId)
       throw forbidden('Send this game from its hosting season')
     if (body.gameId != null && old == null) throw notFound()
-    if (
-      old?.cancellation_reason === 'withdrawal' ||
-      old?.cancellation_reason === 'replacement'
-    )
+    if (systemCancelled(old?.cancellation_reason))
       throw conflict('A canceled withdrawal or replacement cannot be restored')
     if (old != null && !(await matchesVersion(trx, old, body.expected)))
       throw conflict('Review the current game before changing its schedule')
@@ -760,7 +928,10 @@ export async function proposeGame(
             hostingAuthorizerUserId: fresh.userId,
             hostingAuthorizationSource: 'initiator' as const
           }
-        : {})
+        : {}),
+      ...(options.schedulePreviewId == null
+        ? {}
+        : { schedulePreviewId: options.schedulePreviewId })
     }
     const id = makeId('invite')
     const sent = clock.now()
@@ -809,9 +980,11 @@ export async function proposeGame(
           created_at: sent
         })
         .execute()
+      await refreshAroundGame(trx, old.id, clock)
       await notifyGameChange(trx, { game: old.id, kind: 'game' })
       // Cancelled, it leaves its teams' records.
       await noteGameFigures(trx, old.id)
+      await gameNeedsAttention(trx, old.id, 'replaced', fresh.userId)
     }
     await trx
       .insertInto('group_requests')
@@ -881,6 +1054,8 @@ export async function proposeGame(
       })
       .execute()
     await finishGameRequest(trx, id, clock)
+    // A proposal left pending holds its field too.
+    await refreshFieldWarnings(trx, [game.fieldId, old?.field_id], clock)
     await notifyGameChange(trx, { game: terms.proposedGameId!, kind: 'game' })
     noteScopeChange(trx, { gameId: terms.proposedGameId! })
     noteProposedGame(trx, terms)
@@ -916,7 +1091,7 @@ export async function decideGameRequest(
       return await requestById(trx, id)
     }
     await recordRequestRecipient(trx, id, fresh.userId)
-    if (decision === 'decline')
+    if (decision === 'decline') {
       await trx
         .updateTable('group_requests')
         .set({
@@ -926,7 +1101,9 @@ export async function decideGameRequest(
         })
         .where('id', '=', id)
         .execute()
-    else {
+      await refreshFieldWarnings(trx, [terms.game.fieldId], clock)
+      await requestNeedsAttention(trx, request, 'declined', fresh.userId)
+    } else {
       for (const side of permitted)
         await trx
           .updateTable('group_request_sides')
@@ -963,11 +1140,7 @@ export async function withdrawFromGame(
     if (![game.home_team_id, game.away_team_id].includes(teamId))
       throw forbidden('Only a participating team can withdraw')
     await requireScheduler(trx, fresh, { kind: 'team', id: teamId })
-    if (
-      game.cancellation_reason === 'withdrawal' ||
-      game.cancellation_reason === 'replacement'
-    )
-      return game
+    if (systemCancelled(game.cancellation_reason)) return game
     const refs: GroupRef[] = [
       { kind: 'team', id: game.home_team_id },
       { kind: 'team', id: game.away_team_id },
@@ -1023,9 +1196,12 @@ export async function withdrawFromGame(
         oc.columns(['source_type', 'source_id', 'revision']).doNothing()
       )
       .execute()
+    await refreshAroundGame(trx, gameId, clock)
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
     // Cancelled by a withdrawal, it leaves its teams' records.
     await noteGameFigures(trx, gameId)
+    if (game.status !== 'cancelled')
+      await gameNeedsAttention(trx, gameId, 'teamWithdrew', fresh.userId)
     return withdrawn
   })
 }
@@ -1080,7 +1256,9 @@ export async function withdrawGameRequest(
   db: Kysely<Database>,
   actor: Actor,
   id: string,
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  /** Set by `resendGameRequest`: the game stays proposed, as a new request. */
+  options: { resending?: boolean } = {}
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
     await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
@@ -1120,7 +1298,7 @@ export async function withdrawGameRequest(
       throw conflict(
         'This game is already published. A team administrator can withdraw from the game.'
       )
-    if (request.status === 'pending')
+    if (request.status === 'pending') {
       await trx
         .updateTable('group_requests')
         .set({
@@ -1130,6 +1308,22 @@ export async function withdrawGameRequest(
         })
         .where('id', '=', id)
         .execute()
+      // The Auto-Scheduler's own withdrawal of a game its admin rejected
+      // needs no word to that admin.
+      const rejected = await trx
+        .selectFrom('schedule_preview_games')
+        .select('preview_id')
+        .where('request_id', '=', id)
+        .where('rejected_at', 'is not', null)
+        .executeTakeFirst()
+      if (options.resending !== true && rejected == null)
+        await requestNeedsAttention(trx, request, 'withdrawn', fresh.userId)
+    }
+    await refreshFieldWarnings(
+      trx,
+      [(request.terms as GameRequestTerms).game.fieldId],
+      clock
+    )
     await notifyProposalChange(trx, request.terms as GameRequestTerms)
     return await requestById(trx, id)
   })
@@ -1178,7 +1372,7 @@ export async function resendGameRequest(
       throw conflict(
         'A newer invitation exists. Open the latest invitation to resend it.'
       )
-    await withdrawGameRequest(trx, fresh, id, clock)
+    await withdrawGameRequest(trx, fresh, id, clock, { resending: true })
     const terms = original.terms as GameRequestTerms
     const proposal: GameProposal = {
       sender: {
@@ -1206,12 +1400,24 @@ export async function resendGameRequest(
       fresh,
       proposal,
       clock,
-      terms.replacesGameId == null ? undefined : original.id
+      terms.replacesGameId == null ? undefined : original.id,
+      terms.schedulePreviewId == null
+        ? {}
+        : { schedulePreviewId: terms.schedulePreviewId }
     )
     await trx
       .updateTable('group_requests')
       .set({ supersedes_id: id })
       .where('id', '=', next.id)
+      .execute()
+    // A scheduler game's row follows its proposal to the resent one.
+    await trx
+      .updateTable('schedule_preview_games')
+      .set({
+        request_id: next.id,
+        ...(next.status === 'accepted' ? { game_id: next.game_id } : {})
+      })
+      .where('request_id', '=', id)
       .execute()
     await trx
       .updateTable('group_requests')
@@ -1330,6 +1536,7 @@ export async function schedulingGame(
   canPropose: boolean
   withdrawTeamIds: string[]
   administeredTeamIds: string[]
+  field: GameFieldSummary | null
 }> {
   const fresh = await currentActor(db, actor)
   const row = await db
@@ -1346,12 +1553,41 @@ export async function schedulingGame(
   return {
     game: materialGame(row),
     version: gameVersion(materialGame(row)),
-    canPropose:
-      row.cancellation_reason !== 'withdrawal' &&
-      row.cancellation_reason !== 'replacement',
+    canPropose: !systemCancelled(row.cancellation_reason),
     withdrawTeamIds: teamIds,
-    administeredTeamIds: teamIds
+    administeredTeamIds: teamIds,
+    field: await fieldSummary(db, row.field_id, row.field_size)
   }
+}
+
+/** A game's field as the game form names it. */
+async function fieldSummary(
+  db: Kysely<Database>,
+  fieldId: string | null,
+  size: string | null
+): Promise<GameFieldSummary | null> {
+  if (fieldId == null || size == null) return null
+  const field = await db
+    .selectFrom('venue_fields')
+    .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')
+    .select([
+      'venues.id as venue_id',
+      'venues.name as venue_name',
+      'venues.address',
+      'venue_fields.name as field_name'
+    ])
+    .where('venue_fields.id', '=', fieldId)
+    .executeTakeFirst()
+  return field == null
+    ? null
+    : {
+        venueId: field.venue_id,
+        venueName: field.venue_name,
+        fieldId,
+        fieldName: field.field_name,
+        size,
+        address: field.address
+      }
 }
 
 function storedEventFields(game: {

@@ -311,6 +311,11 @@ export interface GamesTable {
   lineups_digest: string | null
   created_at: Timestamp
   updated_at: Timestamp
+  /** The registry field the game is on, and the size it is set up in. */
+  field_id: Generated<string | null>
+  field_size: Generated<string | null>
+  /** The Auto-Scheduler preview the game was published from. */
+  schedule_preview_id: Generated<string | null>
 }
 
 /**
@@ -915,6 +920,139 @@ export interface UmpireAssignmentsTable {
   created_at: Generated<Date>
 }
 
+/** `date[]`: read through `calendarDateText`, which takes Date or text. */
+type CalendarDates = ColumnType<unknown, string[] | undefined, string[]>
+
+/** A real place from Google Maps that leagues can claim and schedule on. */
+export interface VenuesTable {
+  id: string
+  google_place_id: string
+  name: string
+  address: Generated<string>
+  latitude: number
+  longitude: number
+  timezone: string
+  size_switch_minutes: Generated<number>
+  /** A weekly-hours list (`src/common/venues.ts`). */
+  default_hours: ColumnType<unknown, string | undefined, string>
+  default_blackouts: CalendarDates
+  photo_path: string | null
+  photo_sha256: string | null
+  photo_updated_at: Timestamp | null
+  created_at: Generated<Date>
+  updated_at: Generated<Date>
+}
+
+/** One field at a venue, in the sizes it can be set up in. */
+export interface VenueFieldsTable {
+  id: string
+  venue_id: string
+  name: string
+  sizes: string[]
+  pin_latitude: number | null
+  pin_longitude: number | null
+  starts_on: ColumnType<unknown, string | null | undefined, string | null>
+  ends_on: ColumnType<unknown, string | null | undefined, string | null>
+  /** Null takes the venue's default hours. */
+  hours: ColumnType<unknown, string | null | undefined, string | null>
+  blackouts: CalendarDates
+  photo_path: string | null
+  photo_sha256: string | null
+  photo_updated_at: Timestamp | null
+  deleted_at: Timestamp | null
+  created_at: Generated<Date>
+  updated_at: Generated<Date>
+}
+
+/** One build of a league's schedule, and the edits made to one option. */
+export interface SchedulePreviewsTable {
+  id: string
+  league_id: string
+  created_by: string
+  created_at: Generated<Date>
+  mode: 'full' | 'partial'
+  /** The snapshot the engine ran on (`src/server/autoScheduler/snapshot.ts`). */
+  input: ColumnType<unknown, string, string>
+  /** The engine's options (`src/common/autoScheduler/types.ts`). */
+  options: ColumnType<unknown, string | undefined, string>
+  /** Why no option could be built, when none could. */
+  blocking: string | null
+  /** Rejected and added games (`src/common/schedulePreviews.ts`). */
+  edits: ColumnType<unknown, string | undefined, string>
+  status: Generated<'open' | 'published' | 'discarded'>
+  published_option: number | null
+  published_at: Timestamp | null
+  /** How many upcoming games its publication replaced. */
+  removed_games: number | null
+}
+
+/** A game a publication proposed. */
+export interface SchedulePreviewGamesTable {
+  preview_id: string
+  game_key: string
+  season_id: string
+  home_team_id: string
+  away_team_id: string
+  request_id: string | null
+  game_id: string | null
+  rejected_at: Timestamp | null
+  resolved_at: Timestamp | null
+}
+
+/** A team marked as an exhibition team in a season. */
+export interface SeasonTeamFlagsTable {
+  season_id: string
+  team_id: string
+  exhibition: Generated<boolean>
+}
+
+/** A season's scheduling settings for the Auto-Scheduler. */
+export interface SeasonScheduleSettingsTable {
+  season_id: string
+  field_size: string
+  game_minutes: number
+  buffer_minutes: number
+  regular_games: number
+  exhibition_games: number
+  doubleheaders: 'never' | 'ifNecessary' | 'allowed'
+  starts_on: ColumnType<unknown, string, string>
+  ends_on: ColumnType<unknown, string, string>
+  blackouts: CalendarDates
+  /** A list of window periods (`src/common/seasonScheduling.ts`). */
+  windows: ColumnType<unknown, string | undefined, string>
+  updated_at: Generated<Date>
+}
+
+/** The seasons and fields a league's next schedule is built from. */
+export interface LeagueScheduleSetupsTable {
+  league_id: string
+  season_ids: Generated<string[]>
+  field_ids: Generated<string[]>
+  updated_at: Generated<Date>
+}
+
+/** A warning about a game's field, once it has been announced. */
+export interface GameFieldWarningsTable {
+  game_id: string
+  kind: 'conflict' | 'outsideAvailability' | 'fieldDeleted' | 'sizeRemoved'
+  other_ref: Generated<string>
+  notified_at: Generated<Date>
+}
+
+/** A league's claim on a venue, or its request to co-own one. */
+export interface VenueClaimsTable {
+  id: string
+  venue_id: string
+  league_id: string
+  kind: 'claim' | 'coOwner'
+  requested_by: string
+  status: Generated<'pending' | 'approved' | 'rejected' | 'left' | 'removed'>
+  requested_at: Timestamp
+  approves_at: Timestamp
+  decided_by: string | null
+  decided_at: Timestamp | null
+}
+
 export interface Database {
   umpire_note_types: UmpireLevelsTable
   game_umpire_notes: { game_id: string; note_type_id: string; value: string }
@@ -966,6 +1104,12 @@ export interface Database {
   events: EventsTable
   external_ids: ExternalIdsTable
   games: GamesTable
+  game_field_warnings: GameFieldWarningsTable
+  league_schedule_setups: LeagueScheduleSetupsTable
+  season_schedule_settings: SeasonScheduleSettingsTable
+  season_team_flags: SeasonTeamFlagsTable
+  schedule_preview_games: SchedulePreviewGamesTable
+  schedule_previews: SchedulePreviewsTable
   game_player_stats: GamePlayerStatsTable
   game_stats_state: GameStatsStateTable
   invite_redemptions: InviteRedemptionsTable
@@ -989,6 +1133,9 @@ export interface Database {
   user_emails: UserEmailsTable
   users: UsersTable
   video_wall_anchors: VideoWallAnchorsTable
+  venue_claims: VenueClaimsTable
+  venue_fields: VenueFieldsTable
+  venues: VenuesTable
   videos: VideosTable
   walk_up_songs: WalkUpSongsTable
   director_uploads: DirectorUploadsTable

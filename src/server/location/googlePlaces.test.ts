@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { googlePlacesStub } from '../../test/googlePlacesStub'
+import { EXAMPLE_PARK, googlePlacesStub } from '../../test/googlePlacesStub'
 import { googlePlaces } from './googlePlaces'
 
 describe('Google city lookup', () => {
@@ -216,5 +216,50 @@ describe('Google city lookup', () => {
         }
       }
     }
+  })
+
+  it('reads a venue place with its time zone, and refuses a broken answer', async () => {
+    const client = googlePlaces({
+      apiKey: 'placeholder-key',
+      baseUrl: stub.baseUrl
+    })
+    expect(await client.venueDetails(EXAMPLE_PARK.id)).deep.equals({
+      placeId: EXAMPLE_PARK.id,
+      name: EXAMPLE_PARK.name,
+      address: EXAMPLE_PARK.address,
+      latitude: EXAMPLE_PARK.location.latitude,
+      longitude: EXAMPLE_PARK.location.longitude,
+      timezone: 'America/New_York'
+    })
+    expect(stub.calls[0]).include({
+      path: `/v1/places/${EXAMPLE_PARK.id}?languageCode=en`,
+      mask: 'id,displayName,formattedAddress,location'
+    })
+    // Without its Google time zone, boundary data still names the zone.
+    stub.controls.timeZoneFail = true
+    expect((await client.venueDetails(EXAMPLE_PARK.id)).timezone).equals(
+      'America/New_York'
+    )
+    stub.controls.timeZoneFail = false
+    let missing: unknown
+    await client.venueDetails('no-such-place').catch((error: unknown) => {
+      missing = error
+    })
+    expect(String(missing)).includes('Not found')
+    for (const control of ['malformed', 'invalidCoordinates'] as const) {
+      stub.controls[control] = true
+      let broken: unknown
+      await client.venueDetails(EXAMPLE_PARK.id).catch((error: unknown) => {
+        broken = error
+      })
+      expect((broken as { code?: string }).code, control).equals('unavailable')
+      stub.controls[control] = false
+    }
+    stub.controls.fail = true
+    let down: unknown
+    await client.venueDetails(EXAMPLE_PARK.id).catch((error: unknown) => {
+      down = error
+    })
+    expect(String(down)).includes('unavailable')
   })
 })

@@ -43,6 +43,8 @@ export interface GroupScreenProps {
   onCreateGame?: (group: GroupRef) => void
   onPromote?: (group: GroupRef) => void
   onCreateExternal?: (custodian: GroupRef) => void
+  /** A league's Auto-Scheduler, for its admins. */
+  onAutoScheduler?: (league: GroupRef) => void
   onOpenRequest?: (id: string) => void
   onOpenGame?: (
     gameId: string,
@@ -108,6 +110,7 @@ function GroupContent({
   onCreateGame,
   onPromote,
   onCreateExternal,
+  onAutoScheduler,
   onOpenRequest,
   onOpenGame,
   initialTab,
@@ -275,6 +278,7 @@ function GroupContent({
       onSettings={onSettings}
       onLink={onLink}
       onCreateExternal={onCreateExternal}
+      onAutoScheduler={onAutoScheduler}
       onOpenPlayer={
         onOpenPlayer == null
           ? undefined

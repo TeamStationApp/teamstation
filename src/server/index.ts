@@ -78,6 +78,8 @@ import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
+import { schedulePreviewRoutes } from './routes/schedulePreviews'
+import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
@@ -86,6 +88,7 @@ import { teamRoutes } from './routes/teams'
 import { timeRoutes } from './routes/time'
 import { umpireRoutes } from './routes/umpires'
 import { userRoutes } from './routes/users'
+import { venueRoutes } from './routes/venues'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
 import { startScoreboard } from './scoreboard/scoreboardService'
@@ -602,6 +605,9 @@ function runWorker(): void {
       googlePlaces: placesProvider
     })
   )
+  app.use('/api/v1', venueRoutes(db, mediaContext, { places: placesProvider }))
+  app.use('/api/v1', schedulingSetupRoutes(db))
+  app.use('/api/v1', schedulePreviewRoutes(db))
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {
