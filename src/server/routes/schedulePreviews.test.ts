@@ -9,7 +9,10 @@ import {
   type SchedulePreview
 } from '../../common/schedulePreviews'
 import { fieldSizeLabel } from '../../common/venues'
-import { forceSeasonZone } from '../../test/autoSchedulerFixture'
+import {
+  forceSeasonZone,
+  seedHarborField
+} from '../../test/autoSchedulerFixture'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
 
 describe('schedule preview routes', function () {
@@ -402,6 +405,48 @@ describe('schedule preview routes', function () {
         )
       ).status
     ).equals(400)
+  })
+
+  it('builds and publishes on a field of a venue nobody has claimed', async () => {
+    const harbor = await seedHarborField(w.fx)
+    const chosen = await w.call<{
+      fieldIds: string[]
+      fields: Array<{ id: string; ours: boolean; ownerNames: string[] }>
+    }>(101, 'PUT', `/leagues/${w.fx.f.leagueA}/schedule-setup`, {
+      seasonIds: [w.fx.f.seasonA],
+      fieldIds: [harbor]
+    })
+    expect(chosen.status).equals(200)
+    expect(chosen.body.fieldIds).deep.equals([harbor])
+    expect(chosen.body.fields.find(field => field.id === harbor)).deep.include({
+      ours: false,
+      ownerNames: []
+    })
+    const built = await build({ mode: 'full', existing: 'workAround' })
+    expect(built.status).equals(201)
+    expect(built.body.blocking).equals(null)
+    expect(built.body.options.length).greaterThan(0)
+    const option = built.body.options[0]
+    expect(option.games.length).greaterThan(0)
+    for (const game of option.games)
+      expect(game.fieldId, game.key).equals(harbor)
+    const published = await w.call<Publication>(
+      101,
+      'POST',
+      `/schedule-previews/${built.body.id}/publications`,
+      { option: 0 }
+    )
+    expect(published.status).equals(200)
+    expect(published.body.preview.status).equals('published')
+    const games = await w.fx.f.h.db
+      .selectFrom('games')
+      .select(['field_id', 'venue', 'status'])
+      .where('schedule_preview_id', '=', built.body.id)
+      .execute()
+    expect(games.length).equals(published.body.scheduled)
+    expect(games.length).equals(option.games.length)
+    for (const game of games)
+      expect(game).deep.include({ field_id: harbor, venue: 'Harbor Field' })
   })
 
   it('builds a season still at the UTC default in the zone it was set up in', async () => {

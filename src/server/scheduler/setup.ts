@@ -247,29 +247,40 @@ async function ownedVenueIds(
   ]
 }
 
-/** Which of these venues somebody owns. */
-async function claimedVenueIds(
+/**
+ * Who owns each of these venues: the leagues whose claims count, by id
+ * and name.
+ */
+async function venueOwners(
   db: Db,
   venueIds: string[],
   clock: Clock
-): Promise<Set<string>> {
-  if (venueIds.length === 0) return new Set()
+): Promise<Map<string, Array<{ id: string; name: string }>>> {
+  const owners = new Map<string, Array<{ id: string; name: string }>>()
+  if (venueIds.length === 0) return owners
   const claims = await db
     .selectFrom('venue_claims')
-    .selectAll()
-    .where('venue_id', 'in', venueIds)
-    .where('status', 'in', ['pending', 'approved'])
+    .innerJoin('leagues', 'leagues.id', 'venue_claims.league_id')
+    .selectAll('venue_claims')
+    .select('leagues.name as league_name')
+    .where('venue_claims.venue_id', 'in', venueIds)
+    .where('venue_claims.status', 'in', ['pending', 'approved'])
     .execute()
-  return new Set(
-    claims
-      .filter(claim => claimCounts(claim, clock))
-      .map(claim => claim.venue_id)
-  )
+  for (const claim of claims) {
+    if (!claimCounts(claim, clock)) continue
+    const list = owners.get(claim.venue_id) ?? []
+    if (!list.some(owner => owner.id === claim.league_id))
+      list.push({ id: claim.league_id, name: claim.league_name })
+    owners.set(claim.venue_id, list)
+  }
+  return owners
 }
 
 async function setupFields(
   db: Db,
-  where: { venueIds: string[]; fieldIds: string[] }
+  leagueId: string,
+  where: { venueIds: string[]; fieldIds: string[] },
+  clock: Clock
 ): Promise<SetupField[]> {
   if (where.venueIds.length === 0 && where.fieldIds.length === 0) return []
   const rows = await db
@@ -304,16 +315,28 @@ async function setupFields(
     .orderBy('venue_fields.name')
     .orderBy('venue_fields.id')
     .execute()
-  return rows.map(row => ({
-    id: row.id,
-    name: row.name,
-    venueId: row.venue_id,
-    venueName: row.venue_name,
-    sizes: row.sizes.map(size => asFieldSize(size)),
-    startsOn: calendarDateText(row.starts_on),
-    endsOn: calendarDateText(row.ends_on),
-    deleted: row.deleted_at != null
-  }))
+  const owners = await venueOwners(
+    db,
+    [...new Set(rows.map(row => row.venue_id))],
+    clock
+  )
+  return rows.map(row => {
+    const owning = owners.get(row.venue_id) ?? []
+    return {
+      id: row.id,
+      name: row.name,
+      venueId: row.venue_id,
+      venueName: row.venue_name,
+      sizes: row.sizes.map(size => asFieldSize(size)),
+      startsOn: calendarDateText(row.starts_on),
+      endsOn: calendarDateText(row.ends_on),
+      deleted: row.deleted_at != null,
+      ours: owning.some(owner => owner.id === leagueId),
+      ownerNames: owning
+        .map(owner => owner.name)
+        .sort((a, b) => a.localeCompare(b))
+    }
+  })
 }
 
 /**
@@ -352,10 +375,15 @@ export async function scheduleSetup(
   const seasonIds = (chosen?.season_ids ?? []).filter(id =>
     seasons.some(season => season.id === id)
   )
-  const fields = await setupFields(db, {
-    venueIds: await ownedVenueIds(db, leagueId, clock),
-    fieldIds: chosen?.field_ids ?? []
-  })
+  const fields = await setupFields(
+    db,
+    leagueId,
+    {
+      venueIds: await ownedVenueIds(db, leagueId, clock),
+      fieldIds: chosen?.field_ids ?? []
+    },
+    clock
+  )
   return {
     leagueId,
     seasonIds,
@@ -385,7 +413,8 @@ export async function scheduleSetup(
 
 /**
  * Chooses the next run's seasons and fields: seasons of this league, and
- * fields, not deleted, of venues somebody owns.
+ * any fields in the registry that are not deleted, wherever they are and
+ * whether or not anybody claims their venue.
  */
 export async function saveScheduleSetup(
   db: Db,
@@ -406,20 +435,12 @@ export async function saveScheduleSetup(
   if (choice.fieldIds.length > 0) {
     const fields = await db
       .selectFrom('venue_fields')
-      .select(['id', 'venue_id'])
+      .select('id')
       .where('id', 'in', choice.fieldIds)
       .where('deleted_at', 'is', null)
       .execute()
-    const claimed = await claimedVenueIds(
-      db,
-      [...new Set(fields.map(field => field.venue_id))],
-      clock
-    )
-    if (
-      fields.length !== choice.fieldIds.length ||
-      fields.some(field => !claimed.has(field.venue_id))
-    )
-      throw badRequest('Choose fields of claimed venues')
+    if (fields.length !== choice.fieldIds.length)
+      throw badRequest('Choose fields that exist')
   }
   const values = {
     season_ids: choice.seasonIds,

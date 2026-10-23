@@ -99,7 +99,7 @@ export function schedulingSetupPaths(
   const setup = {
     200: {
       description:
-        '{ leagueId, seasonIds, fieldIds, seasons, fields }: the chosen seasons and fields, every season of the league with its settings and team counts, and the fields of the league’s venues and any other chosen field'
+        '{ leagueId, seasonIds, fieldIds, seasons, fields }: the chosen seasons and fields, every season of the league with its settings and team counts, and the fields of the league’s venues and any other chosen field; each field has ours, true when the league owns its venue, and ownerNames, the leagues whose claims on the venue count, by name'
     },
     ...errors
   }
@@ -151,7 +151,7 @@ export function schedulingSetupPaths(
         summary: 'Choose the seasons and fields of the league’s next schedule',
         security: [{ bearer: [] }],
         description:
-          'For a league admin. Seasons must belong to the league; fields must be fields, not deleted, of claimed venues.',
+          'For a league admin. Seasons must belong to the league; fields must exist and not be deleted, at any venue, claimed or not.',
         parameters: [pathId('leagueId')],
         requestBody: jsonBody({
           type: 'object',

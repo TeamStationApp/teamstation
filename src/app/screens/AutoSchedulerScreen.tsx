@@ -17,6 +17,7 @@ import {
   type ScheduleSettings,
   type ScheduleSetup,
   seasonZone,
+  type SetupField,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
@@ -27,6 +28,7 @@ import { DateRangePicker } from '../components/DateRangePicker'
 import { PickerDialog } from '../components/PickerDialog'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { FieldPickerScene } from './FieldPickerScene'
 import { gameTimeLabel } from './SchedulePreviewScreen'
 import { type GridColumn, SeasonScheduleGrid } from './SeasonScheduleGrid'
 import { sizesLabel } from './VenueScreen'
@@ -34,6 +36,21 @@ import { sizesLabel } from './VenueScreen'
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
   return setup.seasons.filter(season => setup.seasonIds.includes(season.id))
+}
+
+/**
+ * A run field's detail: its sizes, and, for a field of a venue the league
+ * doesn't own, the venue and who owns it.
+ */
+export function setupFieldDetail(field: SetupField): string {
+  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
+  const sizes = sizesLabel(field.sizes)
+  if (field.ours) return sizes
+  const owners =
+    field.ownerNames.length === 0
+      ? 'unclaimed'
+      : `claimed by ${field.ownerNames.join(', ')}`
+  return `${sizes} · ${field.venueName} · ${owners}`
 }
 
 /**
@@ -70,6 +87,7 @@ export function AutoSchedulerScreen({
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
   const [asking, setAsking] = useState<{ existing: number }>()
   const [building, setBuilding] = useState(false)
+  const [picking, setPicking] = useState(false)
   const begin = useLatestRequest()
   useEffect(() => {
     const current = begin()
@@ -313,7 +331,16 @@ export function AutoSchedulerScreen({
         <SectionHeader
           title="Fields for this run"
           note={String(fields.length)}
+          // Beside two actions, a phone wraps the title rather than cut it.
+          titleLines={2}
           actions={[
+            {
+              label: 'Add field',
+              accessibilityLabel: 'Add a field to this run',
+              onPress: () => {
+                setPicking(true)
+              }
+            },
             {
               label: 'Field Manager',
               accessibilityLabel: 'Open the Field Manager',
@@ -323,8 +350,8 @@ export function AutoSchedulerScreen({
         />
         {setup.fields.length === 0 ? (
           <Text style={styles.meta}>
-            Your league has no fields yet. Claim a venue and add its fields in
-            the Field Manager.
+            Add any field in the registry, or claim a venue and add its fields
+            in the Field Manager.
           </Text>
         ) : (
           <ListCard>
@@ -332,11 +359,7 @@ export function AutoSchedulerScreen({
               <CheckRow
                 key={field.id}
                 label={`${field.name}, ${field.venueName}`}
-                detail={
-                  field.deleted
-                    ? 'Deleted. Uncheck it to leave it out.'
-                    : sizesLabel(field.sizes)
-                }
+                detail={setupFieldDetail(field)}
                 checked={setup.fieldIds.includes(field.id)}
                 disabled={busy}
                 onToggle={() => {
@@ -424,6 +447,24 @@ export function AutoSchedulerScreen({
           </>
         )}
       </View>
+      {picking && (
+        <FieldPickerScene
+          client={client}
+          onChooseField={chosen => {
+            setPicking(false)
+            choose({
+              seasonIds: setup.seasonIds,
+              fieldIds: [
+                ...liveFieldIds.filter(id => id !== chosen.id),
+                chosen.id
+              ]
+            }).catch(() => undefined)
+          }}
+          onClose={() => {
+            setPicking(false)
+          }}
+        />
+      )}
       {asking != null && (
         <ChoiceSheet
           title={`These seasons already have ${asking.existing === 1 ? 'an upcoming game' : `${asking.existing} upcoming games`}`}

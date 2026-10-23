@@ -306,7 +306,7 @@ export const asSetupSeason = asObject({
 })
 export type SetupSeason = ReturnType<typeof asSetupSeason>
 
-/** A field of a claimed venue the run may use. */
+/** A field in the registry the run may use, and whose venue it is. */
 export const asSetupField = asObject({
   id: asString,
   name: asString,
@@ -316,7 +316,11 @@ export const asSetupField = asObject({
   /** The field's own dates; both or neither. */
   startsOn: asNullableString,
   endsOn: asNullableString,
-  deleted: asBoolean
+  deleted: asBoolean,
+  /** True when this league is among the venue's owners. */
+  ours: asBoolean,
+  /** The leagues whose claims on the venue count, by name; empty if none. */
+  ownerNames: asArray(asString)
 })
 export type SetupField = ReturnType<typeof asSetupField>
 

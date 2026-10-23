@@ -22,6 +22,11 @@ export interface SectionHeaderProps {
     accessibilityLabel?: string
     onPress: () => void
   }>
+  /**
+   * The lines the title may take before it is cut short: more than one for
+   * a long title beside several actions on a phone.
+   */
+  titleLines?: number
 }
 
 /**
@@ -39,13 +44,14 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
     actionLabel,
     onAction,
     actionPill = false,
-    actions = []
+    actions = [],
+    titleLines = 1
   } = props
   const styles = getStyles(useTheme())
 
   return (
     <View style={styles.row}>
-      <Text style={styles.title} numberOfLines={1}>
+      <Text style={styles.title} numberOfLines={titleLines}>
         {title.toUpperCase()}
       </Text>
       <View style={styles.right}>

@@ -14,6 +14,7 @@ import type {
   SetupField,
   SetupSeason
 } from '../../common/seasonScheduling'
+import type { VenueSummary } from '../../common/venues'
 import {
   fill,
   mount,
@@ -22,8 +23,18 @@ import {
   text,
   unmount
 } from '../../test/gameFormDom'
-import { hasLabel, tapLabel, tapText } from '../../test/venueDom'
-import { AutoSchedulerScreen, chosenSeasons } from './AutoSchedulerScreen'
+import {
+  hasLabel,
+  tapLabel,
+  tapText,
+  venueDetail,
+  venueField
+} from '../../test/venueDom'
+import {
+  AutoSchedulerScreen,
+  chosenSeasons,
+  setupFieldDetail
+} from './AutoSchedulerScreen'
 import { seasonGameTotal } from './SeasonScheduleGrid'
 
 const SETTINGS: ScheduleSettings = {
@@ -69,8 +80,33 @@ function field(overrides: Partial<SetupField> = {}): SetupField {
     startsOn: null,
     endsOn: null,
     deleted: false,
+    ours: true,
+    ownerNames: ['Demo League A'],
     ...overrides
   }
+}
+
+/** Harbor Diamond, at a venue nobody has claimed. */
+const HARBOR_DIAMOND = field({
+  id: 'fld_harbor',
+  name: 'Harbor Diamond',
+  venueId: 'ven_harbor',
+  venueName: 'Harbor Field',
+  sizes: ['50/70', '60/90'],
+  ours: false,
+  ownerNames: []
+})
+
+const HARBOR: VenueSummary = {
+  id: 'ven_harbor',
+  placeId: 'harbor-field',
+  name: 'Harbor Field',
+  address: '1 Demo Way, Demo City',
+  owners: [],
+  pendingClaim: false,
+  claimed: false,
+  group: 'unclaimed',
+  distanceKm: null
 }
 
 function setupOf(overrides: Partial<ScheduleSetup> = {}): ScheduleSetup {
@@ -102,6 +138,8 @@ function fakeClient(
     existing?: number
     failBuild?: boolean
     listed?: GameToReschedule[]
+    /** Fields of other venues, listed once chosen, as the server does. */
+    registry?: SetupField[]
   } = {}
 ): {
   client: TeamStationClient
@@ -120,6 +158,21 @@ function fakeClient(
     client: undefined as unknown as TeamStationClient
   }
   record.client = {
+    venues: async () => [HARBOR],
+    venue: async () =>
+      venueDetail({
+        id: 'ven_harbor',
+        placeId: 'harbor-field',
+        name: 'Harbor Field',
+        address: '1 Demo Way, Demo City',
+        fields: [
+          venueField({
+            id: 'fld_harbor',
+            name: 'Harbor Diamond',
+            sizes: ['50/70', '60/90']
+          })
+        ]
+      }),
     gamesToReschedule: async () => options.listed ?? [],
     buildSchedulePreview: async (
       _leagueId: string,
@@ -148,8 +201,23 @@ function fakeClient(
     ) => {
       record.choices.push(choice)
       if (options.failChoice === true)
-        throw new Error('Choose fields of claimed venues')
-      setup = { ...setup, ...choice }
+        throw new Error('Choose fields that exist')
+      // The league's own fields, and every chosen one, wherever it is.
+      const known = [
+        ...setup.fields.filter(item => item.ours),
+        ...[...setup.fields, ...(options.registry ?? [])].filter(
+          item => !item.ours
+        )
+      ].filter(
+        (item, index, all) => all.findIndex(o => o.id === item.id) === index
+      )
+      setup = {
+        ...setup,
+        ...choice,
+        fields: known.filter(
+          item => item.ours || choice.fieldIds.includes(item.id)
+        )
+      }
       return setup
     },
     saveScheduleSettings: async (
@@ -392,6 +460,100 @@ describe('the Auto-Scheduler setup', () => {
     expect(fake.builds).deep.equals([{ mode: 'full', timezone: VIEWER }])
   })
 
+  it('adds any field in the registry to the run, and names whose venue it is', async () => {
+    const fake = fakeClient(
+      setupOf({
+        fields: [
+          field(),
+          field({
+            id: 'fld_pier',
+            name: 'Pier Diamond',
+            venueId: 'ven_pier',
+            venueName: 'Pier Park',
+            ours: false,
+            ownerNames: ['Demo League B']
+          })
+        ],
+        fieldIds: ['fld_one', 'fld_pier']
+      }),
+      { registry: [HARBOR_DIAMOND] }
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    // A field of another league's venue names that league.
+    expect(text()).includes('50/70 · Pier Park · claimed by Demo League B')
+    // The league's own fields show their sizes alone.
+    expect(text()).not.includes('Example Park · ')
+    await tapLabel('Add a field to this run')
+    await settle(50)
+    expect(text()).includes('Choose field')
+    await press('Harbor Field, 1 Demo Way, Demo City')
+    await settle(20)
+    // A field of two sizes is added at once: the run asks for no size.
+    await press('Harbor Diamond, 50/70 · 60/90')
+    await settle(20)
+    expect(text()).not.includes('Choose size')
+    expect(document.querySelector('[data-testid="field-picker"]')).equals(null)
+    expect(fake.choices.at(-1)).deep.equals({
+      seasonIds: ['sea_a'],
+      fieldIds: ['fld_one', 'fld_pier', 'fld_harbor']
+    })
+    const row = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>(
+        '[aria-label="Harbor Diamond, Harbor Field"]'
+      )
+    // A checked row draws its check mark.
+    expect(row()?.textContent).equals(
+      '✓Harbor Diamond, Harbor Field50/70 · 60/90 · Harbor Field · unclaimed'
+    )
+    expect(text()).includes('50/70 · 60/90 · Harbor Field · unclaimed')
+    expect(text()).includes('FIELDS FOR THIS RUN3')
+    // Adding a field already in the run keeps one of it.
+    await tapLabel('Add a field to this run')
+    await settle(50)
+    await press('Harbor Field, 1 Demo Way, Demo City')
+    await settle(20)
+    await press('Harbor Diamond, 50/70 · 60/90')
+    await settle(20)
+    expect(fake.choices.at(-1)?.fieldIds).deep.equals([
+      'fld_one',
+      'fld_pier',
+      'fld_harbor'
+    ])
+    // Removing it unchecks it, and it leaves the list with the run.
+    await tapLabel('Harbor Diamond, Harbor Field')
+    await settle(20)
+    expect(fake.choices.at(-1)?.fieldIds).deep.equals(['fld_one', 'fld_pier'])
+    expect(row()).equals(null)
+    // Cancelling the picker adds nothing.
+    await tapLabel('Add a field to this run')
+    await settle(50)
+    await tapLabel('Cancel field picker')
+    expect(document.querySelector('[data-testid="field-picker"]')).equals(null)
+    expect(fake.choices.length).equals(3)
+  })
+
+  it('details a run field by whose venue it is', () => {
+    expect(setupFieldDetail(field({ sizes: ['46/60', '50/70'] }))).equals(
+      '46/60 · 50/70'
+    )
+    expect(setupFieldDetail(HARBOR_DIAMOND)).equals(
+      '50/70 · 60/90 · Harbor Field · unclaimed'
+    )
+    expect(
+      setupFieldDetail(
+        field({
+          venueName: 'Pier Park',
+          ours: false,
+          ownerNames: ['Demo League B', 'Demo League C']
+        })
+      )
+    ).equals('50/70 · Pier Park · claimed by Demo League B, Demo League C')
+    expect(setupFieldDetail(field({ deleted: true, ours: false }))).equals(
+      'Deleted. Uncheck it to leave it out.'
+    )
+  })
+
   it('says when a save fails, and leaves a deleted field out of changes', async () => {
     const fake = fakeClient(
       setupOf({
@@ -437,7 +599,7 @@ describe('the Auto-Scheduler setup', () => {
     await show(fake.client, calls)
     await tapLabel('Field 1, Example Park')
     await settle(20)
-    expect(text()).includes('Choose fields of claimed venues')
+    expect(text()).includes('Choose fields that exist')
     await unmount()
     await show(
       fakeClient(
@@ -446,7 +608,10 @@ describe('the Auto-Scheduler setup', () => {
       calls
     )
     expect(text()).includes('This league has no seasons yet.')
-    expect(text()).includes('Your league has no fields yet.')
+    expect(text()).includes(
+      'Add any field in the registry, or claim a venue and add its fields in the Field Manager.'
+    )
+    expect(text()).not.includes('Your league has no fields yet.')
     expect(text()).includes('Must fix: Choose a season to schedule.')
   })
 

@@ -30,6 +30,8 @@ import {
   type AutoSchedulerFixture,
   autoSchedulerFixture,
   forceSeasonZone,
+  HARBOR_DIAMOND,
+  seedHarborField,
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
@@ -1064,6 +1066,164 @@ async function f5(run: Run): Promise<void> {
   )
 }
 
+/**
+ * Runs a shell pipeline that starts with a curl against the fixture server
+ * as the league admin, the token in `$TOKEN`, and adds it and its output to
+ * a log. The server runs in this process, so the command must not block its
+ * event loop.
+ */
+async function curlPipe(
+  run: Run,
+  lines: string[],
+  path: string,
+  filter: string
+): Promise<string> {
+  const command = `curl -sS -H "Authorization: Bearer $TOKEN" '${run.fx.f.h.origin}/api/v1${path}' | jq -c '${filter}'`
+  const { stdout } = await promisify(execFile)('sh', ['-c', command], {
+    encoding: 'utf8',
+    env: { ...process.env, TOKEN: run.fx.f.h.tokens.get(ADMIN)! }
+  })
+  const answer = stdout.trim()
+  lines.push(`$ ${command}`, answer, '')
+  return answer
+}
+
+/** The run field row's own text: its check mark, label and detail. */
+async function runFieldRow(
+  b: BrowserSession,
+  label: string
+): Promise<string | null> {
+  return await b.page.evaluate((wanted: string) => {
+    const row = document.querySelector(`[aria-label="${wanted}"]`)
+    return row === null ? null : String(row.textContent)
+  }, label)
+}
+
+/**
+ * F6: Fields for this run adds a field of a venue nobody has claimed, and
+ * the run builds and publishes on it.
+ */
+async function f6(run: Run): Promise<void> {
+  const { fx, b } = run
+  const lines = [
+    '$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts --only F6',
+    ''
+  ]
+  const harbor = 'Harbor Diamond, Harbor Field'
+  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+  await contains(b.page, 'FIELDS FOR THIS RUN')
+  await contains(b.page, 'Field 1, Example Park')
+  expect(await runFieldRow(b, harbor)).equals(null)
+  // Add field opens the picker in field mode: a venue, then its field.
+  await clickLabel(b, 'Add a field to this run')
+  await contains(b.page, 'Choose field')
+  await fill(b.m, 'Search venues', 'Harbor')
+  await clickLabel(b, 'Harbor Field, 1 Demo Way, Demo City')
+  await contains(b.page, 'Harbor Diamond')
+  await clickLabel(b, 'Harbor Diamond, 50/70')
+  await b.page.waitForFunction(
+    () => document.querySelector('[data-testid="field-picker"]') === null,
+    { timeout: 15000 }
+  )
+  await contains(b.page, 'Harbor Field · unclaimed')
+  expect(await runFieldRow(b, harbor)).equals(
+    '✓Harbor Diamond, Harbor Field50/70 · Harbor Field · unclaimed'
+  )
+  // Field 1 leaves the run, so every game goes to Harbor Diamond.
+  await clickLabel(b, 'Field 1, Example Park')
+  await b.page.waitForFunction(
+    (label: string) => {
+      const row = document.querySelector(`[aria-label="${label}"]`)
+      return row !== null && !String(row.textContent).startsWith('✓')
+    },
+    { timeout: 15000 },
+    'Field 1, Example Park'
+  )
+  const setup = await api<{ fieldIds: string[] }>(
+    fx,
+    ADMIN,
+    'GET',
+    `/leagues/${fx.f.leagueA}/schedule-setup`
+  )
+  expect(setup.fieldIds).deep.equals([HARBOR_DIAMOND])
+  await scrollToText(b, 'FIELDS FOR THIS RUN')
+  await run.capture('run-fields-after.png')
+  // Build seasonA's schedule, working around its two games on Field 1.
+  await tapText(b, 'Build schedule')
+  await contains(b.page, 'These seasons already have 2 upcoming games')
+  await clickLabel(b, 'Work around them')
+  await b.page.waitForFunction(
+    () => /\/scheduler\/previews\/[^/]+$/.test(location.pathname),
+    { timeout: 120000 }
+  )
+  await contains(b.page, 'Publish this option')
+  const previewId = decodeURIComponent(
+    await b.page.evaluate(() =>
+      location.pathname.slice(location.pathname.lastIndexOf('/') + 1)
+    )
+  )
+  const preview = await api<SchedulePreview>(
+    fx,
+    ADMIN,
+    'GET',
+    `/schedule-previews/${previewId}`
+  )
+  expect(preview.options.length).greaterThan(0)
+  const planned = preview.options[0].games
+  expect(planned.length).greaterThan(0)
+  expect(planned.every(game => game.fieldId === HARBOR_DIAMOND)).equals(true)
+  await tapText(b, 'Publish this option')
+  await contains(b.page, `${planned.length} games scheduled`)
+  // seasonA's games over the API: the two it had on Field 1, and every new
+  // one on Harbor Diamond.
+  const listed = JSON.parse(
+    await curlPipe(
+      run,
+      lines,
+      `/seasons/${fx.f.seasonA}`,
+      '[.games[] | {id, startAt, venue}]'
+    )
+  ) as Array<{ id: string; startAt: string; venue: string | null }>
+  const published = await fx.f.h.db
+    .selectFrom('games')
+    .select('id')
+    .where('schedule_preview_id', '=', previewId)
+    .execute()
+  const fresh = new Set(published.map(game => game.id))
+  expect(fresh.size).equals(planned.length)
+  const newGames = listed.filter(game => fresh.has(game.id))
+  expect(newGames.length).equals(planned.length)
+  expect(listed.length).equals(planned.length + 2)
+  const fields: string[] = []
+  for (const game of newGames) {
+    const field = JSON.parse(
+      await curlPipe(
+        run,
+        lines,
+        `/games/${game.id}/scheduling`,
+        '.game | {fieldId, fieldSize, venue}'
+      )
+    ) as { fieldId: string; fieldSize: string; venue: string }
+    expect(field, game.id).deep.equals({
+      fieldId: HARBOR_DIAMOND,
+      fieldSize: '50/70',
+      venue: 'Harbor Field'
+    })
+    fields.push(field.fieldId)
+  }
+  lines.push(
+    `seasonA has ${listed.length} games: the 2 it had on Field 1, and the ${newGames.length} Option 1 published, each on ${HARBOR_DIAMOND} (Harbor Diamond, Harbor Field, 50/70): ${fields.every(id => id === HARBOR_DIAMOND) ? 'yes' : 'no'}`,
+    ''
+  )
+  await writeFile(
+    join(run.artifacts, 'run-fields-publish.log'),
+    lines.join('\n')
+  )
+  await run.pass(
+    `Fields for this run's Add field opened the picker in field mode: searching "Harbor", Harbor Field, then Harbor Diamond added it at once with no size step, listed checked as "Harbor Diamond, Harbor Field" with "50/70 · Harbor Field · unclaimed"; with Field 1 unchecked the run's only field is Harbor Diamond; the build gave ${preview.options.length === 1 ? '1 option' : `${preview.options.length} options`}, Option 1's ${planned.length} games all on Harbor Diamond; publishing scheduled them, and over the API every one of seasonA's ${newGames.length} new games is on Harbor Diamond (run-fields-publish.log)`
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -1076,7 +1236,14 @@ const SCENARIOS: Record<string, Scenario> = {
   },
   F3: { start: 'E7', run: f3 },
   F4: { start: 'E3', run: f4 },
-  F5: { start: 'E2', run: f5 }
+  F5: { start: 'E2', run: f5 },
+  F6: {
+    start: 'E7',
+    then: async fx => {
+      await seedHarborField(fx)
+    },
+    run: f6
+  }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */

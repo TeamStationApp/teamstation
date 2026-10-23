@@ -48,7 +48,9 @@ const SETUP: ScheduleSetup = {
       sizes: ['50/70'],
       startsOn: null,
       endsOn: '2027-09-30',
-      deleted: false
+      deleted: false,
+      ours: true,
+      ownerNames: ['Demo League A']
     }
   ]
 }
