@@ -1663,6 +1663,36 @@ describe('chat follow-up conversation message integration', function () {
     expect(saved.followNewest).equals(false)
   })
 
+  it('reports the draft mention tokens with every scroll position it saves', async function () {
+    pointer(true)
+    const engine = new FakeEngine()
+    const original = safeMessage({ body: 'Current mention target' })
+    engine.current.messages = [original]
+    const tokens = [
+      { userId: userIdOfGumbo(2), start: 0, end: 14, label: '@Shohei Ohtani' }
+    ]
+    const changes: ChatDraft[] = []
+    await screen(
+      engine,
+      {
+        text: '@Shohei Ohtani ',
+        mentionTokens: tokens,
+        picked: [],
+        scrollOffset: 0
+      },
+      next => {
+        changes.push(next)
+      }
+    )
+    const visible = readingGeometry(original.id)
+    await visible.layout()
+    await visible.userScroll(647)
+    await visible.userScroll(320)
+    expect(changes.some(change => change.scrollOffset === 320)).equals(true)
+    for (const change of changes)
+      expect(change.mentionTokens).deep.equals(tokens)
+  })
+
   it('keeps newly typed text, reply context and prepared files after queued scrolling and a retained older active-pane scroll callback', async function () {
     pointer(true)
     const engine = new FakeEngine()

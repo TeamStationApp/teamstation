@@ -379,6 +379,25 @@ export function ConversationScreen(
     height: 0,
     content: 0
   })
+  /** The draft as the screen holds it now, with what a caller just changed. */
+  const currentDraft = useCallback(
+    (changed: Partial<ChatDraft> = {}): ChatDraft => {
+      const { mentionTokens, ...draft } = {
+        text: textNow.current,
+        mentionTokens: mentionTokensNow.current,
+        replyTo: replyNow.current,
+        editing: editingNow.current,
+        picked: pickedNow.current,
+        scrollOffset: scrolled.current.offset,
+        hasScrollPosition: scrolled.current.hasPosition,
+        followNewest: scrolled.current.followNewest,
+        scrollAnchor: scrolled.current.anchor,
+        ...changed
+      }
+      return { ...draft, ...(mentionTokens == null ? {} : { mentionTokens }) }
+    },
+    []
+  )
   const awaitingWidthLayout = useRef(false)
   const widthRevision = useRef(0)
   // A reflowed row must not be clamped against the previous width's content.
@@ -404,19 +423,7 @@ export function ConversationScreen(
     () =>
       draftOwner.attach(
         conversationId,
-        () => ({
-          text: textNow.current,
-          ...(mentionTokensNow.current == null
-            ? {}
-            : { mentionTokens: mentionTokensNow.current }),
-          replyTo: replyNow.current,
-          editing: editingNow.current,
-          picked: pickedNow.current,
-          scrollOffset: scrolled.current.offset,
-          hasScrollPosition: scrolled.current.hasPosition,
-          followNewest: scrolled.current.followNewest,
-          scrollAnchor: scrolled.current.anchor
-        }),
+        () => currentDraft(),
         () => {
           if (!mounted.current) return
           const next = draftOwner.draft(conversationId)
@@ -440,7 +447,7 @@ export function ConversationScreen(
           )
         }
       ),
-    [draftOwner, conversationId]
+    [draftOwner, conversationId, currentDraft]
   )
   const restoreTarget = useRef<number | undefined>(
     scrolled.current.hasPosition && !scrolled.current.followNewest
@@ -519,19 +526,9 @@ export function ConversationScreen(
         restoreAnchor.current = physical.anchor
       }
     }
-    const next = {
-      text: textNow.current,
-      replyTo: replyNow.current,
-      editing: editingNow.current,
-      picked: pickedNow.current,
-      ...(mentionTokensNow.current == null
-        ? {}
-        : { mentionTokens: mentionTokensNow.current }),
-      scrollOffset: scrolled.current.offset,
-      hasScrollPosition: scrolled.current.hasPosition,
-      followNewest: scrolled.current.followNewest || atBottom.current,
-      scrollAnchor: scrolled.current.anchor
-    }
+    const next = currentDraft({
+      followNewest: scrolled.current.followNewest || atBottom.current
+    })
     draftOwner.write(conversationId, next)
     onDraftChange(next)
     onMembers()
@@ -728,19 +725,10 @@ export function ConversationScreen(
     scrolled.current.hasPosition = true
     scrolled.current.anchor =
       visible == null ? readingAnchor(messagePositions.current) : visible.anchor
-    onDraftChange?.({
-      text: textNow.current,
-      replyTo: replyNow.current,
-      editing: editingNow.current,
-      picked: pickedNow.current,
-      scrollOffset: scrolled.current.offset,
-      hasScrollPosition: true,
-      followNewest: scrolled.current.followNewest,
-      scrollAnchor: scrolled.current.anchor
-    })
+    onDraftChange?.(currentDraft())
     explicitRead()
     refreshAttention.current(true)
-  }, [onDraftChange, explicitRead, readingAnchor])
+  }, [onDraftChange, currentDraft, explicitRead, readingAnchor])
   useEffect(
     () =>
       bindUserScroll(
@@ -1018,16 +1006,7 @@ export function ConversationScreen(
     scrolled.current.followNewest = false
     scrolled.current.anchor = anchor
     restoreAnchor.current = anchor
-    onDraftChange?.({
-      text: textNow.current,
-      replyTo: replyNow.current,
-      editing: editingNow.current,
-      picked: pickedNow.current,
-      scrollOffset: target,
-      hasScrollPosition: true,
-      followNewest: false,
-      scrollAnchor: scrolled.current.anchor
-    })
+    onDraftChange?.(currentDraft())
     return target
   }
   const recaptureLiveAnchor = (): void => {
@@ -1071,16 +1050,7 @@ export function ConversationScreen(
     )
       return
     scrolled.current.anchor = next
-    onDraftChange?.({
-      text: textNow.current,
-      replyTo: replyNow.current,
-      editing: editingNow.current,
-      picked: pickedNow.current,
-      scrollOffset: scrolled.current.offset,
-      hasScrollPosition: true,
-      followNewest: false,
-      scrollAnchor: next
-    })
+    onDraftChange?.(currentDraft())
   }
   const restoreReadingAnchor = (): void => {
     const anchor = restoreAnchor.current
@@ -1359,17 +1329,7 @@ export function ConversationScreen(
   }
 
   useEffect(() => {
-    const next = {
-      text,
-      ...(mentionTokens == null ? {} : { mentionTokens }),
-      replyTo,
-      editing,
-      picked,
-      scrollOffset: scrolled.current.offset,
-      hasScrollPosition: scrolled.current.hasPosition,
-      followNewest: scrolled.current.followNewest,
-      scrollAnchor: scrolled.current.anchor
-    }
+    const next = currentDraft({ text, mentionTokens, replyTo, editing, picked })
     draftOwner.write(conversationId, next)
     onDraftChange?.(next)
   }, [
@@ -1378,6 +1338,7 @@ export function ConversationScreen(
     replyTo,
     editing,
     picked,
+    currentDraft,
     onDraftChange,
     draftOwner,
     conversationId
@@ -2211,16 +2172,7 @@ export function ConversationScreen(
       physical == null
         ? readingAnchor(messagePositions.current)
         : physical.anchor
-    onDraftChange?.({
-      text: textNow.current,
-      replyTo: replyNow.current,
-      editing: editingNow.current,
-      picked: pickedNow.current,
-      scrollOffset: scrolled.current.offset,
-      hasScrollPosition: true,
-      followNewest: scrolled.current.followNewest,
-      scrollAnchor: scrolled.current.anchor
-    })
+    onDraftChange?.(currentDraft())
   }
 
   const rememberNativeScroll = (
