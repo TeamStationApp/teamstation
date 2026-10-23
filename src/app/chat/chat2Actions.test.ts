@@ -1386,6 +1386,186 @@ describe('chat native adapter compatibility', function () {
     })
     return { actual, page }
   }
+  async function accountSwitchTyping(fault = ''): Promise<{
+    calls: string[]
+    draft: string
+    error: unknown
+    observations: Array<Record<string, unknown>>
+  }> {
+    const { actual, page } = browserModel()
+    const directory = mkdtempSync(join(tmpdir(), 'chat-account-draft-'))
+    directories.push(directory)
+    const image = join(directory, 'synthetic.png')
+    writeFileSync(image, captureImages[0], { mode: 0o600 })
+    const kinds = [
+      'chat-list',
+      'conversation',
+      'floating-pins',
+      'message-actions',
+      'reply-keyboard',
+      'info',
+      'info-members',
+      'mentions',
+      'mention-composer',
+      'attention'
+    ]
+    const files = ['web-wide', 'web-narrow', 'web-touch', 'ios', 'android']
+      .flatMap(surface =>
+        kinds.map(kind => surface + '-' + kind + '-after.png')
+      )
+      .concat([
+        'ios-keyboard-pins-after.png',
+        'android-keyboard-pins-after.png',
+        'web-320-composer-after.png'
+      ])
+    const archive = join(directory, 'unit-archive.json')
+    const source = '0'.repeat(40)
+    writeFileSync(
+      archive,
+      JSON.stringify({
+        entries: files.map(file => ({
+          file,
+          path: image,
+          source,
+          sha256: createHash('sha256').update(captureImages[0]).digest('hex')
+        }))
+      }),
+      { mode: 0o600 }
+    )
+    const sessionFile = join(directory, 'session.json')
+    writeFileSync(sessionFile, JSON.stringify({ token: 'TEST_TOKEN' }), {
+      mode: 0o600
+    })
+    const switchedId = userIdOfGumbo(8)
+    const calls: string[] = []
+    const editor = page.window.document.createElement('textarea')
+    editor.dataset.testid = 'chat-composer'
+    page.window.document.body.append(editor)
+    actual.replaceDraft = async value => {
+      editor.value = value
+      editor.focus()
+    }
+    actual.absent = async () => {}
+    actual.device.assertNotVisible = async () => ({})
+    actual.device.tapOn = async args => {
+      if (args.id === 'chat-composer') {
+        calls.push('focus')
+        if (fault === 'focus-failed')
+          throw Error('Observed composer tap failed')
+        editor.focus()
+      } else if (args.text === '^Send$') {
+        calls.push('send')
+        if (editor.value === '')
+          throw Error('Send is disabled: actual composer is empty')
+      } else throw Error('Unexpected public control')
+    }
+    actual.device.inputText = async args => {
+      calls.push('input')
+      // Selector-free browser input targets the currently focused element.
+      if (
+        page.window.document.activeElement === editor &&
+        fault !== 'lost-input'
+      )
+        editor.value += String(args.text)
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerKey: 'Original',
+      observations: [],
+      f: {
+        apiUrl: 'https://fixture.example.test/api/v1',
+        afterArchive: archive,
+        switchActor: 'Switch',
+        actors: { Switch: { userId: switchedId, provider: { sessionFile } } },
+        conversations: {
+          attentionStress: { id: 'cnv-old' },
+          switch: { id: 'cnv-new' }
+        },
+        historyStress: {
+          viewer: 'Original',
+          neutralTail: { body: 'Previous account reader' }
+        }
+      },
+      check: async (name: string, work: () => Promise<void>) => {
+        if (
+          name ===
+          'E11 real public account switch clears old reader, draft and attention'
+        )
+          await work()
+      },
+      signIn: async () => {},
+      openGroup: async (id: string) => {
+        editor.blur()
+        editor.value =
+          id === 'cnv-new' && fault === 'retained-draft'
+            ? 'Previous account draft'
+            : ''
+      },
+      delivered: async (body: string, id: string) => {
+        expect(id).equals('cnv-new')
+        expect(body).equals(editor.value)
+        calls.push('delivered')
+        return { body }
+      }
+    }) as Scenarios
+    const fetchBefore = globalThis.fetch
+    const sourceBefore = process.env.CHAT2_SOURCE
+    globalThis.fetch = async input => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      if (url.endsWith('/auth/me'))
+        return Response.json({
+          id: switchedId,
+          displayName: 'Cal Ripken',
+          isAdmin: false
+        })
+      if (url.endsWith('/chat/conversations')) return Response.json([])
+      throw Error('Unexpected external request: ' + url)
+    }
+    process.env.CHAT2_SOURCE = source
+    let error: unknown
+    try {
+      await scenario.E11()
+    } catch (failure) {
+      error = failure
+    } finally {
+      globalThis.fetch = fetchBefore
+      if (sourceBefore == null) delete process.env.CHAT2_SOURCE
+      else process.env.CHAT2_SOURCE = sourceBefore
+    }
+    return {
+      calls,
+      draft: editor.value,
+      error,
+      observations: scenario.observations
+    }
+  }
+  it('focuses the new-account composer after E11 navigation and sends exactly the freshly typed note', async () => {
+    const result = await accountSwitchTyping()
+    expect(result.error).equals(undefined)
+    expect(result.calls).deep.equals(['focus', 'input', 'send', 'delivered'])
+    expect(result.draft).matches(
+      /^A fresh account-specific synthetic note \d+$/
+    )
+    expect(result.observations.at(-1)?.actualNormalAccountSwitch).equals(true)
+  })
+  for (const fault of ['lost-input', 'retained-draft', 'focus-failed'])
+    it('does not send an unproved account-switch draft: ' + fault, async () => {
+      const result = await accountSwitchTyping(fault)
+      expect(String(result.error)).includes(
+        fault === 'lost-input'
+          ? 'New-account composer must contain exactly'
+          : fault === 'focus-failed'
+            ? 'Observed composer tap failed'
+            : 'Previous account draft'
+      )
+      expect(result.calls).not.includes('send')
+      expect(result.calls).not.includes('delivered')
+    })
   it('runs the authorization-changing scenario last without losing or duplicating any scenario', () => {
     expect(CHAT2_SCENARIOS.at(-1)).equals('E8')
     expect(new Set(CHAT2_SCENARIOS).size).equals(CHAT2_SCENARIOS.length)

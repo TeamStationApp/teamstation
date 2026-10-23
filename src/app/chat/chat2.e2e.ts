@@ -6515,7 +6515,13 @@ export class Scenarios {
         )
         await ui.assertEmptyDraft()
         const probe = 'A fresh account-specific synthetic note ' + Date.now()
-        await ui.append(probe)
+        await ui.id('chat-composer')
+        await ui.appendComposer(probe)
+        assert.equal(
+          await ui.draft(),
+          probe,
+          'New-account composer must contain exactly the freshly typed note'
+        )
         await ui.text('Send')
         const received = await this.delivered(
           probe,
