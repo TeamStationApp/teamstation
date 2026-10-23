@@ -12,6 +12,7 @@ import {
   translationOf
 } from '../../test/frameClock'
 import {
+  backGestureHandlers,
   type StackDragControls,
   type StackIntent,
   StackNavigator,
@@ -412,6 +413,93 @@ describe('stack navigator', function () {
         expect(controls.current!.begin()).equals(true)
         expect(controls.current!.begin()).equals(false)
       })
+    })
+  })
+
+  describe('stack navigator with Android’s back gesture (U20)', function () {
+    async function gesture(): Promise<{
+      on: ReturnType<typeof backGestureHandlers>
+      popped: () => number
+      below: () => number
+    }> {
+      let popped = 0
+      let below = 0
+      const controls = createRef<StackDragControls>()
+      await start(scene('player', { depth: 2 }))
+      await show({
+        dragControls: controls,
+        renderBelow: () => {
+          below++
+          return scene('team')
+        },
+        onSwipeBack: () => {
+          popped++
+        }
+      })
+      const on = backGestureHandlers(controls.current!, {
+        enabled: true,
+        width,
+        dragging: () => wrapper('team') != null,
+        pop: () => {
+          popped++
+        }
+      })
+      return { on, popped: () => popped, below: () => below }
+    }
+
+    it('reveals the screen beneath, follows progress and springs back on cancel', async function () {
+      const { on, popped, below } = await gesture()
+      await act(async () => {
+        on.onStart()
+      })
+      expect(wrapper('team')!.dataset.sceneRole).equals('beneath')
+      await act(async () => {
+        on.onProgress(0.4)
+      })
+      await advance(16)
+      near(offset('player').x, [width() * 0.4])
+      await act(async () => {
+        on.onCancel()
+      })
+      await advance(300)
+      expect(popped()).equals(0)
+      expect(sceneKeys()).deep.equals(['player'])
+      expect(below()).equals(1)
+    })
+
+    it('completes a drag on invoke, and pops a plain press', async function () {
+      const { on, popped } = await gesture()
+      // Each as its own event, as the phone sends them.
+      await act(async () => {
+        on.onStart()
+      })
+      await act(async () => {
+        on.onProgress(0.6)
+      })
+      await act(async () => {
+        on.onInvoke()
+      })
+      await advance(300)
+      expect(popped()).equals(1)
+      await show(
+        { top: scene('team'), onSwipeBack: undefined },
+        { direction: 'back' }
+      )
+      expect(sceneKeys()).deep.equals(['team'])
+      const again = await gesture()
+      await act(async () => {
+        again.on.onInvoke()
+      })
+      expect(again.popped()).equals(1)
+    })
+
+    it('ignores a gesture start during a drag already under way', async function () {
+      const { on, below } = await gesture()
+      await act(async () => {
+        on.onStart()
+        on.onStart()
+      })
+      expect(below()).equals(1)
     })
   })
 
