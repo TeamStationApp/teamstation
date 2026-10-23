@@ -3,8 +3,13 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { Text } from 'react-native'
 
-import { render, unmount, windowSize } from '../../test/tessTestKit'
-import { TESS_COLUMN_WIDTH, tessIsWide, useTessWide } from './tessLayout'
+import { render, rerender, unmount, windowSize } from '../../test/tessTestKit'
+import {
+  TESS_COLUMN_WIDTH,
+  tessIsWide,
+  usePaneAtLeast,
+  useTessWide
+} from './tessLayout'
 
 describe("Tess's layout", function () {
   let restore: (() => Promise<void>) | undefined
@@ -40,5 +45,29 @@ describe("Tess's layout", function () {
     expect(renders).equals(drawn + 1)
     await windowSize(1300)
     expect(wide()).equals('true')
+  })
+
+  it('says whether the pane beside her column is wide enough, redrawing only when that changes', async function () {
+    restore = (await windowSize(1280)).restore
+    let renders = 0
+    function Shell(props: { column: boolean }): React.ReactElement {
+      renders += 1
+      return (
+        <Text testID="room">{String(usePaneAtLeast(960, props.column))}</Text>
+      )
+    }
+    const room = (): string =>
+      document.querySelector('[data-testid="room"]')?.textContent ?? ''
+    // The whole window, then 1280 less her 400-point column.
+    await render(<Shell column={false} />)
+    expect(room()).equals('true')
+    await rerender(<Shell column />)
+    expect(room()).equals('false')
+    const drawn = renders
+    await windowSize(1300)
+    expect(renders).equals(drawn)
+    await windowSize(1400)
+    expect(room()).equals('true')
+    expect(renders).equals(drawn + 1)
   })
 })

@@ -336,6 +336,47 @@ describe('stack transitions in the actual app', () => {
     }
   })
 
+  it('keeps a season when Back undoes a pill, or a game above it (U12)', async () => {
+    proto.seasons = async () => [
+      {
+        id: 'sea_spring',
+        leagueId: null,
+        name: 'Spring 2026',
+        year: 2026,
+        term: null,
+        ageGroup: null,
+        teams: 1,
+        games: 1,
+        videos: 0,
+        logoUrl: null
+      }
+    ]
+    proto.seasonGames = async () => [game]
+    window.history.replaceState(null, '', '/seasons/sea_spring')
+    const cleanup = await render()
+    try {
+      await rest()
+      const before = scenes()
+      await pressIn('Season sections', 'Teams')
+      await rest()
+      expect(window.location.search).contains('tab=teams')
+      const moves: string[][] = []
+      const watch = setInterval(() => {
+        moves.push(roles())
+      }, 20)
+      await back()
+      await rest()
+      clearInterval(watch)
+      // No move at all: the same screen, its pill undone.
+      expect(moves.flat().filter(role => role !== 'top')).deep.equals([])
+      expect(roles()).deep.equals(['top'])
+      expect(scenes()[0].node).equals(before[0].node)
+      expect(window.location.search).not.contains('tab=teams')
+    } finally {
+      await cleanup()
+    }
+  })
+
   it('keeps the game when Back walks a pill on the same game further down (U12)', async () => {
     const cleanup = await render()
     try {

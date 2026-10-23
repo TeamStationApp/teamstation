@@ -20,6 +20,7 @@ import {
 } from 'react-native'
 
 import { GlassView } from '../components/GlassView'
+import { useBackOverride } from '../components/headerSlot'
 import { useMotionPreference } from '../components/useMotionPreference'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
@@ -48,6 +49,14 @@ export interface MessageActionOverlayProps {
 export function MessageActionOverlay(
   props: MessageActionOverlayProps
 ): React.ReactElement {
+  // Back is the menu's while it is open, the header's and Android's back
+  // gesture's too: the conversation is not dragged off or popped beneath it.
+  // Taken here, in the screen's tree: the portal draws elsewhere.
+  const latest = useRef(props)
+  latest.current = props
+  useBackOverride(true, () => {
+    if (!latest.current.closing) latest.current.onClose()
+  })
   return (
     <ChatOverlayPortal modal={!(props.closing && props.focusHandoff === true)}>
       <SpotlightFrame {...props} />
