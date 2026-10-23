@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { formatClip, type WalkUpSong } from '../../common/walkUpSong'
 import { Button, Card, Emblem } from '../components'
+import { useSceneReveals, useSceneShown } from '../components/sceneShown'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { clipFade } from './useSongPlayer'
@@ -69,9 +70,13 @@ export function WalkUpTab(props: WalkUpTabProps): React.ReactElement {
   const [playing, setPlaying] = useState(false)
   const playingRef = useRef(false)
 
+  // Read again when the song screen, pushed over this one, comes back.
+  const reveals = useSceneReveals()
+  const hasRead = useRef(false)
   useEffect(() => {
     let cancelled = false
-    setSong(undefined)
+    if (!hasRead.current) setSong(undefined)
+    hasRead.current = true
     setLoadError(undefined)
     client
       .roster(teamId)
@@ -92,7 +97,7 @@ export function WalkUpTab(props: WalkUpTabProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, teamId, userId])
+  }, [client, teamId, userId, reveals])
 
   // Where the song is on this phone, asked again whenever the song changes.
   // A failed search is the same answer as an empty one: not here.
@@ -117,8 +122,15 @@ export function WalkUpTab(props: WalkUpTabProps): React.ReactElement {
   }, [onPhone, resolve, song])
 
   // The clip stops on its own at its end, and reports it; and leaving the
-  // page stops it, because a song still playing from a page nobody can see
-  // has no button left to stop it with.
+  // page, or a screen pushed over it, stops it, because a song still playing
+  // from a page nobody can see has no button left to stop it with.
+  const shown = useSceneShown()
+  useEffect(() => {
+    if (shown || !playingRef.current) return
+    playingRef.current = false
+    setPlaying(false)
+    music.stop(0).catch(() => undefined)
+  }, [music, shown])
   useEffect(() => {
     if (!onPhone) return
     const unsubscribe = music.onState(state => {

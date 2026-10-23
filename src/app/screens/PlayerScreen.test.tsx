@@ -21,6 +21,7 @@ import type {
 } from '../../common/playerSettings'
 import type { Role } from '../../common/roles'
 import { userIdOfGumbo } from '../../common/userId'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { App } from '../App'
 import { chat } from '../chat/chatViews.test.helpers'
 import { parseRoute, routePath } from '../navigation/routes'
@@ -452,6 +453,35 @@ describe('a player’s profile the viewer may not see', function () {
       await press('Back')
       expect(back).equals(1)
     })
+
+  it('lets go of a failed read when a later one answers', async function () {
+    const client = playerClient()
+    const read = client.player.bind(client)
+    let refuse = false
+    client.player = async (...args) => {
+      if (refuse) throw new HttpError('forbidden', 'Not found')
+      return await read(...args)
+    }
+    await render(
+      <CoverableScene>
+        <PlayerScreen
+          client={client}
+          userId={userIdOfGumbo(8)}
+          onBack={() => undefined}
+        />
+      </CoverableScene>
+    )
+    refuse = true
+    await coverAndReveal()
+    expect(
+      document.querySelector('[data-testid="Player unavailable"]')
+    ).not.equals(null)
+    refuse = false
+    await coverAndReveal()
+    expect(document.querySelector('[data-testid="Player unavailable"]')).equals(
+      null
+    )
+  })
 
   it('keeps the error line for any other failure', async function () {
     await render(

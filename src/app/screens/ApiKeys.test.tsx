@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
 import type { ApiKey } from '../../common/apiKeys'
+import { SceneShownProvider } from '../components/sceneShown'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ApiKeysSection } from './ApiKeysSection'
 import { NewApiKeyScreen, togglePermission } from './NewApiKeyScreen'
@@ -202,6 +203,37 @@ describe('Account’s API keys', () => {
     await press('Copy Agent')
     expect(copied).deep.equals(['tsk_AbCdEfGhIjKlMnOp'])
     expect(text()).includes('Copied the secret of Agent')
+  })
+
+  it('reads its keys once mounted out of sight, and again each time it is shown', async () => {
+    const { client, calls } = server([agentKey])
+    const reads = (): number =>
+      calls.filter(
+        call => call.method === 'GET' && call.route === '/me/api-keys'
+      ).length
+    const section = (shown: boolean): React.ReactElement => (
+      <ThemeProvider>
+        <SceneShownProvider value={shown}>
+          <ApiKeysSection client={client} copy={() => undefined} />
+        </SceneShownProvider>
+      </ThemeProvider>
+    )
+    // Account beneath Create API key, opened by its address.
+    await render(section(false))
+    expect(reads()).equals(1)
+    expect(text()).includes('Agent')
+    // Back reveals it: read again, for a key made meanwhile.
+    await act(async () => {
+      root!.render(section(true))
+      await delay()
+    })
+    expect(reads()).equals(2)
+    // Covered again: nothing more.
+    await act(async () => {
+      root!.render(section(false))
+      await delay()
+    })
+    expect(reads()).equals(2)
   })
 
   it('deletes a key only once the sheet is confirmed', async () => {

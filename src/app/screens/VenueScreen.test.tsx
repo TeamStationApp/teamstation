@@ -4,6 +4,7 @@ import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import { rangeDates, type VenueDetail } from '../../common/venues'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import {
   fill,
   mount,
@@ -93,6 +94,24 @@ describe('the venue screen', () => {
     )
     expect(sizesLabel(['46/60', '50/70'])).equals('46/60 · 50/70')
     expect(sizesLabel(['T-ball', '46/60'])).equals('T-ball · 46/60')
+  })
+
+  it('reads the venue again on coming back from its field', async () => {
+    const { client, calls } = fakeClient(venueDetail(), () => venueDetail())
+    await mount(
+      <CoverableScene>
+        <VenueScreen
+          client={client}
+          venueId="ven_demo"
+          onOpenField={() => undefined}
+          onClaimed={() => undefined}
+        />
+      </CoverableScene>
+    )
+    expect(calls.venue).length(1)
+    await coverAndReveal()
+    await settle()
+    expect(calls.venue).length(2)
   })
 
   it('shows a load failure and retries', async () => {

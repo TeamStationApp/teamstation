@@ -3,8 +3,10 @@ import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
 
 import { PinnedSpacer } from '../components/PinnedBands'
+import { SlidingContent, useActiveRef } from '../components/TabPages'
 import { PHONE_MARGIN } from '../layout/watch'
 import { useTheme } from '../theme/ThemeContext'
+import { GameWatchHead, uprightColumn } from './GameWatchHead'
 import type { GameWatchLayoutProps } from './gameWatchLayoutProps'
 
 export type { GameWatchLayoutProps }
@@ -28,11 +30,13 @@ export function GameWatchLayout(
     tabsHeight,
     height,
     style,
-    contentStyle,
-    headStyle
+    contentStyle
   } = props
   const theme = useTheme()
-  const handleLayout = pinned.screen.onLayout
+  // A pane sliding out lets go of the pinned head's scroller and its
+  // handlers, as `Screen` does.
+  const handleLayout = useActiveRef(pinned.screen.onLayout)
+  const sharedScroll = useActiveRef(pinned.screen.onScroll)
   const listRef = useRef<HTMLElement | null>(null)
   const fitList = useCallback(() => {
     const node = listRef.current
@@ -42,47 +46,32 @@ export function GameWatchLayout(
   }, [])
   return (
     <Animated.ScrollView
-      ref={pinned.screen.scrollRef}
+      ref={useActiveRef(pinned.screen.scrollRef)}
       onLayout={handleLayout}
       style={style}
       onScroll={event => {
-        if (typeof pinned.screen.onScroll === 'function')
-          pinned.screen.onScroll(event)
+        if (typeof sharedScroll === 'function') sharedScroll(event)
         fitList()
       }}
       scrollEventThrottle={16}
       contentContainerStyle={{ paddingTop: headerHeight }}
     >
-      <View style={contentStyle}>
-        <Animated.View
-          ref={pinned.cardBand.ref}
-          onLayout={pinned.cardBand.handleLayout}
-          style={[!short && headStyle, pinned.cardBand.style]}
-        >
-          {short ? null : head}
-        </Animated.View>
-        <Animated.View
-          testID="event-pill-band"
-          ref={pinned.pillBand.ref}
-          onLayout={pinned.pillBand.handleLayout}
-          style={[
-            {
-              width: '100%',
-              paddingHorizontal: theme.rem(theme.spaceMdRem),
-              backgroundColor: theme.backgroundColor,
-              zIndex: 3
-            },
-            pinned.pillBand.style
-          ]}
-        >
-          {sections}
-        </Animated.View>
-        <View
-          ref={pinned.content.ref}
-          onLayout={pinned.content.handleLayout}
+      <View style={[contentStyle, !short && uprightColumn(theme)]}>
+        <GameWatchHead
+          pinned={pinned}
+          head={head}
+          sections={sections}
+          short={short}
+        />
+        <SlidingContent
+          ref={useActiveRef(pinned.content.ref)}
+          onLayout={useActiveRef(pinned.content.handleLayout)}
           testID="eventTabContent"
           style={{
             width: '100%',
+            // Upright, the pill band takes back the column's gap; the picture
+            // keeps its own small one below the pills.
+            marginTop: short ? 0 : theme.rem(theme.spaceSmRem),
             flexDirection: sideBySide ? 'row' : 'column',
             alignItems: 'flex-start',
             columnGap: theme.rem(1.5)
@@ -129,13 +118,17 @@ export function GameWatchLayout(
             {highlightList}
             {footer}
           </div>
-        </View>
+        </SlidingContent>
         <PinnedSpacer
           part={{
             ...pinned.spacer,
             style: [
               pinned.spacer.style,
-              { marginTop: -theme.rem(theme.spaceSmRem) }
+              {
+                marginTop: -theme.rem(
+                  short ? theme.spaceSmRem : theme.spaceLgRem
+                )
+              }
             ]
           }}
         />

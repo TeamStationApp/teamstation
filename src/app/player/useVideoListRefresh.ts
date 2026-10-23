@@ -25,8 +25,18 @@ export function useVideoListRefresh(options: {
   publishing: string[]
   refresh: () => void
   everyMs?: number
+  /**
+   * Whether the page is on show: covered by a screen opened from it, it asks
+   * nothing, and asks once again when it is shown.
+   */
+  active?: boolean
 }): void {
-  const { videos, publishing, everyMs = VIDEO_LIST_REFRESH_MS } = options
+  const {
+    videos,
+    publishing,
+    everyMs = VIDEO_LIST_REFRESH_MS,
+    active = true
+  } = options
   const refresh = useRef(options.refresh)
   refresh.current = options.refresh
 
@@ -45,15 +55,22 @@ export function useVideoListRefresh(options: {
   const anyLive =
     publishing.length > 0 ||
     (videos ?? []).some(video => video.status === 'live')
+  const hidden = useRef(false)
   useEffect(() => {
+    if (!active) {
+      hidden.current = true
+      return
+    }
     if (!anyLive) return
+    if (hidden.current) refresh.current()
+    hidden.current = false
     const timer = setInterval(() => {
       refresh.current()
     }, everyMs)
     return () => {
       clearInterval(timer)
     }
-  }, [anyLive, everyMs])
+  }, [anyLive, everyMs, active])
 }
 
 /**

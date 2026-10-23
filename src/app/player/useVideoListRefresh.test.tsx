@@ -64,11 +64,31 @@ describe('keeping a game page’s videos current', function () {
     videos: VideoSummary[] | undefined
     publishing: string[]
     refresh: () => void
+    active?: boolean
   }): null {
-    const { videos, publishing, refresh } = props
-    useVideoListRefresh({ videos, publishing, refresh, everyMs: 40 })
+    const { videos, publishing, refresh, active } = props
+    useVideoListRefresh({ videos, publishing, refresh, everyMs: 40, active })
     return null
   }
+
+  it('asks nothing while a screen covers the page, and once when it is shown', async function () {
+    let asked = 0
+    const probe = (active: boolean): React.ReactElement => (
+      <Probe
+        videos={[video('v1', 'live')]}
+        publishing={[]}
+        refresh={() => asked++}
+        active={active}
+      />
+    )
+    await render(probe(false))
+    await wait(150)
+    expect(asked).equals(0)
+    await render(probe(true))
+    expect(asked).equals(1)
+    await wait(150)
+    expect(asked).to.be.at.least(3)
+  })
 
   it('asks nothing of a game nothing is live on', async function () {
     let asked = 0

@@ -11,6 +11,7 @@ import type { ChatVideoProps } from './chatVideoProps'
  */
 const video = require.resolve('react-native-video')
 const themeModule = require.resolve('../theme/ThemeContext')
+const sceneModule = require.resolve('../components/sceneShown')
 const twin = require.resolve('./ChatVideo.native')
 
 function Video(): null {
@@ -34,13 +35,14 @@ function cached(path: string, exports: unknown): void {
 
 describe('an opened chat video on a phone', function () {
   afterEach(function () {
-    for (const path of [twin, video, themeModule])
+    for (const path of [twin, video, themeModule, sceneModule])
       Reflect.deleteProperty(require.cache, path)
   })
 
   it('plays the decrypted cache file in the platform player, contained in its rounded box', function () {
     cached(video, { __esModule: true, default: Video })
     cached(themeModule, { useTheme: () => theme })
+    cached(sceneModule, { useSceneShown: () => true })
     const { ChatVideo } = require('./ChatVideo.native') as {
       ChatVideo: (props: ChatVideoProps) => React.ReactElement<{
         accessibilityLabel: string
@@ -71,5 +73,23 @@ describe('an opened chat video on a phone', function () {
         backgroundColor: '#000000'
       }
     })
+  })
+
+  it('pauses while a screen covers the chat', function () {
+    cached(video, { __esModule: true, default: Video })
+    cached(themeModule, { useTheme: () => theme })
+    cached(sceneModule, { useSceneShown: () => false })
+    const { ChatVideo } = require('./ChatVideo.native') as {
+      ChatVideo: (props: ChatVideoProps) => React.ReactElement<{
+        paused: boolean
+      }>
+    }
+    const element = ChatVideo({
+      uri: 'file:///cache/chat/att_1.mp4',
+      width: 320,
+      height: 180,
+      label: 'Video from Blair B'
+    })
+    expect(element.props.paused).equals(true)
   })
 })

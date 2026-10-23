@@ -16,6 +16,7 @@ import {
   TextField
 } from '../components'
 import { LocationRow } from '../components/LocationRow'
+import { useSceneReveals } from '../components/sceneShown'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -73,6 +74,9 @@ export function GroupSettingsScreen({
   const working = useRef(false)
   const begin = useLatestRequest()
   const beginSave = useLatestRequest()
+  // A team promoted, or a request decided, on a screen pushed over this one.
+  // A name being edited is kept: only one left as it was follows the read.
+  const reveals = useSceneReveals()
   useEffect(() => {
     const identity = `${kind}:${id}`
     if (lastGroup.current !== identity) {
@@ -111,7 +115,7 @@ export function GroupSettingsScreen({
           )
       }
     )
-  }, [client, kind, id, revision, begin, beginSave])
+  }, [client, kind, id, revision, reveals, begin, beginSave])
   const update = async (
     fields: Parameters<TeamStationClient['updateGroup']>[1]
   ): Promise<void> => {

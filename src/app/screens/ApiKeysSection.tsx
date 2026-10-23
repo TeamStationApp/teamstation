@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
@@ -10,6 +10,7 @@ import {
   ListRow,
   SectionHeader
 } from '../components'
+import { useSceneShown } from '../components/sceneShown'
 import { useConfirmedAction } from '../components/useConfirmedAction'
 import { lstrings, sprintf } from '../locales/strings'
 import { copyToClipboard } from '../platform/clipboard'
@@ -41,7 +42,14 @@ export function ApiKeysSection(props: ApiKeysSectionProps): React.ReactElement {
   // Said only while the key copied is still here.
   const copiedKey = keys?.find(key => key.id === copied)
 
+  // Read once as it mounts, even out of sight (Account beneath Create API
+  // key opened by its address), and again each time the screen is shown:
+  // Create API key, pushed over it, comes back to it with a new key.
+  const shown = useSceneShown()
+  const read = useRef(false)
   useEffect(() => {
+    if (!shown && read.current) return
+    read.current = true
     let live = true
     client.apiKeys().then(
       value => {
@@ -59,7 +67,7 @@ export function ApiKeysSection(props: ApiKeysSectionProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client])
+  }, [client, shown])
 
   return (
     <View style={styles.section}>

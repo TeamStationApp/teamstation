@@ -11,6 +11,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PersonProfileScreen } from './PersonProfileScreen'
 
@@ -120,15 +121,17 @@ async function render(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <PersonProfileScreen
-          client={client}
-          kind={kind}
-          id="grp_one"
-          userId={userIdOfGumbo(203)}
-          onOpenPlayer={(userId, name, from) => {
-            calls.players.push([userId, name, from])
-          }}
-        />
+        <CoverableScene>
+          <PersonProfileScreen
+            client={client}
+            kind={kind}
+            id="grp_one"
+            userId={userIdOfGumbo(203)}
+            onOpenPlayer={(userId, name, from) => {
+              calls.players.push([userId, name, from])
+            }}
+          />
+        </CoverableScene>
       </ThemeProvider>
     )
     await delay(10)
@@ -160,6 +163,15 @@ describe('the person profile', function () {
       root?.unmount()
     })
     root = undefined
+  })
+
+  it('reads the person again in place on coming back from their player page', async function () {
+    const calls = await render([profile()])
+    expect(calls.loads).equals(1)
+    const before = document.body.textContent
+    await coverAndReveal()
+    expect(calls.loads).equals(2)
+    expect(document.body.textContent).equals(before)
   })
 
   it('puts the photo, the whole name and the level it is for in the hero, then the players they guard', async function () {
