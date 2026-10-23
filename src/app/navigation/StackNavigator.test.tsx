@@ -12,6 +12,7 @@ import {
   translationOf
 } from '../../test/frameClock'
 import {
+  backGestureHandlers,
   type StackDragControls,
   type StackIntent,
   StackNavigator,
@@ -365,6 +366,39 @@ describe('stack navigator', function () {
       expect(sceneKeys()).deep.equals(['team'])
     })
 
+    it('lets a three-button Back during the pan’s drag add nothing', async function () {
+      let popped = 0
+      const controls = createRef<StackDragControls>()
+      await start(scene('player', { depth: 2 }))
+      await show({
+        dragControls: controls,
+        renderBelow: () => scene('team'),
+        onSwipeBack: () => {
+          popped++
+        }
+      })
+      const on = backGestureHandlers(controls.current!, {
+        enabled: true,
+        width,
+        dragging: () => wrapper('team') != null,
+        pop: () => {
+          popped++
+          return true
+        }
+      })
+      await act(async () => {
+        controls.current!.begin()
+        controls.current!.move(width() * 0.6)
+        controls.current!.release(width() * 0.6, 0)
+      })
+      await advance(100)
+      await act(async () => {
+        expect(on.onInvoke()).equals(true)
+      })
+      await advance(300)
+      expect(popped).equals(1)
+    })
+
     it('shows the retained instance beneath instead of a second one', async function () {
       const controls = createRef<StackDragControls>()
       const score = scene('score', { presentation: 'cover', immersive: true })
@@ -439,6 +473,226 @@ describe('stack navigator', function () {
         expect(controls.current!.begin()).equals(true)
         expect(controls.current!.begin()).equals(false)
       })
+    })
+  })
+
+  describe('stack navigator with Android’s back gesture (U20)', function () {
+    async function gesture(): Promise<{
+      on: ReturnType<typeof backGestureHandlers>
+      popped: () => number
+      below: () => number
+    }> {
+      let popped = 0
+      let below = 0
+      const controls = createRef<StackDragControls>()
+      await start(scene('player', { depth: 2 }))
+      await show({
+        dragControls: controls,
+        renderBelow: () => {
+          below++
+          return scene('team')
+        },
+        onSwipeBack: () => {
+          popped++
+        }
+      })
+      const on = backGestureHandlers(controls.current!, {
+        enabled: true,
+        width,
+        dragging: () => wrapper('team') != null,
+        pop: () => {
+          popped++
+          return true
+        }
+      })
+      return { on, popped: () => popped, below: () => below }
+    }
+
+    it('reveals the screen beneath, follows progress and springs back on cancel', async function () {
+      const { on, popped, below } = await gesture()
+      await act(async () => {
+        on.onStart()
+      })
+      expect(wrapper('team')!.dataset.sceneRole).equals('beneath')
+      await act(async () => {
+        on.onProgress(0.4)
+      })
+      await advance(16)
+      near(offset('player').x, [width() * 0.4])
+      await act(async () => {
+        on.onCancel()
+      })
+      await advance(300)
+      expect(popped()).equals(0)
+      expect(sceneKeys()).deep.equals(['player'])
+      expect(below()).equals(1)
+    })
+
+    it('completes a drag on invoke, and pops a plain press', async function () {
+      const { on, popped } = await gesture()
+      // Each as its own event, as the phone sends them.
+      await act(async () => {
+        on.onStart()
+      })
+      await act(async () => {
+        on.onProgress(0.6)
+      })
+      await act(async () => {
+        on.onInvoke()
+      })
+      await advance(300)
+      expect(popped()).equals(1)
+      await show(
+        { top: scene('team'), onSwipeBack: undefined },
+        { direction: 'back' }
+      )
+      expect(sceneKeys()).deep.equals(['team'])
+      const again = await gesture()
+      await act(async () => {
+        again.on.onInvoke()
+      })
+      expect(again.popped()).equals(1)
+    })
+
+    it('pops once for a second Back while a completed drag waits on its pop', async function () {
+      const { on, popped } = await gesture()
+      await act(async () => {
+        on.onStart()
+      })
+      await act(async () => {
+        on.onProgress(0.6)
+      })
+      await act(async () => {
+        on.onInvoke()
+      })
+      await advance(300)
+      expect(popped()).equals(1)
+      // The shell has not moved yet (a leave confirm, say): the drag stays,
+      // completed, and another Back adds nothing to it.
+      await act(async () => {
+        expect(on.onInvoke()).equals(true)
+      })
+      await advance(300)
+      expect(popped()).equals(1)
+    })
+
+    it('lets a second swipe during the run-out neither move nor undo the first', async function () {
+      const { on, popped } = await gesture()
+      await act(async () => {
+        on.onStart()
+      })
+      await act(async () => {
+        on.onProgress(0.6)
+      })
+      await act(async () => {
+        on.onInvoke()
+      })
+      await advance(100)
+      // A second swipe, straight after: ignored, as is its progress.
+      await act(async () => {
+        on.onStart()
+      })
+      await act(async () => {
+        on.onProgress(0.2)
+      })
+      await act(async () => {
+        on.onCancel()
+      })
+      await act(async () => {
+        on.onInvoke()
+      })
+      await advance(300)
+      expect(popped()).equals(1)
+      // The shell pops, and the drag is over.
+      await show(
+        { top: scene('team'), onSwipeBack: undefined },
+        { direction: 'back' }
+      )
+      expect(sceneKeys()).deep.equals(['team'])
+      expect(offset('team').x).equals(0)
+    })
+
+    it('is off while there is nothing to pop with', async function () {
+      await start(scene('player', { depth: 2 }))
+      const gesture = (): string | undefined =>
+        host.querySelector<HTMLElement>('[data-predictive-back]')?.dataset
+          .predictiveBack
+      await show({ predictiveBack: true, onSwipeBack: () => undefined })
+      expect(gesture()).equals('true')
+      // A back override took Back in this render.
+      await show({ predictiveBack: true, onSwipeBack: undefined })
+      expect(gesture()).equals('false')
+    })
+
+    it('takes over a drag the edge pan began before the gesture started', async function () {
+      const { on, popped } = await gesture()
+      const controls = props.dragControls as React.RefObject<StackDragControls>
+      // The pan activates on the first move, before the system's `started`.
+      await act(async () => {
+        expect(controls.current.begin()).equals(true)
+      })
+      await act(async () => {
+        controls.current.move(width() * 0.1)
+      })
+      await act(async () => {
+        on.onStart()
+      })
+      // The system takes the touch: the pan is cancelled, and that no longer
+      // ends the drag.
+      await act(async () => {
+        controls.current.cancel()
+      })
+      await advance(300)
+      expect(wrapper('team')!.dataset.sceneRole).equals('beneath')
+      await act(async () => {
+        on.onProgress(0.4)
+      })
+      await advance(16)
+      near(offset('player').x, [width() * 0.4])
+      // The pan cannot move it any more, nor start a second one.
+      await act(async () => {
+        controls.current.move(width() * 0.9)
+        expect(controls.current.begin()).equals(false)
+        expect(controls.current.begin('predictive')).equals(false)
+      })
+      await advance(16)
+      near(offset('player').x, [width() * 0.4])
+      await act(async () => {
+        on.onInvoke()
+      })
+      await advance(300)
+      expect(popped()).equals(1)
+    })
+
+    it('keeps the gesture’s drag when the edge pan the system took is cancelled', async function () {
+      const { on, popped } = await gesture()
+      await act(async () => {
+        on.onStart()
+      })
+      // Under gesture navigation the system takes the edge touch, and the
+      // app's pan finalizes as cancelled: that must not end this drag.
+      const controls = props.dragControls as React.RefObject<StackDragControls>
+      await act(async () => {
+        controls.current.cancel()
+        controls.current.release(width(), 0)
+      })
+      await advance(300)
+      expect(wrapper('team')!.dataset.sceneRole).equals('beneath')
+      await act(async () => {
+        on.onProgress(0.4)
+      })
+      await advance(16)
+      near(offset('player').x, [width() * 0.4])
+      expect(popped()).equals(0)
+    })
+
+    it('ignores a gesture start during a drag already under way', async function () {
+      const { on, below } = await gesture()
+      await act(async () => {
+        on.onStart()
+        on.onStart()
+      })
+      expect(below()).equals(1)
     })
   })
 

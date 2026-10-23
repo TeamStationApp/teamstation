@@ -162,6 +162,10 @@ dependencies {
     // Live HLS players get a playlist tracker that waits out a publisher's
     // absence (LivePlaylistPatience), at the same version.
     implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
+    // Predictive back's progress (`BackEventCompat` and the dispatcher's
+    // started/progressed/cancelled callbacks) for the stack navigator's drag;
+    // React Native alone brings 1.7, from before they existed.
+    implementation("androidx.activity:activity:1.9.3")
     // Share Lineup's QR code camera: CameraX for the picture, and ML Kit's
     // bundled barcode scanner, which needs no Play services, to read it.
     implementation("androidx.camera:camera-camera2:1.6.2")
