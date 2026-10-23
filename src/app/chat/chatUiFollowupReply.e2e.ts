@@ -6,6 +6,8 @@ import { join } from 'node:path'
 
 import puppeteer from 'puppeteer'
 
+import { readSeedTable } from '../../test/chatSeedTable'
+
 interface Selector {
   text?: string
   css?: string
@@ -77,22 +79,15 @@ async function evaluate<T>(device: Device, script: string): Promise<T> {
     typeof result.data === 'string' ? JSON.parse(result.data) : result.data
   ) as T
 }
-async function signIn(device: Device): Promise<number> {
-  const actor = required('CHAT_UI_REPLY_ACTOR')
-  let who: { userId: number; email: string; password: string } | undefined
-  for (const line of readFileSync(
-    required('CHAT_UI_REPLY_SEED_FILE'),
-    'utf8'
-  ).split('\n')) {
-    const match = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-    if (match?.[1] === actor)
-      who = { userId: Number(match[2]), email: match[3], password: match[4] }
-  }
+async function signIn(device: Device): Promise<string> {
+  const who = readSeedTable(
+    readFileSync(required('CHAT_UI_REPLY_SEED_FILE'), 'utf8')
+  )[required('CHAT_UI_REPLY_ACTOR')]
   assert(who != null, 'Explicit fixture actor missing')
   hidden.push(who.password)
   await device.openLink({ link: WEB })
-  const authScript = `const r=await fetch(${JSON.stringify(API + '/auth/me')},{credentials:'include'});return JSON.stringify({status:r.status,id:r.ok?Number((await r.json()).id):null});`
-  let auth = await evaluate<{ status: number; id: number | null }>(
+  const authScript = `const r=await fetch(${JSON.stringify(API + '/auth/me')},{credentials:'include'});return JSON.stringify({status:r.status,id:r.ok?(await r.json()).id:null});`
+  let auth = await evaluate<{ status: number; id: string | null }>(
     device,
     authScript
   )
@@ -107,7 +102,10 @@ async function signIn(device: Device): Promise<number> {
     await device.tapOn({ text: 'Password' })
     await device.inputText({ text: who.password })
     await device.tapOn({ text: 'Sign in' })
-    await device.assertVisible({ text: 'Follow a team', timeout: 45000 })
+    await device.assertVisible({
+      css: '[data-testid="chat-conversation-list"]',
+      timeout: 45000
+    })
     auth = await evaluate(device, authScript)
   }
   assert.equal(auth.status, 200, 'Normal GUI sign-in must finish')
@@ -278,7 +276,7 @@ interface Envelope {
   id: string
   kind: string
   seq: number
-  senderUserId: number
+  senderUserId: string
 }
 async function envelopes(device: Device, id: string): Promise<Envelope[]> {
   return await evaluate(
@@ -326,24 +324,18 @@ async function more(device: Device, id: string): Promise<void> {
   })
 }
 async function small(device: Device, results: CaseResult[]): Promise<void> {
-  const peer = required('CHAT_UI_REPLY_PEER')
-  let peerId: number | undefined
-  for (const line of readFileSync(
-    required('CHAT_UI_REPLY_SEED_FILE'),
-    'utf8'
-  ).split('\n')) {
-    const match = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-    if (match?.[1] === peer) peerId = Number(match[2])
-  }
+  const peerId = readSeedTable(
+    readFileSync(required('CHAT_UI_REPLY_SEED_FILE'), 'utf8')
+  )[required('CHAT_UI_REPLY_PEER')]?.userId
   assert(peerId != null, 'Assigned peer is required')
   await device.openLink({ link: `${WEB}/chat` })
   await device.assertVisible({ text: 'New message', timeout: 20000 })
   const candidate = await evaluate<{
-    userId: number
+    userId: string
     shortName: string
   } | null>(
     device,
-    `const r=await fetch(${JSON.stringify(API + '/chat/dm-candidates?q=')},{credentials:'include'});if(!r.ok)throw new Error('Own candidate metadata unavailable');const person=(await r.json()).find(person=>Number(person.userId)===${peerId});return JSON.stringify(person?{userId:person.userId,shortName:person.shortName}:null);`
+    `const r=await fetch(${JSON.stringify(API + '/chat/dm-candidates?q=')},{credentials:'include'});if(!r.ok)throw new Error('Own candidate metadata unavailable');const person=(await r.json()).find(person=>person.userId===${JSON.stringify(peerId)});return JSON.stringify(person?{userId:person.userId,shortName:person.shortName}:null);`
   )
   assert(
     candidate != null,
@@ -635,8 +627,8 @@ interface IncomingFixture {
   targetId: string
   targetBody: string
   targetEarlierBody: string
-  senderUserId: number
-  receiverUserId: number
+  senderUserId: string
+  receiverUserId: string
   incomingId?: string
   incomingBody?: string
   attemptedSend?: boolean
@@ -648,7 +640,7 @@ interface IncomingFixture {
 async function incoming(
   device: Device,
   results: CaseResult[],
-  userId: number,
+  userId: string,
   create: boolean
 ): Promise<void> {
   const fixturePath = required('CHAT_UI_REPLY_INCOMING_FIXTURE')
@@ -745,7 +737,7 @@ async function incoming(
     )
     const author = await evaluate<{ shortName: string } | null>(
       device,
-      `const r=await fetch(${JSON.stringify(API + '/chat/conversations/' + fixture.conversationId + '/members')},{credentials:'include'});if(!r.ok)throw new Error('Current author metadata unavailable');const author=(await r.json()).find(member=>Number(member.userId)===${fixture.senderUserId});return JSON.stringify(author?{shortName:author.shortName}:null);`
+      `const r=await fetch(${JSON.stringify(API + '/chat/conversations/' + fixture.conversationId + '/members')},{credentials:'include'});if(!r.ok)throw new Error('Current author metadata unavailable');const author=(await r.json()).find(member=>member.userId===${JSON.stringify(fixture.senderUserId)});return JSON.stringify(author?{shortName:author.shortName}:null);`
     )
     assert(author != null, 'The other actor must remain an accessible member')
     fixture.outgoingSenderName = author.shortName

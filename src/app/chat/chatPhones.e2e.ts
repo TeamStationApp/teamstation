@@ -40,6 +40,8 @@ import { join, resolve } from 'node:path'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { readSeedTable } from '../../test/chatSeedTable'
+
 interface Device {
   launchApp: (options: object) => Promise<unknown>
   tapOn: (options: object) => Promise<unknown>
@@ -82,14 +84,7 @@ function required(key: string): string {
 function people(
   run: string
 ): Record<string, { email: string; password: string }> {
-  const found: Record<string, { email: string; password: string }> = {}
-  for (const line of readFileSync(join(run, 'seed.txt'), 'utf8').split('\n')) {
-    const person = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-    if (person != null) {
-      found[person[1]] = { email: person[3], password: person[4] }
-    }
-  }
-  return found
+  return readSeedTable(readFileSync(join(run, 'seed.txt'), 'utf8'))
 }
 
 async function until<T>(

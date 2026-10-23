@@ -8,6 +8,7 @@ import { Pool } from 'pg'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 import { presignGetUrl } from '../../server/media/presign'
+import { readSeedTable } from '../../test/chatSeedTable'
 
 /**
  * The chat's browser scenarios, against a running API and web app with
@@ -72,23 +73,14 @@ interface Seed {
 function readSeed(): Seed {
   const text = readFileSync(join(ARTIFACTS, 'seed.txt'), 'utf8')
   const ids: Record<string, string> = {}
-  const people: Seed['people'] = {}
   for (const line of text.split('\n')) {
     for (const match of line.matchAll(
       /(Hawks|Eagles|Owls|QPLL|Spring 2027|\(final\)|video) ((?:tem|lea|sea|gam|vid)_\S+)/g
     )) {
       ids[match[1] === '(final)' ? 'hawksOwlsFinal' : match[1]] = match[2]
     }
-    const person = /^(\S+)\s.*?\s(\d{6,})\s+(\S+@\S+)\s+(\S+)$/.exec(line)
-    if (person != null) {
-      people[person[1]] = {
-        userId: person[2],
-        email: person[3],
-        password: person[4]
-      }
-    }
   }
-  return { ids, people }
+  return { ids, people: readSeedTable(text) }
 }
 
 const browsers: Browser[] = []
@@ -422,8 +414,8 @@ async function dmWith(page: Page, userIds: string[]): Promise<string> {
       if (chat.kind !== 'dm' || chat.closed) continue
       const members = (
         await apiGet(page, `/chat/conversations/${chat.id}/members`)
-      ).body as Array<{ userId: number }>
-      const ids = members.map(member => String(member.userId)).sort()
+      ).body as Array<{ userId: string }>
+      const ids = members.map(member => member.userId).sort()
       if (JSON.stringify(ids) === JSON.stringify([...userIds].sort())) {
         return chat.id
       }
@@ -437,9 +429,8 @@ async function openChatTab(page: Page): Promise<void> {
   await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
   await until('the chat list', async () => {
     const text = await bodyText(page)
-    return text.includes('Follow a team') && !text.includes('Opening chat')
-      ? true
-      : undefined
+    const list = await page.$('[data-testid="chat-conversation-list"]')
+    return list != null && !text.includes('Opening chat') ? true : undefined
   })
 }
 
@@ -1309,11 +1300,11 @@ describe('chat scenarios in the browser', function () {
     const members = await chatIdOf(parentB, 'Hawks Members')
     const ids = (
       (await apiGet(parentB, `/chat/conversations/${members}/messages`))
-        .body as Array<{ id: string; kind: string; senderUserId: number }>
+        .body as Array<{ id: string; kind: string; senderUserId: string }>
     )
       .filter(
         message =>
-          String(message.senderUserId) === seed.people.B.userId &&
+          message.senderUserId === seed.people.B.userId &&
           (message.kind === 'post' || message.kind === 'edit')
       )
       .slice(-2)
@@ -1731,7 +1722,7 @@ describe('chat scenarios in the browser', function () {
     expect(await fan.$('::-p-text(New message)')).equals(null)
     await shot(fan, 'e18-3-f-no-new-message')
     const refused = await apiCall(fan, 'POST', '/chat/dms', {
-      userIds: [Number(seed.people.Hc.userId)]
+      userIds: [seed.people.Hc.userId]
     })
     expect(refused.status).equals(403)
     expect(refused.body.details.reason).equals('notCandidate')
