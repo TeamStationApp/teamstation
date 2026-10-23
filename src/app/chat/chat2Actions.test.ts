@@ -11287,3 +11287,172 @@ describe('E3 autofocus proof before targeted composer entry', function () {
       }
     )
 })
+
+describe('web large-text zoomed control captures', function () {
+  interface Box {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+  function model(
+    options: {
+      pannedCancel?: Box
+      scaleAfterReveal?: number
+      hidden?: boolean
+      unfocused?: boolean
+      deadline?: number
+    } = {}
+  ): {
+    scenario: Scenarios
+    shots: string[]
+    reveals: string[]
+    observations: Array<Record<string, unknown>>
+  } {
+    const page = new JSDOM(
+      '<div data-testid="chat-picker-header"><span>Mention a member</span>' +
+        '<button>Cancel</button></div><div data-testid="chat-picker-content">' +
+        '<input aria-label="Search members"></div>',
+      { runScripts: 'outside-only', pretendToBeVisual: true }
+    )
+    const window = page.window
+    const document = window.document
+    const viewport = {
+      offsetLeft: 0,
+      offsetTop: 0,
+      width: 960,
+      height: 666.667,
+      scale: 1.5
+    }
+    Object.defineProperty(window, 'visualViewport', { value: viewport })
+    Object.defineProperty(window, 'innerWidth', { value: 1440 })
+    Object.defineProperty(window, 'innerHeight', { value: 1000 })
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2 })
+    const boxes = new Map<Element, Box>()
+    const heading = document.querySelector('span')!
+    const cancel = document.querySelector('button')!
+    const search = document.querySelector('input')!
+    boxes.set(heading, { x: 24, y: 16, width: 220, height: 30 })
+    boxes.set(cancel, { x: 1320, y: 12, width: 96, height: 40 })
+    boxes.set(search, { x: 24, y: 70, width: 1377, height: 48 })
+    for (const node of boxes.keys())
+      Object.defineProperty(node, 'getBoundingClientRect', {
+        value: () => {
+          const b = boxes.get(node)!
+          return {
+            ...b,
+            left: b.x,
+            top: b.y,
+            right: b.x + b.width,
+            bottom: b.y + b.height
+          }
+        }
+      })
+    if (options.hidden === true) cancel.setAttribute('aria-hidden', 'true')
+    if (options.unfocused !== true) search.focus()
+    const reveals: string[] = []
+    Object.defineProperty(window.Element.prototype, 'scrollIntoView', {
+      value(this: Element) {
+        reveals.push(this.textContent ?? '')
+        if (options.pannedCancel != null && this === cancel)
+          boxes.set(cancel, options.pannedCancel)
+        if (options.scaleAfterReveal != null)
+          viewport.scale = options.scaleAfterReveal
+      }
+    })
+    const shots: string[] = []
+    const ui = {
+      native: false,
+      deadline: AbortSignal.timeout(options.deadline ?? 10000),
+      dom: async (script: string) =>
+        JSON.parse(
+          JSON.stringify(window.eval('(()=>{' + script + '})()'))
+        ) as Record<string, unknown>,
+      shot: async (kind: string) => {
+        shots.push(kind)
+      }
+    }
+    const observations: Array<Record<string, unknown>> = []
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations
+    }) as Scenarios
+    return { scenario, shots, reveals, observations }
+  }
+  const headingSearch = [
+    {
+      name: 'heading',
+      css: '[data-testid="chat-picker-header"] *',
+      text: 'Mention a member'
+    },
+    {
+      name: 'search',
+      css: '[data-testid="chat-picker-content"] [aria-label="Search members"]'
+    }
+  ]
+  const cancelTarget = [
+    {
+      name: 'cancel',
+      css: '[data-testid="chat-picker-header"] button',
+      text: 'Cancel'
+    }
+  ]
+
+  it('captures heading and focused Search already inside the visual viewport', async () => {
+    const actual = model()
+    await actual.scenario.zoomedWebControlShot('zoom-left', headingSearch, '')
+    expect(actual.shots).deep.equals(['zoom-left'])
+    expect(actual.reveals).deep.equals([])
+    expect(actual.observations[0]).includes({ outcome: 'passed' })
+  })
+
+  it('reveals an off-frame Cancel publicly and captures only once it is framed', async () => {
+    const actual = model({
+      pannedCancel: { x: 700, y: 12, width: 96, height: 40 }
+    })
+    await actual.scenario.zoomedWebControlShot('zoom-right', cancelTarget, '')
+    expect(actual.reveals).deep.equals(['Cancel'])
+    expect(actual.shots).deep.equals(['zoom-right'])
+    expect(actual.observations[0].revealed).deep.equals(['cancel'])
+  })
+
+  it('fails without a capture when an ordinary reveal leaves Cancel outside the view', async () => {
+    const actual = model({ deadline: 400 })
+    const error = await captureFailure(
+      actual.scenario.zoomedWebControlShot('zoom-right', cancelTarget, '')
+    )
+    expect(String(error)).matches(/abort|timeout/i)
+    expect(actual.reveals).deep.equals(['Cancel'])
+    expect(actual.shots).deep.equals([])
+    expect(actual.observations[0]).includes({ outcome: 'failed' })
+  })
+
+  it('refuses a reveal that changes the actual zoom', async () => {
+    const actual = model({ scaleAfterReveal: 1 })
+    const error = await captureFailure(
+      actual.scenario.zoomedWebControlShot('zoom-right', cancelTarget, '')
+    )
+    expect(String(error)).includes(
+      'Control reveal must preserve actual zoom and viewport dimensions'
+    )
+    expect(actual.shots).deep.equals([])
+  })
+
+  it('refuses a hidden control instead of revealing it', async () => {
+    const actual = model({ hidden: true })
+    const error = await captureFailure(
+      actual.scenario.zoomedWebControlShot('zoom-right', cancelTarget, '')
+    )
+    expect(String(error)).includes('Visible enabled zoom control required')
+    expect(actual.reveals).deep.equals([])
+  })
+
+  it('does not accept a Search editor without its actual focus', async () => {
+    const actual = model({ unfocused: true, deadline: 400 })
+    const error = await captureFailure(
+      actual.scenario.zoomedWebControlShot('zoom-left', headingSearch, '')
+    )
+    expect(String(error)).matches(/abort|timeout/i)
+    expect(actual.shots).deep.equals([])
+  })
+})
