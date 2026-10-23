@@ -5492,7 +5492,7 @@ describe('chat native adapter compatibility', function () {
     const { actual, page } = browserModel()
     actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: false })
     page.window.document.body.innerHTML =
-      '<button id="pins">Pins</button><div data-testid="chat-message-target"><div data-testid="chat-bubble-target">Synthetic body</div><button role="button" aria-label="More message actions">More</button></div><textarea data-testid="chat-composer">Unsent draft</textarea>'
+      '<button id="pins">Pins</button><div data-testid="chat-message-history"><div data-testid="chat-message-target"><div data-testid="chat-bubble-target">Synthetic body</div><button role="button" aria-label="More message actions">More</button></div></div><textarea data-testid="chat-composer">Unsent draft</textarea>'
     const editor = page.window.document.querySelector('textarea')!
     const trigger = page.window.document.querySelector<HTMLButtonElement>(
       '[aria-label="More message actions"]'
@@ -5678,12 +5678,27 @@ describe('chat native adapter compatibility', function () {
       }
       const action = page.window.document.createElement('button')
       overlay.append(action)
+      if (mode === 'closing-clone') {
+        const source = bubble.closest('[data-testid="chat-message-target"]')!
+        overlay.append(source.cloneNode(true))
+      }
+      if (mode === 'duplicate-history-row')
+        bubble.parentElement!.parentElement!.append(
+          bubble.parentElement!.cloneNode(true)
+        )
       page.window.document.body.append(overlay)
       action.focus()
     }
     actual.device.pressKey = async args => {
       expect(args.key).equals('ESC')
       calls.push('dismiss')
+      if (mode === 'closing-clone') {
+        page.window.setTimeout(() => {
+          overlay?.remove()
+          bubble.focus()
+        }, 20)
+        return
+      }
       if (mode !== 'retained-overlay') overlay?.remove()
       if (mode === 'wrong-owner') more.focus()
       else if (mode === 'composer-owner') editor.focus()
@@ -5732,6 +5747,27 @@ describe('chat native adapter compatibility', function () {
     )
     expect(result.calls).not.includes('settled-shot')
     expect(result.calls).not.includes('dismiss')
+  })
+  it('waits for the duplicate spotlight preview to unmount while tracking the unique original history trigger', async () => {
+    const result = await touchKeyboardMenu('closing-clone')
+    expect(result.error).equals(undefined)
+    const samples = result.scenario.observations[0].messageActionFocus as Array<
+      Record<string, unknown>
+    >
+    const after = samples.filter(sample => sample.phase === 'after-dismissal')
+    expect(after.length).greaterThan(1)
+    expect(after[0].spotlights).equals(1)
+    expect(after.at(-1)).includes({
+      triggerFocused: true,
+      menus: 0,
+      spotlights: 0
+    })
+  })
+  it('rejects duplicate actual history rows rather than choosing the first matching trigger', async () => {
+    const result = await touchKeyboardMenu('duplicate-history-row')
+    expect(String(result.error)).includes(
+      'Unique message row required for action focus'
+    )
   })
   for (const mode of [
     'wrong-owner',
