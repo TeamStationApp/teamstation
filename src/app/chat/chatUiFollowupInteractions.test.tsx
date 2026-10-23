@@ -182,6 +182,56 @@ describe('chat UI follow-up popup keyboard', function () {
     expect(document.activeElement).equals(focused)
   })
 
+  it('restores a clipped message focus without the browser exposing it by scrolling the reader 14px', function () {
+    const history = document.createElement('div')
+    const trigger = document.createElement('div')
+    const panel = document.createElement('div')
+    const action = document.createElement('button')
+    trigger.tabIndex = 0
+    history.append(trigger)
+    panel.append(action)
+    document.body.append(history, panel)
+    trigger.focus()
+    history.scrollTop = 23542
+    trigger.getBoundingClientRect = () =>
+      new window.DOMRect(48, 23528 - history.scrollTop, 273, 648)
+    const before = trigger.getBoundingClientRect()
+    const nativeFocus = trigger.focus.bind(trigger)
+    const restoring: boolean[] = []
+    let scrollEvents = 0
+    history.addEventListener('scroll', () => {
+      scrollEvents += 1
+    })
+    // JSDOM does not implement the browser's automatic focus scroll. Model
+    // the real clipped source's 14px exposure at this platform boundary.
+    trigger.focus = (options?: FocusOptions) => {
+      restoring.push(isRestoringPopupFocus())
+      if (options?.preventScroll !== true) {
+        history.scrollTop += trigger.getBoundingClientRect().y
+        history.dispatchEvent(new window.Event('scroll'))
+      }
+      nativeFocus(options)
+    }
+    let closed = 0
+    stopKeys = bindPopupKeys(panel, () => {
+      closed += 1
+    })
+    expect(document.activeElement).equals(action)
+    stopKeys()
+    stopKeys = undefined
+    expect(
+      history.scrollTop,
+      'Clipped reader must not move on focus return'
+    ).equals(23542)
+    expect(trigger.getBoundingClientRect().y).equals(before.y)
+    expect(scrollEvents).equals(0)
+    expect(document.activeElement).equals(trigger)
+    expect(restoring).deep.equals([true])
+    expect(isRestoringPopupFocus()).equals(false)
+    key('Escape')
+    expect(closed).equals(0)
+  })
+
   it('closes an empty popup and tolerates a removed focus trigger or missing native view', function () {
     const trigger = document.createElement('button')
     const empty = document.createElement('div')

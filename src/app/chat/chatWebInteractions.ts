@@ -588,7 +588,7 @@ export function bindPopupKeys(
     ) {
       restoringFocus = true
       try {
-        previous.focus()
+        previous.focus({ preventScroll: true })
       } finally {
         restoringFocus = false
       }
