@@ -5,6 +5,7 @@ import { Button, Screen } from '../components'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'
+import type { ChatEngine } from './engine/engine'
 import { type ChatKeysClient, resetUnreadableChat } from './engine/links'
 import { type ChatKeyStore, UnreadableKeyRecordError } from './keyRecord'
 import { keyStore } from './keyStore'
@@ -12,7 +13,8 @@ import { LinkDeviceScreen } from './LinkDeviceScreen'
 import type { ChatScreenEngine } from './screenEngine'
 
 export interface ChatGateProps {
-  engine: Pick<ChatScreenEngine, 'start'>
+  /** `status`, when given, lets a gate over a started engine show at once. */
+  engine: Pick<ChatScreenEngine, 'start'> & Partial<Pick<ChatEngine, 'status'>>
   client: ChatKeysClient
   userId: string
   /** The key store the engine uses; the platform's own by default. */
@@ -37,12 +39,17 @@ export interface ChatGateProps {
  * the device those keys belonged to and wipes the record, and chat starts
  * again as a new device. The record is kept until the person asks for
  * that, and through a reset that could not revoke the device.
+ *
+ * Each chat screen has its own gate: a chat pushed over the chat list is a
+ * screen of its own. Over an engine that has already started, the gate shows
+ * its screen at once while the start runs again behind it, rather than a
+ * moment of "Loading" as the chat slides in.
  */
 export function ChatGate(props: ChatGateProps): React.ReactElement {
   const { engine, client, userId, children } = props
   const styles = getChatStyles(useTheme())
   const [state, setState] = useState<'starting' | 'ready' | 'link' | 'failed'>(
-    'starting'
+    () => (engine.status === 'ready' ? 'ready' : 'starting')
   )
   const [failure, setFailure] = useState<unknown>(undefined)
   const [resetting, setResetting] = useState(false)
@@ -59,7 +66,9 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
 
   useEffect(() => {
     let live = true
-    setState('starting')
+    setState(current =>
+      current === 'ready' && engine.status === 'ready' ? current : 'starting'
+    )
     engine
       .start()
       .then(status => {

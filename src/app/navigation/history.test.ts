@@ -179,3 +179,16 @@ describe('clearing a tab drops only a straight-line suffix', function () {
     expect(history.current()).deep.equals({ name: 'player', userId: 'id' })
   })
 })
+
+describe('where Back would land (U22)', function () {
+  it('is the step back walks to, without walking', function () {
+    const history = makeHistory()
+    expect(history.previous()).equals(undefined)
+    history.show({ name: 'team', teamId: 't1' })
+    history.show({ name: 'team', teamId: 't1', tab: 'stats' })
+    expect(history.previous()).deep.equals({ name: 'team', teamId: 't1' })
+    expect(history.depth()).equals(3)
+    history.back()
+    expect(history.previous()).deep.equals({ name: 'home' })
+  })
+})

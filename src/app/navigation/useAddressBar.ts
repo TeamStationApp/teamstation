@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 
 import { type ClearedFrame, frameMatchesPath, suffixDropCount } from './history'
+import { noteHistoryMove } from './historyMotion'
 import { parseRoute, type Route, routePath } from './routes'
 
 let guard:
@@ -63,6 +64,11 @@ function initializeHistory(): void {
  * `routes.ts` is the part that would be handed to a navigator, so nothing here
  * has to be unpicked when that happens.
  */
+
+/** Never anything: the browser walks its own history. */
+export function previousRoute(): Route | undefined {
+  return undefined
+}
 
 /**
  * The address the app was opened on.
@@ -231,7 +237,7 @@ export function useBrowserBack(
     initializeHistory()
     let restoring: (() => void) | undefined
     let accepting = false
-    const onPop = (): void => {
+    const onPop = (event?: PopStateEvent): void => {
       if (landing != null) {
         const route = landing
         landing = null
@@ -270,6 +276,22 @@ export function useBrowserBack(
               destination: currentRoute()
             })
       if (held == null || held.allow?.(currentRoute()) === true) {
+        // Read before `position` moves: afterwards every move looks forward.
+        // An entry this app did not write (a hash change, another script's
+        // `pushState`) has no index to say which way it lies, and one at the
+        // same index has not gone either way: no move.
+        const landed = indexOfHistory()
+        noteHistoryMove({
+          direction:
+            landed == null || landed === position
+              ? 'none'
+              : landed < position
+                ? 'back'
+                : 'forward',
+          drawn:
+            (event as { hasUAVisualTransition?: boolean } | undefined)
+              ?.hasUAVisualTransition === true
+        })
         position = indexOfHistory() ?? position
         noteTrail(locationPath())
         onRoute(currentRoute())
@@ -289,6 +311,10 @@ export function useBrowserBack(
               position = nextPosition
               showRoute(held.destination, true)
               held.onAccepted?.()
+              noteHistoryMove({
+                direction: delta < 0 ? 'back' : delta > 0 ? 'forward' : 'none',
+                drawn: false
+              })
               onRoute(held.destination)
             }
             if (delta !== 0) {
