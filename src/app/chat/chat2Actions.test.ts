@@ -1813,6 +1813,136 @@ describe('chat native adapter compatibility', function () {
           expect(result.calls).not.includes('erase')
       }
     )
+  async function middleResizeReader(fault = ''): Promise<{
+    error: unknown
+    resizes: Array<{
+      width: number
+      draft: string
+      reply: boolean
+      file: boolean
+    }>
+    wheels: string[]
+  }> {
+    const target = { id: 'msg-resize-target', seq: 231 }
+    let width = 390
+    let y = 114
+    let draft = ''
+    let reply = false
+    let file = false
+    let absent = false
+    const resizes: Array<{
+      width: number
+      draft: string
+      reply: boolean
+      file: boolean
+    }> = []
+    const wheels: string[] = []
+    const ui = {
+      native: false,
+      deadline: AbortSignal.timeout(10000),
+      metrics: () => ({ width, height: width === 390 ? 844 : 1000 }),
+      append: async (text: string) => {
+        draft += text
+      },
+      draft: async () => draft,
+      back: async () => {},
+      open: async () => {},
+      id: async () => {},
+      dom: async () => ({ top: 0 }),
+      present: async (id: string) => {
+        if (id === 'chat-attachment-chip') expect(file).equals(true)
+        if (id === 'chat-bubble-' + target.id && absent)
+          throw Error('Exact public resize row is absent')
+      },
+      resize: async (next: number) => {
+        resizes.push({ width: next, draft, reply, file })
+        // Existing contract: only a newly covering top band reveals the edge.
+        if (next === 1440 && y >= 106 && y < 162) y = 170
+        width = next
+      },
+      device: {
+        assertVisible: async (args: { text: string }) => {
+          expect(args.text).equals('^Cancel reply$')
+          expect(reply).equals(true)
+        },
+        scroll: async (args: { direction: string }) => {
+          wheels.push(args.direction)
+          expect(args.direction).equals('UP')
+          if (fault === 'absent') absent = true
+          if (fault !== 'covered') y += 300
+          return { ordinaryWheel: true }
+        }
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      group: 'cnv-resize',
+      observations: [],
+      f: { messages: { target, oldest: { id: 'msg-oldest', seq: 1 } } },
+      check: async (name: string, work: () => Promise<void>) => {
+        if (
+          name ===
+          'E9 middle/top-zero/end reader with multiline reply/file retained'
+        )
+          await work()
+      },
+      openGroup: async () => {},
+      anchor: async () => {
+        y = 114
+      },
+      reply: async () => {
+        reply = true
+      },
+      attachPhoto: async () => {
+        file = true
+      },
+      openInfo: async () => {},
+      ownWebReader: async () => {},
+      webAnchorReady: async () => {},
+      readingBand: async () => ({
+        top: width === 390 ? 106 : 162,
+        bottom: width === 390 ? 606 : 847
+      }),
+      targetBounds: async (id: string) => {
+        expect(id).equals('chat-bubble-' + target.id)
+        if (absent) throw Error('Exact public resize row is absent')
+        return { x: 48, y, width: 215, height: 108 }
+      },
+      cancelReply: async () => {
+        reply = false
+      }
+    }) as Scenarios
+    let error: unknown
+    try {
+      await scenario.E9()
+    } catch (failure) {
+      error = failure
+    }
+    return { error, resizes, wheels }
+  }
+  it('keeps E9 strict round-trip geometry for an exact middle reader without invoking newly-covered-edge avoidance', async () => {
+    const result = await middleResizeReader()
+    expect(result.error).equals(undefined)
+    expect(result.wheels).deep.equals(['UP'])
+    expect(result.resizes).deep.equals(
+      [1440, 390].map(width => ({
+        width,
+        draft: 'Keep a multiline\nreader draft',
+        reply: true,
+        file: true
+      }))
+    )
+  })
+  for (const fault of ['covered', 'absent'])
+    it('refuses an unproved E9 middle-reader baseline: ' + fault, async () => {
+      const result = await middleResizeReader(fault)
+      expect(String(result.error)).includes(
+        fault === 'absent'
+          ? 'Exact public resize row is absent'
+          : 'Exact resize reader must be clearly inside the readable band'
+      )
+      expect(result.resizes).deep.equals([])
+    })
   async function accountSwitchTyping(fault = ''): Promise<{
     calls: string[]
     draft: string

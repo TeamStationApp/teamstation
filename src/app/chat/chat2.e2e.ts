@@ -5723,9 +5723,32 @@ export class Scenarios {
           )
           await this.anchor()
           await this.ownWebReader(this.f.messages.target)
+          const middleScroll = await ui.device.scroll(
+            { direction: 'UP' },
+            { signal: ui.deadline }
+          )
+          await this.webAnchorReady()
           const beforeResize = await this.targetBounds(
             'chat-bubble-' + this.f.messages.target.id
           )
+          const band = await this.readingBand()
+          const center = beforeResize.y + beforeResize.height / 2
+          const margin = (band.bottom - band.top) / 4
+          assert(
+            beforeResize.y >= band.top &&
+              beforeResize.y + beforeResize.height <= band.bottom &&
+              center >= band.top + margin &&
+              center <= band.bottom - margin,
+            'Exact resize reader must be clearly inside the readable band'
+          )
+          this.observations.push({
+            middleResizeReader: {
+              id: this.f.messages.target.id,
+              bounds: beforeResize,
+              band,
+              scroll: middleScroll
+            }
+          })
           const metrics = ui.metrics()
           await ui.resize(
             metrics.width === 1440 ? 390 : 1440,
