@@ -15,6 +15,7 @@ import { makeDatabase } from './db/database'
 import { purgeExpiredKeys } from './db/syncIdempotency'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
+import { dictationScopes } from './dictation/scopes'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
 import { deliverAccountMail } from './email/accountMail'
@@ -726,6 +727,9 @@ function runWorker(): void {
       : attachDictation(server, {
           db,
           config: serverConfig.dictation,
+          scopes: dictationScopes({
+            tess: tessSettings(serverConfig) != null
+          }),
           allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
           listenForUpgrades: false
         })

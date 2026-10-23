@@ -37,7 +37,7 @@ import {
   type DictationConfig,
   type Recogniser
 } from './route'
-import { type Scope, SCOPES } from './scopes'
+import { dictationScopes, type Scope, SCOPES } from './scopes'
 import type { SttHandlers } from './stt'
 
 const adminUrl = testDatabaseUrl
@@ -147,7 +147,7 @@ describe('dictation route', function () {
   const conversations: FakeConversation[] = []
   const script: Array<Turn | Error | Promise<Turn>> = []
   const logs: string[] = []
-  const scopes = new Map<string, Scope>(SCOPES)
+  const scopes = new Map<string, Scope>(dictationScopes({ tess: true }))
   const home = makeId('team')
   const away = makeId('team')
   const elsewhere = makeId('team')
@@ -1183,7 +1183,7 @@ describe('dictation route', function () {
       toolSchema().filter(tool => tool.name !== 'lineup')
     )
     expect(scoring?.rosterTools).deep.equals(rosterToolSchema())
-    expect([...SCOPES.keys()]).deep.equals(['scoring', 'roster'])
+    expect([...SCOPES.keys()]).deep.equals(['scoring', 'roster', 'tess'])
     let refused: unknown
     try {
       await scoring?.authorise(
@@ -1351,6 +1351,79 @@ describe('dictation route', function () {
             line.includes('claude-haiku-5-5')
         )
       ).equals(true)
+      client.ws.close()
+    })
+  })
+  describe('the tess scope', function () {
+    const tess = (id: string): object =>
+      start(id, { scope: 'tess', target: {}, context: 'tess' })
+
+    it('sends a signed-in stranger the transcript alone, and takes the next start at once', async function () {
+      const client = await connect({ authorization: `Bearer ${STRANGER}` })
+      const recogniser = recognisers[recognisers.length - 1]
+      const asked = conversations.length
+      client.send(tess('t1'))
+      await settled(recogniser, 'begin')
+      client.audio(4)
+      client.send({ kind: 'release', id: 't1' })
+      await settled(recogniser, 'end')
+      recogniser.handlers.onFinal('Where is the schedule?')
+      expect(await client.next()).deep.equals({
+        kind: 'transcript',
+        id: 't1',
+        text: 'Where is the schedule?'
+      })
+      expect(logs.at(-1)).match(
+        /^dictation t1 model grok-4\.7 user .+ transcribed after \d+ms$/
+      )
+      // Nothing is in flight: a second hold on the socket is taken.
+      client.send(tess('t2'))
+      await settled(recogniser, 'begin', 2)
+      client.audio(4)
+      client.send({ kind: 'release', id: 't2' })
+      await settled(recogniser, 'end', 2)
+      recogniser.handlers.onFinal('And the roster?')
+      expect(await client.next()).deep.equals({
+        kind: 'transcript',
+        id: 't2',
+        text: 'And the roster?'
+      })
+      await pause()
+      // The LLM was never asked, and nothing but the words came back.
+      expect(conversations).to.have.length(asked)
+      expect(client.replies.map(reply => reply.kind)).deep.equals([
+        'transcript',
+        'transcript'
+      ])
+      expect(logs.some(line => /^dictation-state t[12] /.test(line))).equals(
+        false
+      )
+      client.ws.close()
+    })
+
+    it('still fails a hold that heard nothing, and frees the socket', async function () {
+      const client = await connect()
+      const recogniser = recognisers[recognisers.length - 1]
+      const asked = conversations.length
+      client.send(tess('t3'))
+      await settled(recogniser, 'begin')
+      client.audio(2)
+      client.send({ kind: 'release', id: 't3' })
+      await settled(recogniser, 'end')
+      recogniser.handlers.onFinal('  ')
+      expect(await client.next()).deep.equals({
+        kind: 'transcript',
+        id: 't3',
+        text: '  '
+      })
+      expect(await client.next()).deep.equals({
+        kind: 'error',
+        id: 't3',
+        message: 'Nothing was heard'
+      })
+      client.send(tess('t4'))
+      await settled(recogniser, 'begin', 2)
+      expect(conversations).to.have.length(asked)
       client.ws.close()
     })
   })
