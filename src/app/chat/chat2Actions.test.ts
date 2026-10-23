@@ -1357,6 +1357,7 @@ describe('chat native adapter compatibility', function () {
       steps: [],
       metrics: () => ({ width: 300, height: 600 }),
       device: {
+        hierarchy: async () => ({ nodes }),
         hierarchyRaw: async () => raw(nodes),
         platformInfo: async () => ({ screenWidth: 300, screenHeight: 600 })
       }
@@ -7308,5 +7309,169 @@ describe('native scenario navigation and mention handoff', function () {
     }) as Scenarios
     expect(await captureFailure(scenario.I2())).equals(stopped)
     expect(calls).deep.equals(['open', 'open', 'chat-jump-latest'])
+  })
+})
+
+describe('iOS spotlight backdrop dismissal', () => {
+  function model(
+    top: number,
+    fault = ''
+  ): {
+    scenario: Scenarios
+    calls: string[]
+    actions: string[]
+    pinned: () => boolean
+  } {
+    const calls: string[] = []
+    const actions: string[] = []
+    let open = true
+    let pinned = true
+    const controls = {
+      x: 8,
+      y: top,
+      width: 386,
+      height: fault === 'compact' ? 48 : 360
+    }
+    const frame = { x: 0, y: 0, width: 402, height: 874 }
+    const nodes = (): PublicNode[] =>
+      fault === 'generic'
+        ? []
+        : [
+            { id: 'chat-message-spotlight', bounds: frame },
+            ...(fault === 'missing-controls'
+              ? []
+              : [
+                  {
+                    id: 'chat-message-spotlight-controls',
+                    bounds: fault === 'covered' ? frame : controls
+                  }
+                ]),
+            ...(fault === 'compact'
+              ? []
+              : [
+                  {
+                    id: 'chat-message-spotlight-preview',
+                    bounds: {
+                      x: 8,
+                      y: top + 56,
+                      width: 281.3333435058594,
+                      height: 128
+                    }
+                  }
+                ]),
+            ...(fault === 'compact'
+              ? []
+              : [
+                  {
+                    id: 'chat-message-spotlight-panel',
+                    bounds: { x: 8, y: top + 192, width: 386, height: 168 }
+                  }
+                ])
+          ]
+    const tap = (x: number, y: number): void => {
+      calls.push('tap')
+      if (
+        x >= controls.x &&
+        x <= controls.x + controls.width &&
+        y >= controls.y &&
+        y <= controls.y + controls.height
+      ) {
+        if (y >= top + 305 && y <= top + 353) {
+          actions.push('Unpin')
+          pinned = false
+          open = false
+        }
+        return
+      }
+      open = false
+    }
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: fault === 'android' ? 'android' : 'ios',
+      deadline: AbortSignal.timeout(10000),
+      device: {
+        hierarchy: async () => ({
+          nodes: nodes().map((n, index) => ({
+            index,
+            type: 'Other',
+            identifier: n.id,
+            rect: n.bounds
+          }))
+        }),
+        assertVisible: async () => ({}),
+        assertNotVisible: async () => {
+          expect(open, 'unchanged strict spotlight absence oracle').equals(
+            false
+          )
+        },
+        tapOn: async () => {
+          if (fault === 'generic') {
+            calls.push('Cancel')
+            open = false
+          } else tap(frame.width / 2, frame.height / 2)
+        },
+        tapOnPoint: async ({ x, y }: { x: number; y: number }) => {
+          tap(x, y)
+        },
+        back: async () => {
+          calls.push('Back')
+          open = false
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+    return { scenario, calls, actions, pinned: () => pinned }
+  }
+
+  for (const [name, top] of [
+    ['Unpin', 122.66666412353516],
+    ['reaction', 434.3333435058594]
+  ] as const)
+    it(
+      'dismisses from measured exposed backdrop when the fullscreen Cancel center overlaps ' +
+        name,
+      async () => {
+        const m = model(top)
+        await m.scenario.dismiss()
+        await m.scenario.ui.absent('chat-message-spotlight')
+        expect(m.calls).deep.equals(['tap'])
+        expect(m.actions).deep.equals([])
+        expect(m.pinned()).equals(true)
+        expect(m.scenario.observations).has.length(1)
+      }
+    )
+
+  for (const fault of ['covered', 'missing-controls'])
+    it(
+      'fails before a tap without proven exposed geometry: ' + fault,
+      async () => {
+        const m = model(122.66666412353516, fault)
+        expect(await captureFailure(m.scenario.dismiss())).instanceOf(Error)
+        expect(m.calls).deep.equals([])
+        expect(m.actions).deep.equals([])
+        expect(m.pinned()).equals(true)
+      }
+    )
+
+  it('dismisses compact spotlight when only the measured controls remain', async () => {
+    const m = model(122.66666412353516, 'compact')
+    await m.scenario.dismiss()
+    await m.scenario.ui.absent('chat-message-spotlight')
+    expect(m.actions).deep.equals([])
+    expect(m.pinned()).equals(true)
+  })
+
+  it('retains an ordinary iOS Cancel outside spotlight', async () => {
+    const m = model(0, 'generic')
+    await m.scenario.dismiss()
+    expect(m.calls).deep.equals(['Cancel'])
+  })
+  it('retains Android Back without an iOS backdrop tap', async () => {
+    const m = model(0, 'android')
+    await m.scenario.dismiss()
+    expect(m.calls).deep.equals(['Back'])
   })
 })

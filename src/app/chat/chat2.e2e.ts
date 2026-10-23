@@ -3034,13 +3034,116 @@ export class Scenarios {
   }
 
   async dismiss(): Promise<void> {
-    if (!this.ui.native) await this.ui.device.pressKey({ key: 'ESC' })
+    const ui = this.ui
+    if (ui.native && ui.surface === 'ios') {
+      const nodes = await ui.nodes()
+      const scenes = nodes.filter(node => node.id === 'chat-message-spotlight')
+      if (scenes.length !== 0) {
+        assert.equal(scenes.length, 1, 'Unique actual spotlight required')
+        const measured = (
+          node: PublicNode
+        ): NonNullable<PublicNode['bounds']> => {
+          const b = need(node.bounds, 'Actual spotlight bounds required')
+          assert(
+            [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+              b.width > 0 &&
+              b.height > 0,
+            'Positive finite spotlight geometry required'
+          )
+          return b
+        }
+        const scene = measured(scenes[0])
+        const keyboards = nodes.filter(node => node.type === 'Keyboard')
+        const statusBars = nodes.filter(node => node.type === 'StatusBar')
+        assert(
+          keyboards.length <= 1 && statusBars.length <= 1,
+          'Unique actual OS occlusion required'
+        )
+        const frameTop =
+          statusBars.length === 0
+            ? scene.y
+            : Math.max(
+                scene.y,
+                measured(statusBars[0]).y + measured(statusBars[0]).height
+              )
+        const frameBottom =
+          keyboards.length === 0
+            ? scene.y + scene.height
+            : Math.min(scene.y + scene.height, measured(keyboards[0]).y)
+        const frame = { ...scene, y: frameTop, height: frameBottom - frameTop }
+        const blocked = [
+          'chat-message-spotlight-controls',
+          'chat-message-spotlight-preview',
+          'chat-message-spotlight-panel'
+        ]
+          .map(id => {
+            const found = nodes.filter(node => node.id === id)
+            assert(
+              found.length <= 1 &&
+                (id !== 'chat-message-spotlight-controls' ||
+                  found.length === 1),
+              'Unique actual spotlight region required: ' + id
+            )
+            return found.map(measured)
+          })
+          .flat()
+        const left = Math.min(...blocked.map(b => b.x))
+        const top = Math.min(...blocked.map(b => b.y))
+        const right = Math.max(...blocked.map(b => b.x + b.width))
+        const bottom = Math.max(...blocked.map(b => b.y + b.height))
+        const inset = {
+          x: frame.x + 8,
+          y: frame.y + 8,
+          width: frame.width - 16,
+          height: frame.height - 16
+        }
+        const choices = [
+          { ...inset, height: top - 8 - inset.y },
+          {
+            ...inset,
+            y: bottom + 8,
+            height: inset.y + inset.height - bottom - 8
+          },
+          { ...inset, width: left - 8 - inset.x },
+          { ...inset, x: right + 8, width: inset.x + inset.width - right - 8 }
+        ].filter(b => b.width >= 44 && b.height >= 44)
+        choices.sort((a, b) => b.width * b.height - a.width * a.height)
+        const clear = need(
+          choices[0],
+          'Measured exposed spotlight backdrop required'
+        )
+        const point = {
+          x: Math.round(clear.x + clear.width / 2),
+          y: Math.round(clear.y + clear.height / 2)
+        }
+        assert(
+          point.x > frame.x &&
+            point.x < frame.x + frame.width &&
+            point.y > frame.y &&
+            point.y < frame.y + frame.height &&
+            blocked.every(
+              b =>
+                point.x < b.x ||
+                point.x > b.x + b.width ||
+                point.y < b.y ||
+                point.y > b.y + b.height
+            ),
+          'Dismissal point must clear every actual spotlight control and preview'
+        )
+        this.observations.push({
+          spotlightBackdropDismiss: { frame, blocked, clear, point }
+        })
+        await ui.tapObserved({ bounds: clear })
+        return
+      }
+    }
+    if (!ui.native) await ui.device.pressKey({ key: 'ESC' })
     else if (
-      this.ui.surface === 'ios' &&
-      (await this.ui.visible({ text: exactText('Cancel') }, 500))
+      ui.surface === 'ios' &&
+      (await ui.visible({ text: exactText('Cancel') }, 500))
     )
-      await this.ui.text('Cancel')
-    else await this.ui.back()
+      await ui.text('Cancel')
+    else await ui.back()
   }
 
   async withFault(
@@ -4194,6 +4297,10 @@ export class Scenarios {
               conversationId: this.group
             }).lastEvent
           )
+          const personalPins =
+            ui.surface === 'ios'
+              ? await (await this.client()).chatPins(this.group)
+              : undefined
           await this.action(message)
           const actions = await this.menuState()
           if (this.touchActions) {
@@ -4246,6 +4353,14 @@ export class Scenarios {
             )
           await this.dismiss()
           await ui.absent('chat-message-spotlight')
+          if (personalPins != null)
+            assert.deepEqual(
+              (await (await this.client()).chatPins(this.group))
+                .map(p => p.messageId)
+                .sort(),
+              personalPins.map(p => p.messageId).sort(),
+              'Spotlight dismissal must preserve actual personal pins'
+            )
         }
         await this.incomingRunEndAvatar(incomingReservations)
       }
