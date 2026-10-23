@@ -12,7 +12,8 @@ import {
   type ChatKeyRecord,
   newRecord,
   recordFromJson,
-  recordToJson
+  recordToJson,
+  UnreadableKeyRecordError
 } from './keyRecord'
 import { KEY_DATABASE, keyStore, webKeyStore } from './keyStore'
 
@@ -265,6 +266,8 @@ describe('chat key store in the browser', function () {
       failed = error
     })
     expect(String(failed)).contains('Unknown chat key record version')
+    expect(failed).instanceOf(UnreadableKeyRecordError)
+    expect((failed as UnreadableKeyRecordError).reason).equals('unknownVersion')
     expect(await raw(factory)).deep.equals(before)
     const db = await new Promise<IDBDatabase>(resolve => {
       const request = factory.open(KEY_DATABASE, 1)
@@ -283,7 +286,80 @@ describe('chat key store in the browser', function () {
       failed = error
     })
     expect(String(failed)).contains('wrapping key is missing')
+    expect((failed as UnreadableKeyRecordError).reason).equals(
+      'wrappingKeyMissing'
+    )
     expect((await raw(factory)).get('record')).deep.equals(before.get('record'))
+  })
+
+  it('names why a kept record is unreadable, without its text, and keeps it', async () => {
+    const cases: Array<[string, (factory: IDBFactory) => Promise<void>]> = [
+      [
+        'invalid',
+        async factory => {
+          await installJson(factory, '{"secret":"do-not-log"')
+        }
+      ],
+      [
+        'undecryptable',
+        async factory => {
+          await installJson(factory, JSON.stringify(legacyRecord))
+          const db = await new Promise<IDBDatabase>(resolve => {
+            const request = factory.open(KEY_DATABASE, 1)
+            request.onsuccess = () => {
+              resolve(request.result)
+            }
+          })
+          const transaction = db.transaction('keys', 'readwrite')
+          const keys = transaction.objectStore('keys')
+          const sealed = await new Promise<any>(resolve => {
+            const request = keys.get('record')
+            request.onsuccess = () => {
+              resolve(request.result)
+            }
+          })
+          const bytes = new Uint8Array(sealed.ciphertext as ArrayBuffer)
+          bytes[0] ^= 1
+          keys.put({ iv: sealed.iv, ciphertext: bytes.buffer }, 'record')
+          await new Promise(resolve => {
+            transaction.oncomplete = resolve
+          })
+          db.close()
+        }
+      ]
+    ]
+    for (const [reason, install] of cases) {
+      const factory = new IDBFactory()
+      await install(factory)
+      const before = await raw(factory)
+      const failed = await webKeyStore({ indexedDB: factory })
+        .load()
+        .catch((error: unknown) => error)
+      expect(failed, reason).instanceOf(UnreadableKeyRecordError)
+      expect((failed as UnreadableKeyRecordError).reason).equals(reason)
+      expect(String(failed)).not.contains('do-not-log')
+      expect(await raw(factory)).deep.equals(before)
+    }
+  })
+
+  it('does not call a store with no crypto to open it an unreadable record', async () => {
+    const factory = new IDBFactory()
+    await installJson(factory, JSON.stringify(legacyRecord))
+    const noDecrypt = new Proxy(globalThis.crypto.subtle, {
+      get(target, key) {
+        if (key === 'decrypt')
+          return async () => {
+            throw new TypeError('crypto.subtle is unavailable')
+          }
+        const value = Reflect.get(target, key)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const failed = await webKeyStore({ indexedDB: factory, subtle: noDecrypt })
+      .load()
+      .catch((error: unknown) => error)
+    expect(failed).instanceOf(TypeError)
+    expect(failed).not.instanceOf(UnreadableKeyRecordError)
   })
 
   it('says whether a record is kept, and makes no database to say so', async function () {

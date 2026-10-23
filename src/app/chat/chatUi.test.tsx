@@ -13,6 +13,7 @@ import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AttachmentView } from './AttachmentView'
+import { chatStartFailure } from './chatCoreLog'
 import {
   bytesUri,
   pickFiles,
@@ -47,6 +48,7 @@ import {
 } from './engine/engine'
 import type { ChatKeysClient } from './engine/links'
 import type { ChatEngineEvent, ChatEngineListener } from './engine/store'
+import { type ChatKeyStore, UnreadableKeyRecordError } from './keyRecord'
 import { NewDmScreen } from './NewDmScreen'
 import { SafetyNumberScreen } from './SafetyNumberScreen'
 import type { ChatScreenEngine } from './screenEngine'
@@ -218,13 +220,15 @@ class FakeEngine implements ChatScreenEngine {
   listeners = new Set<ChatEngineListener>()
   waiting: GrantApproval[] = []
   startAs: 'ready' | 'link' | 'fail' = 'ready'
+  /** What a start that fails throws. */
+  startError: unknown = new Error('offline')
   /** Opens to refuse before one succeeds. */
   refuseOpens = 0
   failSend = false
 
   async start(): Promise<'ready' | 'link' | 'reset'> {
     this.calls.push('start')
-    if (this.startAs === 'fail') throw new Error('offline')
+    if (this.startAs === 'fail') throw this.startError
     return this.startAs
   }
 
@@ -586,6 +590,98 @@ describe('the chat gate', function () {
     await press('Try again')
     await until('inside', () => text().includes('inside'))
     expect(engine.calls.filter(call => call === 'start')).length(2)
+  })
+
+  it('reports saved keys it cannot read, keeps them through Try again, and resets chat here only when asked', async function () {
+    // A store holding a record this build cannot read, as the real ones
+    // report it, and an engine that starts by loading it (enrolOnce).
+    let kept = true
+    const store: ChatKeyStore = {
+      load: async () => {
+        if (kept) throw new UnreadableKeyRecordError('unknownVersion')
+        return undefined
+      },
+      save: async () => {},
+      wipe: async () => {
+        kept = false
+      },
+      exists: async () => kept
+    }
+    const engine = new FakeEngine()
+    engine.start = async () => {
+      engine.calls.push('start')
+      await store.load()
+      return 'ready'
+    }
+    const reported: unknown[] = []
+    await render(
+      <ChatGate
+        engine={engine}
+        client={unusedClient}
+        userId={userIdOfGumbo(1)}
+        store={store}
+        onFailure={error => reported.push(error)}
+      >
+        <span>inside</span>
+      </ChatGate>
+    )
+    await until('the failure', () =>
+      text().includes('Chat could not be opened.')
+    )
+    expect(text()).contains(
+      'The chat keys saved on this device cannot be read.'
+    )
+    expect(reported.map(chatStartFailure)).deep.equals([
+      'storedRecord:unknownVersion'
+    ])
+    expect(button('Reset chat on this device')).not.equals(undefined)
+    await press('Try again')
+    await until(
+      'the second failure',
+      () =>
+        engine.calls.filter(call => call === 'start').length === 2 &&
+        text().includes('Chat could not be opened.')
+    )
+    expect(kept, 'Only the person removes the saved keys').equals(true)
+    await press('Reset chat on this device')
+    await until('inside', () => text().includes('inside'))
+    expect(kept).equals(false)
+    expect(engine.calls.filter(call => call === 'start')).length(3)
+  })
+
+  it('offers no reset when chat will not start for a reason other than the saved keys', async function () {
+    const engine = new FakeEngine()
+    engine.startAs = 'fail'
+    engine.startError = new HttpError('offline', 'The request never left')
+    let wiped = false
+    const store: ChatKeyStore = {
+      load: async () => undefined,
+      save: async () => {},
+      wipe: async () => {
+        wiped = true
+      },
+      exists: async () => true
+    }
+    const reported: unknown[] = []
+    await render(
+      <ChatGate
+        engine={engine}
+        client={unusedClient}
+        userId={userIdOfGumbo(1)}
+        store={store}
+        onFailure={error => reported.push(error)}
+      >
+        <span>inside</span>
+      </ChatGate>
+    )
+    await until('the failure', () =>
+      text().includes('Chat could not be opened.')
+    )
+    expect(reported.map(chatStartFailure)).deep.equals(['http:offline'])
+    expect(button('Try again')).not.equals(undefined)
+    expect(button('Reset chat on this device')).equals(undefined)
+    expect(text()).not.contains('cannot be read')
+    expect(wiped).equals(false)
   })
 
   it('links this device first when the person uses chat elsewhere', async function () {

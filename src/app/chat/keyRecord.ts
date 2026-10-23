@@ -66,7 +66,11 @@ export interface ChatLogHead {
 
 /** Where a device keeps its record. */
 export interface ChatKeyStore {
-  /** Only an absent record returns undefined. Unreadable keys must block enrollment. */
+  /**
+   * Only an absent record returns undefined. Unreadable keys must block
+   * enrollment: a record that is there but cannot be read throws
+   * `UnreadableKeyRecordError` and stays where it is.
+   */
   load: () => Promise<ChatKeyRecord | undefined>
   save: (record: ChatKeyRecord) => Promise<void>
   /** Forgets every key this device holds. */
@@ -180,12 +184,13 @@ export function recordToJson(record: ChatKeyRecord): string {
   })
 }
 
+const UNKNOWN_VERSION = 'Unknown chat key record version'
+
 /** A stored record back. Anything malformed throws. */
 export function recordFromJson(text: string): ChatKeyRecord {
   const parsed: unknown = JSON.parse(text)
   const { version } = asObject({ version: asNumber })(parsed)
-  if (version !== 1 && version !== 2)
-    throw new TypeError('Unknown chat key record version')
+  if (version !== 1 && version !== 2) throw new TypeError(UNKNOWN_VERSION)
   const asId: Cleaner<UserId> =
     version === 1 ? raw => userIdOfGumbo(asNumber(raw)) : asUserId
   const raw = asStoredRecord(asId)(parsed)
@@ -216,6 +221,54 @@ export function recordFromJson(text: string): ChatKeyRecord {
     epochKeys: raw.epochKeys,
     previousPins: pins(raw.previousPins),
     logs: raw.logs
+  }
+}
+
+/** Why a record this device holds cannot be read. */
+export type UnreadableKeyRecordReason =
+  /** The browser's record is there and its wrapping key is not. */
+  | 'wrappingKeyMissing'
+  /** The sealed record does not open under the wrapping key. */
+  | 'undecryptable'
+  /** A record version this build does not know (a newer build's). */
+  | 'unknownVersion'
+  /** Not a record this build can parse. */
+  | 'invalid'
+
+const UNREADABLE: Record<UnreadableKeyRecordReason, string> = {
+  wrappingKeyMissing: 'The saved chat wrapping key is missing',
+  undecryptable: 'The saved chat keys could not be decrypted',
+  unknownVersion: UNKNOWN_VERSION,
+  invalid: 'The saved chat keys are not a record this app can read'
+}
+
+/**
+ * A key record that is on this device and cannot be read. A store throws
+ * it and keeps the record: it may be a newer build's, or readable again
+ * later, and nothing but the person, through "Reset chat on this device",
+ * has it removed. The message names the reason and never any of the
+ * record's text.
+ */
+export class UnreadableKeyRecordError extends Error {
+  readonly reason: UnreadableKeyRecordReason
+
+  constructor(reason: UnreadableKeyRecordReason) {
+    super(UNREADABLE[reason])
+    this.name = 'UnreadableKeyRecordError'
+    this.reason = reason
+  }
+}
+
+/** `recordFromJson` for the record a store holds: unreadable, not malformed. */
+export function storedRecordFromJson(text: string): ChatKeyRecord {
+  try {
+    return recordFromJson(text)
+  } catch (error) {
+    throw new UnreadableKeyRecordError(
+      error instanceof TypeError && error.message === UNKNOWN_VERSION
+        ? 'unknownVersion'
+        : 'invalid'
+    )
   }
 }
 

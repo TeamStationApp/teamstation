@@ -11,7 +11,8 @@ import {
   type ChatKeyStore,
   newRecord,
   recordFromJson,
-  recordToJson
+  recordToJson,
+  UnreadableKeyRecordError
 } from './keyRecord'
 
 /**
@@ -28,6 +29,8 @@ interface Saved {
 const keychain = {
   saved: new Map<string, Saved>(),
   refuse: false,
+  /** A Keychain that will not answer (locked since boot, say). */
+  locked: false,
   calls: [] as string[],
   ACCESSIBLE: {
     AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY:
@@ -39,6 +42,7 @@ const keychain = {
   },
   async getGenericPassword(options?: { service?: string }) {
     keychain.calls.push('get')
+    if (keychain.locked) throw new Error('User interaction is not allowed')
     const found = keychain.saved.get(options?.service ?? '')
     return found == null
       ? false
@@ -182,10 +186,35 @@ describe('chat key store on the phone', function () {
       failed = error
     })
     expect(String(failed)).contains('Unknown chat key record version')
+    expect((failed as UnreadableKeyRecordError).reason).equals('unknownVersion')
     expect(calls).deep.equals([])
     expect(keychain.calls).deep.equals(['get'])
     expect(keychain.saved.get(KEY_SERVICE)).equals(before)
     expect(await keyStore.exists()).equals(true)
+  })
+
+  it('calls a record it cannot parse unreadable, and a Keychain that will not answer no such thing', async function () {
+    keychain.saved.clear()
+    keychain.saved.set(KEY_SERVICE, {
+      username: 'chat',
+      password: '{"secret":"do-not-log"',
+      options: undefined
+    })
+    const before = keychain.saved.get(KEY_SERVICE)
+    const unreadable = await keyStore.load().catch((error: unknown) => error)
+    expect(unreadable).instanceOf(UnreadableKeyRecordError)
+    expect((unreadable as UnreadableKeyRecordError).reason).equals('invalid')
+    expect(String(unreadable)).not.contains('do-not-log')
+    expect(keychain.saved.get(KEY_SERVICE)).equals(before)
+    keychain.locked = true
+    try {
+      const locked = await keyStore.load().catch((error: unknown) => error)
+      expect(locked).instanceOf(Error)
+      expect(locked).not.instanceOf(UnreadableKeyRecordError)
+    } finally {
+      keychain.locked = false
+    }
+    expect(keychain.saved.get(KEY_SERVICE)).equals(before)
   })
 
   it('loads saved v1 keys, survives a refused save, then atomically writes v2 under the same service', async () => {
