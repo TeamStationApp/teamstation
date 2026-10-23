@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path'
 
 import puppeteer from 'puppeteer'
 
-import { chatRowById } from '../../test/chatRows'
+import { chatRowById, chatRowSelector } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
 
 interface Device {
@@ -74,6 +74,15 @@ function required(key: string): string {
 const WEB = required('TS_CHAT_WEB_URL').replace(/\/+$/, '')
 const API = required('TS_CHAT_API_URL').replace(/\/+$/, '')
 const hidden: string[] = []
+/**
+ * The Hawks Members row in the workspace's list. The seed gives it posts, so
+ * its name is `Hawks Members, <latest message>[, <n> unread]` and it is
+ * matched by its title as the leading part (`chatRows`).
+ */
+const MEMBERS_ROW = chatRowSelector(
+  'Hawks Members',
+  '[data-testid="chat-list-pane"]'
+)
 
 async function signIn(device: Device, key: string): Promise<void> {
   const credentials = readSeedTable(
@@ -253,7 +262,7 @@ async function s2(daemon: Daemon): Promise<void> {
       })
     )
     const artifacts = required('CHAT_UI_ARTIFACTS')
-    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ css: MEMBERS_ROW })
     await m.assertVisible({
       text: 'Practice update: please bring water and arrive at 5:30.',
       timeout: 60000
@@ -281,8 +290,7 @@ async function s2(daemon: Daemon): Promise<void> {
       ),
       await m.screenshot()
     )
-    if (narrow)
-      await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    if (narrow) await m.tapOn({ css: MEMBERS_ROW })
     await m.tapOn({ text: 'Conversation actions' })
     await m.assertVisible({ text: 'Unpin' })
     await m.tapOn({ text: 'Unpin' })
@@ -380,7 +388,7 @@ async function s4(daemon: Daemon): Promise<void> {
       )
     }
     await m.tapOn({ text: 'Back' })
-    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ css: MEMBERS_ROW })
     console.log(
       await m.evalBrowserScript({
         script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!=='An unsent practice note\\nBring a glove')throw new Error('Back/reopen lost draft');input.focus();return JSON.stringify({backReopenDraft:true});`
@@ -639,7 +647,7 @@ async function s6(daemon: Daemon): Promise<void> {
     await hold()
     await m.tapOn({ text: 'Unpin' })
     await m.tapOn({ text: 'Back' })
-    await m.longPressOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.longPressOn({ css: MEMBERS_ROW })
     await m.assertVisible({ text: 'Mark unread' })
     writeFileSync(
       join(required('CHAT_UI_ARTIFACTS'), 'narrow-conversation-menu-after.png'),
@@ -3266,10 +3274,10 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     )
     console.log(
       await m.evalBrowserScript({
-        script: `const row=document.querySelector('[role="button"][aria-label="Hawks Members"]');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
+        script: `const row=document.querySelector(${JSON.stringify(MEMBERS_ROW)});if(!row)throw new Error('Hawks Members row unavailable');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
       })
     )
-    await m.tapOn({ css: '[role="button"][aria-label="Hawks Members"]' })
+    await m.tapOn({ css: MEMBERS_ROW })
     await m.assertVisible({
       text: required('CHAT_UI_TARGET_TEXT'),
       timeout: 60000

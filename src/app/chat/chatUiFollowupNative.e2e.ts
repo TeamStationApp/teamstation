@@ -20,6 +20,7 @@ import {
 } from '../../common/api'
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
+import { chatRowText } from '../../test/chatRows'
 
 interface Bounds {
   x: number
@@ -131,6 +132,25 @@ assert(
   'Explicit native platform required'
 )
 const deviceId = required('CHAT_DEVICE')
+const legacyRows = process.env.CHAT_UI_NATIVE_LEGACY_ROWS === '1'
+
+/**
+ * The Chat tab row of a conversation: by its `chat-conversation-<id>` test
+ * id, or, for a legacy build without row ids, by its title as `chatRows`
+ * matches it (iOS names a row `title, preview, unread`). The fixture's own
+ * conversation is known by id even when only its label is given.
+ */
+function chatRow(
+  label: string,
+  conversationId?: string
+): { id: string } | { text: string } {
+  const id =
+    conversationId ??
+    (label === fixture.conversationLabel ? fixture.conversationId : undefined)
+  return id != null && !legacyRows
+    ? { id: `chat-conversation-${id}` }
+    : { text: chatRowText(label, platform === 'ios' ? 'ios' : 'android') }
+}
 const daemonName = required('MAESTRO_D')
 const artifactDirectory = resolve(required('CHAT_UI_ARTIFACTS'))
 const resultDirectory = resolve(required('CHAT_UI_NATIVE_RESULTS'))
@@ -836,10 +856,7 @@ async function main(): Promise<void> {
       return
     }
     await m.assertVisible({ text: 'Chats', timeout: 60000 })
-    const initialRow =
-      process.env.CHAT_UI_NATIVE_LEGACY_ROWS === '1'
-        ? { text: fixture.conversationLabel }
-        : { id: `chat-conversation-${fixture.conversationId}` }
+    const initialRow = chatRow(fixture.conversationLabel)
     await reveal(m, initialRow, 'DOWN')
     await m.assertVisible({ ...initialRow, timeout: 60000 })
     const tree = await m.hierarchy()
@@ -1152,8 +1169,8 @@ async function main(): Promise<void> {
       conversationId?: string
     ): Promise<void> {
       if (conversationId != null)
-        await reveal(m, { id: `chat-conversation-${conversationId}` })
-      else await reveal(m, { text: label }, 'DOWN')
+        await reveal(m, chatRow(label, conversationId))
+      else await reveal(m, chatRow(label), 'DOWN')
       await hold(550, label, conversationId)
       await m.assertVisible({ text: 'Mark unread', timeout: 10000 })
       const text = strings(flatten(await m.hierarchy()))
@@ -1524,6 +1541,9 @@ async function main(): Promise<void> {
       )
       const rowId =
         selected == null ? undefined : `chat-conversation-${selected.id}`
+      const titled = new RegExp(
+        chatRowText(label, platform === 'ios' ? 'ios' : 'android')
+      )
       if (rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1')
         await reveal(m, { id: rowId })
       let prior: Bounds | undefined
@@ -1536,8 +1556,8 @@ async function main(): Promise<void> {
             node =>
               (rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1'
                 ? node.id === rowId
-                : node.text === label || node.label === label) &&
-              node.bounds != null
+                : titled.test(node.text ?? '') ||
+                  titled.test(node.label ?? '')) && node.bounds != null
           )
           const bounds = row?.bounds
           if (bounds == null) return undefined
@@ -6812,7 +6832,7 @@ async function main(): Promise<void> {
     await m.inputText({ text: fixture.draft })
     await m.hideKeyboard().catch(() => undefined)
     await m.tapOn({ text: 'Back' })
-    await reveal(m, { text: fixture.conversationLabel })
+    await reveal(m, chatRow(fixture.conversationLabel))
     await open()
     assert(
       (await composerValue(m)).includes(fixture.draft),
