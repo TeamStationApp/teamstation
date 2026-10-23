@@ -1457,12 +1457,15 @@ export function ConversationScreen(
       previous.bottom === viewport.contentBottom
     )
       return
-    if (
-      !mounted.current ||
-      !paneActive.current ||
-      !scrolled.current.hasPosition
-    )
+    if (!mounted.current || !paneActive.current) return
+    if (!scrolled.current.hasPosition) {
+      // RNW observes only the content box, so this padding-only change never
+      // reaches onContentSizeChange. A cold web reader still owed its first end
+      // position (e.g. the pinned band measured after that scroll) follows here.
+      if (initialFollow.current && menuReading.current == null)
+        scroller.current?.scrollToEnd({ animated: false })
       return
+    }
     if (menuReading.current != null) {
       restoreAnchor.current = menuReading.current.anchor
       restoreForGeometry.current()
