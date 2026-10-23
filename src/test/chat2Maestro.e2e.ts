@@ -3015,14 +3015,24 @@ export class Chat2UI {
       deviceScaleFactor: expected.dpr,
       mobile: expected.coarse
     })
-    const actual = await this.dom(
-      'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches,dpr:devicePixelRatio}'
-    )
-    const matches =
-      actual.width === width &&
-      actual.height === height &&
-      actual.coarse === expected.coarse &&
-      actual.dpr === expected.dpr
+    const end = Date.now() + 2000
+    const signal = AbortSignal.any([this.deadline, AbortSignal.timeout(2000)])
+    let actual: Args = {}
+    let matches = false
+    for (;;) {
+      actual = await this.dom(
+        'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches,dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1}',
+        signal
+      )
+      matches =
+        actual.width === width &&
+        actual.height === height &&
+        actual.coarse === expected.coarse &&
+        actual.dpr === expected.dpr &&
+        actual.scale === 1
+      if (matches || Date.now() >= end) break
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
     this.steps.push({
       name: 'Resized viewport and pointer measurements',
       outcome: matches ? 'passed' : 'failed',
@@ -3031,7 +3041,8 @@ export class Chat2UI {
         width: actual.width,
         height: actual.height,
         coarse: actual.coarse,
-        dpr: actual.dpr
+        dpr: actual.dpr,
+        scale: actual.scale
       }
     })
     assert(matches, 'Actual resized viewport/pointer/pixel scale differs')

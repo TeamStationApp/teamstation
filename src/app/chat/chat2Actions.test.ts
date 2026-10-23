@@ -2160,6 +2160,111 @@ describe('chat native adapter compatibility', function () {
       ].sort()
     )
   })
+  async function resizedViewport(fault = ''): Promise<{
+    actual: Chat2UI
+    reads: number
+    calls: unknown[]
+    error: unknown
+  }> {
+    const actual = ui([], 'web-wide')
+    const page = new JSDOM('<!doctype html><body></body>', {
+      url: 'https://fixture.example.test/chat',
+      runScripts: 'outside-only'
+    })
+    browserDocuments.push(page)
+    Object.assign(actual, { deadline: AbortSignal.timeout(10000) })
+    actual.device.evalBrowserScript = async args => ({
+      data: await page.window.eval('(async()=>{' + String(args.script) + '})()')
+    })
+    delete (actual as Partial<Chat2UI>).metrics
+    const before = { width: 1440, height: 1000, dpr: 2, coarse: true }
+    Object.assign(actual, { webFrame: before })
+    const calls: unknown[] = []
+    let reads = 0
+    let frame = {
+      width: 561,
+      height: 1215,
+      dpr: 2,
+      coarse: true,
+      scale: 0.6951871514320374
+    }
+    Object.defineProperties(page.window, {
+      innerWidth: { get: () => frame.width, configurable: true },
+      innerHeight: { get: () => frame.height, configurable: true },
+      devicePixelRatio: { get: () => frame.dpr },
+      visualViewport: { get: () => ({ scale: frame.scale }) },
+      matchMedia: { value: () => ({ matches: frame.coarse }) }
+    })
+    Object.assign(actual, {
+      cdp: {
+        send: async (method: string, args: unknown) => {
+          calls.push([method, args])
+        }
+      }
+    })
+    const evaluate = actual.device.evalBrowserScript
+    const now = Date.now
+    let elapsed = 0
+    Date.now = () => now() + elapsed
+    actual.device.evalBrowserScript = async (args, options) => {
+      reads += 1
+      expect(options?.signal).instanceOf(AbortSignal)
+      expect(options?.signal.aborted).equals(false)
+      if (fault === 'transport') throw Error('Observed resize transport failed')
+      if (fault !== '' || reads > 1) {
+        frame = { width: 390, height: 844, dpr: 2, coarse: true, scale: 1 }
+        if (fault === 'dimensions') frame.width = 561
+        if (fault === 'scale') frame.scale = 0.6951871514320374
+        if (fault === 'dpr') frame.dpr = 1
+        if (fault === 'pointer') frame.coarse = false
+      }
+      if (fault !== '') elapsed += 1001
+      return await evaluate(args, options)
+    }
+    let error: unknown
+    try {
+      await actual.resize(390, 844)
+    } catch (failure) {
+      error = failure
+    } finally {
+      Date.now = now
+    }
+    expect(calls).deep.equals([
+      [
+        'Emulation.setDeviceMetricsOverride',
+        { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }
+      ]
+    ])
+    if (error != null) expect(actual.metrics()).deep.equals(before)
+    return { actual, reads, calls, error }
+  }
+  it('waits for the exact touch viewport after the observed transient 561px return layout', async () => {
+    const result = await resizedViewport()
+    expect(result.error).equals(undefined)
+    expect(result.reads).equals(2)
+    expect(result.actual.metrics()).deep.equals({
+      width: 390,
+      height: 844,
+      dpr: 2,
+      coarse: true
+    })
+    expect(result.actual.steps.at(-1)?.outcome).equals('passed')
+  })
+  for (const fault of ['dimensions', 'scale', 'dpr', 'pointer', 'transport'])
+    it(
+      'rejects a persistent or unobserved resized browser frame: ' + fault,
+      async () => {
+        const result = await resizedViewport(fault)
+        expect(String(result.error)).includes(
+          fault === 'transport'
+            ? 'Observed resize transport failed'
+            : 'Actual resized viewport/pointer/pixel scale differs'
+        )
+        expect(result.reads).at.most(3)
+        if (fault !== 'transport')
+          expect(result.actual.steps.at(-1)?.outcome).equals('failed')
+      }
+    )
   it('reports the actual resized browser frame instead of the surface default', () => {
     const actual = ui([], 'web-wide')
     delete (actual as Partial<Chat2UI>).metrics
