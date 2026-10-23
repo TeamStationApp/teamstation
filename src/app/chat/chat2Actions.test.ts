@@ -7809,11 +7809,12 @@ describe('native installed legacy reply navigation', () => {
     )
 })
 
-describe('I3 iOS bench cold-link lifecycle', () => {
+describe('I3 native bench cold-link lifecycle', () => {
   async function run(surface: string, fault?: string): Promise<unknown[]> {
     const calls: unknown[] = []
     const ui = {
       surface,
+      native: surface === 'ios' || surface === 'android',
       fixture: { appId: 'app.example.test' },
       step: async (_name: string, action: () => Promise<void>) => {
         await action()
@@ -7855,44 +7856,52 @@ describe('I3 iOS bench cold-link lifecycle', () => {
     }
     return calls
   }
-  it('stops iOS before opening the bench link and requires its heading before unchanged storage checks', async () => {
-    const calls = await run('ios')
-    expect(calls.slice(0, 5)).deep.equals([
-      { stop: { appId: 'app.example.test' } },
-      { open: '/dev/chat-bench' },
-      { visible: '^Chat crypto bench$' },
-      { visible: '^vectors ok$' },
-      { tap: 'Check saved chat compatibility' }
-    ])
-    expect(calls).deep.includes({ visible: '^identity storage ok$' })
-    expect(calls).deep.includes({ absent: '^identity storage failed$' })
-    expect(calls.at(-1)).equals('storage-shot')
-  })
-  for (const surface of ['android', 'web-wide'])
-    it('retains the existing warm navigation on ' + surface, async () => {
-      const calls = await run(surface)
-      expect(calls.slice(0, 2)).deep.equals([
-        { open: '/dev/chat-bench' },
-        { visible: '^vectors ok$' }
-      ])
-      expect(
-        calls.some(
-          call => typeof call === 'object' && call != null && 'stop' in call
-        )
-      ).equals(false)
-    })
-  for (const fault of ['stop', 'heading'])
+  for (const surface of ['ios', 'android'])
     it(
-      'does not claim vectors or storage readiness after an iOS ' +
-        fault +
-        ' failure',
+      'stops ' +
+        surface +
+        ' before opening the bench link and requires its heading before unchanged storage checks',
       async () => {
-        const calls = await run('ios', fault)
-        expect(calls).not.deep.includes({ visible: '^vectors ok$' })
-        expect(calls).not.includes('storage-shot')
-        if (fault === 'stop') expect(calls).has.length(1)
+        const calls = await run(surface)
+        expect(calls.slice(0, 5)).deep.equals([
+          { stop: { appId: 'app.example.test' } },
+          { open: '/dev/chat-bench' },
+          { visible: '^Chat crypto bench$' },
+          { visible: '^vectors ok$' },
+          { tap: 'Check saved chat compatibility' }
+        ])
+        expect(calls).deep.includes({ visible: '^identity storage ok$' })
+        expect(calls).deep.includes({ absent: '^identity storage failed$' })
+        expect(calls.at(-1)).equals('storage-shot')
       }
     )
+  it('retains the existing warm navigation on web-wide', async () => {
+    const calls = await run('web-wide')
+    expect(calls.slice(0, 2)).deep.equals([
+      { open: '/dev/chat-bench' },
+      { visible: '^vectors ok$' }
+    ])
+    expect(
+      calls.some(
+        call => typeof call === 'object' && call != null && 'stop' in call
+      )
+    ).equals(false)
+  })
+  for (const surface of ['ios', 'android'])
+    for (const fault of ['stop', 'heading'])
+      it(
+        'does not claim vectors or storage readiness after an ' +
+          surface +
+          ' ' +
+          fault +
+          ' failure',
+        async () => {
+          const calls = await run(surface, fault)
+          expect(calls).not.deep.includes({ visible: '^vectors ok$' })
+          expect(calls).not.includes('storage-shot')
+          if (fault === 'stop') expect(calls).has.length(1)
+        }
+      )
 })
 
 describe('I2 mixed-account legacy reply selection', () => {

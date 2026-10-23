@@ -4566,10 +4566,10 @@ export class Scenarios {
     await this.check(
       'I3 isolated real platform persistence and injected adapter write refusal',
       async () => {
-        if (this.ui.surface === 'ios')
+        if (this.ui.native)
           await this.ui.device.stopApp({ appId: this.ui.fixture.appId })
         await this.ui.open('/dev/chat-bench')
-        if (this.ui.surface === 'ios')
+        if (this.ui.native)
           await this.ui.device.assertVisible({
             text: exactText('Chat crypto bench'),
             timeout: 30000
