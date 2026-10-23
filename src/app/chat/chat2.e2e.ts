@@ -4724,7 +4724,16 @@ export class Scenarios {
         })
         const body = 'A new synthetic list preview ' + Date.now()
         await this.peerMessage(body)
-        await ui.device.assertVisible({ text: exactText(body), timeout: 30000 })
+        // iOS exposes the row as one button named "title, preview, unread".
+        await ui.device.assertVisible({
+          text:
+            ui.surface === 'ios'
+              ? exactText(body)
+                  .replace(/^\^/, '^(.+, )?')
+                  .replace(/\$$/, '(, .+)?$')
+              : exactText(body),
+          timeout: 30000
+        })
         assert.deepEqual(
           (await client.chatReads(this.group)).filter(
             r => r.userId === this.viewerId
@@ -5716,9 +5725,23 @@ export class Scenarios {
     await this.check(
       'E6 personal floating pins, verified clear target and same-user state',
       async () => {
+        const client = await this.client()
+        // Restore the seeded personal pins an earlier interrupted run may have
+        // removed: setup through the viewer's own API, recorded, never UI.
+        const restored: string[] = []
+        for (const seeded of [
+          this.f.messages.target,
+          this.f.messages.long
+        ].filter((m): m is Chat2Message => m != null)) {
+          const pinned = await client.chatPins(this.group)
+          if (!pinned.some(p => p.messageId === seeded.id)) {
+            await client.pinChatMessage(this.group, seeded.id, true)
+            restored.push(seeded.id)
+          }
+        }
+        this.observations.push({ seededPersonalPinsRestored: restored })
         await this.openGroup()
         await this.anchor()
-        const client = await this.client()
         const before = await client.chatPins(this.group)
         assert(before.length >= 2, 'Multiple personal pins fixture required')
         await ui.present('chat-pinned-band')
