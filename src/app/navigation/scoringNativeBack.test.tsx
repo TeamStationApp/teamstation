@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { BackHandler, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
+import { useScoringExit as nativeExit } from '../scoring/useScoringExit.native'
 import type { Route } from './routes'
 import {
   backFromScoringPlayer,
@@ -84,5 +85,65 @@ describe('retained scoring native Back', function () {
       })
       seedRoute(null)
     }
+  })
+
+  it('returns the native header through all child tab steps and flushes real exits', async function () {
+    seedRoute('teamstation://games/game_fixture/score')
+    const marker = scoringOriginHistory()
+    showRoute({
+      name: 'player',
+      userId: userIdOfGumbo(100),
+      onTeam: 'away',
+      tab: 'settings'
+    })
+    showRoute({
+      name: 'player',
+      userId: userIdOfGumbo(100),
+      onTeam: 'away',
+      tab: 'stats'
+    })
+    expect(backFromScoringPlayer(marker)).equals(true)
+    expect(currentRoute()).deep.equals({
+      name: 'scoreGame',
+      gameId: 'game_fixture'
+    })
+    let exits = 0
+    nativeExit('game_fixture', false, () => {
+      exits++
+    })()
+    expect(exits).equals(1)
+    nativeExit(
+      'game_fixture',
+      true,
+      () => {
+        exits++
+      },
+      async () => false
+    )()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(exits).equals(1)
+    nativeExit(
+      'game_fixture',
+      true,
+      () => {
+        exits++
+      },
+      async () => true
+    )()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(exits).equals(2)
+    nativeExit(
+      'game_fixture',
+      true,
+      () => {
+        exits++
+      },
+      async () => {
+        throw new Error('offline')
+      }
+    )()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(exits).equals(2)
+    seedRoute(null)
   })
 })
