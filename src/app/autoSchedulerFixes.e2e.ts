@@ -789,7 +789,27 @@ async function f3(run: Run): Promise<void> {
   await contains(b.page, 'Mar 1 – May 20')
   await contains(b.page, 'From Jun 1')
   expect(await pageText(b)).not.includes('From Mar 1')
-  await scrollToText(b, 'GAME WINDOWS')
+  // Each period now has its Starts and Ends card, so the section is taller
+  // than the before shot's: the section's title goes under the header to
+  // keep both periods' headings clear of the floating nav bar.
+  await scrollToText(b, 'GAME WINDOWS', 22)
+  const frame = await b.page.evaluate(() => {
+    const box = (text: string): DOMRect =>
+      [...document.querySelectorAll('div, span')]
+        .find(
+          node => node.childElementCount === 0 && node.textContent === text
+        )!
+        .getBoundingClientRect()
+    const nav = document.querySelector('[role="tablist"]')
+    return {
+      first: box('Mar 1 – May 20').top,
+      second: box('From Jun 1').bottom,
+      nav: nav === null ? innerHeight : nav.getBoundingClientRect().top
+    }
+  })
+  trace(`frame ${JSON.stringify(frame)}`)
+  expect(frame.first).greaterThan(56)
+  expect(frame.second).lessThan(frame.nav)
   await run.capture('window-periods-after.png')
   // The Auto-Scheduler warns of the days no period covers.
   await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
