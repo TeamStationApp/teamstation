@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { ActivityIndicator, AppState, Image, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
@@ -20,7 +27,6 @@ import { tsLogoSource } from './assets'
 import {
   AppHeader,
   AppNav,
-  HeaderSlotProvider,
   type NavTabId,
   useBreakpoint,
   useHandoffSlot
@@ -38,6 +44,7 @@ import {
   type PlayerFrom,
   withAngles
 } from './navigation/gameAngles'
+import { takeHistoryMove } from './navigation/historyMotion'
 import {
   type CreationRoute,
   isCreationRoute,
@@ -52,7 +59,15 @@ import {
   isScoringPlayerReturn,
   type ScoringPlayerOrigin
 } from './navigation/scoringPlayerReturn'
+import { screenIdentity } from './navigation/screenIdentity'
 import { seasonParticipantDestination } from './navigation/seasonParticipant'
+import { type StackIntent, StackNavigator } from './navigation/StackNavigator'
+import {
+  frameKey,
+  rootKey,
+  type StackScene,
+  systemBackPops
+} from './navigation/stackScene'
 import {
   filtersForRoute,
   initialTabFilters,
@@ -65,6 +80,7 @@ import {
   currentRoute,
   dropRouteSuffix,
   popRoute,
+  previousRoute,
   scoringOriginHistory,
   showRoute,
   stepBackTo,
@@ -85,7 +101,6 @@ import {
 import { GameReplayScreen } from './replay/GameReplayScreen'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
-import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
@@ -100,7 +115,7 @@ import {
   GameFormScreen,
   type GameSettingsResult
 } from './screens/GameFormScreen'
-import { GameScreen } from './screens/GameScreen'
+import { type GamePlaybackReturn, GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { GroupLinkScreen } from './screens/GroupLinkScreen'
 import { GroupLocationPage } from './screens/GroupLocationPage'
@@ -203,7 +218,7 @@ export interface AppProps {
 type ScoringSettingsRefresh = () => void
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
-type Pushed =
+export type Pushed =
   | CreationRoute
   | { name: 'scoreGame'; gameId: string }
   | { name: 'scoreOptions'; gameId: string }
@@ -291,6 +306,18 @@ type Pushed =
       /** Their name, once the page has said it. */
       title?: string
     }
+
+/**
+ * A screen that fills the window and draws no header or navbar: it has its own
+ * way out, and no chevron or drag back.
+ */
+function isImmersive(frame: Pushed | undefined): boolean {
+  return (
+    frame?.name === 'scoreGame' ||
+    frame?.name === 'coachGame' ||
+    frame?.name === 'gameReplay'
+  )
+}
 
 // Reporting starts as this module loads, once the modules it imports have run,
 // so a failure from then on is reported. Both entry points, web and native,
@@ -963,6 +990,29 @@ function Shell(props: AppProps): React.ReactElement {
   const top = stack[stack.length - 1]
   const navigationRef = useRef({ tab, top })
   navigationRef.current = { tab, top }
+  // Which way the next stack change goes, for the transition layer: set by
+  // each navigation path just before it changes the stack, read by the
+  // navigator in the render that shows the change, and cleared after that
+  // commit so it never labels a later one.
+  const navigationIntent = useRef<StackIntent | undefined>(undefined)
+  const intend = useCallback(
+    (direction: StackIntent['direction'], drawn = false): void => {
+      navigationIntent.current = { direction, drawn }
+    },
+    []
+  )
+  useLayoutEffect(() => {
+    navigationIntent.current = undefined
+  })
+  // A drag back pops exactly what the header's chevron would: a pushed
+  // screen that draws the header, with no screen holding the chevron for
+  // itself.
+  const immersiveTop = isImmersive(top)
+  const swipeBack =
+    props.fieldPreview !== true &&
+    stack.length > 0 &&
+    !immersiveTop &&
+    backOverride == null
   // Why a create did not open is said on the screen it was pressed on.
   useEffect(() => {
     setCreateRefused(false)
@@ -1050,11 +1100,32 @@ function Shell(props: AppProps): React.ReactElement {
     inPlace.current = false
   }, [joining, session, tab, top, filters, route.name])
 
+  // Whether Android's back gesture may drag the top off. That Back walks the
+  // history, so it may only when the history's previous step is the frame
+  // beneath — not after a pill change, which is a step of its own, nor after
+  // a tab switch. After the address effect, so it reads this move's history.
+  const [predictiveBack, setPredictiveBack] = useState(false)
+  useEffect(() => {
+    const previous = previousRoute()
+    setPredictiveBack(
+      swipeBack &&
+        systemBackPops(
+          previous == null ? undefined : routePath(previous),
+          routePath(routeOf(tab, stack.at(-2), filters))
+        )
+    )
+  }, [stack, tab, filters, swipeBack])
+
   const goToRoute = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
+      // A sign-in, a notification or a link does not move; a history step or
+      // the scorer's exit has already said which way it goes.
+      if (navigationIntent.current == null) intend('none')
+      const said = navigationIntent.current
       if (
         guardUmpireLeave(
           () => {
+            navigationIntent.current = said
             goToRoute(route, onHandled)
           },
           () => onHandled?.(false)
@@ -1083,6 +1154,7 @@ function Shell(props: AppProps): React.ReactElement {
               return
             }
             clearScoringVisit(visit)
+            navigationIntent.current = said
             goToRoute(route)
             onHandled?.(true)
           })
@@ -1158,10 +1230,19 @@ function Shell(props: AppProps): React.ReactElement {
       setFilters(current => filtersForRoute(current, route))
       onHandled?.(true)
     },
-    [clearScoringVisit, guardUmpireLeave]
+    [clearScoringVisit, guardUmpireLeave, intend]
+  )
+  // Back, Forward, or a link: the address bar noted which way it went.
+  const onHistoryRoute = useCallback(
+    (route: Route, onHandled?: (accepted: boolean) => void): void => {
+      const move = takeHistoryMove()
+      intend(move?.direction ?? 'none', move?.drawn === true)
+      goToRoute(route, onHandled)
+    },
+    [goToRoute, intend]
   )
   useBrowserBack(
-    goToRoute,
+    onHistoryRoute,
     top?.name === 'umpireSchedule' ? checkUmpireLeave : undefined
   )
 
@@ -1181,6 +1262,9 @@ function Shell(props: AppProps): React.ReactElement {
     }
     if (next === tab && stacks[tab].length > 0)
       dropRouteSuffix(stacks[tab], routePath(routeOf(tab, undefined, filters)))
+    // Pressed again on the tab showing, it pops to the root; a switch does
+    // not move.
+    intend(next === tab && stacks[tab].length > 0 ? 'back' : 'none')
     setTab(next)
     setStacks(current => stacksAfterTabPress(current, tab, next))
     if (session == null || props.fieldPreview === true) {
@@ -1211,18 +1295,21 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
+    intend('forward')
     setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
   }
   const openGroup = useCallback(
     (group: GroupRef): void => {
+      intend('forward')
       setStacks(current => ({
         ...current,
         [tab]: [...current[tab], { name: 'group', ...group }]
       }))
     },
-    [tab]
+    [tab, intend]
   )
   const replace = (next: Pushed): void => {
+    intend('none')
     setStacks(current => ({
       ...current,
       [tab]: [...current[tab].slice(0, -1), next]
@@ -1245,6 +1332,7 @@ function Shell(props: AppProps): React.ReactElement {
       top?.name === 'player' &&
       isScoringPlayerChild({ ...top, name: 'player' }, scoringVisit.current)
     ) {
+      intend('back')
       const synchronous = backFromScoringPlayer(scoringVisit.current?.history)
       // Native history has no popstate callback for the header chevron.
       if (synchronous) {
@@ -1261,6 +1349,7 @@ function Shell(props: AppProps): React.ReactElement {
     // a chevron that left a step behind would make the next press of the
     // system Back button appear to do nothing.
     popRoute()
+    intend('back')
     setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
   }
 
@@ -1754,24 +1843,57 @@ function Shell(props: AppProps): React.ReactElement {
             child,
             refresh: scoringRefresh.current
           }
+          intend('forward')
           setStacks(current => ({ ...current, [tab]: [...stack, child] }))
         }}
         onExit={() => {
           scoringVisit.current = undefined
           inPlace.current = true
+          // The cover slides down onto the game, whichever tab it lands on.
+          intend('back')
           setStacks(current => ({ ...current, [tab]: [] }))
           goToRoute({ name: 'game', gameId: scoringFrame.gameId })
         }}
       />
     )
-  const body =
-    props.fieldPreview === true ? (
-      <StandaloneField
-        onExit={() => {
-          selectTab('home')
-        }}
-      />
-    ) : top == null ? (
+  /**
+   * The screen for one frame of the tab's stack; `undefined` is the tab's
+   * root. Drawn for the top, and for the frame beneath while a drag back
+   * reveals it.
+   *
+   * What a screen writes back — its section, its title, the moment its video
+   * is at, a correction that makes the next address a replace — goes to the
+   * top frame, so it is dropped unless this frame is still the top: a screen
+   * sliding out, or one drawn beneath a drag, must not rewrite the screen
+   * now on show.
+   */
+  const popFrame = pop
+  const replaceFrame = replace
+  const pushFrame = push
+  const renderFrame = (top: Pushed | undefined): React.ReactNode => {
+    const live = (): boolean => navigationRef.current.top === top
+    const writeTop: typeof setStacks = update => {
+      if (live()) setStacks(update)
+    }
+    const topTab = (next: string, correcting?: boolean): void => {
+      if (live()) setTopTab(next, correcting)
+    }
+    const markInPlace = (value: boolean): void => {
+      if (live()) inPlace.current = value
+    }
+    // A write-back that is not one of the above, dropped the same way.
+    const onTop =
+      <Args extends unknown[]>(act: (...args: Args) => void) =>
+      (...args: Args): void => {
+        if (live()) act(...args)
+      }
+    // So are a screen's own moves: a load that answers or a save that lands
+    // after the screen started sliding out must not pop, replace or push the
+    // screen now on show. A touch only ever reaches the top.
+    const pop = onTop(popFrame)
+    const replace = onTop(replaceFrame)
+    const push = onTop(pushFrame)
+    return top == null ? (
       tab === 'home' ? (
         <HomeScreen
           client={client}
@@ -1932,10 +2054,10 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
         initialTab={top.tab}
-        onTab={setTopTab}
+        onTab={topTab}
         initialWhen={top.when}
         onWhen={next => {
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab]
             const last = held.at(-1)
             if (last?.name !== 'group' || last.when === next) return current
@@ -2023,7 +2145,7 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'info' })
         }}
         onRoute={route => {
-          setStacks(current => ({
+          writeTop(current => ({
             ...current,
             [tab]: [...current[tab].slice(0, -1), route]
           }))
@@ -2317,7 +2439,7 @@ function Shell(props: AppProps): React.ReactElement {
           teamId: top.videoTeamId,
           year: top.videoYear
         }}
-        onTab={setTopTab}
+        onTab={topTab}
         forTeam={top.onTeam}
         onSettingsSaved={() => {
           if (
@@ -2350,8 +2472,8 @@ function Shell(props: AppProps): React.ReactElement {
           fadeAppleMusic: walkUpSettings.fadeAppleMusic
         }}
         music={walkUpMusic}
-        onFilter={setPlayerFilter}
-        onVideoFilter={setPlayerVideoFilter}
+        onFilter={onTop(setPlayerFilter)}
+        onVideoFilter={onTop(setPlayerVideoFilter)}
         onOpenTeam={(teamId, name) => {
           openTeam(
             asTeamSummary({
@@ -2418,7 +2540,7 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
         initialTab={top.tab}
-        onTab={setTopTab}
+        onTab={topTab}
       />
     ) : top.name === 'season' ? (
       <SeasonScreen
@@ -2434,10 +2556,10 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'groupSettings', kind: 'season', id: top.season.id })
         }}
         initialTab={top.tab}
-        onTab={setTopTab}
+        onTab={topTab}
         initialWhen={top.when}
         onWhen={next => {
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'season' || last.when === next) return current
@@ -2458,7 +2580,7 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenPlayer={openPlayer}
         onChanged={refreshRoles}
         onTitle={title => {
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'person' || last.title === title) return current
@@ -2482,7 +2604,7 @@ function Shell(props: AppProps): React.ReactElement {
         resolve={resolveDjSong}
         side={top.side}
         onSide={next => {
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'djGame' || last.side === next) return current
@@ -2561,11 +2683,11 @@ function Shell(props: AppProps): React.ReactElement {
         teamId={top.teamId}
         userId={signedInAs}
         socket={gameSocket}
-        onExit={() => {
+        onExit={onTop(() => {
           // Back to the game, on its Box score tab: a coach who does not
           // score has no Score Game tab to come back to.
           popRoute()
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab].slice(0, -1)
             const last = held.at(-1)
             return {
@@ -2576,7 +2698,7 @@ function Shell(props: AppProps): React.ReactElement {
                   : [...held, gameUnder(top.gameId, 'boxScore')]
             }
           })
-        }}
+        })}
       />
     ) : top.name === 'gameReplay' ? (
       <GameReplayScreen
@@ -2588,12 +2710,14 @@ function Shell(props: AppProps): React.ReactElement {
           // The replay sits on its game's page, which it gives way to without
           // leaving a step behind for Back to walk into.
           const below = stack.at(-2)
-          inPlace.current = true
+          markInPlace(true)
           if (below?.name === 'game' && below.gameId === top.gameId) pop()
           else replace(gameUnder(top.gameId))
         }}
       />
-    ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
+    ) : top.name === 'scoreGame' ? (
+      scoringBody
+    ) : top.name === 'game' ? (
       <GameScreen
         signedIn={session != null}
         onSignIn={signInHere}
@@ -2603,8 +2727,10 @@ function Shell(props: AppProps): React.ReactElement {
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
-        onScoreGame={resume => {
-          setStacks(current => {
+        onScoreGame={onTop((resume?: GamePlaybackReturn) => {
+          // The intent goes with the write: a dropped write leaves none.
+          intend('forward')
+          writeTop(current => {
             const held = current[tab]
             const last = held.at(-1)
             const frames =
@@ -2619,7 +2745,7 @@ function Shell(props: AppProps): React.ReactElement {
               [tab]: [...frames, { name: 'scoreOptions', gameId: top.gameId }]
             }
           })
-        }}
+        })}
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
@@ -2642,7 +2768,7 @@ function Shell(props: AppProps): React.ReactElement {
         initialVideoId={top.videoId}
         startAtSec={top.at}
         onTab={next => {
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'game' || last.tab === next) return current
@@ -2656,8 +2782,8 @@ function Shell(props: AppProps): React.ReactElement {
         audioId={top.audio}
         from={top.from}
         onAngles={next => {
-          inPlace.current = !anglesOpenPage(next)
-          setStacks(current => {
+          markInPlace(!anglesOpenPage(next))
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'game') return current
@@ -2669,12 +2795,12 @@ function Shell(props: AppProps): React.ReactElement {
           // A player opened as a page of its own, closed by its ✕: back to
           // the step it was opened over, so Back then leaves the videos page
           // instead of walking into a copy of it.
-          if (next.from === null && top.from != null)
+          if (next.from === null && top.from != null && live())
             stepBackTo(routeOf(tab, withAngles(top, next), filters))
         }}
         onMoment={(videoId, atSec) => {
-          inPlace.current = true
-          setStacks(current => {
+          markInPlace(true)
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'game') return current
@@ -2685,7 +2811,7 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
         onTitle={title => {
-          setStacks(current => {
+          writeTop(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'game' || last.title === title) {
@@ -2699,18 +2825,23 @@ function Shell(props: AppProps): React.ReactElement {
         }}
       />
     ) : null
+  }
 
+  // The header belongs to the last screen that draws one: while the scorer
+  // covers a game, the header sliding under it is still the game's.
+  const chromeDepth = immersiveTop ? stack.length - 1 : stack.length
+  const chromeFrame = stack[chromeDepth - 1]
   const header = (
     <AppHeader
       apiBaseUrl={apiBaseUrl}
       isAdmin={isAdmin}
       buildsClient={session == null ? undefined : client}
-      title={titleFor(tab, top)}
+      title={titleFor(tab, chromeFrame)}
       // The mark on every screen that is a destination in its own right —
       // home, and the two lists — and on none that was pushed on top of one,
       // where the chevron and what scrolled up into the header say where you
       // are.
-      showMark={top == null}
+      showMark={chromeFrame == null}
       handoff={
         visit != null &&
         top?.name === 'player' &&
@@ -2725,7 +2856,11 @@ function Shell(props: AppProps): React.ReactElement {
           <AppNav mode="header" selected={tab} onSelect={selectTab} />
         ) : undefined
       }
-      onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
+      // Under an immersive top the header shows only while the cover rises
+      // over it, and Back there would pop the cover, not the screen named.
+      onBack={
+        backOverride ?? (chromeDepth > 0 && !immersiveTop ? pop : undefined)
+      }
       umpire={
         umpireLeagues.length === 0 ? undefined : (
           <UmpireMask
@@ -2768,67 +2903,99 @@ function Shell(props: AppProps): React.ReactElement {
       : screenScopeOf(tab, top, walkUpMusic.djSupported)
 
   // The header is glass and sits **over** the content, so the page moves under
-  // it; the body therefore starts at the top of the window and is padded down
-  // by the header's measured height.
+  // it; each scene therefore starts at the top of the window and is padded
+  // down by the header's measured height (0 for a screen that draws its own).
   //
-  // Both children carry a key, and that is not decoration. React reconciles
-  // children by position, so a tree that is `[nav, pane]` on a phone and
-  // `[pane]` on a desktop would match the pane against the nav when the window
-  // crossed the boundary and unmount everything below it — the `<video>`
-  // element with it, which is what used to stop playback dead mid-drag. Keyed,
-  // the pane is matched to the pane and nothing below it notices.
-  const immersiveField =
-    props.fieldPreview === true ||
-    top?.name === 'scoreGame' ||
-    top?.name === 'coachGame' ||
-    top?.name === 'gameReplay'
+  // The chrome's children carry a key, and that is not decoration. React
+  // reconciles children by position, so a tree that is `[header, nav]` on a
+  // phone and `[header]` on a desktop would match the wrong things when the
+  // window crossed the boundary. The scenes are keyed by the navigator, so
+  // nothing below them notices either — the `<video>` element least of all.
   const bannerShown =
     bannerText != null || createRefused || heldTeams.length > 0
+  const chrome = (
+    <>
+      <View key="header" style={styles.headerLayer}>
+        {header}
+        <OfflineBanner
+          text={bannerText}
+          refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
+          held={heldTeams}
+          onLayout={setBannerHeight}
+        />
+      </View>
+      {!isWide && (
+        <AppNav key="nav" mode="floating" selected={tab} onSelect={selectTab} />
+      )}
+    </>
+  )
+  // One scorer per person and game, whether on top or kept beneath a child.
+  const scoreKey = (gameId: string): string =>
+    `score:${signedInAs ?? 'local'}:${gameId}`
+  const sceneOf = (index: number): StackScene => {
+    const frame = stack[index] as Pushed | undefined
+    return {
+      key:
+        frame == null
+          ? rootKey(tab)
+          : frame.name === 'scoreGame'
+            ? scoreKey(frame.gameId)
+            : frameKey(tab, stack, index, screenIdentity),
+      group: tab,
+      depth: index + 1,
+      presentation: frame?.name === 'scoreGame' ? 'cover' : 'push',
+      immersive: isImmersive(frame),
+      node: renderFrame(frame)
+    }
+  }
+  const topScene: StackScene =
+    props.fieldPreview === true
+      ? {
+          key: 'fieldPreview',
+          group: tab,
+          depth: 0,
+          presentation: 'push',
+          immersive: true,
+          node: (
+            <StandaloneField
+              onExit={() => {
+                selectTab('home')
+              }}
+            />
+          )
+        }
+      : sceneOf(stack.length - 1)
+  const retainedScene: StackScene | undefined =
+    scoringFrame == null || scoringActive
+      ? undefined
+      : {
+          key: scoreKey(scoringFrame.gameId),
+          group: tab,
+          depth: Math.max(0, stack.length - 1),
+          presentation: 'cover',
+          immersive: true,
+          node: scoringBody
+        }
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <View style={styles.app}>
-        <View key="pane" style={styles.pane}>
-          <HeaderSlotProvider
-            headerHeight={
-              immersiveField
-                ? 0
-                : headerHeight + (bannerShown ? bannerHeight : 0)
+        <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
+          <StackNavigator
+            top={topScene}
+            retained={retainedScene}
+            renderBelow={() =>
+              stack.length > 0 ? sceneOf(stack.length - 2) : undefined
             }
+            chrome={chrome}
+            onSwipeBack={swipeBack ? pop : undefined}
+            intent={navigationIntent}
+            predictiveBack={predictiveBack}
+            headerHeight={headerHeight + (bannerShown ? bannerHeight : 0)}
             onHandoff={setHandoff}
             onBackOverride={setBack}
-          >
-            <View style={styles.body}>
-              <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
-                <ScoringPlayerSettingsFlow
-                  scoring={scoringBody}
-                  active={scoringActive}
-                >
-                  {body}
-                </ScoringPlayerSettingsFlow>
-              </ScreenScopeProvider>
-            </View>
-          </HeaderSlotProvider>
-          {!immersiveField && (
-            <View style={styles.headerLayer}>
-              {header}
-              <OfflineBanner
-                text={bannerText}
-                refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-                held={heldTeams}
-                onLayout={setBannerHeight}
-              />
-            </View>
-          )}
-        </View>
-        {!isWide && !immersiveField && (
-          <AppNav
-            key="nav"
-            mode="floating"
-            selected={tab}
-            onSelect={selectTab}
           />
-        )}
+        </ScreenScopeProvider>
         <SuccessToast notice={successNotice} />
         {confirmingSignOut && (
           <ChoiceSheet
@@ -3240,12 +3407,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.875)
   },
   root: {
-    flex: 1
-  },
-  pane: {
-    flex: 1
-  },
-  body: {
     flex: 1
   },
   // Over the content rather than above it, which is the whole point of glass:

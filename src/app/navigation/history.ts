@@ -104,6 +104,11 @@ export interface History {
    */
   back: () => boolean
   /**
+   * Where `back()` would land, without going. Android's back gesture may drag
+   * the top screen off only when this is the screen beneath it.
+   */
+  previous: () => Route | undefined
+  /**
    * Drops a straight-line suffix of `frames` when what remains is `rootPath`.
    * Returns how many entries were dropped.
    */
@@ -147,6 +152,10 @@ export function makeHistory(start: Route = { name: 'home' }): History {
       if (entries.length <= 1) return false
       entries.pop()
       return true
+    },
+
+    previous(): Route | undefined {
+      return entries.length <= 1 ? undefined : entries[entries.length - 2]
     },
 
     dropSuffix(frames: readonly ClearedFrame[], rootPath: string): number {
