@@ -52,6 +52,7 @@ import {
   PinnedSpacer
 } from '../components/PinnedBands'
 import { useScreenBottom } from '../components/Screen'
+import { TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useScreenScope } from '../hooks/useScreenScope'
@@ -1611,13 +1612,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       />
     )
 
+  const pills = gameTabs({
+    game,
+    now: clockNow,
+    onReplay: props.onReplay
+  })
+  // Which way a section change slides: by the pills' order.
+  const tabIndex = pills.findIndex(item => item.id === tab)
   const tabs = (
     <PillTabs
-      tabs={gameTabs({
-        game,
-        now: clockNow,
-        onReplay: props.onReplay
-      })}
+      tabs={pills}
       selected={tab}
       onSelect={next => {
         if (next === 'replay') {
@@ -2072,59 +2076,73 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <>
       <View style={styles.watch}>
         <View style={styles.tabPane} testID="gameSection">
-          {tab === 'watch' ? (
-            <GameWatchLayout
-              pinned={pinned}
-              head={scoreboard}
-              player={player}
-              description={description}
-              sections={sections}
-              // A game nothing was recorded of has nothing to have
-              // highlights of: "No videos." is the whole of the tab.
-              highlightList={video == null ? null : highlightList}
-              footer={
-                <>
-                  {/*
+          {/*
+            Watch is a layout of its own, a full-height scroller like the
+            sections' Screen: crossing it slides the whole pane, both filling
+            it. Info and Box Score slide only the content under the pills.
+          */}
+          <TabPages
+            fill
+            page={tab === 'watch' ? 'watch' : 'sections'}
+            index={tabIndex}
+          >
+            {tab === 'watch' ? (
+              <GameWatchLayout
+                key="watch"
+                pinned={pinned}
+                head={scoreboard}
+                player={player}
+                description={description}
+                sections={sections}
+                // A game nothing was recorded of has nothing to have
+                // highlights of: "No videos." is the whole of the tab.
+                highlightList={video == null ? null : highlightList}
+                footer={
+                  <>
+                    {/*
                     Under the highlights, and only for the people who run the
                     team: everybody else is answered `404` and sees nothing
                     here at all. A browser lists stream URLs; a phone records
                     with its own camera.
                   */}
-                  <StreamFooter
-                    client={client}
-                    gameId={gameId}
-                    onPublishing={setPublishing}
-                  />
-                </>
-              }
-              layout={layout}
-              short={short}
-              sideBySide={sideBySide}
-              headerHeight={headerHeight}
-              tabsHeight={tabsHeight}
-              height={height}
-              style={styles.tabPane}
-              contentStyle={[
-                styles.watchContent,
-                styles.watchStacked,
-                { paddingBottom: screenBottom }
-              ]}
-              headStyle={styles.head}
-            />
-          ) : (
-            <Screen {...pinned.screen} wide>
-              <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
-              <PillBand part={pinned.pillBand}>{tabs}</PillBand>
-              <PinnedContent
-                key={tab}
-                part={pinned.content}
-                testID="eventTabContent"
-              >
-                {below}
-              </PinnedContent>
-              <PinnedSpacer part={pinned.spacer} />
-            </Screen>
-          )}
+                    <StreamFooter
+                      client={client}
+                      gameId={gameId}
+                      onPublishing={setPublishing}
+                    />
+                  </>
+                }
+                layout={layout}
+                short={short}
+                sideBySide={sideBySide}
+                headerHeight={headerHeight}
+                tabsHeight={tabsHeight}
+                height={height}
+                style={styles.tabPane}
+                contentStyle={[
+                  styles.watchContent,
+                  styles.watchStacked,
+                  { paddingBottom: screenBottom }
+                ]}
+                headStyle={styles.head}
+              />
+            ) : (
+              <Screen key="sections" {...pinned.screen} wide>
+                <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
+                <PillBand part={pinned.pillBand}>{tabs}</PillBand>
+                <TabPages page={tab} index={tabIndex}>
+                  <PinnedContent
+                    key={tab}
+                    part={pinned.content}
+                    testID="eventTabContent"
+                  >
+                    {below}
+                  </PinnedContent>
+                </TabPages>
+                <PinnedSpacer part={pinned.spacer} />
+              </Screen>
+            )}
+          </TabPages>
         </View>
       </View>
       {membershipWarning && (
