@@ -7113,7 +7113,14 @@ describe('native scenario navigation and mention handoff', function () {
               (fault === 'wrong-role' ? 'Member' : member.role),
             bounds: {
               x: 20,
-              y: query === member.name ? 260 : 700,
+              y:
+                fault === 'closed-outside'
+                  ? 1020
+                  : fault === 'header-occluded'
+                    ? 20
+                    : query === member.name
+                      ? 260
+                      : 700,
               width: 360,
               height: 60
             }
@@ -7152,6 +7159,23 @@ describe('native scenario navigation and mention handoff', function () {
           }))
         })
       )
+    const imeRaw = (): string => {
+      if (fault === 'malformed-ime') return 'InputMethod state unavailable'
+      const closed =
+        ((fault === 'closed-before' || fault === 'closed-outside') &&
+          phase === 'picker') ||
+        (fault === 'closed-after' && phase === 'ready')
+      return (
+        'Window #0 Window{0000 u0 InputMethod}\n' +
+        ' isOnScreen=' +
+        String(!closed) +
+        '\n' +
+        ' mHasSurface=' +
+        String(!closed) +
+        '\n' +
+        ' touchable region=SkRegion((0,600,400,1000))'
+      )
+    }
     const actual = Object.assign(Object.create(Chat2UI.prototype), {
       surface,
       deadline: AbortSignal.timeout(10000),
@@ -7192,15 +7216,22 @@ describe('native scenario navigation and mention handoff', function () {
           }
           if (args.id === 'chat-mention-member-' + member.userId) {
             calls.push('member')
-            if (query === member.name) phase = 'closing'
+            if (query === member.name || fault === 'closed-before')
+              phase = 'closing'
           }
         },
         assertVisible: async () => ({}),
         copyTextFrom: async () => ({ data: value })
       },
       readAndroidIme: async () => ({
-        bounds: { x: 0, y: 600, width: 400, height: 400 }
-      })
+        bounds: androidImeFrame(imeRaw(), { width: 400, height: 1000 })
+      }),
+      observeAndroidIme: async () => {
+        const viewport = { width: 400, height: 1000 }
+        const state = androidCaptureImeState(imeRaw(), viewport)
+        calls.push('preselection-ime-' + state.state)
+        return { state, bounds: state.keyboard, viewport }
+      }
     }) as Chat2UI
     const stopped = Error('Actual I2 append boundary reached')
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
@@ -7254,7 +7285,9 @@ describe('native scenario navigation and mention handoff', function () {
       async () => {
         const model = mentionBoundary(surface)
         expect(await captureFailure(model.scenario.I2())).equals(model.stopped)
-        expect(model.calls).deep.equals([
+        expect(
+          model.calls.filter(call => !call.startsWith('preselection-ime-'))
+        ).deep.equals([
           'reply-keyboard-already-proved',
           'trigger',
           'search-control',
@@ -7271,6 +7304,42 @@ describe('native scenario navigation and mention handoff', function () {
         ).equals(true)
       }
     )
+  it('selects the exact visible Android member with an explicitly closed preselection IME and requires the fresh open composer', async () => {
+    const model = mentionBoundary('android', 'closed-before')
+    expect(await captureFailure(model.scenario.I2())).equals(model.stopped)
+    expect(model.calls).includes('member')
+    expect(model.calls).includes('append')
+    expect(model.calls).not.includes('search')
+    expect(model.calls).includes('preselection-ime-already-closed')
+  })
+  it('rejects an Android IME that closes after exact member selection before appending', async () => {
+    const model = mentionBoundary('android', 'closed-after')
+    expect(String(await captureFailure(model.scenario.I2()))).includes(
+      'Hidden, conflicting or unknown Android IME visibility'
+    )
+    expect(model.calls).includes('member')
+    expect(model.calls).not.includes('append')
+  })
+  for (const fault of ['closed-outside', 'header-occluded'])
+    it(
+      'rejects an Android member outside the observed clear bounds: ' + fault,
+      async () => {
+        const model = mentionBoundary('android', fault)
+        expect(String(await captureFailure(model.scenario.I2()))).includes(
+          'Exact member row must clear header'
+        )
+        expect(model.calls).not.includes('member')
+        expect(model.calls).not.includes('append')
+      }
+    )
+  it('rejects malformed Android IME evidence before selecting any member', async () => {
+    const model = mentionBoundary('android', 'malformed-ime')
+    expect(String(await captureFailure(model.scenario.I2()))).includes(
+      'One actual InputMethod window required'
+    )
+    expect(model.calls).not.includes('member')
+    expect(model.calls).not.includes('append')
+  })
   it('keeps generic iOS Search typing on the focused field rather than the composer', async () => {
     const model = mentionBoundary('ios')
     await model.ui.typeMentionTrigger()

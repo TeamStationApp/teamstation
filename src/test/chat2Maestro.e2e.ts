@@ -3832,22 +3832,31 @@ export class Chat2UI {
       return rows[0]
     }
     let nodes = await read()
-    const keyboard =
-      this.surface === 'android'
-        ? (await this.readAndroidIme()).bounds
-        : need(
-            nodes.find(node => node.type === 'Keyboard')?.bounds,
-            'Actual iOS Keyboard required'
-          )
+    const readClearBottom = async (): Promise<number> => {
+      if (this.surface === 'android') {
+        const observed = await this.observeAndroidIme({}, 'state')
+        return observed.state?.state === 'already-closed'
+          ? observed.viewport.height
+          : need(observed.bounds, 'Actual Android IME frame required').y
+      }
+      const keyboard = need(
+        nodes.find(node => node.type === 'Keyboard')?.bounds,
+        'Actual iOS Keyboard required'
+      )
+      assert(positive(keyboard), 'Positive actual iOS Keyboard required')
+      return keyboard.y
+    }
+    let clearBottom = await readClearBottom()
     const clear = (node: PublicNode, current: PublicNode[]): boolean => {
       const h = one(current, 'chat-picker-header').bounds
       const b = node.bounds
       return (
         positive(b) &&
         positive(h) &&
-        positive(keyboard) &&
+        Number.isFinite(clearBottom) &&
+        clearBottom > 0 &&
         b.y >= h.y + h.height + 8 &&
-        b.y + b.height <= keyboard.y - 8
+        b.y + b.height <= clearBottom - 8
       )
     }
     const memberRow = (current: PublicNode[]): PublicNode => {
@@ -3891,6 +3900,7 @@ export class Chat2UI {
           ...(this.surface === 'android' ? { keyPress: true } : {})
         })
         nodes = await read()
+        if (this.surface === 'android') clearBottom = await readClearBottom()
       }
       assert(
         clear(memberRow(nodes), nodes),
@@ -3908,7 +3918,7 @@ export class Chat2UI {
             editors.length !== 1 ||
             e.enabled === false ||
             !positive(b) ||
-            b.y + b.height > keyboard.y + 1
+            b.y + b.height > clearBottom + 1
           )
             return undefined
           const expected = '@' + member.name + ' '
