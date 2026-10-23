@@ -89,6 +89,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const jumpTo = useSharedValue(-1)
   /** A finger is on the page. */
   const dragging = useSharedValue(false)
+  // A finger has been on the page since its last jump, though it may have
+  // lifted, the page still coasting.
+  const touched = useSharedValue(false)
   /** Where the page could scroll to at the last scroll: its end. */
   const pageEnd = useSharedValue(0)
   /**
@@ -223,6 +226,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     onBeginDrag: () => {
       // A finger on the page: from here the page goes where it is taken.
       dragging.value = true
+      touched.value = true
       holdRow.value = false
       jumpTo.value = -1
       if (holding.value) takenOver.value = true
@@ -387,6 +391,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         }
         y.value = to
         collapse.value = held
+        // A finger already on the page as it jumps has it still.
+        touched.value = dragging.value
         // Kept only when nobody is dragging: a tab tapped and the page
         // grabbed at once still jumps, and then goes where it is taken.
         jumpTo.value = dragging.value ? -1 : to
@@ -415,9 +421,32 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
           runOnUI(() => {
             'worklet'
             jumpTo.value = -1
+            // A pixel and back: a scroll, which writes the page's offset into
+            // Fabric's record of it again. A commit made while the new tab
+            // came in can put that record back to where the page was before
+            // the jump, while the page itself stays put, and `measure`
+            // reads the record: the header's title handoff then measured the
+            // card as if the page had never moved. Only on a page left where
+            // it landed (not taken by a finger since, nor coasting from one),
+            // not held on a row, with somewhere to go, and with the head in
+            // step with it, which the two scrolls then leave exactly as it
+            // was.
+            if (
+              !touched.value &&
+              !holdRow.value &&
+              y.value >= 1 &&
+              collapse.value >= y.value
+            ) {
+              const at = y.value
+              scrollTo(scrollRef, 0, at - 1, false)
+              scrollTo(scrollRef, 0, at, false)
+            }
           })()
         }, 900)
       )
+      // And the screen is told the page has landed, once the record has
+      // caught up: one already where it belongs sent no scroll to say so.
+      timers.current.push(setTimeout(notify, 1050))
       notify()
     }
     const room = spacerFor(reach, contentBottom, viewport)
@@ -448,6 +477,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     scrollRef,
     settleSoon,
     takenOver,
+    touched,
     y
   ])
 

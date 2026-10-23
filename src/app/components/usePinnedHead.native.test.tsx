@@ -91,6 +91,161 @@ describe('native pinned schedule anchoring', () => {
     }
   })
 
+  /**
+   * A page pinned on one tab, then another tab selected and laid out until
+   * it has jumped; the scroll commands sent, and how often the screen was
+   * told, are kept.
+   */
+  async function landOnSecondTab(
+    options: { fingerDown?: boolean } = {}
+  ): Promise<{
+    sent: number[]
+    told: () => number
+    landed: number
+    drag: (eventName: string) => void
+    cleanup: () => Promise<void>
+  }> {
+    let head!: PinnedHead
+    let told = 0
+    const sent: number[] = []
+    function Harness(props: { tab: string }): React.ReactElement {
+      head = usePinnedHead({
+        headerHeight: 72,
+        ready: true,
+        tab: props.tab,
+        anchorOnRow: false,
+        tail: 30,
+        onScroll: () => {
+          told++
+        }
+      })
+      return <div />
+    }
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const layout = (y: number, height: number): never => {
+      const event: unknown = {
+        nativeEvent: { layout: { x: 0, y, width: 390, height } }
+      }
+      return event as never
+    }
+    const event = (eventName: string, y: number): void => {
+      const handler = head.screen.onScroll as unknown as {
+        workletEventHandler: { worklet: (event: unknown) => void }
+      }
+      handler.workletEventHandler.worklet({
+        eventName,
+        contentOffset: { x: 0, y },
+        contentSize: { width: 390, height: 2000 },
+        layoutMeasurement: { width: 390, height: 600 }
+      })
+    }
+    const lay = async (): Promise<void> => {
+      await act(async () => {
+        head.screen.onLayout!(layout(0, 600))
+        head.pillBand.handleLayout!(layout(200, 60))
+        head.content.handleLayout!(layout(260, 1500))
+        head.spacer.handleLayout!(
+          layout(0, (head.spacer.style as { height: number }).height)
+        )
+      })
+    }
+    await act(async () => {
+      root.render(<Harness tab="info" />)
+    })
+    // Lands where it is sent, and says so the first time only, as a page
+    // already in place would not.
+    ;(head.screen.scrollRef as unknown as (node: unknown) => void)({
+      scrollTo: ({ y }: { y: number }): void => {
+        sent.push(y)
+        if (sent.length === 1) event('onScroll', y)
+      }
+    })
+    await lay()
+    // Once the first tab has landed, pinned, then another tab.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    })
+    await act(async () => {
+      event('onScroll', 300)
+    })
+    await act(async () => {
+      // A finger on the page from before the pill was chosen, still down
+      // through the jump.
+      if (options.fingerDown === true) event('onScrollBeginDrag', 300)
+      head.select('watch')
+      root.render(<Harness tab="watch" />)
+    })
+    // The new tab lays out, then its room does, however long that takes.
+    for (let tries = 0; tries < 20 && !sent.some(y => y > 0); tries++) {
+      await lay()
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+    }
+    return {
+      sent,
+      told: () => told,
+      landed: sent.find(y => y > 0) ?? 0,
+      drag: eventName => {
+        event(eventName, sent.find(y => y > 0) ?? 0)
+      },
+      cleanup: async () => {
+        await act(async () => {
+          root.unmount()
+        })
+        host.remove()
+      }
+    }
+  }
+
+  it('writes the landed offset again with a scroll, then tells the screen, though the page sent none', async () => {
+    const page = await landOnSecondTab()
+    try {
+      expect(page.landed).greaterThan(0)
+      const before = page.told()
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 1200))
+      })
+      // A pixel short and back, after the retries.
+      expect(page.sent.slice(-2)).deep.equals([page.landed - 1, page.landed])
+      expect(page.told() - before).greaterThan(0)
+    } finally {
+      await page.cleanup()
+    }
+  })
+
+  it('leaves a page a finger was already on as it jumped', async () => {
+    const page = await landOnSecondTab({ fingerDown: true })
+    try {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 1200))
+      })
+      expect(page.landed).greaterThan(0)
+      expect(page.sent).not.includes(page.landed - 1)
+    } finally {
+      await page.cleanup()
+    }
+  })
+
+  it('leaves a page a finger took after it landed, coasting or not', async () => {
+    const page = await landOnSecondTab()
+    try {
+      // Flicked and let go before the landing is over: still coasting.
+      await act(async () => {
+        page.drag('onScrollBeginDrag')
+        page.drag('onScrollEndDrag')
+      })
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 1200))
+      })
+      expect(page.sent).not.includes(page.landed - 1)
+    } finally {
+      await page.cleanup()
+    }
+  })
+
   it('holds a row anchor as the rows above it settle, with no room after the last row, until a finger takes the page', async () => {
     let head!: PinnedHead
     function Harness(): React.ReactElement {

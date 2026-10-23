@@ -18,6 +18,7 @@ import {
 } from '../components'
 import { Badge } from '../components/Badge'
 import { PickerDialog } from '../components/PickerDialog'
+import { useSceneReveals } from '../components/sceneShown'
 import { Wheel } from '../components/Wheel'
 import {
   UmpireError,
@@ -59,6 +60,8 @@ export function UmpireRequirementsScreen({
   const countTitle = (id: string, kind: 'required' | 'optional'): string =>
     `${kind === 'required' ? 'Required' : 'Optional'} ${types.find(t => t.id === id)?.name ?? ''}`
   const firstSeasonId = seasonIds?.[0]
+  // The edit, pushed over the list, is applied to its seasons.
+  const reveals = useSceneReveals()
   useEffect(() => {
     run(async () => {
       const [ss, ls, ts] = await Promise.all([
@@ -84,7 +87,7 @@ export function UmpireRequirementsScreen({
         )
       }
     })
-  }, [client, league, live, run, firstSeasonId])
+  }, [client, league, live, run, firstSeasonId, reveals])
   const editing = seasonIds != null
   return (
     <Screen>

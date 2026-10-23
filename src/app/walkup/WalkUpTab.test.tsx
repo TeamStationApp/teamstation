@@ -10,6 +10,7 @@ import {
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic, {
   type PlaybackState,
@@ -36,13 +37,15 @@ async function render(props: Partial<WalkUpTabProps> = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <WalkUpTab
-          client={songClient()}
-          teamId="t1"
-          userId={userIdOfGumbo(7)}
-          music={webMusic}
-          {...props}
-        />
+        <CoverableScene>
+          <WalkUpTab
+            client={songClient()}
+            teamId="t1"
+            userId={userIdOfGumbo(7)}
+            music={webMusic}
+            {...props}
+          />
+        </CoverableScene>
       </ThemeProvider>
     )
     await delay(20)
@@ -369,6 +372,25 @@ describe('the Walk-up tab on a phone', function () {
       await delay(5)
     })
     expect(text()).includes('Playback failed')
+    expect(labels()).includes('Preview')
+  })
+
+  it('stops the clip while the song screen covers it, and shows the song it saved', async function () {
+    const music = fakeMusic()
+    const client = songClient()
+    await render({ client, music, resolve: async () => 'catalog:1440833098' })
+    await press('Preview')
+    expect(labels()).includes('Stop')
+    const reads: string[] = []
+    const roster = client.roster.bind(client)
+    client.roster = async teamId => {
+      reads.push(teamId)
+      return await roster(teamId)
+    }
+    await coverAndReveal(() => {
+      expect(music.stops).deep.equals([0])
+    })
+    expect(reads).deep.equals(['t1'])
     expect(labels()).includes('Preview')
   })
 

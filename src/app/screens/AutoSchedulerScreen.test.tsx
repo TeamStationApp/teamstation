@@ -17,6 +17,7 @@ import type {
   SetupSeason
 } from '../../common/seasonScheduling'
 import type { VenueSummary } from '../../common/venues'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import {
   fill,
   mount,
@@ -382,6 +383,75 @@ describe('the Auto-Scheduler setup', () => {
     await settle(20)
     expect(fake.choices.at(-1)?.fieldIds).deep.equals([])
     expect(disabled(buildButton())).equals(true)
+  })
+
+  it('reads the setup again on coming back, so a cell’s save keeps what the season’s screen saved', async () => {
+    const fake = fakeClient(setupOf())
+    await mount(
+      <CoverableScene>
+        <AutoSchedulerScreen
+          client={fake.client}
+          leagueId="lea_a"
+          leagueName="Demo League A"
+          onFieldManager={() => undefined}
+          onOpenSeason={() => undefined}
+          onOpenPreview={() => undefined}
+        />
+      </CoverableScene>
+    )
+    await settle(50)
+    // Windows, on the season's own screen, pushed over this one.
+    const blackouts = ['2027-05-01']
+    await coverAndReveal(() => {
+      fake.client.scheduleSetup = async () =>
+        setupOf({
+          seasons: [season({ settings: { ...SETTINGS, blackouts } })]
+        })
+    })
+    await settle(50)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    expect(fake.saves.at(-1)?.[1].gameMinutes).equals(75)
+    expect(fake.saves.at(-1)?.[1].blackouts).deep.equals(blackouts)
+  })
+
+  it('keeps a cell’s save that lands while that read is on its way', async () => {
+    const fake = fakeClient(setupOf())
+    await mount(
+      <CoverableScene>
+        <AutoSchedulerScreen
+          client={fake.client}
+          leagueId="lea_a"
+          leagueName="Demo League A"
+          onFieldManager={() => undefined}
+          onOpenSeason={() => undefined}
+          onOpenPreview={() => undefined}
+        />
+      </CoverableScene>
+    )
+    await settle(50)
+    let answer: () => void = () => undefined
+    await coverAndReveal(() => {
+      const read = fake.client.scheduleSetup.bind(fake.client)
+      // Read before the cell's save, and answering after it.
+      fake.client.scheduleSetup = async leagueId => {
+        const found = await read(leagueId)
+        await new Promise<void>(resolve => {
+          answer = resolve
+        })
+        return found
+      }
+    })
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    expect(fake.saves.at(-1)?.[1].gameMinutes).equals(75)
+    await act(async () => {
+      answer()
+    })
+    await settle(50)
+    expect(hasLabel('Demo Regular Game length in minutes: 75')).equals(true)
   })
 
   it('edits a size, doubleheaders, a number and the dates from the grid', async () => {

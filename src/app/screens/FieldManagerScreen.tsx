@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { VenueSummary } from '../../common/venues'
 import { Badge, Button, Card, Icon, Screen, TextField } from '../components'
+import { useSceneReveals } from '../components/sceneShown'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { currentPosition, type Position } from '../platform/currentPosition'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -70,7 +71,9 @@ export function FieldManagerScreen({
     [client, begin]
   )
   // Lists at once, without waiting for a location prompt the person may
-  // never answer; a position, when it comes, sorts the list by distance.
+  // never answer; a position, when it comes, sorts the list by distance. And
+  // again on coming back from a venue, which may have been claimed there.
+  const reveals = useSceneReveals()
   useEffect(() => {
     clearTimeout(timer.current)
     timer.current = setTimeout(
@@ -82,7 +85,7 @@ export function FieldManagerScreen({
     return () => {
       clearTimeout(timer.current)
     }
-  }, [query, position, revision, load])
+  }, [query, position, revision, reveals, load])
   const groups = (['yours', 'claimed', 'unclaimed'] as const)
     .map(group => ({
       group,

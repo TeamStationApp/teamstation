@@ -11,6 +11,7 @@ import {
 import type { GameDetail, TeamStationClient } from '../../common/api'
 import { httpOrigin, PRIMARY_HOST } from '../../common/primaryUrl'
 import { Button, Card, Icon, Screen } from '../components'
+import { useSceneReveals } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -53,9 +54,12 @@ export function ScoreGameScreen(
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [missing, setMissing] = useState(false)
 
+  // The override or the scorer, pushed over this, change what it offers. The
+  // game stays on show while it is read again.
+  const reveals = useSceneReveals()
   useEffect(() => {
     let live = true
-    setGame(undefined)
+    if (reveals === 0) setGame(undefined)
     setMissing(false)
     client
       .game(gameId)
@@ -68,7 +72,7 @@ export function ScoreGameScreen(
     return () => {
       live = false
     }
-  }, [client, gameId])
+  }, [client, gameId, reveals])
 
   if (missing) {
     return (

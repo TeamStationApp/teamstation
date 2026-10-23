@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { type GameDetail, TeamStationClient } from '../../common/api'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { COPIED_MS, ScoreGameScreen, siteOrigin } from './ScoreGameScreen'
@@ -81,6 +82,30 @@ describe('the Score Game screen', function () {
     expect([...order].sort((a, b) => a - b)).deep.equals(order)
     expect(labelled('Copy scoreboard link')).not.equals(null)
     expect(all).not.includes('Copied')
+  })
+
+  it('reads the game again on coming back, with its options still on show', async function () {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    let reads = 0
+    client.game = async () => {
+      reads++
+      return { ...gameFixture, canScore: true }
+    }
+    await render(
+      <CoverableScene>
+        <ScoreGameScreen
+          client={client}
+          gameId="g1"
+          origin="https://seat.example"
+          onFullScoring={() => undefined}
+          onScoreboard={() => undefined}
+        />
+      </CoverableScene>
+    )
+    expect(reads).equals(1)
+    await coverAndReveal()
+    expect(reads).equals(2)
+    expect(text()).contains('Full game scoring')
   })
 
   it('opens the full scorer and the simplified scoreboard when both are on offer', async function () {

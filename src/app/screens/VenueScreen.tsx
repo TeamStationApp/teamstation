@@ -28,6 +28,7 @@ import { DangerText } from '../components/DangerText'
 import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
+import { useSceneReveals } from '../components/sceneShown'
 import { useConfirmedAction } from '../components/useConfirmedAction'
 import {
   VENUE_OPEN_DEFAULT,
@@ -89,6 +90,8 @@ export function VenueScreen({
   const [switchTime, setSwitchTime] = useState<string>()
   const begin = useLatestRequest()
   const confirm = useConfirmedAction(client, venueId ?? placeId ?? '')
+  // A field's screen, pushed over this one, renames and resizes it.
+  const reveals = useSceneReveals()
   useEffect(() => {
     const current = begin()
     setError('')
@@ -109,7 +112,7 @@ export function VenueScreen({
           )
       }
     )
-  }, [client, venueId, placeId, revision, begin])
+  }, [client, venueId, placeId, revision, reveals, begin])
   const run = useCallback(
     async (
       write: () => Promise<VenueDetail>,

@@ -153,7 +153,12 @@ describe('native event section and picture pinning', () => {
       expect(scrolled - beforeScroll).equals(1)
       expect(handoff.progress.value).equals(layout.short ? 1 : 0.5)
       expect(measured === 0).equals(layout.short)
+      // The sections' band in the same column as the video, and before it,
+      // held either way: the column's own child, as in `Screen`.
       expect(band.parentElement).equals(body.parentElement)
+      expect(
+        band.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
       expect(
         video.contains(document.querySelector('[data-testid="fixture-player"]'))
       ).equals(true)

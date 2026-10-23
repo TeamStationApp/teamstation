@@ -9,6 +9,7 @@ import type {
   UmpirePerson,
   UmpireSeason
 } from '../../common/umpires'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { responderDrag } from '../../test/responderDrag'
 import {
   fixtureCertifications,
@@ -267,6 +268,51 @@ describe('management.test.tsx', () => {
     await press('Remove type')
     expect(types).length(1)
   })
+  it('enables the season requirements on coming back with a level and a type', async () => {
+    const f = fixture()
+    let levels = 0
+    const umpireLevels = f.client.umpireLevels.bind(f.client)
+    f.client.umpireLevels = async league => {
+      levels++
+      return await umpireLevels(league)
+    }
+    await mount(
+      <CoverableScene>
+        <UmpireSettingsCard
+          client={f.client}
+          league="demo"
+          onOpen={() => undefined}
+        />
+      </CoverableScene>
+    )
+    expect(levels).equals(1)
+    await coverAndReveal()
+    expect(levels).equals(2)
+  })
+
+  it('reads the seasons again on coming back from an edit', async () => {
+    const f = fixture()
+    const umpireRequirements = f.client.umpireRequirements.bind(f.client)
+    let reads = 0
+    f.client.umpireRequirements = async league => {
+      reads++
+      return await umpireRequirements(league)
+    }
+    await mount(
+      <CoverableScene>
+        <UmpireRequirementsScreen
+          client={f.client}
+          league="demo"
+          onNext={() => undefined}
+          onApplied={() => undefined}
+        />
+      </CoverableScene>
+    )
+    expect(reads).equals(1)
+    await coverAndReveal()
+    expect(reads).equals(2)
+  })
+
   it('hides Next until selection and applies above the chosen seasons', async () => {
     const f = fixture()
     let chosen: string[] = []

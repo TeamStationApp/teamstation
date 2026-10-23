@@ -4,6 +4,7 @@ import React, { act } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import type { VenueSummary } from '../../common/venues'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import {
   fill,
   find,
@@ -71,6 +72,32 @@ describe('the Field Manager', () => {
       query: 'Park',
       near: { latitude: 40, longitude: -75 }
     })
+  })
+
+  it('reads the list again on coming back from a venue', async () => {
+    const asked: Array<{ query?: string }> = []
+    const client = {
+      venues: async (options: { query?: string }) => {
+        asked.push(options)
+        return [OWN]
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <CoverableScene>
+        <FieldManagerScreen
+          client={client}
+          locate={async () => null}
+          onOpenVenue={() => undefined}
+          onOpenPlace={() => undefined}
+        />
+      </CoverableScene>
+    )
+    await settle(20)
+    const reads = asked.length
+    expect(reads).greaterThan(0)
+    await coverAndReveal()
+    await settle(20)
+    expect(asked.length).equals(reads + 1)
   })
 
   it('lists every place a search finds, after the person’s own venues', async () => {

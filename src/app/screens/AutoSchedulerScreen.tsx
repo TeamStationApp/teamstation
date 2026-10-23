@@ -26,6 +26,7 @@ import { ChoiceSheet } from '../components/ChoiceSheet'
 import { DangerText } from '../components/DangerText'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { PickerDialog } from '../components/PickerDialog'
+import { useSceneReveals } from '../components/sceneShown'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { FieldPickerScene } from './FieldPickerScene'
@@ -109,24 +110,35 @@ export function AutoSchedulerScreen({
   const flush = async (): Promise<boolean> =>
     (await grid.current?.flush()) ?? true
   const begin = useLatestRequest()
+  // A season's or a field's screen, pushed over this one, saves what this
+  // holds a copy of, and a save here sends back the whole of it.
+  const reveals = useSceneReveals()
   useEffect(() => {
     const current = begin()
     setError('')
+    // What was saved before this read is in its answer; a save that lands
+    // after it began is not, and is kept over that answer.
+    stored.current.clear()
     Promise.all([
       client.scheduleSetup(leagueId),
       client.gamesToReschedule(leagueId)
     ]).then(
       ([found, listed]) => {
         if (!current()) return
-        stored.current.clear()
-        setSetup(found)
+        setSetup({
+          ...found,
+          seasons: found.seasons.map(item => {
+            const kept = stored.current.get(item.id)
+            return kept == null ? item : { ...item, saved: true, ...kept }
+          })
+        })
         setToReschedule(listed)
       },
       () => {
         if (current()) setError('The Auto-Scheduler could not load. Try again.')
       }
     )
-  }, [client, leagueId, revision, begin])
+  }, [client, leagueId, revision, reveals, begin])
   /**
    * Builds a preview and opens it. A first build of seasons that already
    * have upcoming games asks whether to replace them or work around them.
@@ -307,7 +319,8 @@ export function AutoSchedulerScreen({
       : setup.seasons.find(season => season.id === editing.seasonId)
   /**
    * Moves to another screen once the grid's open cell is saved, and nowhere
-   * if the cell refuses its text: the screen unmounts with no blur to save it.
+   * if the cell refuses its text: the keyboard goes as that screen comes on,
+   * with no blur to save the cell.
    */
   const leave = (go: () => void): void => {
     flush().then(

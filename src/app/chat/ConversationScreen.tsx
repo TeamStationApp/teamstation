@@ -3119,7 +3119,8 @@ export function ConversationScreen(
               }}
               text={text}
               onText={onText}
-              enabled={view.composer === 'enabled' && props.active !== false}
+              enabled={view.composer === 'enabled'}
+              asleep={props.active === false}
               sending={sending}
               preparing={preparing > 0}
               context={
