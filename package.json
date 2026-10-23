@@ -78,6 +78,7 @@
     "stats-builder": "node -r sucrase/register src/server/statsBuilder/start.ts",
     "stats-fixture": "node -r sucrase/register src/server/dev/postStatsFixture.ts",
     "stats-request": "node -r sucrase/register src/server/statsBuilder/cli.ts",
+    "tess.sitemap": "node -r sucrase/register src/server/tess/sitemapCli.ts",
     "test": "node src/migrate/requirePostgres18.js && node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json",
     "typecheck.native": "tsc -p tsconfig.native.json",

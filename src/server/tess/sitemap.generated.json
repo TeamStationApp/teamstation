@@ -1,0 +1,1020 @@
+{
+  "routes": [
+    {
+      "name": "account",
+      "path": "/account",
+      "title": "Account",
+      "tabs": [],
+      "settings": [
+        "Retry",
+        "Name",
+        "Save name",
+        "Password",
+        "You can always sign in with an email code.",
+        "Verify email and set password",
+        "Change password",
+        "Set password",
+        "Enter the code sent to",
+        "to set a new password.",
+        "Password reset code",
+        "Resend password code",
+        "Current password",
+        "Reset with an email code",
+        "Preparing password security… You can keep typing.",
+        "Retry password preparation",
+        "Save password",
+        "Cancel password change",
+        "Email addresses",
+        "Sign in with any confirmed address. Your primary address appears on your account.",
+        "Change",
+        "Make primary",
+        "Add email address",
+        "Replacing",
+        ". It stays active until you confirm the new address.",
+        "New email address",
+        "Send confirmation code",
+        ". The address is not active yet.",
+        "Confirmation code",
+        "Confirm email",
+        "Resend code",
+        "Cancel email change",
+        "Saving…",
+        "Walk-up songs",
+        "Apple Music settings",
+        "Fade Apple Music using the phone’s volume",
+        "Some Bluetooth speakers beep when the volume changes. Turn this off for hard starts and stops.",
+        "Sign out",
+        "Node administration",
+        "Delete account",
+        "Photo",
+        "JPEG, PNG or WebP, up to 10 MB.",
+        "Save photo",
+        "Cancel",
+        "New password",
+        "With 17 or more characters, only length matters. No special character is needed.",
+        "Use at most 1024 UTF-8 bytes.",
+        "Confirm new password",
+        "Are you sure? Deleting an account is irrecoverable.",
+        "Your session ended. Sign in again to finish deleting your account.",
+        "Your account could not be deleted.",
+        "Sign in",
+        "Slide to delete",
+        "Retry pictures",
+        "Your photo is selected.",
+        "Add Photo",
+        "Use initials",
+        "Initials selected."
+      ]
+    },
+    {
+      "name": "autoScheduler",
+      "path": "/groups/league/:leagueId/scheduler",
+      "title": "Auto scheduler",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "coachGame",
+      "path": "/games/:gameId/coach/:teamId",
+      "title": "Coach game",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "createGame",
+      "path": "/groups/team/:id/create-game",
+      "title": "Create game",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "createGroup",
+      "path": "/create/league",
+      "title": "Create group",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "discover",
+      "path": "/discover",
+      "title": "Discover",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "djGame",
+      "path": "/games/:gameId/dj",
+      "title": "DJ Game",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "fieldManager",
+      "path": "/groups/league/:leagueId/scheduler/fields",
+      "title": "Field manager",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "game",
+      "path": "/games/:gameId",
+      "title": "Game",
+      "tabs": [
+        {
+          "param": "tab",
+          "id": "info",
+          "label": "Info",
+          "path": "/games/:gameId?tab=info"
+        },
+        {
+          "param": "tab",
+          "id": "boxScore",
+          "label": "Box score",
+          "path": "/games/:gameId?tab=boxScore"
+        },
+        {
+          "param": "tab",
+          "id": "watch",
+          "label": "Videos",
+          "path": "/games/:gameId?tab=watch"
+        }
+      ],
+      "settings": []
+    },
+    {
+      "name": "gameReplay",
+      "path": "/games/:gameId/replay",
+      "title": "Game replay",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "gameSettings",
+      "path": "/games/:gameId/settings",
+      "title": "Game settings",
+      "tabs": [],
+      "settings": [
+        "Retry event settings",
+        "Back",
+        "Title",
+        "Team dinner, fundraiser…",
+        "Canceled",
+        "Cancel event",
+        "Create event",
+        "Save event details",
+        "Retry game",
+        "Retry game settings",
+        "Cancel",
+        "Choose … Team",
+        "Swap home and away",
+        "Details",
+        "FIELD (OPTIONAL)",
+        "Clear field",
+        "Exhibition",
+        "Does not count in standings",
+        "More",
+        "In",
+        "Outside tournament (optional)",
+        "This date is outside the season’s reference time frame. You may still send and schedule this game.",
+        "Dismiss date warning",
+        "You need administrator access to create a game here.",
+        "An administrator, coach or assistant of",
+        "must approve",
+        "Reload game settings",
+        "Save",
+        "Withdraw …",
+        "Withdraw",
+        "? The game stays on the schedule as canceled due to withdrawal.",
+        "Confirm withdrawal",
+        "Keep game",
+        "Arrival minutes (optional)",
+        "Leave blank to omit arrival time",
+        "Minutes prior to the event start time",
+        "Ends three hours after the start.",
+        "Choose date",
+        "Previous",
+        "Next",
+        "Year",
+        "Enter a year from 1900 to 9999.",
+        "Use date",
+        "Choose time",
+        "Hour",
+        "Minute",
+        "Period",
+        "Use time",
+        "Choose time zone",
+        "Find time zone",
+        "City or time zone",
+        "Looking up city…",
+        "Retry city search",
+        "No matching cities or time zones",
+        "Event Type",
+        "Retry place suggestions",
+        "Venue name (optional)",
+        "Venue address (optional)",
+        "The venue and address come from the chosen field.",
+        "Notes (optional)",
+        "Where to meet, field number…",
+        "Search venues",
+        "A venue in the registry",
+        "No venues in the registry match. A league claims a venue in its Auto-Scheduler’s Field Manager.",
+        "This venue has no fields yet.",
+        "Create Placeholder Team",
+        "Kept by",
+        "Team name",
+        "Hawks",
+        "Optional. Choose where this team plays, or skip it.",
+        "Continue",
+        "Skip",
+        "Use Placeholder Team",
+        "Previous step",
+        "Search all teams",
+        "Team name, city or state",
+        "Suggested",
+        "Retry",
+        "Loading teams…",
+        "No teams match “",
+        "You need to manage a team or season to create a placeholder.",
+        "A team that is not on TeamStation yet"
+      ]
+    },
+    {
+      "name": "group",
+      "path": "/groups/league/:id",
+      "title": "Group",
+      "tabs": [
+        {
+          "param": "tab",
+          "id": "seasons",
+          "label": "Seasons",
+          "path": "/groups/league/:id?tab=seasons"
+        },
+        {
+          "param": "tab",
+          "id": "teams",
+          "label": "Teams",
+          "path": "/groups/league/:id?tab=teams"
+        },
+        {
+          "param": "tab",
+          "id": "people",
+          "label": "People",
+          "path": "/groups/league/:id?tab=people"
+        },
+        {
+          "param": "tab",
+          "id": "standings",
+          "label": "Standings",
+          "path": "/groups/league/:id?tab=standings"
+        },
+        {
+          "param": "tab",
+          "id": "schedule",
+          "label": "Schedule",
+          "path": "/groups/league/:id?tab=schedule"
+        },
+        {
+          "param": "tab",
+          "id": "stats",
+          "label": "Stats",
+          "path": "/groups/league/:id?tab=stats"
+        },
+        {
+          "param": "tab",
+          "id": "videos",
+          "label": "Videos",
+          "path": "/groups/league/:id?tab=videos"
+        },
+        {
+          "param": "when",
+          "id": "past",
+          "label": "Past",
+          "path": "/groups/league/:id?when=past"
+        },
+        {
+          "param": "when",
+          "id": "upcoming",
+          "label": "Upcoming",
+          "path": "/groups/league/:id?when=upcoming"
+        },
+        {
+          "param": "when",
+          "id": "all",
+          "label": "All",
+          "path": "/groups/league/:id?when=all"
+        }
+      ],
+      "settings": []
+    },
+    {
+      "name": "groupAddPeople",
+      "path": "/groups/league/:id/settings/people",
+      "title": "Group add people",
+      "tabs": [],
+      "settings": [
+        "Retry",
+        "Cancel",
+        "Only a current administrator can change these settings.",
+        "Add People",
+        "E-mail addresses",
+        "parent@example.com, coach@example.com",
+        "Enter one address, or several separated by commas. Everybody you add gets the roles below. Somebody with an account is added at once; anybody else receives an invitation lasting seven days.",
+        "Invalid addresses:",
+        "Adds them as:",
+        "Add people",
+        "Invite Spectators",
+        "Only an administrator can make invite links.",
+        "Anybody with the link can watch %s. They will be asked for their name and e-mail address.",
+        "Loading…",
+        "No invite links yet.",
+        "Disable",
+        "Invite code",
+        "Label",
+        "Create",
+        "Create invite link",
+        "Team admin",
+        "Season admin",
+        "League admin",
+        "Coach",
+        "Assistant",
+        "Scorekeeper",
+        "Songkeeper",
+        "Videographer",
+        "Edits the players’ jerseys, positions, bats and throws in %s, and sees their full names.",
+        "Same as a coach: edits the players’ jerseys, positions, bats and throws in %s, and sees their full names.",
+        "Scores the games of %s, sets walk-up songs and DJs them.",
+        "Sets walk-up songs and DJs the games of %s.",
+        "Films and streams the games of %s.",
+        "Can invite people to %s, remove them, and change what everybody here is.",
+        "From %s",
+        "Admins can do all of this",
+        "Scorekeepers can do this"
+      ]
+    },
+    {
+      "name": "groupInvites",
+      "path": "/groups/league/:id/settings/invites",
+      "title": "Group invites",
+      "tabs": [],
+      "settings": [
+        "Retry",
+        "Cancel",
+        "Only a current administrator can change these settings.",
+        "Add People",
+        "E-mail addresses",
+        "parent@example.com, coach@example.com",
+        "Enter one address, or several separated by commas. Everybody you add gets the roles below. Somebody with an account is added at once; anybody else receives an invitation lasting seven days.",
+        "Invalid addresses:",
+        "Adds them as:",
+        "Add people",
+        "Invite Spectators",
+        "Only an administrator can make invite links.",
+        "Anybody with the link can watch %s. They will be asked for their name and e-mail address.",
+        "Loading…",
+        "No invite links yet.",
+        "Disable",
+        "Invite code",
+        "Label",
+        "Create",
+        "Create invite link",
+        "Team admin",
+        "Season admin",
+        "League admin",
+        "Coach",
+        "Assistant",
+        "Scorekeeper",
+        "Songkeeper",
+        "Videographer",
+        "Edits the players’ jerseys, positions, bats and throws in %s, and sees their full names.",
+        "Same as a coach: edits the players’ jerseys, positions, bats and throws in %s, and sees their full names.",
+        "Scores the games of %s, sets walk-up songs and DJs them.",
+        "Sets walk-up songs and DJs the games of %s.",
+        "Films and streams the games of %s.",
+        "Can invite people to %s, remove them, and change what everybody here is.",
+        "From %s",
+        "Admins can do all of this",
+        "Scorekeepers can do this"
+      ]
+    },
+    {
+      "name": "groupLink",
+      "path": "/groups/league/:id/link?target=league&relationship=parent&direction=children",
+      "title": "Group link",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "groupLocation",
+      "path": "/groups/team/:id/settings/location",
+      "title": "Group location",
+      "tabs": [],
+      "settings": [
+        "Retry",
+        "Cancel",
+        "Only a current administrator can change these settings.",
+        "Location",
+        "City",
+        "Start typing a city",
+        "Looking for cities…",
+        "No city matches",
+        "Save to use",
+        "Save"
+      ]
+    },
+    {
+      "name": "groupSettings",
+      "path": "/groups/league/:id/settings",
+      "title": "Group settings",
+      "tabs": [],
+      "settings": [
+        "Loading…",
+        "Only a current administrator can change these settings.",
+        "… Details",
+        "Name",
+        "Save name",
+        "Time frame",
+        "Editing this reference time frame does not move scheduled games.",
+        "Retry settings",
+        "Photo",
+        "JPEG, PNG or WebP, up to 10 MB.",
+        "Save photo",
+        "Cancel",
+        "Previous",
+        "Next",
+        "Both the first and last day are included.",
+        "Use this range",
+        "Location not set",
+        "Add a city",
+        "Umpire Management",
+        "Enable umpire management",
+        "Manage Umpire Types",
+        "Manage Umpire Levels",
+        "Set Season Requirements",
+        "Manage Umpires",
+        "Umpire schedule",
+        "Manage Umpire Game Notes",
+        "Enable Team Credits",
+        "Allow umpires to credit teams that they are a member of.",
+        "Game proposals",
+        "at",
+        "Open game proposal",
+        "Delete declined entry",
+        "Retry game proposals",
+        "Propose game change",
+        "Withdraw … from game",
+        "Withdraw",
+        "now? The game stays on every schedule as canceled due to withdrawal. Existing scores, events and history stay preserved.",
+        "Confirm withdrawal",
+        "Keep game",
+        "Invitations waiting",
+        "Invited …, not joined yet…",
+        "Resend",
+        "Retry people",
+        "… management",
+        "Managed by",
+        "Invite team administrator",
+        "Add Person to …",
+        "Create Invite Link",
+        "Parent Organizations",
+        "Leave …",
+        "Participating teams",
+        "End participation for …",
+        "Leave season …",
+        "Season Participations",
+        "Retry pictures",
+        "Your photo is selected.",
+        "Add Photo",
+        "Use initials",
+        "Initials selected.",
+        "Manage Players",
+        "No players on the roster yet.",
+        "Remove",
+        "League",
+        "Season"
+      ]
+    },
+    {
+      "name": "home",
+      "path": "/",
+      "title": "Your Home",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "join",
+      "path": "/i/:code",
+      "title": "Join",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "league",
+      "path": "/leagues/:leagueId",
+      "title": "League",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "leagueUmpires",
+      "path": "/groups/league/:id/umpires",
+      "title": "League umpires",
+      "tabs": [],
+      "settings": [
+        "Manage Umpires",
+        "Search affiliated people",
+        "Retry search",
+        "Select rows to change several certifications together. Shift-click to select a range; Command/Control-click to select multiple rows.",
+        "Umpire",
+        "Select …",
+        "Revoke",
+        "Save",
+        "Reload saved settings",
+        "Discard unsaved changes and reload saved settings?",
+        "Save changes before opening this profile?",
+        "Revoke …'s umpire role? Future assignments will be removed when you save.",
+        "Cancel"
+      ]
+    },
+    {
+      "name": "nodeAdministration",
+      "path": "/node",
+      "title": "Node administration",
+      "tabs": [],
+      "settings": [
+        "Revoke",
+        "Add",
+        "This is the final active node administrator.",
+        "This account is suspended.",
+        "Retry accounts",
+        "Node administration",
+        "Account emails",
+        "Find an account",
+        "Name or email",
+        "Search results",
+        "No accounts match.",
+        "Looking for accounts…",
+        "Node access",
+        "Revoke node access for",
+        "They will no longer manage the node. Their account, group memberships and game history remain.",
+        "Cancel",
+        "Scoreboard settings",
+        "Loading the node's settings…",
+        "Retry",
+        "Where the scoreboard sits over video: top, left and height are percentages of the video, from its top-left corner. The height is the full board&apos;s; its width follows the team names. It shows for games starting on or after the date, in UTC.",
+        "Four-angle portrait",
+        "Radar matching",
+        "Match recorded speeds to the scorekeeper’s pitch entry.",
+        "Highlights",
+        "Where each highlight starts in the video, in seconds.",
+        "Rewind length",
+        "Saved.",
+        "Save",
+        "Reset to defaults",
+        "Use",
+        "Ends three hours after the start.",
+        "Choose date",
+        "Previous",
+        "Next",
+        "Year",
+        "Enter a year from 1900 to 9999.",
+        "Use date",
+        "Choose time",
+        "Hour",
+        "Minute",
+        "Period",
+        "Use time",
+        "Choose time zone",
+        "Find time zone",
+        "City or time zone",
+        "Looking up city…",
+        "Retry city search",
+        "No matching cities or time zones"
+      ]
+    },
+    {
+      "name": "notification",
+      "path": "/notifications/:id",
+      "title": "Notifications",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "notifications",
+      "path": "/notifications",
+      "title": "Notifications",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "oauthApprove",
+      "path": "/oauth/approve/:uid",
+      "title": "Oauth approve",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "oauthNative",
+      "path": "/oauth/native-approval/:handle",
+      "title": "Oauth native",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "person",
+      "path": "/leagues/:id/people/:userId",
+      "title": "Person",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "player",
+      "path": "/players/:userId",
+      "title": "Player",
+      "tabs": [
+        {
+          "param": "tab",
+          "id": "videos",
+          "label": "Videos",
+          "path": "/players/:userId"
+        },
+        {
+          "param": "tab",
+          "id": "stats",
+          "label": "Stats",
+          "path": "/players/:userId?tab=stats"
+        },
+        {
+          "param": "tab",
+          "id": "walkup",
+          "label": "Walk-up",
+          "path": "/players/:userId"
+        },
+        {
+          "param": "tab",
+          "id": "teams",
+          "label": "Teams",
+          "path": "/players/:userId?tab=teams"
+        }
+      ],
+      "settings": [
+        "Right",
+        "Left",
+        "Switch",
+        "This player is not on this team’s roster.",
+        "Cannot load this player’s settings.",
+        "Loading…",
+        "Cannot save these settings.",
+        "First name",
+        "Last name",
+        "Jersey number",
+        "Positions",
+        "Bats",
+        "Throws",
+        "Saved.",
+        "Save",
+        "Cannot load this player’s walk-up song.",
+        "Cannot remove this walk-up song.",
+        "No walk-up song yet",
+        "Plays %s",
+        "Apple Music",
+        "A file on the phone",
+        "Set walk-up songs in the TeamStation app on iPhone or Android.",
+        "Set",
+        "Change",
+        "Not on this phone",
+        "Stop",
+        "Preview",
+        "Tap again to remove",
+        "Remove"
+      ]
+    },
+    {
+      "name": "promoteExternal",
+      "path": "/groups/team/:id/invite-administrator",
+      "title": "Promote external",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "schedule",
+      "path": "/schedule",
+      "title": "Schedule",
+      "tabs": [
+        {
+          "param": "when",
+          "id": "upcoming",
+          "label": "Upcoming",
+          "path": "/schedule"
+        },
+        {
+          "param": "when",
+          "id": "past",
+          "label": "Past",
+          "path": "/schedule?when=past"
+        },
+        {
+          "param": "when",
+          "id": "all",
+          "label": "All",
+          "path": "/schedule?when=all"
+        }
+      ],
+      "settings": []
+    },
+    {
+      "name": "schedulePreview",
+      "path": "/groups/league/:leagueId/scheduler/previews/:previewId",
+      "title": "Schedule preview",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "scheduleSeason",
+      "path": "/groups/league/:leagueId/scheduler/seasons/:seasonId",
+      "title": "Schedule season",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "scoreGame",
+      "path": "/games/:gameId/score",
+      "title": "Score game",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "scoreOptions",
+      "path": "/games/:gameId/score-game",
+      "title": "Score Game",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "scoreboardOverride",
+      "path": "/games/:gameId/scoreboard-override",
+      "title": "Override Scoreboard",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "season",
+      "path": "/seasons/:seasonId",
+      "title": "Season",
+      "tabs": [
+        {
+          "param": "tab",
+          "id": "standings",
+          "label": "Standings",
+          "path": "/seasons/:seasonId?tab=standings"
+        },
+        {
+          "param": "tab",
+          "id": "schedule",
+          "label": "Schedule",
+          "path": "/seasons/:seasonId?tab=schedule"
+        },
+        {
+          "param": "tab",
+          "id": "stats",
+          "label": "Stats",
+          "path": "/seasons/:seasonId?tab=stats"
+        },
+        {
+          "param": "tab",
+          "id": "videos",
+          "label": "Videos",
+          "path": "/seasons/:seasonId?tab=videos"
+        },
+        {
+          "param": "tab",
+          "id": "teams",
+          "label": "Teams",
+          "path": "/seasons/:seasonId?tab=teams"
+        },
+        {
+          "param": "tab",
+          "id": "people",
+          "label": "People",
+          "path": "/seasons/:seasonId?tab=people"
+        },
+        {
+          "param": "when",
+          "id": "past",
+          "label": "Past",
+          "path": "/seasons/:seasonId"
+        },
+        {
+          "param": "when",
+          "id": "upcoming",
+          "label": "Upcoming",
+          "path": "/seasons/:seasonId?when=upcoming"
+        },
+        {
+          "param": "when",
+          "id": "all",
+          "label": "All",
+          "path": "/seasons/:seasonId?when=all"
+        }
+      ],
+      "settings": []
+    },
+    {
+      "name": "signIn",
+      "path": "/sign-in",
+      "title": "Sign in",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "signInLink",
+      "path": "/signin/:token",
+      "title": "Sign in link",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "team",
+      "path": "/teams/:teamId",
+      "title": "Team",
+      "tabs": [
+        {
+          "param": "tab",
+          "id": "videos",
+          "label": "Videos",
+          "path": "/teams/:teamId"
+        },
+        {
+          "param": "tab",
+          "id": "schedule",
+          "label": "Schedule",
+          "path": "/teams/:teamId?tab=schedule"
+        },
+        {
+          "param": "tab",
+          "id": "team",
+          "label": "Team",
+          "path": "/teams/:teamId?tab=team"
+        },
+        {
+          "param": "tab",
+          "id": "stats",
+          "label": "Stats",
+          "path": "/teams/:teamId?tab=stats"
+        }
+      ],
+      "settings": []
+    },
+    {
+      "name": "umpireLevels",
+      "path": "/groups/league/:id/umpire-levels",
+      "title": "Umpire levels",
+      "tabs": [],
+      "settings": [
+        "… name",
+        "ie. Jersey Color, Venue Contact",
+        "ie. Plate, Field, 1st, 2nd, 3rd",
+        "ie. Majors, Minors, AA, AAA",
+        "Add …",
+        "Remove",
+        "Removing notes type “…” permanently clears its notes from every game.",
+        "Removing … “…” clears its season requirements, certifications, game assignments and their credits.",
+        "Cancel"
+      ]
+    },
+    {
+      "name": "umpireNoteTypes",
+      "path": "/groups/league/:id/umpire-note-types",
+      "title": "Umpire note types",
+      "tabs": [],
+      "settings": [
+        "… name",
+        "ie. Jersey Color, Venue Contact",
+        "ie. Plate, Field, 1st, 2nd, 3rd",
+        "ie. Majors, Minors, AA, AAA",
+        "Add …",
+        "Remove",
+        "Removing notes type “…” permanently clears its notes from every game.",
+        "Removing … “…” clears its season requirements, certifications, game assignments and their credits.",
+        "Cancel"
+      ]
+    },
+    {
+      "name": "umpireRequirementEdit",
+      "path": "/groups/league/:id/umpire-requirements/edit?seasons=:seasonIds",
+      "title": "Umpire requirement edit",
+      "tabs": [],
+      "settings": [
+        "Select seasons to apply umpire needs.",
+        "Required umpire level",
+        "Create an umpire level and type first.",
+        "Apply umpire requirements to the below seasons",
+        "No requirements",
+        "…: … required, … optional",
+        "Select …",
+        "Next",
+        "Done"
+      ]
+    },
+    {
+      "name": "umpireRequirements",
+      "path": "/groups/league/:id/umpire-requirements",
+      "title": "Umpire requirements",
+      "tabs": [],
+      "settings": [
+        "Select seasons to apply umpire needs.",
+        "Required umpire level",
+        "Create an umpire level and type first.",
+        "Apply umpire requirements to the below seasons",
+        "No requirements",
+        "…: … required, … optional",
+        "Select …",
+        "Next",
+        "Done"
+      ]
+    },
+    {
+      "name": "umpireSchedule",
+      "path": "/umpires/:id",
+      "title": "Umpire schedule",
+      "tabs": [
+        {
+          "param": "pill",
+          "id": "schedule",
+          "label": "Schedule",
+          "path": "/umpires/:id?pill=schedule"
+        },
+        {
+          "param": "pill",
+          "id": "leaderboard",
+          "label": "Leaderboard",
+          "path": "/umpires/:id?pill=leaderboard"
+        }
+      ],
+      "settings": []
+    },
+    {
+      "name": "umpireTypes",
+      "path": "/groups/league/:id/umpire-types",
+      "title": "Umpire types",
+      "tabs": [],
+      "settings": [
+        "… name",
+        "ie. Jersey Color, Venue Contact",
+        "ie. Plate, Field, 1st, 2nd, 3rd",
+        "ie. Majors, Minors, AA, AAA",
+        "Add …",
+        "Remove",
+        "Removing notes type “…” permanently clears its notes from every game.",
+        "Removing … “…” clears its season requirements, certifications, game assignments and their credits.",
+        "Cancel"
+      ]
+    },
+    {
+      "name": "venue",
+      "path": "/venues/:venueId",
+      "title": "Venue",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "venueField",
+      "path": "/venues/:venueId/fields/:fieldId",
+      "title": "Venue field",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "venuePlace",
+      "path": "/venues/place/:placeId",
+      "title": "Venue place",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "videos",
+      "path": "/videos?when=upcoming",
+      "title": "Videos",
+      "tabs": [
+        {
+          "param": "when",
+          "id": "upcoming",
+          "label": "Upcoming",
+          "path": "/videos?when=upcoming"
+        },
+        {
+          "param": "when",
+          "id": "past",
+          "label": "Past",
+          "path": "/videos"
+        },
+        {
+          "param": "when",
+          "id": "all",
+          "label": "All",
+          "path": "/videos?when=all"
+        }
+      ],
+      "settings": []
+    }
+  ]
+}
