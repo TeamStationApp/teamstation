@@ -33,7 +33,7 @@
     "android": "react-native run-android",
     "audit-videos": "node -r sucrase/register src/server/dev/auditVideos.ts",
     "backfill-linescore": "node -r sucrase/register src/server/dev/backfillLinescore.ts",
-    "build": "tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures lib/server/location && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/ && cp src/server/location/placesCatalog.json.gz lib/server/location/",
+    "build": "tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures lib/server/location lib/server/tess && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/ && cp src/server/location/placesCatalog.json.gz lib/server/location/ && cp src/server/tess/sitemap.generated.json lib/server/tess/",
     "build.field": "TS_FIELD_PREVIEW=1 node src/build.mjs",
     "build.web": "node src/build.mjs",
     "camera-sweep": "node -r sucrase/register src/server/dev/cameraSweep.ts",
