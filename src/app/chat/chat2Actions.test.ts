@@ -4290,9 +4290,11 @@ describe('chat native adapter compatibility', function () {
     actual.shot = async () => {}
     actual.device.swipe = async () => {}
     actual.device.assertVisible = async () => {}
+    const observations: Array<Record<string, unknown>> = []
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       group: 'conversation',
+      observations,
       f: {
         messages: { target: { id: 'target', body: 'Duplicate pinned body' } }
       }
@@ -4312,6 +4314,59 @@ describe('chat native adapter compatibility', function () {
     }
     await scenario.E6()
     expect(calls).deep.equals(['chat-pinned-summary', 'chat-pin-target'])
+    expect(observations[0]).deep.equals({ seededPersonalPinsRestored: [] })
+  })
+
+  it('restores a removed seeded personal pin through the API before E6 reads its pins', async () => {
+    const actual = ui([], 'web-wide')
+    actual.id = async () => {}
+    actual.present = async () => {}
+    actual.shot = async () => {}
+    actual.device.swipe = async () => {}
+    actual.device.assertVisible = async () => {}
+    const observations: Array<Record<string, unknown>> = []
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      group: 'conversation',
+      observations,
+      f: {
+        messages: {
+          target: { id: 'target', body: 'Pinned target' },
+          long: { id: 'long', body: 'Long pinned body' }
+        }
+      }
+    }) as Scenarios
+    const order: string[] = []
+    scenario.openGroup = async () => {
+      order.push('open')
+    }
+    scenario.anchor = async () => {}
+    scenario.readable = async () => {}
+    const pins = [{ messageId: 'target' }]
+    const client = {
+      chatPins: async () => pins.map(pin => ({ ...pin })),
+      pinChatMessage: async (group: string, id: string, pinned: boolean) => {
+        order.push('pin ' + group + ' ' + id + ' ' + String(pinned))
+        pins.push({ messageId: id })
+      }
+    }
+    scenario.client = async () =>
+      client as unknown as Awaited<ReturnType<Scenarios['client']>>
+    scenario.check = async (name, run) => {
+      if (
+        name ===
+        'E6 personal floating pins, verified clear target and same-user state'
+      )
+        await run()
+    }
+    await scenario.E6()
+    expect(order.slice(0, 2)).deep.equals([
+      'pin conversation long true',
+      'open'
+    ])
+    expect(observations[0]).deep.equals({
+      seededPersonalPinsRestored: ['long']
+    })
   })
   function olderReader(mode = 'valid'): {
     scenario: Scenarios
