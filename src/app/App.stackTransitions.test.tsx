@@ -448,6 +448,10 @@ describe('stack transitions in the actual app', () => {
       expect(scenes().map(scene => scene.key)).deep.equals(['fieldPreview'])
       expect(navigator().dataset.swipeBack).equals('false')
       expect(document.querySelector('[data-chrome]')).equals(null)
+      // Leaving it goes Home, still one scene.
+      await press('Open field menu')
+      await press('Exit field')
+      expect(scenes()).has.length(1)
     } finally {
       await act(async () => {
         root.unmount()
