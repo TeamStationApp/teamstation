@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   AppState,
   Image,
+  Keyboard,
   Platform,
   Text,
   useWindowDimensions,
@@ -98,6 +99,7 @@ import {
 import {
   CHAT_WORKSPACE_KEY,
   inChatWorkspace,
+  presentationOf,
   screenIdentity
 } from './navigation/screenIdentity'
 import { seasonParticipantDestination } from './navigation/seasonParticipant'
@@ -118,6 +120,7 @@ import { stacksAfterTabPress } from './navigation/tabPress'
 import {
   backFromScoringPlayer,
   currentRoute,
+  deliveringRoute,
   dropRouteSuffix,
   finishChatChild,
   popRoute,
@@ -205,7 +208,7 @@ import {
   usePhoneOffline
 } from './sync/useOffline'
 import { TessDivider } from './tess/TessDivider'
-import { useTessWide, useTessWidth } from './tess/tessLayout'
+import { usePaneAtLeast, useTessWide, useTessWidth } from './tess/tessLayout'
 import { TessOverlayHost, TessOverlayProvider } from './tess/TessOverlay'
 import { TessPanel } from './tess/TessPanel'
 import type { TessScreen } from './tess/tessTypes'
@@ -221,6 +224,7 @@ import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
 import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
 import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
+import { useUmpireLeaveGuard } from './umpires/useUmpireLeaveGuard'
 import { DjGameScreen } from './walkup/DjGameScreen'
 import { resolveSong } from './walkup/resolveSong'
 import walkUpMusic from './walkup/walkUpMusic'
@@ -441,8 +445,6 @@ function Shell(props: AppProps): React.ReactElement {
   // destinations float over the content, above it they sit in the header and
   // there is no sidebar at all.
   const isWide = useBreakpoint() !== 'phone'
-  // Wide enough for the chat list and a chat side by side (`ChatWorkspace`).
-  const chatWide = useWindowDimensions().width >= CHAT_WIDE_WIDTH
   // Measured rather than repeated. The content's top padding and the pegged
   // player both have to clear the header, and a second copy of its height is a
   // second thing to forget.
@@ -644,6 +646,16 @@ function Shell(props: AppProps): React.ReactElement {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const settingsVisitId = useRef(0)
   const [settingsVisit, setSettingsVisit] = useState(0)
+  /**
+   * The scene a settings form was last asked to give fresh (a save, people
+   * added): it reloads as it lands, however it gets there. Other visits —
+   * every address move makes one — leave a screen kept beneath as it was.
+   */
+  const freshScene = useRef<string | undefined>(undefined)
+  const freshSettings = (sceneKey?: string): void => {
+    freshScene.current = sceneKey
+    setSettingsVisit(++settingsVisitId.current)
+  }
   const scoringVisit = useRef<
     | (ScoringPlayerOrigin & {
         actor?: string | number
@@ -672,40 +684,12 @@ function Shell(props: AppProps): React.ReactElement {
     []
   )
   const scoringLeave = useRef<(() => Promise<boolean>) | undefined>(undefined)
-  const umpireLeave = useRef<(() => Promise<boolean>) | undefined>(undefined)
-  const umpireLeaveApproved = useRef(false)
-  const registerUmpireLeave = useCallback((check: () => Promise<boolean>) => {
-    umpireLeave.current = check
-    return () => {
-      if (umpireLeave.current === check) umpireLeave.current = undefined
-    }
-  }, [])
-  const checkUmpireLeave = useCallback(
-    async () => umpireLeave.current == null || (await umpireLeave.current()),
-    []
-  )
-  const guardUmpireLeave = useCallback(
-    (move: () => void, rejected?: () => void): boolean => {
-      const check = umpireLeave.current
-      if (check == null || umpireLeaveApproved.current) return false
-      check()
-        .then(accepted => {
-          if (!accepted || umpireLeave.current !== check) {
-            rejected?.()
-            return
-          }
-          umpireLeaveApproved.current = true
-          try {
-            move()
-          } finally {
-            umpireLeaveApproved.current = false
-          }
-        })
-        .catch(() => rejected?.())
-      return true
-    },
-    []
-  )
+  const {
+    register: registerUmpireLeave,
+    check: checkUmpireLeave,
+    pending: popPending,
+    guard: guardUmpireLeave
+  } = useUmpireLeaveGuard()
   const scoringRefresh = useRef<ScoringSettingsRefresh | undefined>(undefined)
   const registerScoringLeave = useCallback((check: () => Promise<boolean>) => {
     scoringLeave.current = check
@@ -1178,6 +1162,8 @@ function Shell(props: AppProps): React.ReactElement {
     // A remembered chat origin already contains the resolved season frame.
     if (chatHistory.get(scoringOriginHistory())?.path === routePath(route))
       return
+    // A history move onto a season kept in the stack: nothing to resolve.
+    if (stacks[tabOf(route)].some(heldSeason(route.seasonId))) return
     let live = true
     resolvingLink.current = true
     const find = async (): Promise<void> => {
@@ -1207,6 +1193,72 @@ function Shell(props: AppProps): React.ReactElement {
   // One scorer per person and game, whether on top or kept beneath a child.
   const scoreKey = (gameId: string): string =>
     `score:${signedInAs ?? 'local'}:${gameId}`
+  // DJ Game as an iPhone draws it, its own screen; elsewhere its address
+  // shows the game.
+  const djScreen = top?.name === 'djGame' && walkUpMusic.djSupported
+  // The screens that take the whole window: the field preview, scoring,
+  // coaching and replay, which hide the header too.
+  const immersiveField = props.fieldPreview === true || isImmersive(top)
+  /**
+   * Tess, the assistant, for whoever is signed in where the server offers
+   * her. Her button opens a chat that covers the app on a narrow window and
+   * sits in a column beside it on a wide one.
+   *
+   * Not beside or over the screens that take the whole window — those above,
+   * DJ Game on an iPhone and the scoreboard override — on either width:
+   * they keep the window they read, and scoring keeps the browser's Back for
+   * its own save-before-leaving. Whether the chat is open is kept, so it is
+   * back when the person leaves.
+   */
+  const health = useCallback(async () => await client.health(), [client])
+  const tessAvailable = useTessAvailable(health, signedInAs)
+  const [tessOpen, setTessOpen] = useState(false)
+  useEffect(() => {
+    if (signedInAs == null) setTessOpen(false)
+  }, [signedInAs])
+  const tessSuppressed =
+    immersiveField || djScreen || top?.name === 'scoreboardOverride'
+  const tessWide = useTessWide()
+  const onboarded =
+    session?.user.onboarding == null ||
+    session.user.onboarding.step === 'complete'
+  const tessShown =
+    tessAvailable &&
+    tessOpen &&
+    !tessSuppressed &&
+    onboarded &&
+    joining == null &&
+    route.name !== 'oauthApprove' &&
+    route.name !== 'oauthNative'
+  const closeTess = useCallback(() => {
+    setTessOpen(false)
+  }, [])
+  // Her chat over the whole of a narrow window: Back closes it, and the
+  // navigator takes no back gesture beneath it.
+  const tessLayer = tessShown && !tessWide
+  useTessBack(tessLayer, closeTess)
+  // What the pane shows, for Tess on a wide screen, read when a message is
+  // sent: its address and title, and the steps of the tab that led there.
+  // A team opened by its address has no name until its page loads one.
+  const teamNames = useRef(new Map<string, string>())
+  const paneScreen = useRef<() => TessScreen | undefined>(() => undefined)
+  paneScreen.current = () => {
+    if (!tessWide) return undefined
+    const describe = (frame: Pushed | undefined): TessScreen['stack'][0] => ({
+      path: routePath(routeOf(tab, frame, filters)),
+      title: screenTitle(tab, frame, teamNames.current)
+    })
+    return {
+      ...describe(top),
+      stack: top == null ? [] : [undefined, ...stack.slice(0, -1)].map(describe)
+    }
+  }
+  const tessScreen = useCallback(() => paneScreen.current(), [])
+  const tessColumn = tessShown && tessWide
+  // Room for the chat list and a chat side by side, as `ChatWorkspace` lays
+  // itself out: the pane, less Tess's column when it is open beside it.
+  const chatWide = usePaneAtLeast(CHAT_WIDE_WIDTH, tessColumn)
+
   // The scene a frame is drawn as: the same while that screen writes its own
   // frame (a pill, a filter), another for any other screen.
   const sceneKeyOf = (index: number): string => {
@@ -1221,6 +1273,48 @@ function Shell(props: AppProps): React.ReactElement {
   const topKey = sceneKeyOf(stack.length - 1)
   const navigationRef = useRef({ tab, top, topKey })
   navigationRef.current = { tab, top, topKey }
+  /** The last frame on top that draws the header (see `chromeFrame`). */
+  const chromeTop = useRef<{ frame: Pushed | undefined } | undefined>(undefined)
+  /**
+   * The settings visit each scene was drawn for. A settings screen is keyed
+   * by it, so a new visit gives the screen on show a fresh form, as before.
+   * A scene kept beneath keeps the visit it had: a Back that lands on it
+   * (from Add People, say) moves the visit as it lands, and must reveal the
+   * screen as it stood rather than a fresh load.
+   */
+  const sceneVisits = useRef(
+    new Map<string, { drawn: number; landed: number }>()
+  )
+  const committedTopKey = useRef<string | undefined>(undefined)
+  useLayoutEffect(() => {
+    committedTopKey.current = topKey
+  })
+  const settingsVisitOf = (key: string): number => {
+    const held = sceneVisits.current.get(key)
+    if (held == null) {
+      sceneVisits.current.set(key, {
+        drawn: settingsVisit,
+        landed: settingsVisit
+      })
+      return settingsVisit
+    }
+    if (key !== topKey) return held.drawn
+    // Landing on top: the visit it lands with is not a new one for it,
+    // unless it was asked for to make the form fresh (a save, people added).
+    if (committedTopKey.current !== key) {
+      if (key === freshScene.current) {
+        freshScene.current = undefined
+        held.drawn = settingsVisit
+      }
+      held.landed = settingsVisit
+    }
+    // Moved since, while it stayed on top: a fresh form.
+    else if (settingsVisit !== held.landed) {
+      held.drawn = settingsVisit
+      held.landed = settingsVisit
+    }
+    return held.drawn
+  }
   // Which way the next stack change goes, for the transition layer: set by
   // each navigation path just before it changes the stack, read by the
   // navigator in the render that shows the change, and cleared after that
@@ -1229,6 +1323,8 @@ function Shell(props: AppProps): React.ReactElement {
   const intend = useCallback(
     (direction: StackIntent['direction'], drawn = false): void => {
       navigationIntent.current = { direction, drawn }
+      // The screen left stays mounted, so its field would keep the keyboard.
+      if (direction !== 'none') Keyboard.dismiss()
     },
     []
   )
@@ -1243,6 +1339,7 @@ function Shell(props: AppProps): React.ReactElement {
     props.fieldPreview !== true &&
     stack.length > 0 &&
     !immersiveTop &&
+    presentationOf(top) === 'push' &&
     backOverride == null &&
     // One screen over itself (the chat workspace): nothing else to reveal.
     sceneKeyOf(stack.length - 2) !== topKey
@@ -1355,17 +1452,26 @@ function Shell(props: AppProps): React.ReactElement {
   // history, so it may only when the history's previous step is the frame
   // beneath — not after a pill change, which is a step of its own, nor after
   // a tab switch. After the address effect, so it reads this move's history.
+  // The same, read again as a gesture comes: the state reaches the navigator
+  // a render later, and the native callback a bridge hop after that.
+  const backPopsNow = useRef<() => boolean>(() => false)
+  backPopsNow.current = () => {
+    const previous = previousRoute()
+    return (
+      swipeBack &&
+      systemBackPops(
+        previous == null ? undefined : routePath(previous),
+        routePath(routeOf(tab, stack.at(-2), filters))
+      )
+    )
+  }
+  const predictiveBackNow = useCallback(() => backPopsNow.current(), [])
   const [predictiveBack, setPredictiveBack] = useState(false)
   useEffect(() => {
-    const previous = previousRoute()
-    setPredictiveBack(
-      swipeBack &&
-        systemBackPops(
-          previous == null ? undefined : routePath(previous),
-          routePath(routeOf(tab, stack.at(-2), filters))
-        )
-    )
-  }, [stack, tab, filters, swipeBack])
+    setPredictiveBack(backPopsNow.current())
+    // Whatever the address effect writes the history on, so this reads the
+    // history it has just written.
+  }, [joining, session, tab, top, stack, filters, route.name, swipeBack])
 
   const goToRoute = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
@@ -1373,14 +1479,16 @@ function Shell(props: AppProps): React.ReactElement {
       // the scorer's exit has already said which way it goes.
       if (navigationIntent.current == null) intend('none')
       const said = navigationIntent.current
+      // Refused: the direction said for this move is not the next one's.
+      const refused = (): void => {
+        navigationIntent.current = undefined
+        onHandled?.(false)
+      }
       if (
-        guardUmpireLeave(
-          () => {
-            navigationIntent.current = said
-            goToRoute(route, onHandled)
-          },
-          () => onHandled?.(false)
-        )
+        guardUmpireLeave(() => {
+          navigationIntent.current = said
+          goToRoute(route, onHandled)
+        }, refused)
       )
         return
       let visit = scoringVisit.current
@@ -1395,13 +1503,13 @@ function Shell(props: AppProps): React.ReactElement {
       ) {
         const check = scoringLeave.current
         if (check == null) {
-          onHandled?.(false)
+          refused()
           return
         }
         check()
           .then(accepted => {
             if (!accepted || scoringVisit.current !== visit) {
-              onHandled?.(false)
+              refused()
               return
             }
             clearScoringVisit(visit)
@@ -1409,7 +1517,7 @@ function Shell(props: AppProps): React.ReactElement {
             goToRoute(route)
             onHandled?.(true)
           })
-          .catch(() => onHandled?.(false))
+          .catch(refused)
         return
       }
       setSettingsVisit(++settingsVisitId.current)
@@ -1461,6 +1569,20 @@ function Shell(props: AppProps): React.ReactElement {
             [next]: [...visit.frames, { ...visit.child, ...route }]
           }
         const held = current[next]
+        // A history move onto a season already here keeps it, with the pill
+        // the address names: `stackFor` has no answer for a season.
+        if (route.name === 'season') {
+          const at = held.findLastIndex(heldSeason(route.seasonId))
+          const frame = held[at] as
+            Extract<Pushed, { name: 'season' }> | undefined
+          if (frame != null) {
+            const { tab: pill, when } = route
+            return {
+              ...current,
+              [next]: [...held.slice(0, at), { ...frame, tab: pill, when }]
+            }
+          }
+        }
         // Browser Back from a team management flow returns to its settings
         // frame, retaining the team and its selected section underneath.
         const at =
@@ -1512,76 +1634,16 @@ function Shell(props: AppProps): React.ReactElement {
     discardChatHistoryFrom
   )
 
-  // DJ Game as an iPhone draws it, its own screen; elsewhere its address
-  // shows the game.
-  const djScreen = top?.name === 'djGame' && walkUpMusic.djSupported
-  // The screens that take the whole window: the field preview, scoring,
-  // coaching and replay, which hide the header too.
-  const immersiveField = props.fieldPreview === true || isImmersive(top)
-  /**
-   * Tess, the assistant, for whoever is signed in where the server offers
-   * her. Her button opens a chat that covers the app on a narrow window and
-   * sits in a column beside it on a wide one.
-   *
-   * Not beside or over the screens that take the whole window — those above,
-   * DJ Game on an iPhone and the scoreboard override — on either width:
-   * they keep the window they read, and scoring keeps the browser's Back for
-   * its own save-before-leaving. Whether the chat is open is kept, so it is
-   * back when the person leaves.
-   */
-  const health = useCallback(async () => await client.health(), [client])
-  const tessAvailable = useTessAvailable(health, signedInAs)
-  const [tessOpen, setTessOpen] = useState(false)
-  useEffect(() => {
-    if (signedInAs == null) setTessOpen(false)
-  }, [signedInAs])
-  const tessSuppressed =
-    immersiveField || djScreen || top?.name === 'scoreboardOverride'
-  const tessWide = useTessWide()
-  const onboarded =
-    session?.user.onboarding == null ||
-    session.user.onboarding.step === 'complete'
-  const tessShown =
-    tessAvailable &&
-    tessOpen &&
-    !tessSuppressed &&
-    onboarded &&
-    joining == null &&
-    route.name !== 'oauthApprove' &&
-    route.name !== 'oauthNative'
-  const closeTess = useCallback(() => {
-    setTessOpen(false)
-  }, [])
-  // Her chat over the whole of a narrow window: Back closes it, and the
-  // navigator takes no back gesture beneath it.
-  const tessLayer = tessShown && !tessWide
-  useTessBack(tessLayer, closeTess)
-  // What the pane shows, for Tess on a wide screen, read when a message is
-  // sent: its address and title, and the steps of the tab that led there.
-  // A team opened by its address has no name until its page loads one.
-  const teamNames = useRef(new Map<string, string>())
-  const paneScreen = useRef<() => TessScreen | undefined>(() => undefined)
-  paneScreen.current = () => {
-    if (!tessWide) return undefined
-    const describe = (frame: Pushed | undefined): TessScreen['stack'][0] => ({
-      path: routePath(routeOf(tab, frame, filters)),
-      title: screenTitle(tab, frame, teamNames.current)
-    })
-    return {
-      ...describe(top),
-      stack: top == null ? [] : [undefined, ...stack.slice(0, -1)].map(describe)
-    }
-  }
-  const tessScreen = useCallback(() => paneScreen.current(), [])
-  const tessColumn = tessShown && tessWide
-
   const captureChatLeave = useCallback(
-    (change: () => void): void => {
+    (change: () => void, once?: string): void => {
       if (!chatListNavigation.hasReader()) {
         change()
         return
       }
-      chatListNavigation.navigate(change).catch(reportNavigationError)
+      ;(once == null
+        ? chatListNavigation.navigate(change)
+        : chatListNavigation.navigateOnce(once, change)
+      ).catch(reportNavigationError)
     },
     [chatListNavigation]
   )
@@ -1612,6 +1674,7 @@ function Shell(props: AppProps): React.ReactElement {
       })
       return
     }
+    Keyboard.dismiss()
     captureChatLeave(() => {
       if (next === tab && stacks[tab].length > 0)
         dropRouteSuffix(
@@ -1655,7 +1718,7 @@ function Shell(props: AppProps): React.ReactElement {
     captureChatLeave(() => {
       intend('forward')
       setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
-    })
+    }, 'push')
   }
   const openGroup = useCallback(
     (group: GroupRef): void => {
@@ -1665,7 +1728,7 @@ function Shell(props: AppProps): React.ReactElement {
           ...current,
           [tab]: [...current[tab], { name: 'group', ...group }]
         }))
-      })
+      }, 'push')
     },
     [tab, captureChatLeave, intend]
   )
@@ -1711,6 +1774,8 @@ function Shell(props: AppProps): React.ReactElement {
     // history and this does nothing; on a phone the two are kept by hand, and
     // a chevron that left a step behind would make the next press of the
     // system Back button appear to do nothing.
+    // One pop at a time while the list's position is kept: the chat root's
+    // list, covered beneath a conversation, holds the reader.
     captureChatLeave(() => {
       const frames = stacks[tab].slice(0, -1)
       if (
@@ -1731,7 +1796,18 @@ function Shell(props: AppProps): React.ReactElement {
       } else popRoute()
       intend('back')
       setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
-    })
+    }, 'pop')
+  }
+  /**
+   * A drag back's pop, the edge pan's or Android's gesture. Android's Back
+   * reaches the shell through the gesture without `BackHandler`, so it is
+   * swallowed here as `BackHandler` swallows it while a Back or a link is
+   * still being handed to the shell: a pop in the middle of that would leave
+   * the address a step off the screen. The drag springs back.
+   */
+  const popFromDrag = (): void => {
+    if (deliveringRoute()) return
+    pop()
   }
 
   const openGame = (
@@ -1755,7 +1831,7 @@ function Shell(props: AppProps): React.ReactElement {
     if (correcting) inPlace.current = true
     const frame = stacks[tab].at(-1)
     if (frame?.name === 'player' && frame.tab !== next) {
-      if (next === 'settings') setSettingsVisit(++settingsVisitId.current)
+      if (next === 'settings') freshSettings()
       if (
         isScoringPlayerChild(routeOf(tab, frame, filters), scoringVisit.current)
       )
@@ -1924,9 +2000,10 @@ function Shell(props: AppProps): React.ReactElement {
         teamId: from.teamId,
         onTeam: from.onTeam
       }
+      intend('forward')
       setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
     },
-    [tab]
+    [tab, intend]
   )
   /** Somebody on a people list, as the level it was opened from sees them. */
   const openPerson = (
@@ -2285,7 +2362,7 @@ function Shell(props: AppProps): React.ReactElement {
           scoringApproved.current = false
           // Each Settings form gets a fresh player view, so an earlier
           // form cannot change its header after it has been replaced.
-          setSettingsVisit(++settingsVisitId.current)
+          freshSettings()
           const child: Extract<Pushed, { name: 'player' }> = {
             name: 'player',
             userId: String(userId),
@@ -2338,6 +2415,7 @@ function Shell(props: AppProps): React.ReactElement {
     // Its scene, not its frame object: a pill or filter written in place
     // leaves the same screen on top.
     const live = (): boolean => navigationRef.current.topKey === key
+    const sceneVisit = settingsVisitOf(key)
     const writeTop: typeof setStacks = update => {
       if (live()) setStacks(update)
     }
@@ -2471,7 +2549,7 @@ function Shell(props: AppProps): React.ReactElement {
           if (notice != null)
             setSuccessNotice({ id: Date.now(), message: notice })
           refreshRoles()
-          setSettingsVisit(++settingsVisitId.current)
+          freshSettings(sceneKeyOf(stack.length - 2))
           pop()
         }}
       />
@@ -2482,6 +2560,7 @@ function Shell(props: AppProps): React.ReactElement {
         teamId={top.id}
         onCreated={(name, another) => {
           setSuccessNotice({ id: Date.now(), message: `Created ${name}` })
+          freshSettings(sceneKeyOf(stack.length - 2))
           if (!another) pop()
         }}
       />
@@ -2492,6 +2571,7 @@ function Shell(props: AppProps): React.ReactElement {
         teamId={top.id}
         onAdded={message => {
           setSuccessNotice({ id: Date.now(), message })
+          freshSettings(sceneKeyOf(stack.length - 2))
           pop()
         }}
         onCancel={pop}
@@ -2570,7 +2650,7 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         id={top.id}
         onSaved={() => {
-          setSettingsVisit(++settingsVisitId.current)
+          freshSettings(sceneKeyOf(stack.length - 2))
           pop()
         }}
       />
@@ -2582,7 +2662,7 @@ function Shell(props: AppProps): React.ReactElement {
         id={top.id}
         onDone={() => {
           refreshRoles()
-          setSettingsVisit(++settingsVisitId.current)
+          freshSettings(sceneKeyOf(stack.length - 2))
           pop()
         }}
       />
@@ -2735,7 +2815,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'groupSettings' ? (
       <GroupSettingsScreen
-        key={`${top.kind}:${top.id}:${settingsVisit}`}
+        key={`${top.kind}:${top.id}:${sceneVisit}`}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
         onUmpires={name => {
@@ -3126,7 +3206,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'player' ? (
       <PlayerScreen
-        key={`${signedInAs ?? 'signed-out'}:${top.userId}:${top.onTeam ?? ''}:${visit == null ? '' : settingsVisit}`}
+        key={`${signedInAs ?? 'signed-out'}:${top.userId}:${top.onTeam ?? ''}:${visit == null ? '' : sceneVisit}`}
         client={client}
         onOpenChat={chatEngine == null ? undefined : openPersonChat}
         userId={top.userId}
@@ -3545,10 +3625,14 @@ function Shell(props: AppProps): React.ReactElement {
     ) : null
   }
 
-  // The header belongs to the last screen that draws one: while the scorer
-  // covers a game, the header sliding under it is still the game's.
+  // The header belongs to the last screen on top that draws one: while the
+  // scorer rises over a game, the game's; while a player's settings slide off
+  // back onto the scorer, the settings'.
+  if (!immersiveTop) chromeTop.current = { frame: top }
   const chromeDepth = immersiveTop ? stack.length - 1 : stack.length
-  const chromeFrame = stack[chromeDepth - 1]
+  const chromeFrame = immersiveTop
+    ? (chromeTop.current?.frame ?? stack[chromeDepth - 1])
+    : stack[chromeDepth - 1]
   const header = (
     <AppHeader
       apiBaseUrl={apiBaseUrl}
@@ -3699,7 +3783,7 @@ function Shell(props: AppProps): React.ReactElement {
       key,
       group: tab,
       depth: index + 1,
-      presentation: frame?.name === 'scoreGame' ? 'cover' : 'push',
+      presentation: presentationOf(frame),
       immersive: isImmersive(frame),
       node: renderFrame(frame, key)
     }
@@ -3745,16 +3829,22 @@ function Shell(props: AppProps): React.ReactElement {
                   <StackNavigator
                     top={topScene}
                     retained={retainedScene}
+                    // The field preview is one scene, with nothing beneath.
                     renderBelow={() =>
-                      stack.length > 0 ? sceneOf(stack.length - 2) : undefined
+                      props.fieldPreview !== true && stack.length > 0
+                        ? sceneOf(stack.length - 2)
+                        : undefined
                     }
                     chrome={chrome}
-                    onSwipeBack={swipeBack ? pop : undefined}
+                    onForget={key => sceneVisits.current.delete(key)}
+                    onSwipeBack={swipeBack ? popFromDrag : undefined}
                     intent={navigationIntent}
                     // Not under Tess's layer: there Back closes the chat
                     // (`useTessBack`), and must not drag away the screen it
                     // covers.
                     predictiveBack={predictiveBack && !tessLayer}
+                    predictiveBackNow={predictiveBackNow}
+                    popPending={popPending}
                     headerHeight={
                       headerHeight + (bannerShown ? bannerHeight : 0)
                     }
@@ -3872,6 +3962,11 @@ export function screenScopeOf(
  * on the line above: the two together read `TEAMSTATION / TeamStation`, which
  * tells you nothing twice.
  */
+/** Whether a frame is the season with this id. */
+function heldSeason(seasonId: string): (frame: Pushed) => boolean {
+  return frame => frame.name === 'season' && frame.season.id === seasonId
+}
+
 export /**
  * What a link opens on top of its tab.
  *

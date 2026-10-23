@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { Keyboard } from 'react-native'
 
 import {
   asPersonProfile,
@@ -226,6 +227,98 @@ describe('team settings browser history', () => {
       window.history.replaceState(null, '', '/')
     }
   }).timeout(15000)
+
+  it('shows team settings as it was left when Back comes from Add Person', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const detail = asGroupDetail({
+      nonMemberView: false,
+      group: {
+        kind: 'team',
+        id: 'canonical',
+        name: 'Demo Hawks',
+        imageUrl: null,
+        locality: null
+      },
+      parents: [],
+      children: [],
+      participatingSeasons: [],
+      competingTeams: [],
+      games: [],
+      staff: [],
+      canViewPrivate: false,
+      canManage: true
+    })
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Admin',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.hasNotifications = async () => false
+    proto.group = async () => detail
+    proto.gameProposals = async () => []
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    window.history.replaceState(null, '', '/groups/team/canonical/settings')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      const input = document.querySelector<HTMLInputElement>(
+        '[aria-label="Name"]'
+      )!
+      expect(input).not.equals(null)
+      // A name typed and not saved yet.
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, 'Wrens')
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      const add = [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+        .filter(node => node.closest('[data-scene-role="top"]') != null)
+        .find(
+          node => node.textContent?.startsWith('Add Person to Team') === true
+        )
+      expect(add).not.equals(undefined)
+      await act(async () => {
+        add!.click()
+      })
+      await settle()
+      expect(window.location.pathname).not.equals(
+        '/groups/team/canonical/settings'
+      )
+      await act(async () => {
+        window.history.back()
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+      await settle()
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      // The same screen, as it was left: not a fresh load.
+      const again = document.querySelector<HTMLInputElement>(
+        '[data-scene-role="top"] [aria-label="Name"]'
+      )
+      expect(again).equals(input)
+      expect(again!.value).equals('Wrens')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  }).timeout(15000)
 })
 
 describe("team settings' Create Player", () => {
@@ -303,7 +396,11 @@ describe("team settings' Create Player", () => {
       guardianOf: []
     })
     proto.hasNotifications = async () => false
-    proto.group = async () => detail
+    let reads = 0
+    proto.group = async () => {
+      reads++
+      return detail
+    }
     proto.gameProposals = async () => []
     proto.createRosterPlayer = async (teamId, body) => {
       created.push({ teamId, body })
@@ -315,10 +412,11 @@ describe("team settings' Create Player", () => {
       })
     }
     const press = async (label: string): Promise<void> => {
-      // A screen beneath stays drawn: a button named exactly so comes first.
+      // A screen beneath stays drawn, out of reach; of the rest, a button
+      // named exactly so comes first.
       const buttons = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
-      ]
+      ].filter(node => node.closest('[data-scene-role="covered"]') == null)
       const button =
         buttons.find(node => node.getAttribute('aria-label') === label) ??
         buttons.find(node => (node.textContent ?? '').startsWith(label))
@@ -339,7 +437,15 @@ describe("team settings' Create Player", () => {
       })
       await settle()
       expect(document.body.textContent).includes('Only a current administrator')
+      const dismiss = Keyboard.dismiss.bind(Keyboard)
+      let dismissed = 0
+      Keyboard.dismiss = () => {
+        dismissed++
+      }
       await press('Create Player')
+      Keyboard.dismiss = dismiss
+      // The screen left stays mounted: its field must not keep the keyboard.
+      expect(dismissed).greaterThan(0)
       expect(window.location.pathname).equals(
         '/groups/team/canonical/settings/create-player'
       )
@@ -353,8 +459,11 @@ describe("team settings' Create Player", () => {
         )!.set!.call(input, 'Walker')
         input.dispatchEvent(new window.Event('input', { bubbles: true }))
       })
+      const before = reads
       await press('Create Player')
       expect(created).has.length(1)
+      // Kept beneath the form: its list reads the new player again.
+      expect(reads).greaterThan(before)
       expect(window.location.pathname).equals('/groups/team/canonical/settings')
       expect(document.body.textContent).includes('Created Walker')
 
@@ -363,11 +472,57 @@ describe("team settings' Create Player", () => {
       expect(window.location.pathname).equals(
         '/groups/team/canonical/settings/add-player'
       )
+      // A sheet rising over the page: nothing to drag back.
+      expect(
+        document.querySelector<HTMLElement>('[data-swipe-back]')?.dataset
+          .swipeBack
+      ).equals('false')
       await press('Choose Corbin B')
+      const beforeAdd = reads
       await press('Add to Roster')
+      expect(reads).greaterThan(beforeAdd)
       expect(added).deep.equals([{ teamId: 'canonical', userId: 'usr_burnes' }])
       expect(window.location.pathname).equals('/groups/team/canonical/settings')
       expect(document.body.textContent).includes('Added Corbin B to the roster')
+      // A save that stays on the form: Back finds the list read again.
+      await press('Create Player')
+      const form = document.querySelector<HTMLInputElement>(
+        '[aria-label="First name"]'
+      )!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(form, 'Hank')
+        form.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      const beforeAnother = reads
+      await press('Create Player and Add Another')
+      expect(window.location.pathname).equals(
+        '/groups/team/canonical/settings/create-player'
+      )
+      await press('Back')
+      expect(reads).greaterThan(beforeAnother)
+      // And the browser's Back, which moves the address on its way there.
+      await press('Create Player')
+      const again = document.querySelector<HTMLInputElement>(
+        '[aria-label="First name"]'
+      )!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(again, 'Ivan')
+        again.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      await press('Create Player and Add Another')
+      const beforeBrowserBack = reads
+      await act(async () => {
+        window.history.back()
+      })
+      await settle()
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      expect(reads).greaterThan(beforeBrowserBack)
       // Cancel changes nothing.
       await press('Add Player')
       await press('Cancel')
@@ -710,6 +865,13 @@ describe('a season’s and a league’s People tab, however the page is opened',
     try {
       expect(document.body.textContent).includes('Set date range')
       const year = new Date().getFullYear()
+      // Season settings, kept beneath the date range it opened.
+      const kept = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-scene-role="covered"] [role="button"]'
+        )
+      ].find(node => node.textContent?.includes('Time frame') === true)
+      expect(kept).not.equals(undefined)
       await press(`Spring ${year}`)
       const save = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
@@ -734,6 +896,8 @@ describe('a season’s and a league’s People tab, however the page is opened',
       const row = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
       ].find(node => node.textContent?.includes('Time frame') === true)!
+      // Saved: the settings it lands on are read afresh, not the kept form.
+      expect(row).not.equals(kept)
       await act(async () => {
         row.click()
         await new Promise(resolve => setTimeout(resolve, 50))
