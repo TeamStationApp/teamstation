@@ -21,7 +21,7 @@ import {
 import { type Applied, applyAction } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { BASES } from '../field/fieldModel'
-import { advanceReel } from './dictatedReel'
+import { advanceReel, holdForLaterBeat } from './dictatedReel'
 import {
   closePlay,
   copyGame,
@@ -802,7 +802,9 @@ export function runnerReducer(
       past: state.past,
       checkpoints: state.checkpoints
     }
-    next.motions.find(motion => motion.id === event.id)!.complete = true
+    const done = next.motions.find(motion => motion.id === event.id)!
+    done.complete = true
+    holdForLaterBeat(next, done)
     if (command.purpose === 'approachFirst' && next.pendingPlay != null)
       next.pendingPlay.batterPoint = {
         ...command.waypoints[command.waypoints.length - 1]
