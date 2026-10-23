@@ -1450,6 +1450,73 @@ describe('a scoring session', function () {
       )
     })
 
+    it("puts back another device's stored run after a third out, as stored", async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      const runner = session.state.liveData.boxscore.teams.away.battingOrder[1]
+      const draft = overrideOf(session.state)
+      expect(
+        session.apply({
+          type: 'gameFlow',
+          kind: 'override',
+          ...draft,
+          batter: draft.batter ?? undefined,
+          pitcher: draft.pitcher ?? undefined,
+          outs: 2
+        }).problems
+      ).deep.equals([])
+      expect(
+        session.apply({
+          type: 'gameFlow',
+          kind: 'placeRunner',
+          runner,
+          base: '3B'
+        }).problems
+      ).deep.equals([])
+      session.apply(ball)
+      await session.flush()
+      // Undone here, while another device scores the catch for the third out.
+      session.undo()
+      const other = (await open(store)).session
+      const leftFielder = other.state.liveData.linescore.defense.LF!.id
+      const catchOut: ScoringAction[] = [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'fly_ball',
+          fielder: leftFielder
+        },
+        { type: 'result', eventType: 'field_out', outBy: 'catch' }
+      ]
+      for (const action of catchOut)
+        expect(other.apply(action).problems).deep.equals([])
+      await other.flush()
+      // An older build saved the runner scoring after that catch, as such
+      // builds did.
+      const run: ScoringAction = { type: 'runnerMovement', runner, to: 'home' }
+      const stored = [
+        ...[...store.plays.values()].map(row => row.play),
+        store.current
+      ]
+      for (const play of stored) {
+        const record = (
+          play as unknown as {
+            teamStation?: { actions: ScoringAction[] }
+          } | null
+        )?.teamStation
+        const at = record?.actions.findIndex(
+          action => action.type === 'result' && action.outBy === 'catch'
+        )
+        if (record != null && at != null && at >= 0)
+          record.actions.splice(at + 1, 0, run)
+      }
+      await coachSaves(store, swapLeadoff)
+      await session.flush()
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(session.actions).deep.includes(run)
+    })
+
     it('leaves a server action that had no time without one when it puts it back', async function () {
       const store = new LineupStore()
       const clock = new Clock()

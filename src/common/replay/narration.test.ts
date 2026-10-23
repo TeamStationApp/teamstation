@@ -18,6 +18,7 @@ import {
   game,
   single,
   strike,
+  strikeout,
   walk
 } from '../../test/scoringGames'
 import type { ScoringAction } from '../scoring/actions'
@@ -35,7 +36,7 @@ import {
   spoken,
   stepsWithStates
 } from './narration'
-import { replayTimelineOf } from './replayTimeline'
+import { type ReplayStep, replayTimelineOf } from './replayTimeline'
 
 /** What the announcer says for `actions` taken on `state`, as one step. */
 function say(state: GameState, ...actions: ScoringAction[]): Narration {
@@ -485,5 +486,49 @@ describe('replay narration helpers', function () {
     expect(fit([`${long}.`, `${long}.`])).equals(`${long}.`)
     expect(fit(['y'.repeat(300)])).length(MAX_NARRATION)
     expect(fit(['', 'One.', 'Two.'])).equals('One. Two.')
+  })
+})
+
+describe('a stored run after the third out', function () {
+  it('is narrated and rewound as the record holds it, and the next half follows', function () {
+    // Bases loaded and two out; the record scores the runner from third after
+    // the catch, as games scored before the third out was enforced do.
+    const start = strikeout(strikeout(walk(walk(walk(game())))))
+    const atBat = start.liveData.plays.allPlays.length
+    const steps: ReplayStep[] = [
+      {
+        key: `${atBat}-0`,
+        atBatIndex: atBat,
+        actionStart: 0,
+        kind: 'inPlay',
+        actions: [
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'popup',
+            fielder: F.LF
+          },
+          { type: 'result', eventType: 'field_out', outBy: 'catch' },
+          { type: 'runnerMovement', runner: 1, to: 'home' }
+        ]
+      },
+      {
+        key: `${atBat + 1}-0`,
+        atBatIndex: atBat + 1,
+        actionStart: 0,
+        kind: 'pitch',
+        actions: [ball]
+      }
+    ]
+    const walked = [
+      ...stepsWithStates({ start, steps, end: start, derived: 0 })
+    ]
+    expect(walked).length(2)
+    expect(walked[0].after.liveData.linescore.teams.away.runs).equals(
+      start.liveData.linescore.teams.away.runs + 1
+    )
+    const next = walked[1].after.liveData.linescore
+    expect(next.isTopInning).equals(false)
+    expect(next.balls).equals(1)
   })
 })

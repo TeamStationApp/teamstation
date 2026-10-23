@@ -81,14 +81,15 @@ function recordSeenLineup(next: ScoringSnapshot): void {
 function applyLogged(
   next: ScoringSnapshot,
   action: ScoringAction,
-  options: { requireCurrentSetup?: boolean } = {}
+  options: { requireCurrentSetup?: boolean; replay?: boolean } = {}
 ): Applied {
   const before = next.session
   // On a copy that shares the finished plays (`copyGame`): `applyAction`'s
   // own copy is of the whole game, a stall that grew with it.
   const applied = applyAction(copyGame(before), action, {
     inPlace: true,
-    requireCurrentSetup: options.requireCurrentSetup ?? true
+    requireCurrentSetup: options.requireCurrentSetup ?? true,
+    replay: options.replay === true
   })
   if (applied.problems.length > 0) throw new Refused(applied.problems)
   next.session = applied.state
@@ -116,7 +117,7 @@ function applyLogged(
 export function act(
   next: ScoringSnapshot,
   action: ScoringAction,
-  options: { requireCurrentSetup?: boolean } = {}
+  options: { requireCurrentSetup?: boolean; replay?: boolean } = {}
 ): Applied {
   if (next.readOnly === true)
     throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])

@@ -905,6 +905,9 @@ export class ScoringSession {
     this.adopt(fresh)
     // An action of this session's undone before the server's came after it.
     const replay = same < kept ? [...theirs, ...ours] : ours
+    // The server's actions are stored records, and apply as they were saved;
+    // only this session's own are newly authored.
+    const stored = same < kept ? theirs.length : 0
     const replayTimes = same < kept ? [...theirTimes, ...ourTimes] : ourTimes
     const replayPlaybackTimes =
       same < kept
@@ -927,7 +930,8 @@ export class ScoringSession {
       if (roster == null) continue
       const applied = applyAction(copyGame(this.game), roster, {
         inPlace: true,
-        requireCurrentSetup: this.options.requireCurrentSetup === true
+        requireCurrentSetup: this.options.requireCurrentSetup === true,
+        replay: index < stored
       })
       if (applied.problems.length > 0) {
         refused.push(applied.problems[0].message)

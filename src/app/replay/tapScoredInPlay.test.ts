@@ -8,6 +8,7 @@ import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
 import type { PresentationSequence } from '../scoring/scoringPresentation'
+import { playerRef } from '../scoring/scoringSelectors'
 import type { ScoringState } from '../scoring/scoringTypes'
 
 /** Plays every presentation and motion out, as a field would. */
@@ -115,5 +116,32 @@ describe('a ball in play scored by taps, replayed', function () {
     expect(drawn[0]).deep.includes({
       fielderTarget: (detailed[0] as { fielderTarget: unknown }).fielderTarget
     })
+  })
+})
+
+describe('a stored run after the third out, replayed', function () {
+  it('plays the catch and the run as saved, and ends the half', function () {
+    const start = initialScoringState(scoringSession(gameFixture), true)
+    const line = start.session.liveData.linescore
+    const runner = 7
+    line.offense.third = playerRef(start.session, runner)
+    line.outs = 2
+    const actions: ScoringAction[] = [
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'popup',
+        fielder: 16
+      },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' },
+      { type: 'runnerMovement', runner, to: 'home' }
+    ]
+    const replayed = settle(
+      scoringReducer(start, { type: 'REPLAYED', actions })
+    )
+    expect(
+      replayed.log.filter(action => action.type !== 'gameFlow')
+    ).deep.equals(actions)
+    expect(replayed.session.liveData.linescore.teams.away.runs).equals(1)
   })
 })
