@@ -1357,6 +1357,7 @@ describe('chat native adapter compatibility', function () {
       steps: [],
       metrics: () => ({ width: 300, height: 600 }),
       device: {
+        hierarchy: async () => ({ nodes }),
         hierarchyRaw: async () => raw(nodes),
         platformInfo: async () => ({ screenWidth: 300, screenHeight: 600 })
       }
@@ -5299,43 +5300,46 @@ describe('chat native adapter compatibility', function () {
       'Button'
     ])
   })
-  it('routes measured browser gestures through supported endpoints and native gestures through swipe', async () => {
+  it('routes measured iOS movement through explicit drag timing while preserving Android and browser gestures', async () => {
     for (const surface of ['ios', 'android', 'web-wide']) {
       const actual = ui([], surface)
       const calls: unknown[] = []
-      actual.device.swipe = async args => {
+      const signals: Array<AbortSignal | undefined> = []
+      const remaining = AbortSignal.timeout(2000)
+      actual.device.swipe = async (args, options) => {
         calls.push(['swipe', args])
+        signals.push(options?.signal)
       }
-      actual.device.dragAndDrop = async args => {
+      actual.device.dragAndDrop = async (args, options) => {
         calls.push(['drag', args])
+        signals.push(options?.signal)
       }
-      await actual.measuredSwipe({
-        startX: 10,
-        startY: 20,
-        endX: 40,
-        endY: 50,
-        duration: 200
-      })
+      await actual.measuredSwipe(
+        { startX: 10, startY: 20, endX: 40, endY: 50, duration: 350 },
+        remaining
+      )
       expect(calls).deep.equals(
-        surface === 'web-wide'
+        surface === 'android'
           ? [
+              [
+                'swipe',
+                { startX: 10, startY: 20, endX: 40, endY: 50, duration: 350 }
+              ]
+            ]
+          : [
               [
                 'drag',
                 {
                   from: { point: '10,20' },
                   to: { point: '40,50' },
-                  holdDuration: 1,
-                  duration: 200
+                  holdDuration: surface === 'ios' ? 16 : 1,
+                  duration: 350
                 }
               ]
             ]
-          : [
-              [
-                'swipe',
-                { startX: 10, startY: 20, endX: 40, endY: 50, duration: 200 }
-              ]
-            ]
       )
+      expect(signals).has.length(1)
+      expect(signals[0]).equals(surface === 'web-wide' ? undefined : remaining)
     }
   })
   it('waits for a fresh pending link and actual list after same-provider approval', async () => {
@@ -7238,8 +7242,20 @@ describe('native installed legacy reply navigation', () => {
       if (mode === 'transport') throw Error('Actual native transport failure')
       return hierarchy()
     }
+    const deadline = AbortSignal.timeout(10000)
+    const move = (args: unknown): void => {
+      calls.push({ swipe: args })
+      if (clipped && mode !== 'clipped-no-progress') {
+        row.y = 700
+        row.height = 410
+      } else if (
+        !['no-progress', 'occluded-edge', 'clipped-no-progress'].includes(mode)
+      )
+        row.y = mode === 'tall-file' ? 116 : 200
+    }
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native,
+      deadline,
       surface,
       runDir,
       iosRaw: async () => {
@@ -7288,16 +7304,29 @@ describe('native installed legacy reply navigation', () => {
           screenHeight: clipped ? 2400 : 800
         }),
         swipe: async (args: unknown) => {
-          calls.push({ swipe: args })
-          if (clipped && mode !== 'clipped-no-progress') {
-            row.y = 700
-            row.height = 410
-          } else if (
-            !['no-progress', 'occluded-edge', 'clipped-no-progress'].includes(
-              mode
-            )
-          )
-            row.y = mode === 'tall-file' ? 116 : 200
+          move(args)
+        },
+        dragAndDrop: async (
+          args: Record<string, unknown>,
+          options?: { signal: AbortSignal }
+        ) => {
+          expect(surface).equals('ios')
+          expect(args.holdDuration).equals(16)
+          expect(args.duration).equals(350)
+          expect(options?.signal).equals(deadline)
+          const from = args.from as { point: string }
+          const to = args.to as { point: string }
+          expect(from.point).matches(/^\d+,\d+$/)
+          expect(to.point).matches(/^\d+,\d+$/)
+          const start = from.point.split(',').map(Number)
+          const end = to.point.split(',').map(Number)
+          move({
+            startX: start[0],
+            startY: start[1],
+            endX: end[0],
+            endY: end[1],
+            duration: args.duration
+          })
         },
         tapOnPoint: async (args: unknown) => {
           calls.push({ tap: args })
@@ -7747,10 +7776,27 @@ describe('native scenario navigation and mention handoff', function () {
   })
 
   function nativeReader(
-    mode: 'above' | 'below' | 'keyboard' | 'stuck' | 'fling' | 'pin',
-    surface = 'android'
+    mode:
+      | 'above'
+      | 'below'
+      | 'keyboard'
+      | 'stuck'
+      | 'fling'
+      | 'pin'
+      | 'overshoot'
+      | 'closed-stuck'
+      | 'edge-damped'
+      | 'edge-cross'
+      | 'edge-stuck'
+      | 'edge-wrong'
+      | 'edge-repeat',
+    surface = 'android',
+    selected = target
   ): { scenario: Scenarios; calls: unknown[] } {
     const calls: unknown[] = []
+    const edge = mode.startsWith('edge-')
+    const closedFile = mode === 'overshoot' || mode === 'closed-stuck' || edge
+    let closedMoves = 0
     let keyboard = mode === 'keyboard' || mode === 'stuck'
     let rect =
       mode === 'above'
@@ -7765,10 +7811,13 @@ describe('native scenario navigation and mention handoff', function () {
         width: 281.3333435058594,
         height: 96.6669921875
       }
+    if (closedFile) rect = { x: 126, y: 0, width: 672, height: -22280 }
+    if (edge) rect = { x: 126, y: 0, width: 755, height: -25723 }
     const band = (): { top: number; bottom: number } => ({
-      top: surface === 'ios' ? 109.3333346247673 : 100,
-      bottom:
-        surface === 'ios'
+      top: closedFile ? 432 : surface === 'ios' ? 109.3333346247673 : 100,
+      bottom: closedFile
+        ? 1929
+        : surface === 'ios'
           ? keyboard
             ? 462
             : 700.6666870117188
@@ -7779,14 +7828,19 @@ describe('native scenario navigation and mention handoff', function () {
     const nodes = (): PublicNode[] => [
       {
         id: 'chat-message-history',
-        bounds: { x: 0, y: 0, width: 400, height: 1000 }
+        bounds: {
+          x: 0,
+          y: 0,
+          width: closedFile ? 1080 : 400,
+          height: closedFile ? 2400 : 1000
+        }
       },
       {
         id: 'chat-conversation-identity',
         bounds:
           surface === 'ios'
             ? { x: 64, y: 62.3333346247673, width: 274, height: 47 }
-            : { x: 0, y: 40, width: 400, height: 60 }
+            : { x: 0, y: 40, width: 400, height: closedFile ? 392 : 60 }
       },
       {
         id: 'chat-composer-band',
@@ -7798,7 +7852,7 @@ describe('native scenario navigation and mention handoff', function () {
         focused: keyboard,
         bounds: { x: 50, y: band().bottom + 5, width: 200, height: 40 }
       },
-      { id: 'chat-bubble-' + target.id, bounds: { ...rect } },
+      { id: 'chat-bubble-' + selected.id, bounds: { ...rect } },
       ...(surface === 'ios' && keyboard
         ? [
             {
@@ -7828,28 +7882,85 @@ describe('native scenario navigation and mention handoff', function () {
                 }))
               }
             : nodes(),
-        platformInfo: async () => ({ screenWidth: 400, screenHeight: 1000 }),
+        platformInfo: async () => ({
+          screenWidth: closedFile ? 1080 : 400,
+          screenHeight: closedFile ? 2400 : 1000
+        }),
         scrollUntilVisible: async (args: Record<string, unknown>) => {
           if (keyboard) throw Error('Global gesture starts in actual Keyboard')
           calls.push(args)
+          if (closedFile) {
+            rect = { x: 126, y: 24087, width: 672, height: -21687 }
+            throw Error('Element not found after 40 fixed-direction scrolls')
+          }
           expect(args.direction).equals(mode === 'above' ? 'UP' : 'DOWN')
           rect = { x: 20, y: 250, width: 180, height: 80 }
         },
         swipe: async (args: Record<string, unknown>) => {
+          if (surface === 'ios')
+            throw Error('iOS swipe leaves movement duration uncontrolled')
           const b = band()
           const start = Number(args.startY)
           const end = Number(args.endY)
           expect(Math.min(start, end)).greaterThan(b.top)
           expect(Math.max(start, end)).lessThan(b.bottom)
           calls.push(args)
-          if (mode !== 'stuck')
+          if (edge) {
+            closedMoves++
+            if (closedMoves === 1)
+              rect = { x: 126, y: 0, width: 755, height: 432 }
+            else if (mode === 'edge-stuck') {
+              /* Actual target does not move. */
+            } else if (mode === 'edge-wrong')
+              rect = { x: 126, y: 0, width: 755, height: 300 }
+            else if (closedMoves === 2 && mode !== 'edge-damped')
+              rect = { x: 126, y: 2114, width: 755, height: 286 }
+            else if (mode === 'edge-repeat')
+              rect = { x: 126, y: 0, width: 755, height: 432 }
+            else {
+              // The observed 899px gesture moved this target by 2114px.
+              const origin = closedMoves === 2 ? 0 : rect.y
+              rect = {
+                x: 126,
+                y: Math.round(origin + ((end - start) * 2114) / 899),
+                width: 755,
+                height: 286
+              }
+            }
+          } else if (closedFile) {
+            closedMoves++
+            if (mode !== 'closed-stuck')
+              rect =
+                closedMoves === 1
+                  ? { x: 126, y: 24087, width: 672, height: -21687 }
+                  : { x: 126, y: 700, width: 672, height: 719 }
+          } else if (mode !== 'stuck')
             rect =
-              mode === 'fling' || surface === 'ios'
-                ? {
-                    ...rect,
-                    y: rect.y + (end - start) * (surface === 'ios' ? 1.7 : 2)
-                  }
+              mode === 'fling'
+                ? { ...rect, y: rect.y + (end - start) * 2 }
                 : { x: 20, y: 250, width: 180, height: 80 }
+        },
+        dragAndDrop: async (
+          args: Record<string, unknown>,
+          options?: { signal: AbortSignal }
+        ) => {
+          expect(surface).equals('ios')
+          expect(args.holdDuration).equals(16)
+          expect(args.duration).equals(200)
+          expect(options?.signal).instanceOf(AbortSignal)
+          expect(options?.signal.aborted).equals(false)
+          const from = args.from as { point: string }
+          const to = args.to as { point: string }
+          const start = from.point.split(',').map(Number)
+          const end = to.point.split(',').map(Number)
+          expect(start).has.length(2)
+          expect(end).has.length(2)
+          expect(start[0]).equals(end[0])
+          const b = band()
+          expect(Math.min(start[1], end[1])).greaterThan(b.top)
+          expect(Math.max(start[1], end[1])).lessThan(b.bottom)
+          calls.push(args)
+          rect = { ...rect, y: rect.y + (end[1] - start[1]) * 1.7 }
         },
         assertVisible: async () => ({}),
         longPressOn: async () => {
@@ -7864,7 +7975,7 @@ describe('native scenario navigation and mention handoff', function () {
         },
         tapOn: async (args: Record<string, unknown>) => {
           calls.push(args)
-          if (args.id === 'chat-pin-' + target.id)
+          if (args.id === 'chat-pin-' + selected.id)
             rect = { x: 20, y: 250, width: 180, height: 80 }
           if (args.text === '^Reply$') keyboard = true
         }
@@ -7881,7 +7992,7 @@ describe('native scenario navigation and mention handoff', function () {
     }) as Chat2UI
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      f: { messages: { target } },
+      f: { messages: { target: selected } },
       observations: []
     }) as Scenarios
     return { scenario, calls }
@@ -7899,7 +8010,7 @@ describe('native scenario navigation and mention handoff', function () {
           expect(model.calls).deep.includes({ id: 'chat-pin-' + target.id })
       }
     )
-  it('reads fractional iOS flat-snapshot geometry and converges on the observed distant target without global scrolling', async () => {
+  it('reads fractional iOS geometry and reaches the exact distant Reply target through explicitly timed drags', async () => {
     const model = nativeReader('above', 'ios')
     const observed = (await model.scenario.ui.nodes()).find(
       node => node.id === 'chat-bubble-' + target.id
@@ -7913,6 +8024,11 @@ describe('native scenario navigation and mention handoff', function () {
     await model.scenario.reply(target)
     expect(model.calls).includes('hold')
     expect(
+      model.calls.filter(
+        call => typeof call === 'object' && call != null && 'from' in call
+      ).length
+    ).greaterThan(1)
+    expect(
       model.calls.some(
         call => typeof call === 'object' && call != null && 'direction' in call
       )
@@ -7925,6 +8041,108 @@ describe('native scenario navigation and mention handoff', function () {
     )
     expect(model.calls).not.includes('hold')
   })
+
+  it('reverses a closed Android reader after the exact clipped file overshoots from above to below', async () => {
+    const file = {
+      ...target,
+      id: 'msg-preserved-file',
+      seq: 239,
+      body: 'Synthetic encrypted file post'
+    }
+    const model = nativeReader('overshoot', 'android', file)
+    await model.scenario.anchor(file)
+    const proofs = model.scenario.observations.filter(
+      row => row.nativeAnchor === file.id
+    )
+    expect(proofs).has.length(1)
+    const proof = proofs[0]
+    const gestures = proof.gestures as Array<{ startY: number; endY: number }>
+    expect(gestures).has.length(2)
+    expect(gestures[0].endY).greaterThan(gestures[0].startY)
+    expect(gestures[1].endY).lessThan(gestures[1].startY)
+    const samples = proof.samples as Array<{
+      box: { y: number; height: number }
+    }>
+    expect(samples.map(row => [row.box.y, row.box.height])).deep.equals([
+      [0, -22280],
+      [24087, -21687],
+      [700, 719]
+    ])
+    expect(proof.outcome).equals('passed')
+    expect(
+      model.calls.some(
+        call => typeof call === 'object' && call != null && 'direction' in call
+      )
+    ).equals(false)
+  })
+  it('rejects a closed clipped Android reader with no measured progress before any hold', async () => {
+    const model = nativeReader('closed-stuck')
+    expect(
+      String(await captureFailure(model.scenario.anchor(target)))
+    ).includes('Exact target must advance')
+    expect(model.calls).not.includes('hold')
+    expect(model.scenario.observations[0].outcome).not.equals('passed')
+  })
+
+  for (const mode of ['edge-damped', 'edge-cross'] as const)
+    it(
+      'damps the actual closed Android zero-gap edge and frames the same reply: ' +
+        mode,
+      async () => {
+        const reply = { ...target, id: 'msg-preserved-reply', seq: 237 }
+        const m = nativeReader(mode, 'android', reply)
+        await m.scenario.anchor(reply)
+        const proof = m.scenario.observations.find(
+          p => p.nativeAnchor === reply.id
+        )!
+        const samples = proof.samples as Array<{
+          box: { y: number; height: number }
+          band: { top: number; bottom: number }
+        }>
+        const gestures = proof.gestures as Array<{
+          startY: number
+          endY: number
+        }>
+        expect(
+          samples.slice(0, 2).map(p => [p.box.y, p.box.height])
+        ).deep.equals([
+          [0, -25723],
+          [0, 432]
+        ])
+        expect(Math.abs(gestures[1].endY - gestures[1].startY)).lessThan(
+          Math.abs(gestures[0].endY - gestures[0].startY)
+        )
+        if (mode === 'edge-cross') {
+          expect(samples[2].box).includes({ y: 2114, height: 286 })
+          expect(gestures[2].endY).lessThan(gestures[2].startY)
+          expect(Math.abs(gestures[2].endY - gestures[2].startY)).lessThan(
+            Math.abs(gestures[1].endY - gestures[1].startY)
+          )
+          expect(proof.nativeAnchorReversal).not.equals(undefined)
+        }
+        const final = samples.at(-1)!
+        expect(final.box.height).greaterThan(0)
+        expect(final.box.y).at.least(final.band.top + 7.5)
+        expect(final.box.y + final.box.height).at.most(final.band.bottom - 7.5)
+        expect(proof.outcome).equals('passed')
+      }
+    )
+
+  for (const mode of ['edge-stuck', 'edge-wrong', 'edge-repeat'] as const)
+    it(
+      'rejects unproved closed Android movement without a hold: ' + mode,
+      async () => {
+        const m = nativeReader(mode)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).includes(
+          mode === 'edge-repeat'
+            ? 'Only one target crossing'
+            : 'Exact target must advance'
+        )
+        expect(m.calls).not.includes('hold')
+        expect(m.scenario.observations[0].outcome).not.equals('passed')
+      }
+    )
 
   function mentionBoundary(
     surface: 'ios' | 'android',
@@ -8357,5 +8575,169 @@ describe('native scenario navigation and mention handoff', function () {
     }) as Scenarios
     expect(await captureFailure(scenario.I2())).equals(stopped)
     expect(calls).deep.equals(['open', 'open', 'chat-jump-latest'])
+  })
+})
+
+describe('iOS spotlight backdrop dismissal', () => {
+  function model(
+    top: number,
+    fault = ''
+  ): {
+    scenario: Scenarios
+    calls: string[]
+    actions: string[]
+    pinned: () => boolean
+  } {
+    const calls: string[] = []
+    const actions: string[] = []
+    let open = true
+    let pinned = true
+    const controls = {
+      x: 8,
+      y: top,
+      width: 386,
+      height: fault === 'compact' ? 48 : 360
+    }
+    const frame = { x: 0, y: 0, width: 402, height: 874 }
+    const nodes = (): PublicNode[] =>
+      fault === 'generic'
+        ? []
+        : [
+            { id: 'chat-message-spotlight', bounds: frame },
+            ...(fault === 'missing-controls'
+              ? []
+              : [
+                  {
+                    id: 'chat-message-spotlight-controls',
+                    bounds: fault === 'covered' ? frame : controls
+                  }
+                ]),
+            ...(fault === 'compact'
+              ? []
+              : [
+                  {
+                    id: 'chat-message-spotlight-preview',
+                    bounds: {
+                      x: 8,
+                      y: top + 56,
+                      width: 281.3333435058594,
+                      height: 128
+                    }
+                  }
+                ]),
+            ...(fault === 'compact'
+              ? []
+              : [
+                  {
+                    id: 'chat-message-spotlight-panel',
+                    bounds: { x: 8, y: top + 192, width: 386, height: 168 }
+                  }
+                ])
+          ]
+    const tap = (x: number, y: number): void => {
+      calls.push('tap')
+      if (
+        x >= controls.x &&
+        x <= controls.x + controls.width &&
+        y >= controls.y &&
+        y <= controls.y + controls.height
+      ) {
+        if (y >= top + 305 && y <= top + 353) {
+          actions.push('Unpin')
+          pinned = false
+          open = false
+        }
+        return
+      }
+      open = false
+    }
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: fault === 'android' ? 'android' : 'ios',
+      deadline: AbortSignal.timeout(10000),
+      device: {
+        hierarchy: async () => ({
+          nodes: nodes().map((n, index) => ({
+            index,
+            type: 'Other',
+            identifier: n.id,
+            rect: n.bounds
+          }))
+        }),
+        assertVisible: async () => ({}),
+        assertNotVisible: async () => {
+          expect(open, 'unchanged strict spotlight absence oracle').equals(
+            false
+          )
+        },
+        tapOn: async () => {
+          if (fault === 'generic') {
+            calls.push('Cancel')
+            open = false
+          } else tap(frame.width / 2, frame.height / 2)
+        },
+        tapOnPoint: async ({ x, y }: { x: number; y: number }) => {
+          tap(x, y)
+        },
+        back: async () => {
+          calls.push('Back')
+          open = false
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+    return { scenario, calls, actions, pinned: () => pinned }
+  }
+
+  for (const [name, top] of [
+    ['Unpin', 122.66666412353516],
+    ['reaction', 434.3333435058594]
+  ] as const)
+    it(
+      'dismisses from measured exposed backdrop when the fullscreen Cancel center overlaps ' +
+        name,
+      async () => {
+        const m = model(top)
+        await m.scenario.dismiss()
+        await m.scenario.ui.absent('chat-message-spotlight')
+        expect(m.calls).deep.equals(['tap'])
+        expect(m.actions).deep.equals([])
+        expect(m.pinned()).equals(true)
+        expect(m.scenario.observations).has.length(1)
+      }
+    )
+
+  for (const fault of ['covered', 'missing-controls'])
+    it(
+      'fails before a tap without proven exposed geometry: ' + fault,
+      async () => {
+        const m = model(122.66666412353516, fault)
+        expect(await captureFailure(m.scenario.dismiss())).instanceOf(Error)
+        expect(m.calls).deep.equals([])
+        expect(m.actions).deep.equals([])
+        expect(m.pinned()).equals(true)
+      }
+    )
+
+  it('dismisses compact spotlight when only the measured controls remain', async () => {
+    const m = model(122.66666412353516, 'compact')
+    await m.scenario.dismiss()
+    await m.scenario.ui.absent('chat-message-spotlight')
+    expect(m.actions).deep.equals([])
+    expect(m.pinned()).equals(true)
+  })
+
+  it('retains an ordinary iOS Cancel outside spotlight', async () => {
+    const m = model(0, 'generic')
+    await m.scenario.dismiss()
+    expect(m.calls).deep.equals(['Cancel'])
+  })
+  it('retains Android Back without an iOS backdrop tap', async () => {
+    const m = model(0, 'android')
+    await m.scenario.dismiss()
+    expect(m.calls).deep.equals(['Back'])
   })
 })
