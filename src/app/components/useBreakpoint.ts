@@ -1,5 +1,13 @@
-import { useEffect, useState } from 'react'
-import { Dimensions, type ScaledSize } from 'react-native'
+import {
+  createContext,
+  createElement,
+  type ReactElement,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState
+} from 'react'
+import { Dimensions, type ScaledSize, useWindowDimensions } from 'react-native'
 
 /**
  * How wide the window is, in the three sizes the layout actually changes at.
@@ -22,7 +30,72 @@ export function breakpointFor(width: number): Breakpoint {
   return 'desktop'
 }
 
+/**
+ * Where the app's content pane sits in the window, when it is not the whole
+ * window: with Tess open on a wide screen, her chat takes a column on the
+ * left and the pane is the rest. Screens that size themselves to the window
+ * size themselves to this instead, so they lay out for the width they have.
+ */
+export interface PaneFrame {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** The pane's frame, or null where the pane is the whole window. */
+export const PaneFrameContext = createContext<PaneFrame | null>(null)
+
+/**
+ * The breakpoint of a provided frame, apart from the frame: it changes only
+ * when the frame crosses a boundary, so a screen that reads nothing else does
+ * not redraw with every pixel of a window being dragged.
+ */
+const PaneBreakpointContext = createContext<Breakpoint | null>(null)
+
+/** Provides the pane's frame, and its breakpoint; null where it is the window. */
+export function PaneFrameProvider({
+  frame,
+  children
+}: {
+  frame: PaneFrame | null
+  children?: ReactNode
+}): ReactElement {
+  return createElement(
+    PaneFrameContext.Provider,
+    { value: frame },
+    createElement(
+      PaneBreakpointContext.Provider,
+      { value: frame == null ? null : breakpointFor(frame.width) },
+      children
+    )
+  )
+}
+
+/** The pane's rectangle in the window: the window itself without a frame. */
+export function usePaneFrame(): PaneFrame {
+  const frame = useContext(PaneFrameContext)
+  const { width, height } = useWindowDimensions()
+  return frame ?? { x: 0, y: 0, width, height }
+}
+
+/** How wide the pane is, which is the window's width without a frame. */
+export function usePaneWidth(): number {
+  return usePaneFrame().width
+}
+
+/** The pane's breakpoint: its frame's width, or the window's. */
 export function useBreakpoint(): Breakpoint {
+  const pane = useContext(PaneBreakpointContext)
+  const windowBreakpoint = useWindowBreakpoint()
+  return pane ?? windowBreakpoint
+}
+
+/**
+ * The window's breakpoint, which changes state only when the window crosses
+ * a boundary, so a window dragged wider redraws nothing in between.
+ */
+function useWindowBreakpoint(): Breakpoint {
   const [breakpoint, setBreakpoint] = useState<Breakpoint>(() =>
     breakpointFor(Dimensions.get('window').width)
   )

@@ -806,7 +806,43 @@ export const enUs = {
   lineupQr_camera: 'Camera %s',
   lineupQr_imported_one: 'Imported 1 player',
   lineupQr_imported_other: 'Imported %s players',
-  lineupQr_benched: '%s benched'
+  lineupQr_benched: '%s benched',
+  tess_title: 'Tess',
+  tess_close: 'Close Tess',
+  tess_empty:
+    'Ask Tess where to find something in TeamStation, or what to change.',
+  tess_thinking: 'Tess is thinking…',
+  tess_error: 'Tess could not answer. Please try again.',
+  tess_placeholder: 'Ask Tess',
+  tess_send: 'Send',
+  tess_attach: 'Attach a file',
+  tess_attach_title: 'Attach',
+  tess_attach_photo: 'Photo',
+  tess_attach_file: 'File',
+  tess_attach_remove: 'Remove %s',
+  tess_attach_described: '%s (described)',
+  tess_attaching: 'Attaching…',
+  tess_drop_here: 'Drop files here',
+  tess_choose_files: 'Choose files',
+  tess_attach_unsupported:
+    'Tess reads images, CSV, plain text and Markdown files.',
+  tess_attach_too_large: '%s is too large to attach.',
+  tess_attach_too_many:
+    'A message to Tess takes at most %s files. Send these first, or remove one.',
+  tess_attach_unreadable: 'That file could not be read.',
+  tess_attach_failed: 'The file could not be opened. Please try again.',
+  tess_hold_confirm: 'Hold to confirm',
+  tess_hold_hint: 'Hold for three seconds to run this change.',
+  tess_confirming: 'Confirming…',
+  tess_change_done: 'Done',
+  tess_change_failed: 'Failed',
+  tess_change_expired: 'Expired',
+  tess_change_unknown: 'Unknown: check whether it happened',
+  tess_change_body: 'Request body',
+  tess_rich_title: 'A table or chart from Tess',
+  tess_rich_open: 'Open full screen',
+  tess_rich_close: 'Close',
+  tess_way: 'Go to %s'
 }
 
 export type StringKey = keyof typeof enUs
