@@ -7216,9 +7216,23 @@ export class Scenarios {
       x: Math.round(Number(located.x)),
       y: Math.round(Number(located.y))
     }
-    await ui.device.tapOnPoint(point, {
-      signal: AbortSignal.any([ui.deadline, AbortSignal.timeout(15000)])
-    })
+    // Record where the browser actually delivers the tap, then remove the
+    // listener: the evidence says which coordinate space the driver used.
+    const key = '__chat2ZoomedTap' + randomUUID().replace(/-/g, '')
+    await ui.dom(
+      `const key=${JSON.stringify(key)},seen=[];const on=e=>seen.push({type:e.type,x:e.clientX,y:e.clientY});for(const t of ['pointerdown','mousedown'])addEventListener(t,on,{capture:true});window[key]={seen,on};return {listening:true}`
+    )
+    try {
+      await ui.device.tapOnPoint(point, {
+        signal: AbortSignal.any([ui.deadline, AbortSignal.timeout(15000)])
+      })
+    } finally {
+      located.delivered = (
+        await ui.dom(
+          `const key=${JSON.stringify(key)},state=window[key];if(!state)return {seen:[]};for(const t of ['pointerdown','mousedown'])removeEventListener(t,state.on,{capture:true});delete window[key];return {seen:state.seen}`
+        )
+      ).seen
+    }
     const landed = await ui.dom(
       `const n=document.querySelector(${JSON.stringify(target.css)});return {focused:n!=null&&document.activeElement===n}`
     )
