@@ -12,6 +12,7 @@ import {
 import { AppHeader } from '../components/AppHeader'
 import { Button } from '../components/Button'
 import { GlassView } from '../components/GlassView'
+import { useBackOverride } from '../components/headerSlot'
 import { useBreakpoint } from '../components/useBreakpoint'
 import { useMotionPreference } from '../components/useMotionPreference'
 import { edgeMarginRem } from '../layout/margins'
@@ -41,6 +42,14 @@ export interface ChatActionOverlayProps {
 export function ChatActionOverlay(
   props: ChatActionOverlayProps
 ): React.ReactElement {
+  // Back is the overlay's while it is open, the header's and Android's back
+  // gesture's too: the screen it covers is not dragged off or popped beneath
+  // it. Taken here, in the screen's tree: the portal draws elsewhere.
+  const close = useRef(props.onClose)
+  close.current = props.onClose
+  useBackOverride(true, () => {
+    close.current()
+  })
   return (
     <ChatOverlayPortal modal={props.focusHandoff !== true}>
       <OverlayFrame {...props} />

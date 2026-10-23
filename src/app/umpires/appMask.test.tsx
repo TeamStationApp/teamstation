@@ -224,6 +224,82 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       expect(window.location.pathname).equals(path)
       expect(writes).deep.equals(['Blue'])
     }
+    // Back twice while the save is still deciding: one step, one save. The
+    // schedule over the league's settings, so a second pop would leave
+    // those as well.
+    window.history.replaceState(null, '', '/groups/league/demo/settings')
+    await act(async () => {
+      root.render(<App key="twice" />)
+    })
+    await settle()
+    await press('Umpire schedule')
+    expect(window.location.pathname).equals('/umpires/demo')
+    const saves: Array<() => void> = []
+    const written: string[] = []
+    proto.saveUmpireNote = async (_game, _type, _before, value) =>
+      await new Promise(resolve => {
+        saves.push(() => {
+          written.push(value)
+          resolve({ value })
+        })
+      })
+    await press('Edit Color, Demo Hawks vs Demo Eagles, Apr 1, 12:00 pm')
+    await act(async () => {
+      const input = host.querySelector<HTMLInputElement>(
+        'input[data-testid^="umpire-note-input"]'
+      )!
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, 'Green')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await press('Back')
+    expect(window.location.pathname).equals('/umpires/demo')
+    await press('Back')
+    await act(async () => {
+      for (const save of saves) save()
+      await new Promise<void>(resolve => setTimeout(resolve, 100))
+    })
+    await settle()
+    expect(written).deep.equals(['Green'])
+    expect(window.location.pathname).equals('/groups/league/demo/settings')
+    // The browser's Back while the chevron's save decides: refused and put
+    // back, so the screen moves one step, the address with it, and Back
+    // still answers after.
+    await act(async () => {
+      root.render(<App key="browser" />)
+    })
+    await settle()
+    await press('Umpire schedule')
+    saves.length = 0
+    written.length = 0
+    await press('Edit Color, Demo Hawks vs Demo Eagles, Apr 1, 12:00 pm')
+    await act(async () => {
+      const input = host.querySelector<HTMLInputElement>(
+        'input[data-testid^="umpire-note-input"]'
+      )!
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, 'Red')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await press('Back')
+    await act(async () => {
+      window.history.back()
+      await new Promise<void>(resolve => setTimeout(resolve, 100))
+    })
+    await act(async () => {
+      for (const save of saves) save()
+      await new Promise<void>(resolve => setTimeout(resolve, 100))
+    })
+    await settle()
+    expect(written).deep.equals(['Red'])
+    expect(window.location.pathname).equals('/groups/league/demo/settings')
+    await press('Back')
+    expect(window.location.pathname).not.equals('/groups/league/demo/settings')
+    window.history.replaceState(null, '', '/')
     proto.umpireLeagues = async () => []
     await act(async () => {
       root.render(<App key="no-role" />)

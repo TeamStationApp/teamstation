@@ -114,6 +114,17 @@ export function stepBackTo(route: Route): void {
   history.show(route, true)
 }
 
+/**
+ * A Back or a link still being handed to the shell, which may be waiting on
+ * a leave check (the umpire's, the scorer's). Another Back meanwhile is
+ * swallowed, whichever way it comes: the drag back too, which pops without
+ * `BackHandler`.
+ */
+let delivering: object | undefined
+export function deliveringRoute(): boolean {
+  return delivering != null
+}
+
 /** Never: a phone's step back lands at once. */
 export function steppingBack(): boolean {
   return false
@@ -145,13 +156,17 @@ export function useBrowserBack(
   _beforeLeave?: () => Promise<boolean>
 ): void {
   useEffect(() => {
-    let pending = false
+    // A new subscription starts clear, as the one it replaces ends: a
+    // delivery its shell dropped without answering must not hold Back off
+    // for good.
+    delivering = undefined
     const deliver = (route: Route, restore: () => void): void => {
-      pending = true
+      const delivery = {}
+      delivering = delivery
       const handled = (accepted: boolean): void => {
         if (!accepted && routePath(history.current()) === routePath(route))
           restore()
-        pending = false
+        if (delivering === delivery) delivering = undefined
       }
       try {
         onRoute(route, handled)
@@ -160,7 +175,7 @@ export function useBrowserBack(
       }
     }
     const opened = (event: { url: string }): void => {
-      if (pending) return
+      if (deliveringRoute()) return
       const route = routeOfUrl(event.url, { appOrigin })
       const previous = history.current()
       const depth = history.depth()
@@ -175,11 +190,12 @@ export function useBrowserBack(
 
     if (Platform.OS !== 'android') {
       return () => {
+        delivering = undefined
         link.remove()
       }
     }
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (pending) return true
+      if (deliveringRoute()) return true
       // `false` closes the app, which is what should happen at the bottom of
       // the history: a Back button that does nothing on the home screen reads
       // as a hang.
@@ -192,6 +208,7 @@ export function useBrowserBack(
       return true
     })
     return () => {
+      delivering = undefined
       link.remove()
       back.remove()
     }

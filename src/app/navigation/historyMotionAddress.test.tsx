@@ -40,8 +40,13 @@ async function popped(go: () => void): Promise<void> {
   })
 }
 
+/** A navigation guard a test set: released even if the test timed out. */
+let releaseGuard: (() => void) | undefined
+
 describe('history motion', function () {
   afterEach(async () => {
+    releaseGuard?.()
+    releaseGuard = undefined
     await act(async () => {
       root?.unmount()
     })
@@ -139,7 +144,27 @@ describe('history motion', function () {
       })
       web.showRoute({ name: 'game', gameId: 'g1' })
       web.showRoute({ name: 'scoreGame', gameId: 'g1' })
-      const release = web.setNavigationGuard(
+      // Counted from here: the guard's own restore can land before a
+      // listener added after the step that caused it, and waiting for the
+      // next one would then wait for ever on a busy machine.
+      let pops = 0
+      const counted = (): void => {
+        pops++
+      }
+      window.addEventListener('popstate', counted)
+      const until = async (count: number): Promise<void> => {
+        await act(async () => {
+          await new Promise<void>(resolve => {
+            const check = (): void => {
+              if (pops >= count) resolve()
+              else setTimeout(check, 5)
+            }
+            check()
+          })
+          await new Promise(resolve => setTimeout(resolve, 0))
+        })
+      }
+      releaseGuard = web.setNavigationGuard(
         async () =>
           await new Promise<boolean>(resolve => {
             answer = resolve
@@ -148,32 +173,28 @@ describe('history motion', function () {
       )
       try {
         // Back, then the guard restores the entry while it asks.
-        await popped(() => {
-          window.history.back()
-        })
-        await popped(() => undefined)
+        window.history.back()
+        await until(2)
         await act(async () => {
           answer(false)
           await new Promise(resolve => setTimeout(resolve, 0))
         })
         expect(routes).deep.equals([])
         expect(takeHistoryMove()).equals(undefined)
-        await popped(() => {
-          window.history.back()
-        })
-        await popped(() => undefined)
+        window.history.back()
+        await until(4)
         await act(async () => {
           answer(true)
           await new Promise(resolve => setTimeout(resolve, 0))
         })
-        await popped(() => undefined)
+        await until(5)
         expect(routes.at(-1)).deep.equals({
           name: 'scoreOptions',
           gameId: 'g1'
         })
         expect(noted.at(-1)).deep.equals({ direction: 'back', drawn: false })
       } finally {
-        release()
+        window.removeEventListener('popstate', counted)
       }
     })
 
@@ -218,6 +239,90 @@ describe('history motion', function () {
         link?.({ url: 'https://teamstation.app/teams/t2' })
       })
       expect(seen.at(-1)).deep.equals({ direction: 'none', drawn: false })
+    })
+
+    it('says a Back is still being delivered, and swallows another until it lands', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        value: 'android',
+        configurable: true
+      })
+      let back: (() => boolean | null | undefined) | undefined
+      BackHandler.addEventListener = (_event, handler) => {
+        back = () => handler({ type: 'hardwareBackPress', timeStamp: 0 })
+        return { remove: () => undefined }
+      }
+      Linking.addEventListener = () => ({ remove: () => undefined })
+      let land: ((accepted: boolean) => void) | undefined
+      let delivered = 0
+      native.seedRoute(null)
+      native.showRoute({ name: 'team', teamId: 't1' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'stats' })
+      await mount(() => {
+        native.useBrowserBack((_route, handled) => {
+          delivered++
+          // Held on a leave check.
+          land = handled
+        })
+      })
+      expect(native.deliveringRoute()).equals(false)
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      // The drag back's pop asks this, and does nothing meanwhile.
+      expect(native.deliveringRoute()).equals(true)
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      expect(delivered).equals(1)
+      await act(async () => {
+        land?.(true)
+      })
+      expect(native.deliveringRoute()).equals(false)
+      expect(web.deliveringRoute()).equals(false)
+    })
+
+    it('lets go of a delivery its shell dropped once it subscribes again', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        value: 'android',
+        configurable: true
+      })
+      let back: (() => boolean | null | undefined) | undefined
+      BackHandler.addEventListener = (_event, handler) => {
+        back = () => handler({ type: 'hardwareBackPress', timeStamp: 0 })
+        return { remove: () => undefined }
+      }
+      Linking.addEventListener = () => ({ remove: () => undefined })
+      native.seedRoute(null)
+      native.showRoute({ name: 'team', teamId: 't1' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'stats' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'videos' })
+      const delivered: string[] = []
+      // The first shell never answers its delivery (its change was dropped).
+      await mount(() => {
+        native.useBrowserBack(() => {
+          delivered.push('dropped')
+        })
+      })
+      await act(async () => {
+        back?.()
+      })
+      expect(native.deliveringRoute()).equals(true)
+      // A new route handler subscribes again: Back is answered once more.
+      await act(async () => {
+        root?.unmount()
+      })
+      host?.remove()
+      await mount(() => {
+        native.useBrowserBack((_route, handled) => {
+          delivered.push('answered')
+          handled?.(true)
+        })
+      })
+      expect(native.deliveringRoute()).equals(false)
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      expect(delivered).deep.equals(['dropped', 'answered'])
     })
 
     it('says where Back would land without going', function () {
