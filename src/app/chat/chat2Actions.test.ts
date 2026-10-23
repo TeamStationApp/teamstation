@@ -6667,10 +6667,21 @@ describe('native scenario navigation and mention handoff', function () {
   })
 
   function nativeReader(
-    mode: 'above' | 'below' | 'keyboard' | 'stuck' | 'fling' | 'pin',
-    surface = 'android'
+    mode:
+      | 'above'
+      | 'below'
+      | 'keyboard'
+      | 'stuck'
+      | 'fling'
+      | 'pin'
+      | 'overshoot'
+      | 'closed-stuck',
+    surface = 'android',
+    selected = target
   ): { scenario: Scenarios; calls: unknown[] } {
     const calls: unknown[] = []
+    const closedFile = mode === 'overshoot' || mode === 'closed-stuck'
+    let closedMoves = 0
     let keyboard = mode === 'keyboard' || mode === 'stuck'
     let rect =
       mode === 'above'
@@ -6685,10 +6696,12 @@ describe('native scenario navigation and mention handoff', function () {
         width: 281.3333435058594,
         height: 96.6669921875
       }
+    if (closedFile) rect = { x: 126, y: 0, width: 672, height: -22280 }
     const band = (): { top: number; bottom: number } => ({
-      top: surface === 'ios' ? 109.3333346247673 : 100,
-      bottom:
-        surface === 'ios'
+      top: closedFile ? 432 : surface === 'ios' ? 109.3333346247673 : 100,
+      bottom: closedFile
+        ? 1929
+        : surface === 'ios'
           ? keyboard
             ? 462
             : 700.6666870117188
@@ -6699,14 +6712,19 @@ describe('native scenario navigation and mention handoff', function () {
     const nodes = (): PublicNode[] => [
       {
         id: 'chat-message-history',
-        bounds: { x: 0, y: 0, width: 400, height: 1000 }
+        bounds: {
+          x: 0,
+          y: 0,
+          width: closedFile ? 1080 : 400,
+          height: closedFile ? 2400 : 1000
+        }
       },
       {
         id: 'chat-conversation-identity',
         bounds:
           surface === 'ios'
             ? { x: 64, y: 62.3333346247673, width: 274, height: 47 }
-            : { x: 0, y: 40, width: 400, height: 60 }
+            : { x: 0, y: 40, width: 400, height: closedFile ? 392 : 60 }
       },
       {
         id: 'chat-composer-band',
@@ -6718,7 +6736,7 @@ describe('native scenario navigation and mention handoff', function () {
         focused: keyboard,
         bounds: { x: 50, y: band().bottom + 5, width: 200, height: 40 }
       },
-      { id: 'chat-bubble-' + target.id, bounds: { ...rect } },
+      { id: 'chat-bubble-' + selected.id, bounds: { ...rect } },
       ...(surface === 'ios' && keyboard
         ? [
             {
@@ -6748,10 +6766,17 @@ describe('native scenario navigation and mention handoff', function () {
                 }))
               }
             : nodes(),
-        platformInfo: async () => ({ screenWidth: 400, screenHeight: 1000 }),
+        platformInfo: async () => ({
+          screenWidth: closedFile ? 1080 : 400,
+          screenHeight: closedFile ? 2400 : 1000
+        }),
         scrollUntilVisible: async (args: Record<string, unknown>) => {
           if (keyboard) throw Error('Global gesture starts in actual Keyboard')
           calls.push(args)
+          if (closedFile) {
+            rect = { x: 126, y: 24087, width: 672, height: -21687 }
+            throw Error('Element not found after 40 fixed-direction scrolls')
+          }
           expect(args.direction).equals(mode === 'above' ? 'UP' : 'DOWN')
           rect = { x: 20, y: 250, width: 180, height: 80 }
         },
@@ -6764,7 +6789,14 @@ describe('native scenario navigation and mention handoff', function () {
           expect(Math.min(start, end)).greaterThan(b.top)
           expect(Math.max(start, end)).lessThan(b.bottom)
           calls.push(args)
-          if (mode !== 'stuck')
+          if (closedFile) {
+            closedMoves++
+            if (mode !== 'closed-stuck')
+              rect =
+                closedMoves === 1
+                  ? { x: 126, y: 24087, width: 672, height: -21687 }
+                  : { x: 126, y: 700, width: 672, height: 719 }
+          } else if (mode !== 'stuck')
             rect =
               mode === 'fling'
                 ? { ...rect, y: rect.y + (end - start) * 2 }
@@ -6805,7 +6837,7 @@ describe('native scenario navigation and mention handoff', function () {
         },
         tapOn: async (args: Record<string, unknown>) => {
           calls.push(args)
-          if (args.id === 'chat-pin-' + target.id)
+          if (args.id === 'chat-pin-' + selected.id)
             rect = { x: 20, y: 250, width: 180, height: 80 }
           if (args.text === '^Reply$') keyboard = true
         }
@@ -6822,7 +6854,7 @@ describe('native scenario navigation and mention handoff', function () {
     }) as Chat2UI
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
-      f: { messages: { target } },
+      f: { messages: { target: selected } },
       observations: []
     }) as Scenarios
     return { scenario, calls }
@@ -6870,6 +6902,48 @@ describe('native scenario navigation and mention handoff', function () {
       'advance'
     )
     expect(model.calls).not.includes('hold')
+  })
+
+  it('reverses a closed Android reader after the exact clipped file overshoots from above to below', async () => {
+    const file = {
+      ...target,
+      id: 'msg-preserved-file',
+      seq: 239,
+      body: 'Synthetic encrypted file post'
+    }
+    const model = nativeReader('overshoot', 'android', file)
+    await model.scenario.anchor(file)
+    const proofs = model.scenario.observations.filter(
+      row => row.nativeAnchor === file.id
+    )
+    expect(proofs).has.length(1)
+    const proof = proofs[0]
+    const gestures = proof.gestures as Array<{ startY: number; endY: number }>
+    expect(gestures).has.length(2)
+    expect(gestures[0].endY).greaterThan(gestures[0].startY)
+    expect(gestures[1].endY).lessThan(gestures[1].startY)
+    const samples = proof.samples as Array<{
+      box: { y: number; height: number }
+    }>
+    expect(samples.map(row => [row.box.y, row.box.height])).deep.equals([
+      [0, -22280],
+      [24087, -21687],
+      [700, 719]
+    ])
+    expect(proof.outcome).equals('passed')
+    expect(
+      model.calls.some(
+        call => typeof call === 'object' && call != null && 'direction' in call
+      )
+    ).equals(false)
+  })
+  it('rejects a closed clipped Android reader with no measured progress before any hold', async () => {
+    const model = nativeReader('closed-stuck')
+    expect(
+      String(await captureFailure(model.scenario.anchor(target)))
+    ).includes('Exact target must advance')
+    expect(model.calls).not.includes('hold')
+    expect(model.scenario.observations[0].outcome).not.equals('passed')
   })
 
   function mentionBoundary(

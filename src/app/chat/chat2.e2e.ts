@@ -2032,43 +2032,29 @@ export class Scenarios {
       current = await read()
     }
     if (!intersects()) {
-      const below = current.box.y >= current.band.bottom
-      if (keyboard.length === 0 && ui.surface !== 'ios') {
-        await ui.device.scrollUntilVisible(
-          {
-            element: { id },
-            direction: below ? 'DOWN' : 'UP',
-            maxScrolls: 40,
-            timeout: 60000
-          },
-          { signal: signal() }
+      const k = keyboard[0]
+      if (k != null)
+        assert(
+          k.width > 0 && k.height > 0 && current.band.bottom <= k.y + 1,
+          'Native reading band must clear actual Keyboard'
         )
-        current = await read()
-      } else {
-        const k = keyboard[0]
-        if (k != null)
-          assert(
-            k.width > 0 && k.height > 0 && current.band.bottom <= k.y + 1,
-            'Native reading band must clear actual Keyboard'
-          )
-        for (let step = 0; !intersects(); step++) {
-          assert(
-            step < 40 && Date.now() < end,
-            'Bounded native reading-band scroll required'
-          )
-          const before = distance()
-          const height = current.band.bottom - current.band.top
-          // Long iOS histories need measured progress; damp the final approach to avoid a fling past the target.
-          const travel =
-            ui.surface === 'ios'
-              ? Math.min(height * 0.8, Math.max(48, (before + height / 4) / 2))
-              : height * 0.6
-          await swipe((current.box.y >= current.band.bottom ? -1 : 1) * travel)
-          assert(
-            intersects() || distance() < before - 1,
-            'Exact target must advance after native gesture'
-          )
-        }
+      for (let step = 0; !intersects(); step++) {
+        assert(
+          step < 40 && Date.now() < end,
+          'Bounded native reading-band scroll required'
+        )
+        const before = distance()
+        const height = current.band.bottom - current.band.top
+        // Long iOS histories need measured progress; damp the final approach to avoid a fling past the target.
+        const travel =
+          ui.surface === 'ios'
+            ? Math.min(height * 0.8, Math.max(48, (before + height / 4) / 2))
+            : height * 0.6
+        await swipe((current.box.y >= current.band.bottom ? -1 : 1) * travel)
+        assert(
+          intersects() || distance() < before - 1,
+          'Exact target must advance after native gesture'
+        )
       }
     }
     for (let step = 0; !safe(); step++) {
