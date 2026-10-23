@@ -5131,6 +5131,9 @@ export class Scenarios {
               message: message.id
             })
           if (message.id === this.f.messages.file?.id) {
+            // As for the clipped bubble below: read the preview once its
+            // entrance fade has settled, not while it is still at opacity 0.
+            if (this.touchActions) await observeSpotlightCaptureReady(ui)
             const sharpPhoto = this.touchActions
               ? await ui.renderedPhoto({
                   id: 'chat-message-spotlight-preview'
