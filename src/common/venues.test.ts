@@ -9,7 +9,9 @@ import {
   asVenueChanges,
   asVenueDetail,
   asWeeklyHours,
+  blackoutRanges,
   fieldSizeLabel,
+  rangeDates,
   wallMinutes,
   wallTimeOf
 } from './venues'
@@ -85,6 +87,44 @@ describe('venue cleaners', () => {
       () => asBlackouts(Array.from({ length: 367 }, () => '2027-01-01')),
       'at most 366'
     )
+  })
+
+  it('collapses blackout days into ranges, and expands a range', () => {
+    expect(blackoutRanges([])).deep.equals([])
+    // A single day, and the input in any order with repeats.
+    expect(blackoutRanges(['2027-04-10'])).deep.equals([
+      { from: '2027-04-10', to: '2027-04-10' }
+    ])
+    expect(
+      blackoutRanges([
+        '2027-04-04',
+        '2027-04-02',
+        '2027-04-03',
+        '2027-04-03',
+        '2027-05-29'
+      ])
+    ).deep.equals([
+      { from: '2027-04-02', to: '2027-04-04' },
+      { from: '2027-05-29', to: '2027-05-29' }
+    ])
+    // Across a month end, a leap day and a year end.
+    expect(blackoutRanges(['2027-04-30', '2027-05-01'])).deep.equals([
+      { from: '2027-04-30', to: '2027-05-01' }
+    ])
+    expect(
+      blackoutRanges(['2028-02-28', '2028-02-29', '2028-03-01'])
+    ).deep.equals([{ from: '2028-02-28', to: '2028-03-01' }])
+    expect(blackoutRanges(rangeDates('2026-12-20', '2027-01-02'))).deep.equals([
+      { from: '2026-12-20', to: '2027-01-02' }
+    ])
+    // Both ends are included; one day is a range of one; reversed is none.
+    expect(rangeDates('2027-03-10', '2027-03-11')).deep.equals([
+      '2027-03-10',
+      '2027-03-11'
+    ])
+    expect(rangeDates('2026-12-20', '2027-01-02')).length(14)
+    expect(rangeDates('2027-05-29', '2027-05-29')).deep.equals(['2027-05-29'])
+    expect(rangeDates('2027-05-29', '2027-05-28')).deep.equals([])
   })
 
   it('reads sizes, pins and venue changes', () => {

@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
-import type { VenueDetail } from '../../common/venues'
+import { rangeDates, type VenueDetail } from '../../common/venues'
 import {
   fill,
   mount,
@@ -13,7 +13,7 @@ import {
   unmount
 } from '../../test/gameFormDom'
 import {
-  chooseCalendarDate,
+  chooseDateRange,
   hasLabel,
   tapLabel,
   tapText,
@@ -394,7 +394,8 @@ describe('the venue screen', () => {
   it('saves the size switch time, default hours, blackouts and photo', async () => {
     const venue = venueDetail({
       rights: owner(),
-      photoUrl: 'https://images.example.test/venue-640.png'
+      photoUrl: 'https://images.example.test/venue-640.png',
+      defaultBlackouts: rangeDates('2027-07-03', '2027-07-05')
     })
     const { client, calls } = fakeClient(venue)
     let picked = 0
@@ -420,8 +421,10 @@ describe('the venue screen', () => {
     await tapText('Open')
     await tapText('Done')
     await settle()
-    await press('Add blackout day')
-    await chooseCalendarDate('2027-07-04')
+    // Its blackouts list as ranges; a new range joins them.
+    expect(text()).includes('Jul 3 – Jul 5 · 3 days')
+    await press('Add blackout dates')
+    await chooseDateRange('2026-12-20', '2027-01-02')
     await settle()
     expect(document.querySelector('[data-testid="place-photo"]')).not.equals(
       null
@@ -441,7 +444,15 @@ describe('the venue screen', () => {
           ]
         }
       ],
-      ['ven_demo', { defaultBlackouts: ['2027-07-04'] }],
+      [
+        'ven_demo',
+        {
+          defaultBlackouts: [
+            ...rangeDates('2026-12-20', '2027-01-02'),
+            ...rangeDates('2027-07-03', '2027-07-05')
+          ]
+        }
+      ],
       ['ven_demo', { photo: { contentType: 'image/png', base64: 'AAAA' } }]
     ])
   })

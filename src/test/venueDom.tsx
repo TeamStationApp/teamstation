@@ -125,3 +125,25 @@ export async function chooseCalendarDate(date: string): Promise<void> {
   await pressSchedule('Use date')
   await settle(0)
 }
+
+/**
+ * Picks a range in an open two-tap range calendar, `from` then `to`, moving
+ * month by month to each, and uses it. The same day twice is one day.
+ */
+export async function chooseDateRange(from: string, to: string): Promise<void> {
+  for (const day of [from, to]) {
+    for (let month = 0; month < 36 && !hasLabel(day); month++) {
+      const shown = [
+        ...document.querySelectorAll<HTMLElement>('[aria-label^="20"]')
+      ]
+        .map(node => node.getAttribute('aria-label') ?? '')
+        .find(label => /^\d{4}-\d{2}-\d{2}$/.test(label))
+      await tapLabel(
+        shown != null && shown > day ? 'Previous month' : 'Next month'
+      )
+    }
+    await tapLabel(day)
+  }
+  await tapText('Use this range')
+  await settle(0)
+}

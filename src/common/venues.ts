@@ -102,6 +102,37 @@ export function asBlackouts(raw: unknown): string[] {
   return [...new Set(raw.map(asCalendarDate))].sort()
 }
 
+/** A run of blackout days, both ends included. */
+export interface DateRange {
+  from: string
+  to: string
+}
+
+/** The calendar day after this one. */
+function nextDay(date: string): string {
+  const next = new Date(`${date}T12:00:00Z`)
+  next.setUTCDate(next.getUTCDate() + 1)
+  return next.toISOString().slice(0, 10)
+}
+
+/** Blackout days as runs of consecutive days, earliest first. */
+export function blackoutRanges(dates: readonly string[]): DateRange[] {
+  const ranges: DateRange[] = []
+  for (const date of [...new Set(dates)].sort()) {
+    const last = ranges[ranges.length - 1]
+    if (last !== undefined && nextDay(last.to) === date) last.to = date
+    else ranges.push({ from: date, to: date })
+  }
+  return ranges
+}
+
+/** Every day from `from` through `to`; none when `to` comes first. */
+export function rangeDates(from: string, to: string): string[] {
+  const dates: string[] = []
+  for (let date = from; date <= to; date = nextDay(date)) dates.push(date)
+  return dates
+}
+
 /** A pin's coordinates, both or neither. */
 export interface Pin {
   latitude: number

@@ -13,7 +13,7 @@ import {
   unmount
 } from '../../test/gameFormDom'
 import {
-  chooseCalendarDate,
+  chooseDateRange,
   hasLabel,
   tapLabel,
   tapText,
@@ -57,7 +57,7 @@ function fakeClient(
 
 const owned = (fieldOverrides = {}): VenueDetail =>
   venueDetail({
-    defaultBlackouts: ['2027-07-04'],
+    defaultBlackouts: ['2027-07-04', '2027-07-05'],
     fields: [venueField(fieldOverrides)],
     rights: {
       canEdit: true,
@@ -118,7 +118,7 @@ describe('the field screen', () => {
     expect(text()).includes('The pin marks the field.')
     expect(hasLabel('Field name')).equals(false)
     expect(hasLabel('Add photo')).equals(false)
-    expect(hasLabel('Add blackout day')).equals(false)
+    expect(hasLabel('Add blackout dates')).equals(false)
     expect(document.querySelector('[data-testid="pin-map"]')).not.equals(null)
   })
 
@@ -216,7 +216,12 @@ describe('the field screen', () => {
         fieldId="fld_one"
       />
     )
-    expect(text()).includes('The venue is also closed on Sunday, July 4, 2027.')
+    // The venue's blackouts read as ranges, with no Remove.
+    expect(text()).includes('The venue is also closed on these days:')
+    expect(text()).includes('Jul 4 – Jul 5 · 2 days')
+    expect(
+      hasLabel('Remove blackout Sunday, July 4, 2027 – Monday, July 5, 2027')
+    ).equals(false)
     await press('Dates: Open all year')
     await press('Cancel')
     await press('Dates: Open all year')
@@ -244,16 +249,20 @@ describe('the field screen', () => {
     await settle()
     await tapText('Venue hours')
     await settle()
-    await press('Add blackout day')
-    await chooseCalendarDate('2027-04-17')
-    await press('Remove blackout Saturday, April 17, 2027')
+    await press('Add blackout dates')
+    await chooseDateRange('2027-03-10', '2027-03-11')
+    await settle()
+    expect(text()).includes('Mar 10 – Mar 11 · 2 days')
+    await press(
+      'Remove blackout Wednesday, March 10, 2027 – Thursday, March 11, 2027'
+    )
     await settle()
     expect(record.updates.slice(1)).deep.equals([
       { startsOn: null, endsOn: null },
       { hours: [{ weekday: 6, start: '08:00', end: '18:00' }] },
       { hours: [{ weekday: 6, start: '08:00', end: '22:00' }] },
       { hours: null },
-      { blackouts: ['2027-04-17'] },
+      { blackouts: ['2027-03-10', '2027-03-11'] },
       { blackouts: [] }
     ])
   })

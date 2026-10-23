@@ -374,20 +374,23 @@ async function e2(run: Run): Promise<void> {
   await tapLabel(admin, '2027-09-30')
   await admin.m.tapOn({ text: 'Use this range', timeout: 15000 })
   await contains(admin.page, 'Oct 1, 2026 – Sep 30, 2027')
-  await admin.m.tapOn({ text: 'Add blackout day', timeout: 15000 })
-  await admin.page.type('input[aria-label="Year"]', '')
-  await admin.page.evaluate(() => {
-    const year = document.querySelector<HTMLInputElement>(
-      'input[aria-label="Year"]'
+  // A blackout of one day: the same day twice in the range calendar.
+  await admin.m.tapOn({ text: 'Add blackout dates', timeout: 15000 })
+  for (let month = 0; month < 24; month++) {
+    const shown = await admin.page.evaluate(
+      () => document.querySelector('[aria-label="2027-04-17"]') != null
     )
-    if (year !== null) year.select()
-  })
-  await admin.page.keyboard.type('2027')
-  await admin.m.tapOn({ css: '[aria-label^="Choose month:"]', timeout: 15000 })
-  await admin.m.tapOn({ text: 'Apr', timeout: 15000 })
-  await tapLabel(admin, 'Choose 2027-04-17')
-  await admin.m.tapOn({ text: 'Use date', timeout: 15000 })
-  await contains(admin.page, 'Saturday, April 17, 2027')
+    if (shown) break
+    await tapLabel(admin, 'Next month')
+  }
+  await tapLabel(admin, '2027-04-17')
+  await tapLabel(admin, '2027-04-17')
+  await admin.m.tapOn({ text: 'Use this range', timeout: 15000 })
+  await contains(admin.page, 'Blackout days saved.')
+  await admin.page.waitForSelector(
+    '[aria-label="Remove blackout Saturday, April 17, 2027"]',
+    { timeout: 15000 }
+  )
   await capture(admin.m, artifacts, 'field-screen-availability.png')
   const field = await fx.f.h.db
     .selectFrom('venue_fields')
@@ -400,7 +403,10 @@ async function e2(run: Run): Promise<void> {
   expect(field.photo_path).not.equals(null)
   // The pin is where it was dropped after a reload.
   await run.visit(admin, `/venues/${venueId}/fields/${run.state.fieldId}`)
-  await contains(admin.page, 'Saturday, April 17, 2027')
+  await admin.page.waitForSelector(
+    '[aria-label="Remove blackout Saturday, April 17, 2027"]',
+    { timeout: 15000 }
+  )
   // Last on this screen: maestro-d's taps stall once the page is scrolled
   // this way, so nothing is tapped after it.
   await showText(admin, 'FIELD SIZES')
