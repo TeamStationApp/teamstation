@@ -26,6 +26,8 @@ import Animated, {
 import { scheduleOnRN } from 'react-native-worklets'
 
 import { useMotionPreference } from '../components/useMotionPreference'
+import { usePredictiveBack } from './predictiveBack'
+import type { PredictiveBackHandlers } from './predictiveBackTypes'
 import { type SceneRole, SceneSlot } from './sceneSlot'
 import {
   COVER_MS,
@@ -51,13 +53,20 @@ export interface StackIntent {
  * takes how far the top has been dragged, in px.
  */
 export interface StackDragControls {
-  begin: () => boolean
-  move: (dx: number) => void
-  release: (dx: number, vx: number) => void
-  cancel: () => void
+  begin: (source?: DragSource) => boolean
+  move: (dx: number, source?: DragSource) => void
+  release: (dx: number, vx: number, source?: DragSource) => void
+  cancel: (source?: DragSource) => void
   /** Completes from wherever the drag is, as a back press after a drag does. */
-  complete: () => void
+  complete: (source?: DragSource) => void
 }
+
+/**
+ * What is driving a drag. Each only moves, ends or cancels a drag it began:
+ * under Android's gesture navigation the system takes an edge touch from the
+ * app's pan, whose cancel must not end the back gesture's drag.
+ */
+export type DragSource = 'pan' | 'predictive'
 
 export interface StackNavigatorProps {
   top: StackScene
@@ -96,6 +105,7 @@ interface Drag {
   beneath: StackScene
   completed: boolean
   progress: SharedValue<number>
+  source: DragSource
 }
 
 interface Shown {
@@ -116,6 +126,41 @@ const SPRING_MS = 250
 const FALLBACK_MS = 500
 
 let transitions = 0
+
+/**
+ * Android's back gesture as a drag back: `started` reveals the screen
+ * beneath, progress moves the top with the finger, `cancelled` springs it
+ * back, and `invoked` completes the drag — or, a plain press with no drag,
+ * pops with the ordinary back move.
+ */
+export function backGestureHandlers(
+  controls: StackDragControls,
+  options: {
+    enabled: boolean
+    width: () => number
+    dragging: () => boolean
+    /** Pops the top; false when there is nothing to pop it with. */
+    pop: () => boolean
+  }
+): PredictiveBackHandlers {
+  return {
+    enabled: options.enabled,
+    onStart: () => {
+      controls.begin('predictive')
+    },
+    onProgress: progress => {
+      controls.move(progress * options.width(), 'predictive')
+    },
+    onCancel: () => {
+      controls.cancel('predictive')
+    },
+    onInvoke: () => {
+      if (!options.dragging()) return options.pop()
+      controls.complete('predictive')
+      return true
+    }
+  }
+}
 
 /**
  * The tab stacks' one transition layer: pushed screens slide in from the right
@@ -254,45 +299,65 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
     cancel: () => undefined,
     complete: () => undefined
   })
-  // The drag the controls may act on: none once it has completed, so a
-  // second drag started while it runs out cannot move it, cancel it, or
-  // complete it again.
-  const owned = (): Drag | undefined => {
+  // The drag a source may act on: its own, and no other, and none once it
+  // has completed — a second swipe started while it runs out must not move
+  // it, cancel it, or complete it again.
+  const owned = (source: DragSource): Drag | undefined => {
     const held = dragging.current
-    return held != null && !held.completed ? held : undefined
+    return held?.source === source && !held.completed ? held : undefined
   }
   controls.current = {
-    begin: () => {
-      if (dragging.current != null) return false
+    begin: (source = 'pan') => {
+      const held = dragging.current
+      if (held != null) {
+        // Under gesture navigation the edge pan can start on the first move,
+        // before the system says it has the gesture: the back gesture takes
+        // that drag over, so the pan's cancel when the system takes the
+        // touch leaves it alone.
+        if (source !== 'predictive' || held.source !== 'pan' || held.completed)
+          return false
+        const taken: Drag = { ...held, source }
+        dragging.current = taken
+        setShown(shownNow => ({ ...shownNow, drag: taken }))
+        return true
+      }
       const { renderBelow: below, onSwipeBack: pop } = latest.current
       const beneath = pop == null ? undefined : below?.()
       if (beneath == null) return false
-      const next: Drag = { beneath, completed: false, progress: makeMutable(1) }
+      const next: Drag = {
+        beneath,
+        completed: false,
+        progress: makeMutable(1),
+        source
+      }
       dragging.current = next
       setShown(held => ({ ...held, transition: undefined, drag: next }))
       return true
     },
-    move: dx => {
-      const held = owned()
+    move: (dx, source = 'pan') => {
+      const held = owned(source)
       if (held == null) return
       held.progress.value = Math.min(
         1,
         Math.max(0, 1 - dx / latest.current.width)
       )
     },
-    release: (dx, vx) => {
-      if (owned() == null) return
+    release: (dx, vx, source = 'pan') => {
+      const held = owned(source)
+      if (held == null || held.completed) return
       if (swipeCompletes(dx, vx, latest.current.width))
-        controls.current.complete()
-      else controls.current.cancel()
+        controls.current.complete(source)
+      else controls.current.cancel(source)
     },
-    cancel: () => {
-      if (owned() == null) return
+    cancel: (source = 'pan') => {
+      if (owned(source) == null) return
       springBack()
     },
-    complete: () => {
-      const held = owned()
-      if (held == null) return
+    complete: (source = 'pan') => {
+      const held = owned(source)
+      // A completed drag has already popped once; until the top changes, or
+      // its pop is refused and it springs back, a second Back adds nothing.
+      if (held == null || held.completed) return
       // Completed from here on, not once it has run out: Back in between is
       // this drag's, not a second pop.
       const taken: Drag = { ...held, completed: true }
@@ -313,23 +378,41 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
   useImperativeHandle(
     props.dragControls,
     () => ({
-      begin: () => controls.current.begin(),
-      move: dx => {
-        controls.current.move(dx)
+      begin: source => controls.current.begin(source),
+      move: (dx, source) => {
+        controls.current.move(dx, source)
       },
-      release: (dx, vx) => {
-        controls.current.release(dx, vx)
+      release: (dx, vx, source) => {
+        controls.current.release(dx, vx, source)
       },
-      cancel: () => {
-        controls.current.cancel()
+      cancel: source => {
+        controls.current.cancel(source)
       },
-      complete: () => {
-        controls.current.complete()
+      complete: source => {
+        controls.current.complete(source)
       }
     }),
     []
   )
   const swipeEnabled = onSwipeBack != null && Platform.OS !== 'web'
+  // Never on without a pop: the shell turns it off an effect and a bridge hop
+  // after a back override takes Back.
+  const gestureBack = props.predictiveBack === true && onSwipeBack != null
+  usePredictiveBack(
+    backGestureHandlers(controls.current, {
+      enabled: gestureBack,
+      width: () => latest.current.width,
+      // Any drag owns Back: a three-button Back during the edge pan's drag
+      // must not pop beside it.
+      dragging: () => dragging.current != null,
+      pop: () => {
+        const pop = latest.current.onSwipeBack
+        if (pop == null) return false
+        pop()
+        return true
+      }
+    })
+  )
 
   // Who is mounted, and how each is placed.
   const scenes: Array<{ scene: StackScene; role: SceneRole; place: Place }> = []
@@ -380,7 +463,7 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
       onLayout={onLayout}
       dataSet={{
         swipeBack: String(onSwipeBack != null),
-        predictiveBack: String(props.predictiveBack === true)
+        predictiveBack: String(gestureBack)
       }}
     >
       {[...scenes]
