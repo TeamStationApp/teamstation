@@ -5403,7 +5403,8 @@ export class Scenarios {
           const current = await ui.dom(
             `
             const id=${JSON.stringify('chat-message-' + this.f.messages.target.id)};
-            const rows=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(rows.length!==1)throw Error('Unique message row required for action focus');
+            const histories=Array.from(document.querySelectorAll('[data-testid="chat-message-history"]'));if(histories.length!==1)throw Error('Unique message history required for action focus');
+            const rows=Array.from(histories[0].querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(rows.length!==1)throw Error('Unique message row required for action focus');
             const touch=${JSON.stringify(this.touchActions)};
             const selector=touch?${JSON.stringify('[data-testid="chat-bubble-' + this.f.messages.target.id + '"]')}:'[aria-label="More message actions"]';
             const triggers=Array.from(rows[0].querySelectorAll(selector));if(triggers.length!==1||(!touch&&triggers[0].getAttribute('role')!=='button'))throw Error(touch?'Unique actual bubble trigger required':'Unique actual More trigger required');
