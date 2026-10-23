@@ -691,6 +691,123 @@ async function f2b(run: Run): Promise<void> {
   await writeFile(join(run.artifacts, 'build-zone.log'), lines.join('\n'))
 }
 
+/**
+ * F3: a window period ends on a chosen date, the days after it have no
+ * windows and no games, and another season copies the periods.
+ */
+async function f3(run: Run): Promise<void> {
+  const { fx, b } = run
+  const lines = [
+    '$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts --only F3',
+    ''
+  ]
+  const setupOf = (seasonId: string): string =>
+    `/groups/league/${fx.f.leagueA}/scheduler/seasons/${seasonId}`
+  // seasonA's first period, from Mar 1, ends on May 20.
+  await run.visit(setupOf(fx.f.seasonA))
+  await contains(b.page, 'From Mar 1')
+  await contains(b.page, 'From Jun 1')
+  await clickLabel(
+    b,
+    'Change the end of the windows from Monday, March 1, 2027'
+  )
+  await labelled(b, 'Choose 2027-05-31')
+  await tapLabel(b, 'Choose 2027-05-20')
+  await tapText(b, 'Use date')
+  await contains(b.page, 'End date saved.')
+  await run.visit(setupOf(fx.f.seasonA))
+  await contains(b.page, 'Mar 1 – May 20')
+  await contains(b.page, 'From Jun 1')
+  expect(await pageText(b)).not.includes('From Mar 1')
+  await scrollToText(b, 'GAME WINDOWS')
+  await run.capture('window-periods-after.png')
+  // The Auto-Scheduler warns of the days no period covers.
+  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+  const gap = 'Demo Regular has no game windows May 21 – May 31.'
+  await contains(b.page, gap)
+  const warning = await b.page.evaluate((text: string) => {
+    const list = document.querySelector('[data-testid="early-warnings"]')
+    return list !== null && String(list.textContent).includes(text)
+  }, gap)
+  expect(warning).equals(true)
+  await scrollToText(b, 'EARLY WARNINGS')
+  await run.capture('window-gap-warning.png')
+  // A build places no game on those days.
+  await tapText(b, 'Build schedule')
+  await contains(b.page, 'These seasons already have 2 upcoming games')
+  await clickLabel(b, 'Work around them')
+  await b.page.waitForFunction(
+    () => /\/scheduler\/previews\/[^/]+$/.test(location.pathname),
+    { timeout: 120000 }
+  )
+  await contains(b.page, 'Publish this option')
+  const previewId = decodeURIComponent(
+    await b.page.evaluate(() =>
+      location.pathname.slice(location.pathname.lastIndexOf('/') + 1)
+    )
+  )
+  const preview = JSON.parse(
+    await curl(run, lines, 'GET', `/schedule-previews/${previewId}`)
+  ) as SchedulePreview
+  const days = preview.options[0].games.map(
+    game => eventLocalFields(game.startAt, 'America/New_York').date
+  )
+  expect(days.length).greaterThan(0)
+  const uncovered = days.filter(
+    day => day >= '2027-05-21' && day <= '2027-05-31'
+  )
+  lines.push(
+    `Option 1's ${days.length} games, by date in America/New_York: ${days.join(', ')}`,
+    `Dated May 21 – May 31: ${uncovered.length === 0 ? 'none' : uncovered.join(', ')}`,
+    ''
+  )
+  expect(uncovered).deep.equals([])
+  // The playoffs, with no windows, copy seasonA's: the seasons start
+  // together, and the June period starts after the playoffs end.
+  await run.visit(setupOf(fx.f.playoffs))
+  await contains(b.page, 'No game windows yet.')
+  await scrollToText(b, 'GAME WINDOWS')
+  await tapText(b, 'Copy from another season')
+  await contains(b.page, 'Copy game windows from')
+  await labelled(b, 'Demo Regular')
+  await contains(b.page, '2027 · 2 periods')
+  await run.capture('copy-windows-after.png')
+  await clickLabel(b, 'Demo Regular')
+  await contains(b.page, 'Game windows copied from Demo Regular.')
+  await contains(b.page, 'Mar 1 – May 20')
+  const stored = async (): Promise<unknown> =>
+    (
+      JSON.parse(
+        await curl(
+          run,
+          lines,
+          'GET',
+          `/seasons/${fx.f.playoffs}/schedule-settings`
+        )
+      ) as { settings: { windows: Array<{ from: string; until?: string }> } }
+    ).settings.windows.map(({ from, until }) => ({ from, until }))
+  const copied = [{ from: '2027-03-01', until: '2027-05-20' }]
+  expect(await stored()).deep.equals(copied)
+  // A second copy asks before it replaces them.
+  await tapText(b, 'Copy from another season')
+  await clickLabel(b, 'Demo Regular')
+  await contains(b.page, 'Replace this season’s game windows?')
+  await clickLabel(b, 'Replace game windows')
+  await b.page.waitForFunction(
+    () =>
+      !String(document.body.textContent).includes(
+        'Replace this season’s game windows?'
+      ),
+    { timeout: 15000 }
+  )
+  await contains(b.page, 'Game windows copied from Demo Regular.')
+  expect(await stored()).deep.equals(copied)
+  await writeFile(join(run.artifacts, 'window-gap-build.log'), lines.join('\n'))
+  await run.pass(
+    `seasonA's first period ends May 20: after a reload its headings read "Mar 1 – May 20" and "From Jun 1"; the Early warnings say "${gap}"; a build with Work around places none of Option 1's ${days.length} games on May 21 – May 31 (window-gap-build.log); the playoffs copy Demo Regular's windows as one period, Mar 1 – May 20 (shifted 0 days, the June period dropped after the playoffs' end), and a second copy asks "Replace this season’s game windows?" before replacing them`
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -700,7 +817,8 @@ const SCENARIOS: Record<string, Scenario> = {
       await forceSeasonZone(fx, fx.f.seasonA, 'UTC')
     },
     run: f2b
-  }
+  },
+  F3: { start: 'E7', run: f3 }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */

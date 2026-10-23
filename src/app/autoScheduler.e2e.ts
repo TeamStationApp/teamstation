@@ -841,14 +841,14 @@ async function e6(run: Run): Promise<void> {
   }
   await tapText(admin, 'Add game windows')
   const march = 'Windows from Monday, March 1, 2027'
-  await contains(admin.page, 'From Monday, March 1, 2027')
+  await contains(admin.page, 'From Mar 1')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, march, day, '17:30', '21:00')
   await setDay(admin, march, 'Saturday', '08:00', '18:00')
   await tapText(admin, 'Add a period from a date')
   await chooseDate(admin, '2027-06-01')
   const june = 'Windows from Tuesday, June 1, 2027'
-  await contains(admin.page, 'From Tuesday, June 1, 2027')
+  await contains(admin.page, 'From Jun 1')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, june, day, '18:00', '21:00')
   // The last day's save may still be on its way.

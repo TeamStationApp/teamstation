@@ -3,24 +3,45 @@ import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { zoneLongName } from '../../common/eventTime'
-import type { WindowPeriod } from '../../common/fieldAvailability'
+import { addDays, type WindowPeriod } from '../../common/fieldAvailability'
 import {
+  asWindowPeriods,
+  copyWindowPeriods,
   type ScheduleSettings,
   seasonZone,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { Button, ListCard, Screen, SectionHeader } from '../components'
+import { ActionList, ActionRow } from '../components/ActionRow'
 import {
   BlackoutDatesEditor,
   dateLabel
 } from '../components/BlackoutDatesEditor'
 import { CheckRow } from '../components/CheckRow'
+import { ChoiceSheet } from '../components/ChoiceSheet'
 import { DangerText } from '../components/DangerText'
 import { CalendarPicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
 import { WeeklyHoursEditor } from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+
+/** "Mar 1", with the year when it isn't the season's first year. */
+function shortDate(date: string, year: string): string {
+  return new Intl.DateTimeFormat('en', {
+    timeZone: 'UTC',
+    month: 'short',
+    day: 'numeric',
+    ...(date.startsWith(year) ? {} : { year: 'numeric' })
+  }).format(new Date(`${date}T12:00:00Z`))
+}
+
+function plural(count: number, one: string): string {
+  return `${count} ${count === 1 ? one : `${one}s`}`
+}
+
+/** Which date of a period the calendar is choosing. */
+type Choosing = { index: number; end: 'from' | 'until' } | 'add' | null
 
 /**
  * One season of a league's next schedule: its game windows, which can
@@ -43,15 +64,30 @@ export function ScheduleSeasonScreen({
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [revision, setRevision] = useState(0)
-  const [addingPeriod, setAddingPeriod] = useState(false)
+  const [choosing, setChoosing] = useState<Choosing>(null)
+  // The league's other seasons with game windows, newest first.
+  const [sources, setSources] = useState<SetupSeason[]>([])
+  const [copying, setCopying] = useState(false)
+  const [replacing, setReplacing] = useState<SetupSeason | null>(null)
   const begin = useLatestRequest()
   useEffect(() => {
     const current = begin()
     setError('')
     client.scheduleSetup(leagueId).then(
       setup => {
-        if (current())
-          setSeason(setup.seasons.find(item => item.id === seasonId) ?? null)
+        if (!current()) return
+        setSeason(setup.seasons.find(item => item.id === seasonId) ?? null)
+        setSources(
+          setup.seasons
+            .filter(
+              item => item.id !== seasonId && item.settings.windows.length > 0
+            )
+            .sort((a, b) =>
+              a.settings.startsOn === b.settings.startsOn
+                ? a.name.localeCompare(b.name)
+                : b.settings.startsOn.localeCompare(a.settings.startsOn)
+            )
+        )
       },
       () => {
         if (current()) setError('The season could not load. Try again.')
@@ -124,7 +160,32 @@ export function ScheduleSeasonScreen({
     }, done).catch(() => undefined)
   }
   const setWindows = (windows: WindowPeriod[], done: string): void => {
+    // The periods are checked here as the server checks them, so a date
+    // that would overlap another period says why without a round trip.
+    try {
+      asWindowPeriods(windows)
+    } catch (failure) {
+      setNotice('')
+      setError(`${(failure as Error).message}.`)
+      return
+    }
     save({ windows }, done)
+  }
+  const year = settings.startsOn.slice(0, 4)
+  const copyFrom = (source: SetupSeason): void => {
+    const windows = copyWindowPeriods(source.settings, settings)
+    if (windows.length === 0) {
+      setNotice('')
+      setError(`${source.name}’s windows all fall after this season ends.`)
+      return
+    }
+    setWindows(windows, `Game windows copied from ${source.name}.`)
+  }
+  // The end a period without an end date runs to: the day before the next
+  // period, or the season's last day.
+  const openEnd = (index: number): string => {
+    const next = settings.windows[index + 1]
+    return next == null ? settings.endsOn : addDays(next.from, -1)
   }
   return (
     <Screen>
@@ -148,18 +209,24 @@ export function ScheduleSeasonScreen({
           note={String(settings.windows.length)}
         />
         <Text style={styles.meta}>
-          When games may be played each week. A period is in force from its date
-          until the next period begins.
+          When games may be played each week. A period is in force from its
+          start through its end date or, with none, until the next period
+          begins. Days no period covers have no games.
         </Text>
         {settings.windows.length === 0 && (
           <Text style={styles.meta}>No game windows yet.</Text>
         )}
         {settings.windows.map((period, index) => {
           const from = dateLabel(period.from)
+          const last = index === settings.windows.length - 1
           return (
             <View key={period.from} style={styles.period}>
               <View style={styles.periodHead}>
-                <Text style={styles.periodTitle}>From {from}</Text>
+                <Text style={styles.periodTitle}>
+                  {period.until == null
+                    ? `From ${shortDate(period.from, year)}`
+                    : `${shortDate(period.from, year)} – ${shortDate(period.until, year)}`}
+                </Text>
                 <DangerText
                   label="Remove"
                   accessibilityLabel={`Remove the windows from ${from}`}
@@ -171,6 +238,30 @@ export function ScheduleSeasonScreen({
                   }}
                 />
               </View>
+              <ActionList bounded>
+                <ActionRow
+                  title="Starts"
+                  detail={from}
+                  openLabel={`Change the start of the windows from ${from}`}
+                  onOpen={() => {
+                    if (!busy) setChoosing({ index, end: 'from' })
+                  }}
+                />
+                <ActionRow
+                  title="Ends"
+                  detail={
+                    period.until != null
+                      ? dateLabel(period.until)
+                      : last
+                        ? 'End of season'
+                        : 'When the next period begins'
+                  }
+                  openLabel={`Change the end of the windows from ${from}`}
+                  onOpen={() => {
+                    if (!busy) setChoosing({ index, end: 'until' })
+                  }}
+                />
+              </ActionList>
               <WeeklyHoursEditor
                 label={`Windows from ${from}`}
                 value={period.hours}
@@ -201,9 +292,19 @@ export function ScheduleSeasonScreen({
                 [{ from: settings.startsOn, hours: [] }],
                 'Period added.'
               )
-            else setAddingPeriod(true)
+            else setChoosing('add')
           }}
         />
+        {sources.length > 0 && (
+          <Button
+            label="Copy from another season"
+            kind="secondary"
+            disabled={busy}
+            onPress={() => {
+              setCopying(true)
+            }}
+          />
+        )}
         <SectionHeader
           title="Blackout days"
           note={String(settings.blackouts.length)}
@@ -262,21 +363,22 @@ export function ScheduleSeasonScreen({
           </ListCard>
         )}
       </View>
-      {addingPeriod && (
+      {choosing === 'add' && (
         <PickerDialog
           onClose={() => {
-            setAddingPeriod(false)
+            setChoosing(null)
           }}
         >
           <CalendarPicker
             value={settings.windows[settings.windows.length - 1].from}
             onChoose={date => {
-              setAddingPeriod(false)
+              setChoosing(null)
               if (settings.windows.some(period => period.from === date)) {
                 setError('A period already starts on that date.')
                 return
               }
-              // A new period starts as a copy of the one before it.
+              // A new period starts as a copy of the one before it, with no
+              // end date.
               const before = [...settings.windows]
                 .reverse()
                 .find(period => period.from < date)
@@ -289,10 +391,94 @@ export function ScheduleSeasonScreen({
               )
             }}
             onCancel={() => {
-              setAddingPeriod(false)
+              setChoosing(null)
             }}
           />
         </PickerDialog>
+      )}
+      {choosing != null && choosing !== 'add' && (
+        <PickerDialog
+          onClose={() => {
+            setChoosing(null)
+          }}
+        >
+          <CalendarPicker
+            value={
+              choosing.end === 'from'
+                ? settings.windows[choosing.index].from
+                : (settings.windows[choosing.index].until ??
+                  openEnd(choosing.index))
+            }
+            onChoose={date => {
+              const { index, end } = choosing
+              setChoosing(null)
+              setWindows(
+                settings.windows
+                  .map((period, i) =>
+                    i === index ? { ...period, [end]: date } : period
+                  )
+                  .sort((a, b) => a.from.localeCompare(b.from)),
+                end === 'from' ? 'Start saved.' : 'End date saved.'
+              )
+            }}
+            other={
+              choosing.end === 'until'
+                ? {
+                    label: 'No end date',
+                    onPress: () => {
+                      const { index } = choosing
+                      setChoosing(null)
+                      setWindows(
+                        settings.windows.map((period, i) =>
+                          i === index
+                            ? { from: period.from, hours: period.hours }
+                            : period
+                        ),
+                        'End date removed.'
+                      )
+                    }
+                  }
+                : undefined
+            }
+            onCancel={() => {
+              setChoosing(null)
+            }}
+          />
+        </PickerDialog>
+      )}
+      {copying && (
+        <ChoiceSheet
+          title="Copy game windows from"
+          choices={sources.map(source => ({
+            label: source.name,
+            detail: `${source.year} · ${plural(source.settings.windows.length, 'period')}`,
+            onPress: () => {
+              if (settings.windows.length > 0) setReplacing(source)
+              else copyFrom(source)
+            }
+          }))}
+          onClose={() => {
+            setCopying(false)
+          }}
+        />
+      )}
+      {replacing != null && (
+        <ChoiceSheet
+          title="Replace this season’s game windows?"
+          choices={[
+            {
+              label: 'Replace game windows',
+              detail: `${replacing.name}’s windows take the place of this season’s ${plural(settings.windows.length, 'period')}.`,
+              destructive: true,
+              onPress: () => {
+                copyFrom(replacing)
+              }
+            }
+          ]}
+          onClose={() => {
+            setReplacing(null)
+          }}
+        />
       )}
     </Screen>
   )

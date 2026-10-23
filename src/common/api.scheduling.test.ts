@@ -139,6 +139,34 @@ describe('api client scheduling setup', () => {
     ])
   })
 
+  it('keeps a period’s end date through the setup, and sends it again with a save', async () => {
+    const windows = [
+      {
+        from: '2027-03-01',
+        until: '2027-05-20',
+        hours: [{ weekday: 6, start: '08:00', end: '18:00' }]
+      },
+      {
+        from: '2027-06-01',
+        hours: [{ weekday: 6, start: '09:00', end: '17:00' }]
+      }
+    ]
+    const ended = { ...SETTINGS, windows }
+    const { api, calls } = client([
+      { ...SETUP, seasons: [{ ...SETUP.seasons[0], settings: ended }] },
+      { seasonId: 'sea_a', saved: true, timezone: 'UTC', settings: ended }
+    ])
+    const [season] = (await api.scheduleSetup('lea/a')).seasons
+    expect(season.settings.windows).deep.equals(windows)
+    // A grid cell saves the season's settings with one number changed.
+    const saved = await api.saveScheduleSettings('sea_a', {
+      ...season.settings,
+      gameMinutes: 100
+    })
+    expect(calls[1][2]).deep.equals({ ...ended, gameMinutes: 100 })
+    expect(saved.settings.windows).deep.equals(windows)
+  })
+
   it('builds, reads, edits and publishes previews, and lists games to reschedule', async () => {
     const preview: SchedulePreview = {
       id: 'spv/1',

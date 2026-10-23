@@ -112,6 +112,33 @@ describe('field availability', () => {
     expect(seasonWindows(periods, ZONE, '2027-02-02')).deep.equals([])
   })
 
+  it('ends a period on its end date, leaving the days before the next with no windows', () => {
+    const periods = [
+      {
+        from: '2027-03-01',
+        until: '2027-05-20',
+        hours: [{ weekday: 2, start: '17:30', end: '21:00' }]
+      },
+      {
+        from: '2027-06-01',
+        hours: [{ weekday: 2, start: '18:00', end: '21:00' }]
+      }
+    ]
+    expect(periodOn(periods, '2027-05-20')?.from).equals('2027-03-01')
+    expect(periodOn(periods, '2027-05-21')).equals(null)
+    expect(periodOn(periods, '2027-05-31')).equals(null)
+    expect(periodOn(periods, '2027-06-01')?.from).equals('2027-06-01')
+    // 2027-05-18 and 2027-05-25 are Tuesdays.
+    expect(seasonWindows(periods, ZONE, '2027-05-18')).length(1)
+    expect(seasonWindows(periods, ZONE, '2027-05-25')).deep.equals([])
+    // A last period with no end date runs on to the season's end, and past.
+    expect(periodOn(periods, '2027-12-31')?.from).equals('2027-06-01')
+    // A period that ends on the day it starts covers that day alone.
+    const day = [{ from: '2027-05-25', until: '2027-05-25', hours: [] }]
+    expect(periodOn(day, '2027-05-25')?.from).equals('2027-05-25')
+    expect(periodOn(day, '2027-05-26')).equals(null)
+  })
+
   it('covers a game only when it fits wholly inside an open interval', () => {
     const a = effectiveAvailability(venue, field)
     expect(

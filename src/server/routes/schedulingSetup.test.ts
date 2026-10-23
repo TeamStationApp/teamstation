@@ -171,6 +171,18 @@ describe('scheduling setup routes', function () {
       { ...SETTINGS, doubleheaders: 'sometimes' },
       { ...SETTINGS, endsOn: '2027-02-01' },
       { ...SETTINGS, windows: [SETTINGS.windows[0], SETTINGS.windows[0]] },
+      // An end date before its start, and one that overlaps the next period.
+      {
+        ...SETTINGS,
+        windows: [{ ...SETTINGS.windows[1], until: '2027-02-28' }]
+      },
+      {
+        ...SETTINGS,
+        windows: [
+          SETTINGS.windows[0],
+          { ...SETTINGS.windows[1], until: '2027-04-01' }
+        ]
+      },
       'settings'
     ])
       expect(
@@ -189,6 +201,19 @@ describe('scheduling setup routes', function () {
         windows: [SETTINGS.windows[1], SETTINGS.windows[0]]
       }
     })
+    // A period's end date is kept, and read back.
+    const ended = [
+      { ...SETTINGS.windows[1], until: '2027-03-20' },
+      SETTINGS.windows[0]
+    ]
+    expect(
+      await json(
+        await f.h.request('PUT', path, { ...SETTINGS, windows: ended }, 101)
+      )
+    ).deep.nested.include({ 'settings.windows': ended })
+    expect(
+      await json(await f.h.request('GET', path, undefined, 101))
+    ).deep.nested.include({ 'settings.windows': ended })
     expect(
       await json(
         await f.h.request('PUT', path, { ...SETTINGS, windows: [] }, 101)

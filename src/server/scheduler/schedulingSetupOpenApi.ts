@@ -76,12 +76,18 @@ export function schedulingSetupPaths(
         type: 'array',
         maxItems: 20,
         description:
-          'Periods of weekly game windows, one per from date; each is in force from its date until the next.',
+          'Periods of weekly game windows, one per from date; each is in force from its date through its until date, or, with none, until the next period or the season’s end. A day no period covers has no windows. Periods can’t overlap.',
         items: {
           type: 'object',
           required: ['from', 'hours'],
           properties: {
             from: { type: 'string', format: 'date' },
+            until: {
+              type: 'string',
+              format: 'date',
+              description:
+                'The period’s last day, inclusive: on or after from, and before the next period’s from'
+            },
             hours: weeklyHours
           }
         }

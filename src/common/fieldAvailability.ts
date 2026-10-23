@@ -110,13 +110,21 @@ export function fieldWindows(
   return hoursOn(availability.hours, date, availability.timezone)
 }
 
-/** One period of a season's game windows, in force from `from` onward. */
+/**
+ * One period of a season's game windows, in force from `from` through
+ * `until`, or, with no `until`, until the next period or the season's end.
+ */
 export interface WindowPeriod {
   from: string
+  /** The period's last day, inclusive. */
+  until?: string
   hours: WeekdayHours[]
 }
 
-/** The period in force on a date: the last that has begun. */
+/**
+ * The period in force on a date: the last that has begun, unless it ended
+ * before the date, which leaves the date with no windows.
+ */
 export function periodOn(
   periods: WindowPeriod[],
   date: string
@@ -126,7 +134,7 @@ export function periodOn(
     a.from.localeCompare(b.from)
   ))
     if (period.from <= date) found = period
-  return found
+  return found?.until == null || date <= found.until ? found : null
 }
 
 /** The season's game windows on a date in its zone. */
