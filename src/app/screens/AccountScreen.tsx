@@ -25,6 +25,7 @@ import {
   TextField
 } from '../components'
 import { NewPasswordFields } from '../components/NewPasswordFields'
+import { useSceneReveals } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -154,6 +155,9 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [code, setCode] = useState('')
   const user = account?.user ?? session.user
 
+  // What another screen changed about this account, as Node Administration
+  // can. A name being typed here is left alone.
+  const reveals = useSceneReveals()
   useEffect(() => {
     let live = true
     setLoadError('')
@@ -162,7 +166,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       .then(value => {
         if (!live) return
         setAccount(value)
-        setName(value.user.displayName)
+        if (reveals === 0) setName(value.user.displayName)
       })
       .catch((error: unknown) => {
         if (live)
@@ -175,7 +179,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, reload])
+  }, [client, reload, reveals])
 
   const accept = (value: AccountSettings): void => {
     setAccount(value)

@@ -6,6 +6,12 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import type { PinnedHead } from './pinnedHead'
+import {
+  useActiveLayout,
+  useActiveRef,
+  usePageHeadHidden,
+  usePageOffset
+} from './TabPages'
 
 /**
  * The parts of a screen whose head is pinned by `usePinnedHead`: the band
@@ -17,16 +23,23 @@ import type { PinnedHead } from './pinnedHead'
 /** The band holding the card that scrolls away under the header. */
 export function CardBand(props: {
   part: PinnedHead['cardBand']
+  /** Outside a column with its gaps: none of them to reach over. */
+  flat?: boolean
   children: React.ReactNode
 }): React.ReactElement {
-  const { part, children } = props
+  const { part, flat = false, children } = props
   const styles = getStyles(useTheme())
   const { headerHeight } = useHeaderSlot()
   return (
     <Band
-      ref={part.ref}
-      onLayout={part.handleLayout}
-      style={[styles.band, styles.cardBand, part.style]}
+      ref={useActiveRef(part.ref)}
+      onLayout={useActiveRef(part.handleLayout)}
+      style={[
+        styles.band,
+        styles.cardBand,
+        !flat && styles.cardBandSpacing,
+        part.style
+      ]}
     >
       {/*
         The page behind the glass header, which the card band carries up
@@ -47,15 +60,24 @@ export function CardBand(props: {
 /** The band holding the pills, which pins under the header. */
 export function PillBand(props: {
   part: PinnedHead['pillBand']
+  testID?: string
+  /** Outside a column with its gaps: none of them to take back. */
+  flat?: boolean
   children: React.ReactNode
 }): React.ReactElement {
-  const { part, children } = props
+  const { part, testID, flat = false, children } = props
   const styles = getStyles(useTheme())
   return (
     <Band
-      ref={part.ref}
-      onLayout={part.handleLayout}
-      style={[styles.band, styles.pillBand, part.style]}
+      testID={testID}
+      ref={useActiveRef(part.ref)}
+      onLayout={useActiveRef(part.handleLayout)}
+      style={[
+        styles.band,
+        styles.pillBand,
+        !flat && styles.pillBandSpacing,
+        part.style
+      ]}
     >
       {/*
         A sliver of the page above the pills, under the header's lower edge.
@@ -74,7 +96,8 @@ export function PillBand(props: {
 /**
  * One view for whichever tab is showing. Give it `key={tab}`, so each tab is
  * a new view: the anchor measures it, and a tab that is new to the page has
- * to be laid out before it can be.
+ * to be laid out before it can be. Inside a `TabPages` the page sliding out
+ * lets go of the shared ref and layout handler (`useActiveRef`).
  */
 export function PinnedContent(props: {
   part: PinnedHead['content']
@@ -83,11 +106,33 @@ export function PinnedContent(props: {
 }): React.ReactElement {
   const { part, testID, children } = props
   const styles = getStyles(useTheme())
+  // Measured in the column, wherever a pill page puts it: the page's own
+  // offset is added once the page knows it, and the last layout is reported
+  // again whenever it moves, and when a page that started sliding out comes
+  // back (a pill reversed mid-slide), which no layout event says.
+  const offset = usePageOffset()
+  const { handleLayout } = part
+  const onLayout = useActiveLayout(
+    handleLayout == null
+      ? undefined
+      : event => {
+          if (offset == null) return
+          const { layout } = event.nativeEvent
+          handleLayout({
+            ...event,
+            nativeEvent: {
+              ...event.nativeEvent,
+              layout: { ...layout, y: layout.y + offset }
+            }
+          })
+        },
+    offset
+  )
   return (
     <View
       testID={testID}
-      ref={part.ref}
-      onLayout={part.handleLayout}
+      ref={useActiveRef(part.ref)}
+      onLayout={onLayout}
       style={styles.tabContent}
     >
       {children}
@@ -103,8 +148,8 @@ export function PinnedSpacer(props: {
   const styles = getStyles(useTheme())
   return (
     <View
-      ref={part.ref}
-      onLayout={part.handleLayout}
+      ref={useActiveRef(part.ref)}
+      onLayout={useActiveRef(part.handleLayout)}
       testID="pinnedSpacer"
       style={[styles.spacer, part.style]}
     />
@@ -119,15 +164,18 @@ const GLASS_EDGE = 4
  * painted, so what scrolls under it does not show at its sides.
  */
 function Band(props: {
+  testID?: string
   children: React.ReactNode
   ref?: React.Ref<React.ComponentRef<typeof View>>
   onLayout?: (event: LayoutChangeEvent) => void
   style: React.ComponentProps<typeof Animated.View>['style']
 }): React.ReactElement {
-  const { children, ref, onLayout, style } = props
+  const { children, testID, ref, onLayout, style } = props
   const inset = useContentInset()
+  const hidden = usePageHeadHidden()
   return (
     <Animated.View
+      testID={testID}
       ref={ref}
       onLayout={onLayout}
       style={[
@@ -137,7 +185,8 @@ function Band(props: {
           paddingLeft: inset.left,
           paddingRight: inset.right
         },
-        style
+        style,
+        hidden && { opacity: 0 }
       ]}
     >
       {children}
@@ -155,7 +204,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   cardBand: {
     zIndex: 2,
-    elevation: 8,
+    elevation: 8
+  },
+  cardBandSpacing: {
     // Over the column's top margin and the gap down to the pills, so a held
     // card hides what has scrolled up under it.
     marginTop: -theme.rem(theme.spaceLgRem),
@@ -165,7 +216,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pillBand: {
     zIndex: 3,
-    elevation: 9,
+    elevation: 9
+  },
+  pillBandSpacing: {
     // Takes back the column's gap, so the content starts at the band's lower
     // edge: the pills' own target room, the same below them as above.
     marginBottom: -theme.rem(theme.spaceLgRem)

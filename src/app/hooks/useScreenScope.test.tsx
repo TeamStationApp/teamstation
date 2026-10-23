@@ -14,6 +14,7 @@ import {
   heldTimers,
   revisionStamps
 } from '../../test/fakeScreenScope'
+import { SceneShownProvider } from '../components/sceneShown'
 import {
   screenScopeKey,
   ScreenScopeProvider,
@@ -179,6 +180,39 @@ describe('useScreenScope', function () {
     })
     await settle()
   }
+
+  it('reads nothing a notice names while a screen covers it', async function () {
+    const log: string[] = []
+    const socket = new FakeScopeSocket(log)
+    let loads = 0
+    const load = async (): Promise<void> => {
+      loads++
+    }
+    const scope: ScreenScope = { scope: 'home' }
+    const tree = (shown: boolean): React.ReactElement => (
+      <SceneShownProvider value={shown}>
+        <ScreenScopeProvider socket={socket} scope={scope}>
+          <Loader socket={socket} scope={scope} load={load} />
+        </ScreenScopeProvider>
+      </SceneShownProvider>
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(tree(true))
+    })
+    await settle()
+    socket.ack('7')
+    await settle()
+    expect(loads).equals(1)
+    await act(async () => {
+      root!.render(tree(false))
+    })
+    socket.changed('8')
+    await settle()
+    expect(loads).equals(1)
+  })
 
   it('reads only after the scope is acknowledged', async function () {
     const log: string[] = []

@@ -222,6 +222,9 @@ function newest(
   return Date.parse(read) > Date.parse(listed) ? read : listed
 }
 
+/** Who holds a chat when the caller names nobody. */
+const SOLE_HOLDER = {}
+
 export class ChatEngine {
   /** Where the device stands; `idle` until `start()`. */
   status: 'idle' | Enrolment['state'] = 'idle'
@@ -233,7 +236,12 @@ export class ChatEngine {
   private readonly wanted = new Map<string, Set<Part>>()
   private readonly work = new Set<Promise<unknown>>()
   /** Chats a screen has opened: hints keep them current. */
-  private readonly active = new Set<string>()
+  /**
+   * The chats held open, and who holds each: a conversation and the info
+   * screen pushed over it hold the same chat, and each lets go in its own
+   * time. Held until the last of them does.
+   */
+  private readonly active = new Map<string, Set<object>>()
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private readonly safety = new Map<string, string>()
   private readonly personalPins = new Map<string, ChatPin[]>()
@@ -449,7 +457,7 @@ export class ChatEngine {
         }
       })
     }
-    for (const id of this.active) {
+    for (const id of this.active.keys()) {
       if (this.memory.conversations.has(id)) {
         await this.serial(id, async () => {
           const state = this.memory.state(id)
@@ -696,9 +704,14 @@ export class ChatEngine {
    * Reads a chat (its members, membership record, epochs, messages and
    * read cursors) and keeps it current from then on. Answers its view.
    */
-  async open(conversationId: string): Promise<ConversationView> {
+  async open(
+    conversationId: string,
+    holder: object = SOLE_HOLDER
+  ): Promise<ConversationView> {
     const ctx = this.ctx
-    this.active.add(conversationId)
+    const holders = this.active.get(conversationId) ?? new Set()
+    holders.add(holder)
+    this.active.set(conversationId, holders)
     let opened: ConversationView
     try {
       opened = await this.serial(conversationId, async () => {
@@ -720,8 +733,10 @@ export class ChatEngine {
   }
 
   /** The screen left the chat: hints no longer read it. */
-  close(conversationId: string): void {
-    this.active.delete(conversationId)
+  close(conversationId: string, holder: object = SOLE_HOLDER): void {
+    const holders = this.active.get(conversationId)
+    holders?.delete(holder)
+    if (holders?.size === 0) this.active.delete(conversationId)
   }
 
   /** Reads one page of older messages. */
@@ -1259,7 +1274,7 @@ export class ChatEngine {
       case 'chatUser':
         if (event.kind === 'preferences') {
           this.relist()
-          for (const id of this.active)
+          for (const id of this.active.keys())
             this.later(`pins:${id}`, async () => {
               await this.serial(id, async () => {
                 await this.readPins(id)
@@ -1276,7 +1291,7 @@ export class ChatEngine {
       case 'resync':
         this.pendingAlerts.clear()
         this.relist()
-        for (const id of this.active) {
+        for (const id of this.active.keys()) {
           this.want(id, ['members', 'epochs', 'messages', 'reads'])
         }
         this.grants()

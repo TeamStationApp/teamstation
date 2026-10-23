@@ -11,6 +11,7 @@ import {
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { SceneShownProvider } from './sceneShown'
 import { StreamPanel } from './StreamPanel'
 
 let root: Root | undefined
@@ -947,6 +948,58 @@ describe('the stream panel', function () {
     root = undefined
     expect(timers.polls()).deep.equals([])
     expect(server.requests).has.lengthOf(asked)
+  })
+
+  it('asks nothing while a screen covers it, and once again when shown', async function () {
+    timers = heldTimers()
+    const server = new FakeServer([
+      camera('lst_1', 'Home plate', { state: 'publishing' })
+    ])
+    const client = await mount(server)
+    expect(timers.polls()).deep.equals([3000])
+    const panel = (shown: boolean): React.ReactElement => (
+      <ThemeProvider>
+        <SceneShownProvider value={shown}>
+          <StreamPanel client={client} gameId="gam_1" />
+        </SceneShownProvider>
+      </ThemeProvider>
+    )
+    await act(async () => {
+      root!.render(panel(false))
+      await delay(10)
+    })
+    expect(timers.polls()).deep.equals([])
+    const covered = server.requests.length
+    await act(async () => {
+      root!.render(panel(true))
+      await delay(10)
+    })
+    expect(timers.polls()).deep.equals([3000])
+    expect(server.requests).has.lengthOf(covered + 1)
+  })
+
+  it('asks once when shown again though nothing was live, for a camera started meanwhile', async function () {
+    timers = heldTimers()
+    const server = new FakeServer()
+    const client = await mount(server)
+    expect(timers.polls()).deep.equals([])
+    const panel = (shown: boolean): React.ReactElement => (
+      <ThemeProvider>
+        <SceneShownProvider value={shown}>
+          <StreamPanel client={client} gameId="gam_1" />
+        </SceneShownProvider>
+      </ThemeProvider>
+    )
+    await act(async () => {
+      root!.render(panel(false))
+      await delay(10)
+    })
+    const covered = server.requests.length
+    await act(async () => {
+      root!.render(panel(true))
+      await delay(10)
+    })
+    expect(server.requests).has.lengthOf(covered + 1)
   })
 
   it('asks for a camera name before it creates a key', async function () {

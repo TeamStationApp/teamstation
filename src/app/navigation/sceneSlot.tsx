@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useMemo, useRef } from 'react'
 
 import { HeaderSlotProvider } from '../components/headerSlot'
+import { SceneShownProvider } from '../components/sceneShown'
 import {
   type ScreenScopeValue,
   ScreenScopeValueProvider,
@@ -124,18 +125,24 @@ export function SceneSlot(props: SceneSlotProps): React.ReactElement {
   // would remount the screen inside it.
   const scope = active ? shared : kept.current
 
+  // On show: the top. The retained scorer stays live beneath its player's
+  // settings, as it did before scenes slid.
+  const shown = role === 'top' || role === 'retained'
+
   return (
-    <ScreenScopeValueProvider value={scope}>
-      <HeaderSlotProvider
-        headerHeight={headerHeight}
-        navigationHeight={props.navigationHeight}
-        onHandoff={setHandoff}
-        onHandoffHeight={setHandoffHeight}
-        onBackOverride={setBackOverride}
-      >
-        {children}
-      </HeaderSlotProvider>
-    </ScreenScopeValueProvider>
+    <SceneShownProvider value={shown}>
+      <ScreenScopeValueProvider value={scope}>
+        <HeaderSlotProvider
+          headerHeight={headerHeight}
+          navigationHeight={props.navigationHeight}
+          onHandoff={setHandoff}
+          onHandoffHeight={setHandoffHeight}
+          onBackOverride={setBackOverride}
+        >
+          {children}
+        </HeaderSlotProvider>
+      </ScreenScopeValueProvider>
+    </SceneShownProvider>
   )
 }
 

@@ -73,18 +73,25 @@ describe('app titles', function () {
     expect(game).contains(
       '<CardBand part={pinned.cardBand}>{scoreboard}</CardBand>'
     )
+    // Upright, the same card and pill bands as the other sections draw them
+    // in, which let go inside a pill page sliding out (`useActiveRef`).
+    const watchHead = readFileSync(
+      join(__dirname, 'screens', 'GameWatchHead.tsx'),
+      'utf8'
+    )
+    expect(watchHead).contains('<CardBand part={pinned.cardBand}')
+    // The pills have their own measured band, after the card's band.
+    expect(watchHead.indexOf('<CardBand part={pinned.cardBand}>')).lessThan(
+      watchHead.indexOf('<PillBand part={pinned.pillBand}')
+    )
     for (const layout of [
       'GameWatchLayout.tsx',
       'GameWatchLayout.native.tsx'
     ]) {
       const source = readFileSync(join(__dirname, 'screens', layout), 'utf8')
-      expect(source).match(
-        /ref=\{pinned\.cardBand\.ref\}[\s\S]*?onLayout=\{pinned\.cardBand\.handleLayout\}[\s\S]*?\{short \? null : head\}/
-      )
-      // The pills have their own measured band, after the card's band.
-      expect(source.indexOf('{short ? null : head}')).lessThan(
-        source.indexOf('ref={pinned.pillBand.ref}')
-      )
+      // Upright and held sideways alike.
+      expect(source).contains('<GameWatchHead')
+      expect(source).not.contains('pinned.cardBand.ref')
     }
   })
 

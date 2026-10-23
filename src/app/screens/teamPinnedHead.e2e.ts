@@ -312,6 +312,11 @@ async function tab(page: Page, name: string): Promise<Layout> {
   })(${JSON.stringify(name)})`)) as { x: number; y: number } | null
   if (target == null) throw new Error(`no ${name} pill`)
   await page.mouse.click(target.x, target.y)
+  // A page slides in before it is drawn: the layout holds still meanwhile.
+  await page.waitForFunction(
+    'document.querySelector(\'[data-page-role="incoming"], [data-page-role="outgoing"]\') === null',
+    { polling: 50, timeout: 5000 }
+  )
   return await settle(page)
 }
 

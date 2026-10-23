@@ -205,6 +205,56 @@ describe('public chat engine list summaries', () => {
     })
   }
 
+  it('keeps a chat live until the last screen holding it lets go', async function () {
+    const chat = engine(client())
+    const active = (chat as unknown as { active: Map<string, unknown> }).active
+    // As an engine that has been set up: `open` asks this before all else.
+    Object.assign(chat, { status: 'ready', context: {} })
+    const conversation = {}
+    const info = {}
+    try {
+      // The conversation comes back as the screen over it is still leaving.
+      const opens = [
+        chat.open('cnv_one', info),
+        chat.open('cnv_one', conversation),
+        // A retry of the same screen's open is one holder, not two.
+        chat.open('cnv_one', conversation)
+      ]
+      chat.close('cnv_one', info)
+      expect(active.has('cnv_one')).equals(true)
+      chat.close('cnv_one', conversation)
+      expect(active.has('cnv_one')).equals(false)
+      await Promise.allSettled(opens)
+    } finally {
+      chat.stop()
+    }
+  })
+
+  it('brings every chat held up to date on a resync and on new preferences', function () {
+    const chat = engine(client())
+    Object.assign(chat, { status: 'ready', context: {} })
+    const wanted: string[] = []
+    const pinned: string[] = []
+    const inside = chat as unknown as {
+      hint: (event: unknown) => void
+      want: (id: string) => void
+      later: (key: string) => void
+      relist: () => void
+      grants: () => void
+    }
+    inside.want = id => wanted.push(id)
+    inside.later = key => pinned.push(key)
+    inside.relist = () => undefined
+    inside.grants = () => undefined
+    const held = chat.open('cnv_one', {})
+    held.catch(() => undefined)
+    inside.hint({ type: 'resync' })
+    inside.hint({ type: 'chatUser', kind: 'preferences' })
+    chat.stop()
+    expect(wanted).deep.equals(['cnv_one'])
+    expect(pinned).deep.equals(['pins:cnv_one'])
+  })
+
   it('uses listed DM people while members are pending, then strips the departed photo and keeps the full-width current member', async () => {
     const listed = summary()
     listed.people[0].avatarUrl = 'https://images.example.test/listed.png'

@@ -146,7 +146,10 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     const { pinAt: pin, rowOffset, contentBottom, viewport } = measure()
     pinAt.current = pin
     const bottom = contentBottom + latest.current.tail
-    const onRow = latest.current.anchorOnRow
+    // A kept page's first time in is a spinner, with no rows to anchor on:
+    // it stands at its top until they are drawn, and is anchored again then.
+    const drawing = latest.current.anchorOnRow && content.current == null
+    const onRow = latest.current.anchorOnRow && !drawing
     const target = onRow
       ? rowAnchored(from, rowOffset, pin, bottom, viewport)
       : anchored(from, 0, pin)
@@ -164,9 +167,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     page.scrollTop = target.y
     if (spacer.current != null) spacer.current.style.height = `${space}px`
     const y = page.scrollTop
-    rowHold.current = latest.current.anchorOnRow ? { from, at: y } : undefined
+    rowHold.current = onRow ? { from, at: y } : undefined
     state.current = { y, collapse: Math.min(target.collapse, y) }
-    pending.current = undefined
+    pending.current = drawing ? from : undefined
     paint()
     latest.current.onScroll()
   }, [measure, paint, scroller])
@@ -195,6 +198,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   // where the page is, too, and the page put back: the browser runs this
   // before the scroll its pull would send, which then finds nothing moved.
   const remeasure = useCallback((): void => {
+    // The page a tab waited for has been drawn, in a commit of its own.
+    if (pending.current != null && latest.current.ready) {
+      anchorRef.current()
+      return
+    }
     if (pending.current != null || lastOffset.current == null) return
     // Still held on its row (nobody has scrolled since it landed; a page the
     // browser pulled back is not somebody scrolling): anchor on it again.
@@ -346,6 +354,13 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       content: {
         ref: (node: unknown) => {
           content.current = node as Node
+          // A page drawn late is committed without this screen: watched from
+          // here, it is measured before it paints.
+          const watch = observer.current
+          if (content.current == null || watch == null) return
+          if (watched.current.has(content.current)) return
+          watch.observe(content.current)
+          watched.current.add(content.current)
         }
       },
       nextRow: {

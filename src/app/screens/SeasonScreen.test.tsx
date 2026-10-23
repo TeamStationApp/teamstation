@@ -16,6 +16,7 @@ import {
   asPublicGroup,
   type GroupDetail
 } from '../../common/publicGroups'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { scheduleDate, shortDate, shortTime } from './format'
@@ -258,30 +259,32 @@ async function mount(setup: Setup = {}): Promise<Calls> {
   const render = (): void => {
     root!.render(
       <ThemeProvider>
-        <SeasonScreen
-          client={client}
-          season={setup.season ?? season()}
-          onOpenGame={(gameId, title, options) =>
-            calls.games.push({ gameId, title, options })
-          }
-          onOpenTeam={opened => calls.teams.push(opened)}
-          onSettings={
-            setup.manage === true
-              ? () => {
-                  calls.managed++
-                }
-              : undefined
-          }
-          initialTab={
-            setup.defaultTab === true
-              ? undefined
-              : (setup.initialTab ?? 'schedule')
-          }
-          publicDetail={setup.publicDetail}
-          onTab={(tab, correcting) => calls.tabs.push([tab, correcting])}
-          initialWhen={setup.initialWhen}
-          onWhen={when => calls.whens.push(when)}
-        />
+        <CoverableScene>
+          <SeasonScreen
+            client={client}
+            season={setup.season ?? season()}
+            onOpenGame={(gameId, title, options) =>
+              calls.games.push({ gameId, title, options })
+            }
+            onOpenTeam={opened => calls.teams.push(opened)}
+            onSettings={
+              setup.manage === true
+                ? () => {
+                    calls.managed++
+                  }
+                : undefined
+            }
+            initialTab={
+              setup.defaultTab === true
+                ? undefined
+                : (setup.initialTab ?? 'schedule')
+            }
+            publicDetail={setup.publicDetail}
+            onTab={(tab, correcting) => calls.tabs.push([tab, correcting])}
+            initialWhen={setup.initialWhen}
+            onWhen={when => calls.whens.push(when)}
+          />
+        </CoverableScene>
       </ThemeProvider>
     )
   }
@@ -322,10 +325,17 @@ function labelled(label: string): HTMLElement {
 }
 
 /** A pressable whose spoken name starts with these words. */
+/** Not in a pill page kept out of sight, which nobody can reach. */
+function reachable(node: HTMLElement): boolean {
+  return node.closest('[data-page-role="kept"]') == null
+}
+
 function control(label: string): HTMLElement {
   const found = [
     ...document.querySelectorAll<HTMLElement>('[role="button"], [role="tab"]')
-  ].filter(node => (node.getAttribute('aria-label') ?? '').startsWith(label))
+  ]
+    .filter(reachable)
+    .filter(node => (node.getAttribute('aria-label') ?? '').startsWith(label))
   expect(found, label).has.lengthOf(1)
   return found[0]
 }
@@ -341,6 +351,7 @@ function tabNames(strip: string): string[] {
 /** The game rows on the schedule, by what each one says aloud. */
 function gameRows(): string[] {
   return [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+    .filter(reachable)
     .map(node => node.getAttribute('aria-label') ?? '')
     .filter(label => label.includes(' @ '))
 }
@@ -383,6 +394,17 @@ describe('the season screen', function () {
       canManage: true,
       canViewPrivate: true
     })
+  it('reads its games and standings again on coming back from Settings', async function () {
+    const calls = await mount()
+    const reads = (kind: string): number =>
+      calls.loads.filter(load => load.startsWith(kind)).length
+    const games = reads('games')
+    const standings = reads('standings')
+    await coverAndReveal()
+    expect(reads('games')).equals(games + 1)
+    expect(reads('standings')).equals(standings + 1)
+  })
+
   it('uses each participant permission from Teams and Standings on a direct season', async function () {
     const participants = [
       team('tem_owned', 'Owned participant', { canViewPrivate: true }),

@@ -1,6 +1,7 @@
 import React from 'react'
 import Video from 'react-native-video'
 
+import { useSceneShown } from '../components/sceneShown'
 import { useTheme } from '../theme/ThemeContext'
 import type { ChatVideoProps } from './chatVideoProps'
 
@@ -17,7 +18,8 @@ export function ChatVideo(props: ChatVideoProps): React.ReactElement {
       accessibilityLabel={props.label}
       source={{ uri: props.uri }}
       controls
-      paused={false}
+      // A screen pushed over the chat leaves no control in reach.
+      paused={!useSceneShown()}
       resizeMode="contain"
       style={{
         width: props.width,

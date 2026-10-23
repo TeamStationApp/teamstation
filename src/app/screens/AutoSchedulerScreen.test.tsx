@@ -17,6 +17,7 @@ import type {
   SetupSeason
 } from '../../common/seasonScheduling'
 import type { VenueSummary } from '../../common/venues'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import {
   fill,
   mount,
@@ -288,6 +289,23 @@ const buildButton = (): HTMLElement =>
     node => node.textContent === 'Build schedule'
   )!
 
+/** The screen in a scene a test can cover and show again. */
+async function showCoverable(client: TeamStationClient): Promise<void> {
+  await mount(
+    <CoverableScene>
+      <AutoSchedulerScreen
+        client={client}
+        leagueId="lea_a"
+        leagueName="Demo League A"
+        onFieldManager={() => undefined}
+        onOpenSeason={() => undefined}
+        onOpenPreview={() => undefined}
+      />
+    </CoverableScene>
+  )
+  await settle(50)
+}
+
 async function key(name: string): Promise<void> {
   await act(async () => {
     document.querySelector('input')!.dispatchEvent(
@@ -382,6 +400,88 @@ describe('the Auto-Scheduler setup', () => {
     await settle(20)
     expect(fake.choices.at(-1)?.fieldIds).deep.equals([])
     expect(disabled(buildButton())).equals(true)
+  })
+
+  it('reads the setup again on coming back, so a cell’s save keeps what the season’s screen saved', async () => {
+    const fake = fakeClient(setupOf())
+    await mount(
+      <CoverableScene>
+        <AutoSchedulerScreen
+          client={fake.client}
+          leagueId="lea_a"
+          leagueName="Demo League A"
+          onFieldManager={() => undefined}
+          onOpenSeason={() => undefined}
+          onOpenPreview={() => undefined}
+        />
+      </CoverableScene>
+    )
+    await settle(50)
+    // Windows, on the season's own screen, pushed over this one.
+    const blackouts = ['2027-05-01']
+    await coverAndReveal(() => {
+      fake.client.scheduleSetup = async () =>
+        setupOf({
+          seasons: [season({ settings: { ...SETTINGS, blackouts } })]
+        })
+    })
+    await settle(50)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    expect(fake.saves.at(-1)?.[1].gameMinutes).equals(75)
+    expect(fake.saves.at(-1)?.[1].blackouts).deep.equals(blackouts)
+  })
+
+  it('holds a cell’s save until that read answers, and builds on what it read', async () => {
+    const fake = fakeClient(setupOf())
+    await showCoverable(fake.client)
+    const blackouts = ['2027-05-01']
+    let answer: () => void = () => undefined
+    await coverAndReveal(() => {
+      fake.client.scheduleSetup = async () => {
+        await new Promise<void>(resolve => {
+          answer = resolve
+        })
+        return setupOf({
+          seasons: [season({ settings: { ...SETTINGS, blackouts } })]
+        })
+      }
+    })
+    const before = fake.saves.length
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    expect(fake.saves).has.lengthOf(before)
+    await act(async () => {
+      answer()
+    })
+    await settle(50)
+    expect(fake.saves.at(-1)?.[1].gameMinutes).equals(75)
+    expect(fake.saves.at(-1)?.[1].blackouts).deep.equals(blackouts)
+  })
+
+  it('refuses a save on an old copy when that read fails, and offers Retry', async () => {
+    const fake = fakeClient(setupOf())
+    await showCoverable(fake.client)
+    const read = fake.client.scheduleSetup.bind(fake.client)
+    await coverAndReveal(() => {
+      fake.client.scheduleSetup = async () => {
+        throw new Error('Offline')
+      }
+    })
+    await settle(20)
+    expect(text()).includes('could not load')
+    const before = fake.saves.length
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    expect(fake.saves).has.lengthOf(before)
+    expect(text()).includes('could not be read again')
+    fake.client.scheduleSetup = read
+    await press('Retry')
+    await settle(50)
+    expect(text()).not.includes('could not load')
   })
 
   it('edits a size, doubleheaders, a number and the dates from the grid', async () => {

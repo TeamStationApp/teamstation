@@ -1025,6 +1025,66 @@ describe('chat workspace saved scroll position', function () {
   })
 })
 
+describe('a chat over its kept list on a narrow screen', function () {
+  it('keeps the draft typed in a chat when the list beneath it remembers that chat', async function () {
+    const engine = new FakeEngine()
+    const state = newChatWorkspaceState()
+    state.selectedId = 'cnv_aurora'
+    const workspace = (conversationId?: string): React.ReactElement => (
+      <div key={conversationId ?? 'list'}>
+        <ChatWorkspace
+          engine={engine}
+          userId={userIdOfGumbo(1)}
+          state={state}
+          conversationId={conversationId}
+          onOpen={() => {}}
+          onMembers={() => {}}
+          onNewMessage={() => {}}
+          onTitle={() => {}}
+        />
+      </div>
+    )
+    await render(
+      <>
+        {workspace('cnv_aurora')}
+        {workspace()}
+      </>
+    )
+    for (const container of document.querySelectorAll<HTMLElement>(
+      '[data-testid="chat-workspace"]'
+    )) {
+      await act(async () => {
+        ;(
+          container as HTMLElement & {
+            __reactLayoutHandler?: (event: unknown) => void
+          }
+        ).__reactLayoutHandler?.({
+          nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 700 } }
+        })
+        await wait()
+      })
+    }
+    await type('Keep me')
+    // Back: the chat goes, and the list left behind draws again.
+    await render(<>{workspace()}</>)
+    await render(
+      <>
+        {workspace()}
+        {workspace('cnv_aurora')}
+      </>
+    )
+    expect(input().value).equals('Keep me')
+  })
+
+  it('keeps its usual look while it leaves, and takes nothing', async function () {
+    const engine = new FakeEngine()
+    await screen(engine)
+    await screen(engine, { active: false })
+    expect(input().placeholder).equals('Message')
+    expect(input().readOnly).equals(true)
+  })
+})
+
 describe('chat repeated offscreen announcements', function () {
   it('announces the remembered conversation while the narrow list is shown and stays quiet after returning to its message pane', async function () {
     const engine = new FakeEngine()

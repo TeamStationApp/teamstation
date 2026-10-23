@@ -99,8 +99,10 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
         }
       }
     })
+    // The conversation beneath holds the same chat, and comes back first.
+    const holder = {}
     engine
-      .open(conversationId)
+      .open(conversationId, holder)
       .then(() => {
         if (live && generation.current === version) {
           const current = engine.view(conversationId)
@@ -125,7 +127,7 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
       live = false
       generation.current += 1
       unsubscribe()
-      engine.close(conversationId)
+      engine.close(conversationId, holder)
     }
   }, [engine, conversationId, userId, loadRevision])
 
