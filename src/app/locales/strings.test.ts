@@ -23,6 +23,10 @@ describe('locales', function () {
     }
   })
 
+  it('drops the strings of the chat list action and members screen it no longer has', function () {
+    expect(enUs).not.to.have.any.keys('chat_follow_team', 'chat_members_title')
+  })
+
   it('merges a translation over the master', function () {
     selectLocale({ login_title: 'Iniciar sesión' })
     expect(lstrings.login_title).equals('Iniciar sesión')
