@@ -1807,6 +1807,9 @@ export function ConversationScreen(
     discovering.current = true
     setAttentionLoading(true)
     setAttentionFailed(false)
+    // A batch that spent its page budget with the cursor moving is progress:
+    // the next batch starts once this one lets go, still loading.
+    let more = false
     discoverAttentionHistory({
       conversationId,
       userId,
@@ -1815,8 +1818,10 @@ export function ConversationScreen(
       loadEarlier: async () => await discoverPageNow.current(cancelled),
       cancelled
     })
-      .then(() => {
-        if (!cancelled()) session.complete = true
+      .then(result => {
+        if (cancelled()) return
+        if (result === 'more') more = true
+        else session.complete = true
       })
       .catch((error: unknown) => {
         if (!cancelled() && !(error instanceof AttentionCancelled)) {
@@ -1827,9 +1832,9 @@ export function ConversationScreen(
       .finally(() => {
         discovering.current = false
         if (mounted.current && paneActive.current) {
-          setAttentionLoading(false)
+          if (!more) setAttentionLoading(false)
           refreshAttention.current()
-          if (retryDiscovery.current || cancelled()) {
+          if (more || retryDiscovery.current || cancelled()) {
             retryDiscovery.current = false
             setAttentionRevision(value => value + 1)
           }

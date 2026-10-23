@@ -318,7 +318,7 @@ describe('bounded serialized ordinary attention history', function () {
     ).length(2)
   })
 
-  it('advances raw operation-only pages without needing a visible post and can resume after budget or network failure', async function () {
+  it('advances raw operation-only pages without needing a visible post and resumes after a spent budget or a network failure', async function () {
     const initial = opened({
       historyBefore: 500,
       messages: [],
@@ -329,13 +329,12 @@ describe('bounded serialized ordinary attention history', function () {
       opened({ historyBefore: 300, messages: [], hasEarlier: true }),
       opened({ historyBefore: 201, messages: [], hasEarlier: true })
     ])
-    const error = await discoverAttentionHistory({
-      ...loaded.options,
-      budget: 1
-    }).catch((error: unknown) => error as Error)
-    expect(error).instanceOf(Error)
+    // A spent budget with the cursor moving is progress, not a failure.
+    expect(
+      await discoverAttentionHistory({ ...loaded.options, budget: 1 })
+    ).equals('more')
     expect(loaded.calls).equals(1)
-    await discoverAttentionHistory(loaded.options)
+    expect(await discoverAttentionHistory(loaded.options)).equals('complete')
     expect(loaded.calls).equals(3)
     const network = paging(initial, [])
     expect(
@@ -343,6 +342,44 @@ describe('bounded serialized ordinary attention history', function () {
         (error: unknown) => error
       )
     ).instanceOf(Error)
+  })
+
+  it('walks a first visit (read 0) longer than its budget in batches that each report progress', async function () {
+    const target = message({
+      id: 'msg_mention',
+      seq: 1450,
+      mentions: [userIdOfGumbo(1)]
+    })
+    const first = (over: Partial<ConversationView>): ConversationView =>
+      opened({
+        conversation: { ...opened().conversation, lastSeq: 1500 },
+        ownReadSeq: 0,
+        messages: [target],
+        hasEarlier: true,
+        ...over
+      })
+    // 14 pages of 100 back to the boundary: more than one 12-page budget.
+    const pages = Array.from({ length: 14 }, (_, index) =>
+      first({ historyBefore: 1301 - 100 * index })
+    )
+    const loaded = paging(first({ historyBefore: 1401 }), pages)
+    expect(loaded.options.session.boundary).equals(0)
+    const results: string[] = []
+    for (let batch = 0; batch < 5; batch++) {
+      const result = await discoverAttentionHistory(loaded.options)
+      results.push(result)
+      if (result === 'complete') break
+    }
+    expect(results).deep.equals(['more', 'complete'])
+    expect(loaded.calls).equals(14)
+    expect(loaded.current!.historyBefore).equals(1)
+    expect(
+      attentionMessages(
+        loaded.current!,
+        userIdOfGumbo(1),
+        loaded.options.session
+      ).map(value => value.id)
+    ).deep.equals(['msg_mention'])
   })
 
   it('rejects stalled or missing raw cursors while allowing honest terminal exhaustion and unavailable references', async function () {

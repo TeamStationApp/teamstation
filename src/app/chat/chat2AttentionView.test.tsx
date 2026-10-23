@@ -491,6 +491,92 @@ describe('attention controls and synchronized reading visits', function () {
   })
 })
 
+describe('attention discovery longer than one page budget', function () {
+  this.timeout(20000)
+  const target = message({
+    id: 'msg_mention',
+    seq: 1450,
+    mentions: [userIdOfGumbo(1)]
+  })
+  /** A first visit (no read cursor yet: 0) to 1,500 envelopes. */
+  const at = (historyBefore: number): ConversationView =>
+    view({
+      conversation: { ...view().conversation, lastSeq: 1500 },
+      readsReady: true,
+      ownReadSeq: 0,
+      historyBefore,
+      hasEarlier: true,
+      messages: [target]
+    })
+  const shown = (id: string): boolean =>
+    host!.querySelector(`[data-testid="${id}"]`) != null
+  async function settle(done: () => boolean): Promise<void> {
+    for (let tries = 0; tries < 100 && !done(); tries++)
+      await act(async () => {
+        await wait(40)
+      })
+  }
+
+  it('keeps loading through further batches and ends with a count and no Retry', async function () {
+    const state = fixture(at(1401))
+    const during: Array<{ loading: boolean; retry: boolean }> = []
+    state.setLoad(async () => {
+      during.push({
+        loading: shown('chat-attention-loading'),
+        retry: shown('chat-attention-retry')
+      })
+      const next = at(1401 - 100 * state.loads)
+      state.update(next)
+      return next
+    })
+    // A reader above the newest message, so the mention below it counts.
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: 0,
+      followNewest: false
+    })
+    const owner = new ChatDraftOwner(workspace)
+    await render(screen(state.engine, owner))
+    await settle(
+      () => owner.attention('cnv_1')?.complete === true && state.loads >= 14
+    )
+    // 14 pages back to the boundary: more than the 12 one batch may load.
+    expect(state.loads).equals(14)
+    expect(during).length(14)
+    expect(
+      during.every(seen => seen.loading && !seen.retry),
+      'Every page loads under the loading indication, never the failed state'
+    ).equals(true)
+    expect(owner.attention('cnv_1')!.boundary).equals(0)
+    expect(owner.attention('cnv_1')!.complete).equals(true)
+    expect(shown('chat-attention-retry')).equals(false)
+    expect(shown('chat-attention-loading')).equals(false)
+    await measureBodies({ msg_mention: 900 })
+    expect(
+      host!.querySelector('[data-testid="chat-attention-count"]')?.textContent
+    ).equals('1')
+  })
+
+  it('still offers Retry when a page does not move the cursor back', async function () {
+    const state = fixture(at(1401))
+    state.setLoad(async () => {
+      const next = at(1401)
+      state.update(next)
+      return next
+    })
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    await render(screen(state.engine, owner))
+    await settle(() => shown('chat-attention-retry'))
+    expect(shown('chat-attention-retry')).equals(true)
+    expect(shown('chat-attention-loading')).equals(false)
+    expect(state.loads).equals(1)
+    expect(owner.attention('cnv_1')!.complete).equals(false)
+  })
+})
+
 describe('attention history measured page ownership', function () {
   it('waits for delayed mounted quote layout before requesting another raw page and preserves the same physical reader', async function () {
     const current = message({
