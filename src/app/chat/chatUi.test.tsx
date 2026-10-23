@@ -592,13 +592,60 @@ describe('the chat gate', function () {
     expect(engine.calls.filter(call => call === 'start')).length(2)
   })
 
+  it('asks for an app update, and offers no reset, for keys a newer version saved', async function () {
+    const store: ChatKeyStore = {
+      load: async () => {
+        throw new UnreadableKeyRecordError('unknownVersion')
+      },
+      save: async () => {},
+      wipe: async () => {
+        throw Error('A newer version’s keys must not be wiped')
+      },
+      exists: async () => true
+    }
+    const engine = new FakeEngine()
+    engine.start = async () => {
+      engine.calls.push('start')
+      await store.load()
+      return 'ready'
+    }
+    const client = {
+      myChatKeys: async () => ({ deviceId: 'cdv_newer' }),
+      revokeChatDevice: async () => {
+        throw Error('A newer version’s device must not be revoked')
+      }
+    }
+    const reported: unknown[] = []
+    await render(
+      <ChatGate
+        engine={engine}
+        client={client as never}
+        userId={userIdOfGumbo(1)}
+        store={store}
+        onFailure={error => reported.push(error)}
+      >
+        <span>inside</span>
+      </ChatGate>
+    )
+    await until('the failure', () =>
+      text().includes('Chat could not be opened.')
+    )
+    expect(text()).contains('Update the app to open chat.')
+    expect(text()).not.contains('cannot be read')
+    expect(button('Reset chat on this device')).equals(undefined)
+    expect(button('Try again')).not.equals(undefined)
+    expect(reported.map(chatStartFailure)).deep.equals([
+      'storedRecord:unknownVersion'
+    ])
+  })
+
   it('reports saved keys it cannot read, keeps them through Try again, and resets chat here only when asked', async function () {
     // A store holding a record this build cannot read, as the real ones
     // report it, and an engine that starts by loading it (enrolOnce).
     let kept = true
     const store: ChatKeyStore = {
       load: async () => {
-        if (kept) throw new UnreadableKeyRecordError('unknownVersion')
+        if (kept) throw new UnreadableKeyRecordError('undecryptable')
         return undefined
       },
       save: async () => {},
@@ -642,7 +689,7 @@ describe('the chat gate', function () {
       'The chat keys saved on this device cannot be read.'
     )
     expect(reported.map(chatStartFailure)).deep.equals([
-      'storedRecord:unknownVersion'
+      'storedRecord:undecryptable'
     ])
     expect(button('Reset chat on this device')).not.equals(undefined)
     await press('Try again')

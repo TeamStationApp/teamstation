@@ -629,7 +629,12 @@ export async function resetUnreadableChat(
     await store.load()
     return
   } catch (error) {
-    if (!(error instanceof UnreadableKeyRecordError)) throw error
+    // A newer build wrote it: updating the app reads it, so nothing is reset.
+    if (
+      !(error instanceof UnreadableKeyRecordError) ||
+      error.reason === 'unknownVersion'
+    )
+      throw error
   }
   const mine = await client.myChatKeys()
   if (mine.deviceId != null) {

@@ -669,6 +669,16 @@ describe('chat keys on the device', function () {
         resetUnreadableChat({ client, store: broken })
       )
       expect((error as Error).message).equals('IndexedDB will not open')
+      // A newer version's record is still good: refused, never revoked or wiped.
+      const newer = new MemoryStore()
+      newer.text = 'newer'
+      newer.load = async () => {
+        throw new UnreadableKeyRecordError('unknownVersion')
+      }
+      const kept = await refusal(resetUnreadableChat({ client, store: newer }))
+      expect((kept as UnreadableKeyRecordError).reason).equals('unknownVersion')
+      expect(newer.wipes).equals(0)
+      expect(newer.text).equals('newer')
       expect(revokes).deep.equals([])
       expect(one.store.wipes + broken.wipes).equals(0)
       expect(broken.text).equals('kept')

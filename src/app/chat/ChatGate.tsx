@@ -91,7 +91,10 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
       />
     )
   }
-  const unreadable = failure instanceof UnreadableKeyRecordError
+  const newer =
+    failure instanceof UnreadableKeyRecordError &&
+    failure.reason === 'unknownVersion'
+  const unreadable = failure instanceof UnreadableKeyRecordError && !newer
   const reset = (): void => {
     setResetting(true)
     resetUnreadableChat({ client, store: props.store ?? keyStore })
@@ -113,6 +116,9 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
           <Text style={styles.error}>{lstrings.chat_cannot_load}</Text>
           {unreadable && (
             <Text style={styles.muted}>{lstrings.chat_keys_unreadable}</Text>
+          )}
+          {newer && (
+            <Text style={styles.muted}>{lstrings.chat_keys_newer}</Text>
           )}
           <Button
             label={lstrings.common_retry}
