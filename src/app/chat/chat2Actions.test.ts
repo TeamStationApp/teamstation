@@ -10019,6 +10019,7 @@ describe('web post-lifecycle continuity public device ownership', function () {
       document.body.insertAdjacentHTML('beforeend', '<input type="password">')
     const marker = text.firstElementChild as HTMLElement
     if (mode === 'hidden') marker.style.visibility = 'hidden'
+    if (mode === 'loading') document.querySelector('[data-row="own"]')!.remove()
     Object.defineProperty(
       page.window.HTMLElement.prototype,
       'getBoundingClientRect',
@@ -10047,8 +10048,14 @@ describe('web post-lifecycle continuity public device ownership', function () {
       dom: async (script: string) =>
         await page.window.eval('(async()=>{' + script + '})()'),
       device: {
-        assertVisible: async (selector: { text: string }) => {
-          expect(selector.text).equals('^Chat devices$')
+        assertVisible: async (selector: { text: string; timeout?: number }) => {
+          if (selector.text === '^Chat devices$') return
+          expect(selector.text).equals(
+            '^Chrome on a test system \\(this device\\)$'
+          )
+          expect(selector.timeout).equals(15000)
+          if (mode === 'loading')
+            document.body.insertAdjacentHTML('beforeend', own)
         },
         assertNotVisible: async (selector: { text: string }) => {
           calls.push(selector.text)
@@ -10080,6 +10087,17 @@ describe('web post-lifecycle continuity public device ownership', function () {
         '^Link this device$',
         '^Reset chat$'
       ])
+    } finally {
+      m.close()
+    }
+  })
+  it('waits for the exact own row after the device page header appears', async () => {
+    const m = rowModel('loading')
+    try {
+      const actual = await m.scenario.webContinuationDeviceUi({
+        name: 'Chrome on a test system'
+      })
+      expect(actual.linkedText).equals('Web · Linked')
     } finally {
       m.close()
     }
