@@ -1,7 +1,11 @@
 import { expect } from 'chai'
 
 import type { Pushed } from '../App'
-import { inChatWorkspace, screenIdentity as identityOf } from './screenIdentity'
+import {
+  inChatWorkspace,
+  presentationOf,
+  screenIdentity as identityOf
+} from './screenIdentity'
 import {
   frameKey,
   rootKey,
@@ -118,6 +122,17 @@ describe('stack scene keys (U1)', function () {
     )
     expect(identityOf(team('t1'))).not.equals(identityOf(team('t2')))
     expect(identityOf(game('g1'))).not.equals(identityOf(team('g1')))
+  })
+
+  it('covers with the scorer and Add Player, and pushes the rest', function () {
+    expect(presentationOf({ name: 'scoreGame', gameId: 'g' })).equals('cover')
+    expect(
+      presentationOf({ name: 'teamAddPlayer', kind: 'team', id: 't' })
+    ).equals('cover')
+    expect(
+      presentationOf({ name: 'teamCreatePlayer', kind: 'team', id: 't' })
+    ).equals('push')
+    expect(presentationOf(undefined)).equals('push')
   })
 
   it('tells Coach Game teams apart and nothing else by team id', function () {

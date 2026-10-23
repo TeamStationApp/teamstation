@@ -84,8 +84,19 @@ export function HeaderSlotProvider(
  * left its score in the header would leave it there over the next screen.
  */
 /**
- * Take the header's back while `active`. Letting go returns the chevron to
- * leaving the screen.
+ * Who holds each slot's back, latest last. Two holders can overlap in one
+ * screen — a message's menu still closing as the mention picker opens over
+ * it — and the one letting go hands Back to the one before it, not to
+ * nobody.
+ */
+const backHolders = new WeakMap<
+  (handler: (() => void) | null) => void,
+  Array<() => void>
+>()
+
+/**
+ * Take the header's back while `active`. Letting go returns it to whoever
+ * held it before, or the chevron to leaving the screen.
  *
  * The handler is read through a ref, so a new function each render does not
  * re-subscribe the header.
@@ -96,11 +107,18 @@ export function useBackOverride(active: boolean, handler: () => void): void {
   handlerRef.current = handler
   useEffect(() => {
     if (!active) return
-    setBackOverride(() => {
+    const held = (): void => {
       handlerRef.current()
-    })
+    }
+    const holders = backHolders.get(setBackOverride) ?? []
+    backHolders.set(setBackOverride, [...holders, held])
+    setBackOverride(held)
     return () => {
-      setBackOverride(null)
+      const rest = (backHolders.get(setBackOverride) ?? []).filter(
+        holder => holder !== held
+      )
+      backHolders.set(setBackOverride, rest)
+      setBackOverride(rest.at(-1) ?? null)
     }
   }, [active, setBackOverride])
 }
