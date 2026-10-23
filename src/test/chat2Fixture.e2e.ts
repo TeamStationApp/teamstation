@@ -556,7 +556,8 @@ export function verifyChat2HarnessSource(
     'src/test/chat2Maestro.e2e.ts',
     'src/test/chat2Fixture.e2e.ts',
     'src/app/chat/chat2Actions.test.ts',
-    'src/test/chat2FixtureIdentity.test.ts'
+    'src/test/chat2FixtureIdentity.test.ts',
+    'src/app/chat/engine/dmTitle.test.ts'
   ])
   const paths = git([
     'diff',

@@ -204,6 +204,31 @@ describe('committed chat harness and application provenance', () => {
       )
     })
   })
+  it('permits only the exact isolated DM-summary spec while retaining original application binding', () => {
+    const repo = repository()
+    const { fixture } = builtFixture(repo)
+    const path = 'src/app/chat/engine/dmTitle.test.ts'
+    const text = '// isolated public engine summary regression\n'
+    repo.write(path, text)
+    const harness = repo.commit(path)
+    withSources(repo.application, harness, () => {
+      const result = sourceBinding(repo.root, fixture, 'web-narrow')
+      expect(result.source).equals(repo.application)
+      expect(result.harnessSource).equals(harness)
+      expect(result.binding.source).equals(repo.application)
+      expect(result.changedTestFiles).deep.equals([
+        { path, sha256: createHash('sha256').update(text).digest('hex') }
+      ])
+    })
+    repo.write(
+      'src/app/chat/engine/engine.ts',
+      '// changed production engine\n'
+    )
+    const changed = repo.commit('src/app/chat/engine/engine.ts')
+    expect(() =>
+      verifyChat2HarnessSource(repo.root, repo.application, changed)
+    ).throws('new build and capture archive')
+  })
   it('rejects wrong revisions, dirty tracked bytes and unrelated history', () => {
     const repo = repository()
     expect(() =>
