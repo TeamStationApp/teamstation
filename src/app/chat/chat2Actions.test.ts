@@ -9539,7 +9539,6 @@ describe('native E5 exact old outgoing quote route', function () {
     })
 })
 
-
 describe('native pinned jump settlement', function () {
   const target: Chat2Message = {
     id: 'msg-pin-original',
@@ -9547,7 +9546,10 @@ describe('native pinned jump settlement', function () {
     body: 'Synthetic practice update.',
     authorId: userIdOfGumbo(9)
   }
-  function model(mode = 'delayed', surface: 'android' | 'ios' = 'android'): {
+  function model(
+    mode = 'delayed',
+    surface: 'android' | 'ios' = 'android'
+  ): {
     scenario: Scenarios
     events: string[]
     reads: () => number
@@ -9643,9 +9645,10 @@ describe('native pinned jump settlement', function () {
       f: { messages: { target } },
       nativeHistoryTarget: async () => {
         if (selected)
-          expect(reads, 'Selected pin must settle before manual paging').at.least(
-            5
-          )
+          expect(
+            reads,
+            'Selected pin must settle before manual paging'
+          ).at.least(5)
         events.push('history')
       },
       nativeAnchorReady: async () => {
@@ -9657,18 +9660,22 @@ describe('native pinned jump settlement', function () {
   }
 
   for (const surface of ['android', 'ios'] as const)
-    it('waits for the actual selected pin target and stable native window on ' + surface, async () => {
-      const m = model('delayed', surface)
-      await m.scenario.anchor(target)
-      expect(m.reads()).at.least(5)
-      expect(m.events).deep.equals([
-        'chat-pinned-summary',
-        'chat-pin-' + target.id,
-        'history',
-        'frame',
-        'present'
-      ])
-    })
+    it(
+      'waits for the actual selected pin target and stable native window on ' +
+        surface,
+      async () => {
+        const m = model('delayed', surface)
+        await m.scenario.anchor(target)
+        expect(m.reads()).at.least(5)
+        expect(m.events).deep.equals([
+          'chat-pinned-summary',
+          'chat-pin-' + target.id,
+          'history',
+          'frame',
+          'present'
+        ])
+      }
+    )
 
   for (const mode of [
     'retry',
@@ -9678,26 +9685,33 @@ describe('native pinned jump settlement', function () {
     'changing-band',
     'changing-ids'
   ])
-    it('refuses unsettled native pin navigation before paging: ' + mode, async () => {
-      const m = model(mode)
-      const error = String(await captureFailure(m.scenario.anchor(target)))
-      expect(error).matches(
-        mode === 'retry'
-          ? /pin.*jump.*fail/i
-          : mode === 'transport'
-            ? /Public hierarchy disconnected/
-            : /abort|timeout/i
-      )
-      expect(m.events).not.includes('history')
-      expect(m.events).not.includes('frame')
-    })
+    it(
+      'refuses unsettled native pin navigation before paging: ' + mode,
+      async () => {
+        const m = model(mode)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).matches(
+          mode === 'retry'
+            ? /pin.*jump.*fail/i
+            : mode === 'transport'
+              ? /Public hierarchy disconnected/
+              : /abort|timeout/i
+        )
+        expect(m.events).not.includes('history')
+        expect(m.events).not.includes('frame')
+      }
+    )
 
   for (const mode of ['no-summary', 'missing-pin'])
-    it('retains ordinary native history fallback without a selected pin: ' + mode, async () => {
-      const m = model(mode)
-      await m.scenario.anchor(target)
-      expect(m.reads()).equals(0)
-      expect(m.events.slice(-3)).deep.equals(['history', 'frame', 'present'])
-      if (mode === 'missing-pin') expect(m.events).includes('^Cancel$')
-    })
+    it(
+      'retains ordinary native history fallback without a selected pin: ' +
+        mode,
+      async () => {
+        const m = model(mode)
+        await m.scenario.anchor(target)
+        expect(m.reads()).equals(0)
+        expect(m.events.slice(-3)).deep.equals(['history', 'frame', 'present'])
+        if (mode === 'missing-pin') expect(m.events).includes('^Cancel$')
+      }
+    )
 })

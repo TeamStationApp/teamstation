@@ -1897,9 +1897,10 @@ export class Scenarios {
     if (await ui.visible({ id: 'chat-pinned-summary' }, 1000)) {
       await ui.id('chat-pinned-summary')
       if (await ui.visible({ text: exactText('Pinned messages') }, 1000))
-        if (await ui.visible({ id: 'chat-pin-' + target.id }, 500))
+        if (await ui.visible({ id: 'chat-pin-' + target.id }, 500)) {
           await ui.id('chat-pin-' + target.id)
-        else if (ui.native) await ui.text('Cancel')
+          if (ui.native) await this.nativePinJumpReady(target)
+        } else if (ui.native) await ui.text('Cancel')
         else await this.dismiss()
     }
     if (!ui.native) await this.webHistoryTarget(target)
@@ -1913,6 +1914,109 @@ export class Scenarios {
         `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')}); if(!n)throw Error('Visible target required');n.scrollIntoView({block:'center'});return {publicDomScroll:true}`
       )
     if (!ui.native) await this.webAnchorReady(target)
+  }
+
+  /** Let an explicitly selected public pin finish before manual history gestures. */
+  async nativePinJumpReady(target: Chat2Message): Promise<void> {
+    const ui = this.ui
+    assert(ui.native, 'Native pin jump observation required')
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
+    const proof: Json = {
+      nativePinJump: target.id,
+      samples: [],
+      outcome: 'failed'
+    }
+    this.observations.push(proof)
+    let previous: string | undefined
+    let stableSince = Date.now()
+    await until(
+      async () => {
+        signal.throwIfAborted()
+        const nodes = await ui.nodes(undefined, signal)
+        signal.throwIfAborted()
+        const pending = nodes.some(
+          node => node.id === 'chat-history-jump-cancel'
+        )
+        assert(
+          !nodes.some(node => node.id === 'chat-history-jump-retry'),
+          'Selected native pin jump failed; public Retry requires investigation'
+        )
+        const matches = nodes.filter(
+          node => node.id === 'chat-bubble-' + target.id
+        )
+        assert(
+          matches.length <= 1,
+          'Unique selected native pin target required'
+        )
+        const box = matches[0]?.bounds
+        let signature: string | undefined
+        let band: { top: number; bottom: number } | undefined
+        if (!pending && box != null && box.height > 0) {
+          const bounds = (id: string): NonNullable<PublicNode['bounds']> => {
+            const matches = nodes.filter(node => node.id === id)
+            assert.equal(
+              matches.length,
+              1,
+              'Unique native pin geometry required: ' + id
+            )
+            const b = need(
+              matches[0].bounds,
+              'Actual native pin bounds required'
+            )
+            assert(
+              [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+                b.width > 0 &&
+                b.height > 0,
+              'Finite positive native pin geometry required'
+            )
+            return b
+          }
+          const history = bounds('chat-message-history')
+          const header = bounds('chat-conversation-identity')
+          const composer = bounds('chat-composer-band')
+          const pins = nodes.filter(node => node.id === 'chat-pinned-band')
+          assert(pins.length <= 1, 'Unique native pin band required')
+          const pin = pins.length === 1 ? bounds('chat-pinned-band') : undefined
+          band = {
+            top: Math.max(
+              history.y,
+              header.y + header.height,
+              pin == null ? history.y : pin.y + pin.height
+            ),
+            bottom: Math.min(history.y + history.height, composer.y)
+          }
+          assert(
+            band.bottom - band.top > 64,
+            'Actual unobscured native pin reading band required'
+          )
+          bounds('chat-bubble-' + target.id)
+          if (box.y < band.bottom && box.y + box.height > band.top)
+            signature = JSON.stringify({
+              box,
+              band,
+              ids: [
+                ...new Set(
+                  nodes.flatMap(node =>
+                    node.id?.startsWith('chat-bubble-') === true
+                      ? [node.id]
+                      : []
+                  )
+                )
+              ].sort()
+            })
+        }
+        ;(proof.samples as unknown[]).push({ pending, box, band })
+        if (signature == null || signature !== previous) {
+          previous = signature
+          stableSince = Date.now()
+          return undefined
+        }
+        return Date.now() - stableSince >= 200 ? true : undefined
+      },
+      'selected native pin target and loaded window to settle',
+      30000
+    )
+    proof.outcome = 'passed'
   }
 
   /** Native existence assertions include clipped and occluded rows; measure before acting. */
