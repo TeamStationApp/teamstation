@@ -18,6 +18,7 @@ import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import { playedFromStart } from '../../test/liveJoin'
 import { App } from '../App'
+import { SceneShownProvider } from '../components/sceneShown'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { LIVE_DELAY_SEC } from '../player/liveDelay'
@@ -293,8 +294,9 @@ async function mount(setup: Setup = {}): Promise<Calls> {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  await act(async () => {
-    root!.render(
+  homeShown = true
+  const tree = (): React.ReactElement => (
+    <SceneShownProvider value={homeShown}>
       <ThemeProvider>
         <HomeScreen
           client={client}
@@ -322,11 +324,20 @@ async function mount(setup: Setup = {}): Promise<Calls> {
           }
         />
       </ThemeProvider>
-    )
-    await delay(10)
-  })
+    </SceneShownProvider>
+  )
+  redraw = async () => {
+    await act(async () => {
+      root!.render(tree())
+      await delay(10)
+    })
+  }
+  await redraw()
   return calls
 }
+/** Whether the stack has Home on show, and Home drawn again for it. */
+let homeShown = true
+let redraw: () => Promise<void> = async () => undefined
 
 function text(): string {
   return document.body.textContent ?? ''
@@ -744,6 +755,56 @@ describe('the home screen', function () {
     })
     expect(await playedFromStart(document.querySelector('video')!)).deep.equals(
       [600 - LIVE_DELAY_SEC]
+    )
+  })
+
+  it('stops its live preview and its look at what is live while a screen covers it', async function () {
+    clock = liveClock()
+    restoreVideo = playableVideo()
+    await mount({
+      live: async () => [liveGame('vid_a', 'gam_a', 'Alta Hawks', 'Bay Stars')]
+    })
+    expect(document.querySelector('video')?.getAttribute('src')).equals(
+      'https://video.example/vid_a.m3u8'
+    )
+    expect(clock.running()).equals(2)
+    // The live game its hero opened is pushed over it.
+    homeShown = false
+    await redraw()
+    expect(document.querySelector('video')).equals(null)
+    // Nothing on a timer: neither its look at what is live nor the recent
+    // card's refresh, which stands down as every covered screen's does.
+    expect(clock.running()).equals(0)
+    // Back: playing and looking again.
+    homeShown = true
+    await redraw()
+    expect(document.querySelector('video')?.getAttribute('src')).equals(
+      'https://video.example/vid_a.m3u8'
+    )
+    expect(clock.running()).equals(2)
+  })
+
+  it('stops the recent game’s preview while a screen covers it', async function () {
+    restoreVideo = playableVideo()
+    await mount({
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      recent: async () =>
+        recentGame({ posterUrl: 'https://video.example/poster.jpg' }),
+      videos: [
+        { id: 'vid_ready', status: 'ready' }
+      ] as unknown as GameDetail['videos']
+    })
+    expect(document.querySelector('video')?.getAttribute('src')).equals(
+      'https://video.example/vid_ready.m3u8'
+    )
+    // The game it opened is pushed over it: not pulled twice.
+    homeShown = false
+    await redraw()
+    expect(document.querySelector('video')).equals(null)
+    homeShown = true
+    await redraw()
+    expect(document.querySelector('video')?.getAttribute('src')).equals(
+      'https://video.example/vid_ready.m3u8'
     )
   })
 

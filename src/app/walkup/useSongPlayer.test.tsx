@@ -6,6 +6,7 @@ import { Platform } from 'react-native'
 
 import type { Session } from '../../common/api'
 import { TeamStationClient } from '../../common/api'
+import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { AccountScreen } from '../screens/AccountScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -204,6 +205,24 @@ describe('useSongPlayer', function () {
       player!.play(appleC)
     })
     expect(text()).includes('none|raw')
+  })
+
+  it('stops when a screen covers it, and only when something plays', async function () {
+    const music = fakeMusic()
+    await mount(
+      <CoverableScene>
+        <Harness music={music} />
+      </CoverableScene>
+    )
+    await coverAndReveal()
+    expect(music.stops).deep.equals([])
+    await run(() => {
+      player!.toggle(fileB)
+    })
+    await coverAndReveal(() => {
+      expect(music.stops).deep.equals([0])
+    })
+    expect(text()).contains('none')
   })
 
   it('stops on unmount, and only when something plays', async function () {

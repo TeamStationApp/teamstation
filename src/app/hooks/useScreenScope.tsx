@@ -18,6 +18,7 @@ import {
   ScreenScopeGate,
   type ScreenScopeSocket
 } from '../../common/screenScope'
+import { useSceneShown } from '../components/sceneShown'
 
 /** One scope as a string, so two of them compare as values. */
 export function screenScopeKey(scope: ScreenScope): string {
@@ -227,6 +228,8 @@ export function useScreenScope(
   latest.current = load
   const latestPaint = useRef(paint)
   latestPaint.current = paint
+  const shownNow = useRef(true)
+  shownNow.current = useSceneShown()
   const gate = useMemo(
     () =>
       new ScreenScopeGate({
@@ -235,11 +238,11 @@ export function useScreenScope(
         },
         socket,
         client: collectingOf(client),
-        ...(passGameNotices
-          ? {
-              passes: (notice: { gameId?: string }) => notice.gameId != null
-            }
-          : {})
+        // Covered, a screen reads nothing a notice names: it reads as it is
+        // shown again, and the top may take no scope of its own to supersede
+        // this one.
+        passes: (notice: { gameId?: string }) =>
+          !shownNow.current || (passGameNotices && notice.gameId != null)
       }),
     [socket, client, passGameNotices]
   )

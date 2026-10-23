@@ -36,7 +36,7 @@ if (artifacts == null) throw new Error('Supply TS_STACK_ARTIFACTS')
 const before = process.argv.includes('before')
 const daemonName = process.env.TS_STACK_DAEMON ?? 'stackTransitions'
 const chosen = new Set(
-  (process.env.TS_STACK_CASES ?? 'W1,W2,W3,W4,W5,W6,W7')
+  (process.env.TS_STACK_CASES ?? 'W1,W2,W3,W4,W5,W6,W7,W8')
     .split(',')
     .map(name => name.trim())
 )
@@ -533,13 +533,144 @@ async function main(): Promise<void> {
     if (!before && chosen.has('W7')) {
       await m.openLink({ link: `${f.h.origin}/games/${gameId}` })
       await settle('Demo Owls')
-      // Videos is a layout of its own: crossing it slides the pane, while
-      // Info and Box score slide only the content. Every step moves, whether
-      // the game opened on Info or on Videos.
-      for (const name of ['Box score', 'Videos', 'Info', 'Box score'])
-        await measured(`W7 game ${name}`, pages, async () => {
-          await tapCss(`[aria-label="Game sections"] [aria-label="${name}"]`)
-        })
+      // Videos is a layout of its own, with the same hero and pills: crossing
+      // it slides only what is under the pills, as Info and Box score do, and
+      // leaves both layouts, and the pills, exactly where they were. Every
+      // step moves, whether the game opened on Info or on Videos.
+      const strip = async (): Promise<string> =>
+        await page.$eval(
+          '[data-scene-role="top"] [aria-label="Game sections"]',
+          node => {
+            const box = node.getBoundingClientRect()
+            return `${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.width)}x${Math.round(box.height)}`
+          }
+        )
+      // Its pills come with the game's own load, which can land after the
+      // text that settled the page.
+      await page.waitForSelector(
+        '[data-scene-role="top"] [aria-label="Game sections"] [aria-selected="true"]',
+        { timeout: 15000 }
+      )
+      let shown = await page.$eval(
+        '[data-scene-role="top"] [aria-label="Game sections"] [aria-selected="true"]',
+        node => node.getAttribute('aria-label')
+      )
+      assert.ok(shown != null, 'W7: the game opens on a chosen pill')
+      const home = await strip()
+      for (const name of ['Box score', 'Videos', 'Info', 'Box score']) {
+        const label = `W7 game ${name}`
+        const samples = await measured(
+          label,
+          `${pages}, [data-page-content]`,
+          async () => {
+            await tapCss(
+              `[data-scene-role="top"] [aria-label="Game sections"] [aria-label="${name}"]`
+            )
+          }
+        )
+        if (shown === 'Videos' || name === 'Videos') {
+          const layouts = samples.filter(
+            s => s.key === 'watch' || s.key === 'sections'
+          )
+          assert.ok(
+            layouts.length > 0 && layouts.every(s => s.x === 0),
+            `${label}: the layouts stay where they are`
+          )
+          assert.ok(
+            samples.some(s => s.key === '' && s.role !== '' && s.x !== 0),
+            `${label}: what is under the pills slides`
+          )
+        }
+        const at = await strip()
+        await note(`${label}: pills at ${at} (first ${home})`)
+        assert.equal(at, home, `${label}: the pills stay where they were`)
+        shown = name
+      }
+      // And scrolled, the pills pin under the header on both layouts: a band
+      // wrapped in anything as tall as itself would scroll away instead.
+      const pinnedAt = async (name: string): Promise<number> => {
+        await tapCss(
+          `[data-scene-role="top"] [aria-label="Game sections"] [aria-label="${name}"]`
+        )
+        await new Promise(resolve => setTimeout(resolve, 900))
+        const scroll = async (top: number): Promise<void> => {
+          await page.evaluate(to => {
+            let node = document.querySelector(
+              '[data-scene-role="top"] [aria-label="Game sections"]'
+            )
+            while (
+              node != null &&
+              !(
+                node.scrollHeight > node.clientHeight + 10 &&
+                /auto|scroll/.test(getComputedStyle(node).overflowY)
+              )
+            )
+              node = node.parentElement
+            if (node == null) throw new Error('No scroller above the pills')
+            node.scrollTop = to
+          }, top)
+          await new Promise(resolve => setTimeout(resolve, 400))
+        }
+        await scroll(600)
+        const y = await page.$eval(
+          '[data-scene-role="top"] [aria-label="Game sections"]',
+          node => Math.round(node.getBoundingClientRect().y)
+        )
+        await scroll(0)
+        return y
+      }
+      const top = Number(home.split(' ')[0].split(',')[1])
+      const onVideos = await pinnedAt('Videos')
+      const onInfo = await pinnedAt('Info')
+      await note(
+        `W7 pinned: pills at y=${onVideos} on Videos, ${onInfo} on Info (${top} unscrolled)`
+      )
+      assert.ok(onVideos < top, 'W7: the pills pin on Videos')
+      assert.equal(onVideos, onInfo, 'W7: and where they pin on Info')
+    }
+
+    if (!before && chosen.has('W8')) {
+      // Back shows the covered screen where it stood: scrolled as it was,
+      // since a hidden scene keeps its layout. A short window, so the
+      // fixture's Home scrolls.
+      const phone = {
+        width: 402,
+        deviceScaleFactor: 1,
+        hasTouch: true,
+        isMobile: true
+      }
+      await page.setViewport({ ...phone, height: 480 })
+      await home()
+      // No `?.` or `??` in a page function: the build's helpers for them do
+      // not exist in the page.
+      const scrolled = await page.evaluate(() => {
+        const top = document.querySelector('[data-scene-role="top"]')
+        if (top === null) return -1
+        const scroller = [...top.querySelectorAll<HTMLElement>('*')].find(
+          node => {
+            const { overflowY } = getComputedStyle(node)
+            return (
+              (overflowY === 'auto' || overflowY === 'scroll') &&
+              node.scrollHeight > node.clientHeight + 120
+            )
+          }
+        )
+        if (scroller === undefined) return -1
+        scroller.dataset.w8 = ''
+        scroller.scrollTop = 120
+        return scroller.scrollTop
+      })
+      assert.ok(scrolled > 0, `W8: Home scrolls (${scrolled})`)
+      await tapCss(
+        '[data-scene-role="top"] [role="button"][aria-label^="Demo Hawks"]'
+      )
+      await settle('Demo Hawks')
+      await page.goBack({ waitUntil: 'domcontentloaded' })
+      await settle('Your Home')
+      const back = await page.$eval('[data-w8]', node => node.scrollTop)
+      await note(`W8 Home scrolled to ${scrolled}, after Back ${back}`)
+      assert.equal(back, scrolled, 'W8: Back keeps Home where it was scrolled')
+      await page.setViewport({ ...phone, height: 874 })
     }
 
     if (!before && process.env.TS_COVERAGE_BASE != null)

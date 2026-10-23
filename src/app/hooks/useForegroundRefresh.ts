@@ -1,5 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { AppState } from 'react-native'
+
+import { useSceneShown } from '../components/sceneShown'
+import { usePageActive } from '../components/TabPages'
 
 interface ForegroundHost {
   document?: { visibilityState?: string }
@@ -7,9 +10,30 @@ interface ForegroundHost {
   removeEventListener?: (name: string, action: () => void) => void
 }
 
-/** Refresh on foreground entry and every thirty seconds while visible. */
+/**
+ * Refresh on foreground entry and every thirty seconds while visible.
+ *
+ * Inside a pill page kept out of sight it reads nothing — a season of rows
+ * on a page nobody can see would each read every half minute — and reads
+ * once it is chosen again. So does a screen kept covered beneath the top of
+ * the stack, until Back shows it again. A screen mounted out of sight (one
+ * beneath the top that has never been on show) still has its first read, so
+ * Back reveals it loaded; only the repeats wait.
+ */
 export function useForegroundRefresh(refresh: () => Promise<void>): void {
+  const pageActive = usePageActive()
+  const shown = useSceneShown()
+  const active = pageActive && shown
+  const read = useRef(false)
   useEffect(() => {
+    if (!active) {
+      if (!read.current) {
+        read.current = true
+        refresh().catch(() => undefined)
+      }
+      return
+    }
+    read.current = true
     let alive = true
     const root = globalThis as unknown as ForegroundHost & {
       window?: ForegroundHost
@@ -35,5 +59,5 @@ export function useForegroundRefresh(refresh: () => Promise<void>): void {
       host.removeEventListener?.('focus', run)
       host.removeEventListener?.('visibilitychange', run)
     }
-  }, [refresh])
+  }, [refresh, active])
 }

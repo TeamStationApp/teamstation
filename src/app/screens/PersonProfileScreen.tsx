@@ -19,6 +19,7 @@ import {
   SectionHeader
 } from '../components'
 import { type RoleRowKind, RoleRows } from '../components/RoleRows'
+import { useSceneReveals } from '../components/sceneShown'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -86,7 +87,15 @@ export function PersonProfileScreen(
     titled.current?.(found.person.fullName ?? found.person.shortName)
   }, [client, id, kind, userId, begin])
 
+  // On coming back from the player's page, the person is read again in place.
+  const reveals = useSceneReveals()
+  const readAt = useRef(reveals)
   useEffect(() => {
+    if (readAt.current !== reveals) {
+      readAt.current = reveals
+      load().catch(() => undefined)
+      return
+    }
     setProfile(undefined)
     setRefused(false)
     setBusy(false)
@@ -98,7 +107,7 @@ export function PersonProfileScreen(
     load().catch(() => {
       if (current()) setRefused(true)
     })
-  }, [load, beginWrite])
+  }, [load, beginWrite, reveals])
 
   // A successful write must not become a retryable write when its read fails.
   const refreshSaved = async (current: () => boolean): Promise<void> => {

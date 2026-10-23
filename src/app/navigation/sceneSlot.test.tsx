@@ -6,6 +6,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { ScreenScope } from '../../common/gameSocket'
 import type { ScreenScopeSocket } from '../../common/screenScope'
 import { useBackOverride, useHeaderHandoff } from '../components/headerSlot'
+import { useSceneShown } from '../components/sceneShown'
+import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import {
   type ScreenScopeValue,
   ScreenScopeValueProvider,
@@ -209,6 +211,94 @@ describe('scene slot', function () {
         scope: undefined
       })
       expect(scopesSeen.get('game')?.at(-1)).equals(event)
+    })
+  })
+
+  describe('scene slot on show', function () {
+    const shown = new Map<string, boolean>()
+    const reads = new Map<string, number>()
+    function Showing(props: { name: string }): React.ReactElement {
+      shown.set(props.name, useSceneShown())
+      useForegroundRefresh(async () => {
+        reads.set(props.name, (reads.get(props.name) ?? 0) + 1)
+      })
+      return <span>{props.name}</span>
+    }
+    async function place(
+      slots: Array<{ name: string; role: SceneRole }>
+    ): Promise<void> {
+      if (root == null) {
+        host = document.createElement('div')
+        document.body.append(host)
+        root = createRoot(host)
+      }
+      await act(async () => {
+        root!.render(
+          <>
+            {slots.map(slot => (
+              <SceneSlot
+                key={slot.name}
+                role={slot.role}
+                headerHeight={0}
+                onHandoff={() => undefined}
+                onBackOverride={() => undefined}
+              >
+                <Showing name={slot.name} />
+              </SceneSlot>
+            ))}
+          </>
+        )
+      })
+    }
+
+    it('shows the top and the retained scorer, and no scene covered, leaving or beneath a drag', async function () {
+      await place([
+        { name: 'top', role: 'top' },
+        { name: 'covered', role: 'covered' },
+        { name: 'outgoing', role: 'outgoing' },
+        { name: 'beneath', role: 'beneath' },
+        { name: 'scorer', role: 'retained' }
+      ])
+      expect(Object.fromEntries(shown)).deep.equals({
+        top: true,
+        covered: false,
+        outgoing: false,
+        beneath: false,
+        scorer: true
+      })
+    })
+
+    it('reads nothing on a covered screen until Back shows it again', async function () {
+      await place([{ name: 'game', role: 'top' }])
+      expect(reads.get('game')).equals(1)
+      await place([
+        { name: 'game', role: 'covered' },
+        { name: 'player', role: 'top' }
+      ])
+      // Back to the app: the screen on show reads, the covered one does not.
+      await act(async () => {
+        window.dispatchEvent(new window.Event('focus'))
+      })
+      expect(reads.get('player')).equals(2)
+      expect(reads.get('game')).equals(1)
+      // Shown again, it reads once.
+      await place([{ name: 'game', role: 'top' }])
+      expect(reads.get('game')).equals(2)
+    })
+
+    it('reads once on a screen mounted covered, so Back reveals it loaded', async function () {
+      // A pop from depth 3: the new top's screen beneath mounts covered.
+      await place([
+        { name: 'home', role: 'covered' },
+        { name: 'team', role: 'top' }
+      ])
+      expect(reads.get('home')).equals(1)
+      await act(async () => {
+        window.dispatchEvent(new window.Event('focus'))
+      })
+      expect(reads.get('home')).equals(1)
+      await place([{ name: 'home', role: 'top' }])
+      expect(reads.get('home')).equals(2)
     })
   })
 })

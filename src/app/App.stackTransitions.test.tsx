@@ -267,6 +267,8 @@ describe('stack transitions in the actual app', () => {
     await press('Demo Hawks')
     await rest()
     await pressIn('Team sections', 'Team')
+    // The team's page slides in as a spinner, drawn once it has landed.
+    await rest()
     await press('Alex L')
   }
 
@@ -278,6 +280,8 @@ describe('stack transitions in the actual app', () => {
       await rest()
       expect(roles()).deep.equals(['top'])
       await pressIn('Team sections', 'Team')
+      // The team's page slides in as a spinner, drawn once it has landed.
+      await rest()
       await press('Alex L')
       const player = scenes().find(scene => scene.role === 'incoming')
       expect(player?.key).match(/player/)
@@ -596,6 +600,8 @@ describe('stack transitions in the actual app', () => {
       await press('Demo Hawks')
       await rest()
       await pressIn('Team sections', 'Team')
+      // The team's page slides in as a spinner, drawn once it has landed.
+      await rest()
       await press('Alex L')
       await rest()
       await removal.confirm()
@@ -647,13 +653,84 @@ describe('stack transitions in the actual app', () => {
       })
       await rest()
       expect(scenes().map(scene => scene.key)).deep.equals(['fieldPreview'])
+      // Nothing kept beneath it either, hidden or not.
+      expect(document.querySelectorAll('[data-scene]')).has.length(1)
       expect(navigator().dataset.swipeBack).equals('false')
       expect(document.querySelector('[data-chrome]')).equals(null)
+      // Leaving it goes Home, still one scene.
+      await press('Open field menu')
+      await press('Exit field')
+      expect(scenes()).has.length(1)
     } finally {
       await act(async () => {
         root.unmount()
       })
       host.remove()
+    }
+  })
+
+  const pageRoles = (): string[] =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        `[data-scene]${SHOWN} [data-page]`
+      )
+    ].map(node => `${node.dataset.page}:${node.dataset.pageRole}`)
+
+  it('slides a team’s and a player’s pill pages by position (U17)', async () => {
+    const cleanup = await render()
+    try {
+      await press('Demo Hawks')
+      await rest()
+      await pressIn('Team sections', 'Team')
+      expect(pageRoles()).deep.equals(['videos:outgoing', 'team:incoming'])
+      await rest()
+      // The team's pages are kept built: Videos waits beside Team.
+      expect(pageRoles()).deep.equals(['videos:kept', 'team:top'])
+      await pressIn('Team sections', 'Videos')
+      expect(pageRoles()).deep.equals(['videos:incoming', 'team:outgoing'])
+      await rest()
+      await pressIn('Team sections', 'Team')
+      await rest()
+      await press('Alex L')
+      await rest()
+      await pressIn('Player sections', 'Stats')
+      expect(pageRoles()).deep.equals(['videos:outgoing', 'stats:incoming'])
+      await rest()
+      expect(pageRoles()).deep.equals(['stats:top'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('slides a game’s content under its pills, and its pane across Videos (U18)', async () => {
+    const cleanup = await render()
+    try {
+      await press('Demo Hawks')
+      await rest()
+      await pressIn('Team sections', 'Schedule')
+      await press('Demo Owls')
+      await rest()
+      // A game with a video opens on Videos, a layout of its own.
+      expect(pageRoles()).deep.equals(['watch:top'])
+      await pressIn('Game sections', 'Info')
+      expect(pageRoles()).deep.equals([
+        'watch:outgoing',
+        'sections:incoming',
+        'info:top'
+      ])
+      await rest()
+      expect(pageRoles()).deep.equals(['sections:top', 'info:top'])
+      await pressIn('Game sections', 'Box score')
+      // The content under the pills only: the pane stays.
+      expect(pageRoles()).deep.equals([
+        'sections:top',
+        'info:outgoing',
+        'boxScore:incoming'
+      ])
+      await rest()
+      expect(pageRoles()).deep.equals(['sections:top', 'boxScore:top'])
+    } finally {
+      await cleanup()
     }
   })
 

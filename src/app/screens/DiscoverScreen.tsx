@@ -7,6 +7,7 @@ import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { Button, Screen, TextField } from '../components'
 import { GroupSearchCard } from '../components/GroupSearchCard'
+import { useSceneReveals } from '../components/sceneShown'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -32,6 +33,8 @@ export function DiscoverScreen({
   const [own, setOwn] = useState<Set<string>>()
   const [following, setFollowing] = useState<string>()
   const [followError, setFollowError] = useState('')
+  // A Follow pressed on the page pushed over this one.
+  const reveals = useSceneReveals()
   useEffect(() => {
     if (!follow) return
     let active = true
@@ -48,7 +51,7 @@ export function DiscoverScreen({
     return () => {
       active = false
     }
-  }, [client, follow])
+  }, [client, follow, reveals])
   const toggle = (group: PublicGroup): void => {
     const key = `${group.kind}:${group.id}`
     const ref = { kind: group.kind, id: group.id }
