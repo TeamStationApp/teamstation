@@ -1,4 +1,5 @@
 import { type ChildProcess, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, Module } from 'node:module'
@@ -7922,4 +7923,213 @@ describe('native absent history paging', function () {
         })
       }
     )
+})
+
+describe('native E5 exact old outgoing quote route', function () {
+  function route(
+    surface: 'ios' | 'android' | 'web-wide',
+    fault = ''
+  ): {
+    scenario: Scenarios
+    calls: string[]
+    stopped: Error
+    cleanup: () => void
+  } {
+    const viewerId = userIdOfGumbo(1)
+    const outgoing: Chat2Message = {
+      id: 'msg_exact_old_outgoing',
+      seq: 5,
+      authorId: fault === 'wrong-outgoing-author' ? userIdOfGumbo(3) : viewerId,
+      body: 'Earlier synthetic own message.'
+    }
+    const reply = message({
+      id: 'msg_exact_recent_reply',
+      seq: 236,
+      body: 'Recent authenticated reply.',
+      quote: {
+        id: fault === 'wrong-target' ? 'msg_another_original' : outgoing.id,
+        authorId: fault === 'wrong-quote-author' ? userIdOfGumbo(4) : viewerId,
+        authorName: 'Juan S',
+        snippet: outgoing.body,
+        status: 'unavailable'
+      }
+    })
+    const messages =
+      fault === 'absent'
+        ? []
+        : fault === 'ambiguous'
+          ? [reply, { ...reply, id: 'msg_other_recent_reply' }]
+          : [
+              {
+                ...reply,
+                status:
+                  fault === 'invalid'
+                    ? ('invalid' as const)
+                    : fault === 'removed'
+                      ? ('removed' as const)
+                      : reply.status
+              }
+            ]
+    const calls: string[] = []
+    const stopped = Error('Unchanged exact outgoing action boundary reached')
+    let jumped = false
+    const directory = mkdtempSync(join(tmpdir(), 'chat-e5-quote-unit-'))
+    const response = join(directory, 'response.json')
+    const control = join(directory, 'control.cjs')
+    writeFileSync(
+      response,
+      JSON.stringify({
+        ownershipId: 'chat-e5-unit',
+        uiActions: false,
+        ok: true,
+        lastEvent: 0,
+        events: []
+      })
+    )
+    writeFileSync(
+      control,
+      "const fs=require('node:fs');const input=JSON.parse(fs.readFileSync(0,'utf8'));if(input.action!=='snapshot')process.exit(3);console.log(JSON.stringify(require('./response.json')))"
+    )
+    const hash = (path: string): string =>
+      createHash('sha256').update(readFileSync(path)).digest('hex')
+    const incoming: Chat2Message = {
+      id: 'msg_current_incoming',
+      seq: 231,
+      body: 'Current synthetic message.',
+      authorId: userIdOfGumbo(2)
+    }
+    const actual = {
+      native: surface !== 'web-wide',
+      surface,
+      metrics: () => ({ coarse: false }),
+      hideKeyboard: async () => {},
+      absent: async () => {},
+      shot: async () => {},
+      device: { assertVisible: async () => ({}) }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId,
+      group: 'cnv_quote_unit',
+      observations: [],
+      f: {
+        ownershipId: 'chat-e5-unit',
+        control: {
+          executable: process.execPath,
+          args: [control],
+          script: control,
+          sha256: hash(control),
+          dependencies: [{ path: response, sha256: hash(response) }]
+        },
+        messages: {
+          target: incoming,
+          incoming,
+          outgoing,
+          long: { ...incoming, id: 'msg_current_long', seq: 238 },
+          file: { ...incoming, id: 'msg_current_file', seq: 239 }
+        }
+      },
+      openGroup: async () => {},
+      check: async (name: string, work: () => Promise<void>) => {
+        if (name.startsWith('E5 incoming/outgoing')) await work()
+      },
+      client: async () => ({ chatPins: async () => [] }),
+      incomingReservation: async () => ({}),
+      protocolPeer: async () => ({
+        engine: {
+          open: async (id: string) => {
+            expect(id).equals('cnv_quote_unit')
+            calls.push('authenticated-current-replies')
+            return { messages }
+          }
+        }
+      }),
+      identityLegacyAnchor: async (
+        target: Chat2Message,
+        baseline: { text: Chat2Message; reply: Chat2Message }
+      ) => {
+        expect(target).equals(outgoing)
+        expect(baseline.text).equals(outgoing)
+        expect(baseline.reply).deep.equals({
+          id: reply.id,
+          seq: reply.seq,
+          body: reply.body,
+          authorId: reply.senderUserId
+        })
+        calls.push('observed-exact-row-quote-jump')
+        jumped = true
+      },
+      action: async (target: Chat2Message) => {
+        if (target.id === outgoing.id) {
+          expect(target).equals(outgoing)
+          if (actual.native)
+            expect(
+              jumped,
+              'Native old outgoing must first use its unique authenticated reply quote'
+            ).equals(true)
+          calls.push('unchanged-exact-outgoing-action')
+          throw stopped
+        }
+      },
+      menuState: async () => ({ preview: true }),
+      dismiss: async () => {}
+    }) as Scenarios
+    return {
+      scenario,
+      calls,
+      stopped,
+      cleanup: () => {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  }
+  for (const surface of ['ios', 'android'] as const)
+    it(
+      'reaches the same old outgoing through its authenticated current reply on ' +
+        surface,
+      async () => {
+        const m = route(surface)
+        try {
+          expect(await captureFailure(m.scenario.E5())).equals(m.stopped)
+          expect(m.calls).deep.equals([
+            'authenticated-current-replies',
+            'observed-exact-row-quote-jump',
+            'unchanged-exact-outgoing-action'
+          ])
+        } finally {
+          m.cleanup()
+        }
+      }
+    )
+  it('leaves the browser outgoing navigation path unchanged', async () => {
+    const m = route('web-wide')
+    try {
+      expect(await captureFailure(m.scenario.E5())).equals(m.stopped)
+      expect(m.calls).deep.equals(['unchanged-exact-outgoing-action'])
+    } finally {
+      m.cleanup()
+    }
+  })
+  for (const fault of [
+    'absent',
+    'ambiguous',
+    'invalid',
+    'removed',
+    'wrong-target',
+    'wrong-quote-author',
+    'wrong-outgoing-author'
+  ])
+    it('refuses an unproved old outgoing quote route: ' + fault, async () => {
+      const m = route('ios', fault)
+      try {
+        const error = String(await captureFailure(m.scenario.E5()))
+        expect(error).matches(
+          /Unique authenticated current reply|Exact own outgoing quote author/
+        )
+        expect(m.calls).not.includes('observed-exact-row-quote-jump')
+        expect(m.calls).not.includes('unchanged-exact-outgoing-action')
+      } finally {
+        m.cleanup()
+      }
+    })
 })

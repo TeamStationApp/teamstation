@@ -4417,6 +4417,44 @@ export class Scenarios {
     )
   }
 
+  /** Reach the unchanged old own post through one authenticated current reply. */
+  async nativeOutgoingQuoteAnchor(target: Chat2Message): Promise<void> {
+    assert(this.ui.native, 'Native outgoing quote navigation required')
+    assert.equal(
+      target.authorId,
+      this.viewerId,
+      'Exact own outgoing quote author required'
+    )
+    const current = await (await this.protocolPeer()).engine.open(this.group)
+    const replies = current.messages.filter(
+      message => message.status === 'ok' && message.quote?.id === target.id
+    )
+    assert.equal(
+      replies.length,
+      1,
+      'Unique authenticated current reply to the exact outgoing required'
+    )
+    const reply = replies[0]
+    assert(
+      reply.id !== target.id && reply.seq > target.seq,
+      'Unique authenticated current reply must follow its original'
+    )
+    assert.equal(
+      reply.quote?.authorId,
+      target.authorId,
+      'Exact own outgoing quote author required'
+    )
+    await this.identityLegacyAnchor(target, {
+      text: target,
+      reply: {
+        id: reply.id,
+        seq: reply.seq,
+        body: reply.body,
+        authorId: reply.senderUserId
+      }
+    })
+  }
+
   async E5(): Promise<void> {
     const ui = this.ui
     await this.check(
@@ -4433,6 +4471,8 @@ export class Scenarios {
           this.f.messages.long,
           need(this.f.messages.file, 'Encrypted file message fixture required')
         ]) {
+          if (ui.native && message.id === this.f.messages.outgoing?.id)
+            await this.nativeOutgoingQuoteAnchor(message)
           let incomingLane: unknown
           if (message.authorId !== this.viewerId) {
             const reservation = await this.incomingReservation(message)
