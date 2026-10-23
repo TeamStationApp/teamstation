@@ -16,6 +16,7 @@ import {
   openChatFixture,
   TEST_MEDIA
 } from './chatTestFixture'
+import { scopeNames } from './titles'
 
 const space: SpaceSettings = {
   endpoint: 'https://media.example.test',
@@ -105,6 +106,14 @@ describe('chat identity metadata through authorized routes', function () {
       expectImage(avatar.url, `fixtures/${prefix}`)
       expect(avatar.name).not.equals('')
     }
+    // The names its chats are titled by come from the same rows.
+    const names = await scopeNames(fixture.db, scopes)
+    expect(names.size).equals(3)
+    for (const [key, name] of names)
+      expect(avatars.get(key)?.scopeName).equals(name)
+    expect(
+      avatars.get(`season:${fixture.seed.seasonId}`)!.scopeName
+    ).not.equals(avatars.get(`season:${fixture.seed.seasonId}`)!.name)
     expect(avatars.has(`team:${fixture.seed.teams.eagles}`)).equals(false)
     const absent = await scopeAvatars(traced, TEST_MEDIA.space, [
       scopes[0],
@@ -112,6 +121,29 @@ describe('chat identity metadata through authorized routes', function () {
     ])
     expect(absent.get(`team:${fixture.seed.teams.hawks}`)?.url).equals(null)
     expect(absent.has('team:tem_missing')).equals(false)
+  })
+
+  it('reads a scope row once for its chat names and picture, beside its titles', async function () {
+    const executor = fixture.db.getExecutor()
+    const execute = executor.executeQuery.bind(executor)
+    const named: string[] = []
+    executor.executeQuery = async (query, queryId) => {
+      const table = /^select .*"name".* from "(teams|seasons|leagues)"/.exec(
+        query.sql
+      )
+      if (table != null) named.push(table[1])
+      return await execute(query, queryId)
+    }
+    try {
+      const rows = await list('L')
+      expect(rows.some(row => row.scope?.type === 'season')).equals(true)
+      expect(rows.some(row => row.scope?.type === 'league')).equals(true)
+    } finally {
+      executor.executeQuery = execute
+    }
+    // The titles read the names once; the names and pictures once more.
+    expect(named.filter(table => table === 'seasons').length).equals(2)
+    expect(named.filter(table => table === 'leagues').length).equals(2)
   })
 
   it('shares group metadata across its audience rows and exposes no inaccessible scopes or storage fields', async function () {

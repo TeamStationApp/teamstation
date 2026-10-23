@@ -18,7 +18,7 @@ import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
 import { scopeAvatars } from './avatars'
 import { DmFacts } from './dms'
 import { defaultPreferences, preferencesFor } from './preferences'
-import { scopeNames, titlesOf } from './titles'
+import { titlesOf } from './titles'
 
 /**
  * What the chat routes read back: a person's conversations, a
@@ -218,14 +218,6 @@ async function describe(
     rows.filter(row => row.kind === 'dm').map(row => row.id),
     userId
   )
-  const names = await scopeNames(
-    db,
-    rows.flatMap(row =>
-      row.scope_type == null || row.scope_id == null
-        ? []
-        : [{ type: row.scope_type, id: row.scope_id }]
-    )
-  )
   const avatars = await scopeAvatars(
     db,
     media.space,
@@ -299,7 +291,7 @@ async function describe(
       scopeName:
         row.scope_type == null
           ? null
-          : (names.get(`${row.scope_type}:${scopeId}`) ?? null),
+          : (avatars.get(`${row.scope_type}:${scopeId}`)?.scopeName ?? null),
       avatarName: avatars.get(`${row.scope_type}:${scopeId}`)?.name ?? null,
       avatarUrl: avatars.get(`${row.scope_type}:${scopeId}`)?.url ?? null,
       lastSeq: Number(row.last_seq),
