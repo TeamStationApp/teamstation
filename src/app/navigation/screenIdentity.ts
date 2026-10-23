@@ -1,5 +1,5 @@
 import type { Pushed } from '../App'
-import { identityOf } from './stackScene'
+import { identityOf, type Presentation } from './stackScene'
 
 type Ids<Name extends Pushed['name']> = (
   frame: Pushed & { name: Name }
@@ -78,6 +78,16 @@ export function screenIdentity(frame: Pushed): string {
     frame: Pushed
   ) => ReturnType<Ids<Pushed['name']>>
   return identityOf(frame.name, ids(frame))
+}
+
+/**
+ * How a frame comes on. The scorer rises over everything; Add Player's own
+ * sheet rises from the bottom, so the screen beneath it stays where it is.
+ */
+export function presentationOf(frame: Pushed | undefined): Presentation {
+  return frame?.name === 'scoreGame' || frame?.name === 'teamAddPlayer'
+    ? 'cover'
+    : 'push'
 }
 
 /** The chat list and a conversation drawn beside it: one scene. */
