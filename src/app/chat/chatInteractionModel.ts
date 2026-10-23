@@ -75,6 +75,8 @@ export interface MessagePressGesture {
   pressProps: Pick<
     PressableProps,
     | 'onPressIn'
+    | 'onPressOut'
+    | 'onPressMove'
     | 'onPress'
     | 'onTouchMove'
     | 'onTouchCancel'

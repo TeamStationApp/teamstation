@@ -226,6 +226,14 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
     }
     openActions()
   }
+  const cancelMovedHold = (event: GestureResponderEvent): void => {
+    const point = pressPoint(event.nativeEvent)
+    if (
+      point == null ||
+      Math.hypot(point.x - held.current.x, point.y - held.current.y) > 10
+    )
+      held.current.cancelled = true
+  }
   const messageGesture: MessagePressGesture | undefined =
     !desktop && props.selected !== true
       ? {
@@ -257,15 +265,24 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             // PressOut can be delayed by Pressability's minimum JS duration.
             // Real release activation is therefore the final native-time gate.
             onPress: recognizeReleasedHold,
-            onTouchMove: event => {
-              const point = pressPoint(event.nativeEvent)
+            onPressOut: event => {
+              // RNW normalizes the release contact, while onPress gets raw click.
+              // Termination and keyboard events are not contact releases.
               if (
-                point == null ||
-                Math.hypot(point.x - held.current.x, point.y - held.current.y) >
-                  10
+                'type' in event.nativeEvent &&
+                (event.nativeEvent.type === 'mouseup' ||
+                  event.nativeEvent.type === 'touchend')
               )
-                held.current.cancelled = true
+                recognizeReleasedHold(event)
             },
+            onPressMove: event => {
+              if (
+                'type' in event.nativeEvent &&
+                event.nativeEvent.type === 'mousemove'
+              )
+                cancelMovedHold(event)
+            },
+            onTouchMove: cancelMovedHold,
             onTouchCancel: () => {
               held.current.cancelled = true
             },

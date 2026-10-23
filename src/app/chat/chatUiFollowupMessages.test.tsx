@@ -751,6 +751,96 @@ describe('chat follow-up message hold', function () {
     return { target, opens, fetches, jumps, generation }
   }
 
+  async function stampedMouse(
+    target: HTMLElement,
+    kind: 'mousedown' | 'mousemove' | 'mouseup' | 'click',
+    timestamp: number,
+    x = 20
+  ): Promise<MouseEvent> {
+    const event = new window.MouseEvent(kind, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: kind === 'mouseup' || kind === 'click' ? 0 : 1,
+      detail: kind === 'click' ? 1 : 0,
+      clientX: x,
+      clientY: 20
+    })
+    Object.defineProperty(event, 'timeStamp', { value: timestamp })
+    // RNW converts this clock to nativeEvent.timestamp for responder callbacks,
+    // but forwards the raw MouseEvent without an identifier to onPress.
+    expect('timestamp' in event || 'identifier' in event).equals(false)
+    await act(async () => {
+      target.dispatchEvent(event)
+      await Promise.resolve()
+    })
+    return event
+  }
+  for (const duration of [500, 584])
+    it(`recognizes an actual RNW mouse release at${duration}ms when the JavaScript hold timer has not run`, async () => {
+      const { target, opens } = await mount()
+      await stampedMouse(target, 'mousedown', 1000)
+      await stampedMouse(target, 'mouseup', 1000 + duration)
+      await stampedMouse(target, 'click', 1000 + duration)
+      await tick(0)
+      expect(opens.map(value => value.id)).deep.equals(['msg_1'])
+      await stampedMouse(target, 'click', 1000 + duration)
+      await tick(1000)
+      expect(opens).length(1)
+    })
+  it('keeps actual RNW release recognition cancelled after short contact, movement, return movement, parent scrolling or window termination', async () => {
+    for (const fault of ['short', 'move', 'move-back', 'scroll', 'terminate']) {
+      await resetTimeouts()
+      const { target, opens, generation } = await mount()
+      await stampedMouse(target, 'mousedown', 1000)
+      if (fault === 'move' || fault === 'move-back') {
+        await stampedMouse(target, 'mousemove', 1200, 31)
+        if (fault === 'move-back') await stampedMouse(target, 'mousemove', 1300)
+      } else if (fault === 'scroll') generation.current += 1
+      else if (fault === 'terminate')
+        await act(async () => {
+          window.dispatchEvent(new window.Event('blur'))
+        })
+      const end = fault === 'short' ? 1499 : 1584
+      const x = fault === 'move' ? 31 : 20
+      await stampedMouse(target, 'mouseup', end, x)
+      await stampedMouse(target, 'click', end, x)
+      await tick(1000)
+      expect(opens, fault).deep.equals([])
+    }
+  })
+  it('does not turn a keyboard or synthetic click without a current responder contact into a hold', async () => {
+    const { target, opens } = await mount()
+    await stampedMouse(target, 'click', 1584)
+    await act(async () => {
+      target.click()
+      target.dispatchEvent(
+        new window.KeyboardEvent('keydown', { bubbles: true, key: 'Enter' })
+      )
+      target.dispatchEvent(
+        new window.KeyboardEvent('keyup', { bubbles: true, key: 'Enter' })
+      )
+    })
+    await tick(1000)
+    expect(opens).deep.equals([])
+  })
+  it('recognizes actual RNW nested file and quote releases once before the raw click can short-activate them', async () => {
+    for (const kind of ['file', 'quote'] as const) {
+      const value = await nested(kind)
+      await stampedMouse(value.target, 'mousedown', 1000)
+      await stampedMouse(value.target, 'mouseup', 1584)
+      await stampedMouse(value.target, 'click', 1584)
+      await tick(0)
+      expect(value.opens.map(pressed => pressed.id)).deep.equals([
+        `msg_nested_${kind}`
+      ])
+      expect(value.fetches).deep.equals([])
+      expect(value.jumps).deep.equals([])
+      await stampedMouse(value.target, 'click', 1584)
+      await tick(1000)
+      expect(value.opens).length(1)
+    }
+  })
   it('keeps nested file-open and quote-jump short taps while cancelling a hold released before 500 ms', async function () {
     for (const kind of ['file', 'quote'] as const) {
       const value = await nested(kind)
