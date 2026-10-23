@@ -992,7 +992,12 @@ export function ConversationScreen(
     return undefined
   }
   const reachableOffset = (target: number): number => {
-    const { content, height } = scrolled.current
+    // RNW content-size notifications can lag a padding-only layout change.
+    const physical =
+      Platform.OS === 'web'
+        ? readMessageScrollPosition(scroller.current, new Map())
+        : undefined
+    const { content, height } = physical?.geometry ?? scrolled.current
     return content > 0 && height > 0
       ? Math.min(Math.max(0, target), Math.max(0, content - height))
       : Math.max(0, target)

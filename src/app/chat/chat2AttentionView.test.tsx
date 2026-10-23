@@ -2558,8 +2558,16 @@ describe('older pin navigation leaves newest following', function () {
 })
 
 describe('terminal older pin with late measured pinned clearance', function () {
-  for (const acknowledgement of ['before pin', 'during pending page'] as const)
-    it(`preserves the physical tall reader with an end acknowledgement ${acknowledgement}`, async function () {
+  for (const acknowledgement of [
+    'before pin',
+    'during pending page',
+    'retained header'
+  ] as const) {
+    const title =
+      acknowledgement === 'retained header'
+        ? 'preserves the physical tall reader with a retained header and stale browser extent'
+        : `preserves the physical tall reader with an end acknowledgement ${acknowledgement}`
+    it(title, async function () {
       restore = measureChatTestViewport({ width: 1440, height: 1000 })
       const first = message({ id: 'msg_late_pin_first', seq: 290 })
       const tall = message({
@@ -2622,7 +2630,7 @@ describe('terminal older pin with late measured pinned clearance', function () {
       const padding = (edge: 'paddingTop' | 'paddingBottom'): number =>
         Number.parseFloat(getComputedStyle(content)[edge])
       const extent = (): number =>
-        9426 + earlierHeight + padding('paddingTop') + padding('paddingBottom')
+        10420 + earlierHeight + padding('paddingTop') + padding('paddingBottom')
       const contentY = (base: number): number =>
         base + earlierHeight + padding('paddingTop')
       frame.getBoundingClientRect = () => new window.DOMRect(0, 0, 1105, 1000)
@@ -2645,11 +2653,11 @@ describe('terminal older pin with late measured pinned clearance', function () {
         // Browser geometry changes before RNW's throttled scroll acknowledgement.
       }
       const geometry = [
-        { item: first, base: 0, height: 100 },
-        { item: tall, base: 7500, height: 1420 },
-        { item: tails[0], base: 8940, height: 96 },
-        { item: tails[1], base: 9100, height: 80 },
-        { item: tails[2], base: 9200, height: 80 }
+        { item: first, base: 8, height: 100 },
+        { item: tall, base: 8494, height: 1420 },
+        { item: tails[0], base: 9922, height: 96 },
+        { item: tails[1], base: 10094, height: 80 },
+        { item: tails[2], base: 10194, height: 80 }
       ]
       for (const { item, base, height } of geometry) {
         const row = node.querySelector<HTMLElement>(
@@ -2684,7 +2692,7 @@ describe('terminal older pin with late measured pinned clearance', function () {
       body.getBoundingClientRect = () =>
         new window.DOMRect(
           717,
-          contentY(7500) + 8 - history.scrollTop,
+          contentY(8494) + 8 - history.scrollTop,
           328,
           1386
         )
@@ -2709,12 +2717,25 @@ describe('terminal older pin with late measured pinned clearance', function () {
       await layout(pins, 104, 58, 1072)
       expect(padding('paddingTop') - beforePinPadding).equals(58)
       await act(async () => {
-        readingCallbacks(history).onContentSizeChange(1105, extent())
+        if (acknowledgement === 'retained header')
+          // The physical scroll acknowledgement arrives before RNW observes
+          // the added padding height. Its cached row positions stay unchanged.
+          readingCallbacks(history).onScroll(packet(history.scrollTop))
+        else readingCallbacks(history).onContentSizeChange(1105, extent())
         await wait()
       })
       const queuedOffset = history.scrollTop
       const before = body.getBoundingClientRect().top
       expect(before).equals(-1014)
+      if (acknowledgement === 'retained header') {
+        expect(history.scrollTop).equals(9742)
+        expect(extent()).equals(10742)
+        expect(owner.draft('cnv_1').scrollOffset).equals(9742)
+        expect(owner.draft('cnv_1').scrollAnchor).deep.equals({
+          id: tails[0].id,
+          relativeY: 406
+        })
+      }
       if (acknowledgement === 'before pin')
         await act(async () => {
           readingCallbacks(history).onScroll(packet(queuedOffset))
@@ -2727,18 +2748,25 @@ describe('terminal older pin with late measured pinned clearance', function () {
       // The terminal response and error geometry must not add another read or seen item.
       const reads = state.reads
       const seen = [...owner.attention('cnv_1')!.seen]
+      if (acknowledgement === 'retained header')
+        await layout(composer, 0, 112, 1072)
       if (acknowledgement === 'during pending page')
         await act(async () => {
           readingCallbacks(history).onScroll(packet(queuedOffset))
           await wait()
         })
       await act(async () => {
-        earlierHeight = 0
-        const terminal = { ...initial, hasEarlier: false, historyBefore: 1 }
+        if (acknowledgement !== 'retained header') earlierHeight = 0
+        // A no-progress projected page can retain the ordinary paging control.
+        const terminal =
+          acknowledgement === 'retained header'
+            ? initial
+            : { ...initial, hasEarlier: false, historyBefore: 1 }
         state.update(terminal)
         finish(terminal)
         await wait(80)
-        readingCallbacks(history).onContentSizeChange(1105, extent())
+        if (acknowledgement !== 'retained header')
+          readingCallbacks(history).onContentSizeChange(1105, extent())
         await wait(80)
       })
       const afterHeader = body.getBoundingClientRect().top
@@ -2774,4 +2802,5 @@ describe('terminal older pin with late measured pinned clearance', function () {
         `Physical tall reader must survive empty/error geometry; header=${afterHeader}, error=${afterError}, baseline=${before}`
       ).at.most(3)
     })
+  }
 })
