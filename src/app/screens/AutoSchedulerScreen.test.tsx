@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React from 'react'
+import React, { act } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
@@ -190,6 +190,19 @@ const buildButton = (): HTMLElement =>
     node => node.textContent === 'Build schedule'
   )!
 
+async function key(name: string): Promise<void> {
+  await act(async () => {
+    document.querySelector('input')!.dispatchEvent(
+      new window.KeyboardEvent('keydown', {
+        key: name,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+  })
+  await settle(20)
+}
+
 const disabled = (node: HTMLElement): boolean =>
   node.getAttribute('aria-disabled') === 'true'
 
@@ -210,7 +223,9 @@ describe('the Auto-Scheduler setup', () => {
     await press('Retry')
     await settle(50)
     expect(text()).includes('Demo League A')
-    expect(hasLabel('Demo Regular Teams: 7 + 2 exh.')).equals(true)
+    expect(
+      hasLabel('Demo Regular Teams: 7 teams and 2 exhibition teams')
+    ).equals(true)
     expect(hasLabel('Demo Regular Size: 50/70')).equals(true)
     expect(hasLabel('Demo Regular Total games: 17')).equals(true)
     expect(hasLabel('Demo Regular Doubleheaders: Only if necessary')).equals(
@@ -233,7 +248,7 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Open Demo Regular')
     await tapLabel('Demo Regular Windows: 1 period')
     await tapLabel('Demo Regular Blackouts: None')
-    await tapLabel('Demo Regular Teams: 7 + 2 exh.')
+    await tapLabel('Demo Regular Teams: 7 teams and 2 exhibition teams')
     expect(calls.seasons).deep.equals(['sea_a', 'sea_a', 'sea_a', 'sea_a'])
   })
 
@@ -274,28 +289,38 @@ describe('the Auto-Scheduler setup', () => {
     await press('Never')
     await settle(20)
     expect(fake.saves.at(-1)?.[1].doubleheaders).equals('never')
-    await tapLabel('Demo Regular Game: 90 min')
-    await fill('Game length, in minutes', '92')
-    await tapText('Save')
-    expect(text()).includes('Choose 30 to 600, in 5-minute steps.')
-    await fill('Game length, in minutes', '')
-    await tapText('Save')
-    expect(text()).includes('Choose 30 to 600')
-    await fill('Game length, in minutes', '75')
-    await tapText('Save')
-    await settle(20)
+    await tapLabel('Demo Regular Game MINS: 90')
+    await fill('Edit Demo Regular Game MINS', '92')
+    await key('Enter')
+    expect(text()).includes('Game MINS: choose 30 to 600, in 5-minute steps.')
+    await fill('Edit Demo Regular Game MINS', '')
+    await key('Enter')
+    expect(text()).includes('Game MINS: choose 30 to 600')
+    await fill('Edit Demo Regular Game MINS', '75')
+    await key('Enter')
     expect(fake.saves.at(-1)?.[1].gameMinutes).equals(75)
-    expect(hasLabel('Demo Regular Game: 75 min')).equals(true)
-    await tapLabel('Demo Regular Regular: 3')
-    await fill('Regular-season games per team', '4')
-    await tapText('Save')
-    await settle(20)
+    expect(hasLabel('Demo Regular Game MINS: 75')).equals(true)
+    // Each cell's save sends the season's other settings unchanged.
+    await tapLabel('Demo Regular # Regular: 3')
+    await fill('Edit Demo Regular # Regular', '4')
+    await key('Tab')
+    expect(fake.saves.at(-1)).deep.equals([
+      'sea_a',
+      {
+        ...SETTINGS,
+        fieldSize: '60/90',
+        doubleheaders: 'never',
+        gameMinutes: 75,
+        regularGames: 4
+      }
+    ])
     expect(text()).not.includes('an odd number')
-    await tapLabel('Demo Regular Between: 10 min')
-    await tapText('Cancel')
-    await tapLabel('Demo Regular Exhibition: 1')
-    expect(hasLabel('Exhibition games per team')).equals(true)
-    await tapText('Cancel')
+    // Tab opened # Exhibition; Escape leaves it as it was.
+    expect(hasLabel('Edit Demo Regular # Exhibition')).equals(true)
+    await key('Escape')
+    expect(hasLabel('Demo Regular # Exhibition: 1')).equals(true)
+    // No dialog opens for a number.
+    expect(text()).not.includes('Game length, in minutes')
     await tapLabel('Demo Regular Dates: Mar 1 – Jul 31')
     await tapLabel('2027-03-08')
     await tapLabel('2027-03-20')
@@ -327,12 +352,26 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Demo Fall')
     await settle(20)
     expect(fake.choices.at(-1)?.fieldIds).deep.equals(['fld_one'])
-    await tapLabel('Demo Regular Game: 90 min')
-    await fill('Game length, in minutes', '60')
-    await tapText('Save')
+    await tapLabel('Demo Regular Game MINS: 90')
+    await fill('Edit Demo Regular Game MINS', '60')
+    await key('Enter')
+    // The cell stays open with the reason under the grid, and the rest of
+    // the screen stays usable.
+    expect(
+      document.querySelector('[data-testid="season-schedule-grid"]')!
+        .textContent
+    ).includes('That could not be saved. Try again.')
+    expect(hasLabel('Edit Demo Regular Game MINS')).equals(true)
+    expect(
+      disabled(document.querySelector<HTMLElement>('[aria-label="Demo Fall"]')!)
+    ).equals(false)
+    // A sheet's failure shows at the top of the screen instead.
+    await key('Escape')
+    await tapLabel('Demo Regular Size: 50/70')
+    await press('60/90')
     await settle(20)
     expect(text()).includes('That could not be saved. Try again.')
-    expect(hasLabel('Game length, in minutes')).equals(true)
+    expect(hasLabel('Demo Regular Size: 50/70')).equals(true)
   })
 
   it('names a refused choice, and an empty league', async () => {

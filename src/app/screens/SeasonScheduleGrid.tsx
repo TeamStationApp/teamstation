@@ -7,6 +7,11 @@ import {
 } from '../../common/seasonScheduling'
 import { fieldSizeLabel } from '../../common/venues'
 import { WideTable } from '../components'
+import {
+  isNumberColumn,
+  type NumberColumn,
+  useGridNumberEditor
+} from '../components/GridNumberCell'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 /** A column of the grid that has an editor of its own. */
@@ -54,44 +59,53 @@ export function seasonGameTotal(season: SetupSeason): number {
   )
 }
 
+/** What a screen reader hears for a season's teams. */
+export function teamsLabel(season: SetupSeason): string {
+  const teams = `${season.participants} ${season.participants === 1 ? 'team' : 'teams'}`
+  return season.exhibitionTeams === 0
+    ? teams
+    : `${teams} and ${season.exhibitionTeams} exhibition ${season.exhibitionTeams === 1 ? 'team' : 'teams'}`
+}
+
 export const GRID_COLUMNS: Column[] = [
   {
     id: 'teams',
     title: 'Teams',
-    widthRem: 7,
+    widthRem: 4.5,
     value: season =>
       season.exhibitionTeams === 0
         ? String(season.participants)
-        : `${season.participants} + ${season.exhibitionTeams} exh.`
+        : `${season.participants} + ${season.exhibitionTeams}`
   },
   {
     id: 'fieldSize',
     title: 'Size',
-    widthRem: 5,
+    widthRem: 4.5,
     value: season => fieldSizeLabel(season.settings.fieldSize)
   },
   {
     id: 'gameMinutes',
-    title: 'Game',
-    widthRem: 5,
-    value: season => `${season.settings.gameMinutes} min`
+    title: 'Game MINS',
+    widthRem: 5.5,
+    value: season => String(season.settings.gameMinutes)
   },
   {
     id: 'bufferMinutes',
-    title: 'Between',
-    widthRem: 5.5,
-    value: season => `${season.settings.bufferMinutes} min`
+    title: 'Between MINS',
+    // Its two words fit on one line at the header's 0.75 rem.
+    widthRem: 6.25,
+    value: season => String(season.settings.bufferMinutes)
   },
   {
     id: 'regularGames',
-    title: 'Regular',
-    widthRem: 5,
+    title: '# Regular',
+    widthRem: 5.5,
     value: season => String(season.settings.regularGames)
   },
   {
     id: 'exhibitionGames',
-    title: 'Exhibition',
-    widthRem: 6,
+    title: '# Exhibition',
+    widthRem: 6.5,
     value: season => String(season.settings.exhibitionGames)
   },
   {
@@ -129,20 +143,36 @@ export const GRID_COLUMNS: Column[] = [
 
 /**
  * One row per chosen season and a column per setting, wider than a phone,
- * so it scrolls sideways under the pinned season names. Tapping a cell opens
- * that value's editor; tapping a name opens the season's detail.
+ * so it scrolls sideways under the pinned season names. The number columns
+ * are edited in place, like a spreadsheet's cells; tapping any other cell opens
+ * that value's editor, and tapping a name opens the season's detail.
  */
 export function SeasonScheduleGrid({
   seasons,
   onEdit,
+  onSaveNumber,
   onOpenSeason
 }: {
   seasons: SetupSeason[]
   onEdit: (seasonId: string, column: GridColumn) => void
+  /** Resolves null once saved, or the message saying why it wasn't. */
+  onSaveNumber: (
+    seasonId: string,
+    column: NumberColumn,
+    value: number
+  ) => Promise<string | null>
   onOpenSeason: (seasonId: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
+  const numbers = useGridNumberEditor({
+    seasonIds: seasons.map(season => season.id),
+    valueOf: (seasonId, column) =>
+      seasons.find(season => season.id === seasonId)?.settings[column],
+    titleOf: column =>
+      GRID_COLUMNS.find(item => item.id === column)?.title ?? column,
+    onSave: onSaveNumber
+  })
   return (
     <View style={styles.card} testID="season-schedule-grid">
       <WideTable>
@@ -189,11 +219,19 @@ export function SeasonScheduleGrid({
                   </Text>
                 )
               const id = column.id
+              if (isNumberColumn(id))
+                return numbers.cell({
+                  seasonId: season.id,
+                  seasonName: season.name,
+                  column: id,
+                  style: [styles.cell, width],
+                  textStyle: [styles.value, styles.link]
+                })
               return (
                 <Pressable
                   key={column.id}
                   accessibilityRole="button"
-                  accessibilityLabel={`${season.name} ${column.title}: ${value}`}
+                  accessibilityLabel={`${season.name} ${column.title}: ${id === 'teams' ? teamsLabel(season) : value}`}
                   style={({ pressed }) => [
                     styles.cell,
                     width,
@@ -210,6 +248,11 @@ export function SeasonScheduleGrid({
           </View>
         ))}
       </WideTable>
+      {numbers.error !== '' && (
+        <Text accessibilityRole="alert" style={styles.error}>
+          {numbers.error}
+        </Text>
+      )}
     </View>
   )
 }
@@ -243,7 +286,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   cell: {
-    paddingHorizontal: theme.rem(0.5),
+    paddingHorizontal: theme.rem(0.375),
     paddingVertical: theme.rem(0.5),
     justifyContent: 'center' as const
   },
@@ -253,5 +296,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   link: { color: theme.linkTextColor },
+  error: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.9375),
+    color: theme.dangerColor,
+    paddingHorizontal: theme.rem(0.75),
+    paddingVertical: theme.rem(0.5)
+  },
   pressed: { opacity: 0.6 }
 }))

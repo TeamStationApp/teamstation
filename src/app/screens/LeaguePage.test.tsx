@@ -119,10 +119,14 @@ function render(
   api: TeamStationClient,
   opened: GroupRef[],
   links: GroupLinkChoice[] = [],
-  created: string[] = []
+  created: string[] = [],
+  scheduled?: GroupRef[]
 ): React.ReactElement {
   return (
     <GroupScreen
+      onAutoScheduler={
+        scheduled == null ? undefined : league => scheduled.push(league)
+      }
       client={api}
       groupRef={{ kind: 'league', id: league.id }}
       onOpen={group => opened.push(group)}
@@ -275,6 +279,46 @@ describe('the league page', () => {
     expect(asked[0][0].child).deep.equals({ kind: 'season', id: 'season_new' })
     await press('Cancel')
     expect(writes).equals(0)
+  })
+  it('ends the Seasons tab with the Auto-Scheduler, in a card of its own', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    const scheduled: GroupRef[] = []
+    await mount(render(api, [], [], [], scheduled))
+    const row = button('Auto-Scheduler, Fields, season settings and schedules')
+    expect(row).not.equals(undefined)
+    // After the last season row, and not in the hero card with the name.
+    const lastSeason = button('Open Demo Fall')!
+    expect(
+      lastSeason.compareDocumentPosition(row!) &
+        window.Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    let hero = button('League settings')!
+    while (hero.parentElement?.textContent?.includes('Demo Spring') === false)
+      hero = hero.parentElement
+    expect(hero.textContent).includes('Location not set')
+    expect(hero.contains(row!)).equals(false)
+    // The section's last child, alone in its card.
+    let section = lastSeason.parentElement!
+    while (!section.contains(row!)) section = section.parentElement!
+    expect(section.lastElementChild!.contains(row!)).equals(true)
+    expect(section.lastElementChild!.contains(lastSeason)).equals(false)
+    expect(section.lastElementChild!.textContent).equals(row!.textContent)
+    await press('Auto-Scheduler, Fields, season settings and schedules')
+    expect(scheduled).deep.equals([{ kind: 'league', id: 'league_demo' }])
+    for (const tab of ['Teams', 'People']) {
+      await press(tab)
+      expect(
+        button('Auto-Scheduler, Fields, season settings and schedules'),
+        tab
+      ).equals(undefined)
+    }
+  })
+  it('offers a visitor no Auto-Scheduler', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => ({ ...detail, canManage: false })
+    await mount(render(api, [], [], [], []))
+    expect(document.body.textContent).not.includes('Auto-Scheduler')
   })
   it('keeps the relationship and hides management from a visitor', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })

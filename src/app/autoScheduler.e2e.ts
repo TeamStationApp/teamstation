@@ -715,21 +715,36 @@ async function setDay(
   )
 }
 
-/** Sets a number in the grid's editor for one cell. */
+/**
+ * Sets a number in one of the grid's spreadsheet cells: a tap opens it with
+ * its whole number selected, typing replaces it, and Enter saves.
+ */
 async function setNumber(
   b: BrowserSession,
   cell: string,
-  label: string,
   value: string
 ): Promise<void> {
+  const input = `input[aria-label="Edit ${cell.slice(0, cell.lastIndexOf(':'))}"]`
   await tapLabel(b, cell)
-  await fill(b.m, label, value)
-  await tapText(b, 'Save')
   await b.page.waitForFunction(
-    (wanted: string) =>
-      document.querySelector(`input[aria-label="${wanted}"]`) === null,
+    (selector: string) => {
+      const node = document.querySelector<HTMLInputElement>(selector)
+      return (
+        node !== null &&
+        document.activeElement === node &&
+        node.selectionStart === 0 &&
+        node.selectionEnd === node.value.length
+      )
+    },
     { timeout: 15000 },
-    label
+    input
+  )
+  await b.m.inputText({ text: value })
+  await b.m.pressKey({ key: 'Enter' })
+  await b.page.waitForFunction(
+    (selector: string) => document.querySelector(selector) === null,
+    { timeout: 15000 },
+    input
   )
 }
 
@@ -810,30 +825,10 @@ async function e6(run: Run): Promise<void> {
   await tapLabel(admin, 'Field 1, Example Park')
   await tapLabel(admin, 'Demo Regular Size: 60/90')
   await tapLabel(admin, '50/70')
-  await setNumber(
-    admin,
-    'Demo Regular Game: 120 min',
-    'Game length, in minutes',
-    '90'
-  )
-  await setNumber(
-    admin,
-    'Demo Regular Between: 15 min',
-    'Time between games, in minutes',
-    '10'
-  )
-  await setNumber(
-    admin,
-    'Demo Regular Regular: 0',
-    'Regular-season games per team',
-    '3'
-  )
-  await setNumber(
-    admin,
-    'Demo Regular Exhibition: 0',
-    'Exhibition games per team',
-    '1'
-  )
+  await setNumber(admin, 'Demo Regular Game MINS: 120', '90')
+  await setNumber(admin, 'Demo Regular Between MINS: 15', '10')
+  await setNumber(admin, 'Demo Regular # Regular: 0', '3')
+  await setNumber(admin, 'Demo Regular # Exhibition: 0', '1')
   await tapLabel(admin, 'Demo Regular Doubleheaders: Only if necessary')
   await tapLabel(admin, 'Only if necessary')
   // The season's detail: exhibition teams and windows.
@@ -895,12 +890,7 @@ async function e6(run: Run): Promise<void> {
     'Must fix: Demo Playoffs has no chosen field that sets up as 55/80.'
   )
   expect(await buildEnabled(admin)).equals(false)
-  await setNumber(
-    admin,
-    'Demo Regular Regular: 3',
-    'Regular-season games per team',
-    '4'
-  )
+  await setNumber(admin, 'Demo Regular # Regular: 3', '4')
   await gone(admin, 'an odd number')
   await contains(admin.page, '4 for one, 3 for the other')
   expect(await buildEnabled(admin)).equals(false)
