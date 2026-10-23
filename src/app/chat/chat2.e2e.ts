@@ -2829,6 +2829,21 @@ export class Scenarios {
       )
       return value
     }
+    if (!zero) {
+      const setup = await ui.dom(
+        `
+        const one=id=>{const ns=document.querySelectorAll('[data-testid='+JSON.stringify(id)+']');if(ns.length!==1)throw Error('Unique actual wheel setup element required');return ns[0]},h=one('chat-message-history'),b=one(${JSON.stringify('chat-bubble-' + target.id)}),x=innerWidth/2,y=innerHeight/2,hit=document.elementFromPoint(x,y);
+        if(!h.contains(b)||!hit||!h.contains(hit))throw Error('Actual target and wheel hitpoint must belong to history');
+        let blocked=false;for(let n=hit;n!==h;n=n.parentElement){if(!n)throw Error('Actual wheel ancestry required');const s=getComputedStyle(n);if(n.matches('input,textarea,select,button,[contenteditable],[role="slider"],[role="combobox"],[role="listbox"]')||(n.scrollHeight>n.clientHeight&&['auto','scroll'].includes(s.overflowY)))blocked=true}
+        if(!blocked)return {positioned:false};
+        const body=one(${JSON.stringify('chat-message-body-' + target.id)});if(!b.contains(body))throw Error('Exact target body must belong to the wheel source');const rect=body.getBoundingClientRect();if(![rect.x,rect.y,rect.width,rect.height].every(Number.isFinite)||rect.width<=0||rect.height<=0)throw Error('Positive actual wheel source body required');
+        const before=h.scrollTop;h.scrollTop+=rect.y+rect.height/2-y;h.dispatchEvent(new Event('scroll'));return {positioned:true,before,after:h.scrollTop,body:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},wheelPoint:{x,y}};
+      `,
+        signal
+      )
+      proof.noninteractiveWheelSetup = setup
+      if (setup.positioned === true) await this.webAnchorReady(target)
+    }
     const before = await read()
     assert(
       !zero || before.offset === 0,
@@ -5692,7 +5707,6 @@ export class Scenarios {
         )
         await this.anchor(oldest)
         if (!ui.native) {
-          await this.ownWebReader(oldest, true)
           const saved = await ui.dom(
             'const n=document.querySelector(\'[data-testid="chat-message-history"]\');if(!n)throw Error("Public history scroller required");n.scrollTop=0;n.dispatchEvent(new Event("scroll"));return {top:n.scrollTop}'
           )
@@ -5701,6 +5715,8 @@ export class Scenarios {
             0,
             'Explicit oldest scroller zero must actually be recorded'
           )
+          await this.webAnchorReady(oldest)
+          await this.ownWebReader(oldest, true)
           await this.openInfo()
           await ui.back()
           const restoredZero = await ui.dom(
@@ -5723,10 +5739,23 @@ export class Scenarios {
           )
           await this.anchor()
           await this.ownWebReader(this.f.messages.target)
-          const middleScroll = await ui.device.scroll(
-            { direction: 'UP' },
-            { signal: ui.deadline }
+          const currentReader = await this.targetBounds(
+            'chat-bubble-' + this.f.messages.target.id
           )
+          const currentBand = await this.readingBand()
+          const currentCenter = currentReader.y + currentReader.height / 2
+          const currentMargin = (currentBand.bottom - currentBand.top) / 4
+          const alreadyMiddle =
+            currentReader.y >= currentBand.top &&
+            currentReader.y + currentReader.height <= currentBand.bottom &&
+            currentCenter >= currentBand.top + currentMargin &&
+            currentCenter <= currentBand.bottom - currentMargin
+          const middleScroll = alreadyMiddle
+            ? undefined
+            : await ui.device.scroll(
+                { direction: 'UP' },
+                { signal: ui.deadline }
+              )
           await this.webAnchorReady()
           const beforeResize = await this.targetBounds(
             'chat-bubble-' + this.f.messages.target.id
@@ -6606,7 +6635,7 @@ export class Scenarios {
               ' header, composer, pins and chevron reachability/composition'
           )
           const recording =
-            variant === 'light' || variant === 'reduced-motion'
+            ui.native && (variant === 'light' || variant === 'reduced-motion')
               ? join(ui.runDir, variant + '-spotlight.mp4')
               : undefined
           const transition = async (): Promise<void> => {

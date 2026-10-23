@@ -1837,6 +1837,7 @@ describe('chat native adapter compatibility', function () {
       file: boolean
     }> = []
     const wheels: string[] = []
+    let zeroOffset = fault === 'zero-order' ? 42 : 0
     const ui = {
       native: false,
       deadline: AbortSignal.timeout(10000),
@@ -1848,7 +1849,10 @@ describe('chat native adapter compatibility', function () {
       back: async () => {},
       open: async () => {},
       id: async () => {},
-      dom: async () => ({ top: 0 }),
+      dom: async (script: string) => {
+        if (script.includes('scrollTop=0')) zeroOffset = 0
+        return { top: zeroOffset }
+      },
       present: async (id: string) => {
         if (id === 'chat-attachment-chip') expect(file).equals(true)
         if (id === 'chat-bubble-' + target.id && absent)
@@ -1897,7 +1901,10 @@ describe('chat native adapter compatibility', function () {
         file = true
       },
       openInfo: async () => {},
-      ownWebReader: async () => {},
+      ownWebReader: async (_target: unknown, zero = false) => {
+        if (zero) expect(zeroOffset, 'Physical oldest zero required').equals(0)
+        else if (fault === 'already-middle') y = 360
+      },
       webAnchorReady: async () => {},
       readingBand: async () => ({
         top: width === 390 ? 106 : 162,
@@ -1932,6 +1939,17 @@ describe('chat native adapter compatibility', function () {
         file: true
       }))
     )
+  })
+  it('sets the explicit E9 oldest zero before guarded real scroll ownership after an offset42 anchor', async () => {
+    const result = await middleResizeReader('zero-order')
+    expect(result.error).equals(undefined)
+    expect(result.resizes).length(2)
+  })
+  it('keeps an already middle E9 exact reader without a redundant additional UP wheel', async () => {
+    const result = await middleResizeReader('already-middle')
+    expect(result.error).equals(undefined)
+    expect(result.wheels).deep.equals([])
+    expect(result.resizes).length(2)
   })
   for (const fault of ['covered', 'absent'])
     it('refuses an unproved E9 middle-reader baseline: ' + fault, async () => {
@@ -3811,6 +3829,104 @@ describe('chat native adapter compatibility', function () {
       const { scenario } = browserHistory(mode)
       await captureFailure(scenario.anchor())
     })
+  async function blockedWheelReader(mode = ''): Promise<{
+    error: unknown
+    directions: unknown[]
+    offset: number
+    scenario: Scenarios
+  }> {
+    const { actual, page } = browserModel()
+    Object.assign(actual, { surface: 'web-touch', native: false })
+    page.window.document.body.innerHTML =
+      '<div data-testid="chat-message-history"><div data-testid="chat-message-reader"><div data-testid="chat-bubble-reader"><div data-testid="chat-message-body-reader">Ordinary source words</div></div></div><button>Jump to earlier quote</button><input><div id="inner"></div></div>'
+    const document = page.window.document
+    const history = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-reader"]'
+    )!
+    const bubble = document.querySelector<HTMLElement>(
+      '[data-testid="chat-bubble-reader"]'
+    )!
+    const body = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-body-reader"]'
+    )!
+    const quote = document.querySelector('button')!
+    const input = document.querySelector('input')!
+    const inner = document.querySelector<HTMLElement>('#inner')!
+    let offset = 1000
+    Object.defineProperties(history, {
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 5000 },
+      scrollTop: {
+        get: () => offset,
+        set: value => {
+          if (mode !== 'stuck') offset = value
+        }
+      }
+    })
+    Object.defineProperties(inner, {
+      clientHeight: { value: 40 },
+      scrollHeight: { value: 80 }
+    })
+    inner.style.overflowY = 'auto'
+    history.getBoundingClientRect = () =>
+      new page.window.DOMRect(0, 0, 300, 600)
+    const shifted = (y: number, height: number): DOMRect =>
+      new page.window.DOMRect(48, y - (offset - 1000), 200, height)
+    row.getBoundingClientRect = bubble.getBoundingClientRect = () =>
+      shifted(114, 90)
+    body.getBoundingClientRect = () => shifted(130, 56)
+    quote.getBoundingClientRect = () => shifted(280, 40)
+    document.elementFromPoint = (_x, y) => {
+      if (mode === 'input') return input
+      if (mode === 'inner') return inner
+      const q = quote.getBoundingClientRect()
+      if (y >= q.top && y <= q.bottom) return quote
+      const b = body.getBoundingClientRect()
+      return y >= b.top && y <= b.bottom ? body : history
+    }
+    const directions: unknown[] = []
+    actual.device.scroll = async command => {
+      directions.push(command.direction)
+      history.scrollTop += command.direction === 'DOWN' ? 300 : -300
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target: { id: 'reader' } } },
+      observations: []
+    }) as Scenarios
+    let error: unknown
+    try {
+      await scenario.ownWebReader(scenario.f.messages.target)
+    } catch (failure) {
+      error = failure
+    }
+    return { error, directions, offset, scenario }
+  }
+  it('positions the exact noninteractive body before genuine balanced wheels when the fixed point initially hits a quote Button', async () => {
+    const result = await blockedWheelReader()
+    expect(result.error).equals(undefined)
+    expect(result.directions).deep.equals(['DOWN', 'UP'])
+    expect(result.offset).equals(858)
+    const proof = result.scenario.observations[0]
+    expect(
+      (proof.noninteractiveWheelSetup as Record<string, unknown>).positioned
+    ).equals(true)
+  })
+  for (const mode of ['stuck', 'input', 'inner'])
+    it(
+      'retains the real wheel interception guard after unproved body setup: ' +
+        mode,
+      async () => {
+        const result = await blockedWheelReader(mode)
+        expect(String(result.error)).includes(
+          'Interactive or inner-scroll wheel interception'
+        )
+        expect(result.directions).deep.equals([])
+      }
+    )
   it('establishes genuine balanced wheel movement before accepting the unchanged reader zero', async () => {
     const { scenario, actual, page } = browserHistory()
     await scenario.anchor()
@@ -4730,6 +4846,71 @@ describe('chat native adapter compatibility', function () {
       return child as unknown as ChildProcess
     }
   }
+  for (const surface of ['web-wide', 'web-touch', 'ios', 'android'])
+    it(
+      'routes all variant sweeps without unsupported web recording while retaining native light/reduced clips: ' +
+        surface,
+      async () => {
+        const native = surface === 'ios' || surface === 'android'
+        const variants: string[] = []
+        const transitions: string[] = []
+        const recordings: string[] = []
+        const reached = new Error('Original transition action reached')
+        let current = ''
+        const actual = {
+          native,
+          surface,
+          runDir: '/tmp/synthetic-variant',
+          present: async () => {},
+          shot: async () => {},
+          variant: async (name: string, work: () => Promise<void>) => {
+            current = name
+            variants.push(name)
+            await work()
+          },
+          recordTransition: async (
+            _path: string,
+            work: () => Promise<void>
+          ) => {
+            if (!native) throw Error('Browser recording is unsupported')
+            recordings.push(current)
+            await work()
+          }
+        }
+        const scenario = Object.assign(Object.create(Scenarios.prototype), {
+          ui: actual,
+          f: { messages: { target: { id: 'target' } } },
+          observations: [],
+          signIn: async () => {},
+          openGroup: async () => {},
+          anchor: async () => {},
+          readable: async () => {},
+          check: async (_name: string, work: () => Promise<void>) => {
+            try {
+              await work()
+            } catch (error) {
+              if (error !== reached) throw error
+            }
+          },
+          action: async () => {
+            transitions.push(current)
+            throw reached
+          }
+        }) as Scenarios
+        await scenario.variants()
+        expect(variants).deep.equals([
+          'light',
+          'dark',
+          'large-text',
+          'reduced-motion',
+          'reduced-transparency'
+        ])
+        expect(transitions).deep.equals(variants)
+        expect(recordings).deep.equals(
+          native ? ['light', 'reduced-motion'] : []
+        )
+      }
+    )
   it('records only after the actual first-frame marker and finalizes before probing', async () => {
     const actual = ui([])
     const calls: unknown[] = []
