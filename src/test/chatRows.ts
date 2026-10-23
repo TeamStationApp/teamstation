@@ -52,3 +52,51 @@ export function chatRowText(
 export function chatRowById(conversationId: string): string {
   return `[data-testid="chat-conversation-${cssString(conversationId)}"]`
 }
+
+/** A rectangle of the native accessibility hierarchy, in screen points. */
+export interface NativeBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** What `nativeRowInList` reads of a native hierarchy node. */
+export interface NativeNode<T> {
+  type?: string
+  bounds?: NativeBounds
+  children?: T[]
+}
+
+function nativeNodes<T extends NativeNode<T>>(node: T | T[]): T[] {
+  if (Array.isArray(node)) return node.flatMap(nativeNodes)
+  return [node, ...(node.children ?? []).flatMap(nativeNodes)]
+}
+
+/**
+ * A chat row in a native hierarchy and the list it scrolls in: the first
+ * node with bounds that `isRow` picks, and the first ScrollView with bounds
+ * whose subtree holds that very node. The list is found by the row node
+ * itself, not by its `chat-conversation-<id>`, so a legacy build whose
+ * rows carry no id gets the list the row is in, not just any ScrollView.
+ * Undefined until both are there.
+ */
+export function nativeRowInList<T extends NativeNode<T>>(
+  tree: T | T[],
+  isRow: (node: T) => boolean
+): { row: T & { bounds: NativeBounds }; viewport: NativeBounds } | undefined {
+  const nodes = nativeNodes(tree)
+  const row = nodes.find(
+    (node): node is T & { bounds: NativeBounds } =>
+      node.bounds != null && isRow(node)
+  )
+  if (row == null) return undefined
+  const viewport = nodes.find(
+    node =>
+      node.type?.includes('ScrollView') === true &&
+      node.bounds != null &&
+      nativeNodes(node).includes(row)
+  )?.bounds
+  if (viewport == null) return undefined
+  return { row, viewport }
+}

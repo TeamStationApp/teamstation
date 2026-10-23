@@ -4,7 +4,13 @@ import { JSDOM } from 'jsdom'
 import { describe, it } from 'mocha'
 import { join, relative } from 'path'
 
-import { chatRowById, chatRowSelector, chatRowText } from './chatRows'
+import {
+  chatRowById,
+  chatRowSelector,
+  chatRowText,
+  type NativeBounds,
+  nativeRowInList
+} from './chatRows'
 
 /** A Chat tab list as the web draws it, with each row's whole name. */
 function list(): JSDOM {
@@ -88,6 +94,138 @@ describe('chat rows by title', function () {
     const dotted = new RegExp(chatRowText('A.B (2)', 'ios'))
     expect(dotted.test('A.B (2), hi')).equals(true)
     expect(dotted.test('AxB (2)')).equals(false)
+  })
+})
+
+/** A native hierarchy node, as maestro-d gives it. */
+interface Node {
+  type?: string
+  id?: string
+  text?: string
+  label?: string
+  bounds?: NativeBounds
+  children?: Node[]
+}
+
+const at = (y: number, height = 72): NativeBounds => ({
+  x: 0,
+  y,
+  width: 390,
+  height
+})
+
+/**
+ * The Chat tab on iOS as a legacy build draws it: no row carries a
+ * `chat-conversation-<id>`, and the scope pills above the list are a
+ * ScrollView of their own, full of id-less nodes, that comes first.
+ */
+function legacyIos(rowId?: string): { tree: Node; row: Node; list: Node } {
+  const row: Node = {
+    type: 'XCUIElementTypeButton',
+    id: rowId,
+    label: 'Hawks Members, Ec: practice moved, 2 unread',
+    bounds: at(300)
+  }
+  const pills: Node = {
+    type: 'XCUIElementTypeScrollView',
+    bounds: at(100, 44),
+    children: [
+      { type: 'XCUIElementTypeButton', label: 'Members', bounds: at(100, 44) },
+      { type: 'XCUIElementTypeButton', label: 'Fans', bounds: at(100, 44) }
+    ]
+  }
+  const list: Node = {
+    type: 'XCUIElementTypeScrollView',
+    bounds: at(150, 600),
+    children: [
+      {
+        type: 'XCUIElementTypeOther',
+        children: [
+          {
+            type: 'XCUIElementTypeButton',
+            label: 'Hawks Members Fans',
+            bounds: at(228)
+          },
+          row
+        ]
+      }
+    ]
+  }
+  return {
+    tree: {
+      type: 'XCUIElementTypeApplication',
+      bounds: at(0, 844),
+      children: [
+        { type: 'XCUIElementTypeStaticText', label: 'Chat' },
+        pills,
+        list
+      ]
+    },
+    row,
+    list
+  }
+}
+
+describe('a native chat row and the list it scrolls in', function () {
+  const iosTitle = new RegExp(chatRowText('Hawks Members', 'ios'))
+  const byTitle = (node: Node): boolean =>
+    iosTitle.test(node.text ?? '') || iosTitle.test(node.label ?? '')
+
+  it('finds the list holding a legacy row matched by its title, not the first ScrollView', function () {
+    const { tree, row, list } = legacyIos()
+    const found = nativeRowInList(tree, byTitle)
+    expect(found?.row).equals(row)
+    expect(found?.viewport).equals(list.bounds)
+  })
+
+  it('finds the same list for a row matched by its id', function () {
+    const { tree, row, list } = legacyIos('chat-conversation-cnv_a')
+    const found = nativeRowInList(
+      tree,
+      node => node.id === 'chat-conversation-cnv_a'
+    )
+    expect(found?.row).equals(row)
+    expect(found?.viewport).equals(list.bounds)
+  })
+
+  it('finds the list of an Android row matched by its title text node', function () {
+    const title: Node = {
+      type: 'android.widget.TextView',
+      text: 'Hawks Members',
+      bounds: at(310, 24)
+    }
+    const list: Node = {
+      type: 'android.widget.ScrollView',
+      bounds: at(150, 600),
+      children: [
+        {
+          type: 'android.view.ViewGroup',
+          bounds: at(300),
+          children: [title, { type: 'android.widget.TextView', text: '2' }]
+        }
+      ]
+    }
+    const tree: Node[] = [
+      {
+        type: 'android.widget.HorizontalScrollView',
+        bounds: at(100, 44),
+        children: [{ type: 'android.widget.TextView', text: 'Members' }]
+      },
+      list
+    ]
+    const android = new RegExp(chatRowText('Hawks Members', 'android'))
+    const found = nativeRowInList(tree, node => android.test(node.text ?? ''))
+    expect(found?.row).equals(title)
+    expect(found?.viewport).equals(list.bounds)
+  })
+
+  it('has nothing until the row is there, with bounds, inside a list', function () {
+    const { tree, row } = legacyIos()
+    expect(nativeRowInList(tree, () => false)).equals(undefined)
+    const unlisted: Node = { type: 'Other', children: [row] }
+    expect(nativeRowInList(unlisted, byTitle)).equals(undefined)
+    row.bounds = undefined
+    expect(nativeRowInList(tree, byTitle)).equals(undefined)
   })
 })
 

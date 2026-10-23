@@ -20,7 +20,7 @@ import {
 } from '../../common/api'
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
-import { chatRowText } from '../../test/chatRows'
+import { chatRowText, nativeRowInList } from '../../test/chatRows'
 
 interface Bounds {
   x: number
@@ -1551,23 +1551,16 @@ async function main(): Promise<void> {
       const row = await until(
         'Conversation row must finish scrolling before a measured hold',
         async () => {
-          const nodes = flatten(await m.hierarchy())
-          const row = nodes.find(
-            node =>
-              (rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1'
-                ? node.id === rowId
-                : titled.test(node.text ?? '') ||
-                  titled.test(node.label ?? '')) && node.bounds != null
+          // The list is the one holding the matched row node, which a
+          // legacy row without an id is found by too.
+          const found = nativeRowInList(await m.hierarchy(), node =>
+            rowId != null && process.env.CHAT_UI_NATIVE_LEGACY_ROWS !== '1'
+              ? node.id === rowId
+              : titled.test(node.text ?? '') || titled.test(node.label ?? '')
           )
-          const bounds = row?.bounds
-          if (bounds == null) return undefined
-          const viewport = nodes.find(
-            node =>
-              node.type?.includes('ScrollView') === true &&
-              node.bounds != null &&
-              flatten(node).some(child => child.id === rowId)
-          )?.bounds
-          if (viewport == null) return undefined
+          if (found == null) return undefined
+          const { row, viewport } = found
+          const bounds = row.bounds
           const left = Math.max(bounds.x, viewport.x) + 6
           const right =
             Math.min(bounds.x + bounds.width, viewport.x + viewport.width) - 6
