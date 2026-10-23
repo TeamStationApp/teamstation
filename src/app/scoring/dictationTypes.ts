@@ -57,17 +57,34 @@ export interface DictationTopic {
   scope?: string
   /** What the scope speaks about: `{ gameId }` when absent. */
   target?: Record<string, unknown>
-  /** The game as the model is told of it: `dictationContext` when absent. */
+  /**
+   * The game as the model is told of it: `dictationContext` of the session
+   * when absent. A hold with neither starts nothing.
+   */
   contextOf?: () => string
 }
 
-export interface UseDictationOptions extends DictationTopic {
-  url: string
-  gameId: string
+/**
+ * Where a sentence's answer goes. A screen about a game passes its session
+ * and takes `onActions`; one that only wants the words, as Tess does, passes
+ * no session and takes `onTranscript`. Key terms and player tags are sent
+ * only with a session.
+ */
+export interface DictationListener {
+  gameId?: string
   /** The screen's own copy of the game, which is the one the scorer sees. */
-  session: ScoringSessionState
-  log: readonly ScoringAction[]
-  onActions: OnDictated
+  session?: ScoringSessionState
+  log?: readonly ScoringAction[]
+  onActions?: OnDictated
+  /**
+   * The words of a hold that heard some, for a scope that ends at its
+   * transcript. The button is free for the next hold when it runs.
+   */
+  onTranscript?: (text: string) => void
+}
+
+export interface UseDictationOptions extends DictationTopic, DictationListener {
+  url: string
   model?: DictationModel
   /** The session token a phone puts on the socket. The browser uses its cookie. */
   token?: string
@@ -98,7 +115,13 @@ export interface Dictation {
   dismiss: () => void
 }
 
-export interface DictationButtonProps extends DictationTopic {
+/**
+ * What `useDictationControls` takes. Tess passes no game: a `tess` scope,
+ * `contextOf`, `onTranscript`, and `spaceTalks: false`, so Space stays the
+ * page's beside her chat.
+ */
+export interface DictationControlsProps
+  extends DictationTopic, DictationListener {
   /**
    * The scoring screen's pill above Bunt and Swing, or the roster screen's
    * round button in its bottom bar, `size` across. A round control leaves its
@@ -112,9 +135,6 @@ export interface DictationButtonProps extends DictationTopic {
   /** Whether this server takes dictation. The control shows only when it does. */
   health: () => Promise<Health>
   url: string
-  gameId: string
-  session: ScoringSessionState
-  log: readonly ScoringAction[]
   /** Why the screen refused the last dictated sentence, if it did. */
   problem?: Problem
   /** What the screen asks about a dictated sentence, with its answers. */
@@ -141,7 +161,6 @@ export interface DictationButtonProps extends DictationTopic {
    * off while the field has a use for Space.
    */
   spaceTalks?: boolean
-  onActions: OnDictated
   /** The LLM the scorer picked in settings; absent, the server's own. */
   model?: DictationModel
   /**
@@ -151,4 +170,12 @@ export interface DictationButtonProps extends DictationTopic {
   token?: string
   openSocket?: (url: string) => DictationSocket
   openMicrophone?: OpenMicrophone
+}
+
+/** The controls on a screen about a game: scoring's, and the roster sheet's. */
+export interface DictationButtonProps extends DictationControlsProps {
+  gameId: string
+  session: ScoringSessionState
+  log: readonly ScoringAction[]
+  onActions: OnDictated
 }
