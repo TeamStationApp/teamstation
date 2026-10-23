@@ -9988,3 +9988,694 @@ describe('native earlier-control exact-target handoff', function () {
     expect(m.taps).deep.equals([])
   })
 })
+
+describe('web post-lifecycle continuity public device ownership', function () {
+  function rowModel(mode = 'linked'): {
+    scenario: Scenarios
+    close: () => void
+    calls: string[]
+  } {
+    const title = 'Chrome on a test system (this device)'
+    const ownSubtitle =
+      mode === 'pending-sibling-linked'
+        ? 'Web · Not linked yet'
+        : 'Web · Linked'
+    const own = `<div data-row="own"><div data-text="own"><div style="opacity:1">${title}</div><div>${ownSubtitle}</div></div></div>`
+    const other =
+      '<div data-row="other"><div data-text="other"><div>Protocol device</div><div>Web · Linked</div></div></div>'
+    const page = new JSDOM(`<h1>Chat devices</h1><div>${own}${other}</div>`, {
+      url: 'https://fixture.example.test/chat/devices',
+      runScripts: 'outside-only'
+    })
+    const document = page.window.document
+    const text = document.querySelector('[data-text="own"]')!
+    if (mode === 'duplicate-title')
+      text.insertAdjacentHTML('beforeend', `<div>${title}</div>`)
+    if (mode === 'linked-in-other-container')
+      text.lastElementChild!.replaceWith(document.createElement('div'))
+    if (mode === 'nested-linked')
+      text.lastElementChild!.innerHTML = '<div>Web · Linked</div>'
+    if (mode === 'login')
+      document.body.insertAdjacentHTML('beforeend', '<input type="password">')
+    const marker = text.firstElementChild as HTMLElement
+    if (mode === 'hidden') marker.style.visibility = 'hidden'
+    Object.defineProperty(
+      page.window.HTMLElement.prototype,
+      'getBoundingClientRect',
+      {
+        configurable: true,
+        value: () => ({
+          x: 20,
+          y: 120,
+          width: 250,
+          height: 24,
+          top: 120,
+          bottom: 144,
+          left: 20,
+          right: 270
+        })
+      }
+    )
+    page.window.HTMLElement.prototype.scrollIntoView = () => {}
+    const calls: string[] = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: false,
+      surface: 'web-narrow',
+      open: async (route: string) => {
+        calls.push(route)
+      },
+      dom: async (script: string) =>
+        await page.window.eval('(async()=>{' + script + '})()'),
+      device: {
+        assertVisible: async (selector: { text: string }) => {
+          expect(selector.text).equals('^Chat devices$')
+        },
+        assertNotVisible: async (selector: { text: string }) => {
+          calls.push(selector.text)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui
+    }) as Scenarios
+    return {
+      scenario,
+      close: () => {
+        page.window.close()
+      },
+      calls
+    }
+  }
+
+  it('proves Linked only in the exact current title direct text container', async () => {
+    const m = rowModel()
+    try {
+      const actual = await m.scenario.webContinuationDeviceUi({
+        name: 'Chrome on a test system'
+      })
+      expect(actual.label).equals('Chrome on a test system (this device)')
+      expect(actual.linkedText).equals('Web · Linked')
+      expect(m.calls).deep.equals([
+        '/chat/devices',
+        '^Link this device$',
+        '^Reset chat$'
+      ])
+    } finally {
+      m.close()
+    }
+  })
+  for (const mode of [
+    'pending-sibling-linked',
+    'linked-in-other-container',
+    'nested-linked'
+  ])
+    it(
+      'rejects a current row without its own direct Linked subtitle: ' + mode,
+      async () => {
+        const m = rowModel(mode)
+        try {
+          const error = await captureFailure(
+            m.scenario.webContinuationDeviceUi({
+              name: 'Chrome on a test system'
+            })
+          )
+          expect(String(error)).matches(/own direct subtitle/)
+        } finally {
+          m.close()
+        }
+      }
+    )
+  for (const mode of ['duplicate-title', 'hidden', 'login'])
+    it(
+      'rejects an unproved installed public device marker: ' + mode,
+      async () => {
+        const m = rowModel(mode)
+        try {
+          const error = await captureFailure(
+            m.scenario.webContinuationDeviceUi({
+              name: 'Chrome on a test system'
+            })
+          )
+          expect(String(error)).matches(
+            /Unique actual|Visible actual|login forbidden/
+          )
+        } finally {
+          m.close()
+        }
+      }
+    )
+})
+
+describe('web post-lifecycle continuity cryptographic preconditions', function () {
+  function policyModel(): {
+    scenario: Scenarios
+    state: Parameters<Scenarios['verifyWebContinuation']>[0]
+    plan: Parameters<Scenarios['verifyWebContinuation']>[1]
+    baseline: Parameters<Scenarios['verifyWebContinuation']>[2]
+  } {
+    const viewerId = userIdOfGumbo(9)
+    const replacement = {
+      id: 'cdv_replacement',
+      name: 'Chrome on a test system',
+      platform: 'web' as const,
+      boxPublicKey: 'synthetic-public-box',
+      signPublicKey: 'synthetic-public-sign',
+      createdAt: '2026-01-02T00:00:00.000Z'
+    }
+    const originalRevokedAt = '2026-01-02T00:00:01.000Z'
+    const baseline = {
+      actor: 'Willie',
+      deviceId: 'cdv_original',
+      identityId: 'identity-original',
+      identityPublicKey: 'synthetic-public-identity',
+      pukGeneration: 1,
+      pukPublicKey: 'synthetic-public-puk-one',
+      safetyNumber: '1'.repeat(60),
+      text: {
+        id: 'msg_text',
+        seq: 1,
+        body: 'Synthetic preserved text.',
+        authorId: viewerId
+      },
+      reply: {
+        id: 'msg_reply',
+        seq: 2,
+        body: 'Synthetic preserved reply.',
+        authorId: viewerId
+      },
+      file: {
+        id: 'msg_file',
+        seq: 3,
+        body: 'Synthetic preserved photo.',
+        authorId: viewerId
+      },
+      textMentions: [userIdOfGumbo(8)],
+      replyMentions: []
+    }
+    const ref = {
+      path: '/var/app/synthetic-evidence.json',
+      sha256: '0'.repeat(64)
+    }
+    const plan = {
+      schema: 1 as const,
+      kind: 'post-lifecycle-web-continuity' as const,
+      applicationSource: 'a'.repeat(40),
+      harnessSource: 'b'.repeat(40),
+      baseline: ref,
+      revocationEvidence: ref,
+      historicalI1: [ref],
+      review: ref,
+      installedDeviceObservation: ref,
+      originalRevokedAt,
+      replacement
+    }
+    const state = {
+      userId: viewerId,
+      devices: [
+        {
+          ...replacement,
+          id: baseline.deviceId,
+          revokedAt: originalRevokedAt,
+          linked: false,
+          current: false,
+          lastSeenAt: '2026-01-02T00:00:00.000Z'
+        },
+        {
+          ...replacement,
+          revokedAt: null,
+          linked: true,
+          current: true,
+          lastSeenAt: '2026-01-02T00:01:00.000Z'
+        }
+      ],
+      keys: {
+        deviceId: replacement.id,
+        linked: true,
+        pukNeedsRotation: false,
+        identity: {
+          id: baseline.identityId,
+          publicKey: baseline.identityPublicKey,
+          createdAt: '2026-01-01T00:00:00.000Z'
+        },
+        generations: [
+          {
+            generation: 1,
+            publicKey: baseline.pukPublicKey,
+            signature: 'synthetic-public-signature-one',
+            previousKeysBox: null
+          },
+          {
+            generation: 2,
+            publicKey: 'synthetic-public-puk-two',
+            signature: 'synthetic-public-signature-two',
+            previousKeysBox: 'synthetic-wrapped-previous-public-chain'
+          }
+        ]
+      }
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        viewerId
+      }) as Scenarios,
+      state,
+      plan,
+      baseline
+    }
+  }
+
+  it('accepts the pinned linked replacement while retaining exact original revocation and public chain', () => {
+    const m = policyModel()
+    const actual = m.scenario.verifyWebContinuation(m.state, m.plan, m.baseline)
+    expect(actual.identity).deep.equals(m.state.keys.identity)
+    expect(actual.generations).deep.equals(m.state.keys.generations)
+    expect(actual.roster.map(device => device.id)).deep.equals([
+      'cdv_original',
+      'cdv_replacement'
+    ])
+    expect(
+      actual.roster.every(
+        device => !('lastSeenAt' in device) && !('current' in device)
+      )
+    ).equals(true)
+  })
+  for (const fault of [
+    'actor',
+    'replacement',
+    'public-key',
+    'two-current',
+    'unlinked',
+    'revoked',
+    'original-unrevoked',
+    'original-timestamp',
+    'identity',
+    'missing-puk',
+    'key-session',
+    'pending-rotation'
+  ])
+    it('rejects an invalid post-lifecycle policy: ' + fault, () => {
+      const m = policyModel()
+      if (fault === 'actor') m.state.userId = userIdOfGumbo(7)
+      if (fault === 'replacement') m.state.devices[1].id = 'cdv_wrong'
+      if (fault === 'public-key')
+        m.state.devices[1].signPublicKey = 'different-public-sign'
+      if (fault === 'two-current') m.state.devices[0].current = true
+      if (fault === 'unlinked') m.state.devices[1].linked = false
+      if (fault === 'revoked')
+        m.state.devices[1].revokedAt = m.plan.originalRevokedAt
+      if (fault === 'original-unrevoked') m.state.devices[0].revokedAt = null
+      if (fault === 'original-timestamp')
+        m.state.devices[0].revokedAt = '2026-01-03T00:00:00.000Z'
+      if (fault === 'identity')
+        m.state.keys.identity!.publicKey = 'different-public-identity'
+      if (fault === 'missing-puk') m.state.keys.generations.shift()
+      if (fault === 'key-session')
+        m.state.keys.deviceId = 'cdv_provider-session'
+      if (fault === 'pending-rotation') m.state.keys.pukNeedsRotation = true
+      expect(() =>
+        m.scenario.verifyWebContinuation(m.state, m.plan, m.baseline)
+      ).throws()
+    })
+  it('leaves original I1 rejecting the revoked original before sign-in or history', async () => {
+    const m = policyModel()
+    const calls: string[] = []
+    Object.assign(m.scenario, {
+      viewerKey: m.baseline.actor,
+      ui: { surface: 'web-narrow', native: false },
+      f: { identityCompatibility: { legacy: { 'web-narrow': m.baseline } } },
+      check: async (_label: string, work: () => Promise<void>) => {
+        await work()
+      },
+      client: async () => ({
+        myChatKeys: async () => m.state.keys,
+        chatDevices: async () => m.state.devices
+      }),
+      signIn: async () => {
+        calls.push('sign-in')
+      },
+      legacyHistoryAndSafety: async () => {
+        calls.push('history')
+      }
+    })
+    const error = await captureFailure(m.scenario.I1())
+    expect(String(error)).includes(
+      'Original installed device required before reopen'
+    )
+    expect(calls).deep.equals([])
+  })
+  async function orchestration(fault = ''): Promise<{
+    error: unknown
+    calls: string[]
+    observations: Array<Record<string, unknown>>
+  }> {
+    const m = policyModel()
+    const directory = mkdtempSync(join(tmpdir(), 'chat-web-continuation-'))
+    const hash = (file: string): string =>
+      createHash('sha256').update(readFileSync(file)).digest('hex')
+    const evidence = (
+      name: string,
+      value: unknown
+    ): { path: string; sha256: string } => {
+      const file = join(directory, name)
+      writeFileSync(
+        file,
+        typeof value === 'string' ? value : JSON.stringify(value),
+        { mode: 0o600 }
+      )
+      return { path: file, sha256: hash(file) }
+    }
+    const image = join(directory, 'synthetic.png')
+    writeFileSync(image, captureImages[0], { mode: 0o600 })
+    const kinds = [
+      'chat-list',
+      'conversation',
+      'floating-pins',
+      'message-actions',
+      'reply-keyboard',
+      'info',
+      'info-members',
+      'mentions',
+      'mention-composer',
+      'attention'
+    ]
+    const files = ['web-wide', 'web-narrow', 'web-touch', 'ios', 'android']
+      .flatMap(surface =>
+        kinds.map(kind => surface + '-' + kind + '-after.png')
+      )
+      .concat([
+        'ios-keyboard-pins-after.png',
+        'android-keyboard-pins-after.png',
+        'web-320-composer-after.png'
+      ])
+    const archive = evidence('unit-archive.json', {
+      entries: files.map(file => ({
+        file,
+        path: image,
+        source: m.plan.applicationSource,
+        sha256: hash(image)
+      }))
+    })
+    m.plan.baseline = evidence('baseline.json', {
+      identityCompatibility: {
+        legacy: { 'web-narrow': m.baseline },
+        fullWidthActors: []
+      }
+    })
+    m.plan.revocationEvidence = evidence('revocation.json', {
+      readOnly: true,
+      rows: [
+        {
+          surface: 'web-narrow',
+          expectedDevice: m.baseline.deviceId,
+          rows: [
+            { id: m.baseline.deviceId, revoked_at: m.plan.originalRevokedAt }
+          ]
+        }
+      ]
+    })
+    m.plan.historicalI1 = [
+      evidence('historical-i1.json', {
+        scenario: 'I1',
+        surface: 'web-narrow',
+        outcome: 'passed',
+        diagnosticOnly: false,
+        completedScenarios: ['I1'],
+        source: 'c'.repeat(40)
+      })
+    ]
+    m.plan.review = evidence(
+      'review.md',
+      'Synthetic reviewed compatibility comparison fixture'
+    )
+    const hierarchy = evidence('public-hierarchy.json', {
+      publicMarker: 'Synthetic this-device observation fixture'
+    })
+    m.plan.installedDeviceObservation = evidence('installed-observation.json', {
+      kind: 'installed-web-device-public-ui',
+      applicationSource: m.plan.applicationSource,
+      harnessSource: m.plan.harnessSource,
+      userId: m.state.userId,
+      thisDeviceLabel: m.plan.replacement.name + ' (this device)',
+      currentSessionDeviceId: m.plan.replacement.id,
+      replacement: m.plan.replacement,
+      screenshot: image,
+      screenshotSha256: hash(image),
+      publicHierarchy: hierarchy.path,
+      publicHierarchySha256: hierarchy.sha256
+    })
+    const descriptor = evidence('continuation.json', m.plan)
+    const keys = [
+      'CHAT2_ARTIFACTS',
+      'CHAT2_SOURCE',
+      'CHAT2_WEB_CONTINUATION_FILE',
+      'CHAT2_WEB_CONTINUATION_SHA256'
+    ] as const
+    const before = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+    process.env.CHAT2_ARTIFACTS = directory
+    process.env.CHAT2_SOURCE = m.plan.applicationSource
+    process.env.CHAT2_WEB_CONTINUATION_FILE = descriptor.path
+    process.env.CHAT2_WEB_CONTINUATION_SHA256 = descriptor.sha256
+    const calls: string[] = []
+    let draft = ''
+    let sentBody = ''
+    let reopened = false
+    let publicReads = 0
+    const post = (): {
+      id: string
+      seq: number
+      body: string
+      senderUserId: string
+      status: 'ok'
+    } => ({
+      id:
+        fault === 'persisted-id' && reopened
+          ? 'msg_changed_persisted'
+          : 'msg_current_send',
+      seq: 400,
+      body: sentBody,
+      senderUserId: m.state.userId,
+      status: 'ok'
+    })
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      surface: 'web-narrow',
+      native: false,
+      binding: {
+        applicationSource: m.plan.applicationSource,
+        harnessSource: m.plan.harnessSource
+      },
+      runDir: directory,
+      replaceDraft: async (value: string) => {
+        draft = value
+      },
+      draft: async () => draft,
+      text: async (label: string) => {
+        expect(label).equals('Send')
+        calls.push('send')
+        if (fault === 'send-error') throw Error('Public Send failed')
+        expect(draft).not.equals('')
+        sentBody = draft
+      },
+      present: async (id: string) => {
+        expect(id).equals('chat-composer')
+        calls.push('composer-after-reopen')
+      },
+      shot: async (kind: string) => {
+        calls.push('shot:' + kind)
+      },
+      device: {
+        openLink: async (args: { link: string }) => {
+          expect(args.link).equals(
+            'https://fixture.example.test/chat/cnv_mixed'
+          )
+          calls.push('navigate-reopen')
+          reopened = true
+        },
+        assertNotVisible: async (selector: { text: string }) => {
+          expect(selector.text).equals('^Link this device$')
+          if (fault === 'link-on-reopen')
+            throw Error('Unexpected linking fallback')
+        },
+        assertVisible: async (selector: {
+          text: string
+          childOf: { id: string }
+        }) => {
+          expect(reopened).equals(true)
+          expect(selector.text).equals('^' + sentBody + '$')
+          expect(selector.childOf.id).equals('chat-bubble-msg_current_send')
+          if (fault === 'lost-public-message')
+            throw Error('Persisted public message is absent')
+          calls.push('persisted-public-body')
+        }
+      }
+    }) as Chat2UI
+    Object.assign(m.scenario, {
+      ui,
+      viewerKey: m.baseline.actor,
+      group: 'cnv_mixed',
+      observations: [],
+      f: {
+        identityCompatibility: {
+          legacy: { 'web-narrow': m.baseline },
+          fullWidthActors: []
+        },
+        afterArchive: archive.path,
+        webUrl: 'https://fixture.example.test'
+      },
+      check: async (_name: string, work: () => Promise<void>) => {
+        await work()
+        calls.push('case-passed')
+      },
+      webContinuationState: async () => {
+        publicReads++
+        const state = JSON.parse(JSON.stringify(m.state)) as typeof m.state
+        if (fault === 'public-key-after-send' && publicReads >= 3)
+          state.devices[1].boxPublicKey = 'different-public-box'
+        if (fault === 'roster-after-send' && publicReads >= 3)
+          state.devices.push({
+            ...state.devices[1],
+            id: 'cdv_unexpected',
+            current: false
+          })
+        if (fault === 'chain-after-send' && publicReads >= 3)
+          state.keys.generations.push({
+            generation: 3,
+            publicKey: 'different-public-puk',
+            signature: 'different-public-signature',
+            previousKeysBox: null
+          })
+        if (fault === 'device-after-reopen' && reopened)
+          state.keys.deviceId = 'cdv_other_browser'
+        return state
+      },
+      webContinuationDeviceUi: async () => {
+        calls.push('public-device-marker')
+        if (fault === 'login-before-history')
+          throw Error('Existing signed-in device required; login forbidden')
+        return {
+          label: m.plan.replacement.name + ' (this device)',
+          linkedText: 'Web · Linked'
+        }
+      },
+      legacyHistoryAndSafety: async (baseline: typeof m.baseline) => {
+        expect(baseline).deep.equals(m.baseline)
+        calls.push('unchanged-legacy-oracles')
+      },
+      anchor: async (message: Chat2Message) => {
+        expect(message.id).equals('msg_current_send')
+        calls.push('anchor-persisted')
+      },
+      signIn: async () => {
+        calls.push('forbidden-sign-in')
+        throw Error('W1 must not sign in')
+      },
+      approveBrowserLink: async () => {
+        calls.push('forbidden-link')
+        throw Error('W1 must not approve a link')
+      },
+      protocolPeer: async () => ({
+        engine: {
+          open: async () => ({
+            messages:
+              sentBody === ''
+                ? []
+                : fault === 'duplicate-peer'
+                  ? [post(), { ...post(), id: 'msg_duplicate' }]
+                  : [post()]
+          })
+        }
+      })
+    })
+    let error: unknown
+    try {
+      await m.scenario.W1()
+    } catch (failure) {
+      error = failure
+    } finally {
+      for (const key of keys) {
+        if (before[key] == null) Reflect.deleteProperty(process.env, key)
+        else process.env[key] = before[key]
+      }
+      rmSync(directory, { recursive: true, force: true })
+    }
+    return { error, calls, observations: m.scenario.observations }
+  }
+
+  it('orchestration sends once, really navigates, and verifies the same persisted message and identity', async () => {
+    const result = await orchestration()
+    expect(result.error).equals(undefined)
+    expect(result.calls.filter(call => call === 'send')).deep.equals(['send'])
+    expect(result.calls.filter(call => call === 'navigate-reopen')).deep.equals(
+      ['navigate-reopen']
+    )
+    expect(result.calls).includes('unchanged-legacy-oracles')
+    expect(result.calls).includes('persisted-public-body')
+    expect(result.calls.at(-1)).equals('case-passed')
+    expect(result.calls).not.includes('forbidden-sign-in')
+    expect(result.calls).not.includes('forbidden-link')
+    const proof = result.observations.find(
+      row => row.postLifecycleWebContinuity === true
+    )!
+    expect(proof.originalDeviceContinuityClaimed).equals(false)
+    expect(proof.currentPublicIdentityAndChainUnchanged).equals(true)
+    expect(proof.rosterAndPublicKeysUnchanged).equals(true)
+  })
+  for (const fault of [
+    'duplicate-peer',
+    'persisted-id',
+    'lost-public-message',
+    'public-key-after-send',
+    'roster-after-send',
+    'chain-after-send',
+    'device-after-reopen',
+    'link-on-reopen',
+    'send-error'
+  ])
+    it(
+      'orchestration rejects a broken send/reopen lifecycle without retry or fallback: ' +
+        fault,
+      async () => {
+        const result = await orchestration(fault)
+        const expected: Record<string, RegExp> = {
+          'duplicate-peer': /must not duplicate/,
+          'persisted-id': /msg_changed_persisted/,
+          'lost-public-message': /Persisted public message is absent/,
+          'public-key-after-send':
+            /Observed installed replacement differs: boxPublicKey/,
+          'roster-after-send': /cdv_unexpected/,
+          'chain-after-send': /different-public-puk/,
+          'device-after-reopen': /Installed-session key binding/,
+          'link-on-reopen': /Unexpected linking fallback/,
+          'send-error': /Public Send failed/
+        }
+        expect(String(result.error)).matches(expected[fault])
+        expect(result.calls.filter(call => call === 'send')).deep.equals([
+          'send'
+        ])
+        if (
+          [
+            'persisted-id',
+            'lost-public-message',
+            'device-after-reopen',
+            'link-on-reopen'
+          ].includes(fault)
+        )
+          expect(result.calls).includes('navigate-reopen')
+        else expect(result.calls).not.includes('navigate-reopen')
+        expect(result.calls).not.includes('case-passed')
+        expect(result.calls).not.includes('forbidden-sign-in')
+        expect(result.calls).not.includes('forbidden-link')
+        expect(
+          result.observations.some(
+            row => row.postLifecycleWebContinuity === true
+          )
+        ).equals(false)
+      }
+    )
+  it('orchestration rejects required login before old history or any send', async () => {
+    const result = await orchestration('login-before-history')
+    expect(String(result.error)).includes('login forbidden')
+    expect(result.calls).not.includes('unchanged-legacy-oracles')
+    expect(result.calls).not.includes('send')
+    expect(result.calls).not.includes('forbidden-sign-in')
+    expect(result.calls).not.includes('forbidden-link')
+  })
+})

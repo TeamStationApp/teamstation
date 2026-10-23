@@ -13,7 +13,11 @@ import { join, resolve } from 'node:path'
 
 import emojiData from 'emojibase-data/en/compact.json'
 
-import type { TeamStationClient } from '../../common/api'
+import type {
+  ChatDevice,
+  ChatMyKeys,
+  TeamStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { gumboOfUserId } from '../../common/userId'
 import {
@@ -50,6 +54,29 @@ import type { MessageView } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
+interface WebContinuationPlan {
+  schema: 1
+  kind: 'post-lifecycle-web-continuity'
+  applicationSource: string
+  harnessSource: string
+  baseline: { path: string; sha256: string }
+  revocationEvidence: { path: string; sha256: string }
+  historicalI1: Array<{ path: string; sha256: string }>
+  review: { path: string; sha256: string }
+  installedDeviceObservation: { path: string; sha256: string }
+  originalRevokedAt: string
+  replacement: Pick<
+    ChatDevice,
+    'id' | 'name' | 'platform' | 'boxPublicKey' | 'signPublicKey' | 'createdAt'
+  >
+}
+interface WebContinuationState {
+  userId: string
+  devices: ChatDevice[]
+  keys: Omit<ChatMyKeys, 'generations'> & {
+    generations: Array<Omit<ChatMyKeys['generations'][number], 'box'>>
+  }
+}
 type MentionHeaderGeometry = Record<
   'header' | 'title' | 'cancel' | 'search',
   NonNullable<PublicNode['bounds']>
@@ -1743,7 +1770,7 @@ export class Scenarios {
       if (await ui.visible({ text: exactText(actor.email) }, 2000))
         await ui.back()
       else {
-        if (['I1', 'I2'].includes(ui.scenario))
+        if (['I1', 'I2', 'W1'].includes(ui.scenario))
           throw new Chat2Blocked(
             'Compatibility requires its own prepared profile; account replacement is prohibited'
           )
@@ -1801,7 +1828,7 @@ export class Scenarios {
     }
     if (await ui.visible({ text: 'Link this device' }, 500)) {
       assert(
-        ui.scenario !== 'I1',
+        !['I1', 'W1'].includes(ui.scenario),
         'The preserved legacy profile must not request another device link'
       )
       const signal = ui.native
@@ -3893,6 +3920,76 @@ export class Scenarios {
     samples.push({ scopedBodyResult: element })
   }
 
+  async legacyHistoryAndSafety(
+    baseline: NonNullable<
+      Chat2Fixture['identityCompatibility']
+    >['legacy'][string]
+  ): Promise<void> {
+    await this.openGroup()
+    for (const message of [baseline.text, baseline.reply]) {
+      await this.identityLegacyAnchor(message, baseline)
+      await this.identityLegacyBody(message)
+    }
+    if (this.ui.native) {
+      const label = 'Jump to message from You: ' + baseline.text.body
+      const element = await this.identityLegacyRead(baseline.reply, 'quote')
+      assert(
+        element.text === label,
+        'Exact rendered legacy reply quote required'
+      )
+    } else
+      await this.ui.device.assertVisible({
+        text: '^Jump to message from .*'
+      })
+    await this.identityLegacyAnchor(baseline.file, baseline)
+    if (this.ui.native) await this.identityLegacyBody(baseline.file)
+    await until(
+      async () => {
+        try {
+          return await this.ui.renderedPhoto({
+            id: 'chat-bubble-' + baseline.file.id
+          })
+        } catch {
+          return undefined
+        }
+      },
+      'actual legacy encrypted attachment',
+      30000
+    )
+    const peer = await this.protocolPeer()
+    await this.peerTarget(peer, this.group, baseline.text.id)
+    await this.peerTarget(peer, this.group, baseline.reply.id)
+    const history = peer.engine.view(this.group)!
+    assert(
+      baseline.textMentions.length + baseline.replyMentions.length > 0,
+      'A real authenticated legacy numeric mention is required'
+    )
+    assert.deepEqual(
+      history.messages.find(m => m.id === baseline.text.id)?.mentions,
+      baseline.textMentions
+    )
+    assert.deepEqual(
+      history.messages.find(m => m.id === baseline.reply.id)?.mentions,
+      baseline.replyMentions
+    )
+    assert.equal(
+      history.messages.find(m => m.id === baseline.reply.id)?.quote?.authorId,
+      baseline.text.authorId
+    )
+    assert.equal(
+      history.messages.find(m => m.id === baseline.reply.id)?.quote?.id,
+      baseline.text.id
+    )
+    assert.equal(
+      await peer.engine.safetyNumber(this.viewerId),
+      baseline.safetyNumber
+    )
+    await this.identitySafety(
+      need((await peer.client.whoAmI())?.id, 'Safety peer session required'),
+      baseline.safetyNumber
+    )
+  }
+
   async I1(): Promise<void> {
     await this.check(
       'I1 preserved installed legacy identity and encrypted history',
@@ -3932,73 +4029,7 @@ export class Scenarios {
           'Original installed device required before reopen'
         )
         await this.signIn()
-        await this.openGroup()
-        for (const message of [baseline.text, baseline.reply]) {
-          await this.identityLegacyAnchor(message, baseline)
-          await this.identityLegacyBody(message)
-        }
-        if (this.ui.native) {
-          const label = 'Jump to message from You: ' + baseline.text.body
-          const element = await this.identityLegacyRead(baseline.reply, 'quote')
-          assert(
-            element.text === label,
-            'Exact rendered legacy reply quote required'
-          )
-        } else
-          await this.ui.device.assertVisible({
-            text: '^Jump to message from .*'
-          })
-        await this.identityLegacyAnchor(baseline.file, baseline)
-        if (this.ui.native) await this.identityLegacyBody(baseline.file)
-        await until(
-          async () => {
-            try {
-              return await this.ui.renderedPhoto({
-                id: 'chat-bubble-' + baseline.file.id
-              })
-            } catch {
-              return undefined
-            }
-          },
-          'actual legacy encrypted attachment',
-          30000
-        )
-        const peer = await this.protocolPeer()
-        await this.peerTarget(peer, this.group, baseline.text.id)
-        await this.peerTarget(peer, this.group, baseline.reply.id)
-        const history = peer.engine.view(this.group)!
-        assert(
-          baseline.textMentions.length + baseline.replyMentions.length > 0,
-          'A real authenticated legacy numeric mention is required'
-        )
-        assert.deepEqual(
-          history.messages.find(m => m.id === baseline.text.id)?.mentions,
-          baseline.textMentions
-        )
-        assert.deepEqual(
-          history.messages.find(m => m.id === baseline.reply.id)?.mentions,
-          baseline.replyMentions
-        )
-        assert.equal(
-          history.messages.find(m => m.id === baseline.reply.id)?.quote
-            ?.authorId,
-          baseline.text.authorId
-        )
-        assert.equal(
-          history.messages.find(m => m.id === baseline.reply.id)?.quote?.id,
-          baseline.text.id
-        )
-        assert.equal(
-          await peer.engine.safetyNumber(this.viewerId),
-          baseline.safetyNumber
-        )
-        await this.identitySafety(
-          need(
-            (await peer.client.whoAmI())?.id,
-            'Safety peer session required'
-          ),
-          baseline.safetyNumber
-        )
+        await this.legacyHistoryAndSafety(baseline)
         const body = 'Legacy identity continuity ' + Date.now()
         await this.ui.replaceDraft(body)
         await this.ui.text('Send')
@@ -4026,6 +4057,321 @@ export class Scenarios {
         await this.ui.shot(
           'identity-legacy',
           'Actual legacy profile after lossless database and saved-record upgrade'
+        )
+      }
+    )
+  }
+
+  /** Public installed-browser session only; never borrow a provider's current-device flag. */
+  async webContinuationState(): Promise<WebContinuationState> {
+    assert(this.ui.surface === 'web-narrow' && !this.ui.native)
+    const state = await this.ui.dom(`
+      const base=${JSON.stringify(this.f.apiUrl)};
+      const get=async suffix=>{const response=await fetch(base+suffix,{credentials:'include',headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});if(!response.ok)throw Error('Existing installed session required');return await response.json()};
+      const user=await get('/auth/me'),devices=await get('/chat/devices'),keys=await get('/chat/me/keys');
+      return {userId:user.id,devices,keys:{...keys,generations:keys.generations.map(({box,...publicGeneration})=>publicGeneration)}};
+    `)
+    return state as unknown as WebContinuationState
+  }
+
+  async webContinuationDeviceUi(
+    replacement: Pick<WebContinuationPlan['replacement'], 'name'>
+  ): Promise<Json> {
+    const ui = this.ui
+    await ui.open('/chat/devices')
+    await ui.device.assertVisible({ text: exactText('Chat devices') })
+    for (const label of ['Link this device', 'Reset chat'])
+      await ui.device.assertNotVisible({ text: exactText(label), timeout: 500 })
+    const label = replacement.name + ' (this device)'
+    return await ui.dom(`
+      if(document.querySelector('input[type="password"]'))throw Error('Existing signed-in device required; login forbidden');
+      const label=${JSON.stringify(label)};
+      const found=Array.from(document.querySelectorAll('*')).filter(n=>n.textContent===label&&!Array.from(n.children).some(c=>c.textContent===label));
+      if(found.length!==1)throw Error('Unique actual this-device label required');
+      const n=found[0],text=n.parentElement;
+      if(!text||text.children.length!==2||text.children[0]!==n||text.children[1].textContent!=='Web · Linked'||text.children[1].children.length!==0)throw Error('This device own direct subtitle must be Web and Linked');
+      n.scrollIntoView({block:'center',behavior:'instant'});
+      const b=n.getBoundingClientRect(),style=getComputedStyle(n);if(!(b.width>0&&b.height>0&&b.y>=0&&b.bottom<=innerHeight&&style.visibility!=='hidden'&&Number(style.opacity)>0))throw Error('Visible actual this-device marker required');
+      return {label,linkedText:'Web · Linked',bounds:{x:b.x,y:b.y,width:b.width,height:b.height}};
+    `)
+  }
+
+  verifyWebContinuation(
+    state: WebContinuationState,
+    plan: WebContinuationPlan,
+    baseline: NonNullable<
+      Chat2Fixture['identityCompatibility']
+    >['legacy'][string]
+  ): {
+    identity: WebContinuationState['keys']['identity']
+    generations: WebContinuationState['keys']['generations']
+    roster: Array<Omit<ChatDevice, 'lastSeenAt' | 'current'>>
+  } {
+    assert.equal(
+      state.userId,
+      this.viewerId,
+      'Installed browser actor must match the preserved canonical account'
+    )
+    const original = state.devices.filter(
+      device => device.id === baseline.deviceId
+    )
+    assert.equal(original.length, 1, 'Original device public record required')
+    assert.equal(
+      original[0].revokedAt,
+      plan.originalRevokedAt,
+      'Original revocation must remain exact'
+    )
+    const current = state.devices.filter(device => device.current)
+    assert.equal(
+      current.length,
+      1,
+      'Unique installed-session current device required'
+    )
+    const replacement = current[0]
+    assert(
+      replacement.id !== baseline.deviceId &&
+        replacement.revokedAt == null &&
+        replacement.linked &&
+        replacement.platform === 'web',
+      'Active linked replacement is distinct from the revoked original'
+    )
+    for (const key of [
+      'id',
+      'name',
+      'platform',
+      'boxPublicKey',
+      'signPublicKey',
+      'createdAt'
+    ] as const)
+      assert.equal(
+        replacement[key],
+        plan.replacement[key],
+        'Observed installed replacement differs: ' + key
+      )
+    assert.equal(
+      state.keys.deviceId,
+      replacement.id,
+      'Installed-session key binding must match the public this-device row'
+    )
+    assert(
+      state.keys.linked && !state.keys.pukNeedsRotation,
+      'Existing linked device and settled current public PUK chain required'
+    )
+    assert.equal(state.keys.identity?.id, baseline.identityId)
+    assert.equal(state.keys.identity?.publicKey, baseline.identityPublicKey)
+    assert(
+      state.keys.generations.some(
+        generation =>
+          generation.generation === baseline.pukGeneration &&
+          generation.publicKey === baseline.pukPublicKey
+      ),
+      'Original public PUK generation must remain in the current chain'
+    )
+    return {
+      identity: state.keys.identity,
+      generations: [...state.keys.generations].sort(
+        (a, b) => a.generation - b.generation
+      ),
+      roster: state.devices
+        .map(({ lastSeenAt, current, ...device }) => device)
+        .sort((a, b) => a.id.localeCompare(b.id))
+    }
+  }
+
+  /** Separate post-sign-out continuity proof; never an original-device I1 result. */
+  async W1(): Promise<void> {
+    const ui = this.ui
+    assert(
+      ui.surface === 'web-narrow' && !ui.native,
+      'W1 is original narrow web post-lifecycle continuity only'
+    )
+    requireAfterArchive(this.f)
+    const file = need(
+      process.env.CHAT2_WEB_CONTINUATION_FILE,
+      'Reviewed continuation descriptor required'
+    )
+    assert(
+      file.startsWith(
+        resolve(
+          need(process.env.CHAT2_ARTIFACTS, 'Private artifacts required')
+        ) + '/'
+      )
+    )
+    assert.equal(digest(file), process.env.CHAT2_WEB_CONTINUATION_SHA256)
+    const plan = JSON.parse(readFileSync(file, 'utf8')) as WebContinuationPlan
+    assert.equal(plan.schema, 1)
+    assert.equal(plan.kind, 'post-lifecycle-web-continuity')
+    assert.equal(plan.applicationSource, ui.binding.applicationSource)
+    assert.equal(plan.harnessSource, ui.binding.harnessSource)
+    const checked = (ref: WebContinuationPlan['baseline']): Json => {
+      assert(
+        ref.path.startsWith(
+          resolve(
+            need(process.env.CHAT2_ARTIFACTS, 'Private artifacts required')
+          ) + '/'
+        )
+      )
+      assert.equal(digest(ref.path), ref.sha256)
+      return JSON.parse(readFileSync(ref.path, 'utf8')) as Json
+    }
+    const original = checked(plan.baseline) as {
+      identityCompatibility: NonNullable<Chat2Fixture['identityCompatibility']>
+    }
+    const baseline = need(
+      original.identityCompatibility.legacy[ui.surface],
+      'Immutable original surface baseline required'
+    )
+    assert.deepEqual(this.f.identityCompatibility?.legacy[ui.surface], baseline)
+    assert.equal(this.viewerKey, baseline.actor)
+    assert(gumboOfUserId(this.viewerId) != null)
+    assert(
+      plan.originalRevokedAt !== '' &&
+        Number.isFinite(Date.parse(plan.originalRevokedAt))
+    )
+    const status = checked(plan.revocationEvidence) as {
+      readOnly: boolean
+      rows: Array<{
+        surface: string
+        expectedDevice: string
+        rows: Array<{ id: string; revoked_at: string | null }>
+      }>
+    }
+    assert.equal(status.readOnly, true)
+    const revoked = status.rows.find(row => row.surface === ui.surface)
+    assert.equal(revoked?.expectedDevice, baseline.deviceId)
+    assert.equal(
+      revoked?.rows.find(device => device.id === baseline.deviceId)?.revoked_at,
+      plan.originalRevokedAt
+    )
+    assert(plan.historicalI1.length > 0)
+    for (const ref of plan.historicalI1) {
+      const historical = checked(ref)
+      assert(
+        historical.scenario === 'I1' &&
+          historical.surface === 'web-narrow' &&
+          historical.outcome === 'passed' &&
+          historical.diagnosticOnly !== true
+      )
+      assert.deepEqual(historical.completedScenarios, ['I1'])
+      assert(
+        historical.source !== ui.binding.applicationSource,
+        'Historical I1 must retain its actual application revision'
+      )
+    }
+    assert.equal(digest(plan.review.path), plan.review.sha256)
+    const observed = checked(plan.installedDeviceObservation)
+    assert.equal(observed.kind, 'installed-web-device-public-ui')
+    assert.equal(observed.applicationSource, ui.binding.applicationSource)
+    assert.equal(observed.harnessSource, ui.binding.harnessSource)
+    assert.equal(observed.userId, this.viewerId)
+    assert.equal(
+      observed.thisDeviceLabel,
+      plan.replacement.name + ' (this device)'
+    )
+    assert.equal(observed.currentSessionDeviceId, plan.replacement.id)
+    assert.deepEqual(observed.replacement, plan.replacement)
+    assert.equal(digest(String(observed.screenshot)), observed.screenshotSha256)
+    assert.equal(
+      digest(String(observed.publicHierarchy)),
+      observed.publicHierarchySha256
+    )
+    await this.check(
+      'W1 current installed post-lifecycle account, history, identity and persistence',
+      async () => {
+        const before = this.verifyWebContinuation(
+          await this.webContinuationState(),
+          plan,
+          baseline
+        )
+        const marker = await this.webContinuationDeviceUi(plan.replacement)
+        assert.deepEqual(
+          this.verifyWebContinuation(
+            await this.webContinuationState(),
+            plan,
+            baseline
+          ),
+          before
+        )
+        privateJson(join(ui.runDir, 'continuation-start.json'), {
+          kind: plan.kind,
+          applicationSource: ui.binding.applicationSource,
+          harnessSource: ui.binding.harnessSource,
+          descriptor: { path: file, sha256: digest(file) },
+          originalRevokedAt: plan.originalRevokedAt,
+          replacement: plan.replacement,
+          marker,
+          publicState: before
+        })
+        await this.legacyHistoryAndSafety(baseline)
+        const body = 'Post-lifecycle web continuity ' + randomUUID()
+        await ui.replaceDraft(body)
+        assert.equal(await ui.draft(), body)
+        await ui.text('Send')
+        const sent = await this.delivered(body)
+        assert.equal(sent.senderUserId, this.viewerId)
+        assert.deepEqual(
+          this.verifyWebContinuation(
+            await this.webContinuationState(),
+            plan,
+            baseline
+          ),
+          before
+        )
+        await ui.device.openLink({
+          link:
+            this.f.webUrl.replace(/\/$/, '') +
+            '/chat/' +
+            encodeURIComponent(this.group)
+        })
+        await ui.present('chat-composer')
+        await ui.device.assertNotVisible({
+          text: exactText('Link this device'),
+          timeout: 500
+        })
+        await this.anchor({
+          id: sent.id,
+          seq: sent.seq,
+          body: sent.body,
+          authorId: this.viewerId
+        })
+        await ui.device.assertVisible({
+          text: exactText(body),
+          childOf: { id: 'chat-bubble-' + sent.id }
+        })
+        const persisted = await this.delivered(body)
+        assert.equal(persisted.id, sent.id)
+        await ui.shot(
+          'identity-post-lifecycle-message',
+          'Actual unique current-source message after full browser navigation and persisted decryption'
+        )
+        const afterMarker = await this.webContinuationDeviceUi(plan.replacement)
+        assert.deepEqual(
+          this.verifyWebContinuation(
+            await this.webContinuationState(),
+            plan,
+            baseline
+          ),
+          before
+        )
+        this.observations.push({
+          postLifecycleWebContinuity: true,
+          originalDeviceContinuityClaimed: false,
+          historicalI1: plan.historicalI1,
+          originalRevokedAt: plan.originalRevokedAt,
+          replacement: plan.replacement,
+          installedPublicMarker: marker,
+          reopenedPublicMarker: afterMarker,
+          uniqueUiSend: {
+            body,
+            id: sent.id,
+            canonicalSender: sent.senderUserId
+          },
+          currentPublicIdentityAndChainUnchanged: true,
+          rosterAndPublicKeysUnchanged: true
+        })
+        await ui.shot(
+          'identity-post-lifecycle',
+          'Distinct current web continuity after deliberate sign-out and normal replacement linking'
         )
       }
     )
@@ -7263,9 +7609,10 @@ async function main(): Promise<void> {
       command === 'variants' ||
       command === 'surface' ||
       CHAT2_SCENARIOS.includes(command as Chat2Scenario) ||
-      ['I1', 'I2', 'I3'].includes(command),
+      ['I1', 'I2', 'I3', 'W1'].includes(command),
     'Unknown chat2 scenario'
   )
+  if (command === 'W1') assert.equal(surface, 'web-narrow')
   const ui = new Chat2UI(fixture, surface, command)
   const scenarios = new Scenarios(fixture, ui)
   let outcome: 'passed' | 'failed' | 'blocked' = 'failed'
@@ -7277,7 +7624,10 @@ async function main(): Promise<void> {
     await ui.start()
     if (command === 'capture') await scenarios.capture()
     else if (command === 'variants') await scenarios.variants()
-    else if (['I1', 'I2', 'I3'].includes(command)) {
+    else if (command === 'W1') {
+      await scenarios.W1()
+      completed.push('W1')
+    } else if (['I1', 'I2', 'I3'].includes(command)) {
       await scenarios.run(command as 'I1' | 'I2' | 'I3')
       completed.push(command)
     } else {
