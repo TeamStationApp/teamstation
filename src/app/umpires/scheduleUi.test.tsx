@@ -11,6 +11,7 @@ import {
 } from '../../common/umpireSchedule'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { AppHeader } from '../components/AppHeader'
+import { SceneShownProvider } from '../components/sceneShown'
 import type { UmpireScheduleRoute } from '../navigation/routes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameUmpires } from './GameUmpires'
@@ -962,5 +963,38 @@ describe('scheduleUi.test.tsx', () => {
     expect(
       target('Uma L, uty_plate:1').getAttribute('aria-disabled')
     ).not.equals('true')
+  })
+
+  it('holds its leave check only while its screen is on show', async () => {
+    const f = fixture()
+    const held: string[] = []
+    const onBeforeLeave = (): (() => void) => {
+      held.push('held')
+      return () => {
+        held.push('let go')
+      }
+    }
+    const screen = (shown: boolean): React.ReactElement => (
+      <SceneShownProvider value={shown}>
+        <UmpireScheduleScreen
+          client={f.client}
+          route={{ name: 'umpireSchedule', id: 'demo' }}
+          leagues={[]}
+          onRoute={() => undefined}
+          onBeforeLeave={onBeforeLeave}
+        />
+      </SceneShownProvider>
+    )
+    await mount(screen(true))
+    expect(held).deep.equals(['held'])
+    // Covered by a team opened from it: Back up there is not its to gate.
+    await act(async () => {
+      root!.render(<ThemeProvider>{screen(false)}</ThemeProvider>)
+    })
+    expect(held).deep.equals(['held', 'let go'])
+    await act(async () => {
+      root!.render(<ThemeProvider>{screen(true)}</ThemeProvider>)
+    })
+    expect(held).deep.equals(['held', 'let go', 'held'])
   })
 })

@@ -12,6 +12,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { wallTimelineOf } from '../../test/overlayFixtures'
+import { SceneShownProvider } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import type { AnglesChange } from '../navigation/gameAngles'
 import { HAVE_METADATA } from '../player/videoHandle'
@@ -28,12 +29,15 @@ import { GameScreen } from './GameScreen'
  * `useMultiCam`'s tests; the frame and the address are `gameAngles.test.ts`.
  */
 let root: Root | undefined
+/** Whether the stack has the game's screen on show. */
+let sceneShown = true
 
 afterEach(async function () {
   await act(async () => {
     root?.unmount()
   })
   root = undefined
+  sceneShown = true
   document.body.replaceChildren()
 })
 
@@ -138,15 +142,17 @@ async function page(
       root!.render(
         <ThemeProvider>
           <GestureHandlerRootView>
-            <GameScreen
-              client={client}
-              gameId="g1"
-              initialTab="watch"
-              onAngles={next => {
-                changes.push(next)
-              }}
-              {...current}
-            />
+            <SceneShownProvider value={sceneShown}>
+              <GameScreen
+                client={client}
+                gameId="g1"
+                initialTab="watch"
+                onAngles={next => {
+                  changes.push(next)
+                }}
+                {...current}
+              />
+            </SceneShownProvider>
           </GestureHandlerRootView>
         </ThemeProvider>
       )
@@ -693,6 +699,33 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(video.currentTime).closeTo(40, 0.001)
     expect(video.paused).equals(false)
     expect(played()).greaterThan(0)
+  })
+
+  it('stands the picture down while its screen is covered, and picks up as it was when shown again', async function () {
+    const view = await page([videoOf('v1', START)])
+    const video = inline()
+    const { played } = drive(video, 0)
+    await act(async () => {
+      await video.play()
+      video.dispatchEvent(new window.Event('play'))
+      video.currentTime = 30
+      video.dispatchEvent(new window.Event('timeupdate'))
+    })
+    // A screen pushed over the game, or the scorer covering it.
+    sceneShown = false
+    await view.rerender({})
+    expect(video.paused).equals(true)
+    const before = played()
+    // Back shows it again.
+    sceneShown = true
+    await view.rerender({})
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    await waitToLand()
+    expect(video.currentTime).closeTo(30, 0.001)
+    expect(video.paused).equals(false)
+    expect(played()).greaterThan(before)
   })
 
   it('lands at once when the timeline has answered with no anchors and the stream with no dates', async function () {

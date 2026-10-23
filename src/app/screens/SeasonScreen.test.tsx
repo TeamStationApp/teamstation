@@ -322,10 +322,17 @@ function labelled(label: string): HTMLElement {
 }
 
 /** A pressable whose spoken name starts with these words. */
+/** Not in a pill page kept out of sight, which nobody can reach. */
+function reachable(node: HTMLElement): boolean {
+  return node.closest('[data-page-role="kept"]') == null
+}
+
 function control(label: string): HTMLElement {
   const found = [
     ...document.querySelectorAll<HTMLElement>('[role="button"], [role="tab"]')
-  ].filter(node => (node.getAttribute('aria-label') ?? '').startsWith(label))
+  ]
+    .filter(reachable)
+    .filter(node => (node.getAttribute('aria-label') ?? '').startsWith(label))
   expect(found, label).has.lengthOf(1)
   return found[0]
 }
@@ -341,6 +348,7 @@ function tabNames(strip: string): string[] {
 /** The game rows on the schedule, by what each one says aloud. */
 function gameRows(): string[] {
   return [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+    .filter(reachable)
     .map(node => node.getAttribute('aria-label') ?? '')
     .filter(label => label.includes(' @ '))
 }

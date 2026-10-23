@@ -33,6 +33,7 @@ import {
   VideoPoster
 } from '../components'
 import { CreationCard } from '../components/CreationCard'
+import { useSceneShown } from '../components/sceneShown'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useScreenScope } from '../hooks/useScreenScope'
@@ -252,8 +253,16 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     }
   }, [client, beginLook])
   const lookLive = useScreenScope(look, client)
+  // Covered by a screen pushed over it (the live game its hero opened), Home
+  // neither plays its preview nor keeps looking: the game would otherwise be
+  // pulled twice. Its first look still runs, and Back picks both up again.
+  const shown = useSceneShown()
+  const looked = useRef(false)
   useEffect(() => {
+    if (!shown && looked.current) return
+    looked.current = true
     lookLive().catch(() => undefined)
+    if (!shown) return
     // A game starts while somebody has the page open — which is the whole
     // point of a live block — so it is looked at again on a slow timer rather
     // than only when the screen is opened.
@@ -263,7 +272,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     return () => {
       clearInterval(timer)
     }
-  }, [lookLive])
+  }, [lookLive, shown])
 
   // Whether Home can open a player or a group at all, not which function
   // opens one: the shell hands over a new one whenever it renders, and that
@@ -468,7 +477,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               <LivePill />
               <VideoPoster
                 size="hero"
-                videoUrl={liveUrl}
+                videoUrl={shown ? liveUrl : undefined}
                 // From where the game is now, as every live viewer plays it.
                 live
                 onVideoGone={() => {

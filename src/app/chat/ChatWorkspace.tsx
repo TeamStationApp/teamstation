@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Platform, Text, useWindowDimensions, View } from 'react-native'
 
 import { Screen } from '../components'
+import { useSceneShown } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { ChatArrivalHost } from './ChatArrivalHost'
@@ -88,6 +89,7 @@ function WorkspaceContent(
     [navigation]
   )
   const theme = useTheme()
+  const shown = useSceneShown()
   const windowWidth = useWindowDimensions().width
   const [usableWidth, setUsableWidth] = useState(windowWidth)
   const wide = usableWidth >= CHAT_WIDE_WIDTH
@@ -222,7 +224,9 @@ function WorkspaceContent(
               userId={props.userId}
               embedded
               paneHeader={wide}
-              active={messagesVisible}
+              // Covered beneath another screen (its info, its members) it is
+              // not on show: it marks nothing read until Back shows it.
+              active={messagesVisible && shown}
               readingSession={readingSession}
               draft={draft}
               draftOwner={draftOwner}

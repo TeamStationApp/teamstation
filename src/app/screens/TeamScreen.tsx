@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { memo, useEffect, useMemo, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
 import type {
@@ -51,6 +51,8 @@ import {
   peopleSubtitle
 } from '../components/PeopleList'
 import { flagLabel } from '../components/roleLabels'
+import { ActiveView, TabPages } from '../components/TabPages'
+import { useStableCallback } from '../hooks/useStableCallback'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -363,6 +365,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     anchorOnRow: tab === 'schedule' && next >= 0
   })
 
+  // Which way a pill change slides the content.
+  const tabIndex = TABS.findIndex(item => item.id === tab)
+  // The latest handler under one identity: a season's cards, kept built
+  // across pill changes, are drawn again only when their games change.
+  const openGame = useStableCallback(onOpenGame)
+
   return (
     <Screen {...pinned.screen}>
       <CardBand part={pinned.cardBand}>
@@ -445,161 +453,179 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {error != null && <Text style={styles.error}>{error}</Text>}
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
+      {/* Kept built: a team's schedule runs the length of its season. */}
       {publicDetail != null && (
-        <PublicTeamContent
-          membershipAccess={membershipAccess}
-          detail={publicDetail}
-          tab={tab}
-          onOpenGame={onOpenGame}
-        />
+        <TabPages keep page={tab} index={tabIndex}>
+          <PublicTeamContent
+            key={tab}
+            membershipAccess={membershipAccess}
+            detail={publicDetail}
+            tab={tab}
+            onOpenGame={openGame}
+          />
+        </TabPages>
       )}
 
       {!loading && publicDetail == null && (
-        <PinnedContent key={tab} part={pinned.content} testID="teamTabContent">
-          {tab === 'videos' && (
-            <View style={styles.section}>
-              <SectionHeader
-                title="Game video library"
-                note={`${withVideo.length} with video`}
-              />
-              {withVideo.length === 0 ? (
-                <Empty text="No game has a video attached yet." />
-              ) : (
-                withVideo.map(game => (
-                  <GameCard
-                    key={game.id}
-                    game={game}
-                    mode="videos"
-                    nonMemberView={nonMemberView}
-                    teamId={team.id}
-                    onOpen={onOpenGame}
-                  />
-                ))
-              )}
-            </View>
-          )}
+        <TabPages keep page={tab} index={tabIndex}>
+          <PinnedContent
+            key={tab}
+            part={pinned.content}
+            testID="teamTabContent"
+          >
+            {tab === 'videos' && (
+              <View style={styles.section}>
+                <SectionHeader
+                  title="Game video library"
+                  note={`${withVideo.length} with video`}
+                />
+                {withVideo.length === 0 ? (
+                  <Empty text="No game has a video attached yet." />
+                ) : (
+                  withVideo.map(game => (
+                    <GameCard
+                      key={game.id}
+                      game={game}
+                      mode="videos"
+                      nonMemberView={nonMemberView}
+                      teamId={team.id}
+                      onOpen={openGame}
+                    />
+                  ))
+                )}
+              </View>
+            )}
 
-          {tab === 'schedule' && (
-            <View
-              style={styles.section}
-              ref={pinned.rowSection.ref}
-              onLayout={pinned.rowSection.handleLayout}
-            >
-              <SectionHeader
-                title="Schedule"
-                note={`${games.length} games, ${upcoming.length} to play`}
-              />
-              {schedule.length === 0 ? (
-                <Empty text="No games scheduled." />
-              ) : (
-                schedule.map((game, index) => (
-                  <View
-                    // The next game's row is its own element, so it is laid
-                    // out, and measured, again when the next game changes.
-                    key={index === next ? `${game.id}:next` : game.id}
-                    testID="scheduleGame"
-                    ref={index === next ? pinned.nextRow.ref : undefined}
-                    onLayout={
-                      index === next ? pinned.nextRow.handleLayout : undefined
-                    }
-                  >
-                    {nonMemberView ? (
-                      // Visitors can open every published game without
-                      // receiving member-only RSVP controls.
-                      <GameCard
-                        game={game}
-                        mode="schedule"
-                        teamId={team.id}
-                        nonMemberView
-                        onOpen={onOpenGame}
-                      />
-                    ) : (
-                      <ScheduleCard
-                        client={client}
-                        game={game}
-                        teamId={team.id}
-                        onOpen={onOpenGame}
-                      />
-                    )}
-                  </View>
-                ))
-              )}
-              {onCreateGame != null && (
-                <AddEventCard variant="game" onPress={onCreateGame} />
-              )}
-            </View>
-          )}
+            {tab === 'schedule' && (
+              // The pinned head's own: let go while the page is kept.
+              <ActiveView
+                style={styles.section}
+                ref={pinned.rowSection.ref}
+                onLayout={pinned.rowSection.handleLayout}
+              >
+                <SectionHeader
+                  title="Schedule"
+                  note={`${games.length} games, ${upcoming.length} to play`}
+                />
+                {schedule.length === 0 ? (
+                  <Empty text="No games scheduled." />
+                ) : (
+                  schedule.map((game, index) => (
+                    <ActiveView
+                      // The next game's row is its own element, so it is laid
+                      // out, and measured, again when the next game changes.
+                      key={index === next ? `${game.id}:next` : game.id}
+                      testID="scheduleGame"
+                      ref={index === next ? pinned.nextRow.ref : undefined}
+                      onLayout={
+                        index === next ? pinned.nextRow.handleLayout : undefined
+                      }
+                    >
+                      {nonMemberView ? (
+                        // Visitors can open every published game without
+                        // receiving member-only RSVP controls.
+                        <GameCard
+                          game={game}
+                          mode="schedule"
+                          teamId={team.id}
+                          nonMemberView
+                          onOpen={openGame}
+                        />
+                      ) : (
+                        <ScheduleCard
+                          client={client}
+                          game={game}
+                          teamId={team.id}
+                          onOpen={openGame}
+                        />
+                      )}
+                    </ActiveView>
+                  ))
+                )}
+                {onCreateGame != null && (
+                  <AddEventCard variant="game" onPress={onCreateGame} />
+                )}
+              </ActiveView>
+            )}
 
-          {tab === 'team' && (
-            <>
-              {roster.length === 0 && (
-                <Empty text="Nobody has been added to this team yet." />
-              )}
-              <PeopleList
-                people={roster}
-                onOpen={person => {
-                  // A player has a page, for anybody who may see it: a
-                  // non-member is answered `404` there, so their rows open
-                  // nothing. Anybody else opens their profile, for the
-                  // team's administrators, coaches and assistants.
-                  if (person.isPlayer && !nonMemberView && onOpenPlayer != null)
-                    return () => {
-                      onOpenPlayer(person.userId, person.shortName, {
-                        onTeam: team.id
-                      })
-                    }
-                  if (!nonMemberView && managesPeople && onOpenPerson != null)
-                    return () => {
-                      onOpenPerson(person.userId, person.shortName, team.id)
-                    }
-                  return undefined
-                }}
-              />
-            </>
-          )}
+            {tab === 'team' && (
+              <>
+                {roster.length === 0 && (
+                  <Empty text="Nobody has been added to this team yet." />
+                )}
+                <PeopleList
+                  people={roster}
+                  onOpen={person => {
+                    // A player has a page, for anybody who may see it: a
+                    // non-member is answered `404` there, so their rows open
+                    // nothing. Anybody else opens their profile, for the
+                    // team's administrators, coaches and assistants.
+                    if (
+                      person.isPlayer &&
+                      !nonMemberView &&
+                      onOpenPlayer != null
+                    )
+                      return () => {
+                        onOpenPlayer(person.userId, person.shortName, {
+                          onTeam: team.id
+                        })
+                      }
+                    if (!nonMemberView && managesPeople && onOpenPerson != null)
+                      return () => {
+                        onOpenPerson(person.userId, person.shortName, team.id)
+                      }
+                    return undefined
+                  }}
+                />
+              </>
+            )}
 
-          {tab === 'stats' && (
-            <View style={styles.section}>
-              <SectionHeader title="Season performance" />
-              <Card>
-                <StatGrid stats={seasonStats(standing)} columns={2} />
-              </Card>
+            {tab === 'stats' && (
+              <View style={styles.section}>
+                <SectionHeader title="Season performance" />
+                <Card>
+                  <StatGrid stats={seasonStats(standing)} columns={2} />
+                </Card>
 
-              {/*
+                {/*
                 A non-member sees how the team is doing, and not how each player
                 is: the batting and pitching are kept for members.
               */}
-              {nonMemberView ? (
-                membershipAccess
-              ) : (
-                <>
-                  <SectionHeader
-                    title="Batting"
-                    note={`${batting.length} players`}
-                  />
-                  {batting.length === 0 ? (
-                    <Empty text="No plays have been ingested for this team yet." />
-                  ) : (
-                    <Card flush>
-                      <StatsTable rows={batting} columns={battingColumns} />
-                    </Card>
-                  )}
-                  {pitching.length > 0 && (
-                    <>
-                      <SectionHeader
-                        title="Pitching"
-                        note={`${pitching.length} players`}
-                      />
+                {nonMemberView ? (
+                  membershipAccess
+                ) : (
+                  <>
+                    <SectionHeader
+                      title="Batting"
+                      note={`${batting.length} players`}
+                    />
+                    {batting.length === 0 ? (
+                      <Empty text="No plays have been ingested for this team yet." />
+                    ) : (
                       <Card flush>
-                        <StatsTable rows={pitching} columns={pitchingColumns} />
+                        <StatsTable rows={batting} columns={battingColumns} />
                       </Card>
-                    </>
-                  )}
-                </>
-              )}
-            </View>
-          )}
-        </PinnedContent>
+                    )}
+                    {pitching.length > 0 && (
+                      <>
+                        <SectionHeader
+                          title="Pitching"
+                          note={`${pitching.length} players`}
+                        />
+                        <Card flush>
+                          <StatsTable
+                            rows={pitching}
+                            columns={pitchingColumns}
+                          />
+                        </Card>
+                      </>
+                    )}
+                  </>
+                )}
+              </View>
+            )}
+          </PinnedContent>
+        </TabPages>
       )}
       <PinnedSpacer part={pinned.spacer} />
     </Screen>
@@ -626,7 +652,7 @@ function placeLabel(place: number): string {
   return `${place}${suffix} Place`
 }
 
-function GameCard(props: {
+const GameCard = memo(function GameCard(props: {
   game: GameSummary
   mode: 'schedule' | 'videos'
   teamId: string
@@ -727,14 +753,14 @@ function GameCard(props: {
       )}
     </Card>
   )
-}
+})
 
 /**
  * A game on the team's schedule: the nav bar schedule's row, with the one
  * difference that the team's own name is not repeated on every line. The row
  * says only who it is against, and where — `@ Owls`, `vs Hawks`.
  */
-function ScheduleCard(props: {
+const ScheduleCard = memo(function ScheduleCard(props: {
   client: TeamStationClient
   game: GameSummary
   teamId: string
@@ -792,7 +818,7 @@ function ScheduleCard(props: {
       )}
     </Card>
   )
-}
+})
 
 /** Header and body share compact widths, including any unusually large value. */
 function StatsTable<T extends { userId: string; shortName?: string }>(props: {
