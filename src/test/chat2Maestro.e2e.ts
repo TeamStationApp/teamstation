@@ -54,7 +54,7 @@ export interface Chat2Device {
     options?: { signal: AbortSignal }
   ) => Promise<unknown>
   longPressOn: (args: Args) => Promise<unknown>
-  swipe: (args: Args) => Promise<unknown>
+  swipe: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
   scroll: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
   dragAndDrop: (args: Args) => Promise<unknown>
   inputText: (args: Args) => Promise<unknown>
@@ -73,7 +73,10 @@ export interface Chat2Device {
     options?: { signal: AbortSignal }
   ) => Promise<unknown>
   assertNotVisible: (args: Args) => Promise<unknown>
-  scrollUntilVisible: (args: Args) => Promise<unknown>
+  scrollUntilVisible: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>
   uploadFile: (args: Args) => Promise<unknown>
   addMedia: (args: Args) => Promise<unknown>
   startRecording: (args: Args) => Promise<unknown>
@@ -2421,13 +2424,16 @@ export class Chat2UI {
   }
 
   /** Browser CDP swipe ignores absolute endpoints; its drag supports real mouse movement. */
-  async measuredSwipe(input: {
-    startX: number
-    startY: number
-    endX: number
-    endY: number
-    duration: number
-  }): Promise<void> {
+  async measuredSwipe(
+    input: {
+      startX: number
+      startY: number
+      endX: number
+      endY: number
+      duration: number
+    },
+    signal = this.deadline
+  ): Promise<void> {
     assert(
       Object.values(input).every(Number.isFinite) &&
         input.duration > 0 &&
@@ -2437,7 +2443,7 @@ export class Chat2UI {
       'Actual finite measured gesture coordinates required'
     )
     const screen = this.native
-      ? await this.device.platformInfo()
+      ? await this.device.platformInfo({ signal })
       : this.metrics()
     const width = Number(
       'screenWidth' in screen ? screen.screenWidth : screen.width
@@ -2454,7 +2460,7 @@ export class Chat2UI {
         [input.startY, input.endY].every(value => value > 0 && value < height),
       'Measured gesture endpoints must stay strictly inside the actual viewport'
     )
-    if (this.native) await this.device.swipe(input)
+    if (this.native) await this.device.swipe(input, { signal })
     else
       await this.device.dragAndDrop({
         from: { point: `${input.startX},${input.startY}` },
@@ -3324,9 +3330,12 @@ export class Chat2UI {
     }
   }
 
-  async nodes(parentId?: string): Promise<PublicNode[]> {
+  async nodes(
+    parentId?: string,
+    signal = this.deadline
+  ): Promise<PublicNode[]> {
     if (this.native)
-      return flattenPublicHierarchy(await this.device.hierarchy())
+      return flattenPublicHierarchy(await this.device.hierarchy({ signal }))
     const result = await this.dom(
       'return {nodes:(' +
         publicWebNodes.toString() +
@@ -3740,7 +3749,7 @@ export class Chat2UI {
     }
     this.steps.push(proof)
     try {
-      await this.append('@')
+      await this.appendComposer('@')
       await this.present('chat-picker-scene')
       await this.present('chat-picker-header')
       if (this.surface === 'ios') {
@@ -3756,6 +3765,187 @@ export class Chat2UI {
           enabled: true,
           timeout: 15000
         })
+      proof.outcome = 'passed'
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
+  /** Composer input names its real field on iOS; generic append also serves Search. */
+  async appendComposer(text: string): Promise<void> {
+    if (this.surface === 'ios')
+      await this.device.inputText({ id: 'chat-composer', text })
+    else await this.append(text)
+  }
+
+  /** Select one actual member and observe the native scene's completed focus handoff. */
+  async selectMention(member: Chat2Fixture['members'][number]): Promise<void> {
+    const id = 'chat-mention-member-' + member.userId
+    if (!this.native) {
+      await this.id(id)
+      return
+    }
+    const proof: Args = {
+      name: 'Observed native member selection',
+      memberId: member.userId,
+      samples: [],
+      focusSignal:
+        this.surface === 'ios' ? 'unavailable-on-ios' : 'focused-editor',
+      outcome: 'failed'
+    }
+    this.steps.push(proof)
+    const read = async (): Promise<PublicNode[]> => {
+      const nodes =
+        this.surface === 'ios'
+          ? iosPublicRead(await this.iosRaw(), { id: 'chat-picker-scene' })
+              .nodes
+          : await this.nodes()
+      ;(proof.samples as unknown[]).push(
+        nodes.filter(
+          node =>
+            node.id === id ||
+            node.id === 'chat-composer' ||
+            node.id === 'chat-picker-scene' ||
+            node.type === 'Keyboard' ||
+            node.type === 'TextField' ||
+            node.type === 'EditText'
+        )
+      )
+      return nodes
+    }
+    type Box = NonNullable<PublicNode['bounds']>
+    const positive = (b: PublicNode['bounds']): b is Box =>
+      b != null &&
+      [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+      b.width > 0 &&
+      b.height > 0
+    const one = (nodes: PublicNode[], key: string): PublicNode => {
+      const rows = nodes.filter(node => node.id === key)
+      assert.equal(
+        rows.length,
+        1,
+        'Unique actual member control required: ' + key
+      )
+      return rows[0]
+    }
+    let nodes = await read()
+    const readClearBottom = async (): Promise<number> => {
+      if (this.surface === 'android') {
+        const observed = await this.observeAndroidIme({}, 'state')
+        return observed.state?.state === 'already-closed'
+          ? observed.viewport.height
+          : need(observed.bounds, 'Actual Android IME frame required').y
+      }
+      const keyboard = need(
+        nodes.find(node => node.type === 'Keyboard')?.bounds,
+        'Actual iOS Keyboard required'
+      )
+      assert(positive(keyboard), 'Positive actual iOS Keyboard required')
+      return keyboard.y
+    }
+    let clearBottom = await readClearBottom()
+    const clear = (node: PublicNode, current: PublicNode[]): boolean => {
+      const h = one(current, 'chat-picker-header').bounds
+      const b = node.bounds
+      return (
+        positive(b) &&
+        positive(h) &&
+        Number.isFinite(clearBottom) &&
+        clearBottom > 0 &&
+        b.y >= h.y + h.height + 8 &&
+        b.y + b.height <= clearBottom - 8
+      )
+    }
+    const memberRow = (current: PublicNode[]): PublicNode => {
+      const row = one(current, id)
+      assert.equal(row.type, 'Button', 'Actual member Button required')
+      assert.equal(
+        this.surface === 'ios' ? (row as IosReadNode).label : row.text,
+        member.name + ', ' + member.role,
+        'Exact member name and role required'
+      )
+      return row
+    }
+    try {
+      if (!clear(memberRow(nodes), nodes)) {
+        const fields = nodes.filter(node =>
+          this.surface === 'ios'
+            ? node.type === 'TextField' &&
+              (node as IosReadNode).label === 'Search members'
+            : node.type === 'EditText' &&
+              node.text === 'Search members' &&
+              node.focused === true
+        )
+        assert.equal(
+          fields.length,
+          1,
+          'Unique observed empty member Search required'
+        )
+        assert(
+          fields[0].enabled !== false && clear(fields[0], nodes),
+          'Actual enabled Search must clear header and Keyboard'
+        )
+        if (this.surface === 'ios')
+          assert(
+            (fields[0] as IosReadNode).value == null ||
+              (fields[0] as IosReadNode).value === '',
+            'Existing Search query must remain unchanged'
+          )
+        await this.text('Search members')
+        await this.device.inputText({
+          text: member.name,
+          ...(this.surface === 'android' ? { keyPress: true } : {})
+        })
+        nodes = await read()
+        if (this.surface === 'android') clearBottom = await readClearBottom()
+      }
+      assert(
+        clear(memberRow(nodes), nodes),
+        'Exact member row must clear header and actual Keyboard before tap'
+      )
+      await this.id(id)
+      await until(
+        async () => {
+          const current = await read()
+          const editors = current.filter(node => node.id === 'chat-composer')
+          const e = editors[0]
+          const b = e?.bounds
+          if (
+            current.some(node => node.id === 'chat-picker-scene') ||
+            editors.length !== 1 ||
+            e.enabled === false ||
+            !positive(b) ||
+            b.y + b.height > clearBottom + 1
+          )
+            return undefined
+          const expected = '@' + member.name + ' '
+          const ready =
+            this.surface === 'ios'
+              ? // iOS snapshot serialization trims outer whitespace; interior spaces stay exact.
+                e.type === 'TextView' &&
+                e.enabled === true &&
+                (e as IosReadNode).value === expected.trimEnd() &&
+                current.filter(node => node.type === 'Keyboard').length === 1 &&
+                current.some(
+                  node =>
+                    node.type === 'Keyboard' &&
+                    positive(node.bounds) &&
+                    b.y + b.height <= node.bounds.y + 1
+                )
+              : e.type === 'EditText' &&
+                e.focused === true &&
+                e.text === expected
+          if (ready && this.surface === 'android')
+            assert(
+              b.y + b.height <= (await this.readAndroidIme()).bounds.y + 1,
+              'Focused selected composer must clear fresh IME'
+            )
+          return ready ? true : undefined
+        },
+        'selected exact member in actual composer after picker closes',
+        10000
+      )
       proof.outcome = 'passed'
     } catch (error) {
       proof.error = error instanceof Error ? error.message : String(error)

@@ -7724,3 +7724,638 @@ describe('I2 mixed-account legacy reply selection', () => {
     expect(actual.selected).deep.equals([])
   })
 })
+
+describe('native scenario navigation and mention handoff', function () {
+  this.timeout(10000)
+  const member = {
+    userId: userIdOfGumbo(5),
+    name: 'Aaron Judge',
+    role: 'Coach',
+    search: 'Aaron'
+  }
+  const freshId = 'usr_11112LJ7YLqvVc8DmhwPNw'
+  const target: Chat2Message = {
+    id: 'msg-legacy-peer',
+    seq: 231,
+    body: 'Bring water.',
+    authorId: member.userId
+  }
+  const directories: string[] = []
+  afterEach(() => {
+    for (const path of directories.splice(0))
+      rmSync(path, { recursive: true, force: true })
+  })
+
+  function nativeReader(
+    mode: 'above' | 'below' | 'keyboard' | 'stuck' | 'fling' | 'pin',
+    surface = 'android'
+  ): { scenario: Scenarios; calls: unknown[] } {
+    const calls: unknown[] = []
+    let keyboard = mode === 'keyboard' || mode === 'stuck'
+    let rect =
+      mode === 'above'
+        ? { x: 20, y: 0, width: 180, height: -1200 }
+        : mode === 'fling'
+          ? { x: 20, y: 95, width: 180, height: 80 }
+          : { x: 20, y: 2200, width: 180, height: -1200 }
+    if (surface === 'ios' && mode === 'above')
+      rect = {
+        x: 48,
+        y: -8756.33349609375,
+        width: 281.3333435058594,
+        height: 96.6669921875
+      }
+    const band = (): { top: number; bottom: number } => ({
+      top: surface === 'ios' ? 109.3333346247673 : 100,
+      bottom:
+        surface === 'ios'
+          ? keyboard
+            ? 462
+            : 700.6666870117188
+          : keyboard
+            ? 500
+            : 900
+    })
+    const nodes = (): PublicNode[] => [
+      {
+        id: 'chat-message-history',
+        bounds: { x: 0, y: 0, width: 400, height: 1000 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        bounds:
+          surface === 'ios'
+            ? { x: 64, y: 62.3333346247673, width: 274, height: 47 }
+            : { x: 0, y: 40, width: 400, height: 60 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 0, y: band().bottom, width: 400, height: 60 }
+      },
+      {
+        id: 'chat-composer',
+        type: surface === 'ios' ? 'TextView' : 'EditText',
+        focused: keyboard,
+        bounds: { x: 50, y: band().bottom + 5, width: 200, height: 40 }
+      },
+      { id: 'chat-bubble-' + target.id, bounds: { ...rect } },
+      ...(surface === 'ios' && keyboard
+        ? [
+            {
+              type: 'Keyboard',
+              bounds: { x: 0, y: 600, width: 400, height: 400 }
+            }
+          ]
+        : [])
+    ]
+    const actual = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      deadline: AbortSignal.timeout(10000),
+      surface,
+      steps: [],
+      device: {
+        hierarchy: async () =>
+          surface === 'ios'
+            ? {
+                nodes: nodes().map((node, index) => ({
+                  index,
+                  type: node.type ?? 'Other',
+                  identifier: node.id,
+                  label: node.text,
+                  rect: node.bounds,
+                  enabled: true,
+                  hittable: false
+                }))
+              }
+            : nodes(),
+        platformInfo: async () => ({ screenWidth: 400, screenHeight: 1000 }),
+        scrollUntilVisible: async (args: Record<string, unknown>) => {
+          if (keyboard) throw Error('Global gesture starts in actual Keyboard')
+          calls.push(args)
+          expect(args.direction).equals(mode === 'above' ? 'UP' : 'DOWN')
+          rect = { x: 20, y: 250, width: 180, height: 80 }
+        },
+        swipe: async (args: Record<string, unknown>) => {
+          const b = band()
+          const start = Number(args.startY)
+          const end = Number(args.endY)
+          expect(Math.min(start, end)).greaterThan(b.top)
+          expect(Math.max(start, end)).lessThan(b.bottom)
+          calls.push(args)
+          if (mode !== 'stuck')
+            rect =
+              mode === 'fling' || surface === 'ios'
+                ? {
+                    ...rect,
+                    y: rect.y + (end - start) * (surface === 'ios' ? 1.7 : 2)
+                  }
+                : { x: 20, y: 250, width: 180, height: 80 }
+        },
+        assertVisible: async () => ({}),
+        longPressOn: async () => {
+          const b = band()
+          if (
+            rect.height <= 0 ||
+            rect.y < b.top + 7.5 ||
+            rect.y + rect.height > b.bottom - 7.5
+          )
+            throw Error('Actual hold target is clipped or occluded')
+          calls.push('hold')
+        },
+        tapOn: async (args: Record<string, unknown>) => {
+          calls.push(args)
+          if (args.id === 'chat-pin-' + target.id)
+            rect = { x: 20, y: 250, width: 180, height: 80 }
+          if (args.text === '^Reply$') keyboard = true
+        }
+      },
+      visible: async (args: Record<string, unknown>) =>
+        args.id === 'chat-pinned-summary' ? mode === 'pin' : true,
+      readAndroidIme: async () => ({
+        bounds: { x: 0, y: 600, width: 400, height: 400 }
+      }),
+      assertKeyboard: async () => {
+        expect(keyboard).equals(true)
+        calls.push('reply-keyboard')
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target } },
+      observations: []
+    }) as Scenarios
+    return { scenario, calls }
+  }
+
+  for (const mode of ['above', 'below', 'keyboard', 'fling', 'pin'] as const)
+    it(
+      'requires actual native framing before ordinary Reply: ' + mode,
+      async () => {
+        const model = nativeReader(mode)
+        await model.scenario.reply(target)
+        expect(model.calls).includes('hold')
+        expect(model.calls.at(-1)).equals('reply-keyboard')
+        if (mode === 'pin')
+          expect(model.calls).deep.includes({ id: 'chat-pin-' + target.id })
+      }
+    )
+  it('reads fractional iOS flat-snapshot geometry and converges on the observed distant target without global scrolling', async () => {
+    const model = nativeReader('above', 'ios')
+    const observed = (await model.scenario.ui.nodes()).find(
+      node => node.id === 'chat-bubble-' + target.id
+    )
+    expect(observed?.bounds).deep.equals({
+      x: 48,
+      y: -8756.33349609375,
+      width: 281.3333435058594,
+      height: 96.6669921875
+    })
+    await model.scenario.reply(target)
+    expect(model.calls).includes('hold')
+    expect(
+      model.calls.some(
+        call => typeof call === 'object' && call != null && 'direction' in call
+      )
+    ).equals(false)
+  })
+  it('rejects a keyboard-band gesture with no real reader progress before any hold', async () => {
+    const model = nativeReader('stuck')
+    expect(String(await captureFailure(model.scenario.reply(target)))).includes(
+      'advance'
+    )
+    expect(model.calls).not.includes('hold')
+  })
+
+  function mentionBoundary(
+    surface: 'ios' | 'android',
+    fault = ''
+  ): {
+    scenario: Scenarios
+    ui: Chat2UI
+    calls: string[]
+    stopped: Error
+    setAdvance: (work: (ms: number) => void) => void
+  } {
+    const calls: string[] = []
+    let phase = 'conversation'
+    let value = ''
+    let query = ''
+    let closingReads = 0
+    let appended = false
+    let advance = (_ms: number): void => {}
+    const path = mkdtempSync(join(tmpdir(), 'chat-mention-boundary-'))
+    directories.push(path)
+    const nodes = (): PublicNode[] => {
+      if (phase === 'closing') {
+        closingReads++
+        if (closingReads >= 3 && fault !== 'never-ready') {
+          phase = 'ready'
+          value = fault === 'wrong-value' ? '@AaronJudge ' : '@Aaron Judge '
+        }
+        if (fault === 'never-ready' || fault === 'wrong-value') advance(4000)
+      }
+      const picker =
+        phase === 'picker' ||
+        phase === 'closing' ||
+        (fault === 'stale-picker' && phase === 'ready')
+      const result: PublicNode[] =
+        fault === 'missing-keyboard' && phase === 'ready'
+          ? []
+          : [
+              {
+                type: 'Keyboard',
+                bounds: { x: 0, y: 600, width: 400, height: 400 }
+              }
+            ]
+      if (phase !== 'closing')
+        result.push({
+          id: 'chat-composer',
+          type: surface === 'ios' ? 'TextView' : 'EditText',
+          text: value,
+          focused: phase === 'ready',
+          enabled: true,
+          bounds: { x: 50, y: 510, width: 250, height: 40 }
+        })
+      if (picker)
+        result.push(
+          {
+            id: 'chat-picker-scene',
+            bounds: { x: 0, y: 0, width: 400, height: 1000 }
+          },
+          {
+            id: 'chat-picker-header',
+            bounds: { x: 0, y: 0, width: 400, height: 100 }
+          },
+          {
+            type: surface === 'ios' ? 'TextField' : 'EditText',
+            text: query !== '' ? query : 'Search members',
+            focused: true,
+            enabled: true,
+            bounds: { x: 20, y: 140, width: 360, height: 40 }
+          },
+          {
+            id: 'chat-mention-member-' + member.userId,
+            type: 'Button',
+            text:
+              member.name +
+              ', ' +
+              (fault === 'wrong-role' ? 'Member' : member.role),
+            bounds: {
+              x: 20,
+              y:
+                fault === 'closed-outside'
+                  ? 1020
+                  : fault === 'header-occluded'
+                    ? 20
+                    : query === member.name
+                      ? 260
+                      : 700,
+              width: 360,
+              height: 60
+            }
+          }
+        )
+      if (
+        (fault === 'stale-picker' || fault === 'missing-keyboard') &&
+        phase === 'ready'
+      )
+        advance(4000)
+      return result
+    }
+    const raw = (): Buffer =>
+      Buffer.from(
+        JSON.stringify({
+          nodes: nodes().map((node, index) => ({
+            index,
+            type: node.type ?? 'Other',
+            identifier: node.id,
+            label:
+              node.type === 'TextView'
+                ? 'Message Message'
+                : node.type === 'TextField'
+                  ? 'Search members'
+                  : node.text,
+            value:
+              node.type === 'TextField'
+                ? query !== ''
+                  ? query
+                  : undefined
+                : node.type === 'TextView'
+                  ? node.text?.trim()
+                  : undefined,
+            enabled: node.enabled ?? true,
+            rect: node.bounds
+          }))
+        })
+      )
+    const imeRaw = (): string => {
+      if (fault === 'malformed-ime') return 'InputMethod state unavailable'
+      const closed =
+        ((fault === 'closed-before' || fault === 'closed-outside') &&
+          phase === 'picker') ||
+        (fault === 'closed-after' && phase === 'ready')
+      return (
+        'Window #0 Window{0000 u0 InputMethod}\n' +
+        ' isOnScreen=' +
+        String(!closed) +
+        '\n' +
+        ' mHasSurface=' +
+        String(!closed) +
+        '\n' +
+        ' touchable region=SkRegion((0,600,400,1000))'
+      )
+    }
+    const actual = Object.assign(Object.create(Chat2UI.prototype), {
+      surface,
+      deadline: AbortSignal.timeout(10000),
+      native: true,
+      steps: [],
+      runDir: path,
+      fixture: { members: [member] },
+      device: {
+        hierarchy: async () => nodes(),
+        hierarchyRaw: async () => raw(),
+        inputText: async (args: Record<string, unknown>) => {
+          const text = String(args.text)
+          if (text === '@') {
+            phase = 'picker'
+            value = '@'
+            calls.push('trigger')
+            if (surface === 'ios' && args.id !== 'chat-composer')
+              throw Error(
+                'Unchanged unrelated settings-pill-button verification'
+              )
+          } else if (phase === 'picker' && text === member.name) {
+            query = text
+            calls.push('search')
+          } else {
+            if (phase !== 'ready')
+              throw Error('Append began before real selection handoff')
+            if (surface === 'ios' && args.id !== 'chat-composer')
+              throw Error('Input reused disappearing member-row coordinates')
+            value += text
+            appended = true
+            calls.push('append')
+          }
+        },
+        tapOn: async (args: Record<string, unknown>) => {
+          if (args.text === '^Search members$') {
+            calls.push('search-control')
+            return
+          }
+          if (args.id === 'chat-mention-member-' + member.userId) {
+            calls.push('member')
+            if (query === member.name || fault === 'closed-before')
+              phase = 'closing'
+          }
+        },
+        assertVisible: async () => ({}),
+        copyTextFrom: async () => ({ data: value })
+      },
+      readAndroidIme: async () => ({
+        bounds: androidImeFrame(imeRaw(), { width: 400, height: 1000 })
+      }),
+      observeAndroidIme: async () => {
+        const viewport = { width: 400, height: 1000 }
+        const state = androidCaptureImeState(imeRaw(), viewport)
+        calls.push('preselection-ime-' + state.state)
+        return { state, bounds: state.keyboard, viewport }
+      }
+    }) as Chat2UI
+    const stopped = Error('Actual I2 append boundary reached')
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerKey: 'Fresh',
+      viewerId: freshId,
+      group: 'cg-fixture',
+      observations: [],
+      f: {
+        members: [member],
+        identityCompatibility: { fullWidthActors: ['Fresh'] },
+        actors: { Fresh: { provider: {} } },
+        messages: { target }
+      },
+      check: async (_label: string, work: () => Promise<void>) => {
+        await work()
+      },
+      client: async () => ({
+        whoAmI: async () => ({ gumboId: null }),
+        myChatKeys: async () => ({ identity: {} })
+      }),
+      signIn: async () => {},
+      openGroup: async () => {},
+      reply: async () => {
+        calls.push('reply-keyboard-already-proved')
+      },
+      protocolPeer: async () => ({
+        client: { whoAmI: async () => ({ id: member.userId }) }
+      }),
+      attachPhoto: async () => {
+        expect(appended).equals(true)
+        expect(value).matches(/^@Aaron Judge {2}mixed identity \d+$/)
+        throw stopped
+      }
+    }) as Scenarios
+    return {
+      scenario,
+      ui: actual,
+      calls,
+      stopped,
+      setAdvance: work => {
+        advance = work
+      }
+    }
+  }
+
+  for (const surface of ['ios', 'android'] as const)
+    it(
+      'runs actual I2 through clear exact member selection and completed handoff on ' +
+        surface,
+      async () => {
+        const model = mentionBoundary(surface)
+        expect(await captureFailure(model.scenario.I2())).equals(model.stopped)
+        expect(
+          model.calls.filter(call => !call.startsWith('preselection-ime-'))
+        ).deep.equals([
+          'reply-keyboard-already-proved',
+          'trigger',
+          'search-control',
+          'search',
+          'member',
+          'append'
+        ])
+        expect(
+          model.ui.steps.some(
+            step =>
+              step.name === 'Observed native member selection' &&
+              step.outcome === 'passed'
+          )
+        ).equals(true)
+      }
+    )
+  it('selects the exact visible Android member with an explicitly closed preselection IME and requires the fresh open composer', async () => {
+    const model = mentionBoundary('android', 'closed-before')
+    expect(await captureFailure(model.scenario.I2())).equals(model.stopped)
+    expect(model.calls).includes('member')
+    expect(model.calls).includes('append')
+    expect(model.calls).not.includes('search')
+    expect(model.calls).includes('preselection-ime-already-closed')
+  })
+  it('rejects an Android IME that closes after exact member selection before appending', async () => {
+    const model = mentionBoundary('android', 'closed-after')
+    expect(String(await captureFailure(model.scenario.I2()))).includes(
+      'Hidden, conflicting or unknown Android IME visibility'
+    )
+    expect(model.calls).includes('member')
+    expect(model.calls).not.includes('append')
+  })
+  for (const fault of ['closed-outside', 'header-occluded'])
+    it(
+      'rejects an Android member outside the observed clear bounds: ' + fault,
+      async () => {
+        const model = mentionBoundary('android', fault)
+        expect(String(await captureFailure(model.scenario.I2()))).includes(
+          'Exact member row must clear header'
+        )
+        expect(model.calls).not.includes('member')
+        expect(model.calls).not.includes('append')
+      }
+    )
+  it('rejects malformed Android IME evidence before selecting any member', async () => {
+    const model = mentionBoundary('android', 'malformed-ime')
+    expect(String(await captureFailure(model.scenario.I2()))).includes(
+      'One actual InputMethod window required'
+    )
+    expect(model.calls).not.includes('member')
+    expect(model.calls).not.includes('append')
+  })
+  it('keeps generic iOS Search typing on the focused field rather than the composer', async () => {
+    const model = mentionBoundary('ios')
+    await model.ui.typeMentionTrigger()
+    await model.ui.text('Search members')
+    await model.ui.append(member.name)
+    expect(model.calls.at(-1)).equals('search')
+  })
+  for (const fault of [
+    'never-ready',
+    'wrong-value',
+    'stale-picker',
+    'missing-keyboard'
+  ])
+    it(
+      'refuses to append when the native handoff is unproved: ' + fault,
+      async () => {
+        const model = mentionBoundary(
+          fault === 'wrong-value' || fault === 'missing-keyboard'
+            ? 'ios'
+            : 'android',
+          fault
+        )
+        const clock = Date.now
+        let offset = 0
+        Date.now = () => clock() + offset
+        model.setAdvance(ms => {
+          offset += ms
+        })
+        try {
+          expect(String(await captureFailure(model.scenario.I2()))).includes(
+            'Timed out waiting for selected exact member'
+          )
+          expect(model.calls).not.includes('append')
+        } finally {
+          Date.now = clock
+        }
+      }
+    )
+  it('rejects a same-name member with the wrong visible role before selection', async () => {
+    const model = mentionBoundary('android', 'wrong-role')
+    expect(String(await captureFailure(model.scenario.I2()))).includes(
+      'Exact member name and role'
+    )
+    expect(model.calls).not.includes('member')
+    expect(model.calls).not.includes('append')
+  })
+  it('uses the ordinary latest chevron before anchoring the new authenticated incoming file', async () => {
+    const path = mkdtempSync(join(tmpdir(), 'chat-incoming-boundary-'))
+    directories.push(path)
+    const photo = join(path, 'synthetic.png')
+    writeFileSync(photo, captureImages[0])
+    const calls: string[] = []
+    const stopped = Error('Exact incoming anchor boundary reached')
+    const identity = { id: 'cid-synthetic' }
+    let value = ''
+    const incoming = {
+      id: 'msg-mixed-incoming',
+      seq: 240,
+      body: 'Mixed incoming identity 123'
+    }
+    const peer = {
+      client: { whoAmI: async () => ({ id: member.userId }) },
+      engine: { fillGrants: async () => {}, attach: async () => incoming }
+    }
+    const own = { rotateUserKey: async () => 2 }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      viewerKey: 'Fresh',
+      viewerId: freshId,
+      group: 'cg-fixture',
+      observations: [],
+      f: {
+        members: [member],
+        files: { photo },
+        identityCompatibility: { fullWidthActors: ['Fresh'] },
+        actors: { Fresh: { provider: {} } },
+        messages: { target }
+      },
+      ui: {
+        surface: 'android',
+        typeMentionTrigger: async () => {},
+        selectMention: async () => {
+          value = '@Aaron Judge '
+        },
+        appendComposer: async (text: string) => {
+          value += text
+        },
+        append: async (text: string) => {
+          value += text
+        },
+        draft: async () => value,
+        text: async () => {},
+        id: async (id: string) => {
+          calls.push(id)
+        }
+      },
+      check: async (_label: string, work: () => Promise<void>) => {
+        await work()
+      },
+      client: async () => ({
+        whoAmI: async () => ({ gumboId: null }),
+        myChatKeys: async () => ({ identity }),
+        chatDevices: async () => [
+          { id: 'cd-app', linked: true },
+          { id: 'cd-peer', linked: true }
+        ]
+      }),
+      signIn: async () => {},
+      openGroup: async () => {
+        calls.push('open')
+      },
+      reply: async () => {},
+      attachPhoto: async () => {},
+      protocolPeer: async (key?: string) => (key === 'Fresh' ? own : peer),
+      delivered: async () => ({
+        id: 'msg-sent',
+        senderUserId: freshId,
+        mentions: [member.userId],
+        quote: { id: target.id, authorId: target.authorId },
+        attachments: [{}]
+      }),
+      anchor: async (message: Chat2Message) => {
+        expect(message.id).equals(incoming.id)
+        expect(calls.at(-1)).equals('chat-jump-latest')
+        throw stopped
+      }
+    }) as Scenarios
+    expect(await captureFailure(scenario.I2())).equals(stopped)
+    expect(calls).deep.equals(['open', 'open', 'chat-jump-latest'])
+  })
+})
