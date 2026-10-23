@@ -355,6 +355,33 @@ async function appleMap(m: MaestroHandle): Promise<{ map: Node; pin: Node }> {
 }
 
 /**
+ * The app's header, as a fraction of the iPad's screen height, and where a
+ * Field Manager row's name and address sit below the row's top, in points.
+ */
+const HEADER = 0.095
+const ROW_NAME = 16
+const ROW_ADDRESS = 58
+
+/**
+ * The Field Manager rows whose name and address are on screen, below the
+ * header, in order.
+ */
+async function named(m: MaestroHandle): Promise<string[]> {
+  const tree = (await m.hierarchy()) as Node
+  const { height } = tree.bounds!
+  return flatten(tree)
+    .filter(
+      n =>
+        n.bounds != null &&
+        n.bounds.height > 0 &&
+        n.bounds.y + ROW_NAME >= HEADER * height - 1 &&
+        n.bounds.y + ROW_ADDRESS <= height
+    )
+    .map(n => /^Open (.+)$/.exec(n.text ?? '')?.[1])
+    .filter((name): name is string => name != null)
+}
+
+/**
  * I1, search: the Field Manager lists at least ten places for "Example
  * Park", the registry's own first.
  */
@@ -377,6 +404,8 @@ async function i1Search(run: Run): Promise<void> {
       .filter(text => /\d km\b/.test(text)),
     'a distance from the device'
   ).deep.equals([])
+  const all = [EXAMPLE_PARK.name, ...MORE_PARKS]
+  const first = await named(m)
   await run.capture('field-search-ios-after.png')
   // The list may run past the screen: gather every row while scrolling.
   const rows: string[] = []
@@ -387,7 +416,7 @@ async function i1Search(run: Run): Promise<void> {
         name != null &&
         n.bounds != null &&
         n.bounds.height > 0 &&
-        [EXAMPLE_PARK.name, ...MORE_PARKS].includes(name) &&
+        all.includes(name) &&
         !rows.includes(name)
       )
         rows.push(name)
@@ -401,6 +430,69 @@ async function i1Search(run: Run): Promise<void> {
   }
   expect(rows).deep.equals([EXAMPLE_PARK.name, ...MORE_PARKS])
   expect(rows.length).greaterThanOrEqual(10)
+  // The rest of the list, as support: the first row the after shot leaves
+  // out sits just under the header, and every row from it to the last shows
+  // its name and address. The screen holds about six and a half rows, so the
+  // shot ends on the last row's address rather than below it. The drags are
+  // slow, in the page's left gutter, so they scroll by as much as they move.
+  // (The hierarchy holds every row, those off screen too.)
+  const next = all.find(name => !first.includes(name))!
+  /** The row's top and the screen, once the scroll has stopped. */
+  const settled = async (): Promise<{
+    y: number | undefined
+    width: number
+    height: number
+  }> => {
+    let before: number | undefined = Number.NaN
+    for (let read = 0; ; read++) {
+      const tree = (await m.hierarchy()) as Node
+      const y = flatten(tree).find(
+        n => n.text === `Open ${next}` && n.bounds != null
+      )?.bounds?.y
+      const { width, height } = tree.bounds!
+      if (y === before || read === 6) return { y, width, height }
+      before = y
+      await new Promise(resolve => setTimeout(resolve, 700))
+    }
+  }
+  for (let attempt = 0; ; attempt++) {
+    const { y, width, height } = await settled()
+    const want = HEADER * height - ROW_NAME + 6
+    const off = y == null ? height / 4 : want - y
+    trace(`${next} at ${String(y)}, wanted ${want.toFixed(0)}`)
+    if (Math.abs(off) <= 5) break
+    if (attempt === 14) throw new Error(`Could not place ${next}`)
+    // Only a drag up scrolls by what it moves: 10 points less, once it is
+    // 130 points or longer. A drag down, or a shorter one, scrolls on by
+    // 150 points or more. So the row goes down past its place first, and a
+    // drag up, at most a third of the screen, brings it back.
+    const move =
+      off <= -130
+        ? Math.max(-height / 3, off - 10)
+        : Math.min(height / 3, Math.max(100, off))
+    trace(`drag ${Math.round(move)}`)
+    const x = Math.round(width * 0.03)
+    const from = move > 0 ? height * 0.3 : height * 0.8
+    await m.command('dragAndDrop', {
+      from: { point: `${x},${Math.round(from)}` },
+      to: { point: `${x},${Math.round(from + move)}` },
+      holdDuration: 300,
+      duration: 1500
+    })
+  }
+  const rest = await named(m)
+  expect(
+    all.filter(name => !first.includes(name) && !rest.includes(name)),
+    'a row in neither shot'
+  ).deep.equals([])
+  expect(rest).includes(last)
+  expect(
+    (await nodes(m))
+      .map(n => n.text ?? '')
+      .filter(text => /\d km\b/.test(text)),
+    'a distance from the device at the end of the list'
+  ).deep.equals([])
+  await run.capture(join(run.support, 'I1-field-search-end.png'))
   await run.pass(
     `searching "Example Park" in the Field Manager lists ${rows.length} venues on iOS: ${EXAMPLE_PARK.name} first, then ${MORE_PARKS.length} places from Google, ${MORE_PARKS[0]} to ${last}`
   )
