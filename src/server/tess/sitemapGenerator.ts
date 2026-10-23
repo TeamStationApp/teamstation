@@ -460,8 +460,9 @@ interface Shell {
 }
 
 /**
- * The Shell's `body` chain, `top.name === '<route>' ? <Screen …/>`, read for
- * which screen each route opens, and `titleFor` for the titles it gives.
+ * The chain `renderFrame` returns, `top.name === '<route>' ? <Screen …/>`,
+ * read for which screen each route opens, and `titleFor` for the titles the
+ * Shell gives.
  */
 function readShell(sources: Sources): Shell {
   const app = sources.file(SHELL_FILE)
@@ -510,9 +511,9 @@ function readShell(sources: Sources): Shell {
       }
     }
   }
-  const body = findVariable(app, 'body')
-  if (body == null) throw new Error(`No body chain in ${SHELL_FILE}`)
-  walk(body)
+  const chain = returnedBy(findVariable(app, 'renderFrame'))
+  if (chain == null) throw new Error(`No renderFrame chain in ${SHELL_FILE}`)
+  walk(chain)
   // A screen shown only on a condition stands for the route when no other
   // does: the account screen needs a session, and that is the account page.
   for (const [name, file] of conditional)
@@ -556,6 +557,20 @@ function navTabIds(sources: Sources): string[] {
     .map(node => node.literal)
     .filter(ts.isStringLiteral)
     .map(literal => literal.text)
+}
+
+/**
+ * What a function returns: an arrow's expression body, or the last `return`
+ * directly in its block.
+ */
+function returnedBy(
+  expression: ts.Expression | undefined
+): ts.Expression | undefined {
+  const fn = expression == null ? undefined : unwrap(expression)
+  if (fn == null || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)))
+    return undefined
+  if (!ts.isBlock(fn.body)) return fn.body
+  return fn.body.statements.filter(ts.isReturnStatement).at(-1)?.expression
 }
 
 function findVariable(
