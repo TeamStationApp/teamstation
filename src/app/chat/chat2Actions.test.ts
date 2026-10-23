@@ -3329,19 +3329,27 @@ describe('chat native adapter compatibility', function () {
       actual.device.tapOn = async args => {
         calls.push(['focus', args])
       }
-      actual.device.eraseText = async () => {
-        calls.push('erase')
+      actual.device.eraseText = async args => {
+        calls.push(['erase', args])
+        value = ''
       }
       actual.device.inputText = async args => {
         calls.push(['type', args])
         value = String(args.text)
       }
-      let value = ''
+      let value = 'Previous draft'
+      let browserReads = 0
+      actual.dom = async () => {
+        browserReads++
+        return browserReads === 1
+          ? { focused: true, editable: true, value }
+          : { focused: true, value, start: 0, end: value.length }
+      }
       actual.draft = async () => value
       await actual.replaceDraft('Exact\ntext')
       expect(calls).deep.equals([
         ['focus', { id: 'chat-composer' }],
-        'erase',
+        ['erase', surface === 'android' ? undefined : { characters: 1 }],
         [
           'type',
           {
@@ -3352,6 +3360,7 @@ describe('chat native adapter compatibility', function () {
           }
         ]
       ])
+      expect(browserReads).equals(surface === 'android' ? 0 : 2)
     }
   })
   it('uses an exact composer selector for complete multiline browser input', async () => {
@@ -4867,6 +4876,7 @@ describe('chat native adapter compatibility', function () {
             messages: [
               {
                 id: 'synthetic-target',
+                status: 'ok',
                 reactions: [{ emoji: '👍', userIds: [userIdOfGumbo(1)] }]
               }
             ]
@@ -4903,18 +4913,32 @@ describe('chat native adapter compatibility', function () {
       scenario.anchor = async () => {}
       scenario.targetBounds = async () => box
       scenario.action = async () => {}
+      const now = Date.now
+      let elapsed = 0
+      let reads = 0
       const peer = {
         engine: {
-          open: async () => ({
-            messages: [{ id: 'synthetic-target', reactions: [reaction] }]
-          })
+          open: async () => {
+            if (++reads > 1) elapsed += 30001
+            return {
+              messages: [
+                { id: 'synthetic-target', status: 'ok', reactions: [reaction] }
+              ]
+            }
+          }
         }
       }
       scenario.protocolPeer = async () =>
         peer as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>
-      expect(String(await captureFailure(scenario.E5()))).contains(
-        'Actual selected raw glyph and reacting viewer'
-      )
+      Date.now = () => now() + elapsed
+      try {
+        expect(String(await captureFailure(scenario.E5()))).contains(
+          'Actual selected raw glyph and reacting viewer'
+        )
+        expect(reads).equals(2)
+      } finally {
+        Date.now = now
+      }
     }
   })
   function recorder(
@@ -9512,5 +9536,168 @@ describe('native E5 exact old outgoing quote route', function () {
       } finally {
         m.cleanup()
       }
+    })
+})
+
+
+describe('native pinned jump settlement', function () {
+  const target: Chat2Message = {
+    id: 'msg-pin-original',
+    seq: 231,
+    body: 'Synthetic practice update.',
+    authorId: userIdOfGumbo(9)
+  }
+  function model(mode = 'delayed', surface: 'android' | 'ios' = 'android'): {
+    scenario: Scenarios
+    events: string[]
+    reads: () => number
+  } {
+    const events: string[] = []
+    let reads = 0
+    let selected = false
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface,
+      deadline: AbortSignal.timeout(
+        ['pending', 'missing-target', 'changing-band', 'changing-ids'].includes(
+          mode
+        )
+          ? 40
+          : 10000
+      ),
+      nodes: async (_parent?: string, signal?: AbortSignal) => {
+        signal?.throwIfAborted()
+        reads++
+        if (mode === 'transport') throw Error('Public hierarchy disconnected')
+        const pending = mode === 'pending' || reads < 3
+        const bottom =
+          mode === 'changing-band'
+            ? reads % 2 === 0
+              ? 1803
+              : 1929
+            : reads < 4
+              ? 1803
+              : 1929
+        return [
+          {
+            id: 'chat-message-history',
+            bounds: { x: 0, y: 0, width: 1080, height: 2400 }
+          },
+          {
+            id: 'chat-conversation-identity',
+            bounds: { x: 42, y: 150, width: 996, height: 126 }
+          },
+          {
+            id: 'chat-pinned-band',
+            bounds: { x: 42, y: 276, width: 996, height: 156 }
+          },
+          {
+            id: 'chat-composer-band',
+            bounds: { x: 42, y: bottom, width: 996, height: 142 }
+          },
+          { id: 'chat-bubble-msg-recent' },
+          ...(pending ? [{ id: 'chat-history-jump-cancel' }] : []),
+          ...(mode === 'retry' ? [{ id: 'chat-history-jump-retry' }] : []),
+          ...(reads < 2 || mode === 'missing-target'
+            ? []
+            : [
+                {
+                  id: 'chat-bubble-' + target.id,
+                  bounds: {
+                    x: 126,
+                    y: reads < 3 ? 0 : reads < 4 ? 600 : 626,
+                    width: 755,
+                    height: reads < 3 ? -44715 : 180
+                  }
+                }
+              ]),
+          ...(reads >= 4
+            ? [
+                {
+                  id:
+                    'chat-bubble-msg-loaded-' +
+                    (mode === 'changing-ids' ? reads : 4)
+                }
+              ]
+            : [])
+        ]
+      },
+      visible: async (selector: { id?: string; text?: string }) =>
+        selector.id === 'chat-pinned-summary'
+          ? mode !== 'no-summary'
+          : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
+      present: async (id: string) => {
+        expect(id).equals('chat-bubble-' + target.id)
+        events.push('present')
+      },
+      device: {
+        tapOn: async (selector: { id?: string; text?: string }) => {
+          if (selector.id === 'chat-pin-' + target.id) selected = true
+          events.push(selector.id ?? selector.text!)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target } },
+      nativeHistoryTarget: async () => {
+        if (selected)
+          expect(reads, 'Selected pin must settle before manual paging').at.least(
+            5
+          )
+        events.push('history')
+      },
+      nativeAnchorReady: async () => {
+        events.push('frame')
+        return []
+      }
+    }) as Scenarios
+    return { scenario, events, reads: () => reads }
+  }
+
+  for (const surface of ['android', 'ios'] as const)
+    it('waits for the actual selected pin target and stable native window on ' + surface, async () => {
+      const m = model('delayed', surface)
+      await m.scenario.anchor(target)
+      expect(m.reads()).at.least(5)
+      expect(m.events).deep.equals([
+        'chat-pinned-summary',
+        'chat-pin-' + target.id,
+        'history',
+        'frame',
+        'present'
+      ])
+    })
+
+  for (const mode of [
+    'retry',
+    'transport',
+    'pending',
+    'missing-target',
+    'changing-band',
+    'changing-ids'
+  ])
+    it('refuses unsettled native pin navigation before paging: ' + mode, async () => {
+      const m = model(mode)
+      const error = String(await captureFailure(m.scenario.anchor(target)))
+      expect(error).matches(
+        mode === 'retry'
+          ? /pin.*jump.*fail/i
+          : mode === 'transport'
+            ? /Public hierarchy disconnected/
+            : /abort|timeout/i
+      )
+      expect(m.events).not.includes('history')
+      expect(m.events).not.includes('frame')
+    })
+
+  for (const mode of ['no-summary', 'missing-pin'])
+    it('retains ordinary native history fallback without a selected pin: ' + mode, async () => {
+      const m = model(mode)
+      await m.scenario.anchor(target)
+      expect(m.reads()).equals(0)
+      expect(m.events.slice(-3)).deep.equals(['history', 'frame', 'present'])
+      if (mode === 'missing-pin') expect(m.events).includes('^Cancel$')
     })
 })
