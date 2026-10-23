@@ -861,10 +861,14 @@ export function fixtureControl(
     timeout: 60000,
     maxBuffer: 1024 * 1024
   })
+  // A refused action answers on stdout ({ok: false, error}) and exits 2.
   if (result.status !== 0)
     throw new Chat2Blocked(
       'Private fixture control failed: ' +
-        redact(fixture, result.stderr).slice(-600)
+        redact(
+          fixture,
+          result.stderr === '' ? result.stdout : result.stderr
+        ).slice(-600)
     )
   const proof = JSON.parse(result.stdout) as Record<string, unknown>
   assert(
