@@ -4198,19 +4198,16 @@ export class Chat2UI {
     await this.id('chat-composer')
     if (!this.native) {
       const before = await this.dom(
-        `const n=document.querySelector('[data-testid="chat-composer"]');return {focused:n?.isConnected===true&&document.activeElement===n,value:n?.value,platform:navigator.platform}`
+        `const n=document.querySelector('[data-testid="chat-composer"]');return {focused:n?.isConnected===true&&document.activeElement===n,editable:n instanceof HTMLTextAreaElement&&!n.disabled&&!n.readOnly&&n.getAttribute('aria-disabled')!=='true',value:n?.value}`
       )
       assert(
         before.focused === true &&
-          typeof before.value === 'string' &&
-          typeof before.platform === 'string',
-        'Browser replacement requires the focused composer'
+          before.editable === true &&
+          typeof before.value === 'string',
+        'Browser replacement requires the focused enabled composer'
       )
-      await this.device.pressKey({
-        key: before.platform.includes('Mac') ? 'Cmd+A' : 'Ctrl+A'
-      })
       const selected = await this.dom(
-        `const n=document.querySelector('[data-testid="chat-composer"]');return {focused:n?.isConnected===true&&document.activeElement===n,value:n?.value,start:n?.selectionStart,end:n?.selectionEnd}`
+        `const n=document.querySelector('[data-testid="chat-composer"]');if(!(n instanceof HTMLTextAreaElement)||!n.isConnected||n.disabled||n.readOnly||n.getAttribute('aria-disabled')==='true'||document.activeElement!==n)throw Error('Actual focused enabled composer required for public selection');n.select();return {focused:n.isConnected&&document.activeElement===n,value:n.value,start:n.selectionStart,end:n.selectionEnd}`
       )
       assert(
         selected.focused === true &&

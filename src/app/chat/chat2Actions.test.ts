@@ -1692,13 +1692,12 @@ describe('chat native adapter compatibility', function () {
     )
   async function browserReplacement(
     text: string,
-    options: { fault?: string; platform?: string; previous?: string } = {}
+    options: { fault?: string; previous?: string } = {}
   ): Promise<{ draft: string; calls: string[]; error: unknown }> {
     const { actual, page } = browserModel()
     const previous = options.previous ?? '@Juan S edited token 1234567405'
-    const platform = options.platform ?? 'MacIntel'
     Object.defineProperty(page.window.navigator, 'platform', {
-      value: platform
+      value: 'MacIntel'
     })
     const editor = page.window.document.createElement('textarea')
     editor.dataset.testid = 'chat-composer'
@@ -1713,11 +1712,15 @@ describe('chat native adapter compatibility', function () {
       calls.push('focus')
       return {}
     }
-    actual.device.pressKey = async args => {
-      expect(args.key).equals(platform === 'MacIntel' ? 'Cmd+A' : 'Ctrl+A')
+    const select = editor.select.bind(editor)
+    editor.select = () => {
       calls.push('select-all')
-      if (options.fault !== 'partial-selection')
-        editor.setSelectionRange(0, editor.value.length)
+      if (options.fault !== 'partial-selection') select()
+    }
+    actual.device.pressKey = async args => {
+      expect(args.key).equals('Cmd+A')
+      // A successful command response does not prove native text selection.
+      calls.push('unapplied-shortcut')
       return {}
     }
     actual.device.eraseText = async (args = {}) => {
@@ -1777,9 +1780,8 @@ describe('chat native adapter compatibility', function () {
     expect(result.draft).equals('A newer synthetic draft')
     expect(result.calls).deep.equals(['focus', 'select-all', 'erase', 'input'])
   })
-  it('selects and replaces an entire long multiline browser draft using the observed non-Mac platform', async () => {
+  it('selects and replaces an entire long multiline browser draft without a keyboard-shortcut assumption', async () => {
     const result = await browserReplacement('New first line\nNew second line', {
-      platform: 'Linux x86_64',
       previous: 'Old line\n' + 'Long synthetic draft '.repeat(8)
     })
     expect(result.error).equals(undefined)
