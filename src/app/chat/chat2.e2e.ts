@@ -54,6 +54,20 @@ import type { MessageView } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
+/** A public control that must lie inside the pinch-zoomed visual viewport. */
+interface ZoomedWebControl {
+  name: string
+  css: string
+  text?: string
+  /** An editor normally counts only once focused; a reveal before its tap does not. */
+  requireFocus?: boolean
+}
+
+const zoomedComposer: ZoomedWebControl = {
+  name: 'composer',
+  css: '[data-testid="chat-composer"]',
+  requireFocus: false
+}
 interface WebContinuationPlan {
   schema: 1
   kind: 'post-lifecycle-web-continuity'
@@ -7170,8 +7184,26 @@ export class Scenarios {
   /** Pinch zoom may require separate real views of controls that exceed its visual viewport. */
   async zoomedWebControlShot(
     kind: string,
-    targets: Array<{ name: string; css: string; text?: string }>,
+    targets: ZoomedWebControl[],
     note: string
+  ): Promise<void> {
+    await this.frameZoomedWebControls(kind, targets, async () => {
+      await this.ui.shot(kind, note)
+    })
+  }
+
+  /** Pan a pinch-zoomed page to a control, as a reader would, before using it. */
+  async revealZoomedWebControl(
+    kind: string,
+    target: ZoomedWebControl
+  ): Promise<void> {
+    await this.frameZoomedWebControls(kind, [target], async () => {})
+  }
+
+  async frameZoomedWebControls(
+    kind: string,
+    targets: ZoomedWebControl[],
+    framed: () => Promise<void>
   ): Promise<void> {
     const ui = this.ui
     assert(
@@ -7202,7 +7234,7 @@ export class Scenarios {
         const enabled=n.disabled!==true&&n.readOnly!==true&&n.getAttribute('aria-disabled')!=='true';
         const intersection={width:Math.max(0,Math.min(b.right,viewport.x+viewport.width)-Math.max(b.left,viewport.x)),height:Math.max(0,Math.min(b.bottom,viewport.y+viewport.height)-Math.max(b.top,viewport.y))};
         const framed=editor?intersection.width>=44&&intersection.height>=44:b.left>=viewport.x-1&&b.top>=viewport.y-1&&b.right<=viewport.x+viewport.width+1&&b.bottom<=viewport.y+viewport.height+1;
-        return {name:spec.name,box,intersection,editor,focused:document.activeElement===n,enabled,visible,ready:visible&&enabled&&framed&&(!editor||document.activeElement===n)};
+        return {name:spec.name,box,intersection,editor,focused:document.activeElement===n,enabled,visible,ready:visible&&enabled&&framed&&(!editor||spec.requireFocus===false||document.activeElement===n)};
       });return {viewport,controls};`,
         signal
       )
@@ -7257,7 +7289,7 @@ export class Scenarios {
           reference = snapshot
           stableSince = Date.now()
         } else if (Date.now() - stableSince >= 200) {
-          await ui.shot(kind, note)
+          await framed()
           assert.deepEqual(
             await read(),
             actual,
@@ -7356,6 +7388,11 @@ export class Scenarios {
               ' current other-member safety row fully clear of header and bottom overlay'
           )
           await ui.back()
+          if (!ui.native && variant === 'large-text')
+            await this.revealZoomedWebControl(
+              variant + '-composer-reveal',
+              zoomedComposer
+            )
           await ui.replaceDraft('')
           await ui.typeMentionTrigger()
           await ui.device.assertVisible({ text: exactText('Mention a member') })
@@ -7437,6 +7474,11 @@ export class Scenarios {
             ],
             actualReachabilityAndBounds: true
           })
+          if (!ui.native && variant === 'large-text')
+            await this.revealZoomedWebControl(
+              variant + '-composer-reveal-final',
+              zoomedComposer
+            )
           await ui.replaceDraft('')
         })
       })
