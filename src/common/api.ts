@@ -3046,15 +3046,22 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Saves a season's settings. With `timezone`, the zone they were set up
+   * in, a season still at the UTC default adopts it.
+   */
   async saveScheduleSettings(
     seasonId: string,
-    settings: ScheduleSettings
+    settings: ScheduleSettings,
+    options: { timezone?: string } = {}
   ): Promise<SeasonScheduleSettings> {
     return await this.request(
       'PUT',
       `/seasons/${encodeURIComponent(seasonId)}/schedule-settings`,
       asSeasonScheduleSettings,
-      settings
+      options.timezone == null
+        ? settings
+        : { ...settings, timezone: options.timezone }
     )
   }
 

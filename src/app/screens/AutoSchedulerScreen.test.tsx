@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import React, { act } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
@@ -107,6 +107,7 @@ function fakeClient(
   client: TeamStationClient
   choices: Array<{ seasonIds: string[]; fieldIds: string[] }>
   saves: Array<[string, ScheduleSettings]>
+  zones: Array<string | undefined>
   builds: PreviewRequest[]
 } {
   let setup = first instanceof Error ? setupOf() : first
@@ -114,6 +115,7 @@ function fakeClient(
   const record = {
     choices: [] as Array<{ seasonIds: string[]; fieldIds: string[] }>,
     saves: [] as Array<[string, ScheduleSettings]>,
+    zones: [] as Array<string | undefined>,
     builds: [] as PreviewRequest[],
     client: undefined as unknown as TeamStationClient
   }
@@ -152,11 +154,22 @@ function fakeClient(
     },
     saveScheduleSettings: async (
       seasonId: string,
-      settings: ScheduleSettings
+      settings: ScheduleSettings,
+      save: { timezone?: string }
     ) => {
       record.saves.push([seasonId, settings])
+      record.zones.push(save.timezone)
       if (options.failSave === true) throw new Error('')
-      return { seasonId, saved: true, settings }
+      // The server adopts a zone only for a season at the UTC default.
+      const held = setup.seasons.find(item => item.id === seasonId)!.timezone
+      const timezone = held === 'UTC' ? (save.timezone ?? held) : held
+      setup = {
+        ...setup,
+        seasons: setup.seasons.map(item =>
+          item.id === seasonId ? { ...item, timezone } : item
+        )
+      }
+      return { seasonId, saved: true, timezone, settings }
     }
   } as unknown as TeamStationClient
   return record
@@ -208,6 +221,16 @@ const disabled = (node: HTMLElement): boolean =>
 
 describe('the Auto-Scheduler setup', () => {
   afterEach(unmount)
+  // The viewer is in Pacific Time.
+  const zone = process.env.TZ
+  before(() => {
+    process.env.TZ = 'America/Los_Angeles'
+  })
+  after(() => {
+    if (zone == null) delete process.env.TZ
+    else process.env.TZ = zone
+  })
+  const VIEWER = 'America/Los_Angeles'
 
   it('totals a season’s games', () => {
     expect(seasonGameTotal(season())).equals(10 + 7)
@@ -335,6 +358,40 @@ describe('the Auto-Scheduler setup', () => {
     expect(fake.saves.length).equals(5)
   })
 
+  it('stores the viewer’s zone on a season at the UTC default with its first save, and builds in it', async () => {
+    const fake = fakeClient(
+      setupOf({
+        seasons: [
+          season({ timezone: 'UTC' }),
+          season({ id: 'sea_c', name: 'Demo Fall' })
+        ],
+        seasonIds: ['sea_a', 'sea_c']
+      })
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Game MINS: 90')
+    await fill('Edit Demo Regular Game MINS', '75')
+    await key('Enter')
+    // The season now holds the zone, so its next save sends none.
+    await tapLabel('Demo Regular # Regular: 3')
+    await fill('Edit Demo Regular # Regular', '4')
+    await key('Enter')
+    // A season with a zone of its own never sends one.
+    await tapLabel('Demo Fall Game MINS: 90')
+    await fill('Edit Demo Fall Game MINS', '80')
+    await key('Enter')
+    expect(fake.saves.map(([seasonId]) => seasonId)).deep.equals([
+      'sea_a',
+      'sea_a',
+      'sea_c'
+    ])
+    expect(fake.zones).deep.equals([VIEWER, undefined, undefined])
+    await tapText('Build schedule')
+    await settle(20)
+    expect(fake.builds).deep.equals([{ mode: 'full', timezone: VIEWER }])
+  })
+
   it('says when a save fails, and leaves a deleted field out of changes', async () => {
     const fake = fakeClient(
       setupOf({
@@ -402,9 +459,10 @@ describe('the Auto-Scheduler setup', () => {
     expect(text()).includes('These seasons already have 2 upcoming games')
     await press('Work around them')
     await settle(20)
+    // Every build sends the viewer's zone.
     expect(fake.builds).deep.equals([
-      { mode: 'full' },
-      { mode: 'full', existing: 'workAround' }
+      { mode: 'full', timezone: VIEWER },
+      { mode: 'full', existing: 'workAround', timezone: VIEWER }
     ])
     expect(calls.builds).equals(1)
     await tapText('Build schedule')
@@ -413,7 +471,8 @@ describe('the Auto-Scheduler setup', () => {
     await settle(20)
     expect(fake.builds.at(-1)).deep.equals({
       mode: 'full',
-      existing: 'replace'
+      existing: 'replace',
+      timezone: VIEWER
     })
     await tapText('Build schedule')
     await settle(20)
@@ -472,11 +531,12 @@ describe('the Auto-Scheduler setup', () => {
     expect(fake.builds.at(-1)).deep.equals({
       mode: 'partial',
       existing: 'replace',
-      teamIds: ['tem_hawks', 'tem_owls', 'tem_foxes']
+      teamIds: ['tem_hawks', 'tem_owls', 'tem_foxes'],
+      timezone: VIEWER
     })
     await tapText('Recalculate everything')
     await settle(20)
-    expect(fake.builds.at(-1)).deep.equals({ mode: 'full' })
+    expect(fake.builds.at(-1)).deep.equals({ mode: 'full', timezone: VIEWER })
     expect(calls.builds).equals(2)
   })
 })

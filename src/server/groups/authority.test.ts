@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { calendarDateText } from '../../common/groupCreation'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { setScopeRoles } from '../invites/people'
@@ -292,6 +293,45 @@ describe('current authority and immutable relationship request terms', function 
         )
       ).status
     ).equals(400)
+  })
+  it('supersedes a pending request once when only the season’s dates change', async () => {
+    const id = await send()
+    const request = async (): Promise<{
+      status: string
+      resolved_at: Date | null
+    }> =>
+      await f.h.db
+        .selectFrom('group_requests')
+        .select(['status', 'resolved_at'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    const edit = async (body: unknown): Promise<void> => {
+      expect(
+        (await f.h.request('PUT', `/groups/season/${f.seasonB}`, body, 102))
+          .status
+      ).equals(200)
+    }
+    await edit({ startsOn: '2027-03-01', endsOn: '2027-05-31' })
+    expect((await request()).status).equals('pending')
+    const editedAt = f.clock.now()
+    await edit({ endsOn: '2027-06-30' })
+    expect(await request()).deep.equals({
+      status: 'superseded',
+      resolved_at: editedAt
+    })
+    const season = await f.h.db
+      .selectFrom('seasons')
+      .select(['starts_on', 'ends_on', 'timezone'])
+      .where('id', '=', f.seasonB)
+      .executeTakeFirstOrThrow()
+    expect([
+      calendarDateText(season.starts_on),
+      calendarDateText(season.ends_on),
+      season.timezone
+    ]).deep.equals(['2027-03-01', '2027-06-30', 'UTC'])
+    f.advance(60000)
+    await edit({ startsOn: '2027-03-08' })
+    expect((await request()).resolved_at).deep.equals(editedAt)
   })
   it('serializes racing acceptance, withdraw and resend, and rejects a stale parent graph', async () => {
     const id = await send()

@@ -5,7 +5,8 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import {
   asScheduleSettings,
-  asScheduleSetupChoice
+  asScheduleSetupChoice,
+  asTimezoneOption
 } from '../../common/seasonScheduling'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
@@ -88,7 +89,13 @@ export function schedulingSetupRoutes(
       const seasonId = param(req.params.seasonId)
       await requireLeagueAdminOf(req, seasonId)
       const settings = clean(asScheduleSettings, req.body)
-      res.json(await saveSeasonScheduleSettings(db, seasonId, settings))
+      const timezone = clean(asTimezoneOption, req.body.timezone)
+      res.json(
+        await saveSeasonScheduleSettings(db, seasonId, settings, {
+          timezone,
+          clock
+        })
+      )
     })
   )
   router.get(

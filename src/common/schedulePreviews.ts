@@ -12,6 +12,7 @@ import {
 import { asLiteral } from './asLiteral'
 import type { PlannedGame, ScheduleOption } from './autoScheduler/types'
 import { isRecord } from './groupCreation'
+import { asTimezoneOption } from './seasonScheduling'
 import { asFieldSize, type FieldSize } from './venues'
 
 /** What happens to a season's upcoming games when a schedule is built. */
@@ -26,6 +27,11 @@ export interface PreviewRequest {
   /** Recalculating an open preview's option after rejecting or adding games. */
   fromPreviewId?: string
   option?: number
+  /**
+   * The viewer's zone: a chosen season still at the UTC default adopts it
+   * before it is built.
+   */
+  timezone?: string
 }
 
 function asIds(raw: unknown, what: string): string[] {
@@ -67,6 +73,8 @@ export function asPreviewRequest(raw: unknown): PreviewRequest {
     request.fromPreviewId = raw.fromPreviewId
     request.option = asOptionIndex(raw.option)
   }
+  const timezone = asTimezoneOption(raw.timezone)
+  if (timezone != null) request.timezone = timezone
   if (
     request.mode === 'partial' &&
     request.teamIds == null &&

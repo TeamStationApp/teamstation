@@ -409,9 +409,9 @@ describe('a schedule preview', () => {
     await tapLabel('Minute 00')
     await tapLabel('Period AM')
     await tapText('Use time')
-    expect(text()).includes(
-      'The date and start are in the season’s time zone, America/New_York.'
-    )
+    // The note names the zone the start is read in, the snapshot's.
+    expect(text()).includes('The date and start are in Eastern Time.')
+    expect(text()).not.includes('America/New_York')
     await tapLabel('Exhibition game')
     await tapLabel('Season: Demo Regular')
     await press('Demo Regular')

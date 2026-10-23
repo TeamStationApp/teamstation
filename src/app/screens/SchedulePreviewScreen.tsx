@@ -3,7 +3,11 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { FairnessRow, PlannedGame } from '../../common/autoScheduler/types'
-import { eventLocalRange, foreignZoneName } from '../../common/eventTime'
+import {
+  eventLocalRange,
+  foreignZoneName,
+  zoneLongName
+} from '../../common/eventTime'
 import { wallInstant } from '../../common/fieldAvailability'
 import {
   editedGames,
@@ -561,8 +565,7 @@ function AddGameSheet({
           {row('Start', time == null ? 'Choose' : clockLabel(time), 'time')}
           {season != null && (
             <Text style={styles.formNote}>
-              The date and start are in the season’s time zone,{' '}
-              {season.timezone}.
+              The date and start are in {zoneLongName(season.timezone)}.
             </Text>
           )}
           <CheckRow

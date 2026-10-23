@@ -3,6 +3,7 @@ import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { viewerTimezone } from '../../common/eventTime'
 import { isRecord } from '../../common/groupCreation'
 import {
   type GameToReschedule,
@@ -15,6 +16,7 @@ import {
   doubleheadersLabel,
   type ScheduleSettings,
   type ScheduleSetup,
+  seasonZone,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
@@ -94,7 +96,11 @@ export function AutoSchedulerScreen({
     setBuilding(true)
     setError('')
     try {
-      const preview = await client.buildSchedulePreview(leagueId, request)
+      // Seasons still at the UTC default are built in the viewer's zone.
+      const preview = await client.buildSchedulePreview(leagueId, {
+        ...request,
+        timezone: viewerTimezone()
+      })
       onOpenPreview(preview.id)
     } catch (failure) {
       const details =
@@ -138,11 +144,15 @@ export function AutoSchedulerScreen({
     season: SetupSeason,
     changes: Partial<ScheduleSettings>
   ): Promise<string | null> => {
+    // A season still at the UTC default is set up in the viewer's zone,
+    // which the save stores on it.
+    const zone = seasonZone(season)
     try {
-      const saved = await client.saveScheduleSettings(season.id, {
-        ...season.settings,
-        ...changes
-      })
+      const saved = await client.saveScheduleSettings(
+        season.id,
+        { ...season.settings, ...changes },
+        zone === season.timezone ? {} : { timezone: zone }
+      )
       setSetup(current =>
         current == null
           ? current
@@ -150,7 +160,12 @@ export function AutoSchedulerScreen({
               ...current,
               seasons: current.seasons.map(item =>
                 item.id === season.id
-                  ? { ...item, saved: true, settings: saved.settings }
+                  ? {
+                      ...item,
+                      saved: true,
+                      timezone: saved.timezone,
+                      settings: saved.settings
+                    }
                   : item
               )
             }

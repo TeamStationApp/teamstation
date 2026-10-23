@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { zoneLongName } from '../../common/eventTime'
 import type { WindowPeriod } from '../../common/fieldAvailability'
-import type {
-  ScheduleSettings,
-  SetupSeason
+import {
+  type ScheduleSettings,
+  seasonZone,
+  type SetupSeason
 } from '../../common/seasonScheduling'
 import { Button, ListCard, Screen, SectionHeader } from '../components'
 import {
@@ -103,13 +105,22 @@ export function ScheduleSeasonScreen({
       </Screen>
     )
   const settings = season.settings
+  // A season still at the UTC default is shown in the viewer's zone, which
+  // its first save stores on it.
+  const zone = seasonZone(season)
   const save = (changes: Partial<ScheduleSettings>, done: string): void => {
     run(async () => {
-      const saved = await client.saveScheduleSettings(season.id, {
-        ...settings,
-        ...changes
+      const saved = await client.saveScheduleSettings(
+        season.id,
+        { ...settings, ...changes },
+        zone === season.timezone ? {} : { timezone: zone }
+      )
+      setSeason({
+        ...season,
+        saved: true,
+        timezone: saved.timezone,
+        settings: saved.settings
       })
-      setSeason({ ...season, saved: true, settings: saved.settings })
     }, done).catch(() => undefined)
   }
   const setWindows = (windows: WindowPeriod[], done: string): void => {
@@ -121,9 +132,7 @@ export function ScheduleSeasonScreen({
         <Text accessibilityRole="header" style={styles.title}>
           {season.name}
         </Text>
-        <Text style={styles.meta}>
-          Times are in the season’s time zone, {season.timezone}.
-        </Text>
+        <Text style={styles.meta}>Times are in {zoneLongName(zone)}.</Text>
         {error !== '' && (
           <Text accessibilityRole="alert" style={styles.error}>
             {error}

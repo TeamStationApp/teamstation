@@ -8,6 +8,7 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
+import { viewerTimezone } from './eventTime'
 import type { WindowPeriod } from './fieldAvailability'
 import { asCalendarDate, isRecord } from './groupCreation'
 import {
@@ -200,9 +201,37 @@ export const asSeasonScheduleSettings = asObject({
   seasonId: asString,
   /** False while the season still reads as defaults. */
   saved: asBoolean,
+  /** The season's zone, after any zone the save adopted. */
+  timezone: asString,
   settings: asWireSettings
 })
 export type SeasonScheduleSettings = ReturnType<typeof asSeasonScheduleSettings>
+
+/** The zone a season still holds when nobody has chosen one. */
+export const DEFAULT_SEASON_TIMEZONE = 'UTC'
+
+/**
+ * The zone a season's setup is shown and saved in: its own, or, while it
+ * still holds the UTC default, the viewer's, which its next settings save
+ * or build stores on it.
+ */
+export function seasonZone(
+  season: { timezone: string },
+  viewer: string = viewerTimezone()
+): string {
+  return season.timezone === DEFAULT_SEASON_TIMEZONE ? viewer : season.timezone
+}
+
+/**
+ * The zone a save or a build was set up in, when it names one. Whether the
+ * zone exists is checked where it is stored.
+ */
+export function asTimezoneOption(raw: unknown): string | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'string' || raw === '' || raw.length > 64)
+    throw new TypeError('Choose a timezone')
+  return raw
+}
 
 /** One of the league's seasons, as the setup lists them. */
 export const asSetupSeason = asObject({

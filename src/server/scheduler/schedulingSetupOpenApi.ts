@@ -98,7 +98,7 @@ export function schedulingSetupPaths(
   const seasonSettings = {
     200: {
       description:
-        '{ seasonId, saved, settings }: saved is false while the season reads as defaults'
+        '{ seasonId, saved, timezone, settings }: saved is false while the season reads as defaults; timezone is the season’s zone, after any zone the save adopted'
     },
     ...errors
   }
@@ -115,9 +115,19 @@ export function schedulingSetupPaths(
       put: {
         summary: 'Replace a season’s scheduling settings',
         security: [{ bearer: [] }],
-        description: 'For an admin of the season’s league.',
+        description:
+          'For an admin of the season’s league. With timezone, the zone the settings were set up in, a season still at the UTC default adopts it, and its pending participation and parent requests are superseded; a season with another zone keeps it.',
         parameters: [pathId('seasonId')],
-        requestBody: jsonBody(settings),
+        requestBody: jsonBody({
+          ...settings,
+          properties: {
+            ...settings.properties,
+            timezone: {
+              type: 'string',
+              description: 'An IANA time zone, such as America/Los_Angeles'
+            }
+          }
+        }),
         responses: seasonSettings
       }
     },

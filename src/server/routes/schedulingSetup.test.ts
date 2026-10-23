@@ -147,6 +147,7 @@ describe('scheduling setup routes', function () {
     ).deep.equals({
       seasonId: f.seasonA,
       saved: false,
+      timezone: 'UTC',
       settings: {
         fieldSize: '60/90',
         gameMinutes: 120,
@@ -182,6 +183,7 @@ describe('scheduling setup routes', function () {
     expect(saved).deep.equals({
       seasonId: f.seasonA,
       saved: true,
+      timezone: 'UTC',
       settings: {
         ...SETTINGS,
         windows: [SETTINGS.windows[1], SETTINGS.windows[0]]
@@ -216,6 +218,75 @@ describe('scheduling setup routes', function () {
         )
       ).status
     ).equals(404)
+  })
+
+  it('stores the zone a season still at the UTC default was set up in, and supersedes its pending requests', async () => {
+    const path = `/seasons/${f.seasonA}/schedule-settings`
+    const stored = async (): Promise<string> =>
+      (
+        await f.h.db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', f.seasonA)
+          .executeTakeFirstOrThrow()
+      ).timezone
+    const sent = await f.h.request(
+      'POST',
+      '/relationship-requests',
+      {
+        kind: 'participation',
+        teamId: f.teamB,
+        seasonId: f.seasonA,
+        sender: { kind: 'season', id: f.seasonA },
+        idempotencyKey: 'season-zone-adoption'
+      },
+      101
+    )
+    expect(sent.status, await sent.clone().text()).equals(201)
+    const { id } = (await sent.json()) as { id: string }
+    for (const timezone of [7, '', 'Bad/Zone'])
+      expect(
+        (await f.h.request('PUT', path, { ...SETTINGS, timezone }, 101)).status,
+        JSON.stringify(timezone)
+      ).equals(400)
+    expect(await stored()).equals('UTC')
+    const adopted = await json<SeasonScheduleSettings>(
+      await f.h.request(
+        'PUT',
+        path,
+        { ...SETTINGS, timezone: 'America/Los_Angeles' },
+        101
+      )
+    )
+    expect(adopted).deep.include({
+      saved: true,
+      timezone: 'America/Los_Angeles'
+    })
+    expect(await stored()).equals('America/Los_Angeles')
+    // The request's terms named the old zone, so it needs sending again.
+    const history = (await (
+      await f.h.request('GET', '/me/notifications?history=1', undefined, 102)
+    ).json()) as { items: Array<{ requestId: string; status: string }> }
+    expect(history.items.find(item => item.requestId === id)?.status).equals(
+      'superseded'
+    )
+    // A zone of its own is kept, with or without a zone sent.
+    expect(
+      await json<SeasonScheduleSettings>(
+        await f.h.request(
+          'PUT',
+          path,
+          { ...SETTINGS, timezone: 'America/New_York' },
+          101
+        )
+      )
+    ).deep.include({ timezone: 'America/Los_Angeles' })
+    expect(
+      await json<SeasonScheduleSettings>(
+        await f.h.request('PUT', path, SETTINGS, 101)
+      )
+    ).deep.include({ timezone: 'America/Los_Angeles' })
+    expect(await stored()).equals('America/Los_Angeles')
   })
 
   it('chooses the league’s seasons and claimed venues’ fields, for a league admin only', async () => {

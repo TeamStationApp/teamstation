@@ -71,6 +71,7 @@ import {
   currentActor,
   requireGroupAdmin
 } from '../groups/rights'
+import { supersedeSeasonRequests } from '../groups/seasonZone'
 import type { AddedMail } from '../invites/grants'
 import { setScopeRoles } from '../invites/people'
 import {
@@ -1210,18 +1211,7 @@ export function groupRoutes(
             end !== calendarDateText(row.ends_on) ||
             timezone !== row.timezone
           )
-            await trx
-              .updateTable('group_requests')
-              .set({ status: 'superseded', resolved_at: clock.now() })
-              .where('kind', 'in', ['participation', 'parent'])
-              .where('status', '=', 'pending')
-              .where(eb =>
-                eb.or([
-                  eb(sql<string>`terms->>'seasonId'`, '=', ref.id),
-                  sql<boolean>`(terms->'preview'->'expected') ? ${`season:${ref.id}`}`
-                ])
-              )
-              .execute()
+            await supersedeSeasonRequests(trx, ref.id, clock)
         }
         const picture =
           req.body?.picture ??

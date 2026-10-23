@@ -14,17 +14,22 @@
 // order. Set TS_AUTO_SCHEDULER_BROWSER_COVERAGE to record the app's browser
 // coverage, and NODE_V8_COVERAGE for the fixture server's.
 // Browser callbacks avoid `?.`: Sucrase's helper is not in the page.
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
+import { eventLocalFields } from '../common/eventTime'
+import type { SchedulePreview } from '../common/schedulePreviews'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
+  api,
   type AutoSchedulerFixture,
   autoSchedulerFixture,
+  forceSeasonZone,
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
@@ -440,8 +445,262 @@ async function f1(run: Run): Promise<void> {
   )
 }
 
+/** Clicks the last element of this role and exact text, once enabled. */
+async function tapText(
+  b: BrowserSession,
+  text: string,
+  roles = '[role="button"], [role="radio"], [role="tab"]'
+): Promise<void> {
+  trace(`tap text ${text}`)
+  await b.page.waitForFunction(
+    (wanted: string, selector: string) =>
+      [...document.querySelectorAll(selector)].some(
+        node =>
+          node.textContent === wanted &&
+          node.getAttribute('aria-disabled') !== 'true'
+      ),
+    { timeout: 15000 },
+    text,
+    roles
+  )
+  await b.page.evaluate(
+    (wanted: string, selector: string) => {
+      const matches = [...document.querySelectorAll(selector)].filter(
+        node => node.textContent === wanted
+      )
+      ;(matches[matches.length - 1] as HTMLElement).click()
+    },
+    text,
+    roles
+  )
+}
+
+/**
+ * Clicks the element with exactly this accessible label in the page itself,
+ * waiting for it first: for a sheet's rows, which hold a label and a detail.
+ */
+async function clickLabel(b: BrowserSession, label: string): Promise<void> {
+  trace(`click label ${label}`)
+  const selector = `[aria-label="${label}"]`
+  await b.page.waitForSelector(selector, { timeout: 15000 })
+  await b.page.evaluate((wanted: string) => {
+    const node = document.querySelector(wanted)
+    if (node !== null) (node as HTMLElement).click()
+  }, selector)
+}
+
+/** The page's whole text. */
+async function pageText(b: BrowserSession): Promise<string> {
+  return await b.page.evaluate(() => String(document.body.innerText))
+}
+
+/**
+ * Runs a curl against the fixture server as the league admin and adds it to
+ * a log, token hidden, returning the answer's body. The server runs in this
+ * process, so curl must not block its event loop.
+ */
+async function curl(
+  run: Run,
+  lines: string[],
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<string> {
+  const token = run.fx.f.h.tokens.get(ADMIN)!
+  const args = [
+    '-sS',
+    '-X',
+    method,
+    '-H',
+    'Content-Type: application/json',
+    '-H',
+    `Authorization: Bearer ${token}`,
+    ...(body === undefined ? [] : ['-d', JSON.stringify(body)]),
+    '-w',
+    '\nHTTP %{http_code}\n',
+    `${run.fx.f.h.origin}/api/v1${path}`
+  ]
+  const shown = args
+    .map(arg =>
+      arg.startsWith('Authorization:')
+        ? "'Authorization: Bearer $TOKEN'"
+        : arg.includes('\n')
+          ? `$'${arg.replace(/\n/g, '\\n')}'`
+          : /[\s{}"*$]/.test(arg)
+            ? `'${arg}'`
+            : arg
+    )
+    .join(' ')
+  const { stdout } = await promisify(execFile)('curl', args, {
+    encoding: 'utf8'
+  })
+  const answer = stdout.trim()
+  lines.push(`$ curl ${shown}`, answer, '')
+  return answer.slice(0, answer.lastIndexOf('\nHTTP '))
+}
+
+/** A season's zone, as its settings answer reads it, through curl. */
+async function curlZone(
+  run: Run,
+  lines: string[],
+  seasonId: string
+): Promise<string> {
+  const answer = JSON.parse(
+    await curl(run, lines, 'GET', `/seasons/${seasonId}/schedule-settings`)
+  ) as { timezone: string }
+  return answer.timezone
+}
+
+/** Runs a scenario's steps with the browser in this zone, then resets it. */
+async function inZone(
+  b: BrowserSession,
+  timezone: string,
+  steps: () => Promise<void>
+): Promise<void> {
+  trace(`time zone ${timezone}`)
+  await b.page.emulateTimezone(timezone)
+  try {
+    await steps()
+  } finally {
+    await b.page.emulateTimezone(undefined)
+  }
+}
+
+/**
+ * F2: season setup names one zone: a season's own, or the viewer's while it
+ * holds the UTC default, which its first settings save stores on it.
+ */
+async function f2(run: Run): Promise<void> {
+  const { fx, b } = run
+  const lines = [
+    '$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts --only F2',
+    ''
+  ]
+  const setupOf = (seasonId: string): string =>
+    `/groups/league/${fx.f.leagueA}/scheduler/seasons/${seasonId}`
+  await inZone(b, 'America/Los_Angeles', async () => {
+    expect(await curlZone(run, lines, fx.f.playoffs)).equals('UTC')
+    await run.visit(setupOf(fx.f.seasonA))
+    await contains(b.page, 'Demo Regular')
+    await contains(b.page, 'Times are in Eastern Time.')
+    await run.visit(setupOf(fx.f.playoffs))
+    await contains(b.page, 'Demo Playoffs')
+    await contains(b.page, 'Times are in Pacific Time.')
+    for (const other of ['UTC', 'Coordinated Universal Time', 'time zone,'])
+      expect(await pageText(b)).not.includes(other)
+    await run.capture('season-zone-after.png')
+    // In the Auto-Scheduler, playoffs joins the run and saves a number.
+    await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+    await contains(b.page, 'SCHEDULE SETTINGS')
+    await clickLabel(b, 'Demo Playoffs')
+    await labelled(b, 'Demo Playoffs # Regular: 0')
+    await scrollToText(b, 'SCHEDULE SETTINGS')
+    await gridTo(b, 'Demo Playoffs # Regular: 0')
+    await tapLabel(b, 'Demo Playoffs # Regular: 0')
+    await selected(b, 'Demo Playoffs # Regular', '0')
+    await type(b, '2')
+    await press(b, 'Enter')
+    await labelled(b, 'Demo Playoffs # Regular: 2')
+    expect(await curlZone(run, lines, fx.f.playoffs)).equals(
+      'America/Los_Angeles'
+    )
+    // seasonA kept its own zone.
+    expect(await curlZone(run, lines, fx.f.seasonA)).equals('America/New_York')
+    await run.visit(setupOf(fx.f.playoffs))
+    await contains(b.page, 'Times are in Pacific Time.')
+    expect(await pageText(b)).not.includes('UTC')
+  })
+  await writeFile(join(run.artifacts, 'season-zone.log'), lines.join('\n'))
+  await run.pass(
+    'seasonA reads "Times are in Eastern Time."; playoffs, at the UTC default, reads "Times are in Pacific Time." in a Los Angeles browser, with no UTC anywhere; after its # Regular is saved as 2 from the grid, its stored zone reads America/Los_Angeles where it read UTC (season-zone.log), seasonA keeps America/New_York, and playoffs still reads Pacific Time'
+  )
+}
+
+/**
+ * F2b: a build stores the viewer's zone on a chosen season still at the UTC
+ * default before it is built, so its windows are met in that zone, and the
+ * preview names it.
+ */
+async function f2b(run: Run): Promise<void> {
+  const { fx, b } = run
+  const lines = [
+    '$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts --only F2b',
+    ''
+  ]
+  await inZone(b, 'America/New_York', async () => {
+    expect(await curlZone(run, lines, fx.f.seasonA)).equals('UTC')
+    await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+    await contains(b.page, 'SCHEDULE SETTINGS')
+    await tapText(b, 'Build schedule')
+    await contains(b.page, 'These seasons already have 2 upcoming games')
+    await clickLabel(b, 'Work around them')
+    await b.page.waitForFunction(
+      () => /\/scheduler\/previews\/[^/]+$/.test(location.pathname),
+      { timeout: 120000 }
+    )
+    await contains(b.page, 'Publish this option')
+    const previewId = decodeURIComponent(
+      await b.page.evaluate(() =>
+        location.pathname.slice(location.pathname.lastIndexOf('/') + 1)
+      )
+    )
+    expect(await curlZone(run, lines, fx.f.seasonA)).equals('America/New_York')
+    // Weekday games meet seasonA's windows and Field 1's 17:00–21:00 hours
+    // in New York: 17:30–21:00 until June, 18:00–21:00 from June 1, for
+    // 90-minute games with 10 between. Built in UTC, the windows would end
+    // by 5:00 PM in New York and never meet the field on a weekday.
+    const preview = await api<SchedulePreview>(
+      fx,
+      ADMIN,
+      'GET',
+      `/schedule-previews/${previewId}`
+    )
+    expect(preview.seasons.map(season => season.timezone)).deep.equals([
+      'America/New_York'
+    ])
+    const weekday = preview.options[0].games
+      .map(game => eventLocalFields(game.startAt, 'America/New_York'))
+      .filter(local => {
+        const day = new Date(`${local.date}T12:00:00Z`).getUTCDay()
+        return day >= 1 && day <= 5
+      })
+    trace(`weekday starts ${JSON.stringify(weekday)}`)
+    expect(weekday.length).greaterThan(0)
+    for (const local of weekday)
+      expect(
+        local.date < '2027-06-01' ? ['17:30', '19:10'] : ['18:00', '19:40'],
+        JSON.stringify(local)
+      ).includes(local.time)
+    lines.push(
+      `Option 1's weekday games, in America/New_York: ${weekday.map(local => `${local.date} ${local.time}`).join(', ')}`,
+      ''
+    )
+    // The season's zone is the viewer's, so the rows add none.
+    const shown = await pageText(b)
+    for (const zone of [' EDT', ' EST', 'UTC']) expect(shown).not.includes(zone)
+    await tapText(b, 'Add game')
+    await contains(b.page, 'The date and start are in Eastern Time.')
+    expect(await pageText(b)).not.includes('UTC')
+    expect(await pageText(b)).not.includes('America/New_York')
+    await scrollToText(b, 'Add game', 24)
+    await run.capture('preview-zone-after.png')
+    await run.pass(
+      `seasonA's stored zone, forced to UTC, read UTC before the build and America/New_York after it (build-zone.log); the preview's ${weekday.length} weekday games of Option 1 each start at 5:30 PM or 7:10 PM New York time (6:00 PM or 7:40 PM from June 1, the second window period), inside the window and Field 1's hours; no row names a zone, and the Add-game note reads "The date and start are in Eastern Time.", with no UTC anywhere`
+    )
+  })
+  await writeFile(join(run.artifacts, 'build-zone.log'), lines.join('\n'))
+}
+
 const SCENARIOS: Record<string, Scenario> = {
-  F1: { start: 'E7', run: f1 }
+  F1: { start: 'E7', run: f1 },
+  F2: { start: 'E7', run: f2 },
+  F2b: {
+    start: 'E7',
+    then: async fx => {
+      await forceSeasonZone(fx, fx.f.seasonA, 'UTC')
+    },
+    run: f2b
+  }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */

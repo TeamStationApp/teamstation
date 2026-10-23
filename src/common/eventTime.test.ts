@@ -7,7 +7,8 @@ import {
   eventLocalRange,
   eventWallTime,
   nearestFiveMinutes,
-  viewerTimezone
+  viewerTimezone,
+  zoneLongName
 } from './eventTime'
 import { gameTime } from './gameTime'
 
@@ -56,5 +57,20 @@ describe('viewer-local event times', () => {
     expect(nearestFiveMinutes('12:02')).equals('12:00')
     expect(nearestFiveMinutes('12:03')).equals('12:05')
     expect(() => eventLocalFields(start, 'invalid')).throws()
+  })
+
+  it('names a zone the same all year, or by its long name or id when it has no such name', () => {
+    expect(zoneLongName('America/Los_Angeles')).equals('Pacific Time')
+    expect(zoneLongName('America/New_York')).equals('Eastern Time')
+    // UTC's generic name is the offset GMT+00:00, so its long name is used.
+    expect(zoneLongName('UTC')).equals('Coordinated Universal Time')
+    // Both of these names are only offsets, GMT-05:00.
+    expect(zoneLongName('Etc/GMT+5')).equals('Etc/GMT+5')
+    expect(zoneLongName('Bad/Zone_Name')).equals('Bad/Zone Name')
+    // Either side of a daylight-saving change, the generic name holds.
+    for (const at of ['2027-03-13T12:00:00Z', '2027-03-15T12:00:00Z'])
+      expect(zoneLongName('America/New_York', new Date(at))).equals(
+        zoneLongName('America/New_York')
+      )
   })
 })

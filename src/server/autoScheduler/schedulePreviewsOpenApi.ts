@@ -61,7 +61,12 @@ export function schedulePreviewPaths(
             existing: { type: 'string', enum: ['replace', 'workAround'] },
             teamIds: { type: 'array', items: { type: 'string' } },
             fromPreviewId: { type: 'string' },
-            option: { type: 'integer', minimum: 0, maximum: 2 }
+            option: { type: 'integer', minimum: 0, maximum: 2 },
+            timezone: {
+              type: 'string',
+              description:
+                'The viewer’s IANA time zone: each chosen season still at the UTC default adopts it before it is built, superseding its pending participation and parent requests'
+            }
           }
         }),
         responses: { 201: preview, ...errors }

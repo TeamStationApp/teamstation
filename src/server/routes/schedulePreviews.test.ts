@@ -2,12 +2,14 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { PlannedGame } from '../../common/autoScheduler/types'
+import { eventLocalFields } from '../../common/eventTime'
 import {
   editedGames,
   type Publication,
   type SchedulePreview
 } from '../../common/schedulePreviews'
 import { fieldSizeLabel } from '../../common/venues'
+import { forceSeasonZone } from '../../test/autoSchedulerFixture'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
 
 describe('schedule preview routes', function () {
@@ -400,5 +402,62 @@ describe('schedule preview routes', function () {
         )
       ).status
     ).equals(400)
+  })
+
+  it('builds a season still at the UTC default in the zone it was set up in', async () => {
+    const seasonA = w.fx.f.seasonA
+    const stored = async (): Promise<string> =>
+      (
+        await w.fx.f.h.db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', seasonA)
+          .executeTakeFirstOrThrow()
+      ).timezone
+    // As a season saved before seasons took their admin's zone holds it.
+    await forceSeasonZone(w.fx, seasonA, 'UTC')
+    for (const timezone of [7, '', 'Bad/Zone'])
+      expect(
+        (await build({ mode: 'full', existing: 'workAround', timezone }))
+          .status,
+        JSON.stringify(timezone)
+      ).equals(400)
+    expect(await stored()).equals('UTC')
+    const built = await build({
+      mode: 'full',
+      existing: 'workAround',
+      timezone: 'America/New_York'
+    })
+    expect(built.status).equals(201)
+    expect(await stored()).equals('America/New_York')
+    // The snapshot was read after the zone was adopted.
+    expect(built.body.seasons.map(season => season.timezone)).deep.equals([
+      'America/New_York'
+    ])
+    // Weekday games meet seasonA's windows, 17:30–21:00 and from June 1
+    // 18:00–21:00, and Field 1's 17:00–21:00 hours in New York: 90 minutes,
+    // then 10 between. Built in UTC, a window would end by 5:00 PM in New
+    // York and never meet the field's hours on a weekday.
+    const weekday = built.body.options[0].games
+      .map(game => eventLocalFields(game.startAt, 'America/New_York'))
+      .filter(local => {
+        const day = new Date(`${local.date}T12:00:00Z`).getUTCDay()
+        return day >= 1 && day <= 5
+      })
+    expect(weekday.length).greaterThan(0)
+    for (const local of weekday)
+      expect(
+        local.date < '2027-06-01' ? ['17:30', '19:10'] : ['18:00', '19:40'],
+        JSON.stringify(local)
+      ).includes(local.time)
+    // A season with a zone of its own keeps it.
+    const again = await build({
+      mode: 'full',
+      existing: 'workAround',
+      timezone: 'America/Los_Angeles'
+    })
+    expect(again.status).equals(201)
+    expect(again.body.seasons[0].timezone).equals('America/New_York')
+    expect(await stored()).equals('America/New_York')
   })
 })

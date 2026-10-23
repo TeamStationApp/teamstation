@@ -85,7 +85,13 @@ describe('api client scheduling setup', () => {
     const { api, calls } = client([
       SETUP,
       SETUP,
-      { seasonId: 'sea/a', saved: true, settings: SETTINGS },
+      { seasonId: 'sea/a', saved: true, timezone: 'UTC', settings: SETTINGS },
+      {
+        seasonId: 'sea/a',
+        saved: true,
+        timezone: 'America/Los_Angeles',
+        settings: SETTINGS
+      },
       { seasonId: 'sea/a', teamId: 'tem/b', exhibition: true },
       [
         { ...TEAM, id: 'tem_a', exhibition: true },
@@ -100,6 +106,14 @@ describe('api client scheduling setup', () => {
     expect(
       (await api.saveScheduleSettings('sea/a', SETTINGS)).settings
     ).deep.equals(SETTINGS)
+    // A season set up in the viewer's zone sends it, and reads it back.
+    expect(
+      (
+        await api.saveScheduleSettings('sea/a', SETTINGS, {
+          timezone: 'America/Los_Angeles'
+        })
+      ).timezone
+    ).equals('America/Los_Angeles')
     await api.setExhibitionTeam('sea/a', 'tem/b', true)
     const teams = await api.seasonTeams('sea/a')
     expect(teams.map(team => team.exhibition)).deep.equals([true, undefined])
@@ -111,6 +125,11 @@ describe('api client scheduling setup', () => {
         { seasonIds: [], fieldIds: ['fld_one'] }
       ],
       ['PUT', '/api/v1/seasons/sea%2Fa/schedule-settings', SETTINGS],
+      [
+        'PUT',
+        '/api/v1/seasons/sea%2Fa/schedule-settings',
+        { ...SETTINGS, timezone: 'America/Los_Angeles' }
+      ],
       [
         'PUT',
         '/api/v1/seasons/sea%2Fa/memberships/tem%2Fb',
@@ -175,7 +194,8 @@ describe('api client scheduling setup', () => {
     expect(
       await api.buildSchedulePreview('lea/a', {
         mode: 'full',
-        existing: 'workAround'
+        existing: 'workAround',
+        timezone: 'America/New_York'
       })
     ).deep.equals(preview)
     await api.schedulePreview('spv/1')
@@ -186,7 +206,7 @@ describe('api client scheduling setup', () => {
       [
         'POST',
         '/api/v1/leagues/lea%2Fa/schedule-previews',
-        { mode: 'full', existing: 'workAround' }
+        { mode: 'full', existing: 'workAround', timezone: 'America/New_York' }
       ],
       ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
       [

@@ -18,6 +18,39 @@ export function zoneName(instant: string, timezone: string): string {
   )
 }
 
+/** A zone's name of this style at an instant, or '' when there is none. */
+function zonePart(
+  timezone: string,
+  style: 'longGeneric' | 'long',
+  at: Date
+): string {
+  try {
+    return (
+      new Intl.DateTimeFormat('en', { timeZone: timezone, timeZoneName: style })
+        .formatToParts(at)
+        .find(part => part.type === 'timeZoneName')?.value ?? ''
+    )
+  } catch {
+    return ''
+  }
+}
+
+/** Whether a zone name is only an offset, such as "GMT+00:00". */
+const offsetOnly = (name: string): boolean => /^GMT([+-]\d|$)/.test(name)
+
+/**
+ * A zone's long name, the same all year, such as "Pacific Time". A zone
+ * with no such name, such as UTC, takes its long name, "Coordinated
+ * Universal Time"; one that has only an offset takes its id.
+ */
+export function zoneLongName(timezone: string, at: Date = new Date()): string {
+  for (const style of ['longGeneric', 'long'] as const) {
+    const name = zonePart(timezone, style, at)
+    if (name !== '' && !offsetOnly(name)) return name
+  }
+  return timezone.replace(/_/g, ' ')
+}
+
 /**
  * A zone's short name when it is not the viewer's own zone, so a time read
  * in another zone says so; '' otherwise.

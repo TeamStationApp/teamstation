@@ -23,6 +23,7 @@ import { atomic } from '../db/atomic'
 import type { Database, SchedulePreviewsTable } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { requireGroupAdmin } from '../groups/rights'
+import { adoptSeasonTimezone } from '../groups/seasonZone'
 import { scheduleSetup } from '../scheduler/setup'
 import { occupancy } from '../venues/occupancy'
 import { buildOffThread } from './buildOffThread'
@@ -138,6 +139,13 @@ export async function buildPreview(
 ): Promise<SchedulePreview> {
   await requireGroupAdmin(db, actor, { kind: 'league', id: leagueId })
   const plan = await atomic(db, async trx => {
+    // Seasons still at the UTC default are built in the zone the admin set
+    // them up in.
+    if (request.timezone != null) {
+      const { seasonIds } = await scheduleSetup(trx, leagueId, clock)
+      for (const seasonId of seasonIds)
+        await adoptSeasonTimezone(trx, seasonId, request.timezone, clock)
+    }
     let existing = request.existing
     let teamIds = request.teamIds ?? null
     let keep: PlannedGame[] | undefined

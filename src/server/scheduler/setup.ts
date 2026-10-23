@@ -11,8 +11,10 @@ import {
   type SetupField
 } from '../../common/seasonScheduling'
 import { asFieldSize } from '../../common/venues'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
+import { adoptSeasonTimezone } from '../groups/seasonZone'
 import { seasonParticipants } from '../stats/seasonTeams'
 import { claimCounts } from '../venues/ownership'
 import { datesOf } from '../venues/venues'
@@ -138,13 +140,19 @@ export async function seasonScheduleSettings(
 ): Promise<SeasonScheduleSettings> {
   const season = await seasonRow(db, seasonId)
   const found = (await settingsOf(db, [season])).get(season.id)!
-  return { seasonId, ...found }
+  return { seasonId, timezone: season.timezone, ...found }
 }
 
+/**
+ * Saves a season's settings. With the zone they were set up in, a season
+ * still at the UTC default adopts it, so its windows are read in the zone
+ * its admin was shown.
+ */
 export async function saveSeasonScheduleSettings(
   db: Db,
   seasonId: string,
-  settings: ScheduleSettings
+  settings: ScheduleSettings,
+  options: { timezone?: string; clock?: Clock } = {}
 ): Promise<SeasonScheduleSettings> {
   const values = {
     field_size: settings.fieldSize,
@@ -159,11 +167,20 @@ export async function saveSeasonScheduleSettings(
     windows: JSON.stringify(settings.windows),
     updated_at: new Date()
   }
-  await db
-    .insertInto('season_schedule_settings')
-    .values({ season_id: seasonId, ...values })
-    .onConflict(oc => oc.column('season_id').doUpdateSet(values))
-    .execute()
+  await atomic(db, async trx => {
+    if (options.timezone != null)
+      await adoptSeasonTimezone(
+        trx,
+        seasonId,
+        options.timezone,
+        options.clock ?? realClock
+      )
+    await trx
+      .insertInto('season_schedule_settings')
+      .values({ season_id: seasonId, ...values })
+      .onConflict(oc => oc.column('season_id').doUpdateSet(values))
+      .execute()
+  })
   return await seasonScheduleSettings(db, seasonId)
 }
 

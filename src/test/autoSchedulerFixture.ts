@@ -128,6 +128,22 @@ export async function autoSchedulerFixture(
   return { f, teams, siteAdmin: 105, outsideAdmin: 103 }
 }
 
+/**
+ * Writes a season's zone directly, as a season saved before seasons took
+ * their admin's zone would hold it.
+ */
+export async function forceSeasonZone(
+  fx: AutoSchedulerFixture,
+  seasonId: string,
+  timezone: string
+): Promise<void> {
+  await fx.f.h.db
+    .updateTable('seasons')
+    .set({ timezone })
+    .where('id', '=', seasonId)
+    .execute()
+}
+
 /** Calls the API as a fixture user and returns the parsed answer. */
 export async function api<T = unknown>(
   fx: AutoSchedulerFixture,
