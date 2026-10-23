@@ -9715,3 +9715,276 @@ describe('native pinned jump settlement', function () {
       }
     )
 })
+
+describe('native earlier-control exact-target handoff', function () {
+  this.timeout(15000)
+  const target: Chat2Message = {
+    id: 'msg-preserved-reply',
+    seq: 237,
+    body: 'Practice update: bring water.',
+    authorId: userIdOfGumbo(5)
+  }
+
+  function handoffModel(mode = 'prepend'): {
+    scenario: Scenarios
+    earlierMoves: () => number
+    targetMoves: () => number
+    taps: unknown[]
+    presents: string[]
+  } {
+    const controller = new AbortController()
+    const taps: unknown[] = []
+    const presents: string[] = []
+    let earlierMoves = 0
+    let targetMoves = 0
+    let loaded = mode === 'initial'
+    let targetBox = { x: 126, y: 0, width: 755, height: -39391 }
+    const band = (): { top: number; bottom: number } => ({
+      top: 432,
+      bottom: earlierMoves === 0 ? 1803 : 1929
+    })
+    const nodes = (): PublicNode[] => {
+      const b = band()
+      const earlierBox =
+        mode === 'safe'
+          ? { x: 42, y: 425, width: 996, height: 144 }
+          : {
+              x: 42,
+              y: 0,
+              width: 996,
+              height:
+                earlierMoves === 0
+                  ? -34498
+                  : earlierMoves === 1
+                    ? -33508
+                    : -65980
+            }
+      return [
+        {
+          id: 'chat-message-history',
+          type: 'ScrollView',
+          bounds: { x: 0, y: 0, width: 1080, height: 2400 }
+        },
+        {
+          id: 'chat-conversation-identity',
+          type: 'Button',
+          bounds: { x: 168, y: 136, width: 744, height: 123 }
+        },
+        {
+          id: 'chat-pinned-band',
+          bounds: { x: 42, y: 262, width: 996, height: 170 }
+        },
+        {
+          id: 'chat-composer-band',
+          bounds: { x: 42, y: b.bottom, width: 996, height: 142 }
+        },
+        ...(loaded && ['initial', 'final', 'safe'].includes(mode)
+          ? []
+          : [
+              {
+                type: 'Button',
+                text: 'Load earlier messages',
+                bounds: earlierBox
+              }
+            ]),
+        {
+          id: 'chat-bubble-msg-unrelated',
+          bounds: { x: 126, y: 700, width: 755, height: 267 }
+        },
+        ...(loaded
+          ? Array.from({ length: mode === 'duplicate' ? 2 : 1 }, () => ({
+              id: 'chat-bubble-' + target.id,
+              bounds: { ...targetBox }
+            }))
+          : [])
+      ]
+    }
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'android',
+      deadline: controller.signal,
+      steps: [],
+      visible: async () => false,
+      device: {
+        hierarchy: async (options?: { signal: AbortSignal }) => {
+          options?.signal.throwIfAborted()
+          return { type: 'FrameLayout', children: nodes() }
+        },
+        platformInfo: async (options?: { signal: AbortSignal }) => {
+          options?.signal.throwIfAborted()
+          return { screenWidth: 1080, screenHeight: 2400 }
+        },
+        swipe: async (
+          args: { startY: number; endY: number; duration: number },
+          options?: { signal: AbortSignal }
+        ) => {
+          options?.signal.throwIfAborted()
+          const b = band()
+          expect(Math.min(args.startY, args.endY)).greaterThan(b.top)
+          expect(Math.max(args.startY, args.endY)).lessThan(b.bottom)
+          expect(args.duration).equals(200)
+          if (!loaded) {
+            expect(args.endY).greaterThan(args.startY)
+            earlierMoves++
+            if (mode === 'expired')
+              controller.abort(new Error('Parent native deadline expired'))
+            if (
+              mode !== 'absent' &&
+              (earlierMoves === 2 || ['final', 'safe'].includes(mode))
+            )
+              loaded = true
+            return
+          }
+          targetMoves++
+          if (mode === 'target-stuck') return
+          targetBox =
+            mode === 'target-wrong'
+              ? { ...targetBox, height: targetBox.height - 100 }
+              : mode === 'target-repeat'
+                ? targetMoves === 1
+                  ? { x: 126, y: 2200, width: 755, height: 200 }
+                  : { x: 126, y: 0, width: 755, height: 300 }
+                : { x: 126, y: 700, width: 755, height: 267 }
+        },
+        tapOnPoint: async (point: unknown) => {
+          taps.push(point)
+          throw Error('No earlier Button tap is permitted after target arrival')
+        },
+        assertVisible: async (selector: { id: string }) => {
+          expect(selector.id).equals('chat-bubble-' + target.id)
+          expect(loaded).equals(true)
+          expect(targetBox.height).greaterThan(0)
+          expect(targetBox.y).at.least(band().top + 7.5)
+          expect(targetBox.y + targetBox.height).at.most(band().bottom - 7.5)
+          presents.push(selector.id)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      f: { messages: { target } },
+      observations: []
+    }) as Scenarios
+    return {
+      scenario,
+      earlierMoves: () => earlierMoves,
+      targetMoves: () => targetMoves,
+      taps,
+      presents
+    }
+  }
+
+  const handoff = (scenario: Scenarios): Record<string, unknown> =>
+    scenario.observations.find(
+      row => row.nativeEarlierControlFor === target.id
+    )!
+
+  it('hands off a newly loaded exact reply before comparing the obsolete prepended control', async () => {
+    const m = handoffModel()
+    await m.scenario.anchor(target)
+    expect(m.earlierMoves()).equals(2)
+    expect(m.targetMoves()).equals(1)
+    expect(m.taps).deep.equals([])
+    expect(m.presents).deep.equals(['chat-bubble-' + target.id])
+    expect(handoff(m.scenario).outcome).equals('target-loaded')
+    expect(handoff(m.scenario).loadedTarget).deep.equals({
+      id: target.id,
+      bounds: { x: 126, y: 0, width: 755, height: -39391 }
+    })
+    expect(
+      m.scenario.observations.find(row => row.nativeAnchor === target.id)
+        ?.outcome
+    ).equals('passed')
+  })
+
+  it('hands off an exact initial arrival before requiring an obsolete earlier Button', async () => {
+    const m = handoffModel('initial')
+    const observed = await m.scenario.nativeAnchorReady(target, true)
+    expect(
+      observed.filter(n => n.id === 'chat-bubble-' + target.id)
+    ).has.length(1)
+    expect(m.earlierMoves()).equals(0)
+    expect(m.targetMoves()).equals(0)
+    expect(m.presents).deep.equals([])
+    expect(handoff(m.scenario).outcome).equals('target-loaded')
+    expect(
+      m.scenario.observations.some(row => row.nativeAnchor != null)
+    ).equals(false)
+  })
+
+  for (const mode of ['final', 'safe'])
+    it(
+      'retains outer target framing when the earlier Button disappears: ' +
+        mode,
+      async () => {
+        const m = handoffModel(mode)
+        await m.scenario.anchor(target)
+        expect(m.earlierMoves()).equals(1)
+        expect(m.targetMoves()).equals(1)
+        expect(m.taps).deep.equals([])
+        expect(m.presents).deep.equals(['chat-bubble-' + target.id])
+        expect(handoff(m.scenario).outcome).equals('target-loaded')
+        expect(
+          m.scenario.observations.find(row => row.nativeAnchor === target.id)
+            ?.outcome
+        ).equals('passed')
+      }
+    )
+
+  it('rejects the same backwards frontier while only an unrelated target exists', async () => {
+    const m = handoffModel('absent')
+    expect(String(await captureFailure(m.scenario.anchor(target)))).includes(
+      'Exact target must advance in the requested native gesture direction'
+    )
+    expect(m.earlierMoves()).equals(2)
+    expect(m.targetMoves()).equals(0)
+    expect(handoff(m.scenario).outcome).not.equals('target-loaded')
+    expect(m.presents).deep.equals([])
+    expect(m.taps).deep.equals([])
+  })
+
+  it('rejects duplicated exact arrivals before any handoff or target framing', async () => {
+    const m = handoffModel('duplicate')
+    expect(String(await captureFailure(m.scenario.anchor(target)))).includes(
+      'Unique exact native history target required'
+    )
+    expect(m.earlierMoves()).equals(2)
+    expect(m.targetMoves()).equals(0)
+    expect(handoff(m.scenario).outcome).not.equals('target-loaded')
+    expect(m.presents).deep.equals([])
+    expect(m.taps).deep.equals([])
+  })
+
+  for (const mode of ['target-stuck', 'target-wrong', 'target-repeat'])
+    it(
+      'does not let loaded-target handoff waive ordinary geometry: ' + mode,
+      async () => {
+        const m = handoffModel(mode)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).includes(
+          mode === 'target-repeat'
+            ? 'Only one target crossing'
+            : 'Exact target must advance'
+        )
+        expect(handoff(m.scenario).outcome).equals('target-loaded')
+        expect(
+          m.scenario.observations.find(row => row.nativeAnchor === target.id)
+            ?.outcome
+        ).not.equals('passed')
+        expect(m.presents).deep.equals([])
+        expect(m.taps).deep.equals([])
+      }
+    )
+
+  it('retains an aborting parent deadline before target handoff', async () => {
+    const m = handoffModel('expired')
+    expect(String(await captureFailure(m.scenario.anchor(target)))).includes(
+      'Parent native deadline expired'
+    )
+    expect(m.earlierMoves()).equals(1)
+    expect(m.targetMoves()).equals(0)
+    expect(handoff(m.scenario).outcome).not.equals('target-loaded')
+    expect(m.presents).deep.equals([])
+    expect(m.taps).deep.equals([])
+  })
+})
