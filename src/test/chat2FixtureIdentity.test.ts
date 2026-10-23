@@ -34,7 +34,10 @@ describe('identity compatibility driver descriptor', () => {
   }
   it('retains exact canonical IDs while message sequences and key generations remain numbers', () => {
     const input = { legacy: { ios: baseline }, fullWidthActors: ['full'] }
-    expect(asIdentityCompatibility(input)).deep.equals(input)
+    expect(asIdentityCompatibility(input)).deep.equals({
+      ...input,
+      i2Target: undefined
+    })
   })
   it('rejects stale numeric or malformed account fields instead of coercing descriptor values', () => {
     for (const invalid of [42, '42', 'usr_bad', 0, null]) {

@@ -102,7 +102,8 @@ export const asIdentityCompatibility = asObject({
       replyMentions: asArray(asUserId)
     })
   ),
-  fullWidthActors: asArray(asString)
+  fullWidthActors: asArray(asString),
+  i2Target: asOptional(asValue('retained-linked', 'new-empty'))
 })
 const asDevice = asObject({
   id: asString,
