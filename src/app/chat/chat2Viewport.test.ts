@@ -127,9 +127,11 @@ describe('chat browser keyboard and focus handoff', function () {
     const viewport = new window.EventTarget() as EventTarget & {
       height: number
       offsetTop: number
+      scale: number
     }
     viewport.height = window.innerHeight
     viewport.offsetTop = 0
+    viewport.scale = 1
     Object.defineProperty(window, 'visualViewport', {
       configurable: true,
       value: viewport
@@ -162,6 +164,41 @@ describe('chat browser keyboard and focus handoff', function () {
     stop = undefined
     viewport.dispatchEvent(new window.Event('resize'))
     expect(updates.length).equals(count)
+  })
+
+  it('does not mistake a pinch-zoomed browser for an open keyboard', function () {
+    const viewport = new window.EventTarget() as EventTarget & {
+      height: number
+      offsetTop: number
+      scale: number
+    }
+    viewport.height = window.innerHeight
+    viewport.offsetTop = 0
+    viewport.scale = 1
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: viewport
+    })
+    const updates: Array<{ bottom: number; keyboardOpen: boolean }> = []
+    stop = watchVisualViewport(value => updates.push(value))
+    // Zoomed to 1.5x and panned to the top: two thirds of the layout show.
+    viewport.scale = 1.5
+    viewport.height = window.innerHeight / 1.5
+    viewport.dispatchEvent(new window.Event('resize'))
+    expect(updates.at(-1)).deep.equals({
+      bottom: window.innerHeight / 1.5,
+      keyboardOpen: false
+    })
+    viewport.offsetTop = window.innerHeight / 3
+    viewport.dispatchEvent(new window.Event('scroll'))
+    expect(updates.at(-1)?.keyboardOpen).equals(false)
+    // A keyboard while zoomed still leaves the screen short.
+    viewport.height -= 250 / 1.5
+    viewport.dispatchEvent(new window.Event('resize'))
+    expect(updates.at(-1)).deep.equals({
+      bottom: window.innerHeight - 250 / 1.5,
+      keyboardOpen: true
+    })
   })
 
   it('leaves native and browsers without visualViewport independent of DOM keyboard APIs', function () {

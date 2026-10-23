@@ -604,7 +604,13 @@ export function focusPopupControl(view: unknown): void {
       ?.focus()
 }
 
-/** The browser's visible bottom includes its actual software keyboard. */
+/**
+ * The browser's visible bottom includes its actual software keyboard.
+ *
+ * Pinch zoom also shrinks the visual viewport, but only in layout pixels:
+ * its height times its scale still fills the screen. A keyboard is what
+ * leaves that zoom-independent height short.
+ */
 export function watchVisualViewport(
   update: (value: { bottom: number; keyboardOpen: boolean }) => void
 ): () => void {
@@ -613,15 +619,16 @@ export function watchVisualViewport(
   let width = window.innerWidth
   let closedHeight = Math.max(
     window.innerHeight,
-    viewport.offsetTop + viewport.height
+    viewport.height * viewport.scale
   )
   const changed = (): void => {
     const bottom = viewport.offsetTop + viewport.height
+    const visible = viewport.height * viewport.scale
     if (window.innerWidth !== width) {
       width = window.innerWidth
       closedHeight = window.innerHeight
-    } else closedHeight = Math.max(closedHeight, window.innerHeight, bottom)
-    update({ bottom, keyboardOpen: bottom < closedHeight - 80 })
+    } else closedHeight = Math.max(closedHeight, window.innerHeight, visible)
+    update({ bottom, keyboardOpen: visible < closedHeight - 80 })
   }
   viewport.addEventListener('resize', changed)
   viewport.addEventListener('scroll', changed)
