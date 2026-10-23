@@ -223,6 +223,98 @@ describe('team settings browser history', () => {
       window.history.replaceState(null, '', '/')
     }
   }).timeout(15000)
+
+  it('shows team settings as it was left when Back comes from Add Person', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const detail = asGroupDetail({
+      nonMemberView: false,
+      group: {
+        kind: 'team',
+        id: 'canonical',
+        name: 'Demo Hawks',
+        imageUrl: null,
+        locality: null
+      },
+      parents: [],
+      children: [],
+      participatingSeasons: [],
+      competingTeams: [],
+      games: [],
+      staff: [],
+      canViewPrivate: false,
+      canManage: true
+    })
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Admin',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.hasNotifications = async () => false
+    proto.group = async () => detail
+    proto.gameProposals = async () => []
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    window.history.replaceState(null, '', '/groups/team/canonical/settings')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      const input = document.querySelector<HTMLInputElement>(
+        '[aria-label="Name"]'
+      )!
+      expect(input).not.equals(null)
+      // A name typed and not saved yet.
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, 'Wrens')
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      const add = [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+        .filter(node => node.closest('[data-scene-role="top"]') != null)
+        .find(
+          node => node.textContent?.startsWith('Add Person to Team') === true
+        )
+      expect(add).not.equals(undefined)
+      await act(async () => {
+        add!.click()
+      })
+      await settle()
+      expect(window.location.pathname).not.equals(
+        '/groups/team/canonical/settings'
+      )
+      await act(async () => {
+        window.history.back()
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+      await settle()
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      // The same screen, as it was left: not a fresh load.
+      const again = document.querySelector<HTMLInputElement>(
+        '[data-scene-role="top"] [aria-label="Name"]'
+      )
+      expect(again).equals(input)
+      expect(again!.value).equals('Wrens')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  }).timeout(15000)
 })
 
 describe('a person’s profile, through the app', () => {
@@ -550,6 +642,13 @@ describe('a season’s and a league’s People tab, however the page is opened',
     try {
       expect(document.body.textContent).includes('Set date range')
       const year = new Date().getFullYear()
+      // Season settings, kept beneath the date range it opened.
+      const kept = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-scene-role="covered"] [role="button"]'
+        )
+      ].find(node => node.textContent?.includes('Time frame') === true)
+      expect(kept).not.equals(undefined)
       await press(`Spring ${year}`)
       const save = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
@@ -574,6 +673,8 @@ describe('a season’s and a league’s People tab, however the page is opened',
       const row = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
       ].find(node => node.textContent?.includes('Time frame') === true)!
+      // Saved: the settings it lands on are read afresh, not the kept form.
+      expect(row).not.equals(kept)
       await act(async () => {
         row.click()
         await new Promise(resolve => setTimeout(resolve, 50))

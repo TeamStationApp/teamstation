@@ -205,6 +205,11 @@ export function finishChatChild(route: Route, origin: number): void {
   window.history.go(origin - position)
 }
 
+/** The browser delivers its own Back; there is no drag back to hold off. */
+export function deliveringRoute(): boolean {
+  return false
+}
+
 /**
  * A `stepBackTo` has not landed yet. The shell writes no address meanwhile:
  * `history.back()` lands later, and a write now would go over the entry being

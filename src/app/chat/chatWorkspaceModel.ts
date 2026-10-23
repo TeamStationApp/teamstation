@@ -254,8 +254,22 @@ export type ChatListPositionCapture = () =>
 
 /** Measure the still-visible list before its managed navigation changes state. */
 export class ChatListNavigationCapture {
-  private owner: object | undefined
-  private read: ChatListPositionCapture | undefined
+  /**
+   * Every list attached, the last on top. Two can be mounted at once — a
+   * conversation and the list a drag back reveals beneath it, or both sides
+   * of a push — and the one that leaves gives the reader back to the one it
+   * covered.
+   */
+  private readers: Array<{ owner: object; read: ChatListPositionCapture }> = []
+
+  private get owner(): object | undefined {
+    return this.readers.at(-1)?.owner
+  }
+
+  private get read(): ChatListPositionCapture | undefined {
+    return this.readers.at(-1)?.read
+  }
+
   private captureFlight:
     | { owner: object; context: number; work: Promise<ChatListCaptureResult> }
     | undefined
@@ -275,20 +289,16 @@ export class ChatListNavigationCapture {
 
   attach(read: ChatListPositionCapture): () => void {
     const owner = {}
-    this.owner = owner
-    this.read = read
+    this.readers.push({ owner, read })
     return () => {
-      if (this.owner !== owner) return
-      this.owner = undefined
-      this.read = undefined
+      this.readers = this.readers.filter(reader => reader.owner !== owner)
     }
   }
 
   setContextActive(active: boolean): void {
     if (this.active && !active) {
       this.contextRevision += 1
-      this.owner = undefined
-      this.read = undefined
+      this.readers = []
     }
     this.active = active
   }
@@ -332,6 +342,23 @@ export class ChatListNavigationCapture {
       return await flight.work
     } finally {
       if (this.captureFlight === flight) this.captureFlight = undefined
+    }
+  }
+
+  private readonly waiting = new Set<string>()
+
+  /**
+   * `navigate`, but a change already waiting under the same `kind` takes this
+   * one with it: a second Back pressed while the first still waits on the
+   * capture would otherwise pop twice, the history with it, past the screen.
+   */
+  async navigateOnce(kind: string, change: () => void): Promise<void> {
+    if (this.waiting.has(kind)) return
+    this.waiting.add(kind)
+    try {
+      await this.navigate(change)
+    } finally {
+      this.waiting.delete(kind)
     }
   }
 

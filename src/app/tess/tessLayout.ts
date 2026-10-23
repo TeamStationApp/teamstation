@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import { Dimensions, type ScaledSize, useWindowDimensions } from 'react-native'
 
 import { TABLET_MAX } from '../components/useBreakpoint'
@@ -136,6 +142,28 @@ export function useTessWidth(): {
   const width = useSyncExternalStore(subscribe, () => dragged)
   const max = tessMaxWidth(useWindowDimensions().width)
   return { width: clampTessWidth(width, max), max, setWidth: setTessWidth }
+}
+
+/**
+ * Whether the pane beside Tess — the window, less her column when it is
+ * open beside it — is at least `atLeast` wide. Read as it is now, and
+ * answered again only when that changes, so a window being resized or the
+ * divider dragged redraws nothing that asks unless it crosses `atLeast`.
+ */
+export function usePaneAtLeast(atLeast: number, column: boolean): boolean {
+  const watch = useCallback((reader: () => void): (() => void) => {
+    const window = Dimensions.addEventListener('change', reader)
+    const width = subscribe(reader)
+    return () => {
+      window.remove()
+      width()
+    }
+  }, [])
+  return useSyncExternalStore(watch, () => {
+    const window = Dimensions.get('window').width
+    const beside = column ? clampTessWidth(dragged, tessMaxWidth(window)) : 0
+    return window - beside >= atLeast
+  })
 }
 
 async function readSavedWidth(): Promise<number | undefined> {
