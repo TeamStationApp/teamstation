@@ -767,9 +767,13 @@ describe('actual App scoring player Settings return', function () {
       ).not.equals(null)
       await press('Mookie Betts,')
       fixture.rosterFailure(true)
+      // Back slides the player off before the scorer's refresh answers.
       await press('Back')
-      expect(document.body.textContent).includes(
-        'Unable to refresh the roster.'
+      await waitFor(
+        () =>
+          document.body.textContent?.includes(
+            'Unable to refresh the roster.'
+          ) === true
       )
       expect(document.body.textContent).includes('Mookie Betts')
       fixture.rosterFailure(false)
@@ -780,7 +784,9 @@ describe('actual App scoring player Settings return', function () {
       await fixture.roles([])
       await press('Mookie Betts,')
       await press('Back')
-      expect(document.body.textContent).not.includes('Mookie Betts')
+      await waitFor(
+        () => document.body.textContent?.includes('Mookie Betts') === false
+      )
       expect(
         document.querySelector('[aria-label^="Mookie B, jersey 15"]')
       ).not.equals(null)

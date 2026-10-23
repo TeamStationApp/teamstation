@@ -107,12 +107,33 @@ export class SharedScreenScope implements ScreenScopeSocket {
   }
 }
 
-interface ScreenScopeValue {
+export interface ScreenScopeValue {
   socket?: ScreenScopeSocket
   scope?: ScreenScope
 }
 
 const ScreenScopeContext = createContext<ScreenScopeValue>({})
+
+/** The scope a screen's loads read through, as the provider above gives it. */
+export function useScreenScopeContext(): ScreenScopeValue {
+  return useContext(ScreenScopeContext)
+}
+
+/**
+ * Gives a subtree a scope other than the one above: the stack navigator
+ * freezes it for a screen on its way out, and withholds it from a screen
+ * drawn beneath a drag, whose subscribe would take the socket from the top.
+ */
+export function ScreenScopeValueProvider(props: {
+  value: ScreenScopeValue
+  children?: React.ReactNode
+}): React.ReactElement {
+  return (
+    <ScreenScopeContext.Provider value={props.value}>
+      {props.children}
+    </ScreenScopeContext.Provider>
+  )
+}
 
 export interface ScreenScopeProviderProps {
   /** None for a signed-out visitor: nothing is acknowledged. */
