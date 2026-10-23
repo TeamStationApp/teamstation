@@ -6526,20 +6526,37 @@ export class Scenarios {
         }
         for (let index = 0; index < posted.targets.length; index++) {
           await ui.id('chat-attention-count')
+          const tappedAt = Date.now()
           await ui.present('chat-message-body-' + posted.targets[index].id)
-          const body = await this.targetBounds(
-            'chat-message-body-' + posted.targets[index].id
-          )
-          const band = await this.readingBand()
-          assert(
-            body.y >= band.top - 2 &&
-              body.y + Math.min(body.height, 40) < band.bottom,
-            'Jump target leading body must be exposed below header/pins and above composer/keyboard'
+          // The jump scrolls; a longer history takes longer to arrive. The
+          // target must come to rest in the reading band, not pass through it.
+          let moving: { y: number } | undefined
+          const { body, band } = await until(
+            async () => {
+              const body = await this.targetBounds(
+                'chat-message-body-' + posted.targets[index].id
+              )
+              const band = await this.readingBand()
+              if (
+                body.y < band.top - 2 ||
+                body.y + Math.min(body.height, 40) >= band.bottom
+              ) {
+                moving = undefined
+                return undefined
+              }
+              if (moving != null && Math.abs(moving.y - body.y) <= 1)
+                return { body, band }
+              moving = body
+              return undefined
+            },
+            'Jump target leading body must be exposed below header/pins and above composer/keyboard',
+            5000
           )
           await this.expectCount(2 - index)
           this.observations.push({
             attentionStep: index + 1,
             target: posted.targets[index].id,
+            settledMs: Date.now() - tappedAt,
             body,
             unobscuredReader: band,
             remaining: 2 - index
