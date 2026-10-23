@@ -1147,7 +1147,9 @@ function Shell(props: AppProps): React.ReactElement {
           routePath(routeOf(tab, stack.at(-2), filters))
         )
     )
-  }, [stack, tab, filters, swipeBack])
+    // Whatever the address effect writes the history on, so this reads the
+    // history it has just written.
+  }, [joining, session, tab, top, stack, filters, route.name, swipeBack])
 
   const goToRoute = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
@@ -1647,9 +1649,10 @@ function Shell(props: AppProps): React.ReactElement {
         teamId: from.teamId,
         onTeam: from.onTeam
       }
+      intend('forward')
       setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
     },
-    [tab]
+    [tab, intend]
   )
   /** Somebody on a people list, as the level it was opened from sees them. */
   const openPerson = (
@@ -2998,7 +3001,7 @@ function Shell(props: AppProps): React.ReactElement {
       // Under an immersive top the header shows only while the cover rises
       // over it, and Back there would pop the cover, not the screen named.
       onBack={
-        backOverride ?? (chromeDepth > 0 && !immersiveTop ? pop : undefined)
+        backOverride ?? (stack.length > 0 && !immersiveTop ? pop : undefined)
       }
       tess={
         tessAvailable && !tessSuppressed
