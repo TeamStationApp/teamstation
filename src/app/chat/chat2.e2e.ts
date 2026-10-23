@@ -7200,6 +7200,37 @@ export class Scenarios {
     await this.frameZoomedWebControls(kind, [target], async () => {})
   }
 
+  /**
+   * Tap a control framed in a panned, pinch-zoomed page. Browser input lands
+   * in the visual viewport, so the layout centre is offset and scaled into it;
+   * the control's actual focus afterwards proves where the tap landed.
+   */
+  async tapZoomedWebControl(target: ZoomedWebControl): Promise<void> {
+    const ui = this.ui
+    assert(!ui.native, 'Pinch-zoomed browser page required')
+    const spec = JSON.stringify(target)
+    const located = await ui.dom(
+      `const spec=${spec},v=visualViewport,matches=Array.from(document.querySelectorAll(spec.css));if(matches.length!==1||v==null)throw Error('Unique zoomed tap target and visual viewport required');const b=matches[0].getBoundingClientRect();return {x:(b.x+b.width/2-v.offsetLeft)*v.scale,y:(b.y+b.height/2-v.offsetTop)*v.scale,scale:v.scale,offsetLeft:v.offsetLeft,offsetTop:v.offsetTop}`
+    )
+    const point = {
+      x: Math.round(Number(located.x)),
+      y: Math.round(Number(located.y))
+    }
+    await ui.device.tapOnPoint(point, {
+      signal: AbortSignal.any([ui.deadline, AbortSignal.timeout(15000)])
+    })
+    const landed = await ui.dom(
+      `const n=document.querySelector(${JSON.stringify(target.css)});return {focused:n!=null&&document.activeElement===n}`
+    )
+    this.observations.push({
+      zoomedWebTap: target.name,
+      located,
+      point,
+      ...landed
+    })
+    assert(landed.focused === true, 'Zoomed tap must focus its actual target')
+  }
+
   async frameZoomedWebControls(
     kind: string,
     targets: ZoomedWebControl[],
@@ -7388,12 +7419,14 @@ export class Scenarios {
               ' current other-member safety row fully clear of header and bottom overlay'
           )
           await ui.back()
-          if (!ui.native && variant === 'large-text')
+          if (!ui.native && variant === 'large-text') {
             await this.revealZoomedWebControl(
               variant + '-composer-reveal',
               zoomedComposer
             )
-          await ui.replaceDraft('')
+            await this.tapZoomedWebControl(zoomedComposer)
+            await ui.replaceDraft('', { focused: true })
+          } else await ui.replaceDraft('')
           await ui.typeMentionTrigger()
           await ui.device.assertVisible({ text: exactText('Mention a member') })
           this.observations.push(await observeMentionHeader(ui))
@@ -7474,12 +7507,14 @@ export class Scenarios {
             ],
             actualReachabilityAndBounds: true
           })
-          if (!ui.native && variant === 'large-text')
+          if (!ui.native && variant === 'large-text') {
             await this.revealZoomedWebControl(
               variant + '-composer-reveal-final',
               zoomedComposer
             )
-          await ui.replaceDraft('')
+            await this.tapZoomedWebControl(zoomedComposer)
+            await ui.replaceDraft('', { focused: true })
+          } else await ui.replaceDraft('')
         })
       })
     }
