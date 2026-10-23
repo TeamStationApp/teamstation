@@ -43,6 +43,10 @@ export const PITCH_TIMING = {
   finish: 1500,
   foulFinish: 1750
 } as const
+/** When a ball in play meets the bat: as its pitch reaches the plate. */
+export const HIT_CONTACT_MS = PITCH_TIMING.plate
+/** When it meets the bat with no pitcher on the field to draw a pitch. */
+export const HIT_UNPITCHED_CONTACT_MS = 450
 /** The longest a placed foul is in the air: a deep one, into the seats. */
 export const FOUL_FLIGHT_MAX_MS = 2000
 /** How long a placed foul is in the air, by how far it went. */
@@ -130,6 +134,14 @@ export interface HitSequence {
    * there.
    */
   outRunEnd?: GroundPoint
+  /**
+   * The pitch it was hit off: the pitcher winds up and the ball goes from his
+   * hand to the plate, where the bat meets it at `contactMs`.
+   */
+  pitcher?: number
+  throwSide?: 'R' | 'L'
+  from?: Point3
+  plate?: Point3
 }
 export interface ThrowSequence {
   dictated?: boolean
@@ -332,11 +344,18 @@ export function hitPresentation(
     1100,
     (Math.hypot(target.x - start.x, target.z - start.z) / 20) * 1000
   )
-  const flightEndMs = 450 + flight
+  const pitcher = state.session.liveData.plays.currentPlay!.matchup.pitcher.id
+  const mound = players.find(player => player.playerId === pitcher)?.position
+  // With no pitcher to draw a pitch, the swing comes as soon as it did
+  // before a pitch was drawn.
+  const contactMs = mound == null ? HIT_UNPITCHED_CONTACT_MS : HIT_CONTACT_MS
+  const flightEndMs = contactMs + flight
   const caught = pending.outcome === 'Ball Caught' || pending.fielder == null
   const carom = pending.carom
   const fielderEndMs =
-    450 + flight / (caught ? 1 : 0.8) + (carom == null ? 0 : CAROM_MS)
+    contactMs + flight / (caught ? 1 : 0.8) + (carom == null ? 0 : CAROM_MS)
+  const throwSide =
+    state.session.gameData.players[pitcher]?.throws === 'left' ? 'L' : 'R'
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:hit`,
     generation: state.generation,
@@ -356,9 +375,22 @@ export function hitPresentation(
         ? flightEndMs + (carom == null ? 0 : CAROM_MS)
         : Math.max(flightEndMs + (carom == null ? 0 : CAROM_MS), fielderEndMs),
     flightEndMs,
-    fielderStartMs: 450,
+    fielderStartMs: contactMs,
     fielderEndMs,
-    contactMs: 450,
+    contactMs,
+    ...(mound == null
+      ? {}
+      : {
+          pitcher,
+          throwSide,
+          from: pitchingHand(
+            mound,
+            PITCH_TIMING.release,
+            PITCH_TIMING.release,
+            throwSide
+          ),
+          plate: { x: 0, y: BALL_CONTACT, z: 0 }
+        }),
     players,
     batter: state.session.liveData.plays.currentPlay!.matchup.batter.id,
     fielder: pending.fielder,
