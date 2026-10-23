@@ -17,7 +17,7 @@ const SEASON: SetupSeason = {
   teams: [],
   saved: false,
   settings: {
-    fieldSize: '46/60',
+    fieldSize: 'T-ball',
     gameMinutes: 120,
     bufferMinutes: 15,
     regularGames: 5,
@@ -52,6 +52,7 @@ describe('the season schedule grid', () => {
             exhibitionTeams: 2,
             settings: {
               ...SEASON.settings,
+              fieldSize: '46/60',
               blackouts: ['2027-04-04'],
               windows: []
             }
@@ -102,7 +103,9 @@ describe('the season schedule grid', () => {
     expect(hasLabel('Demo Fall Teams: 7 teams and 2 exhibition teams')).equals(
       true
     )
-    expect(hasLabel('Demo Regular Size: T-ball 46/60')).equals(true)
+    // T-ball and 46/60 are two sizes.
+    expect(hasLabel('Demo Regular Size: T-ball')).equals(true)
+    expect(hasLabel('Demo Fall Size: 46/60')).equals(true)
     // No exhibition teams: the exhibition games aren't counted.
     expect(hasLabel('Demo Regular Total games: 15')).equals(true)
     expect(hasLabel('Demo Regular Doubleheaders: Allowed')).equals(true)
@@ -110,7 +113,7 @@ describe('the season schedule grid', () => {
     expect(hasLabel('Demo Regular Windows: 2 periods')).equals(true)
     expect(hasLabel('Demo Fall Blackouts: 1 day')).equals(true)
     expect(hasLabel('Demo Fall Windows: None')).equals(true)
-    await tapLabel('Demo Fall Size: T-ball 46/60')
+    await tapLabel('Demo Fall Size: 46/60')
     await tapLabel('Demo Regular Total games: 15')
     await tapLabel('Demo Fall Teams: 7 teams and 2 exhibition teams')
     await tapLabel('Open Demo Fall')

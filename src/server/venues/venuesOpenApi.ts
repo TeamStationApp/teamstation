@@ -1,3 +1,5 @@
+import { FIELD_SIZES } from '../../common/venues'
+
 /** The venue registry's paths, merged into `openApiDocument`. */
 export function venuePaths(errorResponse: unknown): Record<string, unknown> {
   const errors = {
@@ -54,7 +56,7 @@ export function venuePaths(errorResponse: unknown): Record<string, unknown> {
   const sizes = {
     type: 'array',
     minItems: 1,
-    items: { type: 'string', enum: ['46/60', '50/70', '55/80', '60/90'] }
+    items: { type: 'string', enum: [...FIELD_SIZES] }
   }
   const field = {
     type: 'object',

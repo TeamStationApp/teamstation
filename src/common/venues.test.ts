@@ -10,6 +10,7 @@ import {
   asVenueDetail,
   asWeeklyHours,
   blackoutRanges,
+  FIELD_SIZES,
   fieldSizeLabel,
   rangeDates,
   wallMinutes,
@@ -130,7 +131,16 @@ describe('venue cleaners', () => {
   it('reads sizes, pins and venue changes', () => {
     expect(asFieldSizeChoice('50/70')).equals('50/70')
     fails(() => asFieldSizeChoice('70/100'), 'Choose a field size')
-    expect(fieldSizeLabel('46/60')).equals('T-ball 46/60')
+    expect(asFieldSizeChoice('T-ball')).equals('T-ball')
+    expect(FIELD_SIZES).deep.equals([
+      'T-ball',
+      '46/60',
+      '50/70',
+      '55/80',
+      '60/90'
+    ])
+    expect(fieldSizeLabel('T-ball')).equals('T-ball')
+    expect(fieldSizeLabel('46/60')).equals('46/60')
     expect(fieldSizeLabel('60/90')).equals('60/90')
     expect(asPin({ latitude: 40, longitude: -75 })).deep.equals({
       latitude: 40,

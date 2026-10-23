@@ -70,15 +70,21 @@ describe('capacityCause', () => {
     ])
   }).timeout(30_000)
 
-  it('names T-ball by its label', () => {
-    const context = buildContext(
+  it('names T-ball and 46/60 as two sizes', () => {
+    const tBall = buildContext(
+      saturdays({ fieldSize: 'T-ball', regularGames: 8 })
+    )
+    expect(capacityCause(tBall, tBall.seasons[0], 'regular', 8)).equals(
+      'not enough T-ball field time to give every team 8 games'
+    )
+    expect(capacityCause(tBall, tBall.seasons[0], 'regular', 1)).equals(
+      'not enough T-ball field time to give every team 1 game'
+    )
+    const small = buildContext(
       saturdays({ fieldSize: '46/60', regularGames: 8 })
     )
-    expect(capacityCause(context, context.seasons[0], 'regular', 8)).equals(
-      'not enough T-ball 46/60 field time to give every team 8 games'
-    )
-    expect(capacityCause(context, context.seasons[0], 'regular', 1)).equals(
-      'not enough T-ball 46/60 field time to give every team 1 game'
+    expect(capacityCause(small, small.seasons[0], 'regular', 8)).equals(
+      'not enough 46/60 field time to give every team 8 games'
     )
   }).timeout(30_000)
 

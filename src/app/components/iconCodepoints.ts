@@ -45,5 +45,6 @@ export const iconCodepoints: Record<IconName, number> = {
   search: 0xe8b6,
   filter_alt: 0xef4f,
   edit: 0xe150,
-  place: 0xe0c8
+  place: 0xe0c8,
+  add: 0xe145
 }

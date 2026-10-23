@@ -13,8 +13,17 @@ import {
 import { asLiteral } from './asLiteral'
 import { asCalendarDate, isRecord } from './groupCreation'
 
-/** The field sizes, fixed: base path / pitching distance, in feet. */
-export const FIELD_SIZES = ['46/60', '50/70', '55/80', '60/90'] as const
+/**
+ * The field sizes, fixed and smallest first: T-ball, then base path /
+ * pitching distance in feet.
+ */
+export const FIELD_SIZES = [
+  'T-ball',
+  '46/60',
+  '50/70',
+  '55/80',
+  '60/90'
+] as const
 export type FieldSize = (typeof FIELD_SIZES)[number]
 export const asFieldSize = asLiteral(...FIELD_SIZES)
 
@@ -25,9 +34,9 @@ export function asFieldSizeChoice(raw: unknown): FieldSize {
   return raw as FieldSize
 }
 
-/** How a size reads in the app. */
+/** How a size reads in the app: the size itself. */
 export function fieldSizeLabel(size: FieldSize): string {
-  return size === '46/60' ? 'T-ball 46/60' : size
+  return size
 }
 
 /** The longest a size switch may take, in minutes. */

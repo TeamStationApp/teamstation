@@ -1,3 +1,5 @@
+import { FIELD_SIZES } from '../../common/venues'
+
 /** The Auto-Scheduler setup's paths, merged into `openApiDocument`. */
 export function schedulingSetupPaths(
   errorResponse: unknown
@@ -46,7 +48,7 @@ export function schedulingSetupPaths(
       'endsOn'
     ],
     properties: {
-      fieldSize: { type: 'string', enum: ['46/60', '50/70', '55/80', '60/90'] },
+      fieldSize: { type: 'string', enum: [...FIELD_SIZES] },
       gameMinutes: {
         type: 'integer',
         minimum: 30,

@@ -1,3 +1,5 @@
+import { FIELD_SIZES } from '../../common/venues'
+
 /** The Auto-Scheduler preview paths, merged into `openApiDocument`. */
 export function schedulePreviewPaths(
   errorResponse: unknown
@@ -40,7 +42,7 @@ export function schedulePreviewPaths(
       awayTeamId: { type: 'string' },
       exhibition: { type: 'boolean' },
       fieldId: { type: 'string' },
-      size: { type: 'string', enum: ['46/60', '50/70', '55/80', '60/90'] },
+      size: { type: 'string', enum: [...FIELD_SIZES] },
       startAt: { type: 'string', format: 'date-time' },
       endAt: { type: 'string', format: 'date-time' }
     }

@@ -1,4 +1,6 @@
+import { FIELD_SIZES } from '../../common/venues'
 import { eventLocationProperties } from '../events/eventInfoOpenApi'
+
 export function gameApprovalPaths(
   errorResponse: unknown
 ): Record<string, unknown> {
@@ -58,7 +60,7 @@ export function gameApprovalPaths(
                 },
                 fieldSize: {
                   type: ['string', 'null'],
-                  enum: ['46/60', '50/70', '55/80', '60/90', null],
+                  enum: [...FIELD_SIZES, null],
                   description:
                     'The size the field is set up in; its only size when left out.'
                 },

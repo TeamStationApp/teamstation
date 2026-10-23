@@ -53,6 +53,7 @@ export type IconName =
   | 'filter_alt'
   | 'edit'
   | 'place'
+  | 'add'
 
 export interface IconProps {
   name: IconName

@@ -22,7 +22,10 @@ import { ChoiceSheet } from '../components/ChoiceSheet'
 import { DangerText } from '../components/DangerText'
 import { CalendarPicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
-import { WeeklyHoursEditor } from '../components/WeeklyHoursEditor'
+import {
+  WeeklyHoursEditor,
+  WINDOW_OPEN_DEFAULT
+} from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -266,6 +269,7 @@ export function ScheduleSeasonScreen({
                 label={`Windows from ${from}`}
                 value={period.hours}
                 disabled={busy}
+                openDefault={WINDOW_OPEN_DEFAULT}
                 onChange={hours => {
                   setWindows(
                     settings.windows.map((item, i) =>
