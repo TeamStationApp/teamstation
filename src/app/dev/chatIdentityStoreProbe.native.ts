@@ -28,8 +28,21 @@ export async function openIdentityProbeStorage(
     return PROBE_SERVICE
   }
   try {
-    if (await keychain.hasGenericPassword({ service: PROBE_SERVICE }))
-      throw new Error('Compatibility diagnostic storage is occupied')
+    if (await keychain.hasGenericPassword({ service: PROBE_SERVICE })) {
+      // Only this diagnostic writes its service, as `chat`: a run stopped
+      // before cleanup leaves it behind, and an iOS Keychain item outlives
+      // a reinstall. Anything else there is never touched.
+      const leftover = await keychain.getGenericPassword({
+        service: PROBE_SERVICE
+      })
+      if (
+        leftover === false ||
+        leftover.username !== 'chat' ||
+        !(await keychain.resetGenericPassword({ service: PROBE_SERVICE })) ||
+        (await keychain.hasGenericPassword({ service: PROBE_SERVICE }))
+      )
+        throw new Error('Compatibility diagnostic storage is occupied')
+    }
     // Exclusive to this app's diagnostic runner; no existing item is replaced.
     const allocated = await keychain.setGenericPassword('chat', 'allocated', {
       service: PROBE_SERVICE,

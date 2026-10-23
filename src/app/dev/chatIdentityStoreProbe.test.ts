@@ -360,15 +360,61 @@ describe('isolated native identity storage diagnostic', () => {
     ).equals(true)
   })
 
-  it('never overwrites or resets an occupied namespace', async () => {
+  it('never overwrites or resets a namespace another writer occupies', async () => {
     const fixture = keychainFixture()
     fixture.rows.set(native.PROBE_SERVICE, {
       username: 'owner',
       password: 'existing'
     })
     await rejected(native.openIdentityProbeStorage(fixture.module), 'occupied')
-    expect(fixture.calls).deep.equals(['has ' + native.PROBE_SERVICE])
+    expect(fixture.calls).deep.equals([
+      'has ' + native.PROBE_SERVICE,
+      'get ' + native.PROBE_SERVICE
+    ])
     expect(fixture.rows.get(native.PROBE_SERVICE)?.password).equals('existing')
+  })
+
+  it('clears its own leftover from a run stopped before cleanup, then runs', async () => {
+    for (const password of ['allocated', JSON.stringify(legacy)]) {
+      const fixture = keychainFixture()
+      fixture.rows.set('app.teamstation.chat', {
+        username: 'chat',
+        password: 'protected'
+      })
+      fixture.rows.set(native.PROBE_SERVICE, { username: 'chat', password })
+      const result = await runIdentityStoreProbe(
+        async () => await native.openIdentityProbeStorage(fixture.module),
+        signal()
+      )
+      expect(result.cleanup).equals(true)
+      expect([...fixture.rows]).deep.equals([
+        ['app.teamstation.chat', { username: 'chat', password: 'protected' }]
+      ])
+      expect(fixture.calls.slice(0, 3)).deep.equals([
+        'has ' + native.PROBE_SERVICE,
+        'get ' + native.PROBE_SERVICE,
+        'reset ' + native.PROBE_SERVICE
+      ])
+      expect(
+        fixture.calls.every(call => call.endsWith(native.PROBE_SERVICE))
+      ).equals(true)
+    }
+  })
+
+  it('stays occupied when its leftover cannot be cleared', async () => {
+    const fixture = keychainFixture()
+    fixture.rows.set(native.PROBE_SERVICE, {
+      username: 'chat',
+      password: 'allocated'
+    })
+    fixture.control.refuseReset = true
+    await rejected(native.openIdentityProbeStorage(fixture.module), 'occupied')
+    expect(fixture.calls.some(call => call.startsWith('set'))).equals(false)
+    expect(fixture.rows.get(native.PROBE_SERVICE)?.password).equals('allocated')
+    fixture.control.refuseReset = false
+    const storage = await native.openIdentityProbeStorage(fixture.module)
+    await storage.cleanup()
+    expect(fixture.rows.size).equals(0)
   })
 
   it('releases exclusive ownership when allocation is refused and after cancellation', async () => {
