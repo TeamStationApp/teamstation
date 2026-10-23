@@ -276,6 +276,41 @@ describe('the grid’s spreadsheet number cells', () => {
     expect(shown('a', 'gameMinutes')).equals('100')
   })
 
+  it('selects the whole number once the field has focused, as iOS needs', async () => {
+    await mount()
+    await tap('a', 'gameMinutes')
+    // iOS leaves the caret after the number when the field focuses as it
+    // mounts; the focus handler selects it all a tick later.
+    input().setSelectionRange(2, 2)
+    await act(async () => {
+      ;(inputProps().onFocus as () => void)()
+    })
+    await wait()
+    selected('a', 'gameMinutes')
+    // A native field has no select(): its setSelection selects the number.
+    const node = input() as HTMLInputElement & {
+      setSelection?: (start: number, end: number) => void
+    }
+    const calls: Array<[number, number]> = []
+    Object.defineProperty(node, 'select', { value: undefined })
+    node.setSelection = (start, end) => {
+      calls.push([start, end])
+    }
+    await act(async () => {
+      ;(inputProps().onFocus as () => void)()
+    })
+    await wait()
+    expect(calls).deep.equals([[0, 2]])
+    // A cell closed before the tick selects nothing.
+    const focused = inputProps().onFocus as () => void
+    await act(async () => {
+      focused()
+    })
+    await key('Escape')
+    expect(document.querySelector('input')).equals(null)
+    expect(calls).deep.equals([[0, 2]])
+  })
+
   it('saves on blur only when the number changed, and Escape restores it', async () => {
     await mount()
     await tap('a', 'bufferMinutes')

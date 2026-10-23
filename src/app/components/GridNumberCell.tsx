@@ -341,6 +341,17 @@ export function useGridNumberEditor({
                       setError('')
                     }
                   },
+                  // iOS ignores selectTextOnFocus for a field that is focused
+                  // as it mounts, and puts the caret after the number; a
+                  // selection made as the focus lands is replaced by that
+                  // caret too. Select the whole number a tick later, so
+                  // typing replaces it on every platform.
+                  onFocus: () => {
+                    setTimeout(() => {
+                      if (active.current != null)
+                        selectAll(input.current, active.current.value.length)
+                    }, 0)
+                  },
                   onBlur: () => {
                     if (error === '') save()
                   },
