@@ -1822,15 +1822,16 @@ export class Scenarios {
           this.f,
           ui.scenario === 'capture' ? ui.surface : undefined
         )
-        // Fully in view and centred: a partly scrolled Sign out can sit under
-        // the floating tab bar, where its tap lands on a tab instead.
         await m.scrollUntilVisible({
           element: { text: exactText('Sign out') },
           direction: 'DOWN',
-          visibilityPercentage: 100,
-          centerElement: true,
           timeout: 15000
         })
+        // The driver counts Sign out as visible while the floating tab bar
+        // covers it, and its tap then lands on a tab. It is the page's last
+        // control, and the page's end padding clears the bar: scroll there.
+        for (let i = 0; i < 2; i++)
+          await m.swipe({ direction: 'UP', duration: 400 })
         await ui.text('Sign out')
         await m.assertVisible({ text: exactText('Sign in'), timeout: 15000 })
         this.observations.push({
