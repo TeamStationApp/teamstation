@@ -106,6 +106,51 @@ describe('chat identity presentation', function () {
     expect(host!.textContent).not.contains('HA')
   })
 
+  it('names each row by its title, visible preview and unread state for screen readers', async function () {
+    const list: ConversationListItem[] = [
+      chat({ id: 'news', lastSeq: 7, preview: 'Bring water', unread: 3 }),
+      chat({
+        id: 'marked',
+        lastSeq: 2,
+        preview: 'See you there',
+        preferences: {
+          pinned: false,
+          muted: false,
+          manualUnread: true,
+          manualUnreadRevision: 1
+        }
+      }),
+      chat({ id: 'quiet', lastSeq: 0 }),
+      chat({ id: 'locked', locked: true, preview: 'Private text', unread: 1 })
+    ]
+    const node = await render(
+      <ChatListScreen
+        embedded
+        narrow={false}
+        engine={{
+          refresh: async () => list,
+          conversations: () => list,
+          subscribe: () => () => {}
+        }}
+        onOpen={() => {}}
+        onNewMessage={() => {}}
+      />
+    )
+    const label = (id: string): string | null =>
+      node
+        .querySelector(`[data-testid="chat-conversation-${id}"]`)!
+        .getAttribute('aria-label')
+    const title = (id: string): string => list.find(c => c.id === id)!.title
+    expect(label('news')).equals(title('news') + ', Bring water, 3 unread')
+    expect(label('marked')).equals(
+      title('marked') + ', See you there, Marked unread'
+    )
+    expect(label('quiet')).equals(title('quiet'))
+    expect(label('locked')).equals(
+      title('locked') + ', Locked message, 1 unread'
+    )
+  })
+
   it('uses one pair of row gutters, vertical overflow targets, text-inset separators and blank empty previews', async function () {
     const list: ConversationListItem[] = [
       chat({ id: 'empty', scopeName: 'Harbor', lastSeq: 0 }),

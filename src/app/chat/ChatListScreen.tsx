@@ -1151,6 +1151,19 @@ function ConversationRow(props: {
   const title = conversationTitle(chat)
   const pill = conversationPill(chat)
   const unread = chat.unread > 0 || chat.preferences?.manualUnread === true
+  const preview = chat.locked
+    ? lstrings.chat_locked_message
+    : chat.previewFailed === true
+      ? lstrings.chat_latest_failed
+      : (chat.preview ??
+        (chat.lastSeq === 0 || chat.lastPostSeq === 0
+          ? ''
+          : lstrings.chat_latest_loading))
+  const unreadLabel = !unread
+    ? undefined
+    : chat.unread > 0
+      ? sprintf(lstrings.chat_unread_label, chat.unread)
+      : lstrings.chat_manual_unread_label
   const openMenu = (): void => {
     if (
       held.current.cancelled ||
@@ -1185,7 +1198,10 @@ function ConversationRow(props: {
         {...immediatePressProps}
         style={styles.openRow}
         accessibilityRole="button"
-        accessibilityLabel={chat.title}
+        // The row is one button to screen readers: name what it shows.
+        accessibilityLabel={[chat.title, preview, unreadLabel]
+          .filter(part => part != null && part !== '')
+          .join(', ')}
         accessibilityHint={pill}
         accessibilityActions={[
           { name: 'longpress', label: lstrings.chat_conversation_actions }
@@ -1266,14 +1282,7 @@ function ConversationRow(props: {
           </View>
           <View style={styles.line}>
             <Text style={[shared.small, styles.preview]} numberOfLines={2}>
-              {chat.locked
-                ? lstrings.chat_locked_message
-                : chat.previewFailed === true
-                  ? lstrings.chat_latest_failed
-                  : (chat.preview ??
-                    (chat.lastSeq === 0 || chat.lastPostSeq === 0
-                      ? ''
-                      : lstrings.chat_latest_loading))}
+              {preview}
             </Text>
             <View style={styles.trailing}>
               <Text style={shared.small}>
@@ -1285,14 +1294,7 @@ function ConversationRow(props: {
                 )}
               </Text>
               {unread && (
-                <View
-                  style={styles.unread}
-                  accessibilityLabel={
-                    chat.unread > 0
-                      ? sprintf(lstrings.chat_unread_label, chat.unread)
-                      : lstrings.chat_manual_unread_label
-                  }
-                >
+                <View style={styles.unread} accessibilityLabel={unreadLabel}>
                   <Text style={styles.unreadText}>
                     {chat.unread > 0 ? chat.unread : '•'}
                   </Text>
