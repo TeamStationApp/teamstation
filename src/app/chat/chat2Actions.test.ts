@@ -6676,12 +6676,18 @@ describe('native scenario navigation and mention handoff', function () {
       | 'fling'
       | 'pin'
       | 'overshoot'
-      | 'closed-stuck',
+      | 'closed-stuck'
+      | 'edge-damped'
+      | 'edge-cross'
+      | 'edge-stuck'
+      | 'edge-wrong'
+      | 'edge-repeat',
     surface = 'android',
     selected = target
   ): { scenario: Scenarios; calls: unknown[] } {
     const calls: unknown[] = []
-    const closedFile = mode === 'overshoot' || mode === 'closed-stuck'
+    const edge = mode.startsWith('edge-')
+    const closedFile = mode === 'overshoot' || mode === 'closed-stuck' || edge
     let closedMoves = 0
     let keyboard = mode === 'keyboard' || mode === 'stuck'
     let rect =
@@ -6698,6 +6704,7 @@ describe('native scenario navigation and mention handoff', function () {
         height: 96.6669921875
       }
     if (closedFile) rect = { x: 126, y: 0, width: 672, height: -22280 }
+    if (edge) rect = { x: 126, y: 0, width: 755, height: -25723 }
     const band = (): { top: number; bottom: number } => ({
       top: closedFile ? 432 : surface === 'ios' ? 109.3333346247673 : 100,
       bottom: closedFile
@@ -6790,7 +6797,29 @@ describe('native scenario navigation and mention handoff', function () {
           expect(Math.min(start, end)).greaterThan(b.top)
           expect(Math.max(start, end)).lessThan(b.bottom)
           calls.push(args)
-          if (closedFile) {
+          if (edge) {
+            closedMoves++
+            if (closedMoves === 1)
+              rect = { x: 126, y: 0, width: 755, height: 432 }
+            else if (mode === 'edge-stuck') {
+              /* Actual target does not move. */
+            } else if (mode === 'edge-wrong')
+              rect = { x: 126, y: 0, width: 755, height: 300 }
+            else if (closedMoves === 2 && mode !== 'edge-damped')
+              rect = { x: 126, y: 2114, width: 755, height: 286 }
+            else if (mode === 'edge-repeat')
+              rect = { x: 126, y: 0, width: 755, height: 432 }
+            else {
+              // The observed 899px gesture moved this target by 2114px.
+              const origin = closedMoves === 2 ? 0 : rect.y
+              rect = {
+                x: 126,
+                y: Math.round(origin + ((end - start) * 2114) / 899),
+                width: 755,
+                height: 286
+              }
+            }
+          } else if (closedFile) {
             closedMoves++
             if (mode !== 'closed-stuck')
               rect =
@@ -6946,6 +6975,66 @@ describe('native scenario navigation and mention handoff', function () {
     expect(model.calls).not.includes('hold')
     expect(model.scenario.observations[0].outcome).not.equals('passed')
   })
+
+  for (const mode of ['edge-damped', 'edge-cross'] as const)
+    it(
+      'damps the actual closed Android zero-gap edge and frames the same reply: ' +
+        mode,
+      async () => {
+        const reply = { ...target, id: 'msg-preserved-reply', seq: 237 }
+        const m = nativeReader(mode, 'android', reply)
+        await m.scenario.anchor(reply)
+        const proof = m.scenario.observations.find(
+          p => p.nativeAnchor === reply.id
+        )!
+        const samples = proof.samples as Array<{
+          box: { y: number; height: number }
+          band: { top: number; bottom: number }
+        }>
+        const gestures = proof.gestures as Array<{
+          startY: number
+          endY: number
+        }>
+        expect(
+          samples.slice(0, 2).map(p => [p.box.y, p.box.height])
+        ).deep.equals([
+          [0, -25723],
+          [0, 432]
+        ])
+        expect(Math.abs(gestures[1].endY - gestures[1].startY)).lessThan(
+          Math.abs(gestures[0].endY - gestures[0].startY)
+        )
+        if (mode === 'edge-cross') {
+          expect(samples[2].box).includes({ y: 2114, height: 286 })
+          expect(gestures[2].endY).lessThan(gestures[2].startY)
+          expect(Math.abs(gestures[2].endY - gestures[2].startY)).lessThan(
+            Math.abs(gestures[1].endY - gestures[1].startY)
+          )
+          expect(proof.nativeAnchorReversal).not.equals(undefined)
+        }
+        const final = samples.at(-1)!
+        expect(final.box.height).greaterThan(0)
+        expect(final.box.y).at.least(final.band.top + 7.5)
+        expect(final.box.y + final.box.height).at.most(final.band.bottom - 7.5)
+        expect(proof.outcome).equals('passed')
+      }
+    )
+
+  for (const mode of ['edge-stuck', 'edge-wrong', 'edge-repeat'] as const)
+    it(
+      'rejects unproved closed Android movement without a hold: ' + mode,
+      async () => {
+        const m = nativeReader(mode)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).includes(
+          mode === 'edge-repeat'
+            ? 'Only one target crossing'
+            : 'Exact target must advance'
+        )
+        expect(m.calls).not.includes('hold')
+        expect(m.scenario.observations[0].outcome).not.equals('passed')
+      }
+    )
 
   function mentionBoundary(
     surface: 'ios' | 'android',

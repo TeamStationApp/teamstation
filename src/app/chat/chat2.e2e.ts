@@ -2031,6 +2031,8 @@ export class Scenarios {
       await new Promise(resolve => setTimeout(resolve, 350))
       current = await read()
     }
+    let crossingLimit = Number.POSITIVE_INFINITY
+    let reversed = false
     if (!intersects()) {
       const k = keyboard[0]
       if (k != null)
@@ -2044,15 +2046,62 @@ export class Scenarios {
           'Bounded native reading-band scroll required'
         )
         const before = distance()
+        const previous = current
+        const below = current.box.y >= current.band.bottom
         const height = current.band.bottom - current.band.top
         // Long iOS histories need measured progress; damp the final approach to avoid a fling past the target.
         const travel =
           ui.surface === 'ios'
             ? Math.min(height * 0.8, Math.max(48, (before + height / 4) / 2))
-            : height * 0.6
-        await swipe((current.box.y >= current.band.bottom ? -1 : 1) * travel)
+            : Math.min(
+                height * 0.6,
+                Math.max(48, (Math.max(0, before) + height / 4) / 2),
+                crossingLimit
+              )
+        await swipe((below ? -1 : 1) * travel)
+        const nowBelow = current.box.y >= current.band.bottom
+        const crossed =
+          ui.surface !== 'ios' && !intersects() && below !== nowBelow
+        if (ui.surface !== 'ios') {
+          const movement = below
+            ? Math.max(
+                previous.box.y - current.box.y,
+                previous.box.y +
+                  previous.box.height -
+                  current.box.y -
+                  current.box.height
+              )
+            : Math.max(
+                current.box.y - previous.box.y,
+                current.box.y +
+                  current.box.height -
+                  previous.box.y -
+                  previous.box.height
+              )
+          assert(
+            movement > 1,
+            'Exact target must advance in the requested native gesture direction'
+          )
+          if (crossed) {
+            assert(
+              !reversed &&
+                Math.abs(previous.band.top - current.band.top) < 1 &&
+                Math.abs(previous.band.bottom - current.band.bottom) < 1,
+              'Only one target crossing of the unchanged reading band may reverse'
+            )
+            reversed = true
+            crossingLimit = Math.max(48, travel / 2)
+            proof.nativeAnchorReversal = {
+              from: previous.box,
+              to: current.box,
+              band: current.band,
+              movement,
+              nextMaximum: crossingLimit
+            }
+          }
+        }
         assert(
-          intersects() || distance() < before - 1,
+          intersects() || distance() < before - 1 || crossed,
           'Exact target must advance after native gesture'
         )
       }
