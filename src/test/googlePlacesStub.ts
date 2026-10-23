@@ -9,6 +9,21 @@ export const EXAMPLE_PARK = {
   location: { latitude: 40.02, longitude: -75.22 }
 }
 
+/** The invented parks a park search finds after Example Park. */
+export const MORE_PARKS = [
+  'Alder Park',
+  'Birch Park',
+  'Cedar Park',
+  'Dogwood Park',
+  'Elm Park',
+  'Fir Park',
+  'Ginkgo Park',
+  'Hazel Park',
+  'Ironwood Park',
+  'Juniper Park',
+  'Linden Park'
+]
+
 export async function googlePlacesStub(): Promise<{
   baseUrl: string
   calls: Array<{ path: string; mask: string; key: string; body: unknown }>
@@ -103,18 +118,40 @@ export async function googlePlacesStub(): Promise<{
             return
           }
           const query = (body as { textQuery: string }).textQuery
-          if (/example park/i.test(query)) {
+          const streets = Array.from({ length: 6 }, (_, index) => ({
+            id: `street-${index}`,
+            displayName: { text: `Demo Way ${index}` },
+            formattedAddress: `${index + 2} Demo Way, Demo City`,
+            primaryType: 'street_address',
+            location: { latitude: 34, longitude: 12 }
+          }))
+          // Any park search finds Example Park and eleven more, then the
+          // street addresses a venue search filters out.
+          if (/park/i.test(query)) {
             res.end(
               JSON.stringify({
-                places: [
-                  {
-                    id: EXAMPLE_PARK.id,
-                    displayName: { text: EXAMPLE_PARK.name },
-                    formattedAddress: EXAMPLE_PARK.address,
-                    primaryType: 'park',
-                    location: EXAMPLE_PARK.location
-                  }
-                ]
+                places: controls.empty
+                  ? []
+                  : [
+                      {
+                        id: EXAMPLE_PARK.id,
+                        displayName: { text: EXAMPLE_PARK.name },
+                        formattedAddress: EXAMPLE_PARK.address,
+                        primaryType: 'park',
+                        location: EXAMPLE_PARK.location
+                      },
+                      ...MORE_PARKS.map((name, index) => ({
+                        id: name.toLowerCase().replace(' ', '-'),
+                        displayName: { text: name },
+                        formattedAddress: `${index + 2} Park Row, Demo City`,
+                        primaryType: 'park',
+                        location: {
+                          latitude: 40.02 + (index + 1) / 100,
+                          longitude: -75.22
+                        }
+                      })),
+                      ...streets
+                    ]
               })
             )
             return
@@ -135,13 +172,7 @@ export async function googlePlacesStub(): Promise<{
                           longitude: 12
                         }
                       },
-                      ...Array.from({ length: 6 }, (_, index) => ({
-                        id: `street-${index}`,
-                        displayName: { text: `Demo Way ${index}` },
-                        formattedAddress: `${index + 2} Demo Way, Demo City`,
-                        primaryType: 'street_address',
-                        location: { latitude: 34, longitude: 12 }
-                      }))
+                      ...streets
                     ]
             })
           )

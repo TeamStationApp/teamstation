@@ -110,6 +110,17 @@ describe('Google primary event location HTTP contract', function () {
     expect(
       (await (await get('/locations?kind=address&query=Demo')).json()).places
     ).length(5)
+    // A game's venue suggestions stay at five, with no location bias, though
+    // Google has twelve parks for this search.
+    expect(
+      (await (await get('/locations?kind=venue&query=Example%20Park')).json())
+        .places
+    ).length(5)
+    expect(stub.calls.at(-1)!.body).deep.equals({
+      textQuery: 'Example Park',
+      languageCode: 'en',
+      pageSize: 5
+    })
     expect(
       (await (await get('/locations?kind=venue&query=x')).json()).provider
     ).equals('google')

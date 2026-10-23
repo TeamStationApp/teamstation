@@ -13,10 +13,23 @@ import type { Coordinates } from './eventGeocoder'
 export interface GooglePlaces {
   autocomplete: (query: string, session: string) => Promise<CitySuggestion[]>
   locality: (id: string, session?: string) => Promise<Locality>
-  eventPlaces: (query: string, kind: EventPlaceKind) => Promise<EventPlace[]>
+  eventPlaces: (
+    query: string,
+    kind: EventPlaceKind,
+    options?: EventPlaceOptions
+  ) => Promise<EventPlace[]>
   coordinates: (address: string) => Promise<Coordinates>
   /** A place by its Google id: what the venue registry stores of it. */
   venueDetails: (placeId: string) => Promise<VenuePlace>
+}
+
+/**
+ * How many places an event-place search returns, five unless asked, and the
+ * point Google should favour places near, 50 km around it.
+ */
+export interface EventPlaceOptions {
+  limit?: number
+  near?: Coordinates
 }
 
 /** A Google place as the venue registry takes it in. */
@@ -186,13 +199,31 @@ export function googlePlaces({
         })
       }
     },
-    async eventPlaces(query, kind) {
+    async eventPlaces(query, kind, options = {}) {
       if (query.trim().length < 2) return []
+      const limit = options.limit ?? 5
       try {
         const raw = await request(
           '/v1/places:searchText',
           'places.id,places.displayName,places.formattedAddress,places.primaryType',
-          { textQuery: query.trim(), languageCode: 'en', pageSize: 5 }
+          {
+            textQuery: query.trim(),
+            languageCode: 'en',
+            pageSize: limit,
+            ...(options.near == null
+              ? {}
+              : {
+                  locationBias: {
+                    circle: {
+                      center: {
+                        latitude: options.near.latitude,
+                        longitude: options.near.longitude
+                      },
+                      radius: 50000
+                    }
+                  }
+                })
+          }
         )
         const rows = asObject({ places: asOptional(asArray(eventPlace), []) })(
           raw
@@ -207,7 +238,7 @@ export function googlePlaces({
                 ((row.displayName?.text.trim() ?? '') !== '' &&
                   !addressTypes.has(row.primaryType ?? '')))
           )
-          .slice(0, 5)
+          .slice(0, limit)
           .map(row => ({
             id: `google:${row.id}`,
             name: addressTypes.has(row.primaryType ?? '')
