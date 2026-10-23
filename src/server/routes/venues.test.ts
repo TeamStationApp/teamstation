@@ -49,7 +49,9 @@ describe('venue routes', function () {
       undefined,
       undefined,
       undefined,
-      googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl })
+      googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl }),
+      {},
+      { googleMapsApiKey: 'placeholder-browser-key' }
     )
   })
   afterEach(async () => {
@@ -73,9 +75,11 @@ describe('venue routes', function () {
     expect(place.rights.claimLeagues).deep.equals([
       { id: f.leagueA, name: 'Demo League A' }
     ])
-    expect(place.map).include({
+    // The map is the point and Google's browser key: no tiles of any kind.
+    expect(place.map).deep.equals({
       latitude: EXAMPLE_PARK.location.latitude,
-      longitude: EXAMPLE_PARK.location.longitude
+      longitude: EXAMPLE_PARK.location.longitude,
+      googleMapsApiKey: 'placeholder-browser-key'
     })
     // A place Google doesn't know is no item.
     expect(

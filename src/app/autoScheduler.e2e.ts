@@ -29,6 +29,7 @@ import {
   SEASON_A_WINDOWS,
   seedThrough
 } from '../test/autoSchedulerFixture'
+import { interceptGoogleMaps } from '../test/googleMapsIntercept'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import {
   absent,
@@ -329,16 +330,19 @@ async function e2(run: Run): Promise<void> {
   run.state.fieldId = fieldPath.split('/')[4]
   await uploadPhoto(admin, 'Add photo', photo)
   await contains(admin.page, 'Photo saved.')
-  // Drag the pin: Leaflet's marker, moved and let go inside its frame.
+  // Drag the pin: the Google stub's marker, let go inside its frame.
   const frame = admin.page
     .frames()
     .find(candidate => candidate.url() === 'about:srcdoc')
   expect(frame, 'the pin map frame').not.equals(undefined)
-  await frame!.waitForFunction(() => (window as any).pinMarker != null)
+  await frame!.waitForFunction(
+    () =>
+      document.querySelector('[data-lat][data-draggable="true"]') !== null &&
+      typeof (window as any).__dragPin === 'function',
+    { timeout: 15000 }
+  )
   await frame!.evaluate(() => {
-    const marker = (window as any).pinMarker
-    marker.setLatLng([40.0213, -75.2214])
-    marker.fire('dragend')
+    ;(window as any).__dragPin(40.0213, -75.2214)
   })
   await contains(admin.page, 'Pin saved.')
   await admin.page.evaluate(() => {
@@ -1574,7 +1578,9 @@ async function main(): Promise<void> {
     cityLookup: googlePlaces({
       apiKey: 'placeholder-key',
       baseUrl: places.baseUrl
-    })
+    }),
+    // The pin maps load Google's script, which the stub answers.
+    googleMapsApiKey: 'test-key'
   })
   const daemon = await maestro(process.env.MAESTRO_D ?? 'seasonAutoScheduler')
   const sessions: BrowserSession[] = []
@@ -1602,6 +1608,7 @@ async function main(): Promise<void> {
       const held = signedIn.get(user)
       if (held != null) return held
       const b = await browserSession(daemon, device, WIDTH, HEIGHT, support)
+      await interceptGoogleMaps(b.page)
       sessions.push(b)
       signedIn.set(user, b)
       const email = EMAILS[user] ?? `fixture${user}@example.com`

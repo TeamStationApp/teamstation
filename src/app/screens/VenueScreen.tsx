@@ -518,7 +518,6 @@ export function VenueScreen({
             settings={{
               latitude: detail.map.latitude,
               longitude: detail.map.longitude,
-              tileUrl: detail.map.tileUrl,
               googleMapsApiKey: detail.map.googleMapsApiKey,
               editable: false
             }}

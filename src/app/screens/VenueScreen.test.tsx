@@ -15,6 +15,7 @@ import {
 import {
   chooseDateRange,
   hasLabel,
+  pinMapDrawn,
   tapLabel,
   tapText,
   venueDetail,
@@ -111,6 +112,37 @@ describe('the venue screen', () => {
     await settle()
     expect(calls.venue).length(2)
     expect(text()).includes('Example Park')
+  })
+
+  it('draws the venue on a read-only Google map, even for its owner', async () => {
+    const { client } = fakeClient(
+      venueDetail({
+        rights: owner(),
+        map: {
+          latitude: 40.03,
+          longitude: -75.23,
+          googleMapsApiKey: 'placeholder-key'
+        }
+      })
+    )
+    await mount(
+      <VenueScreen
+        client={client}
+        venueId="ven_demo"
+        onOpenField={() => undefined}
+        onClaimed={() => undefined}
+      />
+    )
+    expect(pinMapDrawn()).deep.equals({
+      config: {
+        latitude: 40.03,
+        longitude: -75.23,
+        key: 'placeholder-key',
+        editable: false,
+        timeoutMs: 15000
+      },
+      foreignTiles: false
+    })
   })
 
   it('claims a Google place for the person’s one league and opens the new venue', async () => {

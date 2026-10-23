@@ -216,7 +216,6 @@ export function FieldScreen({
           <PinMap
             settings={{
               ...pin,
-              tileUrl: venue.map.tileUrl,
               googleMapsApiKey: venue.map.googleMapsApiKey,
               editable
             }}

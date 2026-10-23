@@ -31,7 +31,6 @@ const detail: VenueDetail = {
   map: {
     latitude: 40,
     longitude: -75,
-    tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png',
     googleMapsApiKey: undefined
   }
 }

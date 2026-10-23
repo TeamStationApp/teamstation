@@ -75,7 +75,6 @@ export function venueRoutes(
   options: {
     places?: GooglePlaces
     clock?: Clock
-    tileUrl?: string
     googleMapsApiKey?: string
     fieldsChanged?: FieldsChanged
   } = {}
@@ -93,10 +92,6 @@ export function venueRoutes(
     media,
     clock: options.clock ?? realClock,
     map: {
-      tileUrl:
-        options.tileUrl ??
-        process.env.TS_EVENT_MAP_TILES ??
-        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       googleMapsApiKey:
         options.googleMapsApiKey ?? serverConfig.googleMaps?.webApiKey
     }

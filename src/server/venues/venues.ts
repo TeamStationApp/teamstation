@@ -53,7 +53,8 @@ import { noticeClaimDecided, noticeClaimFiled } from './venueNotices'
 export interface VenueServices {
   places?: GooglePlaces
   media: MediaContext
-  map: { tileUrl: string; googleMapsApiKey?: string }
+  /** Google's browser key, for the venue and field maps on the web. */
+  map: { googleMapsApiKey?: string }
   clock?: Clock
 }
 
@@ -175,7 +176,7 @@ export async function venueDetail(
   }
 }
 
-/** The map the app draws a venue on: the tiles, or Google's with a key. */
+/** The map the app draws a venue on: its point, and Google's key. */
 function mapAt(
   point: { latitude: number; longitude: number },
   services: VenueServices
@@ -184,7 +185,6 @@ function mapAt(
   return {
     latitude: point.latitude,
     longitude: point.longitude,
-    tileUrl: services.map.tileUrl,
     googleMapsApiKey: key == null || key === '' ? undefined : key
   }
 }

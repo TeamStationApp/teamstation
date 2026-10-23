@@ -91,7 +91,9 @@ const tsSuites = [
   'src/server/groups/parentTerms.test.ts',
   // Fixes M5: T-ball as a size of its own, and the add icon in the phone font.
   'src/migrate/migrations/081fieldSizes.test.ts',
-  'src/app/components/iconFont.test.ts'
+  'src/app/components/iconFont.test.ts',
+  // Fixes M8: the pin map's Google-only document.
+  'src/app/components/pinMapDocument.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
