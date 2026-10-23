@@ -1793,6 +1793,18 @@ export class Chat2UI {
       commandTimeout: 30000
     })
     await this.device.launchApp({ appId: this.fixture.appId })
+    // A cold two-core emulator can raise the system's own ANR dialog over the
+    // app; wait for System UI rather than closing anything, and record it.
+    if (
+      platform === 'android' &&
+      (await this.visible({ text: ".* isn't responding$" }, 3000))
+    ) {
+      await this.device.tapOn({ text: '^Wait$' })
+      this.steps.push({
+        name: 'Android system ANR dialog answered with Wait',
+        outcome: 'passed'
+      })
+    }
     if (platform === 'ios') {
       const installed = execFileSync(
         'xcrun',
