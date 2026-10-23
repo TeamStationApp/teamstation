@@ -4191,43 +4191,46 @@ describe('chat native adapter compatibility', function () {
       'Button'
     ])
   })
-  it('routes measured browser gestures through supported endpoints and native gestures through swipe', async () => {
+  it('routes measured iOS movement through explicit drag timing while preserving Android and browser gestures', async () => {
     for (const surface of ['ios', 'android', 'web-wide']) {
       const actual = ui([], surface)
       const calls: unknown[] = []
-      actual.device.swipe = async args => {
+      const signals: Array<AbortSignal | undefined> = []
+      const remaining = AbortSignal.timeout(2000)
+      actual.device.swipe = async (args, options) => {
         calls.push(['swipe', args])
+        signals.push(options?.signal)
       }
-      actual.device.dragAndDrop = async args => {
+      actual.device.dragAndDrop = async (args, options) => {
         calls.push(['drag', args])
+        signals.push(options?.signal)
       }
-      await actual.measuredSwipe({
-        startX: 10,
-        startY: 20,
-        endX: 40,
-        endY: 50,
-        duration: 200
-      })
+      await actual.measuredSwipe(
+        { startX: 10, startY: 20, endX: 40, endY: 50, duration: 350 },
+        remaining
+      )
       expect(calls).deep.equals(
-        surface === 'web-wide'
+        surface === 'android'
           ? [
+              [
+                'swipe',
+                { startX: 10, startY: 20, endX: 40, endY: 50, duration: 350 }
+              ]
+            ]
+          : [
               [
                 'drag',
                 {
                   from: { point: '10,20' },
                   to: { point: '40,50' },
-                  holdDuration: 1,
-                  duration: 200
+                  holdDuration: surface === 'ios' ? 16 : 1,
+                  duration: 350
                 }
               ]
             ]
-          : [
-              [
-                'swipe',
-                { startX: 10, startY: 20, endX: 40, endY: 50, duration: 200 }
-              ]
-            ]
       )
+      expect(signals).has.length(1)
+      expect(signals[0]).equals(surface === 'web-wide' ? undefined : remaining)
     }
   })
   it('waits for a fresh pending link and actual list after same-provider approval', async () => {
@@ -6130,8 +6133,20 @@ describe('native installed legacy reply navigation', () => {
       if (mode === 'transport') throw Error('Actual native transport failure')
       return hierarchy()
     }
+    const deadline = AbortSignal.timeout(10000)
+    const move = (args: unknown): void => {
+      calls.push({ swipe: args })
+      if (clipped && mode !== 'clipped-no-progress') {
+        row.y = 700
+        row.height = 410
+      } else if (
+        !['no-progress', 'occluded-edge', 'clipped-no-progress'].includes(mode)
+      )
+        row.y = mode === 'tall-file' ? 116 : 200
+    }
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native,
+      deadline,
       surface,
       runDir,
       iosRaw: async () => {
@@ -6180,16 +6195,29 @@ describe('native installed legacy reply navigation', () => {
           screenHeight: clipped ? 2400 : 800
         }),
         swipe: async (args: unknown) => {
-          calls.push({ swipe: args })
-          if (clipped && mode !== 'clipped-no-progress') {
-            row.y = 700
-            row.height = 410
-          } else if (
-            !['no-progress', 'occluded-edge', 'clipped-no-progress'].includes(
-              mode
-            )
-          )
-            row.y = mode === 'tall-file' ? 116 : 200
+          move(args)
+        },
+        dragAndDrop: async (
+          args: Record<string, unknown>,
+          options?: { signal: AbortSignal }
+        ) => {
+          expect(surface).equals('ios')
+          expect(args.holdDuration).equals(16)
+          expect(args.duration).equals(350)
+          expect(options?.signal).equals(deadline)
+          const from = args.from as { point: string }
+          const to = args.to as { point: string }
+          expect(from.point).matches(/^\d+,\d+$/)
+          expect(to.point).matches(/^\d+,\d+$/)
+          const start = from.point.split(',').map(Number)
+          const end = to.point.split(',').map(Number)
+          move({
+            startX: start[0],
+            startY: start[1],
+            endX: end[0],
+            endY: end[1],
+            duration: args.duration
+          })
         },
         tapOnPoint: async (args: unknown) => {
           calls.push({ tap: args })
@@ -6728,6 +6756,8 @@ describe('native scenario navigation and mention handoff', function () {
           rect = { x: 20, y: 250, width: 180, height: 80 }
         },
         swipe: async (args: Record<string, unknown>) => {
+          if (surface === 'ios')
+            throw Error('iOS swipe leaves movement duration uncontrolled')
           const b = band()
           const start = Number(args.startY)
           const end = Number(args.endY)
@@ -6736,12 +6766,31 @@ describe('native scenario navigation and mention handoff', function () {
           calls.push(args)
           if (mode !== 'stuck')
             rect =
-              mode === 'fling' || surface === 'ios'
-                ? {
-                    ...rect,
-                    y: rect.y + (end - start) * (surface === 'ios' ? 1.7 : 2)
-                  }
+              mode === 'fling'
+                ? { ...rect, y: rect.y + (end - start) * 2 }
                 : { x: 20, y: 250, width: 180, height: 80 }
+        },
+        dragAndDrop: async (
+          args: Record<string, unknown>,
+          options?: { signal: AbortSignal }
+        ) => {
+          expect(surface).equals('ios')
+          expect(args.holdDuration).equals(16)
+          expect(args.duration).equals(200)
+          expect(options?.signal).instanceOf(AbortSignal)
+          expect(options?.signal.aborted).equals(false)
+          const from = args.from as { point: string }
+          const to = args.to as { point: string }
+          const start = from.point.split(',').map(Number)
+          const end = to.point.split(',').map(Number)
+          expect(start).has.length(2)
+          expect(end).has.length(2)
+          expect(start[0]).equals(end[0])
+          const b = band()
+          expect(Math.min(start[1], end[1])).greaterThan(b.top)
+          expect(Math.max(start[1], end[1])).lessThan(b.bottom)
+          calls.push(args)
+          rect = { ...rect, y: rect.y + (end[1] - start[1]) * 1.7 }
         },
         assertVisible: async () => ({}),
         longPressOn: async () => {
@@ -6791,7 +6840,7 @@ describe('native scenario navigation and mention handoff', function () {
           expect(model.calls).deep.includes({ id: 'chat-pin-' + target.id })
       }
     )
-  it('reads fractional iOS flat-snapshot geometry and converges on the observed distant target without global scrolling', async () => {
+  it('reads fractional iOS geometry and reaches the exact distant Reply target through explicitly timed drags', async () => {
     const model = nativeReader('above', 'ios')
     const observed = (await model.scenario.ui.nodes()).find(
       node => node.id === 'chat-bubble-' + target.id
@@ -6804,6 +6853,11 @@ describe('native scenario navigation and mention handoff', function () {
     })
     await model.scenario.reply(target)
     expect(model.calls).includes('hold')
+    expect(
+      model.calls.filter(
+        call => typeof call === 'object' && call != null && 'from' in call
+      ).length
+    ).greaterThan(1)
     expect(
       model.calls.some(
         call => typeof call === 'object' && call != null && 'direction' in call
