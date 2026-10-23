@@ -3966,7 +3966,10 @@ export class Chat2UI {
     }
   }
 
-  async replaceDraft(text: string): Promise<void> {
+  async replaceDraft(
+    text: string,
+    options: { focused?: boolean } = {}
+  ): Promise<void> {
     if (this.surface === 'ios') {
       const signal = AbortSignal.timeout(90000)
       const options = { signal }
@@ -4206,7 +4209,9 @@ export class Chat2UI {
       }
       return
     }
-    await this.id('chat-composer')
+    // A composer already proven focused (a pinch-zoomed page's own tap) is not
+    // tapped again by id, whose layout coordinates miss a panned visual viewport.
+    if (this.native || options.focused !== true) await this.id('chat-composer')
     if (!this.native) {
       const before = await this.dom(
         `const n=document.querySelector('[data-testid="chat-composer"]');return {focused:n?.isConnected===true&&document.activeElement===n,editable:n instanceof HTMLTextAreaElement&&!n.disabled&&!n.readOnly&&n.getAttribute('aria-disabled')!=='true',value:n?.value}`
