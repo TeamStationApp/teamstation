@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -91,8 +91,22 @@ async function main(): Promise<void> {
       .assertVisible({ text, timeout })
       .then(() => true)
       .catch(() => false)
+  /** A tap, then long enough for any push, cover or page slide to finish. */
   const tap = async (text: string): Promise<void> => {
     await m.tapOn({ text, timeout: 15000 })
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+  /**
+   * A tap that opens `then`. A list that re-renders as its read lands can
+   * swallow the first tap, so a tap that opened nothing is tried again.
+   */
+  const open = async (text: string, then: string): Promise<void> => {
+    for (let tries = 0; ; tries++) {
+      await tap(text)
+      if (await shown(then, 5000)) return
+      if (tries === 2) await visible(then)
+      await note(`  ${text} opened nothing; tapping again`)
+    }
   }
   /** The navbar by its glyph's position: a text tap can hit a card first. */
   const tab = async (label: string): Promise<void> => {
@@ -110,34 +124,52 @@ async function main(): Promise<void> {
     run: () => Promise<void>
   ): Promise<void> => {
     await note(`${name}: start`)
-    await m.startRecording({
-      path: join(artifacts, 'support', `${platform}-${name}.mp4`)
-    })
+    const path = join(artifacts, 'support', `${platform}-${name}.mp4`)
+    // maestro-d records Android; a simulator records itself.
+    const simulator =
+      platform === 'ios'
+        ? spawn('xcrun', [
+            'simctl',
+            'io',
+            device,
+            'recordVideo',
+            '--force',
+            path
+          ])
+        : undefined
+    if (simulator == null) await m.startRecording({ path })
+    else await new Promise(resolve => setTimeout(resolve, 1000))
     try {
       await run()
       await note(`${name}: passed`)
     } finally {
-      await m.stopRecording().catch(() => undefined)
+      if (simulator == null) await m.stopRecording().catch(() => undefined)
+      else
+        await new Promise(resolve => {
+          simulator.once('exit', resolve)
+          simulator.kill('SIGINT')
+        })
     }
   }
+  // Signs in through the mailed link, opened as a deep link: a simulator's
+  // keyboard drops and reorders typed characters.
   const signIn = async (): Promise<void> => {
     await m.launchApp({ appId: APP_ID, stopApp: true })
     if (!(await shown('Sign in to TeamStation', 15000))) return
-    await tap('parent@example.com')
-    await m.inputText({ text: manifest.email })
-    await tap('Send me a sign-in code')
-    let code: string | undefined
-    for (let tries = 0; tries < 20 && code == null; tries++) {
-      const answer = await fetch(
-        `${manifest.origin}/__stack/code?email=${encodeURIComponent(manifest.email)}`
-      )
-      if (answer.ok) code = ((await answer.json()) as { code: string }).code
-      else await new Promise(resolve => setTimeout(resolve, 500))
-    }
-    assert.ok(code != null, 'No sign-in code mailed')
-    await tap('123456')
-    await m.inputText({ text: code })
-    await tap('Sign in')
+    const asked = await fetch(`${manifest.origin}/api/v1/auth/email-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: manifest.email })
+    })
+    assert.equal(asked.status, 202)
+    const answer = await fetch(
+      `${manifest.origin}/__stack/code?email=${encodeURIComponent(manifest.email)}`
+    )
+    assert.ok(answer.ok, 'No sign-in mail')
+    const { link } = (await answer.json()) as { link?: string }
+    const token = link?.split('/signin/')[1]
+    assert.ok(token != null && token !== '', `No sign-in link in ${link}`)
+    await m.openLink({ link: `teamstation://signin/${token}` })
     await visible('Your Home', 30000)
   }
   const openTeam = async (): Promise<void> => {
@@ -149,8 +181,8 @@ async function main(): Promise<void> {
   const openPlayer = async (): Promise<void> => {
     await openTeam()
     await tap('Team')
-    await tap('Alex L')
-    await visible('Player sections')
+    await visible('Alex L')
+    await open('Alex L', 'Player sections')
   }
   const pastHome = async (): Promise<void> => {
     // Back to a clean Home whatever the last case left.
@@ -184,6 +216,8 @@ async function main(): Promise<void> {
       await recorded('N3', async () => {
         await openPlayer()
         await m.swipe({ start: '1%, 50%', end: '30%, 50%', duration: 1500 })
+        // Short of half way and let go: it springs back, and the history is
+        // untouched.
         await visible('Player sections')
         await tap('Back')
         await visible('Team sections')

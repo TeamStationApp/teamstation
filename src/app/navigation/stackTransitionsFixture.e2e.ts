@@ -12,8 +12,8 @@ import { seedStack } from '../../test/stackTransitionsSeed'
  *
  * The phone's build names one fixed address, so the fixture's own port (a new
  * one each run) sits behind a proxy on `TS_STACK_PORT` (9471 by default).
- * `GET /__stack/code?email=` answers the last sign-in code mailed to that
- * address, which is how the phone script signs in. The manifest it writes,
+ * `GET /__stack/code?email=` answers the last sign-in code and link mailed to
+ * that address; the phone script opens the link, so nothing is typed. The manifest it writes,
  * `$TS_STACK_ARTIFACTS/support/native-manifest.json`, holds the origin and
  * the seeded ids.
  *
@@ -29,16 +29,18 @@ async function main(): Promise<void> {
     .find(entry => entry?.family === 'IPv4' && !entry.internal)?.address
   if (lan == null) throw new Error('No LAN address')
   // Filled once the fixture exists; the route only runs after that.
-  const mailbox: { mail?: Map<string, string> } = {}
+  const mailbox: { mail?: Map<string, string>; links?: Map<string, string> } =
+    {}
   const f = await groupFixture(resolve('dist'), '127.0.0.1', app => {
     app.get('/__stack/code', (req, res) => {
       const email = typeof req.query.email === 'string' ? req.query.email : ''
       const code = mailbox.mail?.get(email)
       if (code == null) res.status(404).end()
-      else res.json({ code })
+      else res.json({ code, link: mailbox.links?.get(email) })
     })
   })
   mailbox.mail = f.h.mail
+  mailbox.links = f.h.links
   const seeded = await seedStack(f)
   const target = new URL(f.h.origin)
   const proxy = createServer((incoming, outgoing) => {
