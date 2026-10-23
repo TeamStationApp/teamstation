@@ -1822,9 +1822,13 @@ export class Scenarios {
           this.f,
           ui.scenario === 'capture' ? ui.surface : undefined
         )
+        // Fully in view and centred: a partly scrolled Sign out can sit under
+        // the floating tab bar, where its tap lands on a tab instead.
         await m.scrollUntilVisible({
           element: { text: exactText('Sign out') },
           direction: 'DOWN',
+          visibilityPercentage: 100,
+          centerElement: true,
           timeout: 15000
         })
         await ui.text('Sign out')
