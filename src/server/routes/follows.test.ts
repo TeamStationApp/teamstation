@@ -14,6 +14,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { canReadFollowedTeam, visibleScopes } from '../access'
 import { mergeTeams } from '../admin/mergeTeams'
 import { hashToken } from '../auth/tokens'
+import { seasonTitle } from '../chat/titles'
 import { type Database, makeDatabase } from '../db/database'
 import { type ChatSeed, chatSeed } from '../dev/chatSeed'
 import { jsonBody } from '../jsonBody'
@@ -23,7 +24,7 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { attachGameSocket, type GameSocketHandle } from '../socket/gameSocket'
 import { mintUserId } from '../users/mintUserId'
-import { followRoutes, seasonTitle } from './follows'
+import { followRoutes } from './follows'
 import { mediaRoutes } from './media'
 import { playerRoutes } from './players'
 import { teamRoutes } from './teams'
@@ -648,7 +649,7 @@ describe('following a team (U1)', function () {
   })
 
   it('titles a season with its league when it has one', function () {
-    expect(seasonTitle('QPLL', 'Spring 2027')).equals('QPLL Spring 2027')
-    expect(seasonTitle(null, 'Titan Force 2026')).equals('Titan Force 2026')
+    expect(seasonTitle('Spring 2027', 'QPLL')).equals('QPLL Spring 2027')
+    expect(seasonTitle('Titan Force 2026', null)).equals('Titan Force 2026')
   })
 })

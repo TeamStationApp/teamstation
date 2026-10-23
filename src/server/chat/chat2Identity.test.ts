@@ -10,13 +10,8 @@ import {
   TeamStationClient
 } from '../../common/api'
 import type { SpaceSettings } from '../media/spacesHls'
-import { scopeAvatars } from './avatars'
-import {
-  type ChatFixture,
-  openChatFixture,
-  TEST_MEDIA
-} from './chatTestFixture'
-import { scopeNames } from './titles'
+import { type ChatFixture, openChatFixture } from './chatTestFixture'
+import { scopeIdentities, scopeKey, seasonTitle, titlesOf } from './titles'
 
 const space: SpaceSettings = {
   endpoint: 'https://media.example.test',
@@ -78,7 +73,7 @@ describe('chat identity metadata through authorized routes', function () {
     return (answer.body as unknown[]).map(asChatConversation)
   }
 
-  it('batches and deduplicates only supplied scopes, with each scene own image and name', async function () {
+  it('batches and deduplicates only supplied scopes, with each scope own name, title name and logo', async function () {
     let queries = 0
     const traced = fixture.db.withPlugin({
       transformQuery(args) {
@@ -89,7 +84,7 @@ describe('chat identity metadata through authorized routes', function () {
         return args.result
       }
     })
-    expect(await scopeAvatars(traced, space, [])).deep.equals(new Map())
+    expect(await scopeIdentities(traced, [])).deep.equals(new Map())
     expect(queries).equals(0)
     const scopes = [
       { type: 'team' as const, id: fixture.seed.teams.hawks },
@@ -97,53 +92,113 @@ describe('chat identity metadata through authorized routes', function () {
       { type: 'season' as const, id: fixture.seed.seasonId },
       { type: 'league' as const, id: fixture.seed.leagueId }
     ]
-    const avatars = await scopeAvatars(traced, space, scopes)
+    const identities = await scopeIdentities(traced, scopes)
     expect(queries).equals(3)
-    expect(avatars.size).equals(3)
+    expect(identities.size).equals(3)
     for (const [index, prefix] of ['team', 'season', 'league'].entries()) {
       const scope = scopes[index === 0 ? 0 : index + 1]
-      const avatar = avatars.get(`${scope.type}:${scope.id}`)!
-      expectImage(avatar.url, `fixtures/${prefix}`)
-      expect(avatar.name).not.equals('')
+      const identity = identities.get(scopeKey(scope.type, scope.id))!
+      expect(identity.logoPath).equals(`fixtures/${prefix}`)
+      expect(identity.name).not.equals('')
     }
-    // The names its chats are titled by come from the same rows.
-    const names = await scopeNames(fixture.db, scopes)
-    expect(names.size).equals(3)
-    for (const [key, name] of names)
-      expect(avatars.get(key)?.scopeName).equals(name)
-    expect(
-      avatars.get(`season:${fixture.seed.seasonId}`)!.scopeName
-    ).not.equals(avatars.get(`season:${fixture.seed.seasonId}`)!.name)
-    expect(avatars.has(`team:${fixture.seed.teams.eagles}`)).equals(false)
-    const absent = await scopeAvatars(traced, TEST_MEDIA.space, [
+    const team = identities.get(scopeKey('team', fixture.seed.teams.hawks))!
+    const season = identities.get(scopeKey('season', fixture.seed.seasonId))!
+    const league = identities.get(scopeKey('league', fixture.seed.leagueId))!
+    expect(team.scopeName).equals(team.name)
+    expect(team.leagueId).equals(null)
+    expect(league.scopeName).equals(league.name)
+    expect(league.leagueId).equals(null)
+    // A season is titled with its league's name, read in the same query.
+    expect(season.scopeName).equals(seasonTitle(season.name, league.name))
+    expect(season.scopeName).not.equals(season.name)
+    expect(season.leagueId).equals(fixture.seed.leagueId)
+    expect(identities.has(scopeKey('team', fixture.seed.teams.eagles))).equals(
+      false
+    )
+
+    // Titles are made from the same map, with no read of their own.
+    queries = 0
+    const titles = titlesOf(
+      [
+        {
+          id: 'staff',
+          kind: 'teamStaff',
+          scopeType: 'team',
+          scopeId: fixture.seed.teams.hawks
+        },
+        {
+          id: 'news',
+          kind: 'seasonAnnouncements',
+          scopeType: 'season',
+          scopeId: fixture.seed.seasonId
+        },
+        {
+          id: 'org',
+          kind: 'leagueOrg',
+          scopeType: 'league',
+          scopeId: fixture.seed.leagueId
+        },
+        {
+          id: 'gone',
+          kind: 'teamFans',
+          scopeType: 'team',
+          scopeId: 'tem_missing'
+        },
+        { id: 'dm', kind: 'dm', scopeType: null, scopeId: null }
+      ],
+      identities
+    )
+    expect(queries).equals(0)
+    expect(Object.fromEntries(titles)).deep.equals({
+      staff: `${team.scopeName} Staff`,
+      news: `${season.scopeName} Announcements`,
+      org: `${league.scopeName} Org`,
+      gone: 'Chat Fans',
+      dm: null
+    })
+    const absent = await scopeIdentities(traced, [
       scopes[0],
       { type: 'team', id: 'tem_missing' }
     ])
-    expect(absent.get(`team:${fixture.seed.teams.hawks}`)?.url).equals(null)
+    expect(absent.has(scopeKey('team', fixture.seed.teams.hawks))).equals(true)
     expect(absent.has('team:tem_missing')).equals(false)
   })
 
-  it('reads a scope row once for its chat names and picture, beside its titles', async function () {
+  it('reads each scope table once for a list, its titles, scope names, pictures and season leagues', async function () {
     const executor = fixture.db.getExecutor()
     const execute = executor.executeQuery.bind(executor)
-    const named: string[] = []
+    let byId: string[] = []
     executor.executeQuery = async (query, queryId) => {
-      const table = /^select .*"name".* from "(teams|seasons|leagues)"/.exec(
-        query.sql
-      )
-      if (table != null) named.push(table[1])
+      // A read of the conversations' own scope rows, by their ids; the
+      // role checks read child scopes by parent ("league_id" in …), which
+      // is not this.
+      const table =
+        /\bfrom "(teams|seasons|leagues)"(?: .*)? where (?:"\1"\.)?"id" in /.exec(
+          query.sql
+        )
+      if (table != null) byId.push(table[1])
       return await execute(query, queryId)
     }
+    const suffix = / (Staff|All Staff|Members|Fans|Announcements|Org)$/
     try {
-      const rows = await list('L')
-      expect(rows.some(row => row.scope?.type === 'season')).equals(true)
-      expect(rows.some(row => row.scope?.type === 'league')).equals(true)
+      const league = await list('L')
+      expect(league.some(row => row.scope?.type === 'season')).equals(true)
+      expect(league.some(row => row.scope?.type === 'league')).equals(true)
+      expect(byId.filter(table => table === 'seasons').length).equals(1)
+      expect(byId.filter(table => table === 'leagues').length).equals(1)
+      expect(byId.filter(table => table === 'teams').length).equals(0)
+      byId = []
+      const team = await list('Hc')
+      expect(team.some(row => row.scope?.type === 'team')).equals(true)
+      expect(byId.filter(table => table === 'teams').length).equals(1)
+      // Title and scope name come from the same read, so they agree.
+      for (const row of [...league, ...team]) {
+        if (row.scope == null) continue
+        expect(row.title?.replace(suffix, '')).equals(row.scopeName)
+      }
     } finally {
       executor.executeQuery = execute
     }
-    // The titles read the names once; the names and pictures once more.
-    expect(named.filter(table => table === 'seasons').length).equals(2)
-    expect(named.filter(table => table === 'leagues').length).equals(2)
   })
 
   it('shares group metadata across its audience rows and exposes no inaccessible scopes or storage fields', async function () {

@@ -15,10 +15,9 @@ import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
-import { scopeAvatars } from './avatars'
 import { DmFacts } from './dms'
 import { defaultPreferences, preferencesFor } from './preferences'
-import { titlesOf } from './titles'
+import { scopeIdentities, scopeKey, scopesOf, titlesOf } from './titles'
 
 /**
  * What the chat routes read back: a person's conversations, a
@@ -92,20 +91,6 @@ export function nameMatches(names: string[], query: string): boolean {
   return names.some(name => name.toLowerCase().includes(wanted))
 }
 
-/** The season each season id belongs to the league of, for season chats. */
-async function leaguesOfSeasons(
-  db: Kysely<Database>,
-  seasonIds: string[]
-): Promise<Map<string, string | null>> {
-  if (seasonIds.length === 0) return new Map()
-  const rows = await db
-    .selectFrom('seasons')
-    .select(['id', 'league_id'])
-    .where('id', 'in', seasonIds)
-    .execute()
-  return new Map(rows.map(row => [row.id, row.league_id]))
-}
-
 /** Every conversation `userId` is in now, as the list shows it. */
 export async function conversationsFor(
   db: Kysely<Database>,
@@ -175,14 +160,22 @@ async function describe(
     .orderBy('seq', 'desc')
     .execute()
   const lastPost = new Map(posts.map(post => [post.conversation_id, post]))
-  const titles = await titlesOf(
-    db,
-    rows.map(row => ({
-      id: row.id,
-      kind: row.kind,
-      scopeType: row.scope_type,
-      scopeId: row.scope_id
-    }))
+  // Each scope's row, read once: the title, the scope name, the picture
+  // and a season's league all come from it.
+  const titled = rows.map(row => ({
+    id: row.id,
+    kind: row.kind,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id
+  }))
+  const identities = await scopeIdentities(db, scopesOf(titled))
+  const titles = titlesOf(titled, identities)
+  // Signed once per scope, so every chat of a scope shows the same picture.
+  const pictures = new Map(
+    [...identities].map(([key, identity]) => [
+      key,
+      imageUrl(media.space, identity.logoPath)
+    ])
   )
   const counts = new Map(
     (
@@ -218,15 +211,6 @@ async function describe(
     rows.filter(row => row.kind === 'dm').map(row => row.id),
     userId
   )
-  const avatars = await scopeAvatars(
-    db,
-    media.space,
-    rows.flatMap(row =>
-      row.scope_type == null || row.scope_id == null
-        ? []
-        : [{ type: row.scope_type, id: row.scope_id }]
-    )
-  )
   // When each chat last had a message, for the list. The newest envelope
   // of any kind: a reaction or an edit is news in a chat too.
   const lastAt = new Map(
@@ -245,10 +229,6 @@ async function describe(
 
   // Moderation and posting, from the caller's roles.
   const scopes = await roleScopes(db, userId, isAdmin)
-  const seasonIds = rows.flatMap(row =>
-    row.scope_type === 'season' && row.scope_id != null ? [row.scope_id] : []
-  )
-  const seasonLeague = await leaguesOfSeasons(db, seasonIds)
   const direct = await db
     .selectFrom('scope_roles')
     .select(['scope_type', 'scope_id', 'role'])
@@ -258,7 +238,8 @@ async function describe(
     id != null &&
     direct.some(role => role.scope_type === type && role.scope_id === id)
   const seasonStaff = (seasonId: string): boolean =>
-    holdsOn('season', seasonId) || holdsOn('league', seasonLeague.get(seasonId))
+    holdsOn('season', seasonId) ||
+    holdsOn('league', identities.get(scopeKey('season', seasonId))?.leagueId)
 
   return rows.map(row => {
     const scopeId = row.scope_id ?? ''
@@ -280,6 +261,9 @@ async function describe(
     const canPost =
       !closed && (row.kind !== 'seasonAnnouncements' || seasonStaff(scopeId))
     const key = keys.get(row.id)
+    const scope =
+      row.scope_type == null ? undefined : scopeKey(row.scope_type, scopeId)
+    const identity = scope == null ? undefined : identities.get(scope)
     return {
       id: row.id,
       kind: row.kind,
@@ -288,12 +272,9 @@ async function describe(
         row.scope_type == null || row.scope_id == null
           ? null
           : { type: row.scope_type, id: row.scope_id },
-      scopeName:
-        row.scope_type == null
-          ? null
-          : (avatars.get(`${row.scope_type}:${scopeId}`)?.scopeName ?? null),
-      avatarName: avatars.get(`${row.scope_type}:${scopeId}`)?.name ?? null,
-      avatarUrl: avatars.get(`${row.scope_type}:${scopeId}`)?.url ?? null,
+      scopeName: identity?.scopeName ?? null,
+      avatarName: identity?.name ?? null,
+      avatarUrl: (scope == null ? undefined : pictures.get(scope)) ?? null,
       lastSeq: Number(row.last_seq),
       lastMessageAt: lastAt.get(row.id) ?? null,
       lastPostAt:
