@@ -625,4 +625,34 @@ describe('games on registry fields', function () {
       'A withdrawn game cannot be restored'
     )
   })
+  it('names the field a game is on in its info, at the field’s pin, and none on a game without one', async () => {
+    const onField = (await propose({ fieldId: FIELD, fieldSize: '50/70' }))
+      .gameId as string
+    const info = await request('GET', `/events/${onField}/info`)
+    expect(info).include({
+      venue: 'Example Park',
+      address: '1 Example Way, Demo City'
+    })
+    expect(info.field).deep.equals({
+      id: FIELD,
+      name: 'Field 1',
+      size: '50/70',
+      latitude: 40.021,
+      longitude: -75.221
+    })
+    // Field 2 has no pin: it is at the venue's point.
+    const single = (
+      await propose({ fieldId: SINGLE, startAt: AT(14), endAt: AT(16) })
+    ).gameId as string
+    expect((await request('GET', `/events/${single}/info`)).field).deep.equals({
+      id: SINGLE,
+      name: 'Field 2',
+      size: '60/90',
+      latitude: 40.02,
+      longitude: -75.22
+    })
+    const plain = (await propose({ startAt: AT(18), endAt: AT(20) }))
+      .gameId as string
+    expect(await request('GET', `/events/${plain}/info`)).not.property('field')
+  })
 })

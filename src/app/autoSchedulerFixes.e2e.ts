@@ -31,7 +31,9 @@ import {
   api,
   type AutoSchedulerFixture,
   autoSchedulerFixture,
+  FIELD_ONE_PIN,
   forceSeasonZone,
+  G1,
   HARBOR_DIAMOND,
   seedHarborField,
   seedThrough
@@ -1489,6 +1491,91 @@ async function f8(run: Run): Promise<void> {
   )
 }
 
+/**
+ * The directions log: each run's `$` line and the URL it opened. A run
+ * replaces its own platform's lines and keeps the other's.
+ */
+async function logDirections(
+  run: Run,
+  platform: 'web',
+  url: string
+): Promise<void> {
+  const file = join(run.artifacts, 'directions.log')
+  const kept = (await readFile(file, 'utf8').catch(() => ''))
+    .split('\n')
+    .filter(
+      line =>
+        line !== '' &&
+        !line.startsWith(`${platform}: `) &&
+        !line.startsWith(
+          '$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts'
+        )
+    )
+  await writeFile(
+    file,
+    [...kept, run.command, `${platform}: ${url}`].join('\n') + '\n'
+  )
+}
+
+/**
+ * F9: a field-linked game's Info tab names the field after its venue, pins
+ * the map on the field's own point, and routes directions to that point.
+ */
+async function f9(run: Run): Promise<void> {
+  const { b } = run
+  await run.visit(`/games/${G1}?tab=info`)
+  await contains(b.page, 'Example Park · Field 1')
+  await centerOn(b, '[data-testid="event-location"]')
+  const frame = await mapFrame(b, 'map')
+  const pin = await stubPin(frame)
+  expect({ lat: pin.lat, lng: pin.lng }, 'the map pin').deep.equals({
+    lat: FIELD_ONE_PIN.latitude,
+    lng: FIELD_ONE_PIN.longitude
+  })
+  // The title sits above the address.
+  const card = await b.page.evaluate(() => {
+    const place = document.querySelector('[data-testid="event-place"]')
+    const address = document.querySelector('[data-testid="event-address"]')
+    return {
+      place: place === null ? '' : String(place.textContent),
+      address: address === null ? '' : String(address.textContent),
+      above:
+        place !== null &&
+        address !== null &&
+        place.getBoundingClientRect().bottom <=
+          address.getBoundingClientRect().top + 1
+    }
+  })
+  expect(card).deep.equals({
+    place: 'Example Park · Field 1',
+    address: EXAMPLE_PARK.address,
+    above: true
+  })
+  await new Promise(resolve => setTimeout(resolve, 600))
+  await run.capture('game-info-field-after.png')
+  // Tapping the address opens directions: capture the URL it opens.
+  await b.page.evaluate(() => {
+    ;(window as any).__directions = []
+    window.open = url => {
+      ;(window as any).__directions.push(String(url))
+      return null
+    }
+  })
+  await tapLabel(b, 'Open directions')
+  await b.page.waitForFunction(() => (window as any).__directions.length > 0, {
+    timeout: 15000
+  })
+  const opened: string[] = await b.page.evaluate(
+    () => (window as any).__directions
+  )
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${FIELD_ONE_PIN.latitude},${FIELD_ONE_PIN.longitude}`
+  expect(opened).deep.equals([url])
+  await logDirections(run, 'web', url)
+  await run.pass(
+    `G1's Info tab reads "Example Park · Field 1" above "${EXAMPLE_PARK.address}"; its map pin is at Field 1's own pin ${FIELD_ONE_PIN.latitude}, ${FIELD_ONE_PIN.longitude}, not Example Park's ${EXAMPLE_PARK.location.latitude}, ${EXAMPLE_PARK.location.longitude}; tapping the address opened ${url}`
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -1510,7 +1597,8 @@ const SCENARIOS: Record<string, Scenario> = {
     run: f6
   },
   F7: { start: 'E2', run: f7 },
-  F8: { start: 'E3', run: f8 }
+  F8: { start: 'E3', run: f8 },
+  F9: { start: 'E5', run: f9 }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */

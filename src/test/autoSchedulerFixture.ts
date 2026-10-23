@@ -1,4 +1,5 @@
 import { userIdOfGumbo } from '../common/userId'
+import { EXAMPLE_PARK } from './googlePlacesStub'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
 
 /** The season the scheduler builds: spring through July, on Eastern time. */
@@ -190,6 +191,15 @@ export async function seedClaimedPark(
   return venue.id
 }
 
+/**
+ * Field 1's own pin: 0.0012° north and 0.0009° east of Example Park's point,
+ * so the field's point and the venue's differ.
+ */
+export const FIELD_ONE_PIN = {
+  latitude: Number((EXAMPLE_PARK.location.latitude + 0.0012).toFixed(6)),
+  longitude: Number((EXAMPLE_PARK.location.longitude + 0.0009).toFixed(6))
+}
+
 /** Field 1 as E2 leaves it, and Field 2 deleted; returns Field 1's id. */
 export async function seedFields(
   fx: AutoSchedulerFixture,
@@ -205,7 +215,8 @@ export async function seedFields(
       sizes: ['46/60', '50/70'],
       startsOn: '2026-10-01',
       endsOn: '2027-09-30',
-      hours: FIELD_ONE_HOURS
+      hours: FIELD_ONE_HOURS,
+      pin: FIELD_ONE_PIN
     }
   )
   const withTwo = await api<{ fields: Array<{ id: string; name: string }> }>(

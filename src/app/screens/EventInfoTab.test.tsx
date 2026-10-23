@@ -256,6 +256,110 @@ describe('event Info location and family controls', () => {
       document.querySelector('[data-testid="event-field-warnings"]')
     ).equals(null)
   })
+  it('titles a field-linked game with its venue and field, and routes to the field’s point', async () => {
+    const client = clientFor({
+      ...initial(),
+      venue: 'Example Park',
+      address: '1 Example Way, Demo City',
+      latitude: 40.0212,
+      longitude: -75.2191,
+      field: {
+        id: 'fld_one',
+        name: 'Field 1',
+        size: '50/70',
+        latitude: 40.0212,
+        longitude: -75.2191
+      }
+    })
+    client.eventLocation = async () => ({
+      latitude: 40.0212,
+      longitude: -75.2191,
+      tileUrl: 'https://example.test/{z}/{x}/{y}'
+    })
+    const opened: string[] = []
+    const open = window.open.bind(window)
+    window.open = url => {
+      opened.push(String(url))
+      return null
+    }
+    const info = console.info
+    console.info = () => undefined
+    try {
+      await render(client)
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      const place = document.querySelector('[data-testid="event-place"]')
+      expect(place?.textContent).equals('Example Park · Field 1')
+      const address = document.querySelector('[data-testid="event-address"]')
+      expect(address?.textContent).equals('1 Example Way, Demo City')
+      // The title comes before the address.
+      expect(
+        place!.compareDocumentPosition(address!) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+      await click('[data-testid="event-directions"]')
+      expect(opened).deep.equals([
+        'https://www.google.com/maps/dir/?api=1&destination=40.0212,-75.2191'
+      ])
+      // A field-less game still routes to its address text.
+      await act(async () => root?.unmount())
+      document.body.replaceChildren()
+      opened.length = 0
+      await render(
+        clientFor({
+          ...initial(),
+          venue: 'Demo Park',
+          address: '100 Demo Avenue, Demo City'
+        })
+      )
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      expect(
+        document.querySelector('[data-testid="event-place"]')?.textContent
+      ).equals('Demo Park')
+      await click('[data-testid="event-directions"]')
+      expect(opened).deep.equals([
+        'https://www.google.com/maps/dir/?api=1&destination=' +
+          encodeURIComponent('100 Demo Avenue, Demo City')
+      ])
+    } finally {
+      window.open = open
+      console.info = info
+    }
+  })
+  it('shows a failure to open a field’s directions', async () => {
+    const client = clientFor({
+      ...initial(),
+      venue: 'Example Park',
+      address: '1 Example Way, Demo City',
+      field: {
+        id: 'fld_one',
+        name: 'Field 1',
+        size: '50/70',
+        latitude: 40.0212,
+        longitude: -75.2191
+      }
+    })
+    const open = window.open.bind(window)
+    window.open = () => {
+      throw new Error('Pop-ups are blocked.')
+    }
+    const info = console.info
+    console.info = () => undefined
+    try {
+      await render(client)
+      await click('[data-testid="event-directions"]')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      expect(document.body.textContent).contains('Pop-ups are blocked.')
+    } finally {
+      window.open = open
+      console.info = info
+    }
+  })
   it('keeps date/time in the hero and renders no duplicate beneath tabs', async () => {
     await render(clientFor())
     expect(document.body.textContent)
