@@ -692,3 +692,91 @@ describe('applying in place', function () {
     expect(inPlace.transitions).deep.equals(copied.transitions)
   })
 })
+
+describe('after the third out', function () {
+  /** Bases loaded — 1 on third, 2 on second, 3 on first — and two out. */
+  function loadedTwoOut(): ReturnType<typeof game> {
+    return strikeout(strikeout(walk(walk(walk(game())))))
+  }
+  const caught: ScoringAction[] = [
+    {
+      type: 'ballInPlay',
+      contact: 'swing',
+      trajectory: 'popup',
+      fielder: F.LF
+    },
+    { type: 'result', eventType: 'field_out', outBy: 'catch' }
+  ]
+
+  it('refuses a run after a catch makes it, and keeps the score', function () {
+    const state = after(loadedTwoOut(), ...caught)
+    expect(outs(state)).equals(3)
+    const run = applyAction(state, {
+      type: 'runnerMovement',
+      runner: 1,
+      to: 'home'
+    })
+    expect(run.problems).deep.equals([
+      {
+        code: 'illegal',
+        message: `The third out ended the half: ${state.gameData.players[1].fullName} cannot score`
+      }
+    ])
+    expect(runs(run.state)).equals(runs(state))
+  })
+
+  it('refuses an advance after a ground out at first makes it', function () {
+    const state = after(
+      loadedTwoOut(),
+      { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      {
+        type: 'runnerMovement',
+        runner: 6,
+        to: '1B',
+        out: true,
+        reason: 'Throw Out',
+        fielders: [F.SS, F['1B']]
+      }
+    )
+    expect(outs(state)).equals(3)
+    const advance = applyAction(state, {
+      type: 'runnerMovement',
+      runner: 2,
+      to: '3B'
+    })
+    expect(advance.problems.map(problem => problem.message)).deep.equals([
+      `The third out ended the half: ${state.gameData.players[2].fullName} cannot advance`
+    ])
+  })
+
+  it('replays a stored run after the third out as it was saved', function () {
+    const state = after(loadedTwoOut(), ...caught)
+    const run = applyAction(
+      state,
+      { type: 'runnerMovement', runner: 1, to: 'home' },
+      { replay: true }
+    )
+    expect(run.problems).deep.equals([])
+    expect(runs(run.state)).equals(runs(state) + 1)
+  })
+
+  it('counts a run that crossed before a tag third out', function () {
+    const state = after(
+      strikeout(strikeout(walk(walk(walk(game()))))),
+      { type: 'ballInPlay', contact: 'swing', fielder: F.LF },
+      { type: 'result', eventType: 'single' },
+      { type: 'runnerMovement', runner: 1, to: 'home' },
+      {
+        type: 'runnerMovement',
+        runner: 6,
+        to: '2B',
+        out: true,
+        reason: 'Throw Out',
+        fielders: [F.LF, F['2B']]
+      }
+    )
+    expect(outs(state)).equals(3)
+    expect(runs(state)).equals(1)
+  })
+})

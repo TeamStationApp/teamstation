@@ -969,7 +969,7 @@ function playSentence(
   edit: ScoringState,
   sentence: readonly ScoringAction[],
   presentationEnabled: boolean,
-  options: { requireCurrentSetup?: boolean } = {}
+  options: { requireCurrentSetup?: boolean; replay?: boolean } = {}
 ): void {
   const reel = new ReelBuilder(presentationEnabled)
   sentence.forEach((action, index) => {
@@ -1001,7 +1001,8 @@ function replayed(
   if (actions.length === 0) return state
   return accepted(state, '', edit => {
     playSentence(edit, actions, state.presentationEnabled === true, {
-      requireCurrentSetup: false
+      requireCurrentSetup: false,
+      replay: true
     })
   })
 }
