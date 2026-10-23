@@ -7167,6 +7167,111 @@ export class Scenarios {
     )
   }
 
+  /** Pinch zoom may require separate real views of controls that exceed its visual viewport. */
+  async zoomedWebControlShot(
+    kind: string,
+    targets: Array<{ name: string; css: string; text?: string }>,
+    note: string
+  ): Promise<void> {
+    const ui = this.ui
+    assert(
+      !ui.native && targets.length > 0,
+      'Explicit public web controls required'
+    )
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(5000)])
+    const proof: Json = {
+      zoomedWebControlCapture: kind,
+      outcome: 'failed',
+      samples: []
+    }
+    this.observations.push(proof)
+    const read = async (): Promise<Json> =>
+      await ui.dom(
+        `
+      const specs=${JSON.stringify(targets)},v=visualViewport;
+      const viewport={x:v?.offsetLeft??0,y:v?.offsetTop??0,width:v?.width??innerWidth,height:v?.height??innerHeight,scale:v?.scale??1,layoutWidth:innerWidth,layoutHeight:innerHeight,dpr:devicePixelRatio};
+      if(!Object.values(viewport).every(Number.isFinite)||viewport.width<=0||viewport.height<=0||viewport.scale<=0)throw Error('Actual visual viewport required');
+      const controls=specs.map(spec=>{
+        let matches=Array.from(document.querySelectorAll(spec.css)).filter(n=>spec.text==null||n.textContent===spec.text);
+        if(matches.length>1&&spec.text!=null)matches=matches.filter(n=>!matches.some(other=>other!==n&&n.contains(other)));
+        if(matches.length!==1||!matches[0].isConnected)throw Error('Unique actual zoom control required: '+spec.name);
+        const n=matches[0],b=n.getBoundingClientRect(),box={x:b.x,y:b.y,width:b.width,height:b.height};
+        if(!Object.values(box).every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Positive zoom control geometry required');
+        let visible=true;for(let p=n;p;p=p.parentElement){const s=getComputedStyle(p);if(p.getAttribute('aria-hidden')==='true'||s.display==='none'||s.visibility==='hidden'||Number(s.opacity)===0)visible=false;}
+        const editor=n instanceof HTMLInputElement||n instanceof HTMLTextAreaElement;
+        const enabled=n.disabled!==true&&n.readOnly!==true&&n.getAttribute('aria-disabled')!=='true';
+        const intersection={width:Math.max(0,Math.min(b.right,viewport.x+viewport.width)-Math.max(b.left,viewport.x)),height:Math.max(0,Math.min(b.bottom,viewport.y+viewport.height)-Math.max(b.top,viewport.y))};
+        const framed=editor?intersection.width>=44&&intersection.height>=44:b.left>=viewport.x-1&&b.top>=viewport.y-1&&b.right<=viewport.x+viewport.width+1&&b.bottom<=viewport.y+viewport.height+1;
+        return {name:spec.name,box,intersection,editor,focused:document.activeElement===n,enabled,visible,ready:visible&&enabled&&framed&&(!editor||document.activeElement===n)};
+      });return {viewport,controls};`,
+        signal
+      )
+    const revealed = new Set<string>()
+    let reference = ''
+    let stableSince = 0
+    let environment = ''
+    for (;;) {
+      signal.throwIfAborted()
+      const actual = await read()
+      ;(proof.samples as Json[]).push({
+        at: new Date().toISOString(),
+        ...actual
+      })
+      const viewport = actual.viewport as Json
+      const invariant = JSON.stringify([
+        viewport.scale,
+        viewport.dpr,
+        viewport.layoutWidth,
+        viewport.layoutHeight,
+        viewport.width,
+        viewport.height
+      ])
+      if (environment === '') environment = invariant
+      assert.equal(
+        invariant,
+        environment,
+        'Control reveal must preserve actual zoom and viewport dimensions'
+      )
+      const controls = actual.controls as Json[]
+      const missing = controls.find(control => control.ready !== true)
+      if (missing != null) {
+        reference = ''
+        assert(
+          missing.visible === true && missing.enabled === true,
+          'Visible enabled zoom control required'
+        )
+        if (!revealed.has(String(missing.name))) {
+          const target = need(
+            targets.find(t => t.name === missing.name),
+            'Observed zoom target required'
+          )
+          await ui.dom(
+            `const spec=${JSON.stringify(target)};let matches=Array.from(document.querySelectorAll(spec.css)).filter(n=>spec.text==null||n.textContent===spec.text);if(matches.length>1&&spec.text!=null)matches=matches.filter(n=>!matches.some(other=>other!==n&&n.contains(other)));if(matches.length!==1)throw Error('Unique public reveal target required');matches[0].scrollIntoView({block:'center',inline:'center',behavior:'instant'});return {ordinaryPublicReveal:spec.name};`,
+            signal
+          )
+          revealed.add(String(missing.name))
+        }
+      } else {
+        const snapshot = JSON.stringify(actual)
+        if (reference !== snapshot) {
+          reference = snapshot
+          stableSince = Date.now()
+        } else if (Date.now() - stableSince >= 200) {
+          await ui.shot(kind, note)
+          assert.deepEqual(
+            await read(),
+            actual,
+            'Actual zoom controls must stay framed around the raw capture'
+          )
+          proof.outcome = 'passed'
+          proof.revealed = [...revealed]
+          return
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+  }
+
   async variants(): Promise<void> {
     const ui = this.ui
     await this.signIn()
@@ -7255,6 +7360,34 @@ export class Scenarios {
           await ui.typeMentionTrigger()
           await ui.device.assertVisible({ text: exactText('Mention a member') })
           this.observations.push(await observeMentionHeader(ui))
+          if (!ui.native && variant === 'large-text') {
+            await this.zoomedWebControlShot(
+              variant + '-mention-heading-search',
+              [
+                {
+                  name: 'heading',
+                  css: '[data-testid="chat-picker-header"] *',
+                  text: 'Mention a member'
+                },
+                {
+                  name: 'search',
+                  css: '[data-testid="chat-picker-content"] [aria-label="Search members"]'
+                }
+              ],
+              'Actual same-zoom chooser heading and focused editable Search region in the visual viewport'
+            )
+            await this.zoomedWebControlShot(
+              variant + '-mention-cancel',
+              [
+                {
+                  name: 'cancel',
+                  css: '[data-testid="chat-picker-header"] button,[data-testid="chat-picker-header"] [role="button"]',
+                  text: 'Cancel'
+                }
+              ],
+              'Actual same-zoom Cancel control in a separately revealed visual viewport; not a combined header claim'
+            )
+          }
           const member = need(
             this.f.members.find(m => m.userId !== this.viewerId),
             'Current mention member required'
@@ -7278,6 +7411,18 @@ export class Scenarios {
             variant + '-mention-composer',
             'Actual ' + variant + ' selected token and composer line-box'
           )
+          if (!ui.native && variant === 'large-text')
+            await this.zoomedWebControlShot(
+              variant + '-send-chevron',
+              [
+                {
+                  name: 'send',
+                  css: '[data-testid="chat-composer-band"] [aria-label="Send"]'
+                },
+                { name: 'chevron', css: '[data-testid="chat-jump-latest"]' }
+              ],
+              'Actual same-zoom enabled Send and persistent chevron in the visual viewport; original draft remains unsent'
+            )
           if (ui.native) await ui.hideKeyboard()
           await this.readable()
           this.observations.push({
