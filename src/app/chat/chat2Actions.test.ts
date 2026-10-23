@@ -5214,7 +5214,9 @@ describe('chat native adapter compatibility', function () {
     const calls: string[] = []
     let revealed = false
     row.scrollIntoView = options => {
-      expect(options).deep.equals({ block: 'center' })
+      // A zoomed row wider than the visual viewport keeps an earlier pan
+      // under a vertical-only reveal; only its aligned leading edge clears it.
+      expect(options).deep.equals({ block: 'center', inline: 'start' })
       calls.push('public-dom-reveal')
       revealed = true
     }
@@ -5883,6 +5885,138 @@ describe('chat native adapter compatibility', function () {
       { id: 'chat-bubble-long', point: '50%,50%', duration: 550 }
     ])
   })
+  it('measures a clipped web touch preview only after its entrance fade has settled', async () => {
+    const actual = ui([], 'web-touch')
+    const order: string[] = []
+    let settled = false
+    const box = { x: 8, y: 64, width: 273, height: 544 }
+    const opaque = {
+      opacity: 1,
+      transform: 'none',
+      display: 'flex',
+      visibility: 'visible'
+    }
+    Object.assign(actual, {
+      native: false,
+      metrics: () => ({ width: 390, height: 844, coarse: true })
+    })
+    actual.present = async () => {}
+    actual.absent = async () => {}
+    actual.shot = async () => {
+      order.push('shot')
+    }
+    actual.device.longPressOn = async () => {
+      order.push('hold')
+    }
+    actual.dom = async script => {
+      if (script.includes('publicReaderScroll'))
+        return { publicReaderScroll: true }
+      order.push('readiness')
+      settled = true
+      return {
+        geometry: { controls: box, panel: box, backdrop: box, preview: box },
+        styles: {
+          controls: opaque,
+          panel: opaque,
+          backdrop: opaque,
+          preview: opaque
+        }
+      }
+    }
+    actual.publicBounds = async id => {
+      // Public DOM nodes omit the preview while its fade is still at opacity 0.
+      if (id === 'chat-message-spotlight-preview') {
+        if (!settled) throw Error('Measured public DOM element bounds required')
+        order.push('preview')
+      }
+      return box
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { long: { id: 'long' } } },
+      observations: []
+    }) as Scenarios
+    scenario.check = async (name, work) => {
+      if (name.startsWith('E5 partially scrolled')) await work()
+    }
+    scenario.openGroup = async () => {}
+    scenario.anchor = async () => {}
+    scenario.readingBand = async () => ({ top: 106, bottom: 679 })
+    scenario.targetBounds = async () => ({
+      x: 48,
+      y: -14,
+      width: 273,
+      height: 648
+    })
+    scenario.menuState = async () => ({})
+    scenario.dismiss = async () => {}
+    await scenario.E5()
+    expect(order.indexOf('hold')).lessThan(order.indexOf('readiness'))
+    expect(order.indexOf('readiness')).lessThan(order.indexOf('preview'))
+    expect(order.at(-1)).equals('shot')
+    expect(scenario.observations.at(-1)).deep.includes({
+      selectedPreview: box
+    })
+  })
+  for (const zoom of [
+    {
+      name: 'a panned pinch-zoomed',
+      viewport: { scale: 1.5, left: 48, top: 141, right: 308, bottom: 704 },
+      point: '47.6%,65%'
+    },
+    {
+      name: 'an unzoomed',
+      viewport: { scale: 1, left: 0, top: 0, right: 390, bottom: 844 },
+      point: undefined
+    }
+  ])
+    it(
+      'holds ' +
+        zoom.name +
+        ' web touch bubble at a visible point in the driver coordinate space',
+      async () => {
+        const actual = ui([], 'web-touch')
+        const holds: unknown[] = []
+        Object.assign(actual, {
+          native: false,
+          metrics: () => ({ width: 390, height: 844, coarse: true })
+        })
+        actual.dom = async script => {
+          expect(script).includes('visualViewport')
+          return {
+            ...zoom.viewport,
+            x: 48,
+            y: 114,
+            width: 273,
+            height: 90
+          }
+        }
+        actual.device.longPressOn = async args => {
+          holds.push(args)
+        }
+        actual.device.assertVisible = async () => ({})
+        const scenario = Object.assign(Object.create(Scenarios.prototype), {
+          ui: actual,
+          observations: []
+        }) as Scenarios
+        scenario.anchor = async () => {}
+        scenario.readingBand = async () => ({ top: 106, bottom: 679 })
+        const target: Chat2Message = {
+          id: 'target',
+          seq: 1,
+          body: 'Bring water.',
+          authorId: userIdOfGumbo(1)
+        }
+        await scenario.action(target)
+        expect(holds).deep.equals([
+          {
+            id: 'chat-bubble-target',
+            ...(zoom.point == null ? {} : { point: zoom.point }),
+            duration: 550
+          }
+        ])
+      }
+    )
   it('ignores a full-screen Back wrapper when the real member row is already exposed', async () => {
     const actual = ui([])
     const gestures: unknown[] = []
