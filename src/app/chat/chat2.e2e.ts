@@ -1903,7 +1903,10 @@ export class Scenarios {
         else await this.dismiss()
     }
     if (!ui.native) await this.webHistoryTarget(target)
-    else await this.nativeAnchorReady(target)
+    else {
+      await this.nativeHistoryTarget(target)
+      await this.nativeAnchorReady(target)
+    }
     await ui.present('chat-bubble-' + target.id)
     if (!ui.native)
       await ui.dom(
@@ -1913,11 +1916,25 @@ export class Scenarios {
   }
 
   /** Native existence assertions include clipped and occluded rows; measure before acting. */
-  async nativeAnchorReady(target: Chat2Message): Promise<void> {
+  async nativeAnchorReady(
+    target: Chat2Message,
+    earlier = false,
+    parentSignal = this.ui.deadline
+  ): Promise<PublicNode[]> {
     const ui = this.ui
     assert(ui.native, 'Native anchor geometry required')
-    const id = 'chat-bubble-' + target.id
-    const proof: Json = { nativeAnchor: target.id, samples: [], gestures: [] }
+    const id = earlier ? 'Load earlier messages' : 'chat-bubble-' + target.id
+    const matchesTarget = (node: PublicNode): boolean =>
+      earlier
+        ? node.text === id && /(?:^|\.)Button$/.test(node.type ?? '')
+        : node.id === id
+    const proof: Json = {
+      ...(earlier
+        ? { nativeEarlierControlFor: target.id }
+        : { nativeAnchor: target.id }),
+      samples: [],
+      gestures: []
+    }
     this.observations.push(proof)
     const startedAt = Date.now()
     let end = startedAt + (ui.surface === 'ios' ? 90000 : 120000)
@@ -1925,6 +1942,7 @@ export class Scenarios {
       assert(Date.now() < end, 'Native anchor observation deadline expired')
       return AbortSignal.any([
         ui.deadline,
+        parentSignal,
         AbortSignal.timeout(Math.max(1, end - Date.now()))
       ])
     }
@@ -1938,7 +1956,9 @@ export class Scenarios {
         key: string,
         clipped = false
       ): NonNullable<PublicNode['bounds']> => {
-        const matches = nodes.filter(node => node.id === key)
+        const matches = nodes.filter(node =>
+          key === id ? matchesTarget(node) : node.id === key
+        )
         assert.equal(
           matches.length,
           1,
@@ -2122,6 +2142,100 @@ export class Scenarios {
       )
     }
     proof.outcome = 'passed'
+    return current.nodes
+  }
+
+  /** Fetch absent native rows through the actual public earlier-page button. */
+  async nativeHistoryTarget(target: Chat2Message): Promise<void> {
+    const ui = this.ui
+    assert(ui.native, 'Native history paging required')
+    const id = 'chat-bubble-' + target.id
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(120000)])
+    const targetCount = (nodes: PublicNode[]): number => {
+      const count = nodes.filter(node => node.id === id).length
+      assert(count <= 1, 'Unique exact native history target required')
+      return count
+    }
+    const read = async (observationSignal = signal): Promise<PublicNode[]> => {
+      observationSignal.throwIfAborted()
+      return await ui.nodes(undefined, observationSignal)
+    }
+    let nodes = await read()
+    if (targetCount(nodes) === 1) return
+    const proof: Json = { nativeHistoryTarget: target.id, pages: [] }
+    this.observations.push(proof)
+    for (let page = 0; ; page++) {
+      if (targetCount(nodes) === 1) {
+        proof.outcome = 'passed'
+        return
+      }
+      assert(page < 10, 'Bounded native earlier-page count required')
+      const controls = nodes.filter(
+        node =>
+          node.text === 'Load earlier messages' &&
+          /(?:^|\.)Button$/.test(node.type ?? '')
+      )
+      assert.equal(
+        controls.length,
+        1,
+        'Unique public native earlier Button required'
+      )
+      assert(
+        controls[0].enabled === true,
+        'Enabled public native earlier Button required'
+      )
+      nodes = await this.nativeAnchorReady(target, true, signal)
+      if (targetCount(nodes) === 1) continue
+      const control = nodes.filter(
+        node =>
+          node.text === 'Load earlier messages' &&
+          /(?:^|\.)Button$/.test(node.type ?? '')
+      )
+      assert(
+        control.length === 1 && control[0].enabled === true,
+        'Actual earlier Button must remain enabled'
+      )
+      const box = need(
+        control[0].bounds,
+        'Framed public earlier Button required'
+      )
+      const before = new Set(
+        nodes.flatMap(node =>
+          node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+        )
+      )
+      const sample: Json = { page, box, before: [...before] }
+      ;(proof.pages as unknown[]).push(sample)
+      signal.throwIfAborted()
+      await ui.device.tapOnPoint(
+        { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+        { signal }
+      )
+      const progressSignal = AbortSignal.any([
+        signal,
+        AbortSignal.timeout(10000)
+      ])
+      nodes = await until(
+        async () => {
+          const next = await read(progressSignal)
+          if (
+            targetCount(next) === 1 ||
+            next.some(
+              node =>
+                node.id?.startsWith('chat-bubble-') === true &&
+                !before.has(node.id)
+            )
+          )
+            return next
+          return undefined
+        },
+        'actual native earlier-page message progress',
+        10000
+      )
+      sample.after = nodes.flatMap(node =>
+        node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+      )
+    }
   }
 
   /** Page through the real public history control; browser scroll does not fetch older rows. */

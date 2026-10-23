@@ -7564,3 +7564,248 @@ describe('iOS spotlight backdrop dismissal', () => {
     expect(m.calls).deep.equals(['Back'])
   })
 })
+
+describe('native absent history paging', function () {
+  this.timeout(15000)
+  const target: Chat2Message = {
+    id: 'msg-preserved-outgoing',
+    seq: 5,
+    body: 'Practice update: bring water.',
+    authorId: userIdOfGumbo(5)
+  }
+
+  function model(fault = ''): {
+    scenario: Scenarios
+    taps: Array<{ x: number; y: number }>
+    gestures: unknown[]
+  } {
+    const taps: Array<{ x: number; y: number }> = []
+    const gestures: unknown[] = []
+    let pages = 0
+    let earlierY =
+      fault === 'no-progress' || fault === 'limit' ? 300 : -4395.33332824707
+    let targetY = fault === 'loaded' ? -500 : 300
+    const loaded = (): boolean =>
+      fault === 'loaded' || (fault !== 'limit' && pages === 2)
+    const nodes = (): PublicNode[] => [
+      {
+        id: 'chat-message-history',
+        type: 'Other',
+        text: 'Load earlier messages',
+        bounds: { x: 0, y: 0, width: 402, height: 874 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        type: 'Button',
+        bounds: { x: 64, y: 62.3333346247673, width: 274, height: 47 }
+      },
+      {
+        id: 'chat-pinned-band',
+        bounds: { x: 16, y: 110, width: 370, height: 60.66667175292969 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 16, y: 700.6666870117188, width: 370, height: 54 }
+      },
+      { type: 'ScrollView', text: 'Load earlier messages' },
+      { type: 'Other', text: 'Load earlier messages' },
+      ...(fault === 'exhausted'
+        ? []
+        : Array.from({ length: fault === 'duplicate' ? 2 : 1 }, () => ({
+            id: 'settings-pill-button',
+            type: 'Button',
+            text: 'Load earlier messages',
+            enabled: fault !== 'disabled',
+            bounds: { x: 16, y: earlierY, width: 370, height: 48 }
+          }))),
+      {
+        id: 'chat-bubble-msg-recent',
+        bounds: { x: 48, y: 400, width: 281, height: 96 }
+      },
+      ...(pages > 0
+        ? [
+            {
+              id: 'chat-bubble-msg-older-page-' + pages,
+              bounds: { x: 48, y: 500, width: 281, height: 96 }
+            }
+          ]
+        : []),
+      ...(loaded()
+        ? [
+            {
+              id: 'chat-bubble-' + target.id,
+              bounds: {
+                x: 48,
+                y: targetY,
+                width: 281.3333435058594,
+                height: 96.6669921875
+              }
+            }
+          ]
+        : [])
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      deadline: AbortSignal.timeout(fault === 'no-progress' ? 600 : 15000),
+      steps: [],
+      visible: async () => false,
+      device: {
+        platformInfo: async () => ({ screenWidth: 402, screenHeight: 874 }),
+        // Preserve the actual flat XCTest snapshot contract, including duplicate ancestor labels.
+        hierarchy: async (options?: { signal: AbortSignal }) => {
+          options?.signal.throwIfAborted()
+          return {
+            nodes: nodes().map((node, index) => ({
+              index,
+              type: node.type ?? 'Other',
+              identifier: node.id,
+              label: node.text,
+              rect: node.bounds,
+              enabled: node.enabled ?? true,
+              hittable: false
+            }))
+          }
+        },
+        dragAndDrop: async (args: {
+          from: { point: string }
+          to: { point: string }
+          holdDuration: number
+          duration: number
+        }) => {
+          expect(args.holdDuration).equals(16)
+          expect(args.duration).equals(200)
+          const start = args.from.point.split(',').map(Number)
+          const end = args.to.point.split(',').map(Number)
+          expect(Math.min(start[1], end[1])).greaterThan(170.6666717529297)
+          expect(Math.max(start[1], end[1])).lessThan(700.6666870117188)
+          gestures.push(args)
+          if (fault !== 'stuck') {
+            const delta = (end[1] - start[1]) * 1.7
+            if (loaded()) targetY += delta
+            else earlierY += delta
+          }
+        },
+        tapOnPoint: async (
+          point: { x: number; y: number },
+          options?: { signal: AbortSignal }
+        ) => {
+          options?.signal.throwIfAborted()
+          expect(point.x).equals(201)
+          expect(point.y).equals(earlierY + 24)
+          expect(point.y - 24).at.least(178.1666717529297)
+          expect(point.y + 24).at.most(693.1666870117188)
+          taps.push(point)
+          if (fault !== 'no-progress') pages++
+        },
+        assertVisible: async (selector: { id: string }) => {
+          expect(selector.id).equals('chat-bubble-' + target.id)
+          expect(loaded()).equals(true)
+          expect(targetY).at.least(178.1666717529297)
+          expect(targetY + 96.6669921875).at.most(693.1666870117188)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      f: { messages: { target } },
+      observations: []
+    }) as Scenarios
+    return { scenario, taps, gestures }
+  }
+
+  it('loads the absent exact original through two real earlier-page Buttons before target framing', async () => {
+    const m = model()
+    const before = await m.scenario.ui.nodes()
+    expect(
+      before.filter(node => node.text === 'Load earlier messages')
+    ).has.length(4)
+    expect(
+      before.find(
+        node => node.type === 'Button' && node.text === 'Load earlier messages'
+      )?.bounds
+    ).includes({ y: -4395.33332824707, height: 48 })
+    expect(before.some(node => node.id === 'chat-bubble-' + target.id)).equals(
+      false
+    )
+    await m.scenario.anchor(target)
+    expect(m.taps).has.length(2)
+    expect(m.gestures.length).greaterThan(1)
+    const paging = m.scenario.observations.find(
+      row => row.nativeHistoryTarget === target.id
+    )!
+    expect(paging.outcome).equals('passed')
+    expect(paging.pages).has.length(2)
+    const controls = m.scenario.observations.filter(
+      row => row.nativeEarlierControlFor === target.id
+    )
+    expect(controls).has.length(2)
+    expect(controls.every(row => row.nativeAnchor === undefined)).equals(true)
+    const anchors = m.scenario.observations.filter(
+      row => row.nativeAnchor === target.id
+    )
+    expect(anchors).has.length(1)
+    expect(anchors[0].outcome).equals('passed')
+    expect(target.seq).equals(5)
+  })
+
+  it('keeps an already loaded clipped exact target on the existing measured path without paging', async () => {
+    const m = model('loaded')
+    await m.scenario.anchor(target)
+    expect(m.taps).deep.equals([])
+    expect(m.gestures.length).greaterThan(0)
+    expect(
+      m.scenario.observations.some(
+        row =>
+          row.nativeHistoryTarget != null || row.nativeEarlierControlFor != null
+      )
+    ).equals(false)
+    expect(
+      m.scenario.observations.find(row => row.nativeAnchor === target.id)
+        ?.outcome
+    ).equals('passed')
+  })
+
+  it('stops after ten progressing public pages without claiming the missing original', async () => {
+    const m = model('limit')
+    expect(String(await captureFailure(m.scenario.anchor(target)))).includes(
+      'Bounded native earlier-page count required'
+    )
+    expect(m.taps).has.length(10)
+    expect(
+      m.scenario.observations.some(row => row.nativeAnchor === target.id)
+    ).equals(false)
+    expect(
+      m.scenario.observations.find(row => row.nativeHistoryTarget === target.id)
+        ?.outcome
+    ).not.equals('passed')
+  })
+
+  for (const fault of [
+    'exhausted',
+    'duplicate',
+    'disabled',
+    'stuck',
+    'no-progress'
+  ])
+    it(
+      'refuses absent history without proved public page progress: ' + fault,
+      async () => {
+        const m = model(fault)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).matches(
+          fault === 'stuck'
+            ? /advance/
+            : fault === 'no-progress'
+              ? /Timeout|abort/i
+              : /earlier Button/
+        )
+        expect(
+          m.scenario.observations.some(
+            row => row.nativeAnchor === target.id && row.outcome === 'passed'
+          )
+        ).equals(false)
+        expect(m.taps).has.length(fault === 'no-progress' ? 1 : 0)
+      }
+    )
+})
