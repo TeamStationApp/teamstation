@@ -4566,13 +4566,15 @@ export class Scenarios {
           if (
             message.id === this.f.messages.target.id ||
             message.id === this.f.messages.long.id
-          )
+          ) {
+            if (this.touchActions) await observeSpotlightCaptureReady(ui)
             await ui.shot(
               'message-actions',
               this.touchActions
                 ? 'Actual sharp coordinated spotlight over blur; static composition proof only'
                 : 'Actual desktop hover and filtered More menu; spotlight not applicable'
             )
+          }
           await this.dismiss()
           await ui.absent('chat-message-spotlight')
           if (personalPins != null)
@@ -4667,6 +4669,7 @@ export class Scenarios {
                 preview.y + preview.height <= height + 2,
               'Selected preview from clipped origin must remain inside viewport'
             )
+          if (this.touchActions) await observeSpotlightCaptureReady(ui)
           await ui.shot(
             'partially-scrolled-spotlight',
             this.touchActions
@@ -4854,7 +4857,9 @@ export class Scenarios {
             `
             const id=${JSON.stringify('chat-message-' + this.f.messages.target.id)};
             const rows=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(rows.length!==1)throw Error('Unique message row required for action focus');
-            const triggers=Array.from(rows[0].querySelectorAll('[aria-label="More message actions"]'));if(triggers.length!==1||triggers[0].getAttribute('role')!=='button')throw Error('Unique actual More trigger required');
+            const touch=${JSON.stringify(this.touchActions)};
+            const selector=touch?${JSON.stringify('[data-testid="chat-bubble-' + this.f.messages.target.id + '"]')}:'[aria-label="More message actions"]';
+            const triggers=Array.from(rows[0].querySelectorAll(selector));if(triggers.length!==1||(!touch&&triggers[0].getAttribute('role')!=='button'))throw Error(touch?'Unique actual bubble trigger required':'Unique actual More trigger required');
             const a=document.activeElement,b=triggers[0].getBoundingClientRect();if(![b.x,b.y,b.width,b.height].every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Actual positive More trigger geometry required');
             return {composerFocused:a===document.querySelector('[data-testid="chat-composer"]'),triggerFocused:a===triggers[0],menus:document.querySelectorAll('[aria-label^="Message from "]').length,spotlights:document.querySelectorAll('[data-testid="chat-message-spotlight"]').length,active:{tag:a?.tagName,id:a?.getAttribute('data-testid'),label:a?.getAttribute('aria-label')},trigger:{x:b.x,y:b.y,width:b.width,height:b.height}};
           `,
@@ -4868,7 +4873,7 @@ export class Scenarios {
           signal.throwIfAborted()
           return current
         }
-        if (!this.touchActions) {
+        if (!ui.native) {
           const focused = await readFocus('before-opener')
           assert(
             focused.composerFocused === true,
@@ -4888,6 +4893,7 @@ export class Scenarios {
             direction: 'DOWN',
             timeout: 5000
           })
+        if (this.touchActions) await observeSpotlightCaptureReady(ui)
         await ui.shot(
           'keyboard-spotlight',
           ui.native
@@ -4897,7 +4903,7 @@ export class Scenarios {
               : 'Actual composer-focused entry and desktop More menu with conventional trigger restoration; no software keyboard or touch spotlight claim'
         )
         await this.dismiss()
-        if (this.touchActions) await ui.assertKeyboard()
+        if (ui.native) await ui.assertKeyboard()
         else {
           const signal = AbortSignal.any([
             ui.deadline,
@@ -4912,14 +4918,18 @@ export class Scenarios {
                 ? current
                 : undefined
             },
-            'actual More focus after desktop menu cleanup',
+            this.touchActions
+              ? 'actual bubble focus after touch spotlight cleanup'
+              : 'actual More focus after desktop menu cleanup',
             2000
           )
           assert(
             focused.triggerFocused === true &&
               focused.menus === 0 &&
               focused.spotlights === 0,
-            'Desktop Escape must close the menu and restore its actual More trigger'
+            this.touchActions
+              ? 'Touch Escape must close the spotlight and restore its actual bubble trigger'
+              : 'Desktop Escape must close the menu and restore its actual More trigger'
           )
         }
         if (!ui.native)

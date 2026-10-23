@@ -5455,6 +5455,7 @@ describe('chat native adapter compatibility', function () {
     scenario: Scenarios
     calls: string[]
     actual: Chat2UI
+    page: JSDOM
   } {
     const { actual, page } = browserModel()
     actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: false })
@@ -5525,7 +5526,7 @@ describe('chat native adapter compatibility', function () {
     }
     scenario.targetBounds = async () => box
     scenario.menuState = async () => ({})
-    return { scenario, calls, actual }
+    return { scenario, calls, actual, page }
   }
   it('prepares the E5 reader before focus and verifies the actual desktop More trigger after Escape', async () => {
     const { scenario, calls } = keyboardMenu()
@@ -5587,6 +5588,147 @@ describe('chat native adapter compatibility', function () {
         await captureFailure(scenario.E5())
       }
     )
+  async function touchKeyboardMenu(mode = ''): Promise<{
+    scenario: Scenarios
+    calls: string[]
+    error: unknown
+  }> {
+    const { scenario, actual, calls, page } = keyboardMenu()
+    Object.assign(actual, { surface: 'web-touch' })
+    actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: true })
+    const editor = page.window.document.querySelector('textarea')!
+    const bubble = page.window.document.querySelector<HTMLElement>(
+      '[data-testid="chat-bubble-target"]'
+    )!
+    const more = page.window.document.querySelector<HTMLElement>(
+      '[aria-label="More message actions"]'
+    )!
+    bubble.tabIndex = 0
+    bubble.getBoundingClientRect = () =>
+      new page.window.DOMRect(48, 114, 200, 60)
+    let overlay: HTMLElement | undefined
+    let readyReads = 0
+    actual.shot = async () => {
+      const parts = Array.from(overlay!.children).slice(0, 3)
+      expect(
+        parts.map(part => page.window.getComputedStyle(part).opacity),
+        'E5 static shot requires fully opaque actual spotlight parts'
+      ).deep.equals(['1', '1', '1'])
+      expect(actual.steps.at(-1)).includes({
+        name: 'Settled spotlight capture readiness',
+        outcome: 'passed'
+      })
+      expect(readyReads).at.least(3)
+      calls.push('settled-shot')
+    }
+    actual.device.longPressOn = async args => {
+      expect(args).deep.equals({ id: 'chat-bubble-target', duration: 550 })
+      expect(
+        page.window.document.activeElement,
+        'Composer must own the prehold focus'
+      ).equals(editor)
+      calls.push('hold')
+      bubble.focus()
+      overlay = page.window.document.createElement('div')
+      overlay.dataset.testid = 'chat-message-spotlight'
+      overlay.setAttribute('aria-label', 'Message from Synthetic member')
+      for (const name of ['backdrop', 'controls', 'panel']) {
+        const part = page.window.document.createElement('div')
+        part.dataset.testid = 'chat-message-spotlight-' + name
+        part.style.cssText =
+          'opacity:0.4;transform:none;display:block;visibility:visible'
+        part.getBoundingClientRect = () => {
+          if (name === 'backdrop') readyReads++
+          if (readyReads >= 3 && mode !== 'not-opaque') part.style.opacity = '1'
+          return new page.window.DOMRect(0, 0, 200, 100)
+        }
+        overlay.append(part)
+      }
+      const action = page.window.document.createElement('button')
+      overlay.append(action)
+      page.window.document.body.append(overlay)
+      action.focus()
+    }
+    actual.device.pressKey = async args => {
+      expect(args.key).equals('ESC')
+      calls.push('dismiss')
+      if (mode !== 'retained-overlay') overlay?.remove()
+      if (mode === 'wrong-owner') more.focus()
+      else if (mode === 'composer-owner') editor.focus()
+      else bubble.focus()
+      if (mode === 'changed-draft') editor.value = 'Changed'
+      if (mode !== '')
+        Object.assign(actual, { deadline: AbortSignal.timeout(80) })
+    }
+    let error: unknown
+    try {
+      await scenario.E5()
+    } catch (failure) {
+      error = failure
+    }
+    return { scenario, calls, error }
+  }
+  it('restores the exact touch bubble trigger after Escape without claiming a software keyboard on web', async () => {
+    const result = await touchKeyboardMenu()
+    expect(result.error).equals(undefined)
+    expect(result.calls).deep.equals([
+      'anchor',
+      'focus',
+      'focused-proof',
+      'hold',
+      'settled-shot',
+      'dismiss'
+    ])
+    const samples = result.scenario.observations[0].messageActionFocus as Array<
+      Record<string, unknown>
+    >
+    expect(samples[0].composerFocused).equals(true)
+    expect(samples[0].triggerFocused).equals(false)
+    const after = samples.at(-1)!
+    expect(after.triggerFocused).equals(true)
+    expect((after.active as Record<string, unknown>).id).equals(
+      'chat-bubble-target'
+    )
+    expect(after.trigger).deep.equals({ x: 48, y: 114, width: 200, height: 60 })
+    expect(after.menus).equals(0)
+    expect(after.spotlights).equals(0)
+  })
+  it('refuses the E5 static shot while its actual spotlight remains translucent', async () => {
+    const result = await touchKeyboardMenu('not-opaque')
+    expect(String(result.error)).includes(
+      'Timed out waiting for settled spotlight presentation'
+    )
+    expect(result.calls).not.includes('settled-shot')
+    expect(result.calls).not.includes('dismiss')
+  })
+  for (const mode of [
+    'wrong-owner',
+    'composer-owner',
+    'retained-overlay',
+    'changed-draft'
+  ])
+    it(
+      'rejects an unproved touch bubble focus return or altered draft: ' + mode,
+      async () => {
+        const result = await touchKeyboardMenu(mode)
+        expect(result.error).not.equals(undefined)
+        expect(result.calls).includes('dismiss')
+        const samples = result.scenario.observations[0]
+          .messageActionFocus as Array<Record<string, unknown>>
+        if (mode === 'wrong-owner' || mode === 'composer-owner')
+          expect(
+            samples
+              .filter(sample => sample.phase === 'after-dismissal')
+              .every(sample => sample.triggerFocused === false)
+          ).equals(true)
+        if (mode === 'retained-overlay')
+          expect(samples.at(-1)?.spotlights).equals(1)
+        if (mode === 'changed-draft')
+          expect(String(result.error)).includes(
+            'Message actions must preserve the actual draft'
+          )
+      }
+    )
   it('keeps two positive native keyboard proofs and never infers an empty native draft', async () => {
     const actual = ui([])
     let focus = 0
@@ -5608,6 +5750,8 @@ describe('chat native adapter compatibility', function () {
     actual.back = async () => {}
     actual.shot = async () => {}
     actual.hideKeyboard = async () => {}
+    actual.publicBounds = async () => box
+    actual.device.screenshot = async () => captureImages[0]
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       f: { messages: { target: { id: 'target' } } },
@@ -5631,6 +5775,8 @@ describe('chat native adapter compatibility', function () {
     const calls: unknown[] = []
     actual.hideKeyboard = async () => {}
     actual.absent = async () => {}
+    actual.present = async () => {}
+    actual.device.screenshot = async () => captureImages[0]
     actual.shot = async () => {}
     actual.publicBounds = async () => ({
       x: 0,
@@ -9181,8 +9327,19 @@ describe('native E5 exact old outgoing quote route', function () {
       metrics: () => ({ coarse: false }),
       hideKeyboard: async () => {},
       absent: async () => {},
+      present: async () => {},
+      publicBounds: async () => ({
+        x: 0,
+        y: 100,
+        width: 250,
+        height: 100
+      }),
+      steps: [],
       shot: async () => {},
-      device: { assertVisible: async () => ({}) }
+      device: {
+        assertVisible: async () => ({}),
+        screenshot: async () => captureImages[0]
+      }
     }
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
