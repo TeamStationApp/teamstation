@@ -2151,6 +2151,9 @@ export class Scenarios {
     const ui = this.ui
     assert(ui.native, 'Native history paging required')
     const id = 'chat-bubble-' + target.id
+    // Android normalized hierarchy omits enabled:true; raw iOS must prove it.
+    const enabled = (node: PublicNode): boolean =>
+      ui.surface === 'android' ? node.enabled !== false : node.enabled === true
     const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(300000)])
     const targetCount = (nodes: PublicNode[]): number => {
       const count = nodes.filter(node => node.id === id).length
@@ -2182,7 +2185,7 @@ export class Scenarios {
         'Unique public native earlier Button required'
       )
       assert(
-        controls[0].enabled === true,
+        enabled(controls[0]),
         'Enabled public native earlier Button required'
       )
       nodes = await this.nativeAnchorReady(target, true, signal)
@@ -2193,7 +2196,7 @@ export class Scenarios {
           /(?:^|\.)Button$/.test(node.type ?? '')
       )
       assert(
-        control.length === 1 && control[0].enabled === true,
+        control.length === 1 && enabled(control[0]),
         'Actual earlier Button must remain enabled'
       )
       const box = need(

@@ -8898,7 +8898,10 @@ describe('native absent history paging', function () {
     authorId: userIdOfGumbo(5)
   }
 
-  function model(fault = ''): {
+  function model(
+    fault = '',
+    surface: 'ios' | 'android' = 'ios'
+  ): {
     scenario: Scenarios
     taps: Array<{ x: number; y: number }>
     gestures: unknown[]
@@ -8907,7 +8910,9 @@ describe('native absent history paging', function () {
     const gestures: unknown[] = []
     let pages = 0
     let earlierY =
-      fault === 'no-progress' || fault === 'limit' ? 300 : -4395.33332824707
+      surface === 'android' || fault === 'no-progress' || fault === 'limit'
+        ? 300
+        : -4395.33332824707
     let targetY = fault === 'loaded' ? -500 : 300
     const loaded = (): boolean =>
       fault === 'loaded' || (fault !== 'limit' && pages === 2)
@@ -8939,7 +8944,8 @@ describe('native absent history paging', function () {
             id: 'settings-pill-button',
             type: 'Button',
             text: 'Load earlier messages',
-            enabled: fault !== 'disabled',
+            enabled:
+              fault === 'omitted-enabled' ? undefined : fault !== 'disabled',
             bounds: { x: 16, y: earlierY, width: 370, height: 48 }
           }))),
       {
@@ -8970,7 +8976,7 @@ describe('native absent history paging', function () {
     ]
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native: true,
-      surface: 'ios',
+      surface,
       deadline: AbortSignal.timeout(fault === 'no-progress' ? 600 : 15000),
       steps: [],
       visible: async () => false,
@@ -8979,6 +8985,8 @@ describe('native absent history paging', function () {
         // Preserve the actual flat XCTest snapshot contract, including duplicate ancestor labels.
         hierarchy: async (options?: { signal: AbortSignal }) => {
           options?.signal.throwIfAborted()
+          if (surface === 'android')
+            return { type: 'FrameLayout', children: nodes() }
           return {
             nodes: nodes().map((node, index) => ({
               index,
@@ -8986,7 +8994,7 @@ describe('native absent history paging', function () {
               identifier: node.id,
               label: node.text,
               rect: node.bounds,
-              enabled: node.enabled ?? true,
+              enabled: node.enabled,
               hittable: false
             }))
           }
@@ -9037,6 +9045,45 @@ describe('native absent history paging', function () {
     }) as Scenarios
     return { scenario, taps, gestures }
   }
+
+  it('honors omitted enabled metadata on the normalized Android earlier Button before and after framing', async () => {
+    const m = model('omitted-enabled', 'android')
+    const before = await m.scenario.ui.nodes()
+    const control = before.find(
+      node => node.type === 'Button' && node.text === 'Load earlier messages'
+    )!
+    expect(control.enabled).equals(undefined)
+    await m.scenario.nativeHistoryTarget(target)
+    expect(m.taps).has.length(2)
+    const paging = m.scenario.observations.find(
+      row => row.nativeHistoryTarget === target.id
+    )!
+    expect(paging.outcome).equals('passed')
+    expect(paging.pages).has.length(2)
+    expect(m.gestures).deep.equals([])
+  })
+
+  it('rejects explicit disabled metadata on the normalized Android earlier Button', async () => {
+    const m = model('disabled', 'android')
+    expect(
+      String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
+    ).includes('Enabled public native earlier Button required')
+    expect(m.taps).deep.equals([])
+  })
+
+  it('requires explicit enabled metadata on the raw iOS earlier Button', async () => {
+    const m = model('omitted-enabled')
+    const before = await m.scenario.ui.nodes()
+    expect(
+      before.find(
+        node => node.type === 'Button' && node.text === 'Load earlier messages'
+      )?.enabled
+    ).equals(undefined)
+    expect(
+      String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
+    ).includes('Enabled public native earlier Button required')
+    expect(m.taps).deep.equals([])
+  })
 
   it('loads the absent exact original through two real earlier-page Buttons before target framing', async () => {
     const m = model()
