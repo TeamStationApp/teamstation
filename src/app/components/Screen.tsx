@@ -15,6 +15,7 @@ import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
 import { ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import { navClearanceAboveInset } from './navClearance'
+import { useActiveRef } from './TabPages'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface ScreenProps {
@@ -117,6 +118,8 @@ export function Screen(props: ScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const breakpoint = useBreakpoint()
+  // Inside a pill page sliding out, the scroller lets go of the shared ref.
+  const scroller = useActiveRef(scrollRef)
   // The header is glass and overlays the content, so the content starts at the
   // top of the window and is pushed down by the height the header measured.
   // Anything else and there would be nothing behind the glass to blur.
@@ -161,7 +164,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
 
   return (
     <Animated.ScrollView
-      ref={scrollRef}
+      ref={scroller}
       style={styles.fill}
       onScroll={onScroll}
       onLayout={onLayout}

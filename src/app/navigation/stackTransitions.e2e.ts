@@ -505,14 +505,17 @@ async function main(): Promise<void> {
       await tapTab('Schedule')
       await settle('Upcoming')
       await measured('W6 schedule Past', pages, async () => {
-        await tap(m, 'Past')
+        await tapCss('[role="tab"][aria-label="Past"]')
       })
     }
 
     if (!before && chosen.has('W7')) {
       await m.openLink({ link: `${f.h.origin}/games/${gameId}` })
       await settle('Demo Owls')
-      for (const name of ['Box Score', 'Watch', 'Info'])
+      // Videos is a layout of its own: crossing it slides the pane, while
+      // Info and Box score slide only the content. Every step moves, whether
+      // the game opened on Info or on Videos.
+      for (const name of ['Box score', 'Videos', 'Info', 'Box score'])
         await measured(`W7 game ${name}`, pages, async () => {
           await tapCss(`[aria-label="Game sections"] [aria-label="${name}"]`)
         })
