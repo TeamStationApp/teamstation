@@ -113,6 +113,11 @@ describe('rendered hit timeline', function () {
         const fielder = players.find(p => p.playerId === sequence.fielder)!
         await renderer.advanceFrames(5, 0.05)
         expect(fielder.position).deep.equals(sequence.fielderStart)
+        // The ball in play was pitched: its pitcher is in his windup.
+        const pitcher = players.find(p => p.playerId === sequence.pitcher)!
+        expect(pitcher.pose?.windup).greaterThan(0)
+        expect(pitcher.pose?.athlete).not.equals(undefined)
+        expect(contacts).equals(0)
         await renderer.advanceFrames(20, 0.05)
         expect(contacts).equals(1)
         if (outcome === 'Ball Caught') {

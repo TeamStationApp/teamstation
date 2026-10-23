@@ -83,7 +83,7 @@ export function PlayAnimation({
     for (const player of players) {
       player.pose = {
         windup:
-          sequence.kind === 'pitch' &&
+          sequence.kind !== 'throw' &&
           player.playerId === sequence.pitcher &&
           'windup' in sample
             ? sample.windup
@@ -98,13 +98,18 @@ export function PlayAnimation({
           'catch' in sample
             ? sample.catch
             : 0,
-        throwSide: sequence.kind === 'pitch' ? sequence.throwSide : 'R'
+        throwSide: sequence.kind === 'throw' ? 'R' : (sequence.throwSide ?? 'R')
       }
-      if (sequence.kind === 'pitch' && player.playerId === sequence.pitcher)
+      // A ball in play was pitched too: the pitcher delivers it.
+      if (
+        sequence.kind !== 'throw' &&
+        sequence.pitcher != null &&
+        player.playerId === sequence.pitcher
+      )
         player.pose.athlete = pitchingPose(
           runtime.current.elapsedMs,
           PITCH_TIMING.release,
-          sequence.throwSide
+          sequence.throwSide ?? 'R'
         )
       if (
         sequence.kind !== 'throw' &&

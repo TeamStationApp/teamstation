@@ -43,6 +43,8 @@ export const PITCH_TIMING = {
   finish: 1500,
   foulFinish: 1750
 } as const
+/** When a ball in play meets the bat: as its pitch reaches the plate. */
+export const HIT_CONTACT_MS = PITCH_TIMING.plate
 /** The longest a placed foul is in the air: a deep one, into the seats. */
 export const FOUL_FLIGHT_MAX_MS = 2000
 /** How long a placed foul is in the air, by how far it went. */
@@ -130,6 +132,14 @@ export interface HitSequence {
    * there.
    */
   outRunEnd?: GroundPoint
+  /**
+   * The pitch it was hit off: the pitcher winds up and the ball goes from his
+   * hand to the plate, where the bat meets it at `contactMs`.
+   */
+  pitcher?: number
+  throwSide?: 'R' | 'L'
+  from?: Point3
+  plate?: Point3
 }
 export interface ThrowSequence {
   dictated?: boolean
@@ -332,11 +342,17 @@ export function hitPresentation(
     1100,
     (Math.hypot(target.x - start.x, target.z - start.z) / 20) * 1000
   )
-  const flightEndMs = 450 + flight
+  const flightEndMs = HIT_CONTACT_MS + flight
   const caught = pending.outcome === 'Ball Caught' || pending.fielder == null
   const carom = pending.carom
   const fielderEndMs =
-    450 + flight / (caught ? 1 : 0.8) + (carom == null ? 0 : CAROM_MS)
+    HIT_CONTACT_MS +
+    flight / (caught ? 1 : 0.8) +
+    (carom == null ? 0 : CAROM_MS)
+  const pitcher = state.session.liveData.plays.currentPlay!.matchup.pitcher.id
+  const mound = players.find(player => player.playerId === pitcher)?.position
+  const throwSide =
+    state.session.gameData.players[pitcher]?.throws === 'left' ? 'L' : 'R'
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:hit`,
     generation: state.generation,
@@ -356,9 +372,22 @@ export function hitPresentation(
         ? flightEndMs + (carom == null ? 0 : CAROM_MS)
         : Math.max(flightEndMs + (carom == null ? 0 : CAROM_MS), fielderEndMs),
     flightEndMs,
-    fielderStartMs: 450,
+    fielderStartMs: HIT_CONTACT_MS,
     fielderEndMs,
-    contactMs: 450,
+    contactMs: HIT_CONTACT_MS,
+    ...(mound == null
+      ? {}
+      : {
+          pitcher,
+          throwSide,
+          from: pitchingHand(
+            mound,
+            PITCH_TIMING.release,
+            PITCH_TIMING.release,
+            throwSide
+          ),
+          plate: { x: 0, y: BALL_CONTACT, z: 0 }
+        }),
     players,
     batter: state.session.liveData.plays.currentPlay!.matchup.batter.id,
     fielder: pending.fielder,

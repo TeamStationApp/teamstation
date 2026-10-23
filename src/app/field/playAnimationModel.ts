@@ -156,6 +156,34 @@ function caromPoint(sequence: HitSequence, time: number): Point3 | undefined {
   }
 }
 
+/**
+ * Where the pitch a ball in play was hit off is before contact: in the
+ * pitcher's hand to the release, then on its way to the plate.
+ */
+function pitchedPoint(
+  sequence: HitSequence & { from: Point3; plate: Point3 },
+  time: number
+): Point3 {
+  const mound = sequence.players.find(
+    player => player.playerId === sequence.pitcher
+  )?.position
+  if (time < PITCH_TIMING.release && mound != null)
+    return pitchingHand(
+      mound,
+      time,
+      PITCH_TIMING.release,
+      sequence.throwSide ?? 'R'
+    )
+  return lerp(
+    sequence.from,
+    sequence.plate,
+    clamp(
+      (time - PITCH_TIMING.release) /
+        (sequence.contactMs - PITCH_TIMING.release)
+    )
+  )
+}
+
 export function sampleHit(
   sequence: HitSequence,
   time: number
@@ -163,9 +191,14 @@ export function sampleHit(
   ball: Point3
   visible: boolean
   swing: number
+  windup: number
   fielder: GroundPoint
   running: boolean
 } {
+  const pitched =
+    sequence.from != null && sequence.plate != null
+      ? { ...sequence, from: sequence.from, plate: sequence.plate }
+      : undefined
   const flight = clamp(
     (time - sequence.contactMs) / (sequence.flightEndMs - sequence.contactMs)
   )
@@ -174,9 +207,19 @@ export function sampleHit(
       (sequence.fielderEndMs - sequence.fielderStartMs)
   )
   return {
-    ball: caromPoint(sequence, time) ?? arcPoint(sequence.arc, flight),
-    visible: time >= sequence.contactMs && time < sequence.durationMs,
-    swing: Math.sin(clamp((time - 250) / 400) * Math.PI),
+    ball:
+      pitched != null && time < sequence.contactMs
+        ? pitchedPoint(pitched, time)
+        : (caromPoint(sequence, time) ?? arcPoint(sequence.arc, flight)),
+    visible:
+      time >= (pitched == null ? sequence.contactMs : 0) &&
+      time < sequence.durationMs,
+    // The swing meets the ball as it reaches the plate.
+    swing: Math.sin(clamp((time - (sequence.contactMs - 200)) / 400) * Math.PI),
+    windup:
+      pitched == null
+        ? 0
+        : Math.sin(clamp(time / (PITCH_TIMING.release * 2)) * Math.PI),
     fielder: {
       x:
         sequence.fielderStart.x +
