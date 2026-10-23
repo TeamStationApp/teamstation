@@ -84,11 +84,16 @@ const check = spawnSync(
     '.ts',
     '--ext',
     '.tsx',
-    // A native twin runs on a phone, never under jsdom.
+    // A native twin runs on a phone, never under jsdom, and its specs run
+    // in the native bundles (`npm run test.playerNative`), not this one.
     '--exclude',
     '**/*.native.tsx',
     '--exclude',
     '**/*.native.ts',
+    '--exclude',
+    '**/*.native.spec.tsx',
+    '--exclude',
+    '**/*.native.spec.ts',
     // The test bundle resolves a barrel import to the implementation, so
     // src/app/components/index.ts has no coverage record of its own.
     '--exclude',
@@ -107,6 +112,9 @@ const check = spawnSync(
     'src/app/scoring/NativeCueSounds.ts',
     '--exclude',
     'src/app/components/glassViewProps.ts',
+    // Tess's client shapes, which every importer takes as `import type`.
+    '--exclude',
+    'src/app/tess/tessTypes.ts',
     'src/app'
   ],
   { stdio: 'inherit' }
