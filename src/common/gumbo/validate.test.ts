@@ -172,7 +172,11 @@ describe('the reference validator (U22)', function () {
     expect(
       events.filter(event => 'pitchData' in event).map(event => event.pitchData)
     ).deep.equals([
-      { startSpeed: 72.4, zone: 7 },
+      {
+        startSpeed: 72.4,
+        zone: 7,
+        location: { height: 'low', side: 'inside', inZone: true }
+      },
       { startSpeed: 68, zone: 5 }
     ])
 
@@ -430,6 +434,39 @@ describe('the reference validator (U22)', function () {
     expect(named(hit)).deep.equals([])
   })
 
+  it('takes a kind of pitch TeamStation knows, and a pitch with none', function () {
+    const { plays } = scored()
+    const pitched = copy(plays[1])
+    const events = pitched.playEvents as Json[]
+    const at = events.findIndex(event => event.isPitch === true)
+    const withType = (type: unknown, ours = true): string[] => {
+      const play = {
+        ...pitched,
+        playEvents: events.map((event, i) =>
+          i === at
+            ? { ...event, details: { ...(event.details as Json), type } }
+            : event
+        )
+      }
+      if (!ours) delete (play as { teamStation?: unknown }).teamStation
+      return named(play)
+    }
+    // A scored pitch with no kind is whole: the scorer named none.
+    expect(named(pitched)).deep.equals([])
+    expect(withType({ code: 'SL', description: 'Slider' })).deep.equals([])
+    expect(
+      withType({ code: 'FT', description: 'Two-Seam Fastball' })
+    ).deep.equals([`pitchType playEvents[${at}].details.type.code`])
+    for (const bad of ['SL', { code: 'SL' }, { code: 7, description: 'x' }])
+      expect(withType(bad), JSON.stringify(bad)).deep.equals([
+        `pitchType playEvents[${at}].details.type`
+      ])
+    // Another service's feed may name kinds TeamStation does not.
+    expect(
+      withType({ code: 'FT', description: 'Two-Seam Fastball' }, false)
+    ).deep.equals([])
+  })
+
   it('holds pitch data to a speed and a zone, on a pitch', function () {
     const { plays } = scored()
     // The double: a steal, then a ball, then the pitch hit.
@@ -467,6 +504,19 @@ describe('the reference validator (U22)', function () {
     expect(named(onAction)).deep.equals([
       `pitchData playEvents[${action}].pitchData`
     ])
+    // Where the scorer said it went is his, not measured.
+    const location = { height: 'high', side: 'away', inZone: false }
+    expect(withData({ zone: 12, location })).deep.equals([])
+    for (const bad of [
+      { ...location, height: 'up' },
+      { height: 'high', side: 'away' },
+      { ...location, inZone: 'no' },
+      { ...location, pX: 1 },
+      'high'
+    ])
+      expect(withData({ location: bad }), JSON.stringify(bad)).deep.equals([
+        `pitchData playEvents[${at}].pitchData.location`
+      ])
     // Another service's measured pitch is its own.
     const theirs = copy(pitched)
     delete theirs.teamStation

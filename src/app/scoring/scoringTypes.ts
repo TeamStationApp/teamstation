@@ -72,6 +72,11 @@ export interface PendingPlay {
   contactKind?: ContactKind
   homeRunKind?: HomeRunKind
   landingHeight?: number
+  /**
+   * Where a ball off the wall comes to after meeting the fence in the air,
+   * for the fielder to play.
+   */
+  carom?: GroundPoint
   ballHolder?: number
   ballLocation?: GroundPoint
   batterPoint?: GroundPoint
@@ -211,6 +216,13 @@ export interface Beat {
   presentation?: PresentationSequence
   motions: MotionCommand[]
   after: 'presentation' | 'motions'
+  /**
+   * A batter this beat's hit runs out toward first, and where it leaves him:
+   * when the beat starts he is there, and his motions that would leave from
+   * the plate leave from there. He waits there, `held`, only while a later
+   * beat of the reel goes on with him.
+   */
+  runFrom?: { playerId: number; point: GroundPoint; held: boolean }
 }
 /**
  * The screen without the game: the step, what is drawn, the drafts. It is

@@ -9,12 +9,17 @@ import type {
 } from '../../common/scoring/actions'
 import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
+import { sampleThrow } from '../field/playAnimationModel'
 import { hitGeometry, outcomeOf } from './dictatedReel'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
-import type { HitSequence, ThrowSequence } from './scoringPresentation'
+import {
+  type HitSequence,
+  outBatterPoint,
+  type ThrowSequence
+} from './scoringPresentation'
 import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 
@@ -90,6 +95,71 @@ function moving(state: ScoringState): number[] {
 function held(state: ScoringState): number[] {
   return state.motions.filter(m => m.held === true).map(m => m.playerId)
 }
+/**
+ * While a tag throw is up, the field draws the runner from the picture, on
+ * his way from where he stood; his walk off, already queued, leaves from the
+ * base he is tagged at for the dugout.
+ */
+function drawnByPicture(
+  state: ScoringState,
+  runner: number,
+  base: { x: number; z: number }
+): void {
+  const thrown = state.presentation as ThrowSequence
+  expect(thrown).deep.include({ kind: 'throw', stage: 'tag', runner })
+  const drawn = scoringFieldPlayers(state).find(p => p.playerId === runner)!
+  expect(drawn.position).deep.equals({
+    x: thrown.runnerFrom.x,
+    z: thrown.runnerFrom.z
+  })
+  expect(drawn.motion).equals(undefined)
+  const walks = state.motions.filter(
+    m => m.playerId === runner && m.held !== true && !m.complete
+  )
+  expect(walks).length(1)
+  expect(walks[0].waypoints[0]).deep.equals(base)
+  const dugout = walks[0].waypoints.at(-1)!
+  expect([Math.abs(dugout.x), dugout.z]).deep.equals([32, 6])
+}
+function spoken(
+  state: ScoringState,
+  transcript: string,
+  ...actions: ScoringAction[]
+): ScoringState {
+  return scoringReducer(state, { type: 'DICTATED', transcript, actions })
+}
+/** Plays the reel, naming each throw `thrower>receiver:stage:unassisted`. */
+function throwsOf(state: ScoringState): {
+  state: ScoringState
+  order: string[]
+} {
+  const order: string[] = []
+  for (
+    let step = 0;
+    step < 30 && (state.presentation != null || state.reel != null);
+    step++
+  ) {
+    const sequence = state.presentation
+    if (sequence != null) {
+      order.push(
+        sequence.kind === 'throw'
+          ? `${sequence.thrower}>${sequence.receiver}:${sequence.stage}:${sequence.unassisted}${sequence.safe === true ? ':safe' : ''}`
+          : sequence.kind
+      )
+      if (sequence.kind === 'throw' && sequence.stage === 'tag')
+        drawnByPicture(state, sequence.runner, {
+          x: sequence.to.x,
+          z: sequence.to.z
+        })
+      state = finishPicture(state)
+    } else
+      state = finishMotion(
+        state,
+        state.motions.find(m => !m.complete && m.held !== true)!.playerId
+      )
+  }
+  return { state, order }
+}
 /** Plays the whole reel as the field would. */
 function playOut(state: ScoringState): ScoringState {
   for (let step = 0; step < 50; step++) {
@@ -102,6 +172,12 @@ function playOut(state: ScoringState): ScoringState {
     state = finishMotion(state, motion.playerId)
   }
   throw new Error('The reel did not end')
+}
+const grounder: ScoringAction = {
+  type: 'ballInPlay',
+  contact: 'swing',
+  trajectory: 'ground_ball',
+  fielder: F.SS
 }
 const single: ScoringAction[] = [
   {
@@ -374,16 +450,36 @@ describe('a dictated sentence on the field', function () {
     const log = state.log
     expect(state.presentation?.kind).equals('hit')
     const landing = (state.presentation as HitSequence).arc.target
+    // The hit runs him toward first; the throw takes him on from there, at
+    // the same pace, so he reaches the bag with the ball and not before it.
+    const hit = state.presentation as HitSequence
+    const ranTo = outBatterPoint(hit)
+    const start = hit.players.find(p => p.playerId === batter)!.position
     state = finishPicture(state)
     const thrown = state.presentation as ThrowSequence
+    expect({ x: thrown.runnerFrom.x, z: thrown.runnerFrom.z }).deep.equals(
+      ranTo
+    )
+    const left = Math.hypot(BASES[1].x - ranTo.x, BASES[1].z - ranTo.z)
+    expect(left).greaterThan(5)
+    expect(ranTo.z).lessThan(-1)
+    const hitPace =
+      Math.hypot(ranTo.x - start.x, ranTo.z - start.z) /
+      (hit.durationMs - hit.contactMs)
+    expect(left / thrown.durationMs).closeTo(hitPace, hitPace * 0.01)
+    // He leaves with the windup, not after it.
+    expect(sampleThrow(thrown, 100).runnerProgress).greaterThan(0)
     expect(thrown).deep.include({
       kind: 'throw',
-      stage: 'transfer',
+      stage: 'tag',
+      unassisted: false,
       thrower: F.SS,
       receiver: F.B1,
       runner: batter,
       dictated: true
     })
+    expect(sampleThrow(thrown, thrown.durationMs / 2).visible).equals(true)
+    drawnByPicture(state, batter, BASES[1])
     expect(thrown.holderOrigin).deep.equals(landing)
     expect({ x: thrown.to.x, z: thrown.to.z }).deep.equals(BASES[1])
     state = playOut(state)
@@ -462,13 +558,116 @@ describe('a dictated sentence on the field', function () {
       unassisted: true,
       thrower: F.B3
     })
+    const carried = state.presentation as ThrowSequence
+    expect(sampleThrow(carried, carried.durationMs / 2).visible).equals(false)
+    drawnByPicture(state, 5, BASES[3])
     state = playOut(state)
     expect(state.session.liveData.linescore.outs).equals(1)
   })
 
+  it('throws a runner out caught stealing with him running to the base', function () {
+    let state = say(game({ first: 5 }), {
+      type: 'baseRunning',
+      kind: 'caught_stealing',
+      runner: 5,
+      to: '2B',
+      fielders: [F.C, F.SS]
+    })
+    const thrown = state.presentation as ThrowSequence
+    expect(thrown).deep.include({
+      kind: 'throw',
+      stage: 'tag',
+      unassisted: false,
+      thrower: F.C,
+      receiver: F.SS
+    })
+    expect({ x: thrown.runnerFrom.x, z: thrown.runnerFrom.z }).deep.equals(
+      BASES[1]
+    )
+    expect(sampleThrow(thrown, thrown.durationMs / 2).visible).equals(true)
+    drawnByPicture(state, 5, BASES[2])
+    state = playOut(state)
+    expect(state.session.liveData.linescore.outs).equals(1)
+  })
+
+  it('throws a runner picked off back to the base he walks off from', function () {
+    let state = say(game({ first: 5 }), {
+      type: 'baseRunning',
+      kind: 'pickoff',
+      runner: 5,
+      to: '1B',
+      fielders: [F.P, F.B1]
+    })
+    expect(state.presentation).deep.include({
+      kind: 'throw',
+      stage: 'tag',
+      unassisted: false,
+      thrower: F.P,
+      receiver: F.B1
+    })
+    drawnByPicture(state, 5, BASES[1])
+    state = playOut(state)
+    expect(state.session.liveData.linescore.outs).equals(1)
+  })
+
+  it('tags the batter at first on the toss to the pitcher covering', function () {
+    const { state, order } = throwsOf(
+      spoken(
+        game(),
+        'Grounder to first, tosses it to the pitcher for the out at first.',
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'ground_ball',
+          fielder: F.B1
+        },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      )
+    )
+    expect(order).deep.equals(['hit', `${F.B1}>${F.P}:tag:false`])
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(state.session.liveData.linescore.offense.first ?? null).equals(null)
+  })
+
+  it('keeps every hop of an all-Safe relay a transfer', function () {
+    const route = [
+      { id: F.B3, point: { x: -20, z: -35 } },
+      { id: F.B2, point: { ...BASES[2] } },
+      { id: F.B1, point: { ...BASES[1] } }
+    ]
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    const { state, order } = throwsOf(
+      spoken(
+        game({ first: 6 }),
+        "Fielder's choice. Ground ball to third.",
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'ground_ball',
+          fielder: F.B3
+        },
+        { type: 'result', eventType: 'fielders_choice' },
+        {
+          type: 'runnerMovement',
+          runner: batter,
+          to: '1B',
+          fielders: route.map(hop => hop.id),
+          locations: route.map(hop => hop.point)
+        },
+        { type: 'runnerMovement', runner: 6, to: '2B' }
+      )
+    )
+    expect(order).deep.equals([
+      'hit',
+      `${F.B3}>${F.B2}:transfer:false:safe`,
+      `${F.B2}>${F.B1}:transfer:false:safe`
+    ])
+    expect(state.session.liveData.linescore.outs).equals(0)
+  })
+
   it('plays a double play as its throws, in the order they were said', function () {
     const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
-    let state = say(
+    const state = say(
       game({ first: 5 }),
       {
         type: 'ballInPlay',
@@ -492,28 +691,284 @@ describe('a dictated sentence on the field', function () {
         fielders: [F.B2, F.B1]
       }
     )
-    const order: string[] = []
-    for (
-      let step = 0;
-      step < 20 && (state.presentation != null || state.reel != null);
-      step++
-    ) {
-      const sequence = state.presentation
-      if (sequence != null) {
-        order.push(
-          sequence.kind === 'throw'
-            ? `${sequence.thrower}>${sequence.receiver}`
-            : sequence.kind
-        )
+    expect(state.presentation?.kind).equals('hit')
+    expect(held(state).sort((a, b) => a - b)).deep.equals(
+      [batter, 5].sort((a, b) => a - b)
+    )
+    // Through the first throw he waits where the hit's run left him.
+    const ranTo = outBatterPoint(state.presentation as HitSequence)
+    expect(
+      state.motions.find(m => m.playerId === batter && m.held === true)!
+        .waypoints[0]
+    ).deep.equals(ranTo)
+    const played = throwsOf(state)
+    expect(played.order).deep.equals([
+      'hit',
+      `${F.SS}>${F.B2}:tag:false`,
+      `${F.B2}>${F.B1}:tag:false`
+    ])
+    expect(played.state.session.liveData.linescore.outs).equals(2)
+  })
+
+  it('runs the batter out unassisted at first at one pace with the carry', function () {
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    let state = say(
+      game(),
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'ground_ball',
+        fielder: F.B1
+      },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      {
+        type: 'runnerMovement',
+        runner: batter,
+        to: '1B',
+        out: true,
+        fielders: [F.B1]
+      }
+    )
+    const hit = state.presentation as HitSequence
+    const ranTo = outBatterPoint(hit)
+    const start = hit.players.find(p => p.playerId === batter)!.position
+    state = finishPicture(state)
+    const carried = state.presentation as ThrowSequence
+    expect(carried).deep.include({ stage: 'tag', unassisted: true })
+    expect({ x: carried.runnerFrom.x, z: carried.runnerFrom.z }).deep.equals(
+      ranTo
+    )
+    const left = Math.hypot(BASES[1].x - ranTo.x, BASES[1].z - ranTo.z)
+    const hitPace =
+      Math.hypot(ranTo.x - start.x, ranTo.z - start.z) /
+      (hit.durationMs - hit.contactMs)
+    expect(left / carried.durationMs).closeTo(hitPace, hitPace * 0.01)
+  })
+
+  it('shows the batter at the plate in a picture before his hit', function () {
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    let state = say(
+      game({ first: 5 }),
+      {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 5,
+        to: '2B',
+        fielders: [F.C, F.SS]
+      },
+      grounder,
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      {
+        type: 'runnerMovement',
+        runner: batter,
+        to: '1B',
+        out: true,
+        fielders: [F.SS, F.B1]
+      }
+    )
+    const atPlate = (point: { x: number; z: number }): boolean =>
+      Math.hypot(point.x, point.z) < 5
+    expect(state.presentation).deep.include({ kind: 'throw', runner: 5 })
+    const drawn = scoringFieldPlayers(state).find(p => p.playerId === batter)!
+    expect(atPlate(drawn.position)).equals(true)
+    const hold = state.motions.find(
+      m => m.playerId === batter && m.held === true
+    )
+    if (hold != null) expect(atPlate(hold.waypoints[0])).equals(true)
+    // Once his hit starts, he waits where it leaves him.
+    for (let i = 0; i < 20 && state.presentation?.kind !== 'hit'; i++)
+      state =
+        state.presentation != null
+          ? finishPicture(state)
+          : finishMotion(
+              state,
+              state.motions.find(m => !m.complete && m.held !== true)!.playerId
+            )
+    const ranTo = outBatterPoint(state.presentation as HitSequence)
+    expect(
+      state.motions.find(m => m.playerId === batter && m.held === true)!
+        .waypoints[0]
+    ).deep.equals(ranTo)
+  })
+
+  it('pictures the pitches of the second at-bat with the batter up', function () {
+    let state = spoken(
+      game(),
+      'Single. Next batter: ball, ball, grounds out to short.',
+      ...single,
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      grounder,
+      { type: 'result', eventType: 'field_out', outBy: 'throw' }
+    )
+    const batters: string[] = []
+    for (let i = 0; i < 60 && !atRest(state); i++) {
+      const p = state.presentation
+      if (p != null) {
+        if (p.kind !== 'throw') batters.push(`${p.kind}:${p.batter}`)
         state = finishPicture(state)
-      } else
+      } else {
+        const motion = state.motions.find(m => !m.complete && m.held !== true)
+        if (motion == null) break
+        state = finishMotion(state, motion.playerId)
+      }
+    }
+    expect(batters).deep.equals(['hit:1', 'pitch:2', 'pitch:2', 'hit:2'])
+  })
+
+  it('runs the batter who is up in the second at-bat of a sentence', function () {
+    let state = spoken(
+      game(),
+      'Grounds out to short. Next batter grounds out to second.',
+      grounder,
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      { ...grounder, fielder: F.B2 },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' }
+    )
+    const hits: number[] = []
+    const tagged: Array<{ runner: number; from: { x: number; z: number } }> = []
+    for (let i = 0; i < 60 && !atRest(state); i++) {
+      const p = state.presentation
+      if (p != null) {
+        if (p.kind === 'hit') hits.push(p.batter)
+        if (p.kind === 'throw')
+          tagged.push({ runner: p.runner, from: p.runnerFrom })
+        state = finishPicture(state)
+      } else {
+        const motion = state.motions.find(m => !m.complete && m.held !== true)
+        if (motion == null) break
+        state = finishMotion(state, motion.playerId)
+      }
+    }
+    expect(hits).deep.equals([1, 2])
+    expect(tagged.map(t => t.runner)).deep.equals([1, 2])
+    for (const { from } of tagged) expect(from.z).lessThan(-1)
+  })
+
+  it('keeps the batter where the hit left him through the first throw of a double play', function () {
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    let state = spoken(
+      game({ first: 5 }),
+      'Six four three double play.',
+      grounder,
+      { type: 'result', eventType: 'field_out', outBy: 'throw' }
+    )
+    const ranTo = outBatterPoint(state.presentation as HitSequence)
+    state = finishPicture(state)
+    const first = state.presentation as ThrowSequence
+    expect(first).deep.include({ runner: 5, receiver: F.B2 })
+    const drawn = scoringFieldPlayers(state).find(p => p.playerId === batter)!
+    expect(drawn.position).deep.equals(ranTo)
+    expect(drawn.batting).equals(false)
+    const batterThrown = (): boolean =>
+      state.presentation?.kind === 'throw' &&
+      state.presentation.runner === batter
+    while (!batterThrown()) {
+      if (state.presentation != null) state = finishPicture(state)
+      else
         state = finishMotion(
           state,
           state.motions.find(m => !m.complete && m.held !== true)!.playerId
         )
     }
-    expect(order).deep.equals(['hit', `${F.SS}>${F.B2}`, `${F.B2}>${F.B1}`])
+    const second = state.presentation as unknown as ThrowSequence
+    expect({ x: second.runnerFrom.x, z: second.runnerFrom.z }).deep.equals(
+      ranTo
+    )
+  })
+
+  it('plays a spoken six-four-three as the two throws it expands to', function () {
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    const { state, order } = throwsOf(
+      spoken(
+        game({ first: 5 }),
+        'Six four three double play.',
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'ground_ball',
+          fielder: F.SS
+        },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      )
+    )
+    expect(order).deep.equals([
+      'hit',
+      `${F.SS}>${F.B2}:tag:false`,
+      `${F.B2}>${F.B1}:tag:false`
+    ])
     expect(state.session.liveData.linescore.outs).equals(2)
+    const play = state.session.liveData.plays.allPlays.at(-1)!
+    const outs = play.runners
+      .filter(r => r.movement.isOut)
+      .map(r => [
+        r.details.runner.id,
+        r.credits
+          .filter(c => c.credit === 'f_assist' || c.credit === 'f_putout')
+          .map(c => c.player.id)
+      ])
+    expect(outs).deep.equals([
+      [5, [F.SS, F.B2]],
+      [batter, [F.B2, F.B1]]
+    ])
+  })
+
+  it('throws a caught ball to the base the runner is out at, with him running', function () {
+    let state = say(
+      game({ first: 5 }),
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'fly_ball',
+        fielder: F.LF
+      },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' },
+      {
+        type: 'runnerMovement',
+        runner: 5,
+        to: '2B',
+        out: true,
+        fielders: [F.LF, F.SS]
+      }
+    )
+    expect(state.presentation?.kind).equals('hit')
+    expect(held(state)).deep.equals([5])
+    const landing = (state.presentation as HitSequence).arc.target
+    const ranTo = outBatterPoint(state.presentation as HitSequence)
+    state = finishPicture(state)
+    // The batter's out trot is on the catch, from where the catch left him.
+    // The throw starts once he is done.
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    expect(
+      state.motions.find(m => m.playerId === batter && !m.complete)!
+        .waypoints[0]
+    ).deep.equals(ranTo)
+    while (state.presentation == null) {
+      const motion = state.motions.find(m => !m.complete && m.held !== true)
+      if (motion == null) break
+      state = finishMotion(state, motion.playerId)
+    }
+    const thrown = state.presentation as ThrowSequence
+    expect(thrown).deep.include({
+      kind: 'throw',
+      stage: 'tag',
+      unassisted: false,
+      thrower: F.LF,
+      receiver: F.SS,
+      runner: 5
+    })
+    expect(thrown.holderOrigin).deep.equals(landing)
+    expect({ x: thrown.to.x, z: thrown.to.z }).deep.equals(BASES[2])
+    expect({ x: thrown.runnerFrom.x, z: thrown.runnerFrom.z }).deep.equals(
+      BASES[1]
+    )
+    const flight = sampleThrow(thrown, thrown.durationMs / 2)
+    expect(flight.visible).equals(true)
+    expect(flight.ball.y).greaterThan(thrown.from.y)
+    drawnByPicture(state, 5, BASES[2])
+    state = playOut(state)
+    expect(state.session.liveData.linescore.outs).equals(2)
+    expect(state.reel).equals(undefined)
   })
 
   it('plays a wild pitch after the pitch it came on', function () {
@@ -599,6 +1054,23 @@ describe('a dictated sentence on the field', function () {
     expect(state.session.liveData.linescore.teams.away.runs).equals(1)
   })
 
+  it('walks a batter caught out off from the plate when animations are off', function () {
+    const batter = game().session.liveData.plays.currentPlay!.matchup.batter.id
+    const state = say(
+      { ...game(), presentationEnabled: false },
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'fly_ball',
+        fielder: F.LF
+      },
+      { type: 'result', eventType: 'field_out', outBy: 'catch' }
+    )
+    expect(state.presentation).equals(null)
+    const walk = state.motions.find(m => m.playerId === batter && !m.complete)!
+    expect(Math.hypot(walk.waypoints[0].x, walk.waypoints[0].z)).lessThan(5)
+  })
+
   it('keeps a sentence that arrives mid-reel and applies it after', function () {
     let state = say(game(), { type: 'pitch', call: 'B' })
     state = say(state, { type: 'pitch', call: 'C' })
@@ -623,7 +1095,63 @@ describe('a dictated sentence on the field', function () {
     expect(atRest(state)).equals(true)
   })
 
+  it('holds a batter it runs out only while the reel goes on with him', function () {
+    // A ground out saved without the batter's out, as a tapped one is: the
+    // reel ends with nobody held, waiting for the next save.
+    const state = playOut(
+      say(game(), grounder, {
+        type: 'result',
+        eventType: 'field_out',
+        outBy: 'throw'
+      })
+    )
+    expect(state.reel ?? null).equals(null)
+    expect(
+      state.motions.filter(motion => !motion.complete && motion.held === true)
+    ).deep.equals([])
+  })
+
   describe('the geometry it makes up', function () {
+    it('throws a ball off the wall from its carom, where the fielder played it', function () {
+      let state = spoken(
+        game({ first: 5 }),
+        'Off the wall in left, double, the left fielder throws home, out.',
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'line_drive',
+          fielder: F.LF,
+          direction: 'left'
+        },
+        { type: 'result', eventType: 'double' },
+        {
+          type: 'runnerMovement',
+          runner: 5,
+          to: 'home',
+          out: true,
+          fielders: [F.LF, F.C]
+        }
+      )
+      let carom: { x: number; z: number } | undefined
+      let from: { x: number; z: number } | undefined
+      for (let step = 0; step < 40 && from == null; step++) {
+        const sequence = state.presentation
+        if (sequence?.kind === 'hit') carom ??= sequence.carom
+        if (sequence?.kind === 'throw' && sequence.thrower === F.LF)
+          from = sequence.from
+        if (sequence != null) state = finishPicture(state)
+        else {
+          const motion = state.motions.find(m => !m.complete && m.held !== true)
+          if (motion == null) break
+          state = finishMotion(state, motion.playerId)
+        }
+      }
+      // From the thrower's hand at the carom, 8 u short of the wall.
+      expect(carom).not.equals(undefined)
+      expect(from).not.equals(undefined)
+      expect(Math.hypot(from!.x - carom!.x, from!.z - carom!.z)).lessThan(4)
+    })
+
     const session = game().session
     const inPlay = (
       more: Partial<BallInPlayAction> = {}

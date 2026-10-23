@@ -2528,10 +2528,18 @@ describe('pitch data', function () {
       true
     )
     expect(pitchDataOf(play)).deep.equals([
-      { startSpeed: 71.3, zone: 12 },
+      {
+        startSpeed: 71.3,
+        zone: 12,
+        location: { height: 'high', side: 'away', inZone: false }
+      },
       { zone: 5 },
       undefined,
-      { startSpeed: 68, zone: 7 }
+      {
+        startSpeed: 68,
+        zone: 7,
+        location: { height: 'low', side: 'inside', inZone: true }
+      }
     ])
     // The in-play pitch keeps its hit data beside it.
     const inPlay = eventsOf(play).at(-1) as { hitData?: unknown }
@@ -2561,10 +2569,11 @@ describe('pitch data', function () {
         }
       )
     )
+    // A miss straight high is in no zone, but where it went is kept.
     expect(pitchDataOf(play)).deep.equals([
-      { zone: 14 },
-      { zone: 1 },
-      undefined
+      { zone: 14, location: { height: 'low', side: 'inside', inZone: false } },
+      { zone: 1, location: { height: 'low', side: 'inside', inZone: true } },
+      { location: { height: 'high', side: 'middle', inZone: false } }
     ])
   })
 
@@ -2584,7 +2593,43 @@ describe('pitch data', function () {
       ),
       true
     )
-    expect(pitchDataOf(play)).deep.equals([{ startSpeed: 80, zone: 5 }])
+    expect(pitchDataOf(play)).deep.equals([
+      {
+        startSpeed: 80,
+        zone: 5,
+        location: { height: 'middle', side: 'middle', inZone: true }
+      }
+    ])
+  })
+
+  it('writes the kind of pitch the scorer named, and no kind when he named none', function () {
+    const play = stored(
+      after(
+        game(),
+        { type: 'pitch', call: 'B', pitchType: 'slider' },
+        { type: 'pitch', call: 'C' },
+        { type: 'ballInPlay', contact: 'swing', speed: 80 },
+        // A second ball in play names the kind of the pitch he hit.
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: F.CF,
+          pitchType: 'four_seam'
+        },
+        { type: 'result', eventType: 'single' },
+        close
+      ),
+      true
+    )
+    expect(
+      eventsOf(play)
+        .filter(event => event.isPitch)
+        .map(event => (event.details as { type?: unknown }).type)
+    ).deep.equals([
+      { code: 'SL', description: 'Slider' },
+      undefined,
+      { code: 'FF', description: 'Four-Seam Fastball' }
+    ])
   })
 
   it('drops a speed or zone out of range, and still throws the pitch', function () {
@@ -2614,7 +2659,7 @@ describe('pitch data', function () {
     expect(pitchDataOf(play)).deep.equals([
       undefined,
       undefined,
-      { zone: 6 },
+      { zone: 6, location: { height: 'middle', side: 'away', inZone: true } },
       undefined
     ])
     for (const speed of [20, 110])

@@ -11,7 +11,9 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
+import { DEFAULT_FENCE_DISTANCE_FT } from '../fenceDistance'
 import { asGumboId } from '../userId'
+import { asPitchLocation, type PitchLocation } from './pitchLocation'
 
 /**
  * A game as the scoring library holds it: GUMBO's own `gameData` and
@@ -62,12 +64,14 @@ export type RunnerCredit = ReturnType<typeof asCredit>
 const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
 
 /**
- * A pitch's `pitchData` as the scorer gives it: its speed, and its zone. Gumbo
- * writes much more there, all of it measured, so TeamStation writes no more.
+ * A pitch's `pitchData` as the scorer gives it: its speed, its zone, and
+ * where he said it crossed the plate. Gumbo writes much more there, all of it
+ * measured, so TeamStation writes no more.
  */
 export interface PitchData {
   startSpeed?: number
   zone?: number
+  location?: PitchLocation
 }
 
 /** One pitch or action of a play, in Gumbo's shape. */
@@ -81,6 +85,8 @@ export interface PlayEvent {
     code: string
     /** The umpire's call on a pitch, as Gumbo writes it. */
     call?: { code: string; description: string }
+    /** The kind of pitch the scorer named: MLB's code and description. */
+    type?: { code: string; description: string }
     /** The pitch was put in play. */
     isInPlay?: boolean
     /** The runner entry a runner's action wrote, just before it. */
@@ -101,8 +107,9 @@ export interface PlayEvent {
   /** After a pitch, the count it left; the in-play pitch keeps its own. */
   count: { balls: number; strikes: number; outs: number }
   /**
-   * What the scorer said of a pitch itself: its speed in mph, to a tenth, and
-   * its MLB zone. Each is present only when he gave it, in range.
+   * What the scorer said of a pitch itself: its speed in mph, to a tenth, its
+   * MLB zone, and where it crossed the plate. Each is present only when he
+   * gave it, in range.
    */
   pitchData?: PitchData
   player: PlayerRef
@@ -124,6 +131,7 @@ const asPlayEvent = exactly(
       description: asString,
       code: asString,
       call: asOptional(asObject({ code: asString, description: asString })),
+      type: asOptional(asObject({ code: asString, description: asString })),
       isInPlay: asOptional(asBoolean),
       runnerEntry: asOptional(asNumber),
       fromPosition: asOptional(asString)
@@ -137,7 +145,11 @@ const asPlayEvent = exactly(
     ),
     count: asCount,
     pitchData: asOptional(
-      asObject({ startSpeed: asOptional(asNumber), zone: asOptional(asNumber) })
+      asObject({
+        startSpeed: asOptional(asNumber),
+        zone: asOptional(asNumber),
+        location: asOptional(asPitchLocation)
+      })
     ),
     player: asPlayerRef,
     pitcher: asOptional(asPlayerRef),
@@ -446,6 +458,15 @@ export function fieldInfoOf(fenceDistanceFt: number): FieldInfo {
     center: fenceDistanceFt,
     rightLine: fenceDistanceFt
   }
+}
+
+/**
+ * The fence a game is played to, which sizes its plays' distances: its
+ * centre-field distance, or the default for a game saved before fences had
+ * sizes.
+ */
+export function fenceOf(state: GameState): number {
+  return state.gameData.venue?.fieldInfo.center ?? DEFAULT_FENCE_DISTANCE_FT
 }
 
 export interface GameState {

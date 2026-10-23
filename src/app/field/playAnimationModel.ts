@@ -1,4 +1,5 @@
 import {
+  foulFlightMs,
   type HitSequence,
   PITCH_TIMING,
   type PitchSequence,
@@ -56,6 +57,24 @@ export function foulPoint(
     y: plate.y + Math.SQRT2 * 18 * t - 3 * t * t
   }
 }
+/**
+ * A foul the scorer placed, from the bat to where it came down: up in an
+ * arc as high as a third of its distance, then resting there.
+ */
+function placedFoulPoint(
+  plate: Point3,
+  foul: GroundPoint,
+  time: number
+): Point3 {
+  const t = clamp((time - PITCH_TIMING.plate) / foulFlightMs(foul))
+  const apex = Math.hypot(foul.x - plate.x, foul.z - plate.z) / 3
+  return {
+    x: plate.x + (foul.x - plate.x) * t,
+    y: plate.y * (1 - t) + 4 * apex * t * (1 - t),
+    z: plate.z + (foul.z - plate.z) * t
+  }
+}
+
 export function samplePitch(
   sequence: PitchSequence,
   time: number,
@@ -79,6 +98,8 @@ export function samplePitch(
           (PITCH_TIMING.plate - PITCH_TIMING.release)
       )
     )
+  else if (foul && sequence.foul != null)
+    ball = placedFoulPoint(sequence.plate, sequence.foul, time)
   else if (foul)
     ball = foulPoint(
       sequence.plate,
@@ -112,6 +133,29 @@ export function samplePitch(
   }
 }
 
+/**
+ * A ball off the wall after its flight: it drops from where it met the wall,
+ * touches the ground once halfway, and comes to rest on the carom.
+ */
+function caromPoint(sequence: HitSequence, time: number): Point3 | undefined {
+  const carom = sequence.carom
+  if (carom == null || time <= sequence.flightEndMs) return undefined
+  const wall = sequence.arc.target
+  const height = sequence.arc.landingHeight ?? 0
+  const t = clamp(
+    (time - sequence.flightEndMs) / (sequence.durationMs - sequence.flightEndMs)
+  )
+  const y =
+    t < 0.5
+      ? height * (1 - (t * 2) ** 2)
+      : Math.sin((t - 0.5) * 2 * Math.PI) * 0.8
+  return {
+    x: wall.x + (carom.x - wall.x) * t,
+    y: Math.max(0, y),
+    z: wall.z + (carom.z - wall.z) * t
+  }
+}
+
 export function sampleHit(
   sequence: HitSequence,
   time: number
@@ -130,7 +174,7 @@ export function sampleHit(
       (sequence.fielderEndMs - sequence.fielderStartMs)
   )
   return {
-    ball: arcPoint(sequence.arc, flight),
+    ball: caromPoint(sequence, time) ?? arcPoint(sequence.arc, flight),
     visible: time >= sequence.contactMs && time < sequence.durationMs,
     swing: Math.sin(clamp((time - 250) / 400) * Math.PI),
     fielder: {
@@ -157,6 +201,11 @@ export function sampleThrow(
   visible: boolean
   progress: number
   defenderProgress: number
+  /**
+   * How far a tagged runner has run: over the whole picture, so he does not
+   * wait out the thrower's windup and arrives with the ball.
+   */
+  runnerProgress: number
   swing: number
 } {
   const t = clamp(
@@ -180,6 +229,7 @@ export function sampleThrow(
     visible: !sequence.unassisted && time < sequence.durationMs,
     progress: t,
     defenderProgress: defender,
+    runnerProgress: clamp(time / sequence.durationMs),
     swing: 0
   }
 }

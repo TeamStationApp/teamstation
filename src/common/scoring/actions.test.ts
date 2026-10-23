@@ -33,6 +33,7 @@ import {
 } from './actions'
 import { storedEventType } from './document'
 import { PITCH_HEIGHTS, PITCH_SIDES } from './pitchLocation'
+import { isPitchTypeCode, PITCH_TYPE_NAMES, pitchTypeOf } from './pitchType'
 import { fieldingIds, taggedIds, tagOf } from './playerTags'
 import {
   asGameSetup,
@@ -375,6 +376,33 @@ describe('scoring actions', function () {
       )
       expect(props.pitchLocation.properties?.side.enum).deep.equals(PITCH_SIDES)
     }
+  })
+
+  it('takes and offers the kind of pitch, and drops one no one knows', function () {
+    expect(
+      dictatedAction('pitch', { call: 'S', pitchType: 'curveball' })
+    ).deep.equals({
+      action: { type: 'pitch', call: 'S', pitchType: 'curveball' }
+    })
+    for (const name of PITCH_TYPE_NAMES)
+      expect(
+        cleanAction({ type: 'ballInPlay', contact: 'swing', pitchType: name })
+      ).to.have.nested.property('action.pitchType', name)
+    // An unknown kind — a code is no name — is dropped, and the pitch stands.
+    const unknown = cleanAction({ type: 'pitch', call: 'B', pitchType: 'SL' })
+    expect(unknown).deep.equals({ action: { type: 'pitch', call: 'B' } })
+    const tools = toolSchema()
+    for (const name of ['pitch', 'ballInPlay']) {
+      const field = tools.find(tool => tool.name === name)?.input_schema
+        .properties?.pitchType
+      expect(field?.enum, name).deep.equals(PITCH_TYPE_NAMES)
+      expect(field?.description).includes('see THE PITCH')
+    }
+    expect(pitchTypeOf('knuckleball')).deep.equals({
+      code: 'KN',
+      description: 'Knuckleball'
+    })
+    expect(isPitchTypeCode('FT')).equals(false)
   })
 
   it('tells a model the situation by name, and never the score or an index', function () {

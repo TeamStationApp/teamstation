@@ -1,5 +1,7 @@
 import { isLaunchAngle } from '../launchAngle'
 import { isPitchZone } from '../pitchData'
+import { PITCH_HEIGHTS, PITCH_SIDES } from '../scoring/pitchLocation'
+import { isPitchTypeCode } from '../scoring/pitchType'
 import {
   HIT_TRAJECTORIES,
   MOVEMENT_REASONS,
@@ -35,6 +37,7 @@ export type GumboRule =
   | 'playEvent'
   | 'hitData'
   | 'pitchData'
+  | 'pitchType'
   | 'trajectory'
   | 'location'
   | 'matchup'
@@ -351,6 +354,10 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       ] as Array<[string, unknown]>)
         if (typeof code !== 'string' || !PITCH_CODES.has(code))
           add('pitchCode', path, `${show(code)} is not a pitch code`)
+      // Not one of `PITCH_DETAILS`, whose keys a scored pitch must all have:
+      // a scorer names a pitch's kind only when he knows it.
+      if (details.type !== undefined)
+        pitchType(`${at}.details.type`, details.type)
       if (event.hitData !== undefined) {
         if (details.isInPlay !== true)
           add('hitData', `${at}.hitData`, 'is on a pitch not in play')
@@ -377,6 +384,29 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       add('pitchData', `${at}.pitchData`, `is on a ${type}, not a pitch`)
   }
 
+  /** A pitch's kind: a code `PITCH_TYPES` knows, and its description. */
+  function pitchType(path: string, value: unknown): void {
+    if (
+      !isRecord(value) ||
+      typeof value.code !== 'string' ||
+      typeof value.description !== 'string'
+    ) {
+      add(
+        'pitchType',
+        path,
+        `expected a code and description, got ${show(value)}`
+      )
+      return
+    }
+    // A scorer names only the kinds TeamStation knows; a feed may hold more.
+    if (whole && !isPitchTypeCode(value.code))
+      add(
+        'pitchType',
+        `${path}.code`,
+        `${show(value.code)} is not a pitch type`
+      )
+  }
+
   /**
    * A pitch's speed and zone. Everything else the feed writes there is
    * measured, so a play TeamStation scored carries none of it.
@@ -386,7 +416,7 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       add('pitchData', path, `expected an object, got ${show(value)}`)
       return
     }
-    const { startSpeed, zone } = value
+    const { startSpeed, zone, location } = value
     if (
       startSpeed !== undefined &&
       (typeof startSpeed !== 'number' ||
@@ -404,9 +434,15 @@ export function gumboViolations(play: unknown): GumboViolation[] {
         `${path}.zone`,
         `expected a zone 1-9 or 11-14, got ${show(zone)}`
       )
+    if (location !== undefined && !isPitchLocation(location))
+      add(
+        'pitchData',
+        `${path}.location`,
+        `expected a height, a side and whether it was in the zone, got ${show(location)}`
+      )
     if (whole)
       for (const key of Object.keys(value))
-        if (key !== 'startSpeed' && key !== 'zone')
+        if (key !== 'startSpeed' && key !== 'zone' && key !== 'location')
           add('pitchData', `${path}.${key}`, 'is measured, never scored')
   }
 
@@ -482,4 +518,15 @@ export function gumboViolations(play: unknown): GumboViolation[] {
   }
 
   return found
+}
+
+/** Where a scorer said a pitch crossed the plate, as `pitchData.location`. */
+function isPitchLocation(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    (PITCH_HEIGHTS as readonly unknown[]).includes(value.height) &&
+    (PITCH_SIDES as readonly unknown[]).includes(value.side) &&
+    typeof value.inZone === 'boolean' &&
+    Object.keys(value).length === 3
+  )
 }

@@ -10,6 +10,8 @@ import {
   PLAYER_NAME_MAX_LENGTH,
   PLAYER_POSITIONS
 } from '../common/playerSettings'
+import { PITCH_HEIGHTS, PITCH_SIDES } from '../common/scoring/pitchLocation'
+import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
 import {
   CLIP_MAX_MS,
   CLIP_MIN_MS,
@@ -1149,6 +1151,16 @@ const gumboSchemas = {
           isInPlay: { type: 'boolean' },
           isStrike: { type: 'boolean' },
           isBall: { type: 'boolean' },
+          type: {
+            type: 'object',
+            description:
+              'The kind of pitch the scorer named, as MLB codes it ' +
+              '(`api/v1/pitchTypes`). Absent when none was named.',
+            properties: {
+              code: { type: 'string', enum: PITCH_TYPE_CODES },
+              description: { type: 'string' }
+            }
+          },
           isOut: { type: 'boolean' },
           hasReview: { type: 'boolean' }
         }
@@ -1157,7 +1169,7 @@ const gumboSchemas = {
       pitchData: {
         type: 'object',
         description:
-          'Pitch speed in mph from a matching radar packet, and the scorer’s zone. No tracking coordinates.',
+          'Pitch speed in mph from a matching radar packet, and the scorer’s zone and location. No tracking coordinates.',
         properties: {
           startSpeed: {
             type: 'number',
@@ -1169,6 +1181,18 @@ const gumboSchemas = {
             description:
               "MLB's zone as the catcher sees it: 1-9 the strike zone from " +
               'top left, 11-14 the corners outside it.'
+          },
+          location: {
+            type: 'object',
+            description:
+              'Where the scorer said the pitch crossed the plate, from the ' +
+              "batter's side. A TeamStation field; Gumbo has none.",
+            required: ['height', 'side', 'inZone'],
+            properties: {
+              height: { type: 'string', enum: [...PITCH_HEIGHTS] },
+              side: { type: 'string', enum: [...PITCH_SIDES] },
+              inZone: { type: 'boolean' }
+            }
           }
         }
       },

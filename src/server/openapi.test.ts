@@ -11,6 +11,7 @@ import {
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
 import { ROLE_FLAGS, ROLES } from '../common/roles'
+import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
@@ -552,6 +553,15 @@ describe('the API document', function () {
     expect(runner.details.properties.eventType.enum).deep.equals(
       sorted(STORED_EVENT_TYPES)
     )
+    // The kind of pitch and where the scorer said it went.
+    expect(pitch.details.properties.type.properties.code.enum).deep.equals(
+      PITCH_TYPE_CODES
+    )
+    expect(pitch.pitchData.properties.location.required).deep.equals([
+      'height',
+      'side',
+      'inZone'
+    ])
     expect(action.details.properties.eventType.enum).deep.equals(
       sorted(STORED_EVENT_TYPES)
     )

@@ -655,7 +655,7 @@ describe('refolding the stored plays (U11)', function () {
     expect(await snapshot(old)).deep.equals(before)
   })
 
-  it('stores the speed and zone a scorer gave each pitch, and keeps them through a refold', async function () {
+  it('stores the speed, zone and location a scorer gave each pitch, and keeps them through a refold', async function () {
     const gameId = await newGame()
     await score(gameId, [
       {
@@ -684,8 +684,16 @@ describe('refolding the stored plays (U11)', function () {
       return events.filter(event => event.isPitch).map(event => event.pitchData)
     }
     const stored = [
-      { startSpeed: 64.3, zone: 9 },
-      { startSpeed: 66, zone: 11 }
+      {
+        startSpeed: 64.3,
+        zone: 9,
+        location: { height: 'low', side: 'away', inZone: true }
+      },
+      {
+        startSpeed: 66,
+        zone: 11,
+        location: { height: 'high', side: 'inside', inZone: false }
+      }
     ]
     expect(await pitchData()).deep.equals(stored)
     expect(await refoldScoredGames(db, { gameId })).deep.equals({

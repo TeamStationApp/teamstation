@@ -49,8 +49,10 @@ import {
 } from './lineup'
 import { homeRunKind, isFair } from './park'
 import { pitchZone } from './pitchLocation'
+import { pitchTypeOf } from './pitchType'
 import {
   choiceOpen,
+  closesFirst,
   completesHitOffer,
   currentSetupError,
   forcedFrom,
@@ -312,10 +314,11 @@ function pitchEvent(
 }
 /**
  * What a pitch's action says of the pitch itself, as Gumbo's `pitchData`:
- * its speed to a tenth of a mile an hour, and its zone — the one given as a
- * number, else the one its location falls in for this batter. A speed or zone
- * out of range is dropped rather than refused, so a saved play that holds one
- * still replays: the pitch is thrown without it.
+ * its speed to a tenth of a mile an hour, its zone — the one given as a
+ * number, else the one its location falls in for this batter — and the
+ * location as said. A speed or zone out of range is dropped rather than
+ * refused, so a saved play that holds one still replays: the pitch is thrown
+ * without it.
  */
 function pitchDataOf(
   play: GamePlay,
@@ -329,8 +332,16 @@ function pitchDataOf(
     : action.pitchLocation == null
       ? undefined
       : pitchZone(action.pitchLocation, play.matchup.batSide.code)
-  if (startSpeed == null && zone == null) return undefined
-  return withoutUndefined({ startSpeed, zone })
+  const location =
+    action.pitchLocation == null ? undefined : { ...action.pitchLocation }
+  if (startSpeed == null && zone == null && location == null) return undefined
+  return withoutUndefined({ startSpeed, zone, location })
+}
+/** The kind of pitch an action named, as Gumbo's `details.type`. */
+function typeOf(
+  action: PitchAction | BallInPlayAction
+): PlayEvent['details']['type'] {
+  return action.pitchType == null ? undefined : pitchTypeOf(action.pitchType)
 }
 
 /**
@@ -896,9 +907,11 @@ function pitch(ctx: Ctx, action: PitchAction): void {
     strikes: l.strikes,
     outs
   })
+  const thrown = play.playEvents[play.playEvents.length - 1]
   const pitchData = pitchDataOf(play, action)
-  if (pitchData != null)
-    play.playEvents[play.playEvents.length - 1].pitchData = pitchData
+  if (pitchData != null) thrown.pitchData = pitchData
+  const type = typeOf(action)
+  if (type != null) thrown.details.type = type
   ctx.out.push({
     type: 'pitchThrown',
     call: action.call,
@@ -1007,6 +1020,8 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
   const hit = play.playEvents.findLast(event => event.details.isInPlay === true)
   if (pitchData != null && hit != null)
     hit.pitchData = { ...hit.pitchData, ...pitchData }
+  const type = typeOf(action)
+  if (type != null && hit != null) hit.details.type = type
   // A launch angle is from -90 to 90 degrees. Any other is dropped rather
   // than refused, so a saved play that holds one still replays: the ball is
   // in play without it.
@@ -2105,16 +2120,6 @@ const HANDLERS: {
   gameFlow
 }
 
-/** Actions a decided play closes itself for, rather than refusing. */
-const CLOSES_FIRST = new Set<ScoringAction['type']>([
-  'pitch',
-  'ballInPlay',
-  'result',
-  'baseRunning',
-  'batteryEvent',
-  'lineup'
-])
-
 /**
  * Applies one action to the game. `state` is copied first and left as it
  * was, unless `inPlace` is set: then it is changed where it is, which saves
@@ -2165,11 +2170,7 @@ export function applyAction(
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
   try {
-    if (
-      (CLOSES_FIRST.has(action.type) ||
-        (action.type === 'gameFlow' && action.kind !== 'closePlay')) &&
-      nextDecision(ctx.state) === 'close'
-    )
+    if (closesFirst(action) && nextDecision(ctx.state) === 'close')
       closePlay(ctx)
     if (
       ctx.state.awaitingBatter != null &&

@@ -1,5 +1,6 @@
 import { MAX_ASK_OPTIONS } from '../../common/api'
 import {
+  type BallInPlayAction,
   cleanAction,
   type Problem,
   type ScoringAction,
@@ -24,6 +25,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
+import { placeSections, placeTools } from './placeInstructions'
 
 /**
  * Turns what the scorer said into scoring actions, through an LLM.
@@ -71,6 +73,13 @@ const UNBATTED: ReadonlySet<string> = new Set([
   'catcher_interference',
   'manual_placement'
 ])
+
+/**
+ * What a model is told, once, of an undo the words did not ask for after
+ * calls of its own for the sentence.
+ */
+export const UNDO_NOT_ASKED =
+  "Not undone: undo takes back the scorer's last play, and only when his words say so. Your calls for this sentence stand as sent: do not send them again. If his words say something you have not called yet, call only that now; if not, answer with no tool call."
 
 /** What a model is told when it sent a ball in play and no result for it. */
 export const RESULT_MISSING =
@@ -842,6 +851,50 @@ function isClosePlay(call: ToolCall): boolean {
   )
 }
 
+/**
+ * What an undo in a reply takes back: of each kind of call the reply sends
+ * after it, as many of the last it sent before as it sends again — one
+ * undo and one pitch take back the last pitch.
+ */
+function lastSent(
+  sent: readonly ScoringAction[],
+  after: readonly ToolCall[]
+): ScoringAction[] {
+  const again = new Map<string, number>()
+  for (const call of after)
+    if (call.function.name !== UNDO.function.name)
+      again.set(call.function.name, (again.get(call.function.name) ?? 0) + 1)
+  const taken = new Set<ScoringAction>()
+  for (const [type, count] of again)
+    for (const action of sent.filter(each => each.type === type).slice(-count))
+      taken.add(action)
+  return sent.filter(action => taken.has(action))
+}
+
+/**
+ * A ball in play corrected by the same ball said again: what the second
+ * says wins, and a second that places the ball drops the first's places.
+ */
+function corrected(
+  first: BallInPlayAction,
+  second: BallInPlayAction
+): BallInPlayAction {
+  const placed =
+    second.location != null ||
+    second.direction != null ||
+    second.depth != null ||
+    second.distanceFeet != null
+  if (!placed) return { ...first, ...second }
+  const {
+    location: _location,
+    direction: _direction,
+    depth: _depth,
+    distanceFeet: _distanceFeet,
+    ...unplaced
+  } = first
+  return { ...unplaced, ...second }
+}
+
 function parse(raw: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(raw)
@@ -999,6 +1052,22 @@ export class Interpretation {
   private undo = false
   /** Whether the model was asked once for a result it left out. */
   private nudged = false
+  /** Whether the model was told once that an undo of its own is not one. */
+  private undoAnswered = false
+  /** Whether the last reply held an undo after calls the model had kept. */
+  private ownUndo = false
+  /** Whether this reply answers being told its calls stand. */
+  private answering = false
+  /**
+   * Each ball in play said again before its result and merged into the
+   * first, for the sentence: undone when its results outnumber its balls.
+   */
+  private readonly merges: Array<{
+    merged: ScoringAction
+    before: BallInPlayAction
+    ball: BallInPlayAction
+  }> = []
+
   /** Whether a question about a roster change was turned back once. */
   private rosterAsked = false
   /**
@@ -1021,7 +1090,7 @@ export class Interpretation {
     const choiceRules = /\bfielder['’]?s? choice\b/i.test(transcript)
       ? `\n\nFIELDER CHOICE RELAYS\n${CHOICE_INSTRUCTIONS}`
       : ''
-    const game = `${gamePrompt(context)}${choiceRules}`
+    const game = `${gamePrompt(context)}${choiceRules}${placeSections(transcript)}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)
@@ -1120,8 +1189,13 @@ export class Interpretation {
       // A follow-up round that adds nothing new means the sentence is done.
       const more =
         this.config.followUp === true && read > 0 && round < MAX_FOLLOW_UPS
-      if (!nudge && !more) return this.finished(reply.said)
+      // An undo the words did not ask for, after calls of the model's own:
+      // it is told once that its calls stand, and asked for what is left.
+      const ownUndo = !this.undoAnswered && this.ownUndo
+      if (!nudge && !more && !ownUndo) return this.finished(reply.said)
       if (nudge) this.nudged = true
+      if (ownUndo) this.undoAnswered = true
+      this.answering = ownUndo
       // Each call answered, and the model asked for whatever is left.
       this.messages.push({
         role: 'assistant',
@@ -1132,11 +1206,14 @@ export class Interpretation {
         this.messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: nudge
-            ? this.config.followUp === true
-              ? `${followUp(this.recorded())} ${RESULT_MISSING.replace(/^Recorded\. /, '')}`
-              : RESULT_MISSING
-            : followUp(this.recorded())
+          content:
+            ownUndo && call.function.name === UNDO.function.name
+              ? UNDO_NOT_ASKED
+              : nudge
+                ? this.config.followUp === true
+                  ? `${followUp(this.recorded())} ${RESULT_MISSING.replace(/^Recorded\. /, '')}`
+                  : RESULT_MISSING
+                : followUp(this.recorded())
         })
       this.required = false
     }
@@ -1221,14 +1298,40 @@ export class Interpretation {
       return { kind: 'ask', question, options }
     }
     let kept = 0
-    for (const call of calls) {
+    this.ownUndo = false
+    // What this reply kept, and, after an undo of the model's own in it,
+    // what of that its next calls replace.
+    const sent: ScoringAction[] = []
+    let retaken: ScoringAction[] = []
+    // Told its calls stand, a reply that sends the kept result again is
+    // sending its play again, its ball too; a new result is a new batter's.
+    const lastResult = this.actions.findLast(
+      action => action.type === 'result' && !UNBATTED.has(action.eventType)
+    )
+    const resent =
+      this.answering &&
+      lastResult?.type === 'result' &&
+      calls.some(
+        call =>
+          call.function.name === 'result' &&
+          parse(call.function.arguments)?.eventType === lastResult.eventType
+      )
+    for (const [index, call] of calls.entries()) {
       if (call.function.name === UNDO.function.name) {
         // Taking back a play is destructive: only when the words say so.
         if (!TAKE_BACK.test(this.transcript)) {
-          this.dropped.push({
-            code: 'malformed',
-            message: 'An undo the words did not ask for was ignored'
-          })
+          // After calls of its own for this sentence, it is the model taking
+          // those back, not a play. In the same reply, the calls it sends
+          // next replace them; a later reply is told they stand.
+          if (this.actions.length === 0)
+            this.dropped.push({
+              code: 'malformed',
+              message: 'An undo the words did not ask for was ignored'
+            })
+          else {
+            this.ownUndo = true
+            retaken = lastSent(sent, calls.slice(index + 1))
+          }
           kept++
           continue
         }
@@ -1238,7 +1341,12 @@ export class Interpretation {
       }
       const cleaned = clean(
         call.function.name,
-        parse(call.function.arguments),
+        this.withContact(
+          call.function.name,
+          this.rosterNames().has(call.function.name)
+            ? parse(call.function.arguments)
+            : this.withTagsForNames(parse(call.function.arguments))
+        ),
         this.rosterNames(),
         this.players
       )
@@ -1252,7 +1360,7 @@ export class Interpretation {
         kept++
         continue
       }
-      const { action } = cleaned
+      const action = this.onlyDefenders(cleaned.action)
       if (action.type === 'gameFlow' && action.kind === 'closePlay') continue
       // A runner's move is the same move for the same runner, base and
       // outcome, whatever fielders it names.
@@ -1262,10 +1370,158 @@ export class Interpretation {
         this.actions.some(earlier => moveOf(earlier) === move)
       )
         continue
-      this.actions.push(action)
+      // After its own undo in this reply, a call like one it took back
+      // replaces it, in order; any more are the play's next calls.
+      const taken = retaken.findIndex(earlier => earlier.type === action.type)
+      if (taken >= 0) {
+        const [earlier] = retaken.splice(taken, 1)
+        const at = this.actions.indexOf(earlier)
+        if (at < 0) continue
+        const replaced =
+          earlier.type === 'ballInPlay' && action.type === 'ballInPlay'
+            ? corrected(earlier, action)
+            : action
+        this.actions[at] = replaced
+        sent[sent.indexOf(earlier)] = replaced
+        kept++
+        continue
+      }
+      // Told its calls stand, a batted result said again, no ball waiting
+      // for it, is the one kept. Two batters' same results are two.
+      const last = this.actions.findLast(
+        kept => kept.type === 'result' && !UNBATTED.has(kept.eventType)
+      )
+      if (
+        this.answering &&
+        action.type === 'result' &&
+        !UNBATTED.has(action.eventType) &&
+        last != null &&
+        !this.resultMissing() &&
+        JSON.stringify(last) === JSON.stringify(action)
+      )
+        continue
+      // A second ball in play before the first has its result is the same
+      // ball said again, perhaps corrected: what it says wins. So is one
+      // sent again with its result after the model was told they stand.
+      const earlier = this.actions.findLastIndex(
+        kept => kept.type === 'ballInPlay'
+      )
+      if (
+        resent &&
+        action.type === 'ballInPlay' &&
+        earlier >= 0 &&
+        !this.resultMissing()
+      ) {
+        this.actions[earlier] = corrected(
+          this.actions[earlier] as BallInPlayAction,
+          action
+        )
+        kept++
+        continue
+      }
+      if (
+        action.type === 'ballInPlay' &&
+        earlier >= 0 &&
+        this.resultMissing()
+      ) {
+        const before = this.actions[earlier] as BallInPlayAction
+        const merged = corrected(before, action)
+        this.merges.push({ merged, before, ball: action })
+        this.actions[earlier] = merged
+        const at = sent.indexOf(before)
+        if (at >= 0) sent[at] = merged
+        else sent.push(merged)
+      } else {
+        this.actions.push(action)
+        sent.push(action)
+      }
       kept++
     }
+    // Two batters' balls sent before their results were two balls after all.
+    for (const merge of [...this.merges].reverse()) {
+      if (!this.resultsOutnumberBalls()) break
+      const at = this.actions.indexOf(merge.merged)
+      if (at < 0) continue
+      this.actions[at] = merge.before
+      this.actions.splice(at + 1, 0, merge.ball)
+      this.merges.splice(this.merges.indexOf(merge), 1)
+    }
     return kept
+  }
+
+  /** Whether the sentence has more batted results than balls in play. */
+  private resultsOutnumberBalls(): boolean {
+    const balls = this.actions.filter(action => action.type === 'ballInPlay')
+    const batted = this.actions.filter(
+      action => action.type === 'result' && !UNBATTED.has(action.eventType)
+    )
+    return batted.length > balls.length
+  }
+
+  /**
+   * An action whose relay names only the fielding side: with the whole
+   * defense in GAME, a player off it — a batter whose tag the model took for
+   * the first baseman's — is no fielder, and the screen finds the relay
+   * from the words.
+   */
+  private onlyDefenders(action: ScoringAction): ScoringAction {
+    const defenders = new Set(this.players.fielding.values())
+    if (
+      defenders.size < 9 ||
+      !('fielders' in action) ||
+      !Array.isArray(action.fielders) ||
+      action.fielders.every(id => defenders.has(id))
+    )
+      return action
+    // A fielding play names its fielders: its defenders, or, with none, its
+    // own. Any other relay with a player off the defense is no relay — the
+    // screen finds it from the words — since a part of one credits wrongly.
+    if (action.type === 'fieldingPlay') {
+      const fielders = action.fielders.filter(id => defenders.has(id))
+      return fielders.length === 0 ? action : { ...action, fielders }
+    }
+    const { fielders: _all, ...rest } = action
+    return rest
+  }
+
+  /**
+   * A player the model wrote by his whole name, as GAME gives it, in place
+   * of his tag: his tag, when no one else has that name. Not for a roster
+   * command, which may name a player by name on purpose.
+   */
+  private withTagsForNames(
+    args: Record<string, unknown> | null
+  ): Record<string, unknown> | null {
+    if (args == null) return args
+    const tagOf = (value: unknown): unknown => {
+      if (typeof value !== 'string') return value
+      const tags = [...this.names]
+        .filter(([, name]) => name.toLowerCase() === value.trim().toLowerCase())
+        .map(([tag]) => tag)
+      return tags.length === 1 ? tags[0] : value
+    }
+    return Object.fromEntries(
+      Object.entries(args).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? value.map(tagOf) : tagOf(value)
+      ])
+    )
+  }
+
+  /**
+   * A ball in play said again before its result, without its contact: the
+   * contact of the ball it repeats.
+   */
+  private withContact(
+    name: string,
+    args: Record<string, unknown> | null
+  ): Record<string, unknown> | null {
+    if (name !== 'ballInPlay' || args == null || args.contact != null)
+      return args
+    const earlier = this.actions.findLast(kept => kept.type === 'ballInPlay')
+    return earlier != null && this.resultMissing()
+      ? { ...args, contact: earlier.contact }
+      : args
   }
 
   /** A problem as the scorer reads it, its message with names, never a tag. */
@@ -1442,7 +1698,9 @@ export class Interpretation {
         // One sentence is regularly several actions.
         parallel_tool_calls: true,
         tools: [
-          ...asOpenAiTools(this.config.tools ?? toolSchema()),
+          ...asOpenAiTools(
+            placeTools(this.config.tools ?? toolSchema(), this.transcript)
+          ),
           ...asOpenAiTools(this.config.rosterTools ?? []),
           ASK_SCORER,
           UNDO
@@ -1496,7 +1754,7 @@ export class Interpretation {
         // Any tool, and as many as the sentence needs.
         tool_choice: this.required ? { type: 'any' } : { type: 'auto' },
         tools: [
-          ...(this.config.tools ?? toolSchema()),
+          ...placeTools(this.config.tools ?? toolSchema(), this.transcript),
           ...(this.config.rosterTools ?? []),
           ...[ASK_SCORER, UNDO].map(tool => ({
             name: tool.function.name,

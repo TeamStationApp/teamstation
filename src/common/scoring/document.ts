@@ -20,6 +20,7 @@ import {
 import { PARK } from './park'
 import { trajectoryOf } from './rules'
 import {
+  fenceOf,
   type GamePlay,
   type GameSetup,
   type GameState,
@@ -31,6 +32,9 @@ import {
   type SideLineup,
   withoutUndefined
 } from './state'
+
+/** The fence a game is played to; `state.ts` keeps it beside the field. */
+export { fenceOf }
 
 /**
  * The stored play: a projection of the engine's state in Gumbo's own shape
@@ -548,15 +552,6 @@ export function distanceFeet(
   return Math.round(Math.hypot(point.x, point.z) * feetPerUnit(fenceDistanceFt))
 }
 
-/**
- * The fence a game is played to, which sizes its plays' distances: its
- * centre-field distance, or the default for a game saved before fences had
- * sizes.
- */
-export function fenceOf(state: GameState): number {
-  return state.gameData.venue?.fieldInfo.center ?? DEFAULT_FENCE_DISTANCE_FT
-}
-
 interface HitData {
   launchAngle?: number
   totalDistance?: number
@@ -644,6 +639,9 @@ function pitchDocument(
       isInPlay,
       isStrike: STRIKE_CALLS.has(code),
       isBall: BALL_CALLS.has(code),
+      ...(event.details.type == null
+        ? {}
+        : { type: { ...event.details.type } }),
       isOut,
       hasReview: false
     },

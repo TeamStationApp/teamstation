@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { promptContext, toolSchema } from '../../common/scoring/actions'
+import {
+  actionFromTagSlots,
+  promptContext,
+  toolSchema
+} from '../../common/scoring/actions'
 import {
   rosterPrompt,
   rosterToolSchema
@@ -14,7 +18,7 @@ import {
   choiceRelayPhrases,
   choiceTimingPhrases
 } from '../../test/fieldersChoicePhrases'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
@@ -38,10 +42,7 @@ describe('real dictated fielder choice animation and defensive credits', functio
         throw new Error(
           'Configure dictation.anthropic for the live interpreter tests'
         )
-      const before = initialScoringState(
-        createDevelopmentSession(gameFixture, [], []),
-        true
-      )
+      const before = initialScoringState(scoringSession(gameFixture), true)
       for (const [index, key] of (
         ['first', 'second', 'third'] as const
       ).entries())
@@ -68,7 +69,10 @@ describe('real dictated fielder choice animation and defensive credits', functio
       let state = scoringReducer(before, {
         type: 'DICTATED',
         transcript: example.said,
-        actions: turn.actions
+        // The model names players by tag slot, as the server's route maps them.
+        actions: turn.actions.map(action =>
+          actionFromTagSlots(action, before.session.meta.tagOrder)
+        )
       })
       expect(
         state.dictation?.problem,

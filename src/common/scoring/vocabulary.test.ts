@@ -23,7 +23,19 @@ describe('dictation vocabulary', function () {
     ])
       expect(DICTATION_TERMS).not.includes(term)
     expect(DICTATION_TERMS).includes('six four three')
-    expect(DICTATION_TERMS).to.have.length(34)
+    expect(DICTATION_TERMS).to.have.length(43)
+    for (const term of [
+      'blooper',
+      'dribbler',
+      'warning track',
+      'off the wall',
+      'shallow',
+      'fastball',
+      'curveball',
+      'slider',
+      'changeup'
+    ])
+      expect(DICTATION_TERMS).includes(term)
     expect(new Set(DICTATION_TERMS.map(t => t.toLowerCase())).size).equals(
       DICTATION_TERMS.length
     )
