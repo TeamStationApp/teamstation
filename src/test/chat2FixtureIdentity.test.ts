@@ -1,16 +1,27 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
+import ts from 'typescript'
 
 import { userIdOfGumbo, userIdOfValue } from '../common/userId'
 import {
   asIdentityCompatibility,
+  CHAT2_APPLICATION_TEST_FILES,
   type Chat2Fixture,
+  isChat2HarnessPath,
   sourceBinding,
   verifyChat2HarnessSource
 } from './chat2Fixture.e2e'
@@ -255,8 +266,15 @@ describe('committed chat harness and application provenance', () => {
       )
     ).throws('ancestor')
   })
-  for (const path of ['src/app/index.tsx', 'src/test/unexpected.e2e.ts'])
-    it('rejects an application or unlisted test delta: ' + path, () => {
+  for (const path of [
+    'src/app/index.tsx',
+    'src/server/chat/titles.ts',
+    'src/test/legacyChatKeyRecord.json',
+    'src/app/scoring/scoringModals.e2e.preview.tsx',
+    'scripts/chat-e2e-reset.sh',
+    'scripts/e2e/scoreboardLog/e5Browser.ts'
+  ])
+    it('rejects an application delta: ' + path, () => {
       const repo = repository()
       repo.write(path, '// unauthorized delta\n')
       const harness = repo.commit(path)
@@ -264,6 +282,68 @@ describe('committed chat harness and application provenance', () => {
         verifyChat2HarnessSource(repo.root, repo.application, harness)
       ).throws('new build and capture archive')
     })
+  for (const path of [
+    'src/test/unexpected.e2e.ts',
+    'src/app/chat/chat.e2e.ts',
+    'src/app/chat/chatPhones.e2e.ts',
+    'src/app/chat/chatUi.test.tsx',
+    'src/server/chat/chat2Identity.test.ts',
+    'src/test/chatRows.ts',
+    'scripts/e2e/scoreboardLog/e5Browser.e2e.ts',
+    'scripts/chatBench.e2e.mjs'
+  ])
+    it('accepts a delta no application build takes in: ' + path, () => {
+      const repo = repository()
+      const text = '// harness-only delta\n'
+      repo.write(path, text)
+      const harness = repo.commit(path)
+      const result = verifyChat2HarnessSource(
+        repo.root,
+        repo.application,
+        harness
+      )
+      expect(result.applicationSource).equals(repo.application)
+      expect(result.changedTestFiles).deep.equals([
+        { path, sha256: createHash('sha256').update(text).digest('hex') }
+      ])
+    })
+  it('rejects a harness delta that carries an application change with it', () => {
+    const repo = repository()
+    repo.write('src/app/chat/chat.e2e.ts', '// harness\n')
+    repo.write('src/app/chat/ChatListScreen.tsx', '// application\n')
+    repo.git('add', 'src/app/chat/chat.e2e.ts')
+    const harness = repo.commit('src/app/chat/ChatListScreen.tsx')
+    expect(() =>
+      verifyChat2HarnessSource(repo.root, repo.application, harness)
+    ).throws('new build and capture archive')
+  })
+  it('names the harness by test paths, keeping its six named files', () => {
+    for (const path of [
+      'src/app/chat/chat2.e2e.ts',
+      'src/test/chat2Maestro.e2e.ts',
+      'src/test/chat2Fixture.e2e.ts',
+      'src/app/chat/chat2Actions.test.ts',
+      'src/test/chat2FixtureIdentity.test.ts',
+      'src/app/chat/engine/dmTitle.test.ts',
+      'src/test/fixtures/anything.json',
+      'scripts/socket.e2e.ts'
+    ])
+      expect(isChat2HarnessPath(path), path).equals(true)
+    for (const path of [
+      'src/app/chat/chat2.ts',
+      'src/app/chat/test.ts',
+      'src/app/chat/e2e.ts',
+      'src/app/chat/chat.e2e.ts.orig',
+      'src/app/chat/chat.testing.ts',
+      'src/app/scoring/scoringRosterEdit.e2e.fixture.ts',
+      'src/apptest/x.ts',
+      'scripts/socket.e2e/x.ts',
+      'scripts/chat-socket-listen.mjs',
+      'test/src/x.ts',
+      ...CHAT2_APPLICATION_TEST_FILES
+    ])
+      expect(isChat2HarnessPath(path), path).equals(false)
+  })
   it('keeps original artifact and receipt verification after an allowed harness edit', () => {
     const repo = repository()
     const { fixture, artifact, receipt } = builtFixture(repo)
@@ -281,5 +361,78 @@ describe('committed chat harness and application provenance', () => {
         'receipt source differs'
       )
     })
+  })
+})
+
+/**
+ * Every file an application build can take in: the web bundle's entries
+ * (`src/build.mjs`), the native one (`index.js`, through Metro), and the
+ * server's (`npm start`) with the stats builder it forks. Each relative
+ * `import`, `require` and `import()` is followed into every platform twin
+ * that exists (`.web`, `.native`, `.ios`, `.android`) as well as the plain
+ * file, so the set covers every bundler and platform at once.
+ */
+function applicationFiles(root: string): string[] {
+  const entries = [
+    'src/app/web/index.tsx',
+    'src/app/platform/passwordWorker.ts',
+    'index.js',
+    'src/server/index.ts',
+    'src/server/statsBuilder/start.ts'
+  ]
+  const twins = ['.web', '.native', '.ios', '.android', '']
+  const extensions = ['.tsx', '.ts', '.jsx', '.js', '.cjs', '.mjs', '.json']
+  const isFile = (path: string): boolean =>
+    existsSync(path) && statSync(path).isFile()
+  const resolveAll = (from: string, specifier: string): string[] => {
+    const base = resolve(dirname(from), specifier)
+    const found = isFile(base) ? [base] : []
+    // An image, which Metro reads at the scales beside it (`name@2x.png`).
+    const image = /^(.*)(\.(?:png|jpe?g|gif|webp))$/.exec(base)
+    if (image != null)
+      for (const scale of ['@1x', '@2x', '@3x'])
+        if (isFile(image[1] + scale + image[2]))
+          found.push(image[1] + scale + image[2])
+    for (const stem of [base, join(base, 'index')])
+      for (const twin of twins)
+        for (const extension of extensions)
+          if (isFile(stem + twin + extension))
+            found.push(stem + twin + extension)
+    return found
+  }
+  const seen = new Set<string>()
+  const pending = entries.map(entry => join(root, entry))
+  for (let file = pending.pop(); file != null; file = pending.pop()) {
+    if (seen.has(file)) continue
+    seen.add(file)
+    if (!/\.[cm]?[jt]sx?$/.test(file)) continue
+    const { importedFiles } = ts.preProcessFile(
+      readFileSync(file, 'utf8'),
+      true,
+      true
+    )
+    for (const { fileName } of importedFiles) {
+      if (!fileName.startsWith('.')) continue
+      const targets = resolveAll(file, fileName)
+      expect(
+        targets.length,
+        `${relative(root, file)} imports ${fileName}`
+      ).greaterThan(0)
+      pending.push(...targets)
+    }
+  }
+  return [...seen].map(file => relative(root, file)).sort()
+}
+
+describe('what an application build is made of', () => {
+  it('takes in no harness path from the web, native or server entries', function () {
+    this.timeout(60000)
+    const files = applicationFiles(join(__dirname, '..', '..'))
+    expect(files).includes('src/app/App.tsx')
+    expect(files).includes('src/server/chat/listing.ts')
+    expect(files.filter(isChat2HarnessPath)).deep.equals([])
+    // Each exception is one a build really takes in, or it is stale.
+    for (const path of CHAT2_APPLICATION_TEST_FILES)
+      expect(files, path).includes(path)
   })
 })
