@@ -271,6 +271,44 @@ describe('public chat engine list summaries', () => {
     }
   })
 
+  it('reads the members again when one person left and another joined between list reads', async () => {
+    const api = client()
+    const joinedId = userIdOfGumbo(4)
+    const first = summary()
+    let listed: ChatConversation = { ...first, people: [first.people[0]] }
+    let members = [member(me, 'Juan S'), member(currentId, 'Aaron J')]
+    let reads = 0
+    api.chatConversations = async () => [listed]
+    api.chatMembers = async () => {
+      reads += 1
+      return members
+    }
+    const chat = engine(api)
+    try {
+      await chat.refresh()
+      listed = {
+        ...listed,
+        people: [
+          { ...listed.people[0], left: true },
+          { userId: joinedId, shortName: 'Kim K', left: false, avatarUrl: null }
+        ]
+      }
+      members = [member(me, 'Juan S'), member(joinedId, 'Kim K')]
+      const [item] = await chat.refresh()
+      expect(reads).equals(2)
+      expect(item.title).equals('Kim K')
+      expect(item.people).deep.equals([
+        { userId: joinedId, shortName: 'Kim K', left: false, avatarUrl: null },
+        { userId: currentId, shortName: 'Aaron J', left: true, avatarUrl: null }
+      ])
+      // A list that agrees with the members read reads them no more.
+      await chat.refresh()
+      expect(reads).equals(2)
+    } finally {
+      chat.stop()
+    }
+  })
+
   it('keeps an empty scope chat preview blank and omits unrelated DM people', async () => {
     const api = client()
     api.chatConversations = async () => [

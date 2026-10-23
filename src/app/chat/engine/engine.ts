@@ -342,15 +342,22 @@ export class ChatEngine {
 
   /**
    * Reads the chat list again, and the members of DMs, for their names: of
-   * each DM not read yet, or whose count no longer matches the list's.
+   * each DM not read yet, or whose count or people no longer match the
+   * list's (one left and another joined since they were read).
    */
   async refresh(): Promise<ConversationListItem[]> {
     await this.serial('list', async () => {
       await syncList({ client: this.options.client, memory: this.memory })
       for (const state of this.memory.conversations.values()) {
+        const members = state.members
         if (
           state.summary.kind === 'dm' &&
-          state.members?.length !== state.summary.memberCount
+          (members?.length !== state.summary.memberCount ||
+            state.summary.people.some(
+              person =>
+                person.left ===
+                members.some(member => member.userId === person.userId)
+            ))
         ) {
           state.members = await this.options.client.chatMembers(
             state.summary.id
