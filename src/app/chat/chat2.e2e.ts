@@ -2649,12 +2649,47 @@ export class Scenarios {
         duration: 200
       })
     } else {
+      const point = ui.native ? undefined : await this.zoomedHoldPoint(target)
       await ui.device.longPressOn({
         id: 'chat-bubble-' + target.id,
+        ...(point == null ? {} : { point }),
         duration: 550
       })
       await ui.device.assertVisible({ text: exactText('Reply'), timeout: 5000 })
     }
+  }
+
+  /**
+   * Under pinch zoom the driver's element hold reveals the bubble, then hit-
+   * tests the centre of its visual-viewport-relative box in layout
+   * coordinates; any pan moves that probe onto another element and the hold
+   * fails as "cannot find element". An explicit point stays in one space
+   * (box and pointer are both visual-viewport relative), so hold the centre of
+   * the bubble's part that is both in the visual viewport and in the reader.
+   */
+  async zoomedHoldPoint(target: Chat2Message): Promise<string | undefined> {
+    const located = await this.ui.dom(
+      `const v=window.visualViewport;if(v==null||v.scale===1)return {scale:1};const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});if(!n)throw Error('Public zoomed bubble required');const b=n.getBoundingClientRect();return {scale:v.scale,x:b.x,y:b.y,width:b.width,height:b.height,left:v.offsetLeft,top:v.offsetTop,right:v.offsetLeft+v.width,bottom:v.offsetTop+v.height}`
+    )
+    if (Number(located.scale) === 1) return undefined
+    const band = await this.readingBand()
+    const x = Number(located.x)
+    const y = Number(located.y)
+    const width = Number(located.width)
+    const height = Number(located.height)
+    const left = Math.max(x, Number(located.left))
+    const right = Math.min(x + width, Number(located.right))
+    const top = Math.max(y, Number(located.top), band.top)
+    const bottom = Math.min(y + height, Number(located.bottom), band.bottom)
+    assert(
+      width > 0 && height > 0 && right - left >= 8 && bottom - top >= 8,
+      'Zoomed hold requires a visible unobscured part of the bubble'
+    )
+    const percent = (offset: number, size: number): string =>
+      String(Math.round((offset / size) * 1000) / 10) + '%'
+    const point = `${percent((left + right) / 2 - x, width)},${percent((top + bottom) / 2 - y, height)}`
+    this.observations.push({ zoomedHold: target.id, located, band, point })
+    return point
   }
 
   async reply(target = this.f.messages.target): Promise<void> {
@@ -3158,9 +3193,13 @@ export class Scenarios {
       'Current other-member with a unique public safety label required'
     )
     const selector = { id: 'chat-info-member-' + member.userId }
+    // A pinch-zoomed row is wider than the visual viewport, so a vertical-only
+    // reveal leaves an earlier horizontal pan, and the driver's scroll check
+    // (visual-relative bounds against the layout viewport) never passes. Align
+    // the row's leading edge, where its name and role are, as a reader would.
     if (!ui.native)
       await ui.dom(
-        `const n=document.querySelector(${JSON.stringify('[data-testid="' + selector.id + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
+        `const n=document.querySelector(${JSON.stringify('[data-testid="' + selector.id + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center',inline:'start'});return {publicMemberScroll:true}`
       )
     await ui.device.scrollUntilVisible({
       element: selector,
@@ -5194,6 +5233,9 @@ export class Scenarios {
             })
           }
           const actions = await this.menuState()
+          // The entrance fade starts only after the hold is released, and
+          // public bounds omit an opacity-0 node; measure the settled preview.
+          if (this.touchActions) await observeSpotlightCaptureReady(ui)
           const preview = this.touchActions
             ? await ui.publicBounds('chat-message-spotlight-preview')
             : undefined
@@ -5205,7 +5247,6 @@ export class Scenarios {
                 preview.y + preview.height <= height + 2,
               'Selected preview from clipped origin must remain inside viewport'
             )
-          if (this.touchActions) await observeSpotlightCaptureReady(ui)
           await ui.shot(
             'partially-scrolled-spotlight',
             this.touchActions
