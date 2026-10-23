@@ -1,5 +1,7 @@
 package app.teamstation.cameraman.sentry
 
+import app.teamstation.observability.NativeSentryPrivacy
+
 import android.content.Intent
 import io.sentry.Breadcrumb
 import io.sentry.Sentry
@@ -21,6 +23,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SentrySetupTest {
+    @Test fun `native host validates its public routing configuration`() {
+        val context = RuntimeEnvironment.getApplication()
+        Sentry.close()
+        for (dsn in listOf("", "not a url", "http://public@example.test/1", "https://public:secret@example.test/1", "https://public@example.test/1?x=y", "https://public@example.test/1#x", "https://public@example.test/path/1")) {
+            NativeSentryPrivacy.start(context, dsn, "1.0", "1")
+            assertFalse(Sentry.isEnabled())
+        }
+        try {
+            NativeSentryPrivacy.start(context, "https://public@logs.example.test/1", "1.0", "1")
+            assertTrue(Sentry.isEnabled())
+        } finally { Sentry.close() }
+    }
     @Test
     fun `a build without a DSN starts nothing`() {
         SentrySetup.start(RuntimeEnvironment.getApplication(), dsn = "")
@@ -51,21 +65,21 @@ class SentrySetupTest {
             )
         }
         val out = SentrySetup.scrub(event)
-        assertEquals("code for [email]", out.message?.formatted)
-        assertEquals("POST /api/v1/join/[Filtered]/redeem", out.transaction)
+        assertNull(out.message)
+        assertNull(out.transaction)
         assertNull(out.contexts.get("session"))
-        assertEquals(mapOf("token" to SentryRules.FILTERED, "bytes" to 4), out.contexts.get("upload"))
-        assertEquals("GET /i/[Filtered]", out.exceptions?.first()?.value)
-        assertEquals("https://app.example.test/api/v1/auth/password", out.request?.url)
+        assertNull(out.contexts.get("upload"))
+        assertEquals("internal", out.exceptions?.first()?.value)
+        assertNull(out.request)
         assertNull(out.request?.cookies)
         assertNull(out.request?.queryString)
-        assertEquals(mapOf("User-Agent" to "ua"), out.request?.headers)
+        assertNull(out.request?.headers)
         assertNull(out.serverName)
-        assertEquals("7", out.user?.id)
+        assertNull(out.user)
         assertNull(out.user?.email)
-        assertEquals(SentryRules.FILTERED, out.getExtra("token"))
-        assertEquals(3, out.getExtra("count"))
-        assertEquals(listOf("/signin/[Filtered]"), out.breadcrumbs?.map { it.message })
+        assertNull(out.getExtra("token"))
+        assertNull(out.getExtra("count"))
+        assertTrue(out.breadcrumbs.isNullOrEmpty())
     }
 
     @Test
@@ -126,11 +140,9 @@ class SentrySetupTest {
             Sentry.flush(2000)
             assertEquals(1, sent.size)
             val event = sent.first()
-            assertEquals("Sentry test error", event.exceptions?.first()?.value)
+            assertEquals("internal", event.exceptions?.first()?.value)
             val crumbs = event.breadcrumbs.orEmpty().filter { it.category == "http" }
-            assertEquals("/signin/[Filtered]", crumbs.single().message)
-            assertEquals("/api/v1/teams", crumbs.single().getData("url"))
-            assertEquals(SentryRules.FILTERED, crumbs.single().getData("token"))
+            assertTrue(crumbs.isEmpty())
             assertTrue(event.breadcrumbs.orEmpty().none { it.category == "console" })
         } finally {
             Sentry.close()

@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import TeamStationObservability
 import Observation
 import os
 // Only the level enum: CameramanCore also has a `ProcessLoad`, which would collide with DirectorPipeline's.
@@ -201,6 +202,7 @@ public final class AppEnvironment {
   public private(set) var isRecording = false {
     didSet {
       guard isRecording != oldValue else { return }
+      AppLog.record(isRecording ? .recordingStarted : .recordingStopped)
       // A take starting or stopping changes what TS Distributor may ask the iPad to stitch, and the
       // recordings it lists.
       distributorEvents.publish(.recordingStateChanged(isRecording: isRecording))
@@ -228,6 +230,7 @@ public final class AppEnvironment {
   public private(set) var isStreaming = false {
     didSet {
       guard isStreaming != oldValue else { return }
+      AppLog.record(isStreaming ? .streamStarted : .streamStopped, operation: .service)
       distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
       updateScoreboards()
       holdProgrammeSound()
@@ -2018,6 +2021,7 @@ public final class AppEnvironment {
       return
     }
     let now = clock.now
+    AppLog.record(.recordingRequested)
     let recordingID: Int64
     // The take's row, with the encoding it is recorded with kept for its exports; the master's
     // anchors belong to it until it stops.
@@ -2025,6 +2029,7 @@ public final class AppEnvironment {
     do {
       recordingID = try programmeRecording.open(at: now, settings: settings)
     } catch {
+      AppLog.record(.recordingFailed, error: .storage)
       statusMessage = "Could not start recording: \(error)"
       return
     }
@@ -2034,16 +2039,11 @@ public final class AppEnvironment {
     lastGridSnapshot = nil
     saveGridSnapshot(for: recordingID)
 
-    do {
-      for pipeline in router.activePipelines {
-        // The proxy is a JPEG a second from the decoded picture, which the scrub timeline needs
-        // whether or not the archive is keeping up.
-        attachArchive(to: pipeline, recordingID: recordingID)
-        attachProxy(to: pipeline)
-      }
-
-    } catch {
-      statusMessage = "Could not start every camera: \(error)"
+    for pipeline in router.activePipelines {
+      // The proxy is a JPEG a second from the decoded picture, which the scrub timeline needs
+      // whether or not the archive is keeping up.
+      attachArchive(to: pipeline, recordingID: recordingID)
+      attachProxy(to: pipeline)
     }
 
     // Losing program output is not a failure of the recording: the per-camera archives are the
@@ -2053,6 +2053,7 @@ public final class AppEnvironment {
       try programmeRecording.startProgramme(at: now, settings: settings)
     } catch {
       let message = "Program output unavailable: \(error)"
+      AppLog.record(.recordingFailed, error: .internalError)
       statusMessage = message
       telemetry.mutate { $0.dvr.lastError = message }
     }
@@ -2345,6 +2346,7 @@ public final class AppEnvironment {
 
   private func reportStreamError(_ message: String) {
     guard streamErrorGate.shouldPresent(message) else { return }
+    AppLog.record(.streamFailed, operation: .service, error: .internalError)
     statusMessage = message
     telemetry.mutate { $0.dvr.lastError = message }
   }
@@ -2428,6 +2430,7 @@ public final class AppEnvironment {
         cameraName: knownCameraName(for: pipeline.sourceID)
       )
     } catch {
+      AppLog.record(.recordingFailed, error: .storage)
       statusMessage = "\(pipeline.displayName): \(error)"
     }
   }

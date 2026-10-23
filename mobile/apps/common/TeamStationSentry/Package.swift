@@ -15,7 +15,8 @@ let package = Package(
     .library(name: "TeamStationSentry", targets: [ "TeamStationSentry" ])
   ],
   dependencies: [
-    .package(path: "../TeamStationSentryRules")
+    .package(path: "../TeamStationSentryRules"),
+    .package(path: "../TeamStationObservability")
   ],
   targets: [
     .binaryTarget(
@@ -27,10 +28,12 @@ let package = Package(
       name: "TeamStationSentry",
       dependencies: [
         .product(name: "TeamStationSentryRules", package: "TeamStationSentryRules"),
+        .product(name: "TeamStationObservability", package: "TeamStationObservability"),
         "Sentry"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ],
       linkerSettings: [ .linkedLibrary("c++"), .linkedLibrary("z") ]
-    )
+    ),
+    .testTarget(name: "TeamStationSentryTests", dependencies: ["TeamStationSentry", "Sentry"])
   ]
 )

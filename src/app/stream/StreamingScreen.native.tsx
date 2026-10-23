@@ -72,6 +72,9 @@ import {
 } from './settings/PairDeviceModal'
 import { StreamSettingsSheet } from './settings/StreamSettingsSheet'
 
+// Hermes supplies this monotonic timer, but React Native's types omit it.
+declare const performance: { now: () => number }
+
 /** The stream this phone holds for one angle, as `POST …/live-streams` gave it. */
 export interface StreamingSession {
   gameId: string
@@ -266,6 +269,12 @@ function StreamingOverlay(
   const insets = useInsets()
   const window = useWindowDimensions()
   const status = usePhoneStreamStatusOf(phone)
+  const analytics = useMemo(
+    () => client.captureAnalytics?.(),
+    // A new take captures its actor; a late callback cannot become another account's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client, session.streamId]
+  )
   const radar = useRadarStateOf(phone)
   const [scale, setScale] = useState<PhoneZoomScale | null>(null)
   const [front, setFront] = useState(false)
@@ -278,6 +287,21 @@ function StreamingOverlay(
   /** The microphone, which the settings sheet turns off and on. */
   const [audioEnabled, setAudioEnabled] = useState(true)
   const recording = status?.isRecording ?? recordingHere
+  const recordedAt = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (recording && recordedAt.current == null) {
+      recordedAt.current = performance.now()
+      analytics?.('recording_started', {})
+    } else if (!recording && recordedAt.current != null) {
+      analytics?.('recording_stopped', {
+        dur: Math.max(
+          0,
+          Math.min(604800, (performance.now() - recordedAt.current) / 1000)
+        )
+      })
+      recordedAt.current = undefined
+    }
+  }, [analytics, recording])
   // The stream can outlive its recording's part — the part stops when the
   // phone runs low on space and the stream goes on — and Record cannot start
   // while it does, so the stop control and the hold on Close follow either.
@@ -390,6 +414,7 @@ function StreamingOverlay(
         return
       }
       if (!live || props.startOnOpen !== true) return
+      analytics?.('recording_requested', {})
       await phone.startRecording({
         rtmpUrl: session.url,
         liveStreamId: session.streamId,
@@ -401,6 +426,7 @@ function StreamingOverlay(
     })
     opened
       .catch((error: unknown) => {
+        analytics?.('recording_failed', { ec: 'internal' })
         if (live) setProblem(describeRefusal(error, session.angleName))
       })
       .finally(() => {
@@ -459,6 +485,7 @@ function StreamingOverlay(
     if (cameraLost) return
     setBusy(true)
     setProblem(undefined)
+    analytics?.('recording_requested', {})
     phone
       .startRecording({
         rtmpUrl: session.url,
@@ -472,6 +499,7 @@ function StreamingOverlay(
           setRecordingHere(true)
         },
         (error: unknown) => {
+          analytics?.('recording_failed', { ec: 'internal' })
           setProblem(describeRefusal(error, angleName))
         }
       )
@@ -491,13 +519,14 @@ function StreamingOverlay(
           report()
         },
         (error: unknown) => {
+          analytics?.('recording_failed', { ec: 'internal' })
           setProblem(describeRefusal(error, angleName))
         }
       )
       .finally(() => {
         setBusy(false)
       })
-  }, [angleName, phone, report])
+  }, [angleName, phone, report, analytics])
 
   const flip = (): void => {
     phone.flip().then(

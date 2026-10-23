@@ -26,6 +26,8 @@ export interface RunStatsBuilderOptions {
    * process exits; the default does nothing unless Sentry was started.
    */
   report?: (error: unknown) => Promise<void>
+  /** Flush the process's operational queue before exiting. */
+  onStopped?: () => Promise<void>
 }
 
 /** Reports a failure to Sentry and waits, briefly, for it to leave. */
@@ -163,6 +165,7 @@ export async function runStatsBuilder(
         await listen.end()
       } finally {
         await db.destroy()
+        await options.onStopped?.()
       }
       console.log(`stats builder: stopped on ${signal}`)
     })()
@@ -203,7 +206,8 @@ export async function runStatsBuilder(
 }
 
 export async function runMain(
-  databaseUrl: string = serverConfig.databaseUrl
+  databaseUrl: string = serverConfig.databaseUrl,
+  onStopped?: () => Promise<void>
 ): Promise<StatsBuilderHandle> {
-  return await runStatsBuilder({ databaseUrl })
+  return await runStatsBuilder({ databaseUrl, onStopped })
 }

@@ -41,6 +41,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { settleRecordingReminder } from '../notifications/recordingReminders'
+import { recordOutcome } from '../observability/outcomes'
 import { noteGameFigures } from '../socket/syncRevision'
 
 /**
@@ -472,7 +473,16 @@ export function directorUploadRoutes(
       // work whose outcome the caller reads from `GET /director/uploads/:id`.
       res.status(202).json({ state: 'assembling', step: 'assembling' })
 
-      takeItIn({ row, game, space, dir, total }).catch((error: unknown) => {
+      takeItIn({
+        row,
+        game,
+        space,
+        dir,
+        total,
+        app:
+          req.header('x-teamstation-app') ??
+          (row.live_stream_id == null ? undefined : 'TS')
+      }).catch((error: unknown) => {
         // `takeItIn` writes every outcome to the row itself, so reaching here
         // means the writing failed too. Nothing is left to tell but the log.
         console.error(`taking in ${row.id}: ${String(error)}`)
@@ -490,6 +500,7 @@ export function directorUploadRoutes(
    * app waits on for ever.
    */
   async function takeItIn(work: {
+    app: unknown
     row: Selectable<DirectorUploadsTable>
     game: { id: string; startAt: Date }
     space: SpaceSettings
@@ -557,6 +568,13 @@ export function directorUploadRoutes(
         .execute()
 
       // The parts have done their job and are several gigabytes.
+      await recordOutcome(
+        db,
+        work.app,
+        { userId: row.user_id, isAdmin: false },
+        'processing_ready',
+        { vi: ingested.videoId, bytes: Number(row.size_bytes) }
+      )
       await rm(dir, { recursive: true, force: true })
     } catch (error) {
       // The whole of it goes to the log; what the operator is shown is the
@@ -568,6 +586,13 @@ export function directorUploadRoutes(
         .set({ state: 'failed', step: null, message, updated_at: new Date() })
         .where('id', '=', row.id)
         .execute()
+      await recordOutcome(
+        db,
+        work.app,
+        { userId: row.user_id, isAdmin: false },
+        'processing_failed',
+        { ec: 'internal' }
+      )
       // The parts stay: whatever went wrong here, sending nine gigabytes
       // again is the last resort and not the first, and `finish` will take
       // this upload again. What does not stay is the file assembled out of

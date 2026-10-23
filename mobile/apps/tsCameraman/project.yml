@@ -22,6 +22,8 @@ settings:
     ENABLE_MODULE_VERIFIER: NO
 
 packages:
+  TeamStationObservability:
+    path: ../common/TeamStationObservability
   # Crash reporting, shared by the iOS apps.
   TeamStationSentry:
     path: ../common/TeamStationSentry
@@ -78,6 +80,8 @@ targets:
     dependencies:
       - package: TeamStationSentry
         product: TeamStationSentry
+      - package: TeamStationObservability
+        product: TeamStationObservability
       - package: CameramanCore
         product: CameramanCore
       - package: CameramanControlUI
@@ -106,8 +110,13 @@ targets:
       - path: Tests/CameramanUnitTests
         excludes:
           - Fixtures/**
+      - path: ../common/TeamStationSentry/Tests/TeamStationSentryTests
     dependencies:
       - target: Cameraman
+      - package: TeamStationSentry
+        product: TeamStationSentry
+      - package: TeamStationObservability
+        product: TeamStationObservability
       - package: CameramanCore
         product: CameramanCore
       - package: CameramanControlUI

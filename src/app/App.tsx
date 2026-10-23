@@ -71,6 +71,11 @@ import {
   steppingBack,
   useBrowserBack
 } from './navigation/useAddressBar'
+import {
+  analyticsPage,
+  AnalyticsProvider,
+  useAnalytics
+} from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
 import {
   sessionUserOf,
@@ -310,13 +315,19 @@ export function App(props: AppProps): React.ReactElement {
   return (
     <ThemeProvider>
       <ErrorBoundary fallback={errorScreen}>
-        <Shell {...props} />
+        <AnalyticsProvider
+          endpoint={(props.apiBaseUrl ?? '/api/v1') + '/analytics/events'}
+          enabled={props.fieldPreview !== true}
+        >
+          <Shell {...props} />
+        </AnalyticsProvider>
       </ErrorBoundary>
     </ThemeProvider>
   )
 }
 
 function Shell(props: AppProps): React.ReactElement {
+  const analytics = useAnalytics()
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -357,6 +368,14 @@ function Shell(props: AppProps): React.ReactElement {
     [apiBaseUrl, initialToken, documentCache]
   )
   const caching = client instanceof CachingClient ? client : undefined
+  useEffect(() => {
+    client.analyticsApp = analytics?.app
+    client.captureAnalytics =
+      analytics == null ? undefined : () => analytics.capture()
+    return () => {
+      client.captureAnalytics = undefined
+    }
+  }, [analytics, client])
   // Read by the session effect, which runs once per client: a new function
   // from the platform's shell is not a reason to ask who is signed in again.
   const initialUser = useRef(props.initialUser)
@@ -380,6 +399,10 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const rememberSession = useCallback(
     (next: Session | undefined): void => {
+      analytics?.identify(
+        next?.user.id,
+        next == null ? undefined : client.token
+      )
       setSession(next)
       refreshRoles()
       const token = next == null ? undefined : client.token
@@ -393,7 +416,7 @@ function Shell(props: AppProps): React.ReactElement {
         caching?.openFor(next.user.id)
       }
     },
-    [client, caching, onToken, refreshRoles]
+    [client, caching, onToken, refreshRoles, analytics]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
   const [hasPending, setHasPending] = useState(false)
@@ -455,6 +478,20 @@ function Shell(props: AppProps): React.ReactElement {
    * following a link there is a navigation.
    */
   const [route, setRoute] = useState<Route>(() => currentRoute())
+  useEffect(() => {
+    analytics?.identify(
+      session?.user.id,
+      session == null ? undefined : client.token
+    )
+    analytics?.navigate(analyticsPage(route.name))
+  }, [analytics, client, session, route.name])
+  useEffect(
+    () =>
+      client.subscribeOffline(offline => {
+        analytics?.emit('offline_changed', { on: offline }).catch(() => {})
+      }),
+    [analytics, client]
+  )
   // The address the app was opened on decides what is on the stack, so a link
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {

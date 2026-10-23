@@ -1,6 +1,7 @@
 package app.teamstation.app
 
 import android.app.Application
+import app.teamstation.observability.NativeSentryPrivacy
 import app.teamstation.app.browser.ExternalBrowserPackage
 import app.teamstation.app.cues.CueSoundsPackage
 import app.teamstation.app.feedback.HapticsPackage
@@ -48,6 +49,7 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    NativeSentryPrivacy.start(this, BuildConfig.TS_SENTRY_DSN, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE.toString())
     registerFonts()
     // Live viewers wait out a phone's absence instead of failing (LivePlaylistPatience).
     LivePlaylistPatience.register()

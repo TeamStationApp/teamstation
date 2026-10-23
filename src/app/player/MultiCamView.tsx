@@ -4,6 +4,7 @@ import { Text, useWindowDimensions, View } from 'react-native'
 
 import { webStyle } from '../components/glass'
 import { lstrings } from '../locales/strings'
+import { useVideoAnalytics } from '../observability/useVideoAnalytics'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
@@ -516,6 +517,7 @@ function Tile(props: {
   const theme = useTheme()
   const styles = getStyles(theme)
   const element = useRef<HTMLVideoElement | null>(null)
+  useVideoAnalytics(element, props.videoId, props.url, heard)
   /**
    * Whether this tile has drawn its first picture since its source was
    * attached. Until then it is black, and says it is loading rather than

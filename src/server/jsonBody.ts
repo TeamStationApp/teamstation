@@ -4,6 +4,7 @@ import { badRequest, unauthorized } from '../common/errors'
 
 /** Most bodies: a sign-in, a setting, a batch of log lines. */
 const smallBody = express.json({ limit: '1mb' })
+const analyticsBody = express.json({ limit: '64kb' })
 
 /** One post of a game's plays is the whole game. */
 const gameBody = express.json({ limit: '32mb' })
@@ -39,6 +40,16 @@ const LARGE_BODIES: ReadonlyArray<{
   path: RegExp
   parser: RequestHandler
 }> = [
+  {
+    method: 'POST',
+    path: /^\/api\/v1\/analytics\/events$/,
+    parser: analyticsBody
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/v1\/admin\/analytics\/query$/,
+    parser: analyticsBody
+  },
   {
     method: 'PUT',
     path: /^\/api\/v1\/me\/account\/photo$/,

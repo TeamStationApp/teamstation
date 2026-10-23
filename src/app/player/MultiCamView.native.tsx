@@ -13,6 +13,7 @@ import {
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { lstrings } from '../locales/strings'
+import { useVideoAnalytics } from '../observability/useVideoAnalytics'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
@@ -436,6 +437,7 @@ function Tile(props: {
   const theme = useTheme()
   const styles = getStyles(theme)
   const [handle, setHandle] = useState<TileHandle | null>(null)
+  useVideoAnalytics(handle, videoId, url, heard)
   const takeHandle = useCallback((next: VideoHandle | null): void => {
     setHandle(next)
   }, [])

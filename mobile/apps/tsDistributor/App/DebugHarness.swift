@@ -75,6 +75,11 @@ final class DebugHarness {
       uniquingKeysWith: { _, last in last }
     )
     switch components?.path ?? "/" {
+    case "/observability-fixture":
+      do {
+        try model.installObservabilityFixture(uploadFailure: query["uploadFailure"] != "0")
+        return ["ok": true, "recording": 1]
+      } catch { return ["ok": false, "error": "fixture requires idle harness with no iPad"] }
     case "/set-destination":
       guard let path = query["path"], !path.isEmpty else { return [ "ok": false, "error": "path required" ] }
       let macID = model.macID
@@ -144,8 +149,11 @@ final class DebugHarness {
           if item.hasPrefix("camera:") { return .camera(String(item.dropFirst("camera:".count))) }
           return nil
         }
-        await model.teamStation.refreshFinishedEvents()
-        guard let gameId = query["game"],
+        if model.observabilityFixture != nil && model.observabilityUploadFailure {
+          upload = model.teamStationPlan(listing: recording, gameId: "fixture", title: "Synthetic video", tracks: wanted)
+        } else {
+          await model.teamStation.refreshFinishedEvents()
+          guard let gameId = query["game"],
               let game = model.teamStation.finishedEvents.first(where: { $0.gameId == gameId })
         else { return [ "ok": false, "error": "game=<id> required; /games lists them" ] }
         let day = DateFormatter()
@@ -156,6 +164,7 @@ final class DebugHarness {
           title: query["title"] ?? "\(day.string(from: game.startAt)) \(game.title)",
           tracks: wanted
         )
+        }
       }
       model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan, teamStation: upload)
       return [ "ok": model.batch != nil ]

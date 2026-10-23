@@ -72,6 +72,7 @@ import {
   type Notification,
   type RelationshipRequestInput
 } from './notifications'
+import { type AnalyticsSink, observeApi } from './observability/apiEvents'
 import { asOnboarding, type Onboarding } from './onboarding'
 import { calibratePasswordCosts } from './passwordCalibration'
 import {
@@ -2120,6 +2121,9 @@ export class TeamStationClient {
    */
   private askedSignIn?: string
   token: string | undefined
+  /** Captures the current analytics identity before a request starts. */
+  captureAnalytics?: () => AnalyticsSink
+  analyticsApp?: 'TS' | 'TS web'
   /**
    * Set when the last request failed to leave the device, and cleared when
    * one reaches the server. Each change is told to `subscribeOffline`'s
@@ -4246,11 +4250,29 @@ export class TeamStationClient {
     body?: unknown,
     options: RequestOptions = {}
   ): Promise<T> {
+    return await observeApi(
+      method,
+      path,
+      async () =>
+        await this.requestUnobserved(method, path, cleaner, body, options),
+      this.captureAnalytics
+    )
+  }
+
+  private async requestUnobserved<T>(
+    method: string,
+    path: string,
+    cleaner: Cleaner<T>,
+    body?: unknown,
+    options: RequestOptions = {}
+  ): Promise<T> {
     const headers: Record<string, string> = {
       ...options.headers,
       accept: 'application/json'
     }
     if (body !== undefined) headers['content-type'] = 'application/json'
+    if (this.analyticsApp != null)
+      headers['x-teamstation-app'] = this.analyticsApp
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
     // `fetch` rejects with a bare TypeError when the request never leaves the

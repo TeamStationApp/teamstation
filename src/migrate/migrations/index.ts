@@ -79,6 +79,7 @@ import { migration074OptionalUmpires } from './074optionalUmpires'
 import { migration074SyncIdempotency } from './074syncIdempotency'
 import { migration075UmpireTypes } from './075umpireTypes'
 import { migration076UmpireNotes } from './076umpireNotes'
+import { migration077AnalyticsEvents } from './077analyticsEvents'
 import { migration077Venues } from './077venues'
 import { migration078GameFields } from './078gameFields'
 import { migration079SeasonScheduling } from './079seasonScheduling'
@@ -169,5 +170,6 @@ export const migrations: Migration[] = [
   migration077Venues,
   migration078GameFields,
   migration079SeasonScheduling,
-  migration080SchedulePreviews
+  migration080SchedulePreviews,
+  migration077AnalyticsEvents
 ]

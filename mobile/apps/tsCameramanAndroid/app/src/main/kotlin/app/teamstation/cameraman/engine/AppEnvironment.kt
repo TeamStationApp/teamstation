@@ -1,5 +1,10 @@
 package app.teamstation.cameraman.engine
 
+import app.teamstation.cameraman.observability.AppLog
+import app.teamstation.cameraman.observability.LogKind
+import app.teamstation.cameraman.observability.LogOperation
+import app.teamstation.cameraman.observability.LogError
+
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -815,6 +820,13 @@ class AppEnvironment(
             sendBufferBytes = { adaptiveSendBufferBytes() }
         )
         server.onStatusChange = { status ->
+            val prior = serverStatusState.value
+            if (prior.isListening != status.isListening) {
+                AppLog.record(if (status.isListening) LogKind.STREAM_STARTED else LogKind.STREAM_STOPPED, operation = LogOperation.SERVICE)
+            }
+            if (status.lastError != null && status.lastError != prior.lastError) {
+                AppLog.record(LogKind.STREAM_FAILED, operation = LogOperation.SERVICE, error = LogError.INTERNAL)
+            }
             serverStatusState.value = status
             // Logged as well as shown, because a bind failure on a handset is otherwise invisible
             // from the Mac driving the test.
@@ -1330,6 +1342,7 @@ class AppEnvironment(
         recorder = ElementaryStreamRecorder(directory, "encode-${settings.codec.rawValue}.$extension")
         audioRecorder = AudioStreamRecorder(directory, "encode-audio.aac")
         statusState.value = "recording"
+        AppLog.record(LogKind.RECORDING_STARTED)
     }
 
     fun finishRecording(): JSONObject {
@@ -1339,6 +1352,7 @@ class AppEnvironment(
         recorder = null
         audioRecorder = null
         statusState.value = "recorded"
+        AppLog.record(LogKind.RECORDING_STOPPED)
         return JSONObject().apply {
             put(
                 "video",

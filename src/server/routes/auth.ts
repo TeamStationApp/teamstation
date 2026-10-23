@@ -39,6 +39,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { recordOutcome } from '../observability/outcomes'
 import { gumboIdOf } from '../users/insertUser'
 
 const asPasswordLogin = asObject({
@@ -241,16 +242,25 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
    */
   const userForSignIn = async (
     email: string,
-    claim: { inviteId: string | null; displayName: string | null }
+    claim: { inviteId: string | null; displayName: string | null },
+    app: unknown
   ): Promise<FoundUser | undefined> => {
-    if (claim.inviteId != null) {
-      await settleInviteSignIn(db, {
-        email,
-        inviteId: claim.inviteId,
-        displayName: claim.displayName
-      })
-    } else await settleAccount(db, email)
+    const settled =
+      claim.inviteId != null
+        ? await settleInviteSignIn(db, {
+            email,
+            inviteId: claim.inviteId,
+            displayName: claim.displayName
+          })
+        : await settleAccount(db, email)
     const user = await findUserByEmail(db, email)
+    if (settled?.createdAccount === true && user != null)
+      await recordOutcome(
+        db,
+        app,
+        { userId: user.id, isAdmin: user.isAdmin },
+        'account_created'
+      )
     // The address is proved now: whatever it was added to while nobody held
     // it applies at once.
     if (user != null) await applyWaitingInvitations(db, user.id)
@@ -429,7 +439,10 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       // *codes*: without it, a guesser could ask for a new one every five tries
       // and keep going, which is the same attack wearing a hat.
       const claim = await verifyEmailCode(db, email, 'login', body.code)
-      const user = claim == null ? null : await userForSignIn(email, claim)
+      const user =
+        claim == null
+          ? null
+          : await userForSignIn(email, claim, req.header('x-teamstation-app'))
       if (claim == null || user == null) {
         await recordAttempts(db, rules)
         throw unauthorized('That code is wrong or has expired')
@@ -483,7 +496,13 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         asker: body.requestId
       })
       const user =
-        claim == null ? null : await userForSignIn(claim.email, claim)
+        claim == null
+          ? null
+          : await userForSignIn(
+              claim.email,
+              claim,
+              req.header('x-teamstation-app')
+            )
       if (claim == null || user == null) {
         await recordAttempts(db, rules)
         throw unauthorized('That link is no longer good')
@@ -536,7 +555,11 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         res.status(202).json({ ready: false })
         return
       }
-      const user = await userForSignIn(claim.email, claim)
+      const user = await userForSignIn(
+        claim.email,
+        claim,
+        req.header('x-teamstation-app')
+      )
       if (user == null) throw unauthorized('That sign-in is no longer good')
 
       const session = await createSession(
@@ -574,6 +597,13 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         req.header('cookie')
       )
       if (token != null) await revokeSession(db, token)
+      if (req.actor != null)
+        await recordOutcome(
+          db,
+          req.header('x-teamstation-app'),
+          req.actor,
+          'logout'
+        )
       clearSessionCookie(res, secureCookie)
       res.status(204).end()
     })

@@ -12,6 +12,7 @@ import type { Database } from '../db/database'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { groupName } from '../invites/grants'
 import { revokeStreams } from '../live/revokeStreams'
+import { eraseAnalytics } from '../observability/analytics'
 
 /** What a deleted account is called wherever it still appears. */
 export const DELETED_NAME = 'Deleted user'
@@ -258,6 +259,7 @@ export async function deleteAccount(
         `Add another administrator to ${listOf(unattended)} before deleting your account`
       )
     await signOutEverywhere(trx, userIds, at)
+    await eraseAnalytics(trx, userIds)
     await revokeStreams(
       trx,
       userIds,

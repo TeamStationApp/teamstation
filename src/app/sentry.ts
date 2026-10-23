@@ -1,21 +1,27 @@
 import { useEffect } from 'react'
-import { Platform } from 'react-native'
+import { AppState, Platform } from 'react-native'
 
 import { buildInfo } from '../common/distribution'
+import { safeErrorEvent } from '../common/observability/errors'
+import { logEndpoint } from '../common/observability/logger'
 import { sentryEnvironment } from '../common/sentry/environment'
 import { isExplained } from '../common/sentry/filter'
 import { sentryRelease } from '../common/sentry/release'
-import { scrubBreadcrumb, scrubEvent } from '../common/sentry/scrub'
+import {
+  emitAppLog,
+  flushAppLogs,
+  resetAppLogging,
+  startAppLogging
+} from './observability/log'
 import * as defaultSdk from './sentrySdk'
 
 /**
  * Crash and error reporting for the app, on the web, iOS and Android.
  *
- * One Sentry project takes all three: every event carries a `platform` tag,
- * the release of the build that produced it, the environment of the server it
- * talks to, and the signed-in account's id and nothing else about them. The
- * DSN is inlined at build time from `TS_SENTRY_DSN`; a build without one
- * reports nothing.
+ * SDK envelopes go to the log collector, which assigns app and environment.
+ * Only approved error classes, code locations and release survive the scrub.
+ * The public DSN is inlined from `TS_SENTRY_DSN`; an unconfigured build sends
+ * nothing.
  */
 
 declare const process: { env: Record<string, string | undefined> }
@@ -32,7 +38,7 @@ export function startSentry({
   sdk = defaultSdk,
   platform = Platform.OS
 }: { dsn?: string; sdk?: SentrySdk; platform?: string } = {}): boolean {
-  if (started || dsn === '') return false
+  if (started || logEndpoint(dsn) == null) return false
   started = true
   // A phone build names itself and its build number; a web build's number is
   // the deploy's whole version, which is what its source maps are uploaded as.
@@ -49,22 +55,35 @@ export function startSentry({
     dsn,
     ...release,
     environment: sentryEnvironment(sdk.sentryHost()),
+    sendDefaultPii: false,
+    sendClientReports: false,
+    integrations: defaults =>
+      defaults.filter(integration => integration.name !== 'BrowserSession'),
+    maxBreadcrumbs: 0,
     beforeSend: (event, hint) =>
-      isExplained(event, hint) ? null : scrubEvent(event),
-    beforeBreadcrumb: crumb => scrubBreadcrumb(crumb)
+      isExplained(event, hint) ? null : safeErrorEvent(event),
+    beforeBreadcrumb: () => null
   })
   // Set on the scope, not as an initial scope, so the phone SDK copies it to
   // the native layer and a native crash names its platform too.
   sdk.setTag('platform', platform)
+  startAppLogging(
+    dsn,
+    platform,
+    platform === 'web'
+      ? buildInfo.buildNumber
+      : buildInfo.version + '+' + buildInfo.buildNumber
+  )
   return true
 }
 
 /** Forgets that Sentry was started, for tests that start it more than once. */
 export function resetSentryForTest(): void {
   started = false
+  resetAppLogging()
 }
 
-/** Names the signed-in account on every event by its id, and forgets it on sign-out. */
+/** Keeps the local SDK scope current; the transport scrub omits account identity. */
 export function useSentryUser(
   userId: string | number | undefined,
   sdk: SentrySdk = defaultSdk
@@ -72,6 +91,15 @@ export function useSentryUser(
   useEffect(() => {
     sdk.setUser(userId == null ? null : { id: String(userId) })
   }, [sdk, userId])
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', state => {
+      emitAppLog(state === 'active' ? 'app_foreground' : 'app_background')
+      if (state !== 'active') flushAppLogs().catch(() => {})
+    })
+    return () => {
+      listener.remove()
+    }
+  }, [])
 }
 
 /** Throws while rendering, so an administrator can see the error screen work. */

@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
 import { type Session, TeamStationClient } from '../../common/api'
@@ -23,6 +24,7 @@ describe('signup and onboarding in the real HTTP service', function () {
       app.use('/api/v1', pictureRoutes(db, space))
     })
     client = new TeamStationClient({ baseUrl: h.origin + '/api/v1' })
+    client.analyticsApp = 'TS web'
   })
   after(async () => {
     await h?.close()
@@ -68,6 +70,15 @@ describe('signup and onboarding in the real HTTP service', function () {
       ).status
     ).equals(400)
     expect((await client.onboarding()).displayName).equals('New account')
+    const recorded = await sql<{
+      user_id: string
+      app: string
+    }>`SELECT user_id, app FROM analytics.events WHERE event_name='account_created'`.execute(
+      h.db
+    )
+    expect(recorded.rows).deep.equals([
+      { user_id: session.user.id, app: 'TS web' }
+    ])
   })
   it('enforces name before photo, saves it, resumes and completes with a reused picture', async () => {
     expect(

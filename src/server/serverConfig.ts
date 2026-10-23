@@ -21,6 +21,9 @@ import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
 export const asServerConfig = asObject({
+  /** Separate restricted login; never substitute the application owner. */
+  analyticsReaderUrl: asOptional(asString),
+  logWriteToken: asOptional(asString),
   oauth: asOptional(asOAuthConfig),
   buildsUrl: asOptional(asHttpsUrl),
   /** Browser-restricted display key; never a server or Android credential. */

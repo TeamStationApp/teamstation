@@ -3,6 +3,7 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { runInNewContext } from 'node:vm'
 
 import type { Event } from '@sentry/core'
 import {
@@ -17,7 +18,9 @@ import type { Kysely } from 'kysely'
 import { after, afterEach, before, describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
+import { safeErrorEvent } from '../../common/observability/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { envelope } from '../../logServer/envelope'
 import type { Actor } from '../auth/sessions'
 import { deployedVersion, versionOf } from '../buildVersion'
 import type { Database } from '../db/database'
@@ -31,6 +34,72 @@ const DSN = 'https://public@sentry.example.test/1'
 const ROOT = '/var/app'
 
 describe('server Sentry options', function () {
+  it('delivers compiled server locations through SDK serialization and collector reconstruction', async function () {
+    const options = sentryOptions(
+      { dsn: DSN, environment: 'development' },
+      'example.test',
+      '1.0',
+      ROOT
+    )!
+    const records: ReturnType<typeof envelope> = []
+    const client = new NodeClient({
+      ...options,
+      stackParser: defaultStackParser,
+      integrations:
+        typeof options.integrations === 'function'
+          ? options.integrations([])
+          : [],
+      transport: () => ({
+        send: async packet => {
+          const body = packet[1]
+            .map(
+              ([header, payload]) =>
+                JSON.stringify(header) + '\n' + JSON.stringify(payload)
+            )
+            .join('\n')
+          records.push(
+            ...envelope(
+              Buffer.from(JSON.stringify(packet[0]) + '\n' + body),
+              'TS srv'
+            )
+          )
+          return {}
+        },
+        flush: async () => true
+      })
+    })
+    client.init()
+    try {
+      for (const file of [
+        'server/index.js',
+        'server/routes/auth.js',
+        'server/statsBuilder/main.js'
+      ]) {
+        try {
+          runInNewContext(
+            'throw new TypeError("private-canary")',
+            {},
+            { filename: ROOT + '/lib/' + file }
+          )
+        } catch (error) {
+          client.captureException(error)
+        }
+        await client.flush(1000)
+        expect(records.at(-1)?.P).includes({
+          c: 'TypeError',
+          f0: file,
+          l0: 1,
+          c0: 7
+        })
+      }
+      expect(records).length(3)
+      expect(JSON.stringify(records))
+        .not.contains(ROOT)
+        .and.not.contains('private-canary')
+    } finally {
+      await client.close()
+    }
+  })
   it('reports nothing without a DSN', function () {
     expect(
       sentryOptions(
@@ -124,7 +193,7 @@ describe('server Sentry options', function () {
         },
         { originalException: new Error('x') }
       )
-    ).deep.equals({ type: undefined, message: 'code for [email]' })
+    ).deep.equals(safeErrorEvent({ message: 'code for ruth@example.test' }))
     expect(beforeBreadcrumb({ category: 'console' }, undefined)).equals(null)
   })
 })

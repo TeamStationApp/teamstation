@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>TSSentryDsn</key>
+  <string>$(TS_SENTRY_DSN)</string>
   <!--
     Where this build talks to, for a build that is not pointed at the address in
     the source. A host with no scheme; empty — which is every build that does

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { AppState } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { observeUpload } from '../../common/observability/upload'
 import {
   type PhoneRecording,
   type PhoneStream,
@@ -111,14 +112,17 @@ export function useResumePendingUploads(
         }
         for (const take of takes) {
           if (take.uploadId == null && !mine.has(take.liveStreamId)) continue
-          phone
-            .resumeUpload({
-              liveStreamId: take.liveStreamId,
-              apiBase: client.baseUrl,
-              token,
-              title: take.uploadTitle ?? take.angleName
-            })
-            .catch(() => undefined)
+          observeUpload(
+            async () =>
+              await phone.resumeUpload({
+                liveStreamId: take.liveStreamId,
+                apiBase: client.baseUrl,
+                token,
+                title: take.uploadTitle ?? take.angleName
+              }),
+            client.captureAnalytics,
+            true
+          ).catch(() => undefined)
         }
       }
     }

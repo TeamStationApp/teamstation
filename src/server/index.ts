@@ -46,6 +46,8 @@ import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
 import { createOAuthProvider } from './oauth/provider'
 import { oauthInteractionRoutes } from './oauth/routes'
+import { requestLogs, startServerLogging } from './observability/logging'
+import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
@@ -125,6 +127,13 @@ import { stopWorker } from './stopWorker'
  * which is the honest answer there.
  */
 const VERSION = versionOf()
+const stopLogging = startServerLogging({
+  dsn: serverConfig.sentry.dsn,
+  writeToken: serverConfig.logWriteToken,
+  directory: path.join(serverConfig.workDir, 'logs'),
+  role: 'server',
+  version: VERSION
+})
 
 /**
  * How long a stop may take before it is taken rather than waited for.
@@ -374,7 +383,8 @@ function runPrimary(workerCount: number): void {
     }
   })
   const exitWithBuilder = exitAfterBuilder(builder, code => {
-    process.exit(code)
+    const exit = (): never => process.exit(code)
+    stopLogging().then(exit, exit)
   })
   const forceExit = forceStop(builder, code => {
     process.exit(code)
@@ -479,6 +489,7 @@ function runWorker(): void {
 
   app.set('trust proxy', 'loopback')
   app.disable('x-powered-by')
+  app.use(requestLogs)
   app.use(withCors(serverConfig.corsOrigins))
 
   // Who is calling, then their body, which for a picture is read only when
@@ -591,6 +602,7 @@ function runWorker(): void {
   app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
+  const stopAnalytics = startAnalytics(app, db, serverConfig.analyticsReaderUrl)
   app.use('/api/v1', statsRoutes(db, mediaContext))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
@@ -746,6 +758,8 @@ function runWorker(): void {
     stopWorker({
       server,
       destroyDatabase: async () => {
+        await stopAnalytics()
+        await stopLogging()
         await db.destroy()
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,

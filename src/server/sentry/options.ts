@@ -4,14 +4,11 @@ import {
   rewriteFramesIntegration
 } from '@sentry/node'
 
+import { safeErrorEvent } from '../../common/observability/errors'
 import { sentryEnvironment } from '../../common/sentry/environment'
 import { isExplained } from '../../common/sentry/filter'
 import { sentryRelease } from '../../common/sentry/release'
-import {
-  DATA_COLLECTION,
-  scrubBreadcrumb,
-  scrubEvent
-} from '../../common/sentry/scrub'
+import { DATA_COLLECTION } from '../../common/sentry/scrub'
 
 /** A rejection nobody handled still ends the process, as it did before Sentry. */
 export const UNHANDLED_REJECTION_MODE = 'strict'
@@ -46,6 +43,9 @@ export function sentryOptions(
         : sentryEnvironment(primaryHost),
     ...sentryRelease('teamstation-server', version ?? 'development'),
     dataCollection: DATA_COLLECTION,
+    sendDefaultPii: false,
+    sendClientReports: false,
+    maxBreadcrumbs: 0,
     integrations: defaults => [
       ...defaults.filter(
         integration =>
@@ -58,7 +58,7 @@ export function sentryOptions(
       rewriteFramesIntegration({ root })
     ],
     beforeSend: (event, hint) =>
-      isExplained(event, hint) ? null : scrubEvent(event),
-    beforeBreadcrumb: crumb => scrubBreadcrumb(crumb)
+      isExplained(event, hint) ? null : safeErrorEvent(event),
+    beforeBreadcrumb: () => null
   }
 }

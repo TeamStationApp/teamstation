@@ -5075,6 +5075,36 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/analytics/events': {
+        post: {
+          summary: 'Record explicit private product events',
+          description:
+            'Up to 50 compact JSON records (64 KiB) as a JSON array or application/x-ndjson. Unknown fields and chat content are rejected. Identity comes from authentication. Anonymous intake permits public session, navigation, signup and failed-login events only. Repeated event ID and timestamp pairs are idempotent.',
+          responses: {
+            202: { description: 'Durably accepted' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            413: errorResponse,
+            429: errorResponse
+          }
+        }
+      },
+      '/admin/analytics/query': {
+        post: {
+          summary: 'Read analytics with restricted SQL',
+          description:
+            'Administrator-only body {sql, parameters?}. One SELECT from analytics.events; aggregates, date_trunc, grouping and approved properties->> extraction are supported. Other tables, subqueries, joins, writes, locking and unapproved functions are rejected. A separate restricted reader enforces a two-second timeout and at most 1,000 rows / 1 MiB. Returns {rows,truncated}.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Bounded analytics result' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/box-score': {
         get: {
           summary: "A game's batting and pitching lines",

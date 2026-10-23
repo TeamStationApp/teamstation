@@ -44,6 +44,14 @@ export type VideoEventName =
   | 'resize'
   | 'progress'
   | 'durationchange'
+  | 'playing'
+  | 'waiting'
+  | 'seeking'
+  | 'seeked'
+  | 'ended'
+  | 'ratechange'
+  | 'error'
+  | 'emptied'
 
 export interface VideoListenerOptions {
   /** Remove the listener the first time it fires. */
@@ -64,6 +72,8 @@ export interface VideoHandle {
   /** The whole length, or `NaN`/`Infinity` for a live stream. */
   readonly duration: number
   readonly paused: boolean
+  /** Native playback confirmation; a play request alone is not viewing. */
+  readonly actuallyPlaying?: boolean
   muted: boolean
   playbackRate: number
   /**
