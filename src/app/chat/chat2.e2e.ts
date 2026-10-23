@@ -1897,13 +1897,17 @@ export class Scenarios {
     if (await ui.visible({ id: 'chat-pinned-summary' }, 1000)) {
       await ui.id('chat-pinned-summary')
       if (await ui.visible({ text: exactText('Pinned messages') }, 1000))
-        if (await ui.visible({ id: 'chat-pin-' + target.id }, 500))
+        if (await ui.visible({ id: 'chat-pin-' + target.id }, 500)) {
           await ui.id('chat-pin-' + target.id)
-        else if (ui.native) await ui.text('Cancel')
+          if (ui.native) await this.nativePinJumpReady(target)
+        } else if (ui.native) await ui.text('Cancel')
         else await this.dismiss()
     }
     if (!ui.native) await this.webHistoryTarget(target)
-    else await this.nativeAnchorReady(target)
+    else {
+      await this.nativeHistoryTarget(target)
+      await this.nativeAnchorReady(target)
+    }
     await ui.present('chat-bubble-' + target.id)
     if (!ui.native)
       await ui.dom(
@@ -1912,12 +1916,129 @@ export class Scenarios {
     if (!ui.native) await this.webAnchorReady(target)
   }
 
+  /** Let an explicitly selected public pin finish before manual history gestures. */
+  async nativePinJumpReady(target: Chat2Message): Promise<void> {
+    const ui = this.ui
+    assert(ui.native, 'Native pin jump observation required')
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
+    const proof: Json = {
+      nativePinJump: target.id,
+      samples: [],
+      outcome: 'failed'
+    }
+    this.observations.push(proof)
+    let previous: string | undefined
+    let stableSince = Date.now()
+    await until(
+      async () => {
+        signal.throwIfAborted()
+        const nodes = await ui.nodes(undefined, signal)
+        signal.throwIfAborted()
+        const pending = nodes.some(
+          node => node.id === 'chat-history-jump-cancel'
+        )
+        assert(
+          !nodes.some(node => node.id === 'chat-history-jump-retry'),
+          'Selected native pin jump failed; public Retry requires investigation'
+        )
+        const matches = nodes.filter(
+          node => node.id === 'chat-bubble-' + target.id
+        )
+        assert(
+          matches.length <= 1,
+          'Unique selected native pin target required'
+        )
+        const box = matches[0]?.bounds
+        let signature: string | undefined
+        let band: { top: number; bottom: number } | undefined
+        if (!pending && box != null && box.height > 0) {
+          const bounds = (id: string): NonNullable<PublicNode['bounds']> => {
+            const matches = nodes.filter(node => node.id === id)
+            assert.equal(
+              matches.length,
+              1,
+              'Unique native pin geometry required: ' + id
+            )
+            const b = need(
+              matches[0].bounds,
+              'Actual native pin bounds required'
+            )
+            assert(
+              [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+                b.width > 0 &&
+                b.height > 0,
+              'Finite positive native pin geometry required'
+            )
+            return b
+          }
+          const history = bounds('chat-message-history')
+          const header = bounds('chat-conversation-identity')
+          const composer = bounds('chat-composer-band')
+          const pins = nodes.filter(node => node.id === 'chat-pinned-band')
+          assert(pins.length <= 1, 'Unique native pin band required')
+          const pin = pins.length === 1 ? bounds('chat-pinned-band') : undefined
+          band = {
+            top: Math.max(
+              history.y,
+              header.y + header.height,
+              pin == null ? history.y : pin.y + pin.height
+            ),
+            bottom: Math.min(history.y + history.height, composer.y)
+          }
+          assert(
+            band.bottom - band.top > 64,
+            'Actual unobscured native pin reading band required'
+          )
+          bounds('chat-bubble-' + target.id)
+          if (box.y < band.bottom && box.y + box.height > band.top)
+            signature = JSON.stringify({
+              box,
+              band,
+              ids: [
+                ...new Set(
+                  nodes.flatMap(node =>
+                    node.id?.startsWith('chat-bubble-') === true
+                      ? [node.id]
+                      : []
+                  )
+                )
+              ].sort()
+            })
+        }
+        ;(proof.samples as unknown[]).push({ pending, box, band })
+        if (signature == null || signature !== previous) {
+          previous = signature
+          stableSince = Date.now()
+          return undefined
+        }
+        return Date.now() - stableSince >= 200 ? true : undefined
+      },
+      'selected native pin target and loaded window to settle',
+      30000
+    )
+    proof.outcome = 'passed'
+  }
+
   /** Native existence assertions include clipped and occluded rows; measure before acting. */
-  async nativeAnchorReady(target: Chat2Message): Promise<void> {
+  async nativeAnchorReady(
+    target: Chat2Message,
+    earlier = false,
+    parentSignal = this.ui.deadline
+  ): Promise<PublicNode[]> {
     const ui = this.ui
     assert(ui.native, 'Native anchor geometry required')
-    const id = 'chat-bubble-' + target.id
-    const proof: Json = { nativeAnchor: target.id, samples: [], gestures: [] }
+    const id = earlier ? 'Load earlier messages' : 'chat-bubble-' + target.id
+    const matchesTarget = (node: PublicNode): boolean =>
+      earlier
+        ? node.text === id && /(?:^|\.)Button$/.test(node.type ?? '')
+        : node.id === id
+    const proof: Json = {
+      ...(earlier
+        ? { nativeEarlierControlFor: target.id }
+        : { nativeAnchor: target.id }),
+      samples: [],
+      gestures: []
+    }
     this.observations.push(proof)
     const startedAt = Date.now()
     let end = startedAt + (ui.surface === 'ios' ? 90000 : 120000)
@@ -1925,6 +2046,7 @@ export class Scenarios {
       assert(Date.now() < end, 'Native anchor observation deadline expired')
       return AbortSignal.any([
         ui.deadline,
+        parentSignal,
         AbortSignal.timeout(Math.max(1, end - Date.now()))
       ])
     }
@@ -1938,7 +2060,9 @@ export class Scenarios {
         key: string,
         clipped = false
       ): NonNullable<PublicNode['bounds']> => {
-        const matches = nodes.filter(node => node.id === key)
+        const matches = nodes.filter(node =>
+          key === id ? matchesTarget(node) : node.id === key
+        )
         assert.equal(
           matches.length,
           1,
@@ -1992,6 +2116,7 @@ export class Scenarios {
           ? [(await ui.readAndroidIme()).bounds]
           : []
     if (keyboard.length > 0) end = startedAt + 120000
+    if (earlier) end = startedAt + 180000
     assert(keyboard.length <= 1, 'Unique actual native Keyboard required')
     const intersects = (): boolean =>
       current.box.height > 0 &&
@@ -2122,6 +2247,103 @@ export class Scenarios {
       )
     }
     proof.outcome = 'passed'
+    return current.nodes
+  }
+
+  /** Fetch absent native rows through the actual public earlier-page button. */
+  async nativeHistoryTarget(target: Chat2Message): Promise<void> {
+    const ui = this.ui
+    assert(ui.native, 'Native history paging required')
+    const id = 'chat-bubble-' + target.id
+    // Android normalized hierarchy omits enabled:true; raw iOS must prove it.
+    const enabled = (node: PublicNode): boolean =>
+      ui.surface === 'android' ? node.enabled !== false : node.enabled === true
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(300000)])
+    const targetCount = (nodes: PublicNode[]): number => {
+      const count = nodes.filter(node => node.id === id).length
+      assert(count <= 1, 'Unique exact native history target required')
+      return count
+    }
+    const read = async (observationSignal = signal): Promise<PublicNode[]> => {
+      observationSignal.throwIfAborted()
+      return await ui.nodes(undefined, observationSignal)
+    }
+    let nodes = await read()
+    if (targetCount(nodes) === 1) return
+    const proof: Json = { nativeHistoryTarget: target.id, pages: [] }
+    this.observations.push(proof)
+    for (let page = 0; ; page++) {
+      if (targetCount(nodes) === 1) {
+        proof.outcome = 'passed'
+        return
+      }
+      assert(page < 10, 'Bounded native earlier-page count required')
+      const controls = nodes.filter(
+        node =>
+          node.text === 'Load earlier messages' &&
+          /(?:^|\.)Button$/.test(node.type ?? '')
+      )
+      assert.equal(
+        controls.length,
+        1,
+        'Unique public native earlier Button required'
+      )
+      assert(
+        enabled(controls[0]),
+        'Enabled public native earlier Button required'
+      )
+      nodes = await this.nativeAnchorReady(target, true, signal)
+      if (targetCount(nodes) === 1) continue
+      const control = nodes.filter(
+        node =>
+          node.text === 'Load earlier messages' &&
+          /(?:^|\.)Button$/.test(node.type ?? '')
+      )
+      assert(
+        control.length === 1 && enabled(control[0]),
+        'Actual earlier Button must remain enabled'
+      )
+      const box = need(
+        control[0].bounds,
+        'Framed public earlier Button required'
+      )
+      const before = new Set(
+        nodes.flatMap(node =>
+          node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+        )
+      )
+      const sample: Json = { page, box, before: [...before] }
+      ;(proof.pages as unknown[]).push(sample)
+      signal.throwIfAborted()
+      await ui.device.tapOnPoint(
+        { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+        { signal }
+      )
+      const progressSignal = AbortSignal.any([
+        signal,
+        AbortSignal.timeout(10000)
+      ])
+      nodes = await until(
+        async () => {
+          const next = await read(progressSignal)
+          if (
+            targetCount(next) === 1 ||
+            next.some(
+              node =>
+                node.id?.startsWith('chat-bubble-') === true &&
+                !before.has(node.id)
+            )
+          )
+            return next
+          return undefined
+        },
+        'actual native earlier-page message progress',
+        10000
+      )
+      sample.after = nodes.flatMap(node =>
+        node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+      )
+    }
   }
 
   /** Page through the real public history control; browser scroll does not fetch older rows. */
@@ -4320,6 +4542,44 @@ export class Scenarios {
     )
   }
 
+  /** Reach the unchanged old own post through one authenticated current reply. */
+  async nativeOutgoingQuoteAnchor(target: Chat2Message): Promise<void> {
+    assert(this.ui.native, 'Native outgoing quote navigation required')
+    assert.equal(
+      target.authorId,
+      this.viewerId,
+      'Exact own outgoing quote author required'
+    )
+    const current = await (await this.protocolPeer()).engine.open(this.group)
+    const replies = current.messages.filter(
+      message => message.status === 'ok' && message.quote?.id === target.id
+    )
+    assert.equal(
+      replies.length,
+      1,
+      'Unique authenticated current reply to the exact outgoing required'
+    )
+    const reply = replies[0]
+    assert(
+      reply.id !== target.id && reply.seq > target.seq,
+      'Unique authenticated current reply must follow its original'
+    )
+    assert.equal(
+      reply.quote?.authorId,
+      target.authorId,
+      'Exact own outgoing quote author required'
+    )
+    await this.identityLegacyAnchor(target, {
+      text: target,
+      reply: {
+        id: reply.id,
+        seq: reply.seq,
+        body: reply.body,
+        authorId: reply.senderUserId
+      }
+    })
+  }
+
   async E5(): Promise<void> {
     const ui = this.ui
     await this.check(
@@ -4336,6 +4596,8 @@ export class Scenarios {
           this.f.messages.long,
           need(this.f.messages.file, 'Encrypted file message fixture required')
         ]) {
+          if (ui.native && message.id === this.f.messages.outgoing?.id)
+            await this.nativeOutgoingQuoteAnchor(message)
           let incomingLane: unknown
           if (message.authorId !== this.viewerId) {
             const reservation = await this.incomingReservation(message)
@@ -4411,13 +4673,15 @@ export class Scenarios {
           if (
             message.id === this.f.messages.target.id ||
             message.id === this.f.messages.long.id
-          )
+          ) {
+            if (this.touchActions) await observeSpotlightCaptureReady(ui)
             await ui.shot(
               'message-actions',
               this.touchActions
                 ? 'Actual sharp coordinated spotlight over blur; static composition proof only'
                 : 'Actual desktop hover and filtered More menu; spotlight not applicable'
             )
+          }
           await this.dismiss()
           await ui.absent('chat-message-spotlight')
           if (personalPins != null)
@@ -4512,6 +4776,7 @@ export class Scenarios {
                 preview.y + preview.height <= height + 2,
               'Selected preview from clipped origin must remain inside viewport'
             )
+          if (this.touchActions) await observeSpotlightCaptureReady(ui)
           await ui.shot(
             'partially-scrolled-spotlight',
             this.touchActions
@@ -4699,7 +4964,9 @@ export class Scenarios {
             `
             const id=${JSON.stringify('chat-message-' + this.f.messages.target.id)};
             const rows=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(rows.length!==1)throw Error('Unique message row required for action focus');
-            const triggers=Array.from(rows[0].querySelectorAll('[aria-label="More message actions"]'));if(triggers.length!==1||triggers[0].getAttribute('role')!=='button')throw Error('Unique actual More trigger required');
+            const touch=${JSON.stringify(this.touchActions)};
+            const selector=touch?${JSON.stringify('[data-testid="chat-bubble-' + this.f.messages.target.id + '"]')}:'[aria-label="More message actions"]';
+            const triggers=Array.from(rows[0].querySelectorAll(selector));if(triggers.length!==1||(!touch&&triggers[0].getAttribute('role')!=='button'))throw Error(touch?'Unique actual bubble trigger required':'Unique actual More trigger required');
             const a=document.activeElement,b=triggers[0].getBoundingClientRect();if(![b.x,b.y,b.width,b.height].every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Actual positive More trigger geometry required');
             return {composerFocused:a===document.querySelector('[data-testid="chat-composer"]'),triggerFocused:a===triggers[0],menus:document.querySelectorAll('[aria-label^="Message from "]').length,spotlights:document.querySelectorAll('[data-testid="chat-message-spotlight"]').length,active:{tag:a?.tagName,id:a?.getAttribute('data-testid'),label:a?.getAttribute('aria-label')},trigger:{x:b.x,y:b.y,width:b.width,height:b.height}};
           `,
@@ -4713,7 +4980,7 @@ export class Scenarios {
           signal.throwIfAborted()
           return current
         }
-        if (!this.touchActions) {
+        if (!ui.native) {
           const focused = await readFocus('before-opener')
           assert(
             focused.composerFocused === true,
@@ -4733,6 +5000,7 @@ export class Scenarios {
             direction: 'DOWN',
             timeout: 5000
           })
+        if (this.touchActions) await observeSpotlightCaptureReady(ui)
         await ui.shot(
           'keyboard-spotlight',
           ui.native
@@ -4742,7 +5010,7 @@ export class Scenarios {
               : 'Actual composer-focused entry and desktop More menu with conventional trigger restoration; no software keyboard or touch spotlight claim'
         )
         await this.dismiss()
-        if (this.touchActions) await ui.assertKeyboard()
+        if (ui.native) await ui.assertKeyboard()
         else {
           const signal = AbortSignal.any([
             ui.deadline,
@@ -4757,14 +5025,18 @@ export class Scenarios {
                 ? current
                 : undefined
             },
-            'actual More focus after desktop menu cleanup',
+            this.touchActions
+              ? 'actual bubble focus after touch spotlight cleanup'
+              : 'actual More focus after desktop menu cleanup',
             2000
           )
           assert(
             focused.triggerFocused === true &&
               focused.menus === 0 &&
               focused.spotlights === 0,
-            'Desktop Escape must close the menu and restore its actual More trigger'
+            this.touchActions
+              ? 'Touch Escape must close the spotlight and restore its actual bubble trigger'
+              : 'Desktop Escape must close the menu and restore its actual More trigger'
           )
         }
         if (!ui.native)
