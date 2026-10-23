@@ -7808,4 +7808,118 @@ describe('native absent history paging', function () {
         expect(m.taps).has.length(fault === 'no-progress' ? 1 : 0)
       }
     )
+
+  async function pagingClock(
+    work: (advance: (ms: number) => void) => Promise<void>
+  ): Promise<void> {
+    const actualNow = Date.now
+    const actualTimeout = Object.getOwnPropertyDescriptor(
+      AbortSignal,
+      'timeout'
+    )!
+    const start = actualNow()
+    let elapsed = 0
+    const pending: Array<{ end: number; controller: AbortController }> = []
+    Date.now = () => start + elapsed
+    AbortSignal.timeout = (ms: number): AbortSignal => {
+      const controller = new AbortController()
+      pending.push({ end: elapsed + ms, controller })
+      return controller.signal
+    }
+    try {
+      await work(ms => {
+        elapsed += ms
+        for (const timer of pending)
+          if (timer.end <= elapsed)
+            timer.controller.abort(
+              new Error('Observed native signal budget expired')
+            )
+      })
+    } finally {
+      Date.now = actualNow
+      Object.defineProperty(AbortSignal, 'timeout', actualTimeout)
+    }
+  }
+
+  it('keeps a progressing earlier control alive through the measured large-tree latency budget', async () => {
+    const m = model()
+    await pagingClock(async advance => {
+      const drag = m.scenario.ui.device.dragAndDrop.bind(m.scenario.ui.device)
+      let delayed = false
+      m.scenario.ui.device.dragAndDrop = async (args, options) => {
+        await drag(args, options)
+        if (!delayed) {
+          delayed = true
+          advance(100000)
+        }
+      }
+      await m.scenario.nativeAnchorReady(target, true)
+      expect(
+        m.scenario.observations.find(
+          row => row.nativeEarlierControlFor === target.id
+        )?.outcome
+      ).equals('passed')
+      expect(m.taps).deep.equals([])
+      expect(
+        m.scenario.observations.some(row => row.nativeAnchor === target.id)
+      ).equals(false)
+    })
+  })
+
+  it('retains exact two-page target progress after the real first-page work consumes the old shared budget', async () => {
+    const m = model()
+    await pagingClock(async advance => {
+      const tap = m.scenario.ui.device.tapOnPoint.bind(m.scenario.ui.device)
+      m.scenario.ui.device.tapOnPoint = async (args, options) => {
+        await tap(args, options)
+        if (m.taps.length === 1) advance(150000)
+      }
+      await m.scenario.anchor(target)
+      expect(m.taps).has.length(2)
+      expect(
+        m.scenario.observations.find(
+          row => row.nativeHistoryTarget === target.id
+        )?.outcome
+      ).equals('passed')
+      expect(
+        m.scenario.observations.find(row => row.nativeAnchor === target.id)
+          ?.outcome
+      ).equals('passed')
+    })
+  })
+
+  for (const fault of ['earlier-budget', 'shared-budget', 'ordinary-budget'])
+    it(
+      'still refuses bounded native work after ' + fault + ' expires',
+      async () => {
+        const m = model(fault === 'ordinary-budget' ? 'loaded' : '')
+        await pagingClock(async advance => {
+          if (fault === 'shared-budget') {
+            const tap = m.scenario.ui.device.tapOnPoint.bind(
+              m.scenario.ui.device
+            )
+            m.scenario.ui.device.tapOnPoint = async (args, options) => {
+              await tap(args, options)
+              advance(310000)
+            }
+          } else {
+            const drag = m.scenario.ui.device.dragAndDrop.bind(
+              m.scenario.ui.device
+            )
+            m.scenario.ui.device.dragAndDrop = async (args, options) => {
+              await drag(args, options)
+              advance(fault === 'earlier-budget' ? 190000 : 100000)
+            }
+          }
+          const error = await captureFailure(m.scenario.anchor(target))
+          expect(String(error)).matches(/deadline|signal budget expired/)
+          expect(
+            m.scenario.observations.some(
+              row => row.nativeAnchor === target.id && row.outcome === 'passed'
+            )
+          ).equals(false)
+          expect(m.taps).has.length(fault === 'shared-budget' ? 1 : 0)
+        })
+      }
+    )
 })

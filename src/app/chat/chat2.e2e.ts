@@ -2012,6 +2012,7 @@ export class Scenarios {
           ? [(await ui.readAndroidIme()).bounds]
           : []
     if (keyboard.length > 0) end = startedAt + 120000
+    if (earlier) end = startedAt + 180000
     assert(keyboard.length <= 1, 'Unique actual native Keyboard required')
     const intersects = (): boolean =>
       current.box.height > 0 &&
@@ -2150,7 +2151,7 @@ export class Scenarios {
     const ui = this.ui
     assert(ui.native, 'Native history paging required')
     const id = 'chat-bubble-' + target.id
-    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(120000)])
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(300000)])
     const targetCount = (nodes: PublicNode[]): number => {
       const count = nodes.filter(node => node.id === id).length
       assert(count <= 1, 'Unique exact native history target required')
