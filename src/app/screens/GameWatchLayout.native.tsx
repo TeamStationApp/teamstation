@@ -8,6 +8,7 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import { PinnedSpacer } from '../components/PinnedBands'
+import { useActiveRef } from '../components/TabPages'
 import { PHONE_MARGIN } from '../layout/watch'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
@@ -45,7 +46,10 @@ export function GameWatchLayout(
     headStyle
   } = props
   const theme = useTheme()
-  const handleLayout = pinned.screen.onLayout
+  // A pane sliding out lets go of the pinned head's scroller and its
+  // handlers, as `Screen` does.
+  const handleLayout = useActiveRef(pinned.screen.onLayout)
+  const sharedScroll = useActiveRef(pinned.screen.onScroll)
   const insets = useInsets()
   const scrollY = useSharedValue(0)
   const bodyTop = useSharedValue(0)
@@ -60,7 +64,7 @@ export function GameWatchLayout(
   // The native pinned-head implementation always supplies a Reanimated handler.
   const onPageScroll = useComposedEventHandler([
     handleScroll,
-    pinned.screen.onScroll as typeof handleScroll
+    (sharedScroll ?? null) as typeof handleScroll | null
   ])
   const pegStyle = useAnimatedStyle(() => {
     const wanted = scrollY.value + tabsHeight - bodyTop.value - pegTop.value
@@ -94,7 +98,7 @@ export function GameWatchLayout(
   }
   return (
     <Animated.ScrollView
-      ref={pinned.screen.scrollRef}
+      ref={useActiveRef(pinned.screen.scrollRef)}
       onLayout={handleLayout}
       style={style}
       // A tap on a button in a dialog opened from this tab (Record video's
@@ -114,16 +118,16 @@ export function GameWatchLayout(
     >
       <View style={contentStyle}>
         <Animated.View
-          ref={pinned.cardBand.ref}
-          onLayout={pinned.cardBand.handleLayout}
+          ref={useActiveRef(pinned.cardBand.ref)}
+          onLayout={useActiveRef(pinned.cardBand.handleLayout)}
           style={[!short && headStyle, pinned.cardBand.style]}
         >
           {short ? null : head}
         </Animated.View>
         <Animated.View
           testID="event-pill-band"
-          ref={pinned.pillBand.ref}
-          onLayout={pinned.pillBand.handleLayout}
+          ref={useActiveRef(pinned.pillBand.ref)}
+          onLayout={useActiveRef(pinned.pillBand.handleLayout)}
           style={[
             {
               width: '100%',
@@ -138,12 +142,12 @@ export function GameWatchLayout(
           {sections}
         </Animated.View>
         <View
-          ref={pinned.content.ref}
+          ref={useActiveRef(pinned.content.ref)}
           testID="eventTabContent"
-          onLayout={event => {
+          onLayout={useActiveRef((event: LayoutChangeEvent) => {
             bodyTop.value = event.nativeEvent.layout.y
             pinned.content.handleLayout?.(event)
-          }}
+          })}
           style={{
             width: '100%',
             flexDirection: sideBySide ? 'row' : 'column',

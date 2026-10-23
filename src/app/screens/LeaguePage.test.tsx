@@ -252,6 +252,52 @@ describe('the league page', () => {
       'Review relationship changes'
     )
   })
+  it('adds, creates and opens its teams, and says when it has none', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    const placed = asPublicGroup({
+      id: 'team_placed',
+      kind: 'team',
+      name: 'Demo Owls',
+      imageUrl: null,
+      locality: {
+        city: 'Austin',
+        region: 'TX',
+        country: 'US',
+        placeId: null,
+        timezone: 'America/Chicago'
+      }
+    })
+    api.group = async () => ({
+      ...detail,
+      children: [...detail.children, placed]
+    })
+    const opened: GroupRef[] = []
+    const links: GroupLinkChoice[] = []
+    const created: string[] = []
+    await mount(render(api, opened, links, created))
+    await press('Teams')
+    expect(document.body.textContent).includes('Austin')
+    await press('Add team')
+    expect(links.at(-1)).deep.include({
+      targetKind: 'team',
+      relationship: 'parent',
+      direction: 'children'
+    })
+    await press('Create team')
+    expect(document.body.textContent).includes('Placeholder team')
+    await press('Open Demo Owls')
+    expect(opened.at(-1)).deep.equals({ kind: 'team', id: 'team_placed' })
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    api.group = async () => ({
+      ...detail,
+      children: detail.children.filter(child => child.kind !== 'team'),
+      keptTeams: []
+    })
+    await mount(render(api, []))
+    await press('Teams')
+    expect(document.body.textContent).includes('No teams in this league yet.')
+  })
   it('reviews a season row departure and cancels without applying it', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail

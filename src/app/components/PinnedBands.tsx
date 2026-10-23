@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { type LayoutChangeEvent, View } from 'react-native'
 import Animated from 'react-native-reanimated'
 
@@ -6,6 +6,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import type { PinnedHead } from './pinnedHead'
+import { useActiveRef, usePageOffset } from './TabPages'
 
 /**
  * The parts of a screen whose head is pinned by `usePinnedHead`: the band
@@ -24,8 +25,8 @@ export function CardBand(props: {
   const { headerHeight } = useHeaderSlot()
   return (
     <Band
-      ref={part.ref}
-      onLayout={part.handleLayout}
+      ref={useActiveRef(part.ref)}
+      onLayout={useActiveRef(part.handleLayout)}
       style={[styles.band, styles.cardBand, part.style]}
     >
       {/*
@@ -53,8 +54,8 @@ export function PillBand(props: {
   const styles = getStyles(useTheme())
   return (
     <Band
-      ref={part.ref}
-      onLayout={part.handleLayout}
+      ref={useActiveRef(part.ref)}
+      onLayout={useActiveRef(part.handleLayout)}
       style={[styles.band, styles.pillBand, part.style]}
     >
       {/*
@@ -74,7 +75,8 @@ export function PillBand(props: {
 /**
  * One view for whichever tab is showing. Give it `key={tab}`, so each tab is
  * a new view: the anchor measures it, and a tab that is new to the page has
- * to be laid out before it can be.
+ * to be laid out before it can be. Inside a `TabPages` the page sliding out
+ * lets go of the shared ref and layout handler (`useActiveRef`).
  */
 export function PinnedContent(props: {
   part: PinnedHead['content']
@@ -83,11 +85,49 @@ export function PinnedContent(props: {
 }): React.ReactElement {
   const { part, testID, children } = props
   const styles = getStyles(useTheme())
+  // Measured in the column, wherever a pill page puts it: the page's own
+  // offset is added once the page knows it, and the last layout is reported
+  // again whenever it moves, and when a page that started sliding out comes
+  // back (a pill reversed mid-slide), which no layout event says.
+  const handle = useActiveRef(part.handleLayout)
+  const offset = usePageOffset()
+  const last = useRef<LayoutChangeEvent | undefined>(undefined)
+  const report = (event: LayoutChangeEvent): void => {
+    if (offset == null) return
+    const { layout } = event.nativeEvent
+    handle?.({
+      ...event,
+      nativeEvent: {
+        ...event.nativeEvent,
+        layout: { ...layout, y: layout.y + offset }
+      }
+    })
+  }
+  const reported = useRef(report)
+  reported.current = report
+  const showing = handle != null
+  useEffect(() => {
+    if (showing && last.current != null) reported.current(last.current)
+  }, [offset, showing])
   return (
     <View
       testID={testID}
-      ref={part.ref}
-      onLayout={part.handleLayout}
+      ref={useActiveRef(part.ref)}
+      onLayout={
+        handle == null
+          ? undefined
+          : event => {
+              // Kept by value: the event's own objects may be reused.
+              last.current = {
+                ...event,
+                nativeEvent: {
+                  ...event.nativeEvent,
+                  layout: { ...event.nativeEvent.layout }
+                }
+              }
+              report(last.current)
+            }
+      }
       style={styles.tabContent}
     >
       {children}
@@ -103,8 +143,8 @@ export function PinnedSpacer(props: {
   const styles = getStyles(useTheme())
   return (
     <View
-      ref={part.ref}
-      onLayout={part.handleLayout}
+      ref={useActiveRef(part.ref)}
+      onLayout={useActiveRef(part.handleLayout)}
       testID="pinnedSpacer"
       style={[styles.spacer, part.style]}
     />

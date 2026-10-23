@@ -584,7 +584,10 @@ describe('a team’s tabs, each started under the pills', function () {
 
   it('lays the card, the pills, the tab and its room out side by side', async function () {
     await mount('normal', 'schedule')
-    const content = document.querySelector('[data-testid="teamTabContent"]')!
+    // The tab is in its pill pages, which slide it when a pill changes.
+    const content = document
+      .querySelector('[data-testid="teamTabContent"]')!
+      .closest('[data-page]')!.parentElement!
     const column = content.parentElement!
     const children = [...column.children]
     expect(children.indexOf(content)).equals(2)

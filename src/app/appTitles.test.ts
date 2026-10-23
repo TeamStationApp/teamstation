@@ -78,12 +78,13 @@ describe('app titles', function () {
       'GameWatchLayout.native.tsx'
     ]) {
       const source = readFileSync(join(__dirname, 'screens', layout), 'utf8')
+      // Each let go inside a pill page sliding out (`useActiveRef`).
       expect(source).match(
-        /ref=\{pinned\.cardBand\.ref\}[\s\S]*?onLayout=\{pinned\.cardBand\.handleLayout\}[\s\S]*?\{short \? null : head\}/
+        /ref=\{useActiveRef\(pinned\.cardBand\.ref\)\}[\s\S]*?onLayout=\{useActiveRef\(pinned\.cardBand\.handleLayout\)\}[\s\S]*?\{short \? null : head\}/
       )
       // The pills have their own measured band, after the card's band.
       expect(source.indexOf('{short ? null : head}')).lessThan(
-        source.indexOf('ref={pinned.pillBand.ref}')
+        source.indexOf('ref={useActiveRef(pinned.pillBand.ref)}')
       )
     }
   })

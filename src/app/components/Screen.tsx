@@ -15,6 +15,7 @@ import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
 import { ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import { navClearanceAboveInset } from './navClearance'
+import { useActiveRef } from './TabPages'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface ScreenProps {
@@ -117,6 +118,12 @@ export function Screen(props: ScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const breakpoint = useBreakpoint()
+  // Inside a pill page sliding out, the scroller lets go of the shared ref,
+  // and stops feeding the shared scroll and layout handlers: a fling still
+  // coasting there would move the arriving page's pinned head.
+  const scroller = useActiveRef(scrollRef)
+  const handleScroll = useActiveRef(onScroll)
+  const handleLayout = useActiveRef(onLayout)
   // The header is glass and overlays the content, so the content starts at the
   // top of the window and is pushed down by the height the header measured.
   // Anything else and there would be nothing behind the glass to blur.
@@ -161,10 +168,10 @@ export function Screen(props: ScreenProps): React.ReactElement {
 
   return (
     <Animated.ScrollView
-      ref={scrollRef}
+      ref={scroller}
       style={styles.fill}
-      onScroll={onScroll}
-      onLayout={onLayout}
+      onScroll={handleScroll}
+      onLayout={handleLayout}
       scrollEventThrottle={16}
       // Without this the first tap on a button while a field has focus only
       // dismisses the keyboard and the button is never pressed — so `Sign in`,
