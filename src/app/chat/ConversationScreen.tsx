@@ -2133,9 +2133,13 @@ export function ConversationScreen(
   }
 
   const rememberScroll = (
-    event: NativeSyntheticEvent<NativeScrollEvent>
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+    userOwned = false
   ): void => {
     if (!mounted.current || !paneActive.current) return
+    // A queued programmatic acknowledgement cannot replace an active jump's reader.
+    // Actual native drag/momentum still records its position and cancels the jump.
+    if (!userOwned && measuringJump.current != null) return
     const { contentOffset, layoutMeasurement } = event.nativeEvent
     if (
       restoreAnchor.current != null &&
@@ -2222,7 +2226,7 @@ export function ConversationScreen(
     // An authoritative user offset must not be discarded as an outstanding
     // programmatic restoration acknowledgement.
     if (owned) restoreTarget.current = undefined
-    rememberScroll(event)
+    rememberScroll(event, owned)
     if (owned) userScrolled()
     else refreshAttention.current()
     if (end != null && end === input) nativeUserScroll.current = undefined

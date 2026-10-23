@@ -175,7 +175,7 @@ function screen(
   engine: ChatScreenEngine,
   owner?: ChatDraftOwner,
   active = true
-): React.ReactElement {
+): React.ReactElement<React.ComponentProps<typeof ConversationScreen>> {
   return (
     <ConversationScreen
       engine={engine}
@@ -2554,5 +2554,224 @@ describe('older pin navigation leaves newest following', function () {
       expect(state.reads).equals(reads)
       expect([...owner.attention('cnv_1')!.seen]).deep.equals(seen)
       expect(state.loads).equals(1)
+    })
+})
+
+describe('terminal older pin with late measured pinned clearance', function () {
+  for (const acknowledgement of ['before pin', 'during pending page'] as const)
+    it(`preserves the physical tall reader with an end acknowledgement ${acknowledgement}`, async function () {
+      restore = measureChatTestViewport({ width: 1440, height: 1000 })
+      const first = message({ id: 'msg_late_pin_first', seq: 290 })
+      const tall = message({
+        id: 'msg_late_pin_tall',
+        seq: 300,
+        body: 'Synthetic tall reader. '.repeat(100)
+      })
+      const tails = [301, 302, 303].map(seq =>
+        message({ id: 'msg_late_pin_tail_' + seq, seq })
+      )
+      const initial = view({
+        conversation: { ...view().conversation, lastSeq: 303 },
+        messages: [first, tall, ...tails],
+        historyBefore: 290,
+        hasEarlier: true,
+        pins: [
+          { messageId: 'msg_late_pin_old', pinnedAt: '2027-04-01T00:00:00Z' },
+          { messageId: first.id, pinnedAt: '2027-03-31T00:00:00Z' }
+        ]
+      })
+      const state = fixture(initial)
+      let finish!: (next: ConversationView) => void
+      state.setLoad(
+        async () =>
+          await new Promise(resolve => {
+            finish = resolve
+          })
+      )
+      const workspace = newChatWorkspaceState()
+      const draft = {
+        text: '@Aaron Judge keep terminal draft',
+        mentionTokens: [
+          { userId: userIdOfGumbo(2), start: 0, end: 12, label: '@Aaron Judge' }
+        ],
+        picked: [],
+        scrollOffset: 0
+      }
+      workspace.drafts.set('cnv_1', draft)
+      const owner = new ChatDraftOwner(workspace)
+      const node = await render(
+        React.cloneElement(screen(state.engine, owner), { paneHeader: true })
+      )
+      const history = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-history"]'
+      )!
+      const content = history.firstElementChild as HTMLElement
+      const frame = node.querySelector<HTMLElement>(
+        '[data-testid="chat-viewport"]'
+      )!
+      const composer = node.querySelector<HTMLElement>(
+        '[data-testid="chat-composer-band"]'
+      )!
+      const pins = node.querySelector<HTMLElement>(
+        '[data-testid="chat-pinned-band"]'
+      )!
+      const body = node.querySelector<HTMLElement>(
+        `[data-testid="chat-message-body-${tall.id}"]`
+      )!
+      let earlierHeight = 48
+      const padding = (edge: 'paddingTop' | 'paddingBottom'): number =>
+        Number.parseFloat(getComputedStyle(content)[edge])
+      const extent = (): number =>
+        9426 + earlierHeight + padding('paddingTop') + padding('paddingBottom')
+      const contentY = (base: number): number =>
+        base + earlierHeight + padding('paddingTop')
+      frame.getBoundingClientRect = () => new window.DOMRect(0, 0, 1105, 1000)
+      history.getBoundingClientRect = () => new window.DOMRect(0, 0, 1105, 1000)
+      content.getBoundingClientRect = () =>
+        new window.DOMRect(0, -history.scrollTop, 1105, extent())
+      Object.defineProperties(history, {
+        clientWidth: { configurable: true, value: 1105 },
+        clientHeight: { configurable: true, value: 1000 },
+        scrollHeight: { configurable: true, get: extent }
+      })
+      const moves: number[] = []
+      history.scroll = options => {
+        const top = Math.min(
+          Math.max(0, (options as ScrollToOptions).top ?? 0),
+          extent() - 1000
+        )
+        moves.push(top)
+        history.scrollTop = top
+        // Browser geometry changes before RNW's throttled scroll acknowledgement.
+      }
+      const geometry = [
+        { item: first, base: 0, height: 100 },
+        { item: tall, base: 7500, height: 1420 },
+        { item: tails[0], base: 8940, height: 96 },
+        { item: tails[1], base: 9100, height: 80 },
+        { item: tails[2], base: 9200, height: 80 }
+      ]
+      for (const { item, base, height } of geometry) {
+        const row = node.querySelector<HTMLElement>(
+          `[data-testid="chat-message-row-${item.id}"]`
+        )!
+        row.getBoundingClientRect = () =>
+          new window.DOMRect(
+            0,
+            contentY(base) - history.scrollTop,
+            1057,
+            height
+          )
+        Object.defineProperty(row, 'measureLayout', {
+          configurable: true,
+          get:
+            () =>
+            (
+              _parent: unknown,
+              done: (
+                x: number,
+                y: number,
+                width: number,
+                height: number
+              ) => void
+            ) => {
+              done(0, contentY(base), 1057, height)
+            },
+          set: () => {}
+        })
+        await layout(row, contentY(base), height, 1057)
+      }
+      body.getBoundingClientRect = () =>
+        new window.DOMRect(
+          717,
+          contentY(7500) + 8 - history.scrollTop,
+          328,
+          1386
+        )
+      await layout(history, 0, 1000, 1105)
+      await layout(composer, 0, 64, 1072)
+      const packet = (offset: number): unknown => ({
+        nativeEvent: {
+          contentOffset: { x: 0, y: offset },
+          contentSize: { width: 1105, height: extent() },
+          layoutMeasurement: { width: 1105, height: 1000 }
+        }
+      })
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(1105, extent())
+        readingCallbacks(history).onScroll(packet(history.scrollTop))
+        await wait()
+      })
+      await until(() => owner.draft('cnv_1').followNewest === true)
+      const beforePinPadding = padding('paddingTop')
+      // Pin dimensions arrive after the rows' own ResizeObserver notifications.
+      // Only content padding changes: those unchanged rows do not resize.
+      await layout(pins, 104, 58, 1072)
+      expect(padding('paddingTop') - beforePinPadding).equals(58)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(1105, extent())
+        await wait()
+      })
+      const queuedOffset = history.scrollTop
+      const before = body.getBoundingClientRect().top
+      expect(before).equals(-1014)
+      if (acknowledgement === 'before pin')
+        await act(async () => {
+          readingCallbacks(history).onScroll(packet(queuedOffset))
+          await wait()
+        })
+      await click('chat-pinned-summary')
+      await click('chat-pin-msg_late_pin_old')
+      await until(() => state.loads === 1)
+      // Opening/closing the actual two-pin list can repeat the ordinary read acknowledgement.
+      // The terminal response and error geometry must not add another read or seen item.
+      const reads = state.reads
+      const seen = [...owner.attention('cnv_1')!.seen]
+      if (acknowledgement === 'during pending page')
+        await act(async () => {
+          readingCallbacks(history).onScroll(packet(queuedOffset))
+          await wait()
+        })
+      await act(async () => {
+        earlierHeight = 0
+        const terminal = { ...initial, hasEarlier: false, historyBefore: 1 }
+        state.update(terminal)
+        finish(terminal)
+        await wait(80)
+        readingCallbacks(history).onContentSizeChange(1105, extent())
+        await wait(80)
+      })
+      const afterHeader = body.getBoundingClientRect().top
+      await until(
+        () =>
+          node.querySelector('[data-testid="chat-history-jump-retry"]') != null,
+        3500
+      )
+      moves.length = 0
+      await layout(composer, 0, 128, 1072)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(1105, extent())
+        await wait(80)
+      })
+      const afterError = body.getBoundingClientRect().top
+      expect(owner.draft('cnv_1').text).equals(draft.text)
+      expect(owner.draft('cnv_1').mentionTokens).deep.equals(
+        draft.mentionTokens
+      )
+      expect(state.reads).equals(reads)
+      expect([...owner.attention('cnv_1')!.seen]).deep.equals(seen)
+      expect(
+        owner.draft('cnv_1').followNewest,
+        `Explicit old-pin navigation must retain reader ownership; header=${afterHeader}, error=${afterError}, baseline=${before}`
+      ).equals(false)
+      expect(state.loads).equals(1)
+      expect(
+        moves,
+        'Error chrome must not follow the newest edge'
+      ).not.contains(extent() - 1000)
+      expect(
+        Math.abs(afterError - before),
+        `Physical tall reader must survive empty/error geometry; header=${afterHeader}, error=${afterError}, baseline=${before}`
+      ).at.most(3)
     })
 })
