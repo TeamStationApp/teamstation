@@ -11077,3 +11077,168 @@ describe('I2 descriptor-bound retained target session', () => {
     ).equals(false)
   })
 })
+
+describe('E3 autofocus proof before targeted composer entry', function () {
+  function model(
+    surface: 'ios' | 'android' | 'web-wide' = 'ios',
+    fault = ''
+  ): {
+    scenario: Scenarios
+    calls: string[]
+    inputs: Array<Record<string, unknown>>
+    stop: Error
+    failed: Error
+  } {
+    const calls: string[] = []
+    const inputs: Array<Record<string, unknown>> = []
+    const stop = Error('Original E3 first attachment boundary')
+    const failed = Error('Actual pre-input proof failed: ' + fault)
+    let reply = false
+    let keyboardComplete = false
+    let captured = false
+    const native = surface !== 'web-wide'
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      surface,
+      native,
+      steps: [],
+      metrics: () => ({ coarse: false }),
+      replaceDraft: async (text: string) => {
+        expect(text).equals('')
+        calls.push('prepare-empty-draft')
+      },
+      assertKeyboard: async () => {
+        expect(reply).equals(true)
+        calls.push('keyboard-check')
+        if (fault === 'keyboard') throw failed
+        calls.push('keyboard-image')
+        if (fault === 'keyboard-image') throw failed
+        keyboardComplete = true
+      },
+      shot: async (kind: string) => {
+        expect(kind).equals('reply-keyboard')
+        expect(keyboardComplete).equals(true)
+        calls.push('pre-input-capture')
+        if (fault === 'capture') throw failed
+        captured = true
+      },
+      device: {
+        tapOn: async (args: Record<string, unknown>) => {
+          expect(args).deep.equals({ text: '^Reply$' })
+          calls.push('explicit-reply')
+          reply = true
+        },
+        assertVisible: async (args: Record<string, unknown>) => {
+          expect(args.text).equals('^Cancel reply$')
+          expect(reply).equals(true)
+          calls.push('reply-context')
+          if (fault === 'reply-context') throw failed
+        },
+        inputText: async (args: Record<string, unknown>) => {
+          expect(
+            reply && keyboardComplete && captured,
+            'No input or its driver focus tap before all pre-input proof succeeds'
+          ).equals(true)
+          inputs.push(args)
+          calls.push('text-entry')
+          if (fault === 'input') throw failed
+          if (surface === 'ios' && args.id !== 'chat-composer')
+            throw Error(
+              'Stale Reply button remains the input verification target'
+            )
+          expect(args.text).matches(
+            /^Explicit reply with synthetic photo \d{13}$/
+          )
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target: { id: 'msg-reply-fixture' } } },
+      check: async (_name: string, work: () => Promise<void>) => {
+        await work()
+      },
+      openGroup: async () => {
+        calls.push('open-group')
+      },
+      anchor: async () => {
+        calls.push('anchor')
+      },
+      action: async () => {
+        calls.push('reply-action')
+        if (!native) reply = true
+      },
+      attachPhoto: async () => {
+        calls.push('original-attachment-boundary')
+        expect(inputs).has.length(1)
+        throw stop
+      }
+    }) as Scenarios
+    return { scenario, calls, inputs, stop, failed }
+  }
+
+  it('uses the exact iOS composer only after original Reply keyboard proof and capture', async () => {
+    const m = model()
+    expect(await captureFailure(m.scenario.E3())).equals(m.stop)
+    expect(m.calls).deep.equals([
+      'open-group',
+      'anchor',
+      'prepare-empty-draft',
+      'reply-action',
+      'explicit-reply',
+      'reply-context',
+      'keyboard-check',
+      'keyboard-image',
+      'pre-input-capture',
+      'text-entry',
+      'original-attachment-boundary'
+    ])
+    expect(m.inputs).has.length(1)
+    expect(m.inputs[0].id).equals('chat-composer')
+    expect(Object.keys(m.inputs[0]).sort()).deep.equals(['id', 'text'])
+  })
+
+  for (const fault of [
+    'reply-context',
+    'keyboard',
+    'keyboard-image',
+    'capture'
+  ])
+    it(
+      'does not target or type into composer after failed pre-input proof: ' +
+        fault,
+      async () => {
+        const m = model('ios', fault)
+        expect(await captureFailure(m.scenario.E3())).equals(m.failed)
+        expect(m.inputs).deep.equals([])
+        expect(m.calls).not.includes('text-entry')
+        expect(m.calls).not.includes('original-attachment-boundary')
+      }
+    )
+
+  it('propagates a genuine targeted-input failure instead of treating it as autofocus success', async () => {
+    const m = model('ios', 'input')
+    expect(await captureFailure(m.scenario.E3())).equals(m.failed)
+    expect(m.calls.indexOf('text-entry')).greaterThan(
+      m.calls.indexOf('pre-input-capture')
+    )
+    expect(m.calls).not.includes('original-attachment-boundary')
+  })
+
+  for (const surface of ['android', 'web-wide'] as const)
+    it(
+      'retains original non-iOS input semantics after the same proof boundary: ' +
+        surface,
+      async () => {
+        const m = model(surface)
+        expect(await captureFailure(m.scenario.E3())).equals(m.stop)
+        expect(m.inputs).has.length(1)
+        expect(m.inputs[0]).not.have.property('id')
+        if (surface === 'android') expect(m.inputs[0].keyPress).equals(true)
+        else expect(Object.keys(m.inputs[0])).deep.equals(['text'])
+        expect(m.calls.indexOf('text-entry')).greaterThan(
+          m.calls.indexOf('pre-input-capture')
+        )
+      }
+    )
+})
