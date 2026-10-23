@@ -47,7 +47,10 @@ export async function autoSchedulerFixture(
   webRoot?: string,
   options: {
     cityLookup?: Parameters<typeof groupFixture>[3]
-    /** The venue map's Google key, for a run that serves Google's stub. */
+    /**
+     * The Google key for the venue and event maps, for a run that serves
+     * Google's stub. Without it both maps keep the harness's empty key.
+     */
     googleMapsApiKey?: string
   } = {}
 ): Promise<AutoSchedulerFixture> {
@@ -56,7 +59,9 @@ export async function autoSchedulerFixture(
     undefined,
     undefined,
     options.cityLookup,
-    {},
+    options.googleMapsApiKey == null
+      ? {}
+      : { googleMapsApiKey: options.googleMapsApiKey },
     { googleMapsApiKey: options.googleMapsApiKey }
   )
   for (const [id, name] of [
