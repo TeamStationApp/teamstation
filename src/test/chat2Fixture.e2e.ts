@@ -343,8 +343,15 @@ export function digest(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
-/** Normal sign-out is allowed only after every matched AFTER frame is archived. */
-export function requireAfterArchive(fixture: Chat2Fixture): void {
+/**
+ * Normal sign-out is allowed only after every matched AFTER frame is archived.
+ * A capture of `recapturing` replaces that surface's own frames, so those must
+ * still be archived and intact but may come from an earlier source.
+ */
+export function requireAfterArchive(
+  fixture: Chat2Fixture,
+  recapturing?: string
+): void {
   const path = need(
     fixture.afterArchive,
     'Archive all53 matched AFTER frames before account-switch scenarios'
@@ -384,7 +391,8 @@ export function requireAfterArchive(fixture: Chat2Fixture): void {
       'Matched AFTER archive is incomplete'
     )
     assert(
-      row.source === process.env.CHAT2_SOURCE,
+      row.source === process.env.CHAT2_SOURCE ||
+        (recapturing != null && file.startsWith(recapturing + '-')),
       'Archived AFTER source differs'
     )
     const image =

@@ -1818,7 +1818,10 @@ export class Scenarios {
           throw new Chat2Blocked(
             'Compatibility requires its own prepared profile; account replacement is prohibited'
           )
-        requireAfterArchive(this.f)
+        requireAfterArchive(
+          this.f,
+          ui.scenario === 'capture' ? ui.surface : undefined
+        )
         await m.scrollUntilVisible({
           element: { text: exactText('Sign out') },
           direction: 'DOWN',
