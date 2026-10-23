@@ -108,7 +108,8 @@
     "coverage.umpires": "node scripts/umpire-coverage.mjs",
     "coverage.umpires.server": "node scripts/umpire-server-coverage.mjs",
     "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs",
-    "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs"
+    "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs",
+    "coverage.observability": "node scripts/observability-coverage.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",

@@ -164,6 +164,7 @@ kover {
             filters {
                 includes {
                     classes(
+                        "app.teamstation.cameraman.observability.*",
                         "app.teamstation.cameraman.ui.SettingsBody",
                         "app.teamstation.cameraman.ui.RadarSettingsCard",
                         "app.teamstation.cameraman.ui.RadarSettingsCardKt",
