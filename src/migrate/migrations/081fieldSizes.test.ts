@@ -82,7 +82,26 @@ describe('081 field sizes', function () {
     ).deep.equals([
       { sizes: ['T-ball', '50/70'], game: 'T-ball', season: 'T-ball' }
     ])
-    // 46/60 stays a size of its own, and other sizes are still refused.
+    // 46/60 stays a size of its own beside machine pitch, and other sizes
+    // are still refused.
+    await pool.query(
+      `update venue_fields set sizes = '{T-ball,"46/60 MP",46/60}'`
+    )
+    await pool.query(`update games set field_size = '46/60 MP'`)
+    await pool.query(
+      `update season_schedule_settings set field_size = '46/60 MP'`
+    )
+    expect(await rollbackFailure()).includes(
+      'use the T-ball or machine pitch size'
+    )
+    await pool.query(`update venue_fields set sizes = '{"46/60 MP"}'`)
+    expect(await rollbackFailure()).includes(
+      'use the T-ball or machine pitch size'
+    )
+    await pool.query(tBallGame)
+    await pool.query(
+      `update season_schedule_settings set field_size = 'T-ball'`
+    )
     await pool.query(`update venue_fields set sizes = '{T-ball,46/60}'`)
     expect(
       await refused(`update venue_fields set sizes = '{T-ball,70/100}'`)
@@ -95,11 +114,17 @@ describe('081 field sizes', function () {
     )
 
     // Each use of T-ball on its own refuses the rollback.
-    expect(await rollbackFailure()).includes('use the T-ball size')
+    expect(await rollbackFailure()).includes(
+      'use the T-ball or machine pitch size'
+    )
     await pool.query(`update venue_fields set sizes = '{46/60}'`)
-    expect(await rollbackFailure()).includes('use the T-ball size')
+    expect(await rollbackFailure()).includes(
+      'use the T-ball or machine pitch size'
+    )
     await pool.query(`update games set field_size = '46/60'`)
-    expect(await rollbackFailure()).includes('use the T-ball size')
+    expect(await rollbackFailure()).includes(
+      'use the T-ball or machine pitch size'
+    )
     await pool.query(`update season_schedule_settings set field_size = '46/60'`)
 
     await migrateDown(pool, [migration081FieldSizes], 1)

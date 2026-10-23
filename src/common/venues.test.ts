@@ -135,12 +135,15 @@ describe('venue cleaners', () => {
     expect(asFieldSizeChoice('T-ball')).equals('T-ball')
     expect(FIELD_SIZES).deep.equals([
       'T-ball',
+      '46/60 MP',
       '46/60',
       '50/70',
       '55/80',
       '60/90'
     ])
     expect(fieldSizeLabel('T-ball')).equals('T-ball')
+    expect(asFieldSizeChoice('46/60 MP')).equals('46/60 MP')
+    expect(fieldSizeLabel('46/60 MP')).equals('46/60 MP')
     expect(fieldSizeLabel('46/60')).equals('46/60')
     expect(fieldSizeLabel('60/90')).equals('60/90')
     expect(asPin({ latitude: 40, longitude: -75 })).deep.equals({

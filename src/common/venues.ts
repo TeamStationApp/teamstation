@@ -14,11 +14,12 @@ import { asLiteral } from './asLiteral'
 import { asCalendarDate, isRecord } from './groupCreation'
 
 /**
- * The field sizes, fixed and smallest first: T-ball, then base path /
- * pitching distance in feet.
+ * The field sizes, fixed and smallest first: T-ball, machine pitch on a
+ * 46/60 field, then base path / pitching distance in feet.
  */
 export const FIELD_SIZES = [
   'T-ball',
+  '46/60 MP',
   '46/60',
   '50/70',
   '55/80',

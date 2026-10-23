@@ -1031,7 +1031,7 @@ async function f5(run: Run): Promise<void> {
         node.getAttribute('aria-label')
       )
     )
-  ).deep.equals(['T-ball', '46/60', '50/70', '55/80', '60/90'])
+  ).deep.equals(['T-ball', '46/60 MP', '46/60', '50/70', '55/80', '60/90'])
   await run.capture('field-sizes-after.png')
   await fill(b.m, 'Field name', 'Tee Field')
   await tapLabel(b, 'T-ball')
@@ -1080,7 +1080,7 @@ async function f5(run: Run): Promise<void> {
     { weekday: 1, start: '09:00', end: '17:00' }
   ])
   await run.pass(
-    'Example Park with no fields shows a full-width "Add field" row with the plus in its icon tile and no header Add; Add field lists T-ball, 46/60, 50/70, 55/80 and 60/90 as five choices; after adding Tee Field with T-ball only the row is gone, the header Add is back and Tee Field reads T-ball; Monday opened from Closed fills 9:00 AM – 5:00 PM and saves 09:00–17:00'
+    'Example Park with no fields shows a full-width "Add field" row with the plus in its icon tile and no header Add; Add field lists T-ball, 46/60 MP, 46/60, 50/70, 55/80 and 60/90 as six choices; after adding Tee Field with T-ball only the row is gone, the header Add is back and Tee Field reads T-ball; Monday opened from Closed fills 9:00 AM – 5:00 PM and saves 09:00–17:00'
   )
 }
 
