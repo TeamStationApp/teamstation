@@ -2031,44 +2031,79 @@ export class Scenarios {
       await new Promise(resolve => setTimeout(resolve, 350))
       current = await read()
     }
+    let crossingLimit = Number.POSITIVE_INFINITY
+    let reversed = false
     if (!intersects()) {
-      const below = current.box.y >= current.band.bottom
-      if (keyboard.length === 0 && ui.surface !== 'ios') {
-        await ui.device.scrollUntilVisible(
-          {
-            element: { id },
-            direction: below ? 'DOWN' : 'UP',
-            maxScrolls: 40,
-            timeout: 60000
-          },
-          { signal: signal() }
+      const k = keyboard[0]
+      if (k != null)
+        assert(
+          k.width > 0 && k.height > 0 && current.band.bottom <= k.y + 1,
+          'Native reading band must clear actual Keyboard'
         )
-        current = await read()
-      } else {
-        const k = keyboard[0]
-        if (k != null)
+      for (let step = 0; !intersects(); step++) {
+        assert(
+          step < 40 && Date.now() < end,
+          'Bounded native reading-band scroll required'
+        )
+        const before = distance()
+        const previous = current
+        const below = current.box.y >= current.band.bottom
+        const height = current.band.bottom - current.band.top
+        // Long iOS histories need measured progress; damp the final approach to avoid a fling past the target.
+        const travel =
+          ui.surface === 'ios'
+            ? Math.min(height * 0.8, Math.max(48, (before + height / 4) / 2))
+            : Math.min(
+                height * 0.6,
+                Math.max(48, (Math.max(0, before) + height / 4) / 2),
+                crossingLimit
+              )
+        await swipe((below ? -1 : 1) * travel)
+        const nowBelow = current.box.y >= current.band.bottom
+        const crossed =
+          ui.surface !== 'ios' && !intersects() && below !== nowBelow
+        if (ui.surface !== 'ios') {
+          const movement = below
+            ? Math.max(
+                previous.box.y - current.box.y,
+                previous.box.y +
+                  previous.box.height -
+                  current.box.y -
+                  current.box.height
+              )
+            : Math.max(
+                current.box.y - previous.box.y,
+                current.box.y +
+                  current.box.height -
+                  previous.box.y -
+                  previous.box.height
+              )
           assert(
-            k.width > 0 && k.height > 0 && current.band.bottom <= k.y + 1,
-            'Native reading band must clear actual Keyboard'
+            movement > 1,
+            'Exact target must advance in the requested native gesture direction'
           )
-        for (let step = 0; !intersects(); step++) {
-          assert(
-            step < 40 && Date.now() < end,
-            'Bounded native reading-band scroll required'
-          )
-          const before = distance()
-          const height = current.band.bottom - current.band.top
-          // Long iOS histories need measured progress; damp the final approach to avoid a fling past the target.
-          const travel =
-            ui.surface === 'ios'
-              ? Math.min(height * 0.8, Math.max(48, (before + height / 4) / 2))
-              : height * 0.6
-          await swipe((current.box.y >= current.band.bottom ? -1 : 1) * travel)
-          assert(
-            intersects() || distance() < before - 1,
-            'Exact target must advance after native gesture'
-          )
+          if (crossed) {
+            assert(
+              !reversed &&
+                Math.abs(previous.band.top - current.band.top) < 1 &&
+                Math.abs(previous.band.bottom - current.band.bottom) < 1,
+              'Only one target crossing of the unchanged reading band may reverse'
+            )
+            reversed = true
+            crossingLimit = Math.max(48, travel / 2)
+            proof.nativeAnchorReversal = {
+              from: previous.box,
+              to: current.box,
+              band: current.band,
+              movement,
+              nextMaximum: crossingLimit
+            }
+          }
         }
+        assert(
+          intersects() || distance() < before - 1 || crossed,
+          'Exact target must advance after native gesture'
+        )
       }
     }
     for (let step = 0; !safe(); step++) {
@@ -3063,13 +3098,116 @@ export class Scenarios {
   }
 
   async dismiss(): Promise<void> {
-    if (!this.ui.native) await this.ui.device.pressKey({ key: 'ESC' })
+    const ui = this.ui
+    if (ui.native && ui.surface === 'ios') {
+      const nodes = await ui.nodes()
+      const scenes = nodes.filter(node => node.id === 'chat-message-spotlight')
+      if (scenes.length !== 0) {
+        assert.equal(scenes.length, 1, 'Unique actual spotlight required')
+        const measured = (
+          node: PublicNode
+        ): NonNullable<PublicNode['bounds']> => {
+          const b = need(node.bounds, 'Actual spotlight bounds required')
+          assert(
+            [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+              b.width > 0 &&
+              b.height > 0,
+            'Positive finite spotlight geometry required'
+          )
+          return b
+        }
+        const scene = measured(scenes[0])
+        const keyboards = nodes.filter(node => node.type === 'Keyboard')
+        const statusBars = nodes.filter(node => node.type === 'StatusBar')
+        assert(
+          keyboards.length <= 1 && statusBars.length <= 1,
+          'Unique actual OS occlusion required'
+        )
+        const frameTop =
+          statusBars.length === 0
+            ? scene.y
+            : Math.max(
+                scene.y,
+                measured(statusBars[0]).y + measured(statusBars[0]).height
+              )
+        const frameBottom =
+          keyboards.length === 0
+            ? scene.y + scene.height
+            : Math.min(scene.y + scene.height, measured(keyboards[0]).y)
+        const frame = { ...scene, y: frameTop, height: frameBottom - frameTop }
+        const blocked = [
+          'chat-message-spotlight-controls',
+          'chat-message-spotlight-preview',
+          'chat-message-spotlight-panel'
+        ]
+          .map(id => {
+            const found = nodes.filter(node => node.id === id)
+            assert(
+              found.length <= 1 &&
+                (id !== 'chat-message-spotlight-controls' ||
+                  found.length === 1),
+              'Unique actual spotlight region required: ' + id
+            )
+            return found.map(measured)
+          })
+          .flat()
+        const left = Math.min(...blocked.map(b => b.x))
+        const top = Math.min(...blocked.map(b => b.y))
+        const right = Math.max(...blocked.map(b => b.x + b.width))
+        const bottom = Math.max(...blocked.map(b => b.y + b.height))
+        const inset = {
+          x: frame.x + 8,
+          y: frame.y + 8,
+          width: frame.width - 16,
+          height: frame.height - 16
+        }
+        const choices = [
+          { ...inset, height: top - 8 - inset.y },
+          {
+            ...inset,
+            y: bottom + 8,
+            height: inset.y + inset.height - bottom - 8
+          },
+          { ...inset, width: left - 8 - inset.x },
+          { ...inset, x: right + 8, width: inset.x + inset.width - right - 8 }
+        ].filter(b => b.width >= 44 && b.height >= 44)
+        choices.sort((a, b) => b.width * b.height - a.width * a.height)
+        const clear = need(
+          choices[0],
+          'Measured exposed spotlight backdrop required'
+        )
+        const point = {
+          x: Math.round(clear.x + clear.width / 2),
+          y: Math.round(clear.y + clear.height / 2)
+        }
+        assert(
+          point.x > frame.x &&
+            point.x < frame.x + frame.width &&
+            point.y > frame.y &&
+            point.y < frame.y + frame.height &&
+            blocked.every(
+              b =>
+                point.x < b.x ||
+                point.x > b.x + b.width ||
+                point.y < b.y ||
+                point.y > b.y + b.height
+            ),
+          'Dismissal point must clear every actual spotlight control and preview'
+        )
+        this.observations.push({
+          spotlightBackdropDismiss: { frame, blocked, clear, point }
+        })
+        await ui.tapObserved({ bounds: clear })
+        return
+      }
+    }
+    if (!ui.native) await ui.device.pressKey({ key: 'ESC' })
     else if (
-      this.ui.surface === 'ios' &&
-      (await this.ui.visible({ text: exactText('Cancel') }, 500))
+      ui.surface === 'ios' &&
+      (await ui.visible({ text: exactText('Cancel') }, 500))
     )
-      await this.ui.text('Cancel')
-    else await this.ui.back()
+      await ui.text('Cancel')
+    else await ui.back()
   }
 
   async withFault(
@@ -4226,6 +4364,10 @@ export class Scenarios {
               conversationId: this.group
             }).lastEvent
           )
+          const personalPins =
+            ui.surface === 'ios'
+              ? await (await this.client()).chatPins(this.group)
+              : undefined
           await this.action(message)
           const actions = await this.menuState()
           if (this.touchActions) {
@@ -4278,6 +4420,14 @@ export class Scenarios {
             )
           await this.dismiss()
           await ui.absent('chat-message-spotlight')
+          if (personalPins != null)
+            assert.deepEqual(
+              (await (await this.client()).chatPins(this.group))
+                .map(p => p.messageId)
+                .sort(),
+              personalPins.map(p => p.messageId).sort(),
+              'Spotlight dismissal must preserve actual personal pins'
+            )
         }
         await this.incomingRunEndAvatar(incomingReservations)
       }

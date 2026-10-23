@@ -56,7 +56,10 @@ export interface Chat2Device {
   longPressOn: (args: Args) => Promise<unknown>
   swipe: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
   scroll: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
-  dragAndDrop: (args: Args) => Promise<unknown>
+  dragAndDrop: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>
   inputText: (args: Args) => Promise<unknown>
   copyTextFrom: (
     args: Args
@@ -2423,7 +2426,7 @@ export class Chat2UI {
     }
   }
 
-  /** Browser CDP swipe ignores absolute endpoints; its drag supports real mouse movement. */
+  /** iOS swipe duration controls its hold; drag supplies an explicit movement duration. */
   async measuredSwipe(
     input: {
       startX: number
@@ -2460,7 +2463,17 @@ export class Chat2UI {
         [input.startY, input.endY].every(value => value > 0 && value < height),
       'Measured gesture endpoints must stay strictly inside the actual viewport'
     )
-    if (this.native) await this.device.swipe(input, { signal })
+    if (this.surface === 'ios')
+      await this.device.dragAndDrop(
+        {
+          from: { point: `${input.startX},${input.startY}` },
+          to: { point: `${input.endX},${input.endY}` },
+          holdDuration: 16,
+          duration: input.duration
+        },
+        { signal }
+      )
+    else if (this.native) await this.device.swipe(input, { signal })
     else
       await this.device.dragAndDrop({
         from: { point: `${input.startX},${input.startY}` },
