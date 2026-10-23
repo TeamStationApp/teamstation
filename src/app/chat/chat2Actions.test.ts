@@ -1,4 +1,5 @@
 import { type ChildProcess, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, Module } from 'node:module'
@@ -3328,19 +3329,27 @@ describe('chat native adapter compatibility', function () {
       actual.device.tapOn = async args => {
         calls.push(['focus', args])
       }
-      actual.device.eraseText = async () => {
-        calls.push('erase')
+      actual.device.eraseText = async args => {
+        calls.push(['erase', args])
+        value = ''
       }
       actual.device.inputText = async args => {
         calls.push(['type', args])
         value = String(args.text)
       }
-      let value = ''
+      let value = 'Previous draft'
+      let browserReads = 0
+      actual.dom = async () => {
+        browserReads++
+        return browserReads === 1
+          ? { focused: true, editable: true, value }
+          : { focused: true, value, start: 0, end: value.length }
+      }
       actual.draft = async () => value
       await actual.replaceDraft('Exact\ntext')
       expect(calls).deep.equals([
         ['focus', { id: 'chat-composer' }],
-        'erase',
+        ['erase', surface === 'android' ? undefined : { characters: 1 }],
         [
           'type',
           {
@@ -3351,6 +3360,7 @@ describe('chat native adapter compatibility', function () {
           }
         ]
       ])
+      expect(browserReads).equals(surface === 'android' ? 0 : 2)
     }
   })
   it('uses an exact composer selector for complete multiline browser input', async () => {
@@ -4866,6 +4876,7 @@ describe('chat native adapter compatibility', function () {
             messages: [
               {
                 id: 'synthetic-target',
+                status: 'ok',
                 reactions: [{ emoji: '👍', userIds: [userIdOfGumbo(1)] }]
               }
             ]
@@ -4902,18 +4913,32 @@ describe('chat native adapter compatibility', function () {
       scenario.anchor = async () => {}
       scenario.targetBounds = async () => box
       scenario.action = async () => {}
+      const now = Date.now
+      let elapsed = 0
+      let reads = 0
       const peer = {
         engine: {
-          open: async () => ({
-            messages: [{ id: 'synthetic-target', reactions: [reaction] }]
-          })
+          open: async () => {
+            if (++reads > 1) elapsed += 30001
+            return {
+              messages: [
+                { id: 'synthetic-target', status: 'ok', reactions: [reaction] }
+              ]
+            }
+          }
         }
       }
       scenario.protocolPeer = async () =>
         peer as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>
-      expect(String(await captureFailure(scenario.E5()))).contains(
-        'Actual selected raw glyph and reacting viewer'
-      )
+      Date.now = () => now() + elapsed
+      try {
+        expect(String(await captureFailure(scenario.E5()))).contains(
+          'Actual selected raw glyph and reacting viewer'
+        )
+        expect(reads).equals(2)
+      } finally {
+        Date.now = now
+      }
     }
   })
   function recorder(
@@ -5454,6 +5479,7 @@ describe('chat native adapter compatibility', function () {
     scenario: Scenarios
     calls: string[]
     actual: Chat2UI
+    page: JSDOM
   } {
     const { actual, page } = browserModel()
     actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: false })
@@ -5524,7 +5550,7 @@ describe('chat native adapter compatibility', function () {
     }
     scenario.targetBounds = async () => box
     scenario.menuState = async () => ({})
-    return { scenario, calls, actual }
+    return { scenario, calls, actual, page }
   }
   it('prepares the E5 reader before focus and verifies the actual desktop More trigger after Escape', async () => {
     const { scenario, calls } = keyboardMenu()
@@ -5586,6 +5612,147 @@ describe('chat native adapter compatibility', function () {
         await captureFailure(scenario.E5())
       }
     )
+  async function touchKeyboardMenu(mode = ''): Promise<{
+    scenario: Scenarios
+    calls: string[]
+    error: unknown
+  }> {
+    const { scenario, actual, calls, page } = keyboardMenu()
+    Object.assign(actual, { surface: 'web-touch' })
+    actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: true })
+    const editor = page.window.document.querySelector('textarea')!
+    const bubble = page.window.document.querySelector<HTMLElement>(
+      '[data-testid="chat-bubble-target"]'
+    )!
+    const more = page.window.document.querySelector<HTMLElement>(
+      '[aria-label="More message actions"]'
+    )!
+    bubble.tabIndex = 0
+    bubble.getBoundingClientRect = () =>
+      new page.window.DOMRect(48, 114, 200, 60)
+    let overlay: HTMLElement | undefined
+    let readyReads = 0
+    actual.shot = async () => {
+      const parts = Array.from(overlay!.children).slice(0, 3)
+      expect(
+        parts.map(part => page.window.getComputedStyle(part).opacity),
+        'E5 static shot requires fully opaque actual spotlight parts'
+      ).deep.equals(['1', '1', '1'])
+      expect(actual.steps.at(-1)).includes({
+        name: 'Settled spotlight capture readiness',
+        outcome: 'passed'
+      })
+      expect(readyReads).at.least(3)
+      calls.push('settled-shot')
+    }
+    actual.device.longPressOn = async args => {
+      expect(args).deep.equals({ id: 'chat-bubble-target', duration: 550 })
+      expect(
+        page.window.document.activeElement,
+        'Composer must own the prehold focus'
+      ).equals(editor)
+      calls.push('hold')
+      bubble.focus()
+      overlay = page.window.document.createElement('div')
+      overlay.dataset.testid = 'chat-message-spotlight'
+      overlay.setAttribute('aria-label', 'Message from Synthetic member')
+      for (const name of ['backdrop', 'controls', 'panel']) {
+        const part = page.window.document.createElement('div')
+        part.dataset.testid = 'chat-message-spotlight-' + name
+        part.style.cssText =
+          'opacity:0.4;transform:none;display:block;visibility:visible'
+        part.getBoundingClientRect = () => {
+          if (name === 'backdrop') readyReads++
+          if (readyReads >= 3 && mode !== 'not-opaque') part.style.opacity = '1'
+          return new page.window.DOMRect(0, 0, 200, 100)
+        }
+        overlay.append(part)
+      }
+      const action = page.window.document.createElement('button')
+      overlay.append(action)
+      page.window.document.body.append(overlay)
+      action.focus()
+    }
+    actual.device.pressKey = async args => {
+      expect(args.key).equals('ESC')
+      calls.push('dismiss')
+      if (mode !== 'retained-overlay') overlay?.remove()
+      if (mode === 'wrong-owner') more.focus()
+      else if (mode === 'composer-owner') editor.focus()
+      else bubble.focus()
+      if (mode === 'changed-draft') editor.value = 'Changed'
+      if (mode !== '')
+        Object.assign(actual, { deadline: AbortSignal.timeout(80) })
+    }
+    let error: unknown
+    try {
+      await scenario.E5()
+    } catch (failure) {
+      error = failure
+    }
+    return { scenario, calls, error }
+  }
+  it('restores the exact touch bubble trigger after Escape without claiming a software keyboard on web', async () => {
+    const result = await touchKeyboardMenu()
+    expect(result.error).equals(undefined)
+    expect(result.calls).deep.equals([
+      'anchor',
+      'focus',
+      'focused-proof',
+      'hold',
+      'settled-shot',
+      'dismiss'
+    ])
+    const samples = result.scenario.observations[0].messageActionFocus as Array<
+      Record<string, unknown>
+    >
+    expect(samples[0].composerFocused).equals(true)
+    expect(samples[0].triggerFocused).equals(false)
+    const after = samples.at(-1)!
+    expect(after.triggerFocused).equals(true)
+    expect((after.active as Record<string, unknown>).id).equals(
+      'chat-bubble-target'
+    )
+    expect(after.trigger).deep.equals({ x: 48, y: 114, width: 200, height: 60 })
+    expect(after.menus).equals(0)
+    expect(after.spotlights).equals(0)
+  })
+  it('refuses the E5 static shot while its actual spotlight remains translucent', async () => {
+    const result = await touchKeyboardMenu('not-opaque')
+    expect(String(result.error)).includes(
+      'Timed out waiting for settled spotlight presentation'
+    )
+    expect(result.calls).not.includes('settled-shot')
+    expect(result.calls).not.includes('dismiss')
+  })
+  for (const mode of [
+    'wrong-owner',
+    'composer-owner',
+    'retained-overlay',
+    'changed-draft'
+  ])
+    it(
+      'rejects an unproved touch bubble focus return or altered draft: ' + mode,
+      async () => {
+        const result = await touchKeyboardMenu(mode)
+        expect(result.error).not.equals(undefined)
+        expect(result.calls).includes('dismiss')
+        const samples = result.scenario.observations[0]
+          .messageActionFocus as Array<Record<string, unknown>>
+        if (mode === 'wrong-owner' || mode === 'composer-owner')
+          expect(
+            samples
+              .filter(sample => sample.phase === 'after-dismissal')
+              .every(sample => sample.triggerFocused === false)
+          ).equals(true)
+        if (mode === 'retained-overlay')
+          expect(samples.at(-1)?.spotlights).equals(1)
+        if (mode === 'changed-draft')
+          expect(String(result.error)).includes(
+            'Message actions must preserve the actual draft'
+          )
+      }
+    )
   it('keeps two positive native keyboard proofs and never infers an empty native draft', async () => {
     const actual = ui([])
     let focus = 0
@@ -5607,6 +5774,8 @@ describe('chat native adapter compatibility', function () {
     actual.back = async () => {}
     actual.shot = async () => {}
     actual.hideKeyboard = async () => {}
+    actual.publicBounds = async () => box
+    actual.device.screenshot = async () => captureImages[0]
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       f: { messages: { target: { id: 'target' } } },
@@ -5630,6 +5799,8 @@ describe('chat native adapter compatibility', function () {
     const calls: unknown[] = []
     actual.hideKeyboard = async () => {}
     actual.absent = async () => {}
+    actual.present = async () => {}
+    actual.device.screenshot = async () => captureImages[0]
     actual.shot = async () => {}
     actual.publicBounds = async () => ({
       x: 0,
@@ -8740,4 +8911,807 @@ describe('iOS spotlight backdrop dismissal', () => {
     await m.scenario.dismiss()
     expect(m.calls).deep.equals(['Back'])
   })
+})
+
+describe('native absent history paging', function () {
+  this.timeout(15000)
+  const target: Chat2Message = {
+    id: 'msg-preserved-outgoing',
+    seq: 5,
+    body: 'Practice update: bring water.',
+    authorId: userIdOfGumbo(5)
+  }
+
+  function model(
+    fault = '',
+    surface: 'ios' | 'android' = 'ios'
+  ): {
+    scenario: Scenarios
+    taps: Array<{ x: number; y: number }>
+    gestures: unknown[]
+  } {
+    const taps: Array<{ x: number; y: number }> = []
+    const gestures: unknown[] = []
+    let pages = 0
+    let earlierY =
+      surface === 'android' || fault === 'no-progress' || fault === 'limit'
+        ? 300
+        : -4395.33332824707
+    let targetY = fault === 'loaded' ? -500 : 300
+    const loaded = (): boolean =>
+      fault === 'loaded' || (fault !== 'limit' && pages === 2)
+    const nodes = (): PublicNode[] => [
+      {
+        id: 'chat-message-history',
+        type: 'Other',
+        text: 'Load earlier messages',
+        bounds: { x: 0, y: 0, width: 402, height: 874 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        type: 'Button',
+        bounds: { x: 64, y: 62.3333346247673, width: 274, height: 47 }
+      },
+      {
+        id: 'chat-pinned-band',
+        bounds: { x: 16, y: 110, width: 370, height: 60.66667175292969 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 16, y: 700.6666870117188, width: 370, height: 54 }
+      },
+      { type: 'ScrollView', text: 'Load earlier messages' },
+      { type: 'Other', text: 'Load earlier messages' },
+      ...(fault === 'exhausted'
+        ? []
+        : Array.from({ length: fault === 'duplicate' ? 2 : 1 }, () => ({
+            id: 'settings-pill-button',
+            type: 'Button',
+            text: 'Load earlier messages',
+            enabled:
+              fault === 'omitted-enabled' ? undefined : fault !== 'disabled',
+            bounds: { x: 16, y: earlierY, width: 370, height: 48 }
+          }))),
+      {
+        id: 'chat-bubble-msg-recent',
+        bounds: { x: 48, y: 400, width: 281, height: 96 }
+      },
+      ...(pages > 0
+        ? [
+            {
+              id: 'chat-bubble-msg-older-page-' + pages,
+              bounds: { x: 48, y: 500, width: 281, height: 96 }
+            }
+          ]
+        : []),
+      ...(loaded()
+        ? [
+            {
+              id: 'chat-bubble-' + target.id,
+              bounds: {
+                x: 48,
+                y: targetY,
+                width: 281.3333435058594,
+                height: 96.6669921875
+              }
+            }
+          ]
+        : [])
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface,
+      deadline: AbortSignal.timeout(fault === 'no-progress' ? 600 : 15000),
+      steps: [],
+      visible: async () => false,
+      device: {
+        platformInfo: async () => ({ screenWidth: 402, screenHeight: 874 }),
+        // Preserve the actual flat XCTest snapshot contract, including duplicate ancestor labels.
+        hierarchy: async (options?: { signal: AbortSignal }) => {
+          options?.signal.throwIfAborted()
+          if (surface === 'android')
+            return { type: 'FrameLayout', children: nodes() }
+          return {
+            nodes: nodes().map((node, index) => ({
+              index,
+              type: node.type ?? 'Other',
+              identifier: node.id,
+              label: node.text,
+              rect: node.bounds,
+              enabled: node.enabled,
+              hittable: false
+            }))
+          }
+        },
+        dragAndDrop: async (args: {
+          from: { point: string }
+          to: { point: string }
+          holdDuration: number
+          duration: number
+        }) => {
+          expect(args.holdDuration).equals(16)
+          expect(args.duration).equals(200)
+          const start = args.from.point.split(',').map(Number)
+          const end = args.to.point.split(',').map(Number)
+          expect(Math.min(start[1], end[1])).greaterThan(170.6666717529297)
+          expect(Math.max(start[1], end[1])).lessThan(700.6666870117188)
+          gestures.push(args)
+          if (fault !== 'stuck') {
+            const delta = (end[1] - start[1]) * 1.7
+            if (loaded()) targetY += delta
+            else earlierY += delta
+          }
+        },
+        tapOnPoint: async (
+          point: { x: number; y: number },
+          options?: { signal: AbortSignal }
+        ) => {
+          options?.signal.throwIfAborted()
+          expect(point.x).equals(201)
+          expect(point.y).equals(earlierY + 24)
+          expect(point.y - 24).at.least(178.1666717529297)
+          expect(point.y + 24).at.most(693.1666870117188)
+          taps.push(point)
+          if (fault !== 'no-progress') pages++
+        },
+        assertVisible: async (selector: { id: string }) => {
+          expect(selector.id).equals('chat-bubble-' + target.id)
+          expect(loaded()).equals(true)
+          expect(targetY).at.least(178.1666717529297)
+          expect(targetY + 96.6669921875).at.most(693.1666870117188)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      f: { messages: { target } },
+      observations: []
+    }) as Scenarios
+    return { scenario, taps, gestures }
+  }
+
+  it('honors omitted enabled metadata on the normalized Android earlier Button before and after framing', async () => {
+    const m = model('omitted-enabled', 'android')
+    const before = await m.scenario.ui.nodes()
+    const control = before.find(
+      node => node.type === 'Button' && node.text === 'Load earlier messages'
+    )!
+    expect(control.enabled).equals(undefined)
+    await m.scenario.nativeHistoryTarget(target)
+    expect(m.taps).has.length(2)
+    const paging = m.scenario.observations.find(
+      row => row.nativeHistoryTarget === target.id
+    )!
+    expect(paging.outcome).equals('passed')
+    expect(paging.pages).has.length(2)
+    expect(m.gestures).deep.equals([])
+  })
+
+  it('rejects explicit disabled metadata on the normalized Android earlier Button', async () => {
+    const m = model('disabled', 'android')
+    expect(
+      String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
+    ).includes('Enabled public native earlier Button required')
+    expect(m.taps).deep.equals([])
+  })
+
+  it('requires explicit enabled metadata on the raw iOS earlier Button', async () => {
+    const m = model('omitted-enabled')
+    const before = await m.scenario.ui.nodes()
+    expect(
+      before.find(
+        node => node.type === 'Button' && node.text === 'Load earlier messages'
+      )?.enabled
+    ).equals(undefined)
+    expect(
+      String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
+    ).includes('Enabled public native earlier Button required')
+    expect(m.taps).deep.equals([])
+  })
+
+  it('loads the absent exact original through two real earlier-page Buttons before target framing', async () => {
+    const m = model()
+    const before = await m.scenario.ui.nodes()
+    expect(
+      before.filter(node => node.text === 'Load earlier messages')
+    ).has.length(4)
+    expect(
+      before.find(
+        node => node.type === 'Button' && node.text === 'Load earlier messages'
+      )?.bounds
+    ).includes({ y: -4395.33332824707, height: 48 })
+    expect(before.some(node => node.id === 'chat-bubble-' + target.id)).equals(
+      false
+    )
+    await m.scenario.anchor(target)
+    expect(m.taps).has.length(2)
+    expect(m.gestures.length).greaterThan(1)
+    const paging = m.scenario.observations.find(
+      row => row.nativeHistoryTarget === target.id
+    )!
+    expect(paging.outcome).equals('passed')
+    expect(paging.pages).has.length(2)
+    const controls = m.scenario.observations.filter(
+      row => row.nativeEarlierControlFor === target.id
+    )
+    expect(controls).has.length(2)
+    expect(controls.every(row => row.nativeAnchor === undefined)).equals(true)
+    const anchors = m.scenario.observations.filter(
+      row => row.nativeAnchor === target.id
+    )
+    expect(anchors).has.length(1)
+    expect(anchors[0].outcome).equals('passed')
+    expect(target.seq).equals(5)
+  })
+
+  it('keeps an already loaded clipped exact target on the existing measured path without paging', async () => {
+    const m = model('loaded')
+    await m.scenario.anchor(target)
+    expect(m.taps).deep.equals([])
+    expect(m.gestures.length).greaterThan(0)
+    expect(
+      m.scenario.observations.some(
+        row =>
+          row.nativeHistoryTarget != null || row.nativeEarlierControlFor != null
+      )
+    ).equals(false)
+    expect(
+      m.scenario.observations.find(row => row.nativeAnchor === target.id)
+        ?.outcome
+    ).equals('passed')
+  })
+
+  it('stops after ten progressing public pages without claiming the missing original', async () => {
+    const m = model('limit')
+    expect(String(await captureFailure(m.scenario.anchor(target)))).includes(
+      'Bounded native earlier-page count required'
+    )
+    expect(m.taps).has.length(10)
+    expect(
+      m.scenario.observations.some(row => row.nativeAnchor === target.id)
+    ).equals(false)
+    expect(
+      m.scenario.observations.find(row => row.nativeHistoryTarget === target.id)
+        ?.outcome
+    ).not.equals('passed')
+  })
+
+  for (const fault of [
+    'exhausted',
+    'duplicate',
+    'disabled',
+    'stuck',
+    'no-progress'
+  ])
+    it(
+      'refuses absent history without proved public page progress: ' + fault,
+      async () => {
+        const m = model(fault)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).matches(
+          fault === 'stuck'
+            ? /advance/
+            : fault === 'no-progress'
+              ? /Timeout|abort/i
+              : /earlier Button/
+        )
+        expect(
+          m.scenario.observations.some(
+            row => row.nativeAnchor === target.id && row.outcome === 'passed'
+          )
+        ).equals(false)
+        expect(m.taps).has.length(fault === 'no-progress' ? 1 : 0)
+      }
+    )
+
+  async function pagingClock(
+    work: (advance: (ms: number) => void) => Promise<void>
+  ): Promise<void> {
+    const actualNow = Date.now
+    const actualTimeout = Object.getOwnPropertyDescriptor(
+      AbortSignal,
+      'timeout'
+    )!
+    const start = actualNow()
+    let elapsed = 0
+    const pending: Array<{ end: number; controller: AbortController }> = []
+    Date.now = () => start + elapsed
+    AbortSignal.timeout = (ms: number): AbortSignal => {
+      const controller = new AbortController()
+      pending.push({ end: elapsed + ms, controller })
+      return controller.signal
+    }
+    try {
+      await work(ms => {
+        elapsed += ms
+        for (const timer of pending)
+          if (timer.end <= elapsed)
+            timer.controller.abort(
+              new Error('Observed native signal budget expired')
+            )
+      })
+    } finally {
+      Date.now = actualNow
+      Object.defineProperty(AbortSignal, 'timeout', actualTimeout)
+    }
+  }
+
+  it('keeps a progressing earlier control alive through the measured large-tree latency budget', async () => {
+    const m = model()
+    await pagingClock(async advance => {
+      const drag = m.scenario.ui.device.dragAndDrop.bind(m.scenario.ui.device)
+      let delayed = false
+      m.scenario.ui.device.dragAndDrop = async (args, options) => {
+        await drag(args, options)
+        if (!delayed) {
+          delayed = true
+          advance(100000)
+        }
+      }
+      await m.scenario.nativeAnchorReady(target, true)
+      expect(
+        m.scenario.observations.find(
+          row => row.nativeEarlierControlFor === target.id
+        )?.outcome
+      ).equals('passed')
+      expect(m.taps).deep.equals([])
+      expect(
+        m.scenario.observations.some(row => row.nativeAnchor === target.id)
+      ).equals(false)
+    })
+  })
+
+  it('retains exact two-page target progress after the real first-page work consumes the old shared budget', async () => {
+    const m = model()
+    await pagingClock(async advance => {
+      const tap = m.scenario.ui.device.tapOnPoint.bind(m.scenario.ui.device)
+      m.scenario.ui.device.tapOnPoint = async (args, options) => {
+        await tap(args, options)
+        if (m.taps.length === 1) advance(150000)
+      }
+      await m.scenario.anchor(target)
+      expect(m.taps).has.length(2)
+      expect(
+        m.scenario.observations.find(
+          row => row.nativeHistoryTarget === target.id
+        )?.outcome
+      ).equals('passed')
+      expect(
+        m.scenario.observations.find(row => row.nativeAnchor === target.id)
+          ?.outcome
+      ).equals('passed')
+    })
+  })
+
+  for (const fault of ['earlier-budget', 'shared-budget', 'ordinary-budget'])
+    it(
+      'still refuses bounded native work after ' + fault + ' expires',
+      async () => {
+        const m = model(fault === 'ordinary-budget' ? 'loaded' : '')
+        await pagingClock(async advance => {
+          if (fault === 'shared-budget') {
+            const tap = m.scenario.ui.device.tapOnPoint.bind(
+              m.scenario.ui.device
+            )
+            m.scenario.ui.device.tapOnPoint = async (args, options) => {
+              await tap(args, options)
+              advance(310000)
+            }
+          } else {
+            const drag = m.scenario.ui.device.dragAndDrop.bind(
+              m.scenario.ui.device
+            )
+            m.scenario.ui.device.dragAndDrop = async (args, options) => {
+              await drag(args, options)
+              advance(fault === 'earlier-budget' ? 190000 : 100000)
+            }
+          }
+          const error = await captureFailure(m.scenario.anchor(target))
+          expect(String(error)).matches(/deadline|signal budget expired/)
+          expect(
+            m.scenario.observations.some(
+              row => row.nativeAnchor === target.id && row.outcome === 'passed'
+            )
+          ).equals(false)
+          expect(m.taps).has.length(fault === 'shared-budget' ? 1 : 0)
+        })
+      }
+    )
+})
+
+describe('native E5 exact old outgoing quote route', function () {
+  function route(
+    surface: 'ios' | 'android' | 'web-wide',
+    fault = ''
+  ): {
+    scenario: Scenarios
+    calls: string[]
+    stopped: Error
+    cleanup: () => void
+  } {
+    const viewerId = userIdOfGumbo(1)
+    const outgoing: Chat2Message = {
+      id: 'msg_exact_old_outgoing',
+      seq: 5,
+      authorId: fault === 'wrong-outgoing-author' ? userIdOfGumbo(3) : viewerId,
+      body: 'Earlier synthetic own message.'
+    }
+    const reply = message({
+      id: 'msg_exact_recent_reply',
+      seq: 236,
+      body: 'Recent authenticated reply.',
+      quote: {
+        id: fault === 'wrong-target' ? 'msg_another_original' : outgoing.id,
+        authorId: fault === 'wrong-quote-author' ? userIdOfGumbo(4) : viewerId,
+        authorName: 'Juan S',
+        snippet: outgoing.body,
+        status: 'unavailable'
+      }
+    })
+    const messages =
+      fault === 'absent'
+        ? []
+        : fault === 'ambiguous'
+          ? [reply, { ...reply, id: 'msg_other_recent_reply' }]
+          : [
+              {
+                ...reply,
+                status:
+                  fault === 'invalid'
+                    ? ('invalid' as const)
+                    : fault === 'removed'
+                      ? ('removed' as const)
+                      : reply.status
+              }
+            ]
+    const calls: string[] = []
+    const stopped = Error('Unchanged exact outgoing action boundary reached')
+    let jumped = false
+    const directory = mkdtempSync(join(tmpdir(), 'chat-e5-quote-unit-'))
+    const response = join(directory, 'response.json')
+    const control = join(directory, 'control.cjs')
+    writeFileSync(
+      response,
+      JSON.stringify({
+        ownershipId: 'chat-e5-unit',
+        uiActions: false,
+        ok: true,
+        lastEvent: 0,
+        events: []
+      })
+    )
+    writeFileSync(
+      control,
+      "const fs=require('node:fs');const input=JSON.parse(fs.readFileSync(0,'utf8'));if(input.action!=='snapshot')process.exit(3);console.log(JSON.stringify(require('./response.json')))"
+    )
+    const hash = (path: string): string =>
+      createHash('sha256').update(readFileSync(path)).digest('hex')
+    const incoming: Chat2Message = {
+      id: 'msg_current_incoming',
+      seq: 231,
+      body: 'Current synthetic message.',
+      authorId: userIdOfGumbo(2)
+    }
+    const actual = {
+      native: surface !== 'web-wide',
+      surface,
+      metrics: () => ({ coarse: false }),
+      hideKeyboard: async () => {},
+      absent: async () => {},
+      present: async () => {},
+      publicBounds: async () => ({
+        x: 0,
+        y: 100,
+        width: 250,
+        height: 100
+      }),
+      steps: [],
+      shot: async () => {},
+      device: {
+        assertVisible: async () => ({}),
+        screenshot: async () => captureImages[0]
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId,
+      group: 'cnv_quote_unit',
+      observations: [],
+      f: {
+        ownershipId: 'chat-e5-unit',
+        control: {
+          executable: process.execPath,
+          args: [control],
+          script: control,
+          sha256: hash(control),
+          dependencies: [{ path: response, sha256: hash(response) }]
+        },
+        messages: {
+          target: incoming,
+          incoming,
+          outgoing,
+          long: { ...incoming, id: 'msg_current_long', seq: 238 },
+          file: { ...incoming, id: 'msg_current_file', seq: 239 }
+        }
+      },
+      openGroup: async () => {},
+      check: async (name: string, work: () => Promise<void>) => {
+        if (name.startsWith('E5 incoming/outgoing')) await work()
+      },
+      client: async () => ({ chatPins: async () => [] }),
+      incomingReservation: async () => ({}),
+      protocolPeer: async () => ({
+        engine: {
+          open: async (id: string) => {
+            expect(id).equals('cnv_quote_unit')
+            calls.push('authenticated-current-replies')
+            return { messages }
+          }
+        }
+      }),
+      identityLegacyAnchor: async (
+        target: Chat2Message,
+        baseline: { text: Chat2Message; reply: Chat2Message }
+      ) => {
+        expect(target).equals(outgoing)
+        expect(baseline.text).equals(outgoing)
+        expect(baseline.reply).deep.equals({
+          id: reply.id,
+          seq: reply.seq,
+          body: reply.body,
+          authorId: reply.senderUserId
+        })
+        calls.push('observed-exact-row-quote-jump')
+        jumped = true
+      },
+      action: async (target: Chat2Message) => {
+        if (target.id === outgoing.id) {
+          expect(target).equals(outgoing)
+          if (actual.native)
+            expect(
+              jumped,
+              'Native old outgoing must first use its unique authenticated reply quote'
+            ).equals(true)
+          calls.push('unchanged-exact-outgoing-action')
+          throw stopped
+        }
+      },
+      menuState: async () => ({ preview: true }),
+      dismiss: async () => {}
+    }) as Scenarios
+    return {
+      scenario,
+      calls,
+      stopped,
+      cleanup: () => {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  }
+  for (const surface of ['ios', 'android'] as const)
+    it(
+      'reaches the same old outgoing through its authenticated current reply on ' +
+        surface,
+      async () => {
+        const m = route(surface)
+        try {
+          expect(await captureFailure(m.scenario.E5())).equals(m.stopped)
+          expect(m.calls).deep.equals([
+            'authenticated-current-replies',
+            'observed-exact-row-quote-jump',
+            'unchanged-exact-outgoing-action'
+          ])
+        } finally {
+          m.cleanup()
+        }
+      }
+    )
+  it('leaves the browser outgoing navigation path unchanged', async () => {
+    const m = route('web-wide')
+    try {
+      expect(await captureFailure(m.scenario.E5())).equals(m.stopped)
+      expect(m.calls).deep.equals(['unchanged-exact-outgoing-action'])
+    } finally {
+      m.cleanup()
+    }
+  })
+  for (const fault of [
+    'absent',
+    'ambiguous',
+    'invalid',
+    'removed',
+    'wrong-target',
+    'wrong-quote-author',
+    'wrong-outgoing-author'
+  ])
+    it('refuses an unproved old outgoing quote route: ' + fault, async () => {
+      const m = route('ios', fault)
+      try {
+        const error = String(await captureFailure(m.scenario.E5()))
+        expect(error).matches(
+          /Unique authenticated current reply|Exact own outgoing quote author/
+        )
+        expect(m.calls).not.includes('observed-exact-row-quote-jump')
+        expect(m.calls).not.includes('unchanged-exact-outgoing-action')
+      } finally {
+        m.cleanup()
+      }
+    })
+})
+
+describe('native pinned jump settlement', function () {
+  const target: Chat2Message = {
+    id: 'msg-pin-original',
+    seq: 231,
+    body: 'Synthetic practice update.',
+    authorId: userIdOfGumbo(9)
+  }
+  function model(
+    mode = 'delayed',
+    surface: 'android' | 'ios' = 'android'
+  ): {
+    scenario: Scenarios
+    events: string[]
+    reads: () => number
+  } {
+    const events: string[] = []
+    let reads = 0
+    let selected = false
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface,
+      deadline: AbortSignal.timeout(
+        ['pending', 'missing-target', 'changing-band', 'changing-ids'].includes(
+          mode
+        )
+          ? 40
+          : 10000
+      ),
+      nodes: async (_parent?: string, signal?: AbortSignal) => {
+        signal?.throwIfAborted()
+        reads++
+        if (mode === 'transport') throw Error('Public hierarchy disconnected')
+        const pending = mode === 'pending' || reads < 3
+        const bottom =
+          mode === 'changing-band'
+            ? reads % 2 === 0
+              ? 1803
+              : 1929
+            : reads < 4
+              ? 1803
+              : 1929
+        return [
+          {
+            id: 'chat-message-history',
+            bounds: { x: 0, y: 0, width: 1080, height: 2400 }
+          },
+          {
+            id: 'chat-conversation-identity',
+            bounds: { x: 42, y: 150, width: 996, height: 126 }
+          },
+          {
+            id: 'chat-pinned-band',
+            bounds: { x: 42, y: 276, width: 996, height: 156 }
+          },
+          {
+            id: 'chat-composer-band',
+            bounds: { x: 42, y: bottom, width: 996, height: 142 }
+          },
+          { id: 'chat-bubble-msg-recent' },
+          ...(pending ? [{ id: 'chat-history-jump-cancel' }] : []),
+          ...(mode === 'retry' ? [{ id: 'chat-history-jump-retry' }] : []),
+          ...(reads < 2 || mode === 'missing-target'
+            ? []
+            : [
+                {
+                  id: 'chat-bubble-' + target.id,
+                  bounds: {
+                    x: 126,
+                    y: reads < 3 ? 0 : reads < 4 ? 600 : 626,
+                    width: 755,
+                    height: reads < 3 ? -44715 : 180
+                  }
+                }
+              ]),
+          ...(reads >= 4
+            ? [
+                {
+                  id:
+                    'chat-bubble-msg-loaded-' +
+                    (mode === 'changing-ids' ? reads : 4)
+                }
+              ]
+            : [])
+        ]
+      },
+      visible: async (selector: { id?: string; text?: string }) =>
+        selector.id === 'chat-pinned-summary'
+          ? mode !== 'no-summary'
+          : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
+      present: async (id: string) => {
+        expect(id).equals('chat-bubble-' + target.id)
+        events.push('present')
+      },
+      device: {
+        tapOn: async (selector: { id?: string; text?: string }) => {
+          if (selector.id === 'chat-pin-' + target.id) selected = true
+          events.push(selector.id ?? selector.text!)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target } },
+      nativeHistoryTarget: async () => {
+        if (selected)
+          expect(
+            reads,
+            'Selected pin must settle before manual paging'
+          ).at.least(5)
+        events.push('history')
+      },
+      nativeAnchorReady: async () => {
+        events.push('frame')
+        return []
+      }
+    }) as Scenarios
+    return { scenario, events, reads: () => reads }
+  }
+
+  for (const surface of ['android', 'ios'] as const)
+    it(
+      'waits for the actual selected pin target and stable native window on ' +
+        surface,
+      async () => {
+        const m = model('delayed', surface)
+        await m.scenario.anchor(target)
+        expect(m.reads()).at.least(5)
+        expect(m.events).deep.equals([
+          'chat-pinned-summary',
+          'chat-pin-' + target.id,
+          'history',
+          'frame',
+          'present'
+        ])
+      }
+    )
+
+  for (const mode of [
+    'retry',
+    'transport',
+    'pending',
+    'missing-target',
+    'changing-band',
+    'changing-ids'
+  ])
+    it(
+      'refuses unsettled native pin navigation before paging: ' + mode,
+      async () => {
+        const m = model(mode)
+        const error = String(await captureFailure(m.scenario.anchor(target)))
+        expect(error).matches(
+          mode === 'retry'
+            ? /pin.*jump.*fail/i
+            : mode === 'transport'
+              ? /Public hierarchy disconnected/
+              : /abort|timeout/i
+        )
+        expect(m.events).not.includes('history')
+        expect(m.events).not.includes('frame')
+      }
+    )
+
+  for (const mode of ['no-summary', 'missing-pin'])
+    it(
+      'retains ordinary native history fallback without a selected pin: ' +
+        mode,
+      async () => {
+        const m = model(mode)
+        await m.scenario.anchor(target)
+        expect(m.reads()).equals(0)
+        expect(m.events.slice(-3)).deep.equals(['history', 'frame', 'present'])
+        if (mode === 'missing-pin') expect(m.events).includes('^Cancel$')
+      }
+    )
 })
