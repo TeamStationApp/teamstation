@@ -15,9 +15,10 @@ import { join } from 'path'
  * The invariant is that a breakpoint may change styles, and may change where a
  * stateless thing is drawn, but may not change the position of the tree above
  * something stateful. The navigation moves between the header and a floating
- * capsule, which is allowed because it holds nothing; the pane holding the body
- * is rendered once, unconditionally, and keyed, so React matches it to itself
- * across the change instead of matching it against whatever used to be first.
+ * capsule, which is allowed because it holds nothing; the stack navigator
+ * holding every screen is rendered once, unconditionally, and keys each scene
+ * and each piece of chrome, so React matches each to itself across the change
+ * instead of matching it against whatever used to be first.
  *
  * Rendering the app at two widths and comparing node identity would state that
  * directly, but needs a React renderer this project does not carry — and the
@@ -25,31 +26,51 @@ import { join } from 'path'
  */
 describe('app layout', function () {
   const source = readFileSync(join(__dirname, 'App.tsx'), 'utf8')
+  const navigator = readFileSync(
+    join(__dirname, 'navigation/StackNavigator.tsx'),
+    'utf8'
+  )
 
-  it('renders the body exactly once, whatever the width', function () {
-    const uses = source.match(/\{body\}/g) ?? []
-    expect(uses.length, 'the body is written once, in one tree').equals(1)
+  it('renders every screen through one navigator, whatever the width', function () {
+    const uses = source.match(/<StackNavigator\b/g) ?? []
+    expect(uses.length, 'the screens are drawn in one tree').equals(1)
+    // Each frame is drawn by the one function, from the one scene builder.
+    expect(source.match(/renderFrame\(/g) ?? []).has.length(1)
   })
 
-  it('keys both children of the root, so neither can take the other s place', function () {
-    expect(source).contains('key="pane"')
+  it('keys every scene and every piece of chrome, so none can take another s place', function () {
+    expect(source).contains('key="header"')
     expect(source).contains('key="nav"')
+    expect(navigator).contains('key={scene.key}')
+    expect(navigator).contains('key="chrome"')
   })
 
-  it('renders the pane unconditionally', function () {
+  it('renders the navigator unconditionally', function () {
     // Inside a branch it could be unmounted by a width change, which is
     // exactly the bug this file exists for.
-    // It may carry props of its own (what the narrow Tess layer hides it
-    // with), never a condition.
+    // The pane around it may carry props of its own (what the narrow Tess
+    // layer hides it with), never a condition.
     expect(source).match(/<View key="pane" style={styles\.pane}[\s>]/)
     expect(source).not.match(/&&\s*\(?\s*<View key="pane"/)
+    expect(source).match(/<ScreenScopeProvider[^>]*>\s*<StackNavigator\b/)
+  })
+
+  it('closes Tess s layer with Back, and never drags the screen beneath it', function () {
+    // One condition for both: while the layer is up, Android Back is
+    // `useTessBack`'s, so the navigator must not take the back gesture.
+    expect(source).contains('useTessBack(tessLayer, closeTess)')
+    expect(source).contains('predictiveBack={predictiveBack && !tessLayer}')
+    expect(source.match(/const tessLayer = /g) ?? []).has.length(1)
   })
 
   it('draws the header over the content rather than above it', function () {
     // Glass needs something behind it to blur, so the content runs the full
     // height of the window and clears the header with padding instead.
     expect(source).contains('styles.headerLayer')
-    expect(source).contains('<HeaderSlotProvider')
+    // Each scene's own header slot, written only while it is the top.
+    expect(
+      readFileSync(join(__dirname, 'navigation/sceneSlot.tsx'), 'utf8')
+    ).contains('<HeaderSlotProvider')
     const screen = readFileSync(
       join(__dirname, 'components/Screen.tsx'),
       'utf8'
@@ -103,11 +124,13 @@ describe('DJ Game in the shell', function () {
   })
 
   it('is not immersive: the header and the tabs stay', function () {
-    const immersive = source.slice(
-      source.indexOf('const immersiveField ='),
-      source.indexOf('return (', source.indexOf('const immersiveField ='))
-    )
-    expect(immersive).match(/top\?\.name === 'scoreGame'/)
+    const at = source.indexOf('function isImmersive(')
+    expect(at).greaterThan(0)
+    const immersive = source.slice(at, source.indexOf('\n}\n', at))
+    expect(immersive).match(/name === 'scoreGame'/)
     expect(immersive).not.includes('djGame')
+    // The one list answers for both the shell and the scenes.
+    expect(source).includes('const immersiveTop = isImmersive(top)')
+    expect(source).includes('immersive: isImmersive(frame)')
   })
 })

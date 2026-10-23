@@ -4,6 +4,7 @@ import { BackHandler, Linking, Platform } from 'react-native'
 import { appOrigin } from '../native/config'
 import { routeOfUrl } from './deepLink'
 import { type ClearedFrame, makeHistory } from './history'
+import { noteHistoryMove } from './historyMotion'
 import { type Route, routePath } from './routes'
 
 /**
@@ -64,6 +65,11 @@ export function seedRoute(url: string | null | undefined): void {
 /** Where the app currently is. */
 export function currentRoute(): Route {
   return history.current()
+}
+
+/** Where Android's Back would land, without going. */
+export function previousRoute(): Route | undefined {
+  return history.previous()
 }
 
 /**
@@ -159,6 +165,7 @@ export function useBrowserBack(
       const previous = history.current()
       const depth = history.depth()
       for (const step of linkSteps(route, previous)) history.show(step)
+      noteHistoryMove({ direction: 'none', drawn: false })
       deliver(route, () => {
         if (history.depth() <= depth) history.show(previous, true)
         while (history.depth() > depth) history.back()
@@ -178,6 +185,7 @@ export function useBrowserBack(
       // as a hang.
       const previous = history.current()
       if (!history.back()) return false
+      noteHistoryMove({ direction: 'back', drawn: false })
       deliver(history.current(), () => {
         history.show(previous)
       })
