@@ -6,6 +6,7 @@ import type {
   LiveStream,
   TeamStationClient
 } from '../../common/api'
+import { observeUpload } from '../../common/observability/upload'
 import { Button } from '../components/Button'
 import { SectionHeader } from '../components/SectionHeader'
 import { streamActionsFor } from '../components/streamActions'
@@ -310,30 +311,33 @@ export function CameraAnglesPanel(
         message: null
       }
     }))
-    phone
-      .uploadRecording({
-        liveStreamId: id,
-        apiBase: client.baseUrl,
-        token: client.token ?? '',
-        title: recording.angleName
-      })
-      .then(
-        () => {
-          refresh()
-          reload().catch(() => undefined)
-        },
-        (error: unknown) => {
-          setProgress(current => ({
-            ...current,
-            [id]: {
-              ...current[id],
-              state: 'failed',
-              message: error instanceof Error ? error.message : null
-            }
-          }))
-          refresh()
-        }
-      )
+    observeUpload(
+      async () =>
+        await phone.uploadRecording({
+          liveStreamId: id,
+          apiBase: client.baseUrl,
+          token: client.token ?? '',
+          title: recording.angleName
+        }),
+      client.captureAnalytics,
+      recording.hasPendingUpload
+    ).then(
+      () => {
+        refresh()
+        reload().catch(() => undefined)
+      },
+      (error: unknown) => {
+        setProgress(current => ({
+          ...current,
+          [id]: {
+            ...current[id],
+            state: 'failed',
+            message: error instanceof Error ? error.message : null
+          }
+        }))
+        refresh()
+      }
+    )
   }
 
   const cancel = (recording: PhoneRecording): void => {

@@ -59,6 +59,28 @@ describe('withCors', function () {
     expect(response.headers.get(REVISION_HEADER)).equals('42')
   })
 
+  it('admits the app classifier with authenticated browser API requests', async () => {
+    const response = await fetch(`${base}/teams`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: ORIGIN,
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization,x-teamstation-app'
+      }
+    })
+    expect(response.status).equals(204)
+    const allowed = response.headers
+      .get('access-control-allow-headers')
+      ?.split(',')
+    expect(allowed).includes('authorization')
+    expect(allowed).includes('x-teamstation-app')
+    const result = await fetch(`${base}/teams`, {
+      headers: { origin: ORIGIN, 'x-teamstation-app': 'TS web' }
+    })
+    expect(result.status).equals(200)
+    expect(result.headers.get('access-control-allow-origin')).equals(ORIGIN)
+  })
+
   it('refuses a preflight from an origin it does not list', async function () {
     const response = await fetch(`${base}/teams`, {
       method: 'OPTIONS',

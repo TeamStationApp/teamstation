@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process'
 import { globSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import gateModule from './observability-line-gate.cjs'
-import counters from './changed-line-coverage.cjs'
+
 import { build } from 'esbuild'
+
+import counters from './changed-line-coverage.cjs'
+import gateModule from './observability-line-gate.cjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const { snapshot, gate } = gateModule
@@ -12,6 +14,11 @@ const directory = 'coverage/observability'
 mkdirSync(directory, { recursive: true })
 await build({
   ...webSettings,
+  alias: {
+    ...webSettings.alias,
+    '@react-native/assets-registry/registry':
+      'react-native-web/dist/modules/AssetRegistry'
+  },
   plugins: [
     ...webSettings.plugins,
     {
@@ -32,6 +39,15 @@ await build({
     contents: [
       'src/app/sentry.test.tsx',
       'src/app/sentrySdk.native.test.tsx',
+      'src/app/screens/OnboardingScreen.test.tsx',
+      'src/app/App.offlineSession.test.tsx',
+      'src/app/player/MultiCamView.test.tsx',
+      'src/app/player/MultiCamView.native.test.tsx',
+      'src/app/stream/StreamingScreen.test.tsx',
+      'src/app/stream/CameraAnglesPanel.test.tsx',
+      'src/app/stream/useResumePendingUploads.test.tsx',
+      'src/app/screens/SignInLinkScreen.test.tsx',
+      'src/app/screens/SignInLinkServer.test.tsx',
       ...globSync('src/app/observability/*.test.tsx')
     ]
       .map(file => `import './${file}'`)
@@ -60,15 +76,21 @@ const tests = [
   ...globSync('src/logServer/*.test.ts'),
   'src/server/account/deleteAccount.test.ts',
   'src/server/jsonBody.test.ts',
+  'src/server/middleware/withCors.test.ts',
   'src/server/serverConfig.test.ts',
   'src/server/openapi.test.ts',
   'src/server/sentry/sentry.test.ts',
   'src/server/statsBuilder/main.test.ts',
+  'src/app/player/nativeVideoHandle.test.ts',
+  'src/common/api.test.ts',
+  'src/server/routes/signup.test.ts',
+  'src/server/routes/directorUploads.test.ts',
   'lib/observability-tests.cjs',
   'scripts/observability-line-gate.test.cjs'
 ]
 const include = [
   'src/common/observability/*.ts',
+  'src/common/api.ts',
   'src/server/observability/*.ts',
   'src/logServer/*.ts',
   'scripts/observability-line-gate.cjs',
@@ -76,12 +98,26 @@ const include = [
   'src/migrate/migrations/index.ts',
   'src/server/account/deleteAccount.ts',
   'src/server/jsonBody.ts',
+  'src/server/middleware/withCors.ts',
   'src/server/serverConfig.ts',
   'src/server/openapi.ts',
   'src/server/index.ts',
   'src/app/sentry.ts',
   'src/app/sentrySdk.native.ts',
   'src/app/observability/*.ts',
+  'src/app/observability/*.tsx',
+  'src/app/App.tsx',
+  'src/app/screens/LoginScreen.tsx',
+  'src/app/screens/OnboardingScreen.tsx',
+  'src/app/screens/SignInLinkScreen.tsx',
+  'src/app/stream/StreamingScreen.native.tsx',
+  'src/app/stream/CameraAnglesPanel.native.tsx',
+  'src/app/stream/useResumePendingUploads.ts',
+  'src/server/routes/auth.ts',
+  'src/server/routes/directorUploads.ts',
+  'src/app/player/MultiCamView.tsx',
+  'src/app/player/MultiCamView.native.tsx',
+  'src/app/player/nativeVideoHandle.ts',
   'src/server/sentry/options.ts',
   'src/server/statsBuilder/main.ts',
   'src/server/statsBuilder/start.ts'

@@ -156,6 +156,8 @@ export class NativeVideoHandle implements VideoHandle {
    * player's `onBuffer` until it says it has enough again.
    */
   private buffering = false
+  actuallyPlaying = false
+  private reportedPlaying = false
 
   /**
    * When the player last said it had stopped playing, by itself, until
@@ -206,6 +208,8 @@ export class NativeVideoHandle implements VideoHandle {
     if (next < this.length - 0.5) this.over = false
     this.pendingSeekTo = next
     this.pendingSeekAt = Date.now()
+    this.actuallyPlaying = false
+    this.emit('seeking')
     this.player?.seek(next, SEEK_TOLERANCE)
   }
 
@@ -247,6 +251,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.rebase()
     this.props = { ...this.props, rate: value }
     this.onPropsChange()
+    this.emit('ratechange')
   }
 
   get readyState(): number {
@@ -281,6 +286,8 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   pause(): void {
+    this.actuallyPlaying = false
+    this.reportedPlaying = false
     this.playerStoppedAt = null
     if (this.props.paused) return
     this.rebase()
@@ -372,6 +379,17 @@ export class NativeVideoHandle implements VideoHandle {
       this.pendingSeekTo = null
       this.time = data.currentTime
       this.timeAt = this.clock()
+      // Android can report playing while isSeeking remains true, then acknowledge
+      // the seek through progress without another playback-state callback.
+      if (
+        this.reportedPlaying &&
+        !this.props.paused &&
+        !this.buffering &&
+        !this.actuallyPlaying
+      ) {
+        this.actuallyPlaying = true
+        this.emit('playing')
+      }
     }
     this.emit('progress')
     this.emit('timeupdate')
@@ -383,6 +401,7 @@ export class NativeVideoHandle implements VideoHandle {
       // from there now that it has.
       this.pendingSeekTo = null
       this.timeAt = this.clock()
+      this.emit('seeked')
     }
     if (shouldResumeAfterSeek({ wantsPaused: this.props.paused })) {
       this.player?.resume()
@@ -390,6 +409,11 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handlePlaybackState = (data: OnPlaybackStateChangedData): void => {
+    this.reportedPlaying = data.isPlaying
+    this.actuallyPlaying = data.isPlaying && !data.isSeeking
+    this.emit(
+      data.isSeeking ? 'seeking' : data.isPlaying ? 'playing' : 'waiting'
+    )
     // A seek is never information about intent. ExoPlayer reports
     // `isPlaying: false, isSeeking: true` while it works, and reading that as
     // "not playing" would flip a **paused** player to playing the moment
@@ -451,6 +475,10 @@ export class NativeVideoHandle implements VideoHandle {
   handleBuffer = (data: OnBufferData): void => {
     this.rebase()
     this.buffering = data.isBuffering
+    if (data.isBuffering) {
+      this.actuallyPlaying = false
+      this.emit('waiting')
+    }
     const stoppedAt = this.playerStoppedAt
     this.playerStoppedAt = null
     if (data.isBuffering) {
@@ -501,6 +529,9 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleEnd = (): void => {
+    this.actuallyPlaying = false
+    this.reportedPlaying = false
+    this.emit('ended')
     this.rebase()
     this.over = true
     // Ended is paused, as a browser's element is. Said here because a player
@@ -515,6 +546,9 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleError = (error: OnVideoErrorData): void => {
+    this.actuallyPlaying = false
+    this.reportedPlaying = false
+    this.emit('error')
     // Held where it failed: nothing moves in a player that has given up.
     this.rebase()
     this.failed = true
@@ -568,6 +602,9 @@ export class NativeVideoHandle implements VideoHandle {
 
   /** A new source: everything known about the last one is now wrong. */
   reset(): void {
+    this.reportedPlaying = false
+    this.actuallyPlaying = false
+    this.emit('emptied')
     this.time = 0
     this.timeAt = this.clock()
     this.length = Number.POSITIVE_INFINITY

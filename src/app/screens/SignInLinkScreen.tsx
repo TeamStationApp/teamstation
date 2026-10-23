@@ -3,7 +3,9 @@ import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { Session, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { AnalyticsClient } from '../../common/observability/analyticsClient'
 import { Button, Card, Screen } from '../components'
+import { analyticsError, useAnalytics } from '../observability/AnalyticsContext'
 import { linkDeviceName } from '../platform/signInRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -74,10 +76,13 @@ async function spend(
   client: TeamStationClient,
   token: string,
   server: string | undefined,
-  deviceName: string | undefined
+  deviceName: string | undefined,
+  analytics: AnalyticsClient | undefined
 ): Promise<Failure | undefined> {
   const known = attempts.get(token)
   if (known != null) return await known
+  const emit = analytics?.capture()
+  emit?.('login_started', { mt: 'link' })
   const attempt = linkIsOurs(client, server)
     .then(async ours => {
       if (ours === undefined) {
@@ -107,6 +112,7 @@ async function spend(
         }
       },
       (error: unknown): Failure => {
+        emit?.('login_failed', { mt: 'link', ec: analyticsError(error) })
         if (error instanceof HttpError && error.code === 'unauthorized') {
           return { kind: 'refused' }
         }
@@ -161,6 +167,7 @@ export function SignInLinkScreen(
     onSignedIn,
     onSignInAgain
   } = props
+  const analytics = useAnalytics()
   const theme = useTheme()
   const styles = getStyles(theme)
   const [failure, setFailure] = useState<Failure | undefined>(undefined)
@@ -173,16 +180,18 @@ export function SignInLinkScreen(
 
   const signIn = useCallback((): void => {
     setFailure(undefined)
-    spend(client, token, server, deviceName)
+    spend(client, token, server, deviceName, analytics)
       .then(next => {
         if (mounted.current) setFailure(next)
       })
       .catch(() => undefined)
-  }, [client, token, server, deviceName])
+  }, [client, token, server, deviceName, analytics])
 
   useEffect(() => {
     mounted.current = true
     const deliver = (session: Session): void => {
+      analytics?.identify(session.user.id, client.token)
+      analytics?.emit('login_succeeded', { mt: 'link' }).catch(() => {})
       signedIn.current(session)
     }
     deliverTo.set(token, deliver)
@@ -191,7 +200,7 @@ export function SignInLinkScreen(
       mounted.current = false
       if (deliverTo.get(token) === deliver) deliverTo.delete(token)
     }
-  }, [signIn, token])
+  }, [signIn, token, analytics, client])
 
   return (
     <Screen>

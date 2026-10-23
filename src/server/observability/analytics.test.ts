@@ -30,6 +30,7 @@ import {
   pruneAnalytics,
   storeAnalytics
 } from './analytics'
+import { recordOutcome } from './outcomes'
 import { AnalyticsReader } from './query'
 import { analyticsRoutes } from './routes'
 import { startAnalytics } from './service'
@@ -156,6 +157,30 @@ describe('analytics PostgreSQL and HTTP isolation', function () {
       body: content === 'application/json' ? JSON.stringify(body) : String(body)
     })
   }
+  it('stores only main-app committed outcomes and contains analytics failures', async () => {
+    await recordOutcome(h.db, 'TS dir', actor, 'processing_ready', {
+      vi: 'vid_analytics'
+    })
+    await recordOutcome(h.db, 'TS', actor, 'processing_ready', {
+      vi: 'vid_analytics'
+    })
+    await recordOutcome(h.db, 'TS web', actor, 'processing_failed', {
+      ec: 'internal'
+    })
+    await recordOutcome(
+      h.db,
+      'TS',
+      { ...actor, userId: userIdOfGumbo(999) },
+      'processing_failed'
+    )
+    const rows = await owner.query(
+      "SELECT app,event_name,user_id FROM analytics.events WHERE event_name LIKE 'processing_%' ORDER BY event_name"
+    )
+    expect(rows.rows).deep.equals([
+      { app: 'TS web', event_name: 'processing_failed', user_id: actor.userId },
+      { app: 'TS', event_name: 'processing_ready', user_id: actor.userId }
+    ])
+  })
   it('durably accepts and deduplicates authorized events without trusting identity', async () => {
     const row = event('page_viewed', { pg: 'home' })
     expect((await post('/analytics/events', [row])).status).equals(202)

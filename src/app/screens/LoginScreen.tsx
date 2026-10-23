@@ -3,6 +3,7 @@ import { Platform, Text, View } from 'react-native'
 
 import type { Session, SignInWait, TeamStationClient } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
+import { analyticsError, useAnalytics } from '../observability/AnalyticsContext'
 import { signInRequest } from '../platform/signInRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -36,6 +37,7 @@ type Method = 'code' | 'password'
  */
 export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   const { client, onSignedIn } = props
+  const analytics = useAnalytics()
   const theme = useTheme()
   const styles = getStyles(theme)
 
@@ -54,12 +56,40 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   const waiting = useRef<SignInWait | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  const analyticsMethod = method === 'password' ? 'password' : 'email_code'
+  const analyticsStep =
+    method === 'password' ? 'password' : codeSent ? 'code' : 'email'
+  useEffect(() => {
+    analytics
+      ?.emit('signup_step_viewed', { mt: analyticsMethod, sp: analyticsStep })
+      .catch(() => {})
+  }, [analytics, analyticsMethod, analyticsStep])
+
+  const signedIn = (session: Session): void => {
+    analytics?.identify(session.user.id, client.token)
+    analytics?.emit('login_succeeded', { mt: analyticsMethod }).catch(() => {})
+    onSignedIn(session)
+  }
 
   const run = (work: () => Promise<void>): void => {
+    analytics?.emit('login_started', { mt: analyticsMethod }).catch(() => {})
     setError(undefined)
     setBusy(true)
     work()
       .catch((caught: unknown) => {
+        analytics
+          ?.emit('login_failed', {
+            mt: analyticsMethod,
+            ec: analyticsError(caught)
+          })
+          .catch(() => {})
+        analytics
+          ?.emit('signup_step_failed', {
+            mt: analyticsMethod,
+            sp: analyticsStep,
+            ec: analyticsError(caught)
+          })
+          .catch(() => {})
         setError(
           caught instanceof Error ? caught.message : 'Something went wrong'
         )
@@ -70,12 +100,16 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   }
 
   const sendCode = (): void => {
+    analytics?.emit('signup_started', { mt: 'email_code' }).catch(() => {})
     run(async () => {
       const wait = await client.requestEmailCode(email.trim(), {
         ...signInRequest,
         next: props.next
       })
       waiting.current = wait
+      analytics
+        ?.emit('signup_step_completed', { mt: 'email_code', sp: 'email' })
+        .catch(() => {})
       setCodeSent(true)
     })
   }
@@ -92,7 +126,11 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
       client
         .claimSignIn(wait)
         .then(session => {
-          if (live && session != null) onSignedIn(session)
+          if (live && session != null) {
+            analytics?.identify(session.user.id, client.token)
+            analytics?.emit('login_succeeded', { mt: 'link' }).catch(() => {})
+            onSignedIn(session)
+          }
         })
         .catch(() => undefined)
     }, 3000)
@@ -100,17 +138,21 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
       live = false
       clearInterval(timer)
     }
-  }, [client, codeSent, onSignedIn])
+  }, [client, codeSent, onSignedIn, analytics])
 
   const signInWithCode = (): void => {
     run(async () => {
-      onSignedIn(await client.signInWithCode(email.trim(), code.trim()))
+      const session = await client.signInWithCode(email.trim(), code.trim())
+      signedIn(session)
+      analytics
+        ?.emit('signup_step_completed', { mt: 'email_code', sp: 'code' })
+        .catch(() => {})
     })
   }
 
   const signInWithPassword = (): void => {
     run(async () => {
-      onSignedIn(await client.signInWithPassword(email.trim(), password))
+      signedIn(await client.signInWithPassword(email.trim(), password))
     })
   }
 

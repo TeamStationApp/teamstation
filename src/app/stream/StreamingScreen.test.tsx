@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { LiveStream, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { EventName, Property } from '../../common/observability/contract'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   type FakePhoneStreamModule,
@@ -56,6 +57,7 @@ const delay = async (ms: number): Promise<void> => {
 }
 
 interface Harness {
+  events: Array<{ event: EventName; properties: Record<string, Property> }>
   native: FakePhoneStreamModule
   patches: Array<{ streamId: string; change: unknown }>
   rotations: string[]
@@ -75,6 +77,7 @@ async function mount(
     ...answers
   })
   const harness: Harness = {
+    events: [],
     native,
     patches: [],
     rotations: [],
@@ -83,6 +86,10 @@ async function mount(
     failPatch: false
   }
   const client = {
+    captureAnalytics:
+      () => (event: EventName, properties: Record<string, Property>) => {
+        harness.events.push({ event, properties })
+      },
     baseUrl: 'https://teamstation.example.test/api/v1',
     token: 'token-0000',
     updateLiveStream: async (
@@ -528,6 +535,12 @@ describe('the streaming screen', function () {
     h.failPatch = true
     await emit(h.native, { phase: 'live', isRecording: true })
     await emit(h.native, { phase: 'live', isRecording: false })
+    expect(h.events.map(row => row.event)).includes('recording_started')
+    expect(h.events.map(row => row.event)).includes('recording_stopped')
+    expect(
+      h.events.find(row => row.event === 'recording_stopped')!.properties.dur
+    ).at.least(0)
+    expect(JSON.stringify(h.events)).not.includes('rtmp:')
     expect(h.patches).has.length(1)
     h.failPatch = false
     await emit(h.native, { phase: 'live', isRecording: true })

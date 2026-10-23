@@ -7,6 +7,7 @@ import type { Onboarding } from '../../common/onboarding'
 import type { AvailablePicture } from '../../common/pictureCatalog'
 import { Button, Card, Screen } from '../components'
 import { PhotoGrid } from '../components/PhotoGrid'
+import { analyticsError, useAnalytics } from '../observability/AnalyticsContext'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -23,6 +24,7 @@ export function OnboardingScreen({
   initialState,
   onComplete
 }: OnboardingScreenProps): React.ReactElement {
+  const analytics = useAnalytics()
   const styles = getStyles(useTheme())
   const [step, setStep] = useState(initialState.step)
   const [name, setName] = useState(
@@ -34,6 +36,9 @@ export function OnboardingScreen({
   const [error, setError] = useState('')
   const [catalogError, setCatalogError] = useState('')
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    analytics?.emit('signup_step_viewed', { sp: step }).catch(() => {})
+  }, [analytics, step])
   const loadPictures = useCallback(async (): Promise<void> => {
     try {
       setPictures(await client.pictures())
@@ -52,9 +57,13 @@ export function OnboardingScreen({
     setError('')
     try {
       const saved = await client.saveOnboardingName(name)
+      analytics?.emit('signup_step_completed', { sp: 'name' }).catch(() => {})
       setName(saved.displayName)
       setStep(saved.onboarding.step)
     } catch (error) {
+      analytics
+        ?.emit('signup_step_failed', { sp: 'name', ec: analyticsError(error) })
+        .catch(() => {})
       setError(
         error instanceof Error
           ? error.message
@@ -89,8 +98,13 @@ export function OnboardingScreen({
             ? { image }
             : { catalogId }
       )
+      analytics?.emit('signup_step_completed', { sp: 'photo' }).catch(() => {})
+      analytics?.emit('onboarding_completed').catch(() => {})
       await onComplete()
     } catch (error) {
+      analytics
+        ?.emit('signup_step_failed', { sp: 'photo', ec: analyticsError(error) })
+        .catch(() => {})
       setError(
         error instanceof Error
           ? error.message

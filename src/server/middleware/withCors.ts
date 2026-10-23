@@ -27,7 +27,7 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
       // reads the revision its documents were taken at from the response.
       res.setHeader(
         'access-control-allow-headers',
-        'authorization,content-type,idempotency-key'
+        'authorization,content-type,idempotency-key,x-teamstation-app'
       )
       res.setHeader('access-control-expose-headers', REVISION_HEADER)
       res.setHeader(
