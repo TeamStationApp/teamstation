@@ -214,4 +214,91 @@ describe('server operational logging', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  it('forwards tess_request and names the Tess route, never the conversation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'tess-logs-'))
+    const sent: string[] = []
+    const primary = createServerLog({
+      directory,
+      dsn: 'https://public@logs.example.test/1',
+      role: 'server',
+      writeToken: 'fixture-write-token'.repeat(3),
+      request: async (_url: unknown, init?: RequestInit) => {
+        sent.push(init?.body as string)
+        return new Response('', { status: 202 })
+      }
+    })
+    const worker = createServerLog({
+      directory,
+      dsn: 'https://public@logs.example.test/1',
+      role: 'server',
+      writeToken: 'fixture-write-token'.repeat(3),
+      send: primary.accept
+    })
+    const stop = startServerLogging({
+      directory,
+      role: 'server',
+      dsn: 'https://public@logs.example.test/1',
+      request: async (_url, init) => {
+        sent.push(init?.body as string)
+        return new Response('', { status: 202 })
+      }
+    })
+    const app = express()
+    app.use(requestLogs)
+    app.post('/me/tess/messages', (req, res) => {
+      res.sendStatus(200)
+    })
+    const server = app.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => server.once('listening', resolve))
+    try {
+      worker.emit(
+        'tess_request',
+        { op: 'assistant', status: 200, ms: 1800, it: 9520, ot: 75 },
+        'info',
+        'usr_demo'
+      )
+      // An unknown property drops the whole event: its text never leaves.
+      worker.emit('tess_request', {
+        op: 'assistant',
+        text: 'Where is our schedule? private-canary'
+      })
+      await fetch(
+        'http://127.0.0.1:' +
+          (server.address() as AddressInfo).port +
+          '/me/tess/messages',
+        { method: 'POST', body: 'private-canary' }
+      )
+      await worker.close()
+      await primary.close()
+      await stop()
+      const rows = sent
+        .join('')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+      const tess = rows.filter(row => row.E === 'tess_request')
+      expect(tess).length(1)
+      expect(tess[0].P).deep.equals({
+        op: 'assistant',
+        status: 200,
+        ms: 1800,
+        it: 9520,
+        ot: 75
+      })
+      expect(tess[0].U).equals('usr_demo')
+      expect(
+        rows.filter(row => row.E === 'request_completed').map(row => row.P.rp)
+      ).deep.equals(['/me/tess/messages'])
+      expect(sent.join('')).not.contains('private-canary')
+    } finally {
+      await stop()
+      await new Promise<void>(resolve =>
+        server.close(() => {
+          resolve()
+        })
+      )
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 })

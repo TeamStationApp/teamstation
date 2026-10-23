@@ -1549,10 +1549,16 @@ export const asHealth = asObject({
   dictation: asOptional(asBoolean, false),
   dictationModels: asOptional(asArray(asString), []),
   /** Whether the replay's announcer can speak; absent from an older server. */
-  narration: asOptional(asBoolean)
+  narration: asOptional(asBoolean),
+  /**
+   * Whether Tess, the assistant, is available. Absent from an older server,
+   * which has no Tess: only `true` shows her.
+   */
+  tess: asOptional(asBoolean)
 })
-export type Health = Omit<ReturnType<typeof asHealth>, 'narration'> & {
+export type Health = Omit<ReturnType<typeof asHealth>, 'narration' | 'tess'> & {
   narration?: boolean
+  tess?: boolean
 }
 
 /** The response header a screen's read carries its revision in. */

@@ -25,7 +25,8 @@ export const DELETED_NAME = 'Deleted user'
  * row is emptied rather than removed. Its name becomes "Deleted user", here
  * and on the requests it sent to other people's inboxes; its
  * addresses, password, picture, bats and throws, walk-up songs, family links,
- * roles, follows, tags and notifications go; and it is marked deleted, which
+ * roles, follows, tags, notifications and Tess conversation go; and it is
+ * marked deleted, which
  * keeps it disabled for good: no sign-in, no lifted suspension and no import
  * gives it a way in, a role or a family link again. Its import ids and RSVPs
  * stay, with its plays and stats, so a later import of a game it played in
@@ -190,6 +191,16 @@ export async function deleteAccount(
       .deleteFrom('notification_receipts')
       .where('user_id', 'in', userIds)
       .execute()
+    // Their conversation with Tess: what they said and attached, the changes
+    // she proposed, and the tokens it used.
+    for (const table of [
+      'tess_messages',
+      'tess_attachments',
+      'tess_changes',
+      'tess_conversations',
+      'tess_usage_weeks'
+    ] as const)
+      await trx.deleteFrom(table).where('user_id', 'in', userIds).execute()
     // Requests that are theirs or about them. Pending ones end here: a
     // guardian link or a membership accepted later would bring back what
     // this removes. One a team sent through them stays the team's.

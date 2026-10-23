@@ -156,6 +156,7 @@ const operation = choice(
   'export',
   'service',
   'request',
+  'assistant',
   'other'
 )
 export const REQUEST_ROUTES = [
@@ -169,6 +170,7 @@ export const REQUEST_ROUTES = [
   '/games/:gameId',
   '/videos/:videoId',
   '/director/uploads',
+  '/me/tess/messages',
   'other'
 ] as const
 const system = {
@@ -189,6 +191,16 @@ const system = {
   ms: number(86400000),
   n: number(1e9),
   on: boolean
+}
+
+/** One Messages API call of Tess's: its tokens in and out, never the text. */
+const tess = {
+  op: operation,
+  status: system.status,
+  ms: system.ms,
+  it: number(10000000),
+  ot: number(10000000),
+  ec: error
 }
 
 /** The property dictionary is positive: unknown fields never leave a client. */
@@ -259,6 +271,7 @@ export const EVENT_RULES = {
   export_started: system,
   export_completed: system,
   export_failed: system,
+  tess_request: tess,
   queue_dropped: { n: number(1e9) }
 } satisfies Record<string, Record<string, Rule>>
 export type EventName = keyof typeof EVENT_RULES
@@ -280,7 +293,8 @@ export const ANONYMOUS_EVENTS = new Set<EventName>([
 export const SERVER_EVENTS = new Set<EventName>([
   'account_created',
   'processing_ready',
-  'processing_failed'
+  'processing_failed',
+  'tess_request'
 ])
 export const MAX_EVENT_BYTES = 4096
 export const MAX_AGE_MS = 7 * 86400000

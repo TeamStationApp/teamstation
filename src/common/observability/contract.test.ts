@@ -11,6 +11,8 @@ import {
   MAX_EVENT_BYTES,
   parseBatch,
   parseEvent,
+  REQUEST_ROUTES,
+  SERVER_EVENTS,
   userId
 } from './contract'
 
@@ -178,5 +180,50 @@ describe('private compact event contract', () => {
     for (const U of ['private-canary', 123, null])
       expect(() => parseEvent({ ...sample(), A: 'TS srv', U }, NOW)).throws()
     expect(() => parseEvent({ ...sample(), U: 'usr_demo' }, NOW)).throws()
+  })
+  it('accepts tess_request with its tokens, refuses anything else, and keeps it a server event', () => {
+    const rows = [
+      sample('tess_request', {
+        op: 'assistant',
+        status: 200,
+        ms: 2400,
+        it: 9520,
+        ot: 75
+      }),
+      sample('tess_request', {
+        op: 'assistant',
+        status: 529,
+        ms: 300,
+        ec: 'internal'
+      }),
+      sample('tess_request', { op: 'assistant', ms: 120000, ec: 'timeout' }),
+      sample('tess_request', { it: 10000000, ot: 0 })
+    ]
+    for (const row of rows)
+      expect(parseEvent({ ...row, A: 'TS srv' }, NOW)).deep.equals({
+        ...row,
+        A: 'TS srv'
+      })
+    const canary = 'Where is our schedule? private-canary'
+    for (const P of [
+      { op: 'assistant', text: canary },
+      { op: 'assistant', model: 'claude-sonnet-5-5' },
+      { op: 'chat' },
+      { it: -1 },
+      { it: 10000001 },
+      { ot: 'many' },
+      { ot: NaN },
+      { status: 99 },
+      { ec: canary }
+    ])
+      expect(() => parseEvent(sample('tess_request', P), NOW)).throws()
+    expect(SERVER_EVENTS.has('tess_request')).equals(true)
+    expect(REQUEST_ROUTES).includes('/me/tess/messages')
+    expect(
+      parseEvent(
+        sample('request_completed', { op: 'request', rp: '/me/tess/messages' }),
+        NOW
+      ).P.rp
+    ).equals('/me/tess/messages')
   })
 })

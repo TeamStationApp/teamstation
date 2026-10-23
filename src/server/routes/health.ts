@@ -17,6 +17,8 @@ export interface HealthBody {
   dictationModels: string[]
   /** Whether the replay's announcer can speak. Never the key. */
   narration: boolean
+  /** Whether Tess, the assistant, has a key. Never the key. */
+  tess: boolean
 }
 
 /**
@@ -30,6 +32,7 @@ export function healthRoutes(
     dictation?: boolean
     dictationModels?: readonly string[]
     narration?: boolean
+    tess?: boolean
   } = {}
 ): Router {
   const router = Router()
@@ -58,7 +61,8 @@ export function healthRoutes(
         pid: process.pid,
         dictation: options.dictation ?? false,
         dictationModels: [...(options.dictationModels ?? [])],
-        narration: options.narration ?? false
+        narration: options.narration ?? false,
+        tess: options.tess ?? false
       }
       res.status(database === 'ok' ? 200 : 503).json(body)
     })

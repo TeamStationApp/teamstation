@@ -1477,6 +1477,11 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'boolean',
               description:
                 "Whether the replay's announcer can speak on this server"
+            },
+            tess: {
+              type: 'boolean',
+              description:
+                'Whether Tess, the assistant, is available on this server'
             }
           }
         },

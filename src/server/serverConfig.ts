@@ -313,6 +313,19 @@ export const asServerConfig = asObject({
     })
   ),
 
+  /**
+   * Tess, the assistant: Anthropic's Messages API. `apiKey` falls back to
+   * dictation's Anthropic key; with neither, Tess is off and `/health` says
+   * so. `baseUrl` exists so a test can point it somewhere else.
+   */
+  tess: asOptional(
+    asObject({
+      apiKey: asOptional(asString),
+      baseUrl: asOptional(asString, 'https://api.anthropic.com/v1'),
+      model: asOptional(asString, 'claude-sonnet-5-5')
+    })
+  ),
+
   /** Log every request. Noisy, but useful while the server is still new. */
   logRequests: asOptional(asBoolean, true),
 
@@ -394,6 +407,26 @@ export function eventControlIssuerOf(
   origin: string
 ): string {
   return config.eventControlIssuer ?? origin
+}
+
+/** What Tess calls the Messages API with. Never sent to a client. */
+export interface TessSettings {
+  apiKey: string
+  baseUrl: string
+  model: string
+}
+
+/** Tess's settings, or null when nothing has a key for her. */
+export function tessSettings(
+  config: Pick<ServerConfig, 'tess' | 'dictation'>
+): TessSettings | null {
+  const apiKey = config.tess?.apiKey ?? config.dictation?.anthropic?.apiKey
+  if (apiKey == null || apiKey === '') return null
+  return {
+    apiKey,
+    baseUrl: config.tess?.baseUrl ?? 'https://api.anthropic.com/v1',
+    model: config.tess?.model ?? 'claude-sonnet-5-5'
+  }
 }
 
 /** The same name again with no port, which is what a stream URL names. */

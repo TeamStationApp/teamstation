@@ -1053,6 +1053,69 @@ export interface VenueClaimsTable {
   decided_at: Timestamp | null
 }
 
+/**
+ * One person's conversation with Tess (081tess): the summary of the turns
+ * compaction removed, and the size of the last request, in tokens.
+ */
+export interface TessConversationsTable {
+  user_id: string
+  summary: string | null
+  context_tokens: Generated<number>
+  updated_at: Generated<Date>
+}
+
+/**
+ * A message of a Tess conversation: Anthropic content blocks as they were
+ * sent and received. An attachment is `{type: 'attachment', id}`, expanded
+ * when the request is built. `id` is a bigint, read as a number.
+ */
+export interface TessMessagesTable {
+  id: Generated<number>
+  user_id: string
+  role: 'user' | 'assistant'
+  content: Json
+  created_at: Generated<Date>
+}
+
+/** A file given to Tess. Compaction sets `description` and clears `data`. */
+export interface TessAttachmentsTable {
+  id: string
+  user_id: string
+  name: string
+  media_type: string
+  kind: 'image' | 'csv' | 'text' | 'markdown'
+  data: Buffer | null
+  description: string | null
+  created_at: Generated<Date>
+}
+
+/** A change Tess proposed, which runs only when its person confirms it. */
+export interface TessChangesTable {
+  id: string
+  user_id: string
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  body: Json | null
+  summary: string
+  status: Generated<'pending' | 'running' | 'done' | 'failed' | 'expired'>
+  result: Json | null
+  created_at: Generated<Date>
+  expires_at: Timestamp
+}
+
+/**
+ * Tess's tokens for one person in one UTC week, from Monday (081tess).
+ * `week_start` is a `date`: read it as text, never as a Date, which `pg`
+ * places at local midnight. The token counts are bigints, read as numbers.
+ */
+export interface TessUsageWeeksTable {
+  user_id: string
+  week_start: ColumnType<unknown, string, never>
+  input_tokens: Generated<number>
+  output_tokens: Generated<number>
+  requests: Generated<number>
+}
+
 export interface Database {
   umpire_note_types: UmpireLevelsTable
   game_umpire_notes: { game_id: string; note_type_id: string; value: string }
@@ -1129,6 +1192,11 @@ export interface Database {
   sync_idempotency: SyncIdempotencyTable
   system_settings: SystemSettingsTable
   teams: TeamsTable
+  tess_attachments: TessAttachmentsTable
+  tess_changes: TessChangesTable
+  tess_conversations: TessConversationsTable
+  tess_messages: TessMessagesTable
+  tess_usage_weeks: TessUsageWeeksTable
   user_links: UserLinksTable
   user_emails: UserEmailsTable
   users: UsersTable
