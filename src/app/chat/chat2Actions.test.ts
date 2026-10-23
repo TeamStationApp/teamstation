@@ -4850,10 +4850,13 @@ describe('chat native adapter compatibility', function () {
   it('runs the real E5 movement callback with documented endpoints and a sub-hold delay', async () => {
     const actual = ui([])
     const calls: unknown[] = []
+    let reacted = false
     actual.absent = async id => {
       calls.push(id)
     }
-    actual.text = async () => {}
+    actual.text = async () => {
+      reacted = !reacted
+    }
     actual.device.dragAndDrop = async args => {
       calls.push(args)
     }
@@ -4861,7 +4864,8 @@ describe('chat native adapter compatibility', function () {
       ui: actual,
       f: { messages: { target: { id: 'synthetic-target' } } },
       group: 'synthetic',
-      viewerId: userIdOfGumbo(1)
+      viewerId: userIdOfGumbo(1),
+      observations: []
     }) as Scenarios
     scenario.check = async (name, work) => {
       if (name.startsWith('E5 movement before hold')) await work()
@@ -4877,7 +4881,9 @@ describe('chat native adapter compatibility', function () {
               {
                 id: 'synthetic-target',
                 status: 'ok',
-                reactions: [{ emoji: '👍', userIds: [userIdOfGumbo(1)] }]
+                reactions: reacted
+                  ? [{ emoji: '👍', userIds: [userIdOfGumbo(1)] }]
+                  : []
               }
             ]
           })
@@ -4905,7 +4911,8 @@ describe('chat native adapter compatibility', function () {
         ui: actual,
         f: { messages: { target: { id: 'synthetic-target' } } },
         group: 'synthetic',
-        viewerId: userIdOfGumbo(1)
+        viewerId: userIdOfGumbo(1),
+        observations: []
       }) as Scenarios
       scenario.check = async (name, work) => {
         if (name.startsWith('E5 movement before hold')) await work()
@@ -4935,7 +4942,7 @@ describe('chat native adapter compatibility', function () {
         expect(String(await captureFailure(scenario.E5()))).contains(
           'Actual selected raw glyph and reacting viewer'
         )
-        expect(reads).equals(2)
+        expect(reads).equals(4)
       } finally {
         Date.now = now
       }
@@ -10695,5 +10702,192 @@ describe('web post-lifecycle continuity cryptographic preconditions', function (
     expect(result.calls).not.includes('send')
     expect(result.calls).not.includes('forbidden-sign-in')
     expect(result.calls).not.includes('forbidden-link')
+  })
+})
+
+describe('E5 exact touch quick-reaction toggle', () => {
+  const viewer = userIdOfGumbo(1)
+  const other = userIdOfGumbo(2)
+  interface Reaction {
+    emoji: string
+    userIds: string[]
+    mine?: boolean
+  }
+  async function run(options: {
+    before: Reaction[]
+    after: Reaction[]
+    desktop?: boolean
+    missingAfter?: boolean
+    unavailableAfter?: boolean
+    stalled?: boolean
+  }): Promise<{
+    error?: unknown
+    calls: string[]
+    observations: Array<Record<string, unknown>>
+  }> {
+    const calls: string[] = []
+    let selected = false
+    let postReads = 0
+    let elapsed = 0
+    const clock = Object.getOwnPropertyDescriptor(Date, 'now')!
+    Object.defineProperty(Date, 'now', { ...clock, value: () => elapsed })
+    const ui = {
+      native: false,
+      surface: options.desktop === true ? 'web-wide' : 'web-touch',
+      metrics: () => ({ coarse: options.desktop !== true }),
+      device: {
+        dragAndDrop: async () => {
+          calls.push('movement')
+        },
+        tapOn: async () => {
+          calls.push('picker-tap')
+        },
+        inputText: async () => {
+          calls.push('picker-query')
+        }
+      },
+      absent: async (id: string) => {
+        calls.push('absent:' + id)
+      },
+      text: async (text: string) => {
+        calls.push('tap:' + text)
+        if (text === '👍') selected = true
+      },
+      dom: async () => ({ publicHover: true })
+    } as unknown as Chat2UI
+    const peer = {
+      engine: {
+        open: async () => {
+          if (selected) postReads++
+          const late = selected && postReads > 1
+          if (late) elapsed += 30001
+          return {
+            messages:
+              late && options.missingAfter === true
+                ? []
+                : [
+                    {
+                      id: 'synthetic-target',
+                      status:
+                        late && options.unavailableAfter === true
+                          ? 'unavailable'
+                          : 'ok',
+                      reactions:
+                        selected && options.stalled !== true
+                          ? options.after
+                          : options.before
+                    }
+                  ]
+          }
+        }
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      f: { messages: { target: { id: 'synthetic-target' } } },
+      group: 'synthetic',
+      viewerId: viewer,
+      observations: [],
+      check: async (name: string, work: () => Promise<void>) => {
+        if (name.startsWith('E5 movement before hold')) await work()
+      },
+      anchor: async () => {},
+      targetBounds: async () => ({ x: 48, y: 114, width: 273, height: 90 }),
+      action: async () => {
+        calls.push('exact-target-menu')
+      },
+      protocolPeer: async () => peer,
+      pickThumbsUp: async () => {
+        selected = true
+        return '👍️'
+      }
+    }) as unknown as Scenarios
+    let error: unknown
+    try {
+      await scenario.E5()
+    } catch (failure) {
+      error = failure
+    } finally {
+      Object.defineProperty(Date, 'now', clock)
+    }
+    return { error, calls, observations: scenario.observations }
+  }
+  it('accepts removal of the existing exact viewer quick glyph and keeps the VS16 sibling separate', async () => {
+    const result = await run({
+      before: [
+        { emoji: '👍', userIds: [viewer], mine: false },
+        { emoji: '👍️', userIds: [other], mine: true }
+      ],
+      after: [{ emoji: '👍️', userIds: [other], mine: true }]
+    })
+    expect(result.error).equals(undefined)
+    expect(result.calls.filter(call => call === 'tap:👍')).has.length(1)
+    expect(result.observations[0].actualQuickReactionToggle).deep.equals({
+      messageId: 'synthetic-target',
+      raw: '👍',
+      viewerId: viewer,
+      beforePresent: true,
+      expectedAfterPresent: false
+    })
+  })
+  it('accepts adding the exact viewer quick glyph when only another viewer had it', async () => {
+    const result = await run({
+      before: [{ emoji: '👍', userIds: [other], mine: true }],
+      after: [{ emoji: '👍', userIds: [other, viewer] }]
+    })
+    expect(result.error).equals(undefined)
+    expect(result.observations[0].actualQuickReactionToggle).deep.includes({
+      beforePresent: false,
+      expectedAfterPresent: true
+    })
+  })
+  it('does not normalize a viewer VS16 glyph into the raw quick glyph', async () => {
+    const result = await run({
+      before: [{ emoji: '👍️', userIds: [viewer] }],
+      after: [
+        { emoji: '👍️', userIds: [viewer] },
+        { emoji: '👍', userIds: [viewer] }
+      ]
+    })
+    expect(result.error).equals(undefined)
+  })
+  for (const after of [
+    [{ emoji: '👍️', userIds: [viewer] }],
+    [{ emoji: '👍', userIds: [other] }]
+  ])
+    it('rejects a different raw glyph or another reacting viewer after addition', async () => {
+      const result = await run({ before: [], after })
+      expect(String(result.error)).includes(
+        'Actual selected raw glyph and reacting viewer must reach the peer'
+      )
+    })
+  it('rejects an unchanged existing viewer reaction after the removal tap', async () => {
+    const own = [{ emoji: '👍', userIds: [viewer] }]
+    const result = await run({ before: own, after: [], stalled: true })
+    expect(String(result.error)).includes(
+      'Actual selected raw glyph and reacting viewer must reach the peer'
+    )
+  })
+  for (const fault of ['missingAfter', 'unavailableAfter'] as const)
+    it(
+      'does not accept target disappearance or unavailability as a successful removal: ' +
+        fault,
+      async () => {
+        const result = await run({
+          before: [{ emoji: '👍', userIds: [viewer] }],
+          after: [],
+          [fault]: true
+        })
+        expect(String(result.error)).includes(
+          'Actual selected raw glyph and reacting viewer must reach the peer'
+        )
+      }
+    )
+  it('keeps full desktop picker addition even when the viewer already has the selected raw glyph', async () => {
+    const own = [{ emoji: '👍️', userIds: [viewer] }]
+    const result = await run({ before: own, after: own, desktop: true })
+    expect(result.error).equals(undefined)
+    expect(result.observations).has.length(0)
+    expect(result.calls).includes('picker-query')
   })
 })
