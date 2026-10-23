@@ -517,7 +517,46 @@ export function loadChat2Fixture(path: string): Chat2Fixture {
   return fixture
 }
 
-/** A changed harness may reuse an application build only across these test files. */
+/** The chat2 harness's own files, named because they are its core. */
+const CHAT2_HARNESS_FILES: ReadonlySet<string> = new Set([
+  'src/app/chat/chat2.e2e.ts',
+  'src/test/chat2Maestro.e2e.ts',
+  'src/test/chat2Fixture.e2e.ts',
+  'src/app/chat/chat2Actions.test.ts',
+  'src/test/chat2FixtureIdentity.test.ts',
+  'src/app/chat/engine/dmTitle.test.ts'
+])
+
+/**
+ * Files under `src/test/` that an application build does take in, so a
+ * change to them is an application change. `src/app/dev/
+ * chatIdentityStoreProbeRun.ts` imports `legacyChatKeyRecord.json`; the
+ * native bundle holds it always (`chatBench.native.ts` imports the bench
+ * screen statically) and a served web bundle in development.
+ */
+export const CHAT2_APPLICATION_TEST_FILES: ReadonlySet<string> = new Set([
+  'src/test/legacyChatKeyRecord.json'
+])
+
+/**
+ * Whether a path can change without changing what an application build is
+ * made of: a unit or end-to-end test (`*.test.ts(x)`, `*.e2e.ts(x)`),
+ * anything else under `src/test/`, or an end-to-end script in `scripts/`.
+ * None of these is reachable from the web entries (`src/build.mjs`), the
+ * native entry (`index.js`, through Metro) or the server's (`npm start`,
+ * `src/server/index.ts`) — except `CHAT2_APPLICATION_TEST_FILES`, which are.
+ */
+export function isChat2HarnessPath(path: string): boolean {
+  if (CHAT2_APPLICATION_TEST_FILES.has(path)) return false
+  return (
+    CHAT2_HARNESS_FILES.has(path) ||
+    /\.(test|e2e)\.tsx?$/.test(path) ||
+    path.startsWith('src/test/') ||
+    /^scripts\/[^/]+\.e2e\./.test(path)
+  )
+}
+
+/** A changed harness may reuse an application build only across test files. */
 export function verifyChat2HarnessSource(
   root: string,
   applicationSource: string,
@@ -552,14 +591,6 @@ export function verifyChat2HarnessSource(
     { cwd: root }
   )
   assert(ancestry.status === 0, 'Application source must be a harness ancestor')
-  const allowed = new Set([
-    'src/app/chat/chat2.e2e.ts',
-    'src/test/chat2Maestro.e2e.ts',
-    'src/test/chat2Fixture.e2e.ts',
-    'src/app/chat/chat2Actions.test.ts',
-    'src/test/chat2FixtureIdentity.test.ts',
-    'src/app/chat/engine/dmTitle.test.ts'
-  ])
   const paths = git([
     'diff',
     '--name-only',
@@ -571,7 +602,7 @@ export function verifyChat2HarnessSource(
     .split('\0')
     .filter(Boolean)
   assert(
-    paths.every(path => allowed.has(path)),
+    paths.every(isChat2HarnessPath),
     'Application changes require a new build and capture archive'
   )
   const diff = git([
