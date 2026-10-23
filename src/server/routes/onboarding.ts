@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { asAccountName } from '../../common/accountSettings'
 import { badRequest, conflict, unauthorized } from '../../common/errors'
+import { isMachine } from '../auth/sessions'
 import { onboardingFor } from '../auth/settleAccount'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
@@ -22,7 +23,7 @@ export function onboardingRoutes(
     '/me/onboarding',
     withAsync(async (req, res) => {
       const actor = req.actor
-      if (actor == null || actor.apiTokenId != null) throw unauthorized()
+      if (actor == null || isMachine(actor)) throw unauthorized()
       const user = await db
         .selectFrom('users')
         .select('display_name')
@@ -38,7 +39,7 @@ export function onboardingRoutes(
     '/me/onboarding/name',
     withAsync(async (req, res) => {
       const actor = req.actor
-      if (actor == null || actor.apiTokenId != null) throw unauthorized()
+      if (actor == null || isMachine(actor)) throw unauthorized()
       let name: string
       try {
         name = asAccountName(req.body?.displayName)
@@ -80,7 +81,7 @@ export function onboardingRoutes(
     '/me/onboarding/photo',
     withAsync(async (req, res) => {
       const actor = req.actor
-      if (actor == null || actor.apiTokenId != null) throw unauthorized()
+      if (actor == null || isMachine(actor)) throw unauthorized()
       const body = req.body ?? {}
       const choices = [
         body.catalogId != null,

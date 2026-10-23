@@ -1,5 +1,4 @@
 import { expect } from 'chai'
-import type { Router } from 'express'
 import type { Kysely } from 'kysely'
 import { describe, it } from 'mocha'
 import type Provider from 'oidc-provider'
@@ -12,6 +11,7 @@ import {
 } from '../common/gumbo/reference'
 import { ROLE_FLAGS, ROLES } from '../common/roles'
 import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
+import { routesOf } from '../test/routeTable'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
@@ -51,6 +51,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
+import { tessRoutes } from './routes/tess'
 import { timeRoutes } from './routes/time'
 import { umpireRoutes } from './routes/umpires'
 import { userRoutes } from './routes/users'
@@ -102,28 +103,6 @@ const live: LiveRouteOptions = {
 }
 
 const uploads = { uploadsDir: '/tmp', ffmpegPath: '/usr/bin/ffmpeg' }
-
-interface RouteLayer {
-  route?: { path: string; methods: Record<string, boolean> }
-}
-
-/** Every `METHOD /path` a router answers, in the document's spelling. */
-function routesOf(router: Router): string[] {
-  // Express keeps its layers on the router without declaring them.
-  const { stack } = router as unknown as { stack: RouteLayer[] }
-  const out: string[] = []
-  for (const layer of stack) {
-    const route = layer.route
-    if (route == null) continue
-    // Express writes `:gameId`; OpenAPI writes `{gameId}`.
-    const path = route.path.replace(/:([A-Za-z0-9_]+)/g, '{$1}')
-    for (const method of Object.keys(route.methods)) {
-      if (method === '_all') continue
-      out.push(`${method.toUpperCase()} ${path}`)
-    }
-  }
-  return out
-}
 
 /**
  * Routes that are deliberately not in the document.
@@ -194,7 +173,8 @@ describe('the API document', function () {
       ...routesOf(venueRoutes(db, media)),
       ...routesOf(schedulingSetupRoutes(db)),
       ...routesOf(schedulePreviewRoutes(db)),
-      ...routesOf(scoreboardRoutes(db, store))
+      ...routesOf(scoreboardRoutes(db, store)),
+      ...routesOf(tessRoutes(db, { settings: null, origin: () => '' }))
     ]
 
     const documented = new Set<string>()
@@ -257,7 +237,8 @@ describe('the API document', function () {
       // Only the player routes the document describes: the reads of a
       // player's page are left out of it, as they always have been.
       ...routesOf(playerRoutes(db, media)),
-      ...routesOf(scoreboardRoutes(db, store))
+      ...routesOf(scoreboardRoutes(db, store)),
+      ...routesOf(tessRoutes(db, { settings: null, origin: () => '' }))
     ])
 
     const paths = openApiDocument('0.0.0').paths

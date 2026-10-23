@@ -14,10 +14,20 @@ declare module 'express-serve-static-core' {
 }
 
 /**
+ * The header every request Tess's tools send carries. It only ever takes
+ * rights away: whoever sends it is a machine acting for the person
+ * (`isMachine`), so a client that sends it on its own gains nothing, and it
+ * needs no secret. One that a secret had to vouch for would fail open:
+ * a request of Tess's whose secret did not match would pass as the person.
+ */
+export const TESS_HEADER = 'x-teamstation-tess'
+
+/**
  * Attaches the caller to the request when a token is present and good. It does
  * not reject an anonymous request: routes that need somebody say so with
  * `requireActor`, so a public route and a private one are told apart in one
- * place rather than by remembering to check.
+ * place rather than by remembering to check. A request Tess's tools sent is
+ * marked as hers.
  */
 export function withActor(db: Kysely<Database>): RequestHandler {
   return (req, res, next) => {
@@ -29,8 +39,13 @@ export function withActor(db: Kysely<Database>): RequestHandler {
       next()
       return
     }
+    const viaTess = req.header(TESS_HEADER) != null
     actorForToken(db, token).then(
-      actor => {
+      found => {
+        const actor =
+          found != null && viaTess
+            ? { ...found, viaTess: true as const }
+            : found
         req.actor = actor
         // The account by id only, on this request's own scope, so an error
         // it raises names who was signed in and nothing else about them.

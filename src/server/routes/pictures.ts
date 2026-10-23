@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
+import { isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import {
   availablePictures,
@@ -27,7 +28,7 @@ export function pictureRoutes(
     requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
-      if (actor == null || actor.apiTokenId != null) throw unauthorized()
+      if (actor == null || isMachine(actor)) throw unauthorized()
       try {
         await selectAccountCatalogPicture(db, actor.userId, req.body?.catalogId)
       } catch (error) {

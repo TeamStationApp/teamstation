@@ -6,6 +6,11 @@ import { adminScopes, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 
+/**
+ * The actor as their account stands now, or a refusal. A machine token may
+ * not manage organizations. Tess may, on the person's own session: each of
+ * her writes runs only once the person holds Confirm on the card showing it.
+ */
 export async function currentActor(
   db: Kysely<Database>,
   actor: Actor

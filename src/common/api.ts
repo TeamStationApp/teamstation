@@ -7,6 +7,7 @@ import {
   asOptional,
   asString,
   asTuple,
+  asUnknown,
   type Cleaner
 } from 'cleaners'
 
@@ -1588,6 +1589,245 @@ export type Health = Omit<ReturnType<typeof asHealth>, 'narration' | 'tess'> & {
   tess?: boolean
 }
 
+/** A string of at most `max` characters. */
+function asTextUpTo(max: number): Cleaner<string> {
+  return raw => {
+    const text = asString(raw)
+    if (text.length > max)
+      throw new TypeError(`Expected at most ${max} characters`)
+    return text
+  }
+}
+
+/**
+ * The page open beside Tess on a wide screen, and the pages that led there:
+ * sent with a message so she knows what "this game" is. A narrow screen,
+ * where the chat covers the app, sends none.
+ */
+export const asTessScreen = asObject({
+  path: asTextUpTo(2000),
+  title: asTextUpTo(200),
+  stack: asOptional(
+    asArray(asObject({ path: asTextUpTo(2000), title: asTextUpTo(200) })),
+    () => []
+  )
+})
+export type TessScreen = ReturnType<typeof asTessScreen>
+
+/**
+ * The id the app gives a message it sends, up to 64 letters, digits, `-`
+ * and `_`. The conversation shows it on the message, so the app can tell
+ * whether a send whose answer it lost was kept.
+ */
+export const asTessClientId: Cleaner<string> = raw => {
+  const id = asString(raw)
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id))
+    throw new TypeError('Expected up to 64 letters, digits, - and _')
+  return id
+}
+
+/** `POST /me/tess/messages`: what the person said, and what they attached. */
+export const asTessMessageBody = asObject({
+  text: asTextUpTo(20000),
+  attachmentIds: asOptional(asArray(asString), () => []),
+  screen: asOptional(asTessScreen),
+  clientId: asOptional(asTessClientId)
+})
+export type TessMessageBody = ReturnType<typeof asTessMessageBody>
+
+/** `POST /me/tess/attachments`: one file, its bytes in base64. */
+export const asTessAttachmentBody = asObject({
+  name: asTextUpTo(1000),
+  /** May be empty: the type is then read from the name's extension. */
+  mediaType: asOptional(asString, ''),
+  data: asString
+})
+export type TessAttachmentBody = ReturnType<typeof asTessAttachmentBody>
+
+export const asTessAttachmentKind = asLiteral(
+  'image',
+  'csv',
+  'text',
+  'markdown'
+)
+export type TessAttachmentKind = ReturnType<typeof asTessAttachmentKind>
+
+/**
+ * The most a picture for Tess may hold, in bytes: 5 MB of base64, the most
+ * the model takes. The server refuses more, and the app does not send it.
+ */
+export const TESS_MAX_IMAGE_BYTES = (5 * 1024 * 1024 * 3) / 4
+/** The most a CSV, plain text or Markdown file for Tess may hold, in bytes. */
+export const TESS_MAX_TEXT_BYTES = 1024 * 1024
+/** The most attachments one message may name. */
+export const TESS_MAX_ATTACHMENTS = 5
+
+/** The media types Tess reads, and what each is to her. */
+const TESS_TYPES: Readonly<Record<string, TessAttachmentKind>> = {
+  'image/png': 'image',
+  'image/jpeg': 'image',
+  'image/gif': 'image',
+  'image/webp': 'image',
+  'text/csv': 'csv',
+  'text/plain': 'text',
+  'text/markdown': 'markdown'
+}
+
+/** Other names the same types travel under. */
+const TESS_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  'image/jpg': 'image/jpeg',
+  'application/csv': 'text/csv',
+  'text/comma-separated-values': 'text/csv',
+  'text/x-markdown': 'text/markdown'
+}
+
+/** The type a file name's extension says. */
+const TESS_EXTENSIONS: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  csv: 'text/csv',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown'
+}
+
+/** What a browser's file chooser offers for Tess, by type and by name. */
+export const TESS_ACCEPT = [
+  'image/*',
+  ...new Set(
+    Object.keys(TESS_EXTENSIONS)
+      .filter(extension => TESS_TYPES[TESS_EXTENSIONS[extension]] !== 'image')
+      .map(extension => `.${extension}`)
+  ),
+  ...Object.keys(TESS_TYPES).filter(type => !type.startsWith('image/'))
+].join(',')
+
+/**
+ * The type a file for Tess is, from the media type it came with or, when
+ * that is missing or names nothing she reads (a CSV that Windows calls a
+ * spreadsheet), from its name's extension. Null for a file she cannot read.
+ * The app and the server both read files by this.
+ */
+export function tessUploadType(
+  name: string,
+  mediaType: string | null | undefined
+): { kind: TessAttachmentKind; mediaType: string } | null {
+  const given = (mediaType ?? '').split(';')[0].trim().toLowerCase()
+  const known = TESS_TYPE_ALIASES[given] ?? given
+  const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1].toLowerCase()
+  const type =
+    TESS_TYPES[known] != null
+      ? known
+      : extension == null
+        ? undefined
+        : TESS_EXTENSIONS[extension]
+  return type == null ? null : { kind: TESS_TYPES[type], mediaType: type }
+}
+
+/** An uploaded file, as a message names it. */
+export const asTessAttachment = asObject({
+  id: asString,
+  name: asString,
+  kind: asTessAttachmentKind
+})
+export type TessAttachment = ReturnType<typeof asTessAttachment>
+
+/**
+ * A change Tess proposed: what the server will run, from the stored request
+ * rather than her words, and where it stands. It runs only when the person
+ * holds Confirm.
+ */
+export const asTessChange = asObject({
+  id: asString,
+  summary: asString,
+  method: asLiteral('POST', 'PUT', 'PATCH', 'DELETE'),
+  path: asString,
+  body: asOptional(asUnknown, null),
+  /**
+   * `unknown`: it began to run and gave no answer in time, or the server
+   * lost track of it, so whether it happened has to be checked.
+   */
+  status: asLiteral(
+    'pending',
+    'running',
+    'done',
+    'failed',
+    'expired',
+    'unknown'
+  )
+})
+export type TessChange = ReturnType<typeof asTessChange>
+
+/**
+ * One message of the conversation as the app shows it: the person's text
+ * with their attachments, or Tess's reply with the changes she proposed in
+ * it. Her tool calls and their results are not shown.
+ */
+const asTessMessageShape = asObject({
+  id: asString,
+  role: asLiteral('user', 'assistant'),
+  text: asString,
+  attachments: asArray(
+    asObject({
+      id: asString,
+      name: asString,
+      kind: asTessAttachmentKind,
+      /** Its bytes were replaced by a description to keep the conversation short. */
+      described: asBoolean
+    })
+  ),
+  changes: asArray(asTessChange),
+  createdAt: asString,
+  /** The id the app sent a message of the person's with, if it sent one. */
+  clientId: asOptional(asString)
+})
+export type TessMessage = Omit<
+  ReturnType<typeof asTessMessageShape>,
+  'clientId'
+> & { clientId?: string }
+/** A message, without `clientId` when it has none. */
+export const asTessMessage: Cleaner<TessMessage> = raw => {
+  const { clientId, ...message } = asTessMessageShape(raw)
+  return clientId == null ? message : { ...message, clientId }
+}
+
+/** `GET /me/tess`: the conversation, and its size in tokens. */
+const asTessConversationShape = asObject({
+  available: asBoolean,
+  messages: asArray(asTessMessage),
+  contextTokens: asNumber,
+  /**
+   * Tess is answering a message or a confirmed change now; what she stores
+   * shows on a later read.
+   */
+  answering: asOptional(asBoolean)
+})
+export type TessConversation = Omit<
+  ReturnType<typeof asTessConversationShape>,
+  'answering'
+> & { answering?: boolean }
+export const asTessConversation: Cleaner<TessConversation> =
+  asTessConversationShape
+
+/** `POST /me/tess/changes/:changeId/confirm`: the change, and Tess's report. */
+export const asTessConfirmation = asObject({
+  change: asTessChange,
+  messages: asArray(asTessMessage)
+})
+export type TessConfirmation = ReturnType<typeof asTessConfirmation>
+
+/** One UTC week, from Monday, of the caller's use of Tess. */
+export const asTessUsageWeek = asObject({
+  weekStart: asString,
+  inputTokens: asNumber,
+  outputTokens: asNumber,
+  requests: asNumber
+})
+export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>
+
 /** The response header a screen's read carries its revision in. */
 export const REVISION_HEADER = 'x-teamstation-revision'
 
@@ -2550,6 +2790,75 @@ export class TeamStationClient {
   /** What the server can do, including whether it takes dictation. */
   async health(): Promise<Health> {
     return await this.request('GET', '/health', asHealth)
+  }
+
+  /** The caller's conversation with Tess. */
+  async tess(): Promise<TessConversation> {
+    return await this.request('GET', '/me/tess', asTessConversation)
+  }
+
+  /**
+   * Says something to Tess, with any attachments already uploaded and, on a
+   * wide screen, the page beside the chat. Answers the new message and
+   * everything Tess added after it. `clientId` comes back on the stored
+   * message, so a send whose answer never arrived can be looked for.
+   */
+  async sendTessMessage(
+    text: string,
+    options: {
+      attachmentIds?: string[]
+      screen?: TessScreen
+      clientId?: string
+    } = {}
+  ): Promise<TessMessage[]> {
+    return (
+      await this.request(
+        'POST',
+        '/me/tess/messages',
+        asObject({ messages: asArray(asTessMessage) }),
+        {
+          text,
+          ...(options.attachmentIds == null ||
+          options.attachmentIds.length === 0
+            ? {}
+            : { attachmentIds: options.attachmentIds }),
+          ...(options.screen == null ? {} : { screen: options.screen }),
+          ...(options.clientId == null ? {} : { clientId: options.clientId })
+        }
+      )
+    ).messages
+  }
+
+  /** Uploads one file for a later message to name. */
+  async uploadTessAttachment(
+    file: TessAttachmentBody
+  ): Promise<TessAttachment> {
+    return await this.request(
+      'POST',
+      '/me/tess/attachments',
+      asTessAttachment,
+      file
+    )
+  }
+
+  /** Runs a change Tess proposed, once the person has held Confirm. */
+  async confirmTessChange(changeId: string): Promise<TessConfirmation> {
+    return await this.request(
+      'POST',
+      `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
+      asTessConfirmation
+    )
+  }
+
+  /** The caller's tokens with Tess, week by week, newest first. */
+  async tessUsage(): Promise<TessUsageWeek[]> {
+    return (
+      await this.request(
+        'GET',
+        '/me/tess/usage',
+        asObject({ weeks: asArray(asTessUsageWeek) })
+      )
+    ).weeks
   }
 
   /** The server's clock, in milliseconds since the epoch. */

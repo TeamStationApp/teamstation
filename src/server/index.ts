@@ -87,6 +87,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
+import { tessRoutes } from './routes/tess'
 import { timeRoutes } from './routes/time'
 import { umpireRoutes } from './routes/umpires'
 import { userRoutes } from './routes/users'
@@ -114,6 +115,7 @@ import {
   superviseStatsBuilder
 } from './statsBuilder/supervisor'
 import { stopWorker } from './stopWorker'
+import { loopbackOrigin } from './tess/loopback'
 
 /**
  * What is actually running, not just what the package says.
@@ -618,6 +620,14 @@ function runWorker(): void {
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db, mediaContext.space))
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
+  // Tess's tools call this same server back, as the person they act for.
+  app.use(
+    '/api/v1',
+    tessRoutes(db, {
+      settings: tessSettings(serverConfig),
+      origin: () => loopbackOrigin(serverConfig)
+    })
+  )
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))
   app.use(
