@@ -48,13 +48,14 @@ object LivePlaylistPatience : RNVExoplayerPlugin {
     fun stuckAfterMs(targetDurationMs: Long): Long = (targetDurationMs * STUCK_TARGET_DURATIONS).toLong()
 
     private val trackerFactory =
-        HlsPlaylistTracker.Factory { dataSourceFactory, loadErrorHandlingPolicy, parserFactory, cmcdConfiguration ->
+        HlsPlaylistTracker.Factory { dataSourceFactory, loadErrorHandlingPolicy, parserFactory, cmcdConfiguration, executorSupplier ->
             DefaultHlsPlaylistTracker(
                 dataSourceFactory,
                 loadErrorHandlingPolicy,
                 parserFactory,
                 cmcdConfiguration,
                 STUCK_TARGET_DURATIONS,
+                executorSupplier,
             )
         }
 

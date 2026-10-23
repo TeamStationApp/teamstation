@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A0B5E8A10000000000000002 /* NativeSentryPrivacy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B5E8A10000000000000001 /* NativeSentryPrivacy.swift */; };
 		03F14B118BD0EE7968DFD528 /* SpaceGrotesk-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C9B14565B09802CB64B889F5 /* SpaceGrotesk-Medium.ttf */; };
 		0C80B921A6F3F58F76C31292 /* libPods-TeamStation.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-TeamStation.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
@@ -45,6 +46,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A0B5E8A10000000000000001 /* NativeSentryPrivacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSentryPrivacy.swift; path = ../mobile/apps/common/TeamStationSentry/Sources/TeamStationSentry/NativeSentryPrivacy.swift; sourceTree = SOURCE_ROOT; };
 		0CA8A8955AF78ED8BFDEF03F /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-SemiBold.ttf"; path = "../src/app/assets/fonts/Inter-SemiBold.ttf"; sourceTree = SOURCE_ROOT; };
 		12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TSGlassView.mm; path = TeamStation/TSGlassView.mm; sourceTree = SOURCE_ROOT; };
 		13B07F961A680F5B00A75B9A /* TeamStation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeamStation.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -104,6 +106,7 @@
 			children = (
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
+				A0B5E8A10000000000000001 /* NativeSentryPrivacy.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -432,6 +435,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				A0B5E8A10000000000000002 /* NativeSentryPrivacy.swift in Sources */,
 				E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */,
 				D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */,
 				C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */,

@@ -187,10 +187,12 @@ describe('collector durable HTTP and provider boundary', function () {
       r => r.path === '/_index_template/logs-v1'
     )!.body
     expect(template.template.mappings.dynamic).equals('strict')
+    expect(template.template.mappings.properties.U.type).equals('keyword')
     const update = requests.find(r =>
       r.path.startsWith('/logs-v1-*/_mapping')
     )!.body
     expect(update.properties.P.properties.c0).deep.equals({ type: 'double' })
+    expect(update.properties.U.type).equals('keyword')
     expect(update.properties.P.properties).deep.equals(
       template.template.mappings.properties.P.properties
     )
@@ -382,6 +384,7 @@ describe('collector durable HTTP and provider boundary', function () {
     }
     for (const bad of [
       { ...config, readToken: 'short' },
+      { ...config, serverWriteToken: 'short' },
       { ...config, origins: ['https://web.example.test/path'] },
       {
         ...config,
@@ -546,6 +549,69 @@ describe('collector durable HTTP and provider boundary', function () {
           resolve()
         })
       )
+    }
+  })
+
+  it('admits operational actors only from authenticated server ingestion and preserves them through restart', async () => {
+    const file = join(root, 'trusted-actors')
+    const spool = new LogSpool(file, search())
+    const token = 'fixture-server-write'.repeat(3)
+    const config = {
+      origins: [],
+      readToken: '0'.repeat(64),
+      serverWriteToken: token,
+      projects: {
+        server: { app: 'TS srv' as const, environment: 'test' },
+        client: { app: 'TS' as const, environment: 'test' }
+      }
+    }
+    const app = collector(config, spool, search())
+    const server = app.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => server.once('listening', resolve))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const document = { ...row(), A: 'TS srv' as const, U: 'usr_demo' }
+    const post = async (project: string, secret?: string): Promise<Response> =>
+      await fetch(base + '/ingest/' + project, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-ndjson',
+          ...(secret == null ? {} : { authorization: 'Bearer ' + secret })
+        },
+        body: wire(document)
+      })
+    try {
+      expect((await post('server')).status).equals(403)
+      expect((await post('server', 'x'.repeat(token.length))).status).equals(
+        403
+      )
+      expect((await post('client', token)).status).equals(403)
+      expect((await post('server', token)).status).equals(202)
+      const persisted = await readFile(file, 'utf8')
+      expect(persisted).not.contains(token)
+      expect(JSON.parse(persisted)[0].U).equals('usr_demo')
+      const restored = new LogSpool(file, search())
+      await restored.ready
+      await restored.flush()
+      expect((stored.get(document.I) as LogDocument).U).equals('usr_demo')
+      const withoutToken = collector(
+        { ...config, serverWriteToken: undefined },
+        spool,
+        search()
+      ).listen(0, '127.0.0.1')
+      await new Promise<void>(resolve =>
+        withoutToken.once('listening', resolve)
+      )
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${(withoutToken.address() as AddressInfo).port}/ingest/server`,
+          { method: 'POST', body: wire(document) }
+        )
+        expect(response.status).equals(403)
+      } finally {
+        await new Promise<void>(resolve => withoutToken.close(() => resolve()))
+      }
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
     }
   })
 

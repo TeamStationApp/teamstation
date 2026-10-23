@@ -6,6 +6,8 @@ buildscript {
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
         kotlinVersion = "2.2.0"
+        // CameraX brings Media3 1.9 at runtime; compile the video plugin against that same API.
+        RNVideo_media3Version = "1.9.0"
     }
     repositories {
         google()

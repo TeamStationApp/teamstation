@@ -8,6 +8,7 @@ let package = Package(
     .library(name: "DirectorUI", targets: [ "DirectorUI" ])
   ],
   dependencies: [
+    .package(path: "../../../common/TeamStationObservability"),
     .package(path: "../../common/DirectorCore"),
     .package(path: "../../../common/DirectorExport"),
     .package(path: "../../common/DirectorSources"),
@@ -30,6 +31,7 @@ let package = Package(
     .target(
       name: "DirectorUI",
       dependencies: [
+        "TeamStationObservability",
         "DirectorCore",
         "DirectorExport",
         "DirectorSources",

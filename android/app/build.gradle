@@ -4,12 +4,17 @@ apply plugin: "com.facebook.react"
 // Links the Expo modules into the app, which here stands where the `expo`
 // package's own library would, and generates `expo.modules.ExpoModulesPackageList`.
 apply plugin: "expo-autolinking"
+apply plugin: "jacoco"
+
+def observabilityCoverage = System.getenv('TS_OBSERVABILITY_COVERAGE') == '1'
+jacoco { toolVersion = '0.8.13' }
 
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
+    if (observabilityCoverage) debuggableVariants = []
     /* Folders */
     //   The root of your project, i.e. where "package.json" lives. Default is '../..'
     // root = file("../../")
@@ -116,6 +121,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "TS_SENTRY_DSN", groovy.json.JsonOutput.toJson(System.getenv("TS_SENTRY_DSN") ?: "")
         manifestPlaceholders += [appLinkHost: appLinkHost,
             googleMapsApiKey: System.getenv("GOOGLE_MAPS_ANDROID_API_KEY") ?: ""]
     }
@@ -130,6 +137,7 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            enableAndroidTestCoverage observabilityCoverage
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -139,6 +147,18 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
+    testCoverage { jacocoVersion = '0.8.13' }
+}
+
+// Run instrumentation on the explicitly selected device, then supply its measured execution file.
+tasks.register('observabilityHostCoverage', JacocoReport) {
+    executionData.from(providers.environmentVariable('TS_OBSERVABILITY_EXEC').map { file(it) })
+    sourceDirectories.from(file('src/main/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/MainApplication.class'
+        include 'app/teamstation/app/video/LivePlaylistPatience.class'
+    })
+    reports { xml.required = true }
 }
 
 // The sign-in link filter for the app's link host, added to every variant's
@@ -158,10 +178,10 @@ dependencies {
 
     // Walk-up songs play through ExoPlayer, at the version react-native-video
     // already brings (RNVideo_media3Version), so the app carries one copy.
-    implementation("androidx.media3:media3-exoplayer:1.8.0")
+    implementation("androidx.media3:media3-exoplayer:1.9.0")
     // Live HLS players get a playlist tracker that waits out a publisher's
     // absence (LivePlaylistPatience), at the same version.
-    implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.9.0")
     // Share Lineup's QR code camera: CameraX for the picture, and ML Kit's
     // bundled barcode scanner, which needs no Play services, to read it.
     implementation("androidx.camera:camera-camera2:1.6.2")
@@ -171,6 +191,8 @@ dependencies {
     // LocalFileIdTest reads the fixtures it shares with localFileId.test.ts.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test:runner:1.5.0")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
@@ -233,4 +255,5 @@ ${familyFile("${family}_bold", 700)}
 }
 
 android.sourceSets.main.res.srcDirs += tsFontRes
+android.sourceSets.main.java.srcDirs += file("../../mobile/apps/common/android/observability/src/main/kotlin")
 tasks.named('preBuild') { dependsOn('tsFonts') }

@@ -37,8 +37,34 @@ final class DistributorModel {
 
   /// This Mac's download folder.
   var destination: URL? {
-    settings.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    #if DEBUG
+    if let observabilityFixture { return observabilityFixture }
+    #endif
+    return settings.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
   }
+  #if DEBUG
+  private(set) var observabilityFixture: URL?
+  private(set) var observabilityUploadFailure = true
+
+  /// Temporary synthetic input for the existing export/upload paths; no saved settings change.
+  func installObservabilityFixture(uploadFailure: Bool = true) throws {
+    guard DebugHarness.isRequested, DebugHarness.ignoresCable, !isExporting else { throw ExportRefusal.exporting }
+    if let observabilityFixture { try? FileManager.default.removeItem(at: observabilityFixture) }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("observability-" + UUID().uuidString)
+    let camera = CameraListing(sourceID: SourceID("fixture-camera"), name: "Fixture camera", isNamed: true, bytes: 23)
+    let recording = RecordingListing(id: 1, startedAt: WallClock(seconds: 1_000), endedAt: WallClock(seconds: 1_010),
+                                     isLive: false, hasPrimary: true, cameras: [camera], preparedTracks: [])
+    let folder = DistributionRun.folder(for: recording, in: root)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    // Present but deliberately invalid media reaches the real combined-export decoder failure.
+    try Data("invalid synthetic video".utf8).write(to: folder.appendingPathComponent(DistributionRun.filename(for: .primary, of: recording)))
+    try Data("invalid synthetic video".utf8).write(to: folder.appendingPathComponent(DistributionRun.filename(for: .camera(camera.sourceID), of: recording)))
+    observabilityFixture = root
+    observabilityUploadFailure = uploadFailure
+    recordings = [recording]
+    batch = nil
+  }
+  #endif
   /// The export under way or just finished, if any: of one recording, or of several together.
   private(set) var batch: DistributionBatch?
   /// Whether TS Director is recording right now. While it is, the iPad stitches nothing.
@@ -88,11 +114,19 @@ final class DistributorModel {
   init(state: MacState = MacState()) {
     self.state = state
     self.settings = state.settings()
+    var keychain = KeychainStore(service: "\(MacState.keychainPrefix).teamStation")
+    #if DEBUG
+    if DebugHarness.isRequested && DebugHarness.ignoresCable { keychain = .inMemory() }
+    #endif
     self.teamStation = TeamStationAccount(
       serverURL: AppServer.url,
       deviceName: Host.current().localizedName ?? "Mac",
-      keychain: KeychainStore(service: "\(MacState.keychainPrefix).teamStation")
+      keychain: keychain
     )
+    #if DEBUG
+    // The synthetic harness must not restore this workstation's real account.
+    if DebugHarness.isRequested && DebugHarness.ignoresCable { return }
+    #endif
     Task { await teamStation.restore() }
   }
 
@@ -285,6 +319,13 @@ final class DistributorModel {
     title: String,
     tracks: [UploadTrack]
   ) -> TeamStationPlan {
+    #if DEBUG
+    if observabilityFixture != nil {
+      return TeamStationPlan(listing: listing, gameId: gameId, title: title, tracks: tracks) { _, _, _, _, _ in
+        throw URLError(.cannotConnectToHost)
+      }
+    }
+    #endif
     let account = teamStation
     // The take's wall clock, not this upload's: every file of the export
     // starts there, and the library lays a take's cameras out against it.

@@ -121,6 +121,7 @@ export class OpenSearch {
       'vi',
       'ps',
       'op',
+      'rp',
       'c',
       'f0',
       'f1',
@@ -185,6 +186,7 @@ export class OpenSearch {
             N: keyword,
             V: keyword,
             S: keyword,
+            U: keyword,
             R: { type: 'integer' },
             P: { type: 'object', dynamic: 'strict', properties }
           }
@@ -196,7 +198,10 @@ export class OpenSearch {
       'PUT',
       '/logs-v1-*/_mapping?allow_no_indices=true&ignore_unavailable=true',
       {
-        properties: { P: { type: 'object', dynamic: 'strict', properties } }
+        properties: {
+          U: keyword,
+          P: { type: 'object', dynamic: 'strict', properties }
+        }
       }
     )
   }

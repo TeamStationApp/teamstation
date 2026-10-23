@@ -158,8 +158,32 @@ const operation = choice(
   'request',
   'other'
 )
+export const REQUEST_ROUTES = [
+  '/auth/password',
+  '/auth/code',
+  '/auth/signup',
+  '/onboarding',
+  '/analytics/events',
+  '/admin/analytics/query',
+  '/health',
+  '/games/:gameId',
+  '/videos/:videoId',
+  '/director/uploads',
+  'other'
+] as const
 const system = {
   op: operation,
+  rp: choice(...REQUEST_ROUTES),
+  mt: choice(
+    'GET',
+    'POST',
+    'PUT',
+    'PATCH',
+    'DELETE',
+    'HEAD',
+    'OPTIONS',
+    'OTHER'
+  ),
   ec: error,
   status: number(599, 100),
   ms: number(86400000),
@@ -228,6 +252,9 @@ export const EVENT_RULES = {
   offline_changed: { on: boolean },
   service_started: system,
   service_stopped: system,
+  stream_started: system,
+  stream_stopped: system,
+  stream_failed: system,
   request_completed: system,
   export_started: system,
   export_completed: system,
@@ -268,6 +295,8 @@ export interface EventRecord {
   P: Record<string, Property>
   V?: string
   S?: string
+  /** Authenticated server operational attribution; public ingestion cannot assert it. */
+  U?: string
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -295,11 +324,11 @@ export function parseEvent(value: unknown, now = Date.now()): EventRecord {
   if (
     !object(value) ||
     Object.keys(value).some(
-      key => !['D', 'A', 'I', 'E', 'L', 'R', 'P', 'V', 'S'].includes(key)
+      key => !['D', 'A', 'I', 'E', 'L', 'R', 'P', 'V', 'S', 'U'].includes(key)
     )
   )
     throw new Error('Invalid event fields')
-  const { D, A, I, E, L, R, P, V, S } = value
+  const { D, A, I, E, L, R, P, V, S, U } = value
   if (
     typeof D !== 'string' ||
     !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(D)
@@ -342,6 +371,8 @@ export function parseEvent(value: unknown, now = Date.now()): EventRecord {
   )
     throw new Error('Invalid build version')
   if (S !== undefined && !uuid(S)) throw new Error('Invalid session ID')
+  if (U !== undefined && (A !== 'TS srv' || userId(U) === undefined))
+    throw new Error('Invalid operational actor')
   const event: EventRecord = {
     D,
     A: A as AppCode,
@@ -353,6 +384,7 @@ export function parseEvent(value: unknown, now = Date.now()): EventRecord {
   }
   if (V !== undefined) event.V = V
   if (S !== undefined) event.S = S as string
+  if (U !== undefined) event.U = U as string
   // The finite key set and bounded property values keep every event below
   // MAX_EVENT_BYTES; there is no unrestricted string to truncate here.
   return event

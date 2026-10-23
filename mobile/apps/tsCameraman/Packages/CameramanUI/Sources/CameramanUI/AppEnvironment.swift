@@ -9,6 +9,7 @@ import EventControl
 import Observation
 import os
 import TeamStationKit
+import TeamStationObservability
 import SwiftUI
 
 /// Wiring for the whole app, injected by the app target so the UI package owns no globals.
@@ -129,6 +130,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
   private var appliedSettings: StreamSettings
   private let settingsStore: StreamSettingsStore
   private let broadcastPreference: BroadcastPreference
+  private let captureHardwareAvailable: Bool
+  private let requestCaptureAccess: @Sendable (AVMediaType) async -> Bool
 
   public init(
     launch: LaunchConfiguration = LaunchConfiguration(),
@@ -140,9 +143,13 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     eventControlRebindDelay: TimeInterval = 0.5,
     scoreboardHTTP: ScoreboardHTTP? = nil,
     scoreboardSockets: ScoreboardSocketOpener? = nil,
-    radarFleet: RadarFleet? = nil
+    radarFleet: RadarFleet? = nil,
+    captureHardwareAvailable: Bool? = nil,
+    requestCaptureAccess: @escaping @Sendable (AVMediaType) async -> Bool = { await AVCaptureDevice.requestAccess(for: $0) }
   ) {
     self.launch = launch
+    self.captureHardwareAvailable = captureHardwareAvailable ?? !Self.hasNoCaptureHardware
+    self.requestCaptureAccess = requestCaptureAccess
     self.radarFleet = radarFleet ?? RadarFleet(storage: .cameraman, limit: 1)
     self.settingsStore = settingsStore
     let preference = BroadcastPreference(store: broadcastStore)
@@ -497,8 +504,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     startRadar()
     eventOverride.start()
     status = "requesting permissions"
-    cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
-    microphoneAuthorized = await AVCaptureDevice.requestAccess(for: .audio)
+    cameraAuthorized = await requestCaptureAccess(.video)
+    microphoneAuthorized = await requestCaptureAccess(.audio)
 
     if launch.measureCapabilities {
       isBroadcasting = false
@@ -508,11 +515,12 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
 
     // The synthetic source is the only one a simulator has, so it is checked before the permission
     // gate — there is no camera to be denied access to.
-    if launch.useSyntheticCamera || Self.hasNoCaptureHardware {
+    if launch.useSyntheticCamera || !captureHardwareAvailable {
       startEncoding(fromCamera: false)
       startSynthetic()
     } else {
       guard cameraAuthorized else {
+        AppLog.record(.streamFailed, operation: .service, error: .permission)
         status = "camera permission denied"
         isBroadcasting = false
         return
@@ -571,6 +579,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     if broadcasting {
       if server == nil { startServer() }
     } else {
+      if serverStatus.isListening { AppLog.record(.streamStopped, operation: .service) }
       server?.stop()
       adaptiveBitrate?.stop()
       adaptiveBitrate = nil
@@ -635,10 +644,18 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       }
       if wakes { videoEncoder.requestKeyframe() }
       Task { @MainActor in
-        self?.serverStatus = status
+        guard let self else { return }
+        let prior = self.serverStatus
+        if prior.isListening != status.isListening {
+          AppLog.record(status.isListening ? .streamStarted : .streamStopped, operation: .service)
+        }
+        self.serverStatus = status
+        if status.lastError != nil && status.lastError != prior.lastError {
+          AppLog.record(.streamFailed, operation: .service, error: .internalError)
+        }
         // Printed as well as shown, because a bind failure on a handset is otherwise invisible from
         // the Mac driving the test.
-        self?.printJSON(status)
+        self.printJSON(status)
       }
     }
 
@@ -1263,6 +1280,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     videoEncoder.onFrame = { frame in recorder.append(frame) }
     audioEncoder.onFrame = { frame in audioRecorder.append(frame) }
     status = "recording"
+    AppLog.record(.recordingStarted)
 
     try? await Task.sleep(for: .seconds(seconds))
 
@@ -1271,6 +1289,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     videoEncoder.onFrame = nil
     audioEncoder.onFrame = nil
     status = "recorded"
+    AppLog.record(.recordingStopped)
 
     print("CAMERAMAN_RECORDING_BEGIN")
     printJSON(summary)

@@ -1,4 +1,5 @@
 import SwiftUI
+import TeamStationObservability
 
 /// TS Distributor: pulls TS Director's recordings off the iPad over the cable and stitches them
 /// with the Director's own code. Its settings are kept on this Mac and on the iPad, so
@@ -13,6 +14,7 @@ struct DistributorApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
   init() {
+    AppLog.start(app: .distributor)
     let model = DistributorModel()
     _model = State(initialValue: model)
     let api = APIServer(model: model)

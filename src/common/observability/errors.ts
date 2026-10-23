@@ -12,7 +12,7 @@ const bag = (value: unknown): Bag =>
     : {}
 
 /** SDK event reconstruction. No raw messages, locals, contexts, breadcrumbs or user metadata. */
-export function safeErrorEvent(input: unknown): Bag {
+export function safeErrorEvent(input: unknown): Bag & { type: undefined } {
   const raw = bag(input)
   const stamp =
     typeof raw.timestamp === 'string' &&
@@ -57,6 +57,7 @@ export function safeErrorEvent(input: unknown): Bag {
         })
     }
   return {
+    type: undefined,
     event_id:
       typeof raw.event_id === 'string' && /^[a-f0-9]{32}$/i.test(raw.event_id)
         ? raw.event_id.toLowerCase()

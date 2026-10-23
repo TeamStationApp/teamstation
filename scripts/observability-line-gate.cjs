@@ -15,7 +15,7 @@ const git = (cwd, args) =>
   }).trim()
 const production = path =>
   /\.(ts|tsx|cjs|mjs|swift|kt)$/.test(path) &&
-  !/\.(test|spec|e2e|integration)\.|\/Tests\/|\/test\/|Package\.swift$/.test(
+  !/\.(test|spec|e2e|integration)\.|\/Tests\/|\/test\/|\/androidTest\/|Package\.swift$/.test(
     path
   )
 
@@ -53,6 +53,17 @@ function snapshot(cwd = process.cwd()) {
 function verifySource(before, after) {
   if (before.stamp !== after.stamp)
     throw new Error('Source changed while collecting coverage')
+}
+
+function mergeCounts(...reports) {
+  const combined = {}
+  for (const report of reports)
+    for (const [path, lines] of Object.entries(report)) {
+      const target = (combined[path] ??= {})
+      for (const [line, hits] of Object.entries(lines))
+        target[line] = (target[line] ?? 0) + hits
+    }
+  return combined
 }
 
 function evaluate(changes, counts, newFiles = []) {
@@ -97,4 +108,11 @@ function gate(before, rawCounts, include, log = console.log) {
     throw new Error('Changed executable lines require 95% per file and overall')
   return report
 }
-module.exports = { snapshot, verifySource, production, evaluate, gate }
+module.exports = {
+  snapshot,
+  verifySource,
+  mergeCounts,
+  production,
+  evaluate,
+  gate
+}

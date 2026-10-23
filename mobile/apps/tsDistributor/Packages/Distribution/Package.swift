@@ -8,6 +8,7 @@ let package = Package(
     .library(name: "Distribution", targets: [ "Distribution" ])
   ],
   dependencies: [
+    .package(path: "../../../common/TeamStationObservability"),
     .package(path: "../DirectorClient"),
     .package(path: "../CombinedVideo"),
     .package(path: "../../../common/DirectorCore"),
@@ -19,13 +20,13 @@ let package = Package(
   targets: [
     .target(
       name: "Distribution",
-      dependencies: [ "DirectorClient", "CombinedVideo", "DirectorCore", "DirectorExport", "DistributorWire" ],
+      dependencies: [ "TeamStationObservability", "DirectorClient", "CombinedVideo", "DirectorCore", "DirectorExport", "DistributorWire" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
     .testTarget(
       name: "DistributionTests",
       dependencies: [
-        "Distribution", "DirectorClient", "DirectorCore", "DirectorExport", "DistributorWire", "DirectorLink"
+        "Distribution", "TeamStationObservability", "DirectorClient", "DirectorCore", "DirectorExport", "DistributorWire", "DirectorLink"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )

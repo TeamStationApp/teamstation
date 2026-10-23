@@ -172,5 +172,11 @@ describe('private compact event contract', () => {
     for (const value of ['123', 'usr_demo']) expect(userId(value)).equals(value)
     for (const value of [null, 3, '', '0', 'me@example.test', '123/secret'])
       expect(userId(value)).equals(undefined)
+    expect(
+      parseEvent({ ...sample(), A: 'TS srv', U: 'usr_demo' }, NOW).U
+    ).equals('usr_demo')
+    for (const U of ['private-canary', 123, null])
+      expect(() => parseEvent({ ...sample(), A: 'TS srv', U }, NOW)).throws()
+    expect(() => parseEvent({ ...sample(), U: 'usr_demo' }, NOW)).throws()
   })
 })

@@ -18,6 +18,7 @@ import type { Kysely } from 'kysely'
 import { after, afterEach, before, describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
+import { safeErrorEvent } from '../../common/observability/errors'
 import { userIdOfGumbo } from '../../common/userId'
 import { envelope } from '../../logServer/envelope'
 import type { Actor } from '../auth/sessions'
@@ -192,7 +193,7 @@ describe('server Sentry options', function () {
         },
         { originalException: new Error('x') }
       )
-    ).deep.equals({ type: undefined, message: 'code for [email]' })
+    ).deep.equals(safeErrorEvent({ message: 'code for ruth@example.test' }))
     expect(beforeBreadcrumb({ category: 'console' }, undefined)).equals(null)
   })
 })

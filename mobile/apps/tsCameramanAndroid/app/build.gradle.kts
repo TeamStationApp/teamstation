@@ -67,7 +67,7 @@ android {
         // The release build is signed with the debug keystore, so `installRelease` works on a
         // handset without provisioning a release keystore for a match-day tool.
         getByName("debug") {
-            storeFile = file("debug.keystore")
+            storeFile = file(System.getenv("TS_ANDROID_DEBUG_KEYSTORE") ?: "debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
@@ -98,6 +98,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
+            java.srcDirs("../../common/android/observability/src/main/kotlin")
         }
         getByName("test") {
             java.srcDirs("src/test/kotlin")

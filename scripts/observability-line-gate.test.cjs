@@ -8,11 +8,21 @@ const {
   evaluate,
   production,
   verifySource,
+  mergeCounts,
   snapshot,
   gate
 } = require('./observability-line-gate.cjs')
 
 describe('observability coverage gate', () => {
+  it('combines host and package counters by executable line without erasing hits', () => {
+    const first = { 'host.swift': { 1: 2, 2: 0 }, 'other.kt': { 4: 1 } }
+    const second = { 'host.swift': { 1: 0, 2: 3, 3: 0 } }
+    assert.deepEqual(mergeCounts(first, second), {
+      'host.swift': { 1: 2, 2: 3, 3: 0 },
+      'other.kt': { 4: 1 }
+    })
+    assert.deepEqual(first['host.swift'], { 1: 2, 2: 0 })
+  })
   it('enforces per-file and total boundaries including new files and missing records', () => {
     const lines = new Set(Array.from({ length: 100 }, (_, i) => i + 1))
     const counters = n =>
@@ -38,6 +48,7 @@ describe('observability coverage gate', () => {
       'a.test.ts',
       'a.e2e.ts',
       'test/a.kt',
+      'app/src/androidTest/StartupTest.kt',
       'x/Tests/a.swift',
       'Package.swift',
       'README.md'
@@ -46,10 +57,20 @@ describe('observability coverage gate', () => {
   })
   it('fingerprints untracked source independently of the checkout state', () => {
     const root = mkdtempSync(join(tmpdir(), 'coverage-source-'))
-    const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
+    const git = (...args) =>
+      execFileSync('git', args, { cwd: root, stdio: 'ignore' })
     try {
       git('init', '-b', 'master')
-      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-m', 'Fixture')
+      git(
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.test',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'Fixture'
+      )
       git('update-ref', 'refs/remotes/origin/master', 'HEAD')
       writeFileSync(join(root, 'new.ts'), 'export const value = 1\n')
       writeFileSync(join(root, 'note.txt'), 'fixture')

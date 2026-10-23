@@ -22,6 +22,8 @@ settings:
     ENABLE_MODULE_VERIFIER: NO
 
 packages:
+  TeamStationObservability:
+    path: ../common/TeamStationObservability
   # Crash reporting, shared by the iOS apps.
   TeamStationSentry:
     path: ../common/TeamStationSentry
@@ -99,6 +101,8 @@ targets:
     dependencies:
       - package: TeamStationSentry
         product: TeamStationSentry
+      - package: TeamStationObservability
+        product: TeamStationObservability
       - package: DirectorCore
         product: DirectorCore
       - package: DirectorSources
@@ -163,6 +167,8 @@ targets:
       # compiling them here too runs the same tests on the iPad.
       - path: ../common/DirectorExport/Tests/DirectorExportTests
     dependencies:
+      - package: TeamStationObservability
+        product: TeamStationObservability
       - target: Director
       - package: AdaptiveBitrate
         product: AdaptiveBitrate

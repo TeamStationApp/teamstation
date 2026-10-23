@@ -3,11 +3,58 @@ import { globSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import gateModule from './observability-line-gate.cjs'
 import counters from './changed-line-coverage.cjs'
+import { build } from 'esbuild'
+import { webSettings } from './web-build-settings.mjs'
 
 const { snapshot, gate } = gateModule
 const before = snapshot()
 const directory = 'coverage/observability'
 mkdirSync(directory, { recursive: true })
+await build({
+  ...webSettings,
+  plugins: [
+    ...webSettings.plugins,
+    {
+      name: 'native-sdk-host-test',
+      setup(builder) {
+        builder.onResolve({ filter: /^@sentry\/react-native$/ }, () => ({
+          path: 'native-sdk-test',
+          namespace: 'native-sdk-test'
+        }))
+        builder.onLoad({ filter: /.*/, namespace: 'native-sdk-test' }, () => ({
+          contents:
+            'export const addBreadcrumb = () => {}, captureException = () => {}, ErrorBoundary = () => {}, init = () => {}, nativeCrash = () => {}, setTag = () => {}, setUser = () => {}'
+        }))
+      }
+    }
+  ],
+  stdin: {
+    contents: [
+      'src/app/sentry.test.tsx',
+      'src/app/sentrySdk.native.test.tsx',
+      ...globSync('src/app/observability/*.test.tsx')
+    ]
+      .map(file => `import './${file}'`)
+      .join('\n'),
+    resolveDir: process.cwd(),
+    sourcefile: 'observability-tests.ts'
+  },
+  outfile: 'lib/observability-tests.cjs',
+  platform: 'node',
+  format: 'cjs',
+  bundle: true,
+  jsx: 'automatic',
+  external: ['react', 'react-dom', 'jsdom', 'mocha', 'chai'],
+  sourcemap: true,
+  define: {
+    __DEV__: 'true',
+    TS_API_BASE_URL: JSON.stringify('/api/v1'),
+    'process.env.TS_SENTRY_DSN': '""',
+    'process.env.TS_API_BASE_URL': '"https://app.example.test/api/v1"',
+    'process.env.NODE_ENV': '"test"'
+  },
+  loader: { '.png': 'dataurl', '.svg': 'dataurl' }
+})
 const tests = [
   ...globSync('src/**/observability/*.test.ts'),
   ...globSync('src/logServer/*.test.ts'),
@@ -15,6 +62,9 @@ const tests = [
   'src/server/jsonBody.test.ts',
   'src/server/serverConfig.test.ts',
   'src/server/openapi.test.ts',
+  'src/server/sentry/sentry.test.ts',
+  'src/server/statsBuilder/main.test.ts',
+  'lib/observability-tests.cjs',
   'scripts/observability-line-gate.test.cjs'
 ]
 const include = [
@@ -28,7 +78,13 @@ const include = [
   'src/server/jsonBody.ts',
   'src/server/serverConfig.ts',
   'src/server/openapi.ts',
-  'src/server/index.ts'
+  'src/server/index.ts',
+  'src/app/sentry.ts',
+  'src/app/sentrySdk.native.ts',
+  'src/app/observability/*.ts',
+  'src/server/sentry/options.ts',
+  'src/server/statsBuilder/main.ts',
+  'src/server/statsBuilder/start.ts'
 ]
 const args = [
   'node_modules/.bin/c8',
@@ -38,6 +94,8 @@ const args = [
   '--report-dir',
   directory,
   ...include.flatMap(path => ['--include', path]),
+  '--include',
+  'lib/observability-tests.cjs',
   '--exclude',
   '**/*.test.*',
   'node',
@@ -47,6 +105,8 @@ const args = [
   '--exit',
   '-r',
   'sucrase/register',
+  '-r',
+  './src/test/scoringDomSetup.cjs',
   ...tests
 ]
 console.log('$ node ' + args.join(' '))
@@ -65,7 +125,7 @@ const report = gate(
   before,
   counts,
   path =>
-    /^src\/(common|server)\/observability\//.test(path) ||
+    /^src\/(common|server|app)\/observability\//.test(path) ||
     path.startsWith('src/logServer/') ||
     include.includes(path) ||
     path === 'scripts/observability-line-gate.cjs'

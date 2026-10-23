@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { buildInfo } from '../common/distribution'
 import { HttpError } from '../common/errors'
+import { safeErrorEvent } from '../common/observability/errors'
 import { sentryRelease } from '../common/sentry/release'
 import {
   RenderErrorProbe,
@@ -67,6 +68,12 @@ describe('startSentry', function () {
       environment: 'develop2'
     })
     expect(sdk.tags).deep.equals([['platform', 'web']])
+    const integrations = options.integrations as (
+      defaults: Array<{ name: string }>
+    ) => Array<{ name: string }>
+    expect(
+      integrations([{ name: 'BrowserSession' }, { name: 'GlobalHandlers' }])
+    ).deep.equals([{ name: 'GlobalHandlers' }])
     expect(startSentry({ dsn: DSN, sdk, platform: 'web' })).equals(false)
     expect(sdk.options).length(1)
   })
@@ -105,8 +112,9 @@ describe('startSentry', function () {
         { message: 'open /signin/abc' },
         { originalException: new Error('x') }
       )
-    ).deep.equals({ message: 'open /signin/[Filtered]' })
+    ).deep.equals(safeErrorEvent({ message: 'open /signin/abc' }))
     expect(options.beforeBreadcrumb({ category: 'console' })).equals(null)
+    expect(options.beforeBreadcrumb({ category: 'ui.click' })).equals(null)
   })
 })
 
@@ -147,6 +155,23 @@ describe('useSentryUser', function () {
     await act(async () => {
       root?.render(<Probe userId={7} sdk={sdk} />)
     })
+    const visibility = Object.getOwnPropertyDescriptor(
+      document,
+      'visibilityState'
+    )
+    try {
+      for (const value of ['hidden', 'visible']) {
+        Object.defineProperty(document, 'visibilityState', {
+          value,
+          configurable: true
+        })
+        document.dispatchEvent(new window.Event('visibilitychange'))
+      }
+    } finally {
+      if (visibility != null)
+        Object.defineProperty(document, 'visibilityState', visibility)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    }
     await act(async () => {
       root?.render(<Probe userId={undefined} sdk={sdk} />)
     })

@@ -1,6 +1,7 @@
 import DirectorClient
 import Foundation
 import Observation
+import TeamStationObservability
 
 /// Several recordings exported together, taken through each step of an export as one: every file
 /// of every recording comes off the iPad first, under one export lock; then the Mac stitches them
@@ -51,6 +52,18 @@ public final class DistributionBatch {
   }
 
   public func run() async {
+    AppLog.record(.exportStarted, operation: .export, count: runs.count)
+    defer {
+      let failed = runs.contains { run in
+        (Array(run.states.values) + [run.combinedState].compactMap { $0 }).contains {
+          if case .failed = $0 { return true }; return false
+        } || run.uploadStates.values.contains {
+          if case .failed = $0 { return true }; return false
+        }
+      }
+      AppLog.record(wasCancelled || failed ? .exportFailed : .exportCompleted, operation: .export,
+                    error: wasCancelled ? .cancelled : failed ? .storage : nil, count: runs.count)
+    }
     // Work the user asked for: macOS neither naps the app nor lets the Mac idle to sleep while an
     // export runs, whether or not the window is in front.
     let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Exporting recordings")

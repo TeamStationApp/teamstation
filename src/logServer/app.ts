@@ -15,6 +15,7 @@ import type { LogSpool } from './spool'
 export interface CollectorConfig {
   origins: string[]
   readToken: string
+  serverWriteToken?: string
   projects: Record<string, { app: AppCode; environment: string }>
 }
 export function collector(
@@ -24,6 +25,8 @@ export function collector(
 ): express.Express {
   if (config.readToken.length < 32)
     throw new Error('Read token must be at least 32 characters')
+  if (config.serverWriteToken != null && config.serverWriteToken.length < 32)
+    throw new Error('Server write token must be at least 32 characters')
   for (const [key, project] of Object.entries(config.projects)) {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(key) || !APPS.includes(project.app))
       throw new Error('Invalid project')
@@ -130,6 +133,21 @@ export function collector(
         rows = req.path.startsWith('/api/')
           ? envelope(req.body, project.app)
           : parseBatch((req.body as Buffer).toString('utf8'))
+        if (rows.some(row => row.U !== undefined)) {
+          const provided = Buffer.from(req.header('authorization') ?? '')
+          const expected = Buffer.from(
+            'Bearer ' + (config.serverWriteToken ?? '')
+          )
+          if (
+            project.app !== 'TS srv' ||
+            config.serverWriteToken == null ||
+            provided.length !== expected.length ||
+            !timingSafeEqual(provided, expected)
+          ) {
+            res.status(403).json({ error: 'untrusted_actor' })
+            return
+          }
+        }
         rows = rows.map(row => ({
           ...row,
           A: project.app,

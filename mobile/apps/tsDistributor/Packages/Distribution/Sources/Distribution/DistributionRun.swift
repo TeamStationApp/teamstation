@@ -6,6 +6,7 @@ import DirectorExport
 import DistributorWire
 import Foundation
 import Observation
+import TeamStationObservability
 
 /// What goes to TeamStation once an export's files are saved, one video per
 /// file, all on the same game.
@@ -533,11 +534,13 @@ public final class DistributionRun {
     for track in ordered {
       guard !Task.isCancelled else { return }
       guard let file = savedFile(for: track) else {
+        AppLog.record(.uploadFailed, error: .storage)
         uploadStates[track] = .failed("not saved, so not uploaded")
         continue
       }
       let total = Self.size(of: file)
       uploadStates[track] = .uploading(sent: 0, total: total)
+      AppLog.record(.uploadStarted)
       do {
         _ = try await plan.send(
           file,
@@ -556,7 +559,9 @@ public final class DistributionRun {
           }
         }
         uploadStates[track] = .done
+        AppLog.record(.uploadCompleted)
       } catch {
+        AppLog.record(.uploadFailed, error: Task.isCancelled ? .cancelled : .internalError)
         uploadStates[track] = .failed("\(error)")
         return
       }
