@@ -7201,16 +7201,17 @@ export class Scenarios {
   }
 
   /**
-   * Tap a control framed in a panned, pinch-zoomed page. Browser input lands
-   * in the visual viewport, so the layout centre is offset and scaled into it;
-   * the control's actual focus afterwards proves where the tap landed.
+   * Tap a control framed in a panned, pinch-zoomed page. The driver's point is
+   * relative to the visual viewport (measured: delivered client = point +
+   * offset, unscaled), so the layout centre is offset into it; the control's
+   * actual focus afterwards proves where the tap landed.
    */
   async tapZoomedWebControl(target: ZoomedWebControl): Promise<void> {
     const ui = this.ui
     assert(!ui.native, 'Pinch-zoomed browser page required')
     const spec = JSON.stringify(target)
     const located = await ui.dom(
-      `const spec=${spec},v=visualViewport,matches=Array.from(document.querySelectorAll(spec.css));if(matches.length!==1||v==null)throw Error('Unique zoomed tap target and visual viewport required');const b=matches[0].getBoundingClientRect();return {x:(b.x+b.width/2-v.offsetLeft)*v.scale,y:(b.y+b.height/2-v.offsetTop)*v.scale,scale:v.scale,offsetLeft:v.offsetLeft,offsetTop:v.offsetTop}`
+      `const spec=${spec},v=visualViewport,matches=Array.from(document.querySelectorAll(spec.css));if(matches.length!==1||v==null)throw Error('Unique zoomed tap target and visual viewport required');const b=matches[0].getBoundingClientRect();return {x:b.x+b.width/2-v.offsetLeft,y:b.y+b.height/2-v.offsetTop,scale:v.scale,offsetLeft:v.offsetLeft,offsetTop:v.offsetTop}`
     )
     const point = {
       x: Math.round(Number(located.x)),
