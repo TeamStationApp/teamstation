@@ -44,7 +44,11 @@ import {
   VideoPoster
 } from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
-import { ContentInsetContext, NO_INSET } from '../components/contentInset'
+import {
+  ContentInsetContext,
+  NO_INSET,
+  useContentInset
+} from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
 import {
   CardBand,
@@ -53,6 +57,7 @@ import {
   PinnedSpacer
 } from '../components/PinnedBands'
 import { useScreenBottom } from '../components/Screen'
+import { TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useScreenScope } from '../hooks/useScreenScope'
@@ -267,6 +272,24 @@ function teamStatsOf(
     away: side(linescore.away, linescore.home),
     home: side(linescore.home, linescore.away)
   }
+}
+
+/**
+ * The inset the section pills run out through. Upright they sit in the
+ * column's pill band, as on the other sections, and keep its inset, so a
+ * strip swiped sideways reaches the screen's edge there as it does on Info;
+ * held sideways, beside the picture, none.
+ */
+function PillStripInset(props: {
+  none: boolean
+  children: React.ReactNode
+}): React.ReactElement {
+  const inherited = useContentInset()
+  return (
+    <ContentInsetContext.Provider value={props.none ? NO_INSET : inherited}>
+      {props.children}
+    </ContentInsetContext.Provider>
+  )
 }
 
 /**
@@ -1617,13 +1640,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       />
     )
 
+  const pills = gameTabs({
+    game,
+    now: clockNow,
+    onReplay: props.onReplay
+  })
+  // Which way a section change slides: by the pills' order.
+  const tabIndex = pills.findIndex(item => item.id === tab)
   const tabs = (
     <PillTabs
-      tabs={gameTabs({
-        game,
-        now: clockNow,
-        onReplay: props.onReplay
-      })}
+      tabs={pills}
       selected={tab}
       onSelect={next => {
         if (next === 'replay') {
@@ -1887,18 +1913,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
-  // The full-width section band keeps the same horizontal inset in every
-  // layout, above both the picture and the highlight column.
-  const headInset = theme.rem(theme.spaceMdRem)
   const sections = (
     <View
       onLayout={event => {
         setTabsHeight(event.nativeEvent.layout.height)
       }}
     >
-      <ContentInsetContext.Provider
-        value={short ? NO_INSET : { left: headInset, right: headInset }}
-      >
+      <PillStripInset none={short}>
         {short && tab === 'watch' ? actionButtons : null}
         <View
           onLayout={event => {
@@ -1907,7 +1928,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         >
           {tabs}
         </View>
-      </ContentInsetContext.Provider>
+      </PillStripInset>
     </View>
   )
 
@@ -2078,59 +2099,75 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <>
       <View style={styles.watch}>
         <View style={styles.tabPane} testID="gameSection">
-          {tab === 'watch' ? (
-            <GameWatchLayout
-              pinned={pinned}
-              head={scoreboard}
-              player={player}
-              description={description}
-              sections={sections}
-              // A game nothing was recorded of has nothing to have
-              // highlights of: "No videos." is the whole of the tab.
-              highlightList={video == null ? null : highlightList}
-              footer={
-                <>
-                  {/*
+          {/*
+            Watch is a layout of its own, a full-height scroller like the
+            sections' Screen, with the same hero and pills in the same place:
+            crossing it slides only what is under the pills, as Info and Box
+            Score do between themselves. Held sideways it shows no hero, so
+            the two have no head in common and slide whole.
+          */}
+          <TabPages
+            fill
+            keepHead={!short}
+            page={tab === 'watch' ? 'watch' : 'sections'}
+            index={tabIndex}
+          >
+            {tab === 'watch' ? (
+              <GameWatchLayout
+                key="watch"
+                pinned={pinned}
+                head={scoreboard}
+                player={player}
+                description={description}
+                sections={sections}
+                // A game nothing was recorded of has nothing to have
+                // highlights of: "No videos." is the whole of the tab.
+                highlightList={video == null ? null : highlightList}
+                footer={
+                  <>
+                    {/*
                     Under the highlights, and only for the people who run the
                     team: everybody else is answered `404` and sees nothing
                     here at all. A browser lists stream URLs; a phone records
                     with its own camera.
                   */}
-                  <StreamFooter
-                    client={client}
-                    gameId={gameId}
-                    onPublishing={setPublishing}
-                  />
-                </>
-              }
-              layout={layout}
-              short={short}
-              sideBySide={sideBySide}
-              headerHeight={headerHeight}
-              tabsHeight={tabsHeight}
-              height={height}
-              style={styles.tabPane}
-              contentStyle={[
-                styles.watchContent,
-                styles.watchStacked,
-                { paddingBottom: screenBottom }
-              ]}
-              headStyle={styles.head}
-            />
-          ) : (
-            <Screen {...pinned.screen} wide>
-              <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
-              <PillBand part={pinned.pillBand}>{tabs}</PillBand>
-              <PinnedContent
-                key={tab}
-                part={pinned.content}
-                testID="eventTabContent"
-              >
-                {below}
-              </PinnedContent>
-              <PinnedSpacer part={pinned.spacer} />
-            </Screen>
-          )}
+                    <StreamFooter
+                      client={client}
+                      gameId={gameId}
+                      onPublishing={setPublishing}
+                    />
+                  </>
+                }
+                layout={layout}
+                short={short}
+                sideBySide={sideBySide}
+                headerHeight={headerHeight}
+                tabsHeight={tabsHeight}
+                height={height}
+                style={styles.tabPane}
+                contentStyle={[
+                  styles.watchContent,
+                  styles.watchStacked,
+                  { paddingBottom: screenBottom }
+                ]}
+              />
+            ) : (
+              <Screen key="sections" {...pinned.screen} wide>
+                <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
+                <PillBand part={pinned.pillBand}>{tabs}</PillBand>
+                <TabPages page={tab} index={tabIndex}>
+                  <PinnedContent
+                    key={tab}
+                    part={pinned.content}
+                    testID="eventTabContent"
+                  >
+                    {below}
+                  </PinnedContent>
+                </TabPages>
+                <PinnedSpacer part={pinned.spacer} />
+              </Screen>
+            )}
+          </TabPages>
         </View>
       </View>
       {membershipWarning && (
@@ -2395,14 +2432,6 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     watchStacked: {
       flexDirection: 'column'
-    },
-    head: {
-      width: '100%',
-      // The same inset the card keeps at the sides, so the gap under the
-      // header matches the gap at the left and right of the screen.
-      paddingTop: theme.rem(theme.spaceMdRem),
-      paddingHorizontal: theme.rem(theme.spaceMdRem),
-      gap: theme.rem(theme.spaceSmRem)
     },
     // The tables under that card. The same side inset, so they share its
     // edges rather than sitting in a wider column of their own.

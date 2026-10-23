@@ -522,13 +522,84 @@ async function main(): Promise<void> {
     if (!before && chosen.has('W7')) {
       await m.openLink({ link: `${f.h.origin}/games/${gameId}` })
       await settle('Demo Owls')
-      // Videos is a layout of its own: crossing it slides the pane, while
-      // Info and Box score slide only the content. Every step moves, whether
-      // the game opened on Info or on Videos.
-      for (const name of ['Box score', 'Videos', 'Info', 'Box score'])
-        await measured(`W7 game ${name}`, pages, async () => {
-          await tapCss(`[aria-label="Game sections"] [aria-label="${name}"]`)
+      // Videos is a layout of its own, with the same hero and pills: crossing
+      // it slides only what is under the pills, as Info and Box score do, and
+      // leaves both layouts, and the pills, exactly where they were. Every
+      // step moves, whether the game opened on Info or on Videos.
+      const strip = async (): Promise<string> =>
+        await page.$eval('[aria-label="Game sections"]', node => {
+          const box = node.getBoundingClientRect()
+          return `${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.width)}x${Math.round(box.height)}`
         })
+      let shown = await page.$eval(
+        '[aria-label="Game sections"] [aria-selected="true"]',
+        node => node.getAttribute('aria-label')
+      )
+      assert.ok(shown != null, 'W7: the game opens on a chosen pill')
+      const home = await strip()
+      for (const name of ['Box score', 'Videos', 'Info', 'Box score']) {
+        const label = `W7 game ${name}`
+        const samples = await measured(
+          label,
+          `${pages}, [data-page-content]`,
+          async () => {
+            await tapCss(`[aria-label="Game sections"] [aria-label="${name}"]`)
+          }
+        )
+        if (shown === 'Videos' || name === 'Videos') {
+          const layouts = samples.filter(
+            s => s.key === 'watch' || s.key === 'sections'
+          )
+          assert.ok(
+            layouts.length > 0 && layouts.every(s => s.x === 0),
+            `${label}: the layouts stay where they are`
+          )
+          assert.ok(
+            samples.some(s => s.key === '' && s.role !== '' && s.x !== 0),
+            `${label}: what is under the pills slides`
+          )
+        }
+        const at = await strip()
+        await note(`${label}: pills at ${at} (first ${home})`)
+        assert.equal(at, home, `${label}: the pills stay where they were`)
+        shown = name
+      }
+      // And scrolled, the pills pin under the header on both layouts: a band
+      // wrapped in anything as tall as itself would scroll away instead.
+      const pinnedAt = async (name: string): Promise<number> => {
+        await tapCss(`[aria-label="Game sections"] [aria-label="${name}"]`)
+        await new Promise(resolve => setTimeout(resolve, 900))
+        const scroll = async (top: number): Promise<void> => {
+          await page.evaluate(to => {
+            let node = document.querySelector('[aria-label="Game sections"]')
+            while (
+              node != null &&
+              !(
+                node.scrollHeight > node.clientHeight + 10 &&
+                /auto|scroll/.test(getComputedStyle(node).overflowY)
+              )
+            )
+              node = node.parentElement
+            if (node == null) throw new Error('No scroller above the pills')
+            node.scrollTop = to
+          }, top)
+          await new Promise(resolve => setTimeout(resolve, 400))
+        }
+        await scroll(600)
+        const y = await page.$eval('[aria-label="Game sections"]', node =>
+          Math.round(node.getBoundingClientRect().y)
+        )
+        await scroll(0)
+        return y
+      }
+      const top = Number(home.split(' ')[0].split(',')[1])
+      const onVideos = await pinnedAt('Videos')
+      const onInfo = await pinnedAt('Info')
+      await note(
+        `W7 pinned: pills at y=${onVideos} on Videos, ${onInfo} on Info (${top} unscrolled)`
+      )
+      assert.ok(onVideos < top, 'W7: the pills pin on Videos')
+      assert.equal(onVideos, onInfo, 'W7: and where they pin on Info')
     }
 
     if (!before && process.env.TS_COVERAGE_BASE != null)

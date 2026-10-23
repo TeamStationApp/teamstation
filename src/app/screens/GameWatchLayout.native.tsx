@@ -8,9 +8,11 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import { PinnedSpacer } from '../components/PinnedBands'
+import { SlidingContent, useActiveRef } from '../components/TabPages'
 import { PHONE_MARGIN } from '../layout/watch'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
+import { GameWatchHead, uprightColumn } from './GameWatchHead'
 import type { GameWatchLayoutProps } from './gameWatchLayoutProps'
 
 export type { GameWatchLayoutProps }
@@ -41,11 +43,13 @@ export function GameWatchLayout(
     tabsHeight,
     height,
     style,
-    contentStyle,
-    headStyle
+    contentStyle
   } = props
   const theme = useTheme()
-  const handleLayout = pinned.screen.onLayout
+  // A pane sliding out lets go of the pinned head's scroller and its
+  // handlers, as `Screen` does.
+  const handleLayout = useActiveRef(pinned.screen.onLayout)
+  const sharedScroll = useActiveRef(pinned.screen.onScroll)
   const insets = useInsets()
   const scrollY = useSharedValue(0)
   const bodyTop = useSharedValue(0)
@@ -60,7 +64,7 @@ export function GameWatchLayout(
   // The native pinned-head implementation always supplies a Reanimated handler.
   const onPageScroll = useComposedEventHandler([
     handleScroll,
-    pinned.screen.onScroll as typeof handleScroll
+    (sharedScroll ?? null) as typeof handleScroll | null
   ])
   const pegStyle = useAnimatedStyle(() => {
     const wanted = scrollY.value + tabsHeight - bodyTop.value - pegTop.value
@@ -94,7 +98,7 @@ export function GameWatchLayout(
   }
   return (
     <Animated.ScrollView
-      ref={pinned.screen.scrollRef}
+      ref={useActiveRef(pinned.screen.scrollRef)}
       onLayout={handleLayout}
       style={style}
       // A tap on a button in a dialog opened from this tab (Record video's
@@ -112,40 +116,26 @@ export function GameWatchLayout(
         paddingRight: insets.right
       }}
     >
-      <View style={contentStyle}>
-        <Animated.View
-          ref={pinned.cardBand.ref}
-          onLayout={pinned.cardBand.handleLayout}
-          style={[!short && headStyle, pinned.cardBand.style]}
-        >
-          {short ? null : head}
-        </Animated.View>
-        <Animated.View
-          testID="event-pill-band"
-          ref={pinned.pillBand.ref}
-          onLayout={pinned.pillBand.handleLayout}
-          style={[
-            {
-              width: '100%',
-              paddingHorizontal: theme.rem(theme.spaceMdRem),
-              zIndex: 3,
-              elevation: 3,
-              backgroundColor: theme.backgroundColor
-            },
-            pinned.pillBand.style
-          ]}
-        >
-          {sections}
-        </Animated.View>
-        <View
-          ref={pinned.content.ref}
+      <View style={[contentStyle, !short && uprightColumn(theme)]}>
+        <GameWatchHead
+          pinned={pinned}
+          head={head}
+          sections={sections}
+          short={short}
+          scrollerInset={insets}
+        />
+        <SlidingContent
+          ref={useActiveRef(pinned.content.ref)}
           testID="eventTabContent"
-          onLayout={event => {
+          onLayout={useActiveRef((event: LayoutChangeEvent) => {
             bodyTop.value = event.nativeEvent.layout.y
             pinned.content.handleLayout?.(event)
-          }}
+          })}
           style={{
             width: '100%',
+            // Upright, the pill band takes back the column's gap; the picture
+            // keeps its own small one below the pills.
+            marginTop: short ? 0 : theme.rem(theme.spaceSmRem),
             flexDirection: sideBySide ? 'row' : 'column',
             alignItems: 'flex-start',
             columnGap: theme.rem(1.5)
@@ -198,13 +188,17 @@ export function GameWatchLayout(
             {highlightList}
             {footer}
           </Animated.ScrollView>
-        </View>
+        </SlidingContent>
         <PinnedSpacer
           part={{
             ...pinned.spacer,
             style: [
               pinned.spacer.style,
-              { marginTop: -theme.rem(theme.spaceSmRem) }
+              {
+                marginTop: -theme.rem(
+                  short ? theme.spaceSmRem : theme.spaceLgRem
+                )
+              }
             ]
           }}
         />

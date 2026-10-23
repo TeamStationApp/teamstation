@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { Text, View } from 'react-native'
 
 import type {
@@ -39,6 +46,7 @@ import { FollowButton } from '../components/FollowButton'
 import { SegmentedPill } from '../components/SegmentedPill'
 import { StatisticsTable } from '../components/StatisticsTable'
 import { StickySectionLayout } from '../components/StickySectionLayout'
+import { TabPages } from '../components/TabPages'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -169,6 +177,16 @@ export function SeasonPresentation(
   const [when, setWhen] = useState<When>(initialWhen ?? 'past')
   const [includeExhibitions, setIncludeExhibitions] = useState(false)
   const [games, setGames] = useState<SeasonGame[]>([])
+  // The latest handler under one identity, so the schedule's cards, kept
+  // built across pill changes, are not drawn again for a new one.
+  const opener = useRef(onOpenGame)
+  opener.current = onOpenGame
+  const openGame = useCallback<SeasonPresentationProps['onOpenGame']>(
+    (...args) => {
+      opener.current(...args)
+    },
+    []
+  )
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [standings, setStandings] = useState<StandingsRow[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
@@ -559,366 +577,370 @@ export function SeasonPresentation(
         </View>
       )}
       {loading && <Text style={styles.muted}>Loading…</Text>}
-      {mayView && tab === 'standings' && (
-        <View style={styles.section}>
-          <SegmentedPill
-            options={EXHIBITION_TABS}
-            selected={includeExhibitions ? 'all' : 'inSeason'}
-            onSelect={next => {
-              setIncludeExhibitions(next === 'all')
-            }}
-            accessibilityLabel="Standings games"
-          />
-          <SectionHeader title="Standings" note={`${standings.length} teams`} />
-          {standingsError !== '' && (
+      {/* Kept built: its schedule and standings run the length of a season. */}
+      <TabPages keep page={tab} index={tabs.findIndex(item => item.id === tab)}>
+        <View key={tab} style={styles.page}>
+          {mayView && tab === 'standings' && (
             <View style={styles.section}>
-              <Text accessibilityRole="alert" style={styles.error}>
-                {standingsError}
-              </Text>
-              <Button
-                label="Retry standings"
-                accessibilityLabel="Retry standings"
-                kind="secondary"
-                onPress={() => {
-                  setStandingsRetry(value => value + 1)
+              <SegmentedPill
+                options={EXHIBITION_TABS}
+                selected={includeExhibitions ? 'all' : 'inSeason'}
+                onSelect={next => {
+                  setIncludeExhibitions(next === 'all')
                 }}
+                accessibilityLabel="Standings games"
               />
+              <SectionHeader
+                title="Standings"
+                note={`${standings.length} teams`}
+              />
+              {standingsError !== '' && (
+                <View style={styles.section}>
+                  <Text accessibilityRole="alert" style={styles.error}>
+                    {standingsError}
+                  </Text>
+                  <Button
+                    label="Retry standings"
+                    accessibilityLabel="Retry standings"
+                    kind="secondary"
+                    onPress={() => {
+                      setStandingsRetry(value => value + 1)
+                    }}
+                  />
+                </View>
+              )}
+              {standingsLoading ? (
+                <Text style={styles.muted}>Loading standings…</Text>
+              ) : (
+                standingsError === '' &&
+                (standings.length === 0 ? (
+                  <Card>
+                    <Text style={styles.muted}>
+                      No games have been scored in this season yet.
+                    </Text>
+                  </Card>
+                ) : (
+                  <SeasonStandings rows={standings} onOpen={openStanding} />
+                ))
+              )}
             </View>
           )}
-          {standingsLoading ? (
-            <Text style={styles.muted}>Loading standings…</Text>
-          ) : (
-            standingsError === '' &&
-            (standings.length === 0 ? (
-              <Card>
-                <Text style={styles.muted}>
-                  No games have been scored in this season yet.
-                </Text>
-              </Card>
-            ) : (
-              <SeasonStandings rows={standings} onOpen={openStanding} />
-            ))
+          {tab === 'schedule' && !loading && (
+            <View style={styles.section}>
+              <PillTabs
+                tabs={WHEN_TABS}
+                selected={when}
+                onSelect={chooseWhen}
+                accessibilityLabel="Which games"
+              />
+              <TabPages
+                keep
+                page={when}
+                index={WHEN_TABS.findIndex(item => item.id === when)}
+              >
+                <View key={when} style={styles.page}>
+                  <SectionHeader
+                    title="Schedule"
+                    note={gameCountLabel(
+                      mayView ? shown.length : publicShown.length
+                    )}
+                  />
+                  {mayView ? (
+                    shown.length === 0 ? (
+                      <Card>
+                        <Text style={styles.muted}>Nothing here yet.</Text>
+                      </Card>
+                    ) : (
+                      shown.map(game => (
+                        <SeasonGameCard
+                          key={game.id}
+                          game={game}
+                          onOpenGame={openGame}
+                        />
+                      ))
+                    )
+                  ) : (
+                    publicShown.map(game => {
+                      const options = gameListOptions(game, 'schedule')
+                      return (
+                        <Card key={game.id}>
+                          <View style={styles.publicGameHeader}>
+                            <Text
+                              style={[styles.name, styles.publicGameMatchup]}
+                            >
+                              {game.awayTeam.name} at {game.homeTeam.name}
+                            </Text>
+                            {game.isUmpire === true &&
+                              game.status !== 'cancelled' && (
+                                <Badge label="UMP" tone="umpire" />
+                              )}
+                            {game.isGameLive === true &&
+                              game.status !== 'cancelled' && (
+                                <Badge label="LIVE" tone="live" />
+                              )}
+                            {game.pendingApproval && (
+                              <Text
+                                accessibilityLabel={`Pending approval for ${game.awayTeam.name} at ${game.homeTeam.name}`}
+                                style={styles.muted}
+                              >
+                                Pending approval
+                              </Text>
+                            )}
+                          </View>
+                          <Text style={styles.muted}>
+                            {shortDate(game.startAt)}
+                            {shortTime(game.startAt) === ''
+                              ? ''
+                              : ` · ${shortTime(game.startAt)}`}
+                            {game.venue == null ? '' : ` · ${game.venue}`}
+                          </Text>
+                          {options?.pendingRequestId != null && (
+                            <Button
+                              label="Open game proposal"
+                              accessibilityLabel={`Open game proposal for ${game.awayTeam.name} at ${game.homeTeam.name}`}
+                              kind="secondary"
+                              onPress={() => {
+                                onOpenGame(
+                                  game.id,
+                                  `${game.awayTeam.name} at ${game.homeTeam.name}`,
+                                  options
+                                )
+                              }}
+                            />
+                          )}
+                          {!game.pendingApproval && (
+                            <Text style={styles.muted}>
+                              {game.status === 'cancelled'
+                                ? game.cancellationReason === 'withdrawal'
+                                  ? `Canceled — ${game.withdrawnByTeamName ?? 'A team'} withdrew`
+                                  : 'Canceled'
+                                : game.status}
+                              {game.homeScore == null || game.awayScore == null
+                                ? ''
+                                : ` · ${game.awayScore}–${game.homeScore}`}
+                            </Text>
+                          )}
+                        </Card>
+                      )
+                    })
+                  )}
+                  {props.scheduleActions}
+                </View>
+              </TabPages>
+            </View>
           )}
-        </View>
-      )}
-      {tab === 'schedule' && !loading && (
-        <View style={styles.section}>
-          <PillTabs
-            tabs={WHEN_TABS}
-            selected={when}
-            onSelect={chooseWhen}
-            accessibilityLabel="Which games"
-          />
-          <SectionHeader
-            title="Schedule"
-            note={gameCountLabel(mayView ? shown.length : publicShown.length)}
-          />
-          {mayView ? (
-            shown.length === 0 ? (
-              <Card>
-                <Text style={styles.muted}>Nothing here yet.</Text>
-              </Card>
-            ) : (
-              shown.map(game => {
-                const lines = matchupLines(game)
-                const options = gameListOptions(game, 'schedule')
-                return (
-                  <Card key={game.id}>
-                    <ScheduleRow
-                      first={lines.first}
-                      second={lines.second}
-                      startAt={game.startAt}
-                      isGameLive={game.isGameLive}
-                      isUmpire={game.isUmpire}
-                      venue={game.venue}
-                      status={game.status}
-                      awayScore={game.awayScore}
-                      homeScore={game.homeScore}
-                      isLive={game.isLive}
-                      videoCount={game.videoCount}
-                      pendingApproval={game.pendingApproval}
-                      cancellationReason={game.cancellationReason}
-                      withdrawnByTeamName={game.withdrawnByTeamName}
-                      onPress={
-                        options == null
-                          ? undefined
-                          : () => {
+          {mayView && tab === 'stats' && (
+            <View style={styles.section}>
+              {statsLoading && (
+                <Text style={styles.muted}>Loading statistics…</Text>
+              )}
+              {statsError !== '' && (
+                <View style={styles.section}>
+                  <Text accessibilityRole="alert" style={styles.error}>
+                    {statsError}
+                  </Text>
+                  <Button
+                    label="Retry stats"
+                    accessibilityLabel="Retry stats"
+                    kind="secondary"
+                    onPress={() => {
+                      setStatsRetry(value => value + 1)
+                    }}
+                  />
+                </View>
+              )}
+              {!statsLoading && statsError === '' && (
+                <>
+                  <SectionHeader
+                    title="Batting"
+                    note={`${batting.length} players`}
+                  />
+                  {batting.length === 0 ? (
+                    <Card>
+                      <Text style={styles.muted}>
+                        No batting statistics yet.
+                      </Text>
+                    </Card>
+                  ) : (
+                    <Card flush>
+                      <StatisticsTable
+                        rows={batting}
+                        columns={battingColumns}
+                        onOpen={openPlayer}
+                      />
+                    </Card>
+                  )}
+                  <SectionHeader
+                    title="Pitching"
+                    note={`${pitching.length} players`}
+                  />
+                  {pitching.length === 0 ? (
+                    <Card>
+                      <Text style={styles.muted}>
+                        No pitching statistics yet.
+                      </Text>
+                    </Card>
+                  ) : (
+                    <Card flush>
+                      <StatisticsTable
+                        rows={pitching}
+                        columns={pitchingColumns}
+                        onOpen={openPlayer}
+                      />
+                    </Card>
+                  )}
+                </>
+              )}
+            </View>
+          )}
+          {mayView && tab === 'videos' && !loading && (
+            <View style={styles.section}>
+              <SectionHeader
+                title="Game videos"
+                note={gameCountLabel(withVideo.length)}
+              />
+              {withVideo.length === 0 ? (
+                <Card>
+                  <Text style={styles.muted}>No recorded games here yet.</Text>
+                </Card>
+              ) : (
+                <View style={styles.videoGrid}>
+                  {withVideo.map(game => {
+                    const lines = matchupLines(game)
+                    return (
+                      <View
+                        key={game.id}
+                        style={{
+                          width: `${100 / columnsForWidth(width)}%`,
+                          padding: theme.rem(0.25)
+                        }}
+                      >
+                        <Card>
+                          <GameRow
+                            first={lines.first}
+                            second={lines.second}
+                            detail={`${shortDate(game.startAt)}${game.startAt == null ? '' : ` · ${shortTime(game.startAt)}`} · ${videoCountLabel(game.videoCount)}`}
+                            length={
+                              game.durationSec == null
+                                ? undefined
+                                : clock(game.durationSec)
+                            }
+                            venue={game.venue}
+                            posterUrl={game.posterUrl ?? undefined}
+                            badgeLabel={
+                              game.pendingApproval
+                                ? 'Pending approval'
+                                : undefined
+                            }
+                            onPress={() => {
                               onOpenGame(
                                 game.id,
                                 `${lines.first} ${lines.second}`,
-                                options
+                                { autoPlay: true }
                               )
-                            }
-                      }
-                    />
-                  </Card>
-                )
-              })
-            )
-          ) : (
-            publicShown.map(game => {
-              const options = gameListOptions(game, 'schedule')
-              return (
-                <Card key={game.id}>
-                  <View style={styles.publicGameHeader}>
-                    <Text style={[styles.name, styles.publicGameMatchup]}>
-                      {game.awayTeam.name} at {game.homeTeam.name}
-                    </Text>
-                    {game.isUmpire === true && game.status !== 'cancelled' && (
-                      <Badge label="UMP" tone="umpire" />
-                    )}
-                    {game.isGameLive === true &&
-                      game.status !== 'cancelled' && (
-                        <Badge label="LIVE" tone="live" />
-                      )}
-                    {game.pendingApproval && (
-                      <Text
-                        accessibilityLabel={`Pending approval for ${game.awayTeam.name} at ${game.homeTeam.name}`}
-                        style={styles.muted}
-                      >
-                        Pending approval
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={styles.muted}>
-                    {shortDate(game.startAt)}
-                    {shortTime(game.startAt) === ''
-                      ? ''
-                      : ` · ${shortTime(game.startAt)}`}
-                    {game.venue == null ? '' : ` · ${game.venue}`}
-                  </Text>
-                  {options?.pendingRequestId != null && (
-                    <Button
-                      label="Open game proposal"
-                      accessibilityLabel={`Open game proposal for ${game.awayTeam.name} at ${game.homeTeam.name}`}
-                      kind="secondary"
-                      onPress={() => {
-                        onOpenGame(
-                          game.id,
-                          `${game.awayTeam.name} at ${game.homeTeam.name}`,
-                          options
-                        )
-                      }}
-                    />
-                  )}
-                  {!game.pendingApproval && (
-                    <Text style={styles.muted}>
-                      {game.status === 'cancelled'
-                        ? game.cancellationReason === 'withdrawal'
-                          ? `Canceled — ${game.withdrawnByTeamName ?? 'A team'} withdrew`
-                          : 'Canceled'
-                        : game.status}
-                      {game.homeScore == null || game.awayScore == null
-                        ? ''
-                        : ` · ${game.awayScore}–${game.homeScore}`}
-                    </Text>
-                  )}
-                </Card>
-              )
-            })
+                            }}
+                          />
+                        </Card>
+                      </View>
+                    )
+                  })}
+                </View>
+              )}
+            </View>
           )}
-          {props.scheduleActions}
-        </View>
-      )}
-      {mayView && tab === 'stats' && (
-        <View style={styles.section}>
-          {statsLoading && (
-            <Text style={styles.muted}>Loading statistics…</Text>
-          )}
-          {statsError !== '' && (
+          {tab === 'teams' && !loading && (
             <View style={styles.section}>
-              <Text accessibilityRole="alert" style={styles.error}>
-                {statsError}
-              </Text>
-              <Button
-                label="Retry stats"
-                accessibilityLabel="Retry stats"
-                kind="secondary"
-                onPress={() => {
-                  setStatsRetry(value => value + 1)
-                }}
-              />
-            </View>
-          )}
-          {!statsLoading && statsError === '' && (
-            <>
-              <SectionHeader
-                title="Batting"
-                note={`${batting.length} players`}
-              />
-              {batting.length === 0 ? (
-                <Card>
-                  <Text style={styles.muted}>No batting statistics yet.</Text>
-                </Card>
-              ) : (
-                <Card flush>
-                  <StatisticsTable
-                    rows={batting}
-                    columns={battingColumns}
-                    onOpen={openPlayer}
-                  />
-                </Card>
+              {breaker.error !== '' && (
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {breaker.error}
+                </Text>
               )}
-              <SectionHeader
-                title="Pitching"
-                note={`${pitching.length} players`}
-              />
-              {pitching.length === 0 ? (
-                <Card>
-                  <Text style={styles.muted}>No pitching statistics yet.</Text>
-                </Card>
-              ) : (
-                <Card flush>
-                  <StatisticsTable
-                    rows={pitching}
-                    columns={pitchingColumns}
-                    onOpen={openPlayer}
-                  />
-                </Card>
-              )}
-            </>
-          )}
-        </View>
-      )}
-      {mayView && tab === 'videos' && !loading && (
-        <View style={styles.section}>
-          <SectionHeader
-            title="Game videos"
-            note={gameCountLabel(withVideo.length)}
-          />
-          {withVideo.length === 0 ? (
-            <Card>
-              <Text style={styles.muted}>No recorded games here yet.</Text>
-            </Card>
-          ) : (
-            <View style={styles.videoGrid}>
-              {withVideo.map(game => {
-                const lines = matchupLines(game)
-                return (
-                  <View
-                    key={game.id}
-                    style={{
-                      width: `${100 / columnsForWidth(width)}%`,
-                      padding: theme.rem(0.25)
-                    }}
-                  >
-                    <Card>
-                      <GameRow
-                        first={lines.first}
-                        second={lines.second}
-                        detail={`${shortDate(game.startAt)}${game.startAt == null ? '' : ` · ${shortTime(game.startAt)}`} · ${videoCountLabel(game.videoCount)}`}
-                        length={
-                          game.durationSec == null
-                            ? undefined
-                            : clock(game.durationSec)
-                        }
-                        venue={game.venue}
-                        posterUrl={game.posterUrl ?? undefined}
-                        badgeLabel={
-                          game.pendingApproval ? 'Pending approval' : undefined
-                        }
-                        onPress={() => {
-                          onOpenGame(
-                            game.id,
-                            `${lines.first} ${lines.second}`,
-                            { autoPlay: true }
-                          )
-                        }}
-                      />
-                    </Card>
-                  </View>
-                )
-              })}
-            </View>
-          )}
-        </View>
-      )}
-      {tab === 'teams' && !loading && (
-        <View style={styles.section}>
-          {breaker.error !== '' && (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {breaker.error}
-            </Text>
-          )}
-          {mayView ? (
-            <>
-              {(teamActions != null ||
-                teams.length === 0 ||
-                teams.some(
-                  team => (team.seasonCategory ?? 'unscheduled') === 'inSeason'
-                )) && (
-                <SectionHeader
-                  title="Teams"
-                  note={String(
-                    teams.filter(
+              {mayView ? (
+                <>
+                  {(teamActions != null ||
+                    teams.length === 0 ||
+                    teams.some(
                       team =>
                         (team.seasonCategory ?? 'unscheduled') === 'inSeason'
-                    ).length
+                    )) && (
+                    <SectionHeader
+                      title="Teams"
+                      note={String(
+                        teams.filter(
+                          team =>
+                            (team.seasonCategory ?? 'unscheduled') ===
+                            'inSeason'
+                        ).length
+                      )}
+                      actions={teamActions}
+                    />
                   )}
-                  actions={teamActions}
-                />
-              )}
-              {teams.length === 0 && (
-                <Card>
-                  <Text style={styles.muted}>No teams in this season yet.</Text>
-                </Card>
-              )}
-              {categories.map(category => {
-                const list = teams.filter(
-                  team => (team.seasonCategory ?? 'unscheduled') === category.id
-                )
-                return list.length === 0 ? null : (
-                  <View key={category.id} style={styles.section}>
-                    {category.id !== 'inSeason' && (
-                      <SectionHeader
-                        title={category.title}
-                        note={String(list.length)}
-                      />
-                    )}
-                    {category.id === 'unscheduled' && (
+                  {teams.length === 0 && (
+                    <Card>
                       <Text style={styles.muted}>
-                        These teams are in the season but don&apos;t have
-                        scheduled games.
+                        No teams in this season yet.
                       </Text>
-                    )}
-                    {teamCards(list)}
-                  </View>
-                )
-              })}
-            </>
-          ) : (
-            <>
-              <SectionHeader
-                title="Teams"
-                note={String(publicTeams.length)}
-                actions={teamActions}
-              />
-              {teamCards(
-                publicTeams.map(team => ({
-                  id: team.id,
-                  name: team.name,
-                  shortName: null,
-                  logoPath: null,
-                  logoUrl: team.imageUrl,
-                  canViewPrivate: false,
-                  record: null,
-                  kind: team.external ? 'external' : 'full',
-                  seasonCategory: 'unscheduled'
-                }))
+                    </Card>
+                  )}
+                  {categories.map(category => {
+                    const list = teams.filter(
+                      team =>
+                        (team.seasonCategory ?? 'unscheduled') === category.id
+                    )
+                    return list.length === 0 ? null : (
+                      <View key={category.id} style={styles.section}>
+                        {category.id !== 'inSeason' && (
+                          <SectionHeader
+                            title={category.title}
+                            note={String(list.length)}
+                          />
+                        )}
+                        {category.id === 'unscheduled' && (
+                          <Text style={styles.muted}>
+                            These teams are in the season but don&apos;t have
+                            scheduled games.
+                          </Text>
+                        )}
+                        {teamCards(list)}
+                      </View>
+                    )
+                  })}
+                </>
+              ) : (
+                <>
+                  <SectionHeader
+                    title="Teams"
+                    note={String(publicTeams.length)}
+                    actions={teamActions}
+                  />
+                  {teamCards(
+                    publicTeams.map(team => ({
+                      id: team.id,
+                      name: team.name,
+                      shortName: null,
+                      logoPath: null,
+                      logoUrl: team.imageUrl,
+                      canViewPrivate: false,
+                      record: null,
+                      kind: team.external ? 'external' : 'full',
+                      seasonCategory: 'unscheduled'
+                    }))
+                  )}
+                </>
               )}
-            </>
+            </View>
+          )}
+          {tab === 'people' && seesPeople && (
+            <LevelPeopleTab
+              client={client}
+              kind="season"
+              id={season.id}
+              onOpenPlayer={props.onOpenPlayer}
+              onOpenPerson={props.onOpenPerson}
+            />
           )}
         </View>
-      )}
-      {tab === 'people' && seesPeople && (
-        <LevelPeopleTab
-          client={client}
-          kind="season"
-          id={season.id}
-          onOpenPlayer={props.onOpenPlayer}
-          onOpenPerson={props.onOpenPerson}
-        />
-      )}
+      </TabPages>
       {breaker.sheet}
       {choosing === 'add' && management != null && (
         <ChoiceSheet
@@ -971,7 +993,52 @@ export function SeasonPresentation(
   )
 }
 
+/**
+ * A game on the season's schedule. Drawn again only when its game changes:
+ * the schedule's pages are kept built across pill changes, and a season's
+ * worth of rows drawn on every one would hold the next tap up.
+ */
+const SeasonGameCard = memo(function SeasonGameCard(props: {
+  game: SeasonGame
+  onOpenGame: SeasonPresentationProps['onOpenGame']
+}): React.ReactElement {
+  const { game, onOpenGame } = props
+  const lines = matchupLines(game)
+  const options = gameListOptions(game, 'schedule')
+  return (
+    <Card>
+      <ScheduleRow
+        first={lines.first}
+        second={lines.second}
+        startAt={game.startAt}
+        isGameLive={game.isGameLive}
+        isUmpire={game.isUmpire}
+        venue={game.venue}
+        status={game.status}
+        awayScore={game.awayScore}
+        homeScore={game.homeScore}
+        isLive={game.isLive}
+        videoCount={game.videoCount}
+        pendingApproval={game.pendingApproval}
+        cancellationReason={game.cancellationReason}
+        withdrawnByTeamName={game.withdrawnByTeamName}
+        onPress={
+          options == null
+            ? undefined
+            : () => {
+                onOpenGame(game.id, `${lines.first} ${lines.second}`, options)
+              }
+        }
+      />
+    </Card>
+  )
+})
+
 const getStyles = cacheStyles((theme: Theme) => ({
+  // One pill's sections, spaced as the screen spaces them.
+  page: {
+    gap: theme.rem(theme.spaceLgRem)
+  },
   headerHandoff: {
     flexDirection: 'row',
     alignItems: 'center',
