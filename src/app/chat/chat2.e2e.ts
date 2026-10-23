@@ -1903,19 +1903,190 @@ export class Scenarios {
         else await this.dismiss()
     }
     if (!ui.native) await this.webHistoryTarget(target)
-    else if (!(await ui.visible({ id: 'chat-bubble-' + target.id }, 1000))) {
-      await ui.device.scrollUntilVisible({
-        element: { id: 'chat-bubble-' + target.id },
-        direction: 'UP',
-        timeout: 30000
-      })
-    }
+    else await this.nativeAnchorReady(target)
     await ui.present('chat-bubble-' + target.id)
     if (!ui.native)
       await ui.dom(
         `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')}); if(!n)throw Error('Visible target required');n.scrollIntoView({block:'center'});return {publicDomScroll:true}`
       )
     if (!ui.native) await this.webAnchorReady(target)
+  }
+
+  /** Native existence assertions include clipped and occluded rows; measure before acting. */
+  async nativeAnchorReady(target: Chat2Message): Promise<void> {
+    const ui = this.ui
+    assert(ui.native, 'Native anchor geometry required')
+    const id = 'chat-bubble-' + target.id
+    const proof: Json = { nativeAnchor: target.id, samples: [], gestures: [] }
+    this.observations.push(proof)
+    const startedAt = Date.now()
+    let end = startedAt + (ui.surface === 'ios' ? 90000 : 120000)
+    const signal = (): AbortSignal => {
+      assert(Date.now() < end, 'Native anchor observation deadline expired')
+      return AbortSignal.any([
+        ui.deadline,
+        AbortSignal.timeout(Math.max(1, end - Date.now()))
+      ])
+    }
+    const read = async (): Promise<{
+      nodes: PublicNode[]
+      box: NonNullable<PublicNode['bounds']>
+      band: { top: number; bottom: number }
+    }> => {
+      const nodes = await ui.nodes(undefined, signal())
+      const one = (
+        key: string,
+        clipped = false
+      ): NonNullable<PublicNode['bounds']> => {
+        const matches = nodes.filter(node => node.id === key)
+        assert.equal(
+          matches.length,
+          1,
+          'Unique native anchor element required: ' + key
+        )
+        const b = need(
+          matches[0].bounds,
+          'Actual native anchor bounds required'
+        )
+        assert(
+          [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+            b.width > 0 &&
+            (clipped || b.height > 0),
+          'Finite actual native geometry required'
+        )
+        return b
+      }
+      const history = one('chat-message-history')
+      const header = one('chat-conversation-identity')
+      const composer = one('chat-composer-band')
+      const pins = nodes.filter(node => node.id === 'chat-pinned-band')
+      assert(pins.length <= 1, 'Unique native pin band required')
+      const top = Math.max(
+        history.y,
+        header.y + header.height,
+        ...(pins.length === 0
+          ? []
+          : [one('chat-pinned-band').y + one('chat-pinned-band').height])
+      )
+      const band = {
+        top,
+        bottom: Math.min(history.y + history.height, composer.y)
+      }
+      assert(
+        band.bottom - band.top > 64,
+        'Actual unobscured native reading band required'
+      )
+      const box = one(id, true)
+      ;(proof.samples as unknown[]).push({ box, band })
+      return { nodes, box, band }
+    }
+    let current = await read()
+    const keyboard =
+      ui.surface === 'ios'
+        ? current.nodes
+            .filter(node => node.type === 'Keyboard')
+            .map(node => node.bounds)
+        : current.nodes.some(
+              node => node.id === 'chat-composer' && node.focused === true
+            )
+          ? [(await ui.readAndroidIme()).bounds]
+          : []
+    if (keyboard.length > 0) end = startedAt + 120000
+    assert(keyboard.length <= 1, 'Unique actual native Keyboard required')
+    const intersects = (): boolean =>
+      current.box.height > 0 &&
+      current.box.y < current.band.bottom &&
+      current.box.y + current.box.height > current.band.top
+    const safe = (): boolean =>
+      intersects() &&
+      current.box.y >= current.band.top + 7.5 &&
+      current.box.y +
+        Math.min(
+          current.box.height,
+          current.band.bottom - current.band.top - 32
+        ) <=
+        current.band.bottom - 7.5
+    const distance = (): number =>
+      current.box.y >= current.band.bottom
+        ? current.box.y - current.band.bottom
+        : current.band.top - current.box.y - current.box.height
+    const swipe = async (delta: number): Promise<void> => {
+      const { box, band } = current
+      const middle = (band.top + band.bottom) / 2
+      const input = {
+        startX: Math.round(box.x + box.width / 2),
+        endX: Math.round(box.x + box.width / 2),
+        startY: Math.round(middle - delta / 2),
+        endY: Math.round(middle + delta / 2),
+        duration: 200
+      }
+      assert(
+        Math.abs(delta) >= 48 &&
+          Math.min(input.startY, input.endY) > band.top &&
+          Math.max(input.startY, input.endY) < band.bottom,
+        'Meaningful gesture must stay inside actual reading band'
+      )
+      ;(proof.gestures as unknown[]).push(input)
+      await ui.measuredSwipe(input, signal())
+      await new Promise(resolve => setTimeout(resolve, 350))
+      current = await read()
+    }
+    if (!intersects()) {
+      const below = current.box.y >= current.band.bottom
+      if (keyboard.length === 0 && ui.surface !== 'ios') {
+        await ui.device.scrollUntilVisible(
+          {
+            element: { id },
+            direction: below ? 'DOWN' : 'UP',
+            maxScrolls: 40,
+            timeout: 60000
+          },
+          { signal: signal() }
+        )
+        current = await read()
+      } else {
+        const k = keyboard[0]
+        if (k != null)
+          assert(
+            k.width > 0 && k.height > 0 && current.band.bottom <= k.y + 1,
+            'Native reading band must clear actual Keyboard'
+          )
+        for (let step = 0; !intersects(); step++) {
+          assert(
+            step < 40 && Date.now() < end,
+            'Bounded native reading-band scroll required'
+          )
+          const before = distance()
+          const height = current.band.bottom - current.band.top
+          // Long iOS histories need measured progress; damp the final approach to avoid a fling past the target.
+          const travel =
+            ui.surface === 'ios'
+              ? Math.min(height * 0.8, Math.max(48, (before + height / 4) / 2))
+              : height * 0.6
+          await swipe((current.box.y >= current.band.bottom ? -1 : 1) * travel)
+          assert(
+            intersects() || distance() < before - 1,
+            'Exact target must advance after native gesture'
+          )
+        }
+      }
+    }
+    for (let step = 0; !safe(); step++) {
+      assert(
+        step < 4 && current.box.height > 0,
+        'Positive native target must clear header, pins and composer'
+      )
+      const { box, band } = current
+      const desired =
+        (band.top + band.bottom) / 2 -
+        box.y -
+        Math.min(box.height, band.bottom - band.top - 32) / 2
+      const limit = Math.max(48, (band.bottom - band.top) / 8)
+      await swipe(
+        Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired)))
+      )
+    }
+    proof.outcome = 'passed'
   }
 
   /** Page through the real public history control; browser scroll does not fetch older rows. */
@@ -3499,9 +3670,19 @@ export class Scenarios {
         )
         await this.reply(target)
         await this.ui.typeMentionTrigger()
-        await this.ui.id('chat-mention-member-' + peerId)
-        await this.ui.append(' mixed identity ' + Date.now())
+        const mentioned = need(
+          this.f.members.find(member => member.userId === peerId),
+          'Prepared current mention peer required'
+        )
+        await this.ui.selectMention(mentioned)
+        const suffix = ' mixed identity ' + Date.now()
+        await this.ui.appendComposer(suffix)
         const body = await this.ui.draft()
+        assert.equal(
+          body,
+          '@' + mentioned.name + ' ' + suffix,
+          'Selected mention and complete appended suffix must remain exact'
+        )
         await this.attachPhoto()
         await this.ui.text('Send')
         const sent = await this.delivered(body)
@@ -3540,6 +3721,7 @@ export class Scenarios {
           'Verified mixed incoming file required'
         )
         await this.openGroup()
+        await this.ui.id('chat-jump-latest')
         await this.anchor({
           id: incoming.id,
           seq: incoming.seq,
@@ -4857,14 +5039,14 @@ export class Scenarios {
           'mentions',
           'Actual searched member chooser with stable public member IDs'
         )
-        await ui.id('chat-mention-member-' + first.userId)
+        await ui.selectMention(first)
         await ui.assertKeyboard()
         assert((await ui.draft()).includes('@' + first.name))
         await ui.shot(
           'mention-composer',
           'Actual readable selected mention token and focused composer'
         )
-        await ui.append(' synthetic mention ' + Date.now())
+        await ui.appendComposer(' synthetic mention ' + Date.now())
         const body = await ui.draft()
         await this.attachPhoto()
         await ui.text('Send')
@@ -4890,11 +5072,13 @@ export class Scenarios {
         assert.equal(await ui.draft(), '@')
         await ui.replaceDraft('')
         await ui.typeMentionTrigger()
-        await ui.id('chat-mention-member-' + this.f.members[0].userId)
+        await ui.selectMention(this.f.members[0])
         await ui.deleteBackward()
         await ui.deleteBackward()
         const body = (await ui.draft()) + ' edited token ' + Date.now()
-        await ui.append(' edited token ' + body.split(' edited token ')[1])
+        await ui.appendComposer(
+          ' edited token ' + body.split(' edited token ')[1]
+        )
         await this.withFault('send', async () => {
           await ui.text('Send')
           await ui.device.assertVisible({
@@ -6150,7 +6334,7 @@ export class Scenarios {
             variant + '-mentions',
             'Actual ' + variant + ' chooser row reachability and Cancel'
           )
-          await ui.id('chat-mention-member-' + member.userId)
+          await ui.selectMention(member)
           await ui.assertKeyboard()
           this.observations.push(
             await observeComposerCaptureReady(ui, {
@@ -6250,7 +6434,7 @@ export class Scenarios {
       this.f.members.find(m => m.userId !== this.viewerId),
       'Current member required'
     )
-    await ui.id('chat-mention-member-' + member.userId)
+    await ui.selectMention(member)
     this.observations.push(
       await observeComposerCaptureReady(ui, { focused: true, reply: false })
     )
