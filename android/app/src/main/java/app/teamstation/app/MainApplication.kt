@@ -5,6 +5,7 @@ import app.teamstation.app.browser.ExternalBrowserPackage
 import app.teamstation.app.cues.CueSoundsPackage
 import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
+import app.teamstation.app.navigation.PredictiveBackPackage
 import app.teamstation.app.orientation.OrientationPackage
 import app.teamstation.app.qrscanner.QrScannerPackage
 import app.teamstation.app.stream.PhoneStreamPackage
@@ -35,6 +36,8 @@ class MainApplication : Application(), ReactApplication {
           add(GlassPackage())
           // Lets the multi-camera view turn sideways in an upright app.
           add(OrientationPackage())
+          // Android's back gesture, as the stack navigator's drag back.
+          add(PredictiveBackPackage())
           add(ExternalBrowserPackage())
           add(HapticsPackage())
           // The phone's own streaming and recording, and its camera preview.

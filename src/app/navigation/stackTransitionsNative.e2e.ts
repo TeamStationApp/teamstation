@@ -267,17 +267,36 @@ async function main(): Promise<void> {
         await m.swipe({ start: '0%, 50%', end: '80%, 50%', duration: 600 })
         await visible('Team sections')
         await tap('Team')
-        await tap('Alex L')
-        await visible('Player sections')
-        await m.swipe({ start: '0%, 50%', end: '15%, 50%', duration: 1500 })
+        await visible('Alex L')
+        await open('Alex L', 'Player sections')
+        // Android commits a back gesture let go anywhere; it cancels one
+        // whose finger comes back to the edge first. Out and back, by raw
+        // touches, because a swipe goes one way.
+        const touch = (action: string, x: number): void => {
+          execFileSync('adb', [
+            '-s',
+            device,
+            'shell',
+            'input',
+            'motionevent',
+            action,
+            String(x),
+            '1200'
+          ])
+        }
+        touch('DOWN', 2)
+        for (const x of [60, 160, 260, 360, 300, 200, 100, 30, 5])
+          touch('MOVE', x)
+        touch('UP', 5)
+        await new Promise(resolve => setTimeout(resolve, 800))
         await visible('Player sections')
         await m.back()
         await visible('Team sections')
         await m.pressKey({ key: 'Home' })
         await m.launchApp({ appId: APP_ID, stopApp: false })
         await tap('Team')
-        await tap('Alex L')
-        await visible('Player sections')
+        await visible('Alex L')
+        await open('Alex L', 'Player sections')
         await m.swipe({ start: '0%, 50%', end: '80%, 50%', duration: 600 })
         await visible('Team sections')
         await pastHome()

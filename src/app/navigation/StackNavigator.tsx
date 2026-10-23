@@ -26,6 +26,8 @@ import Animated, {
 import { scheduleOnRN } from 'react-native-worklets'
 
 import { useMotionPreference } from '../components/useMotionPreference'
+import { usePredictiveBack } from './predictiveBack'
+import type { PredictiveBackHandlers } from './predictiveBackTypes'
 import { type SceneRole, SceneSlot } from './sceneSlot'
 import {
   COVER_MS,
@@ -116,6 +118,39 @@ const SPRING_MS = 250
 const FALLBACK_MS = 500
 
 let transitions = 0
+
+/**
+ * Android's back gesture as a drag back: `started` reveals the screen
+ * beneath, progress moves the top with the finger, `cancelled` springs it
+ * back, and `invoked` completes the drag — or, a plain press with no drag,
+ * pops with the ordinary back move.
+ */
+export function backGestureHandlers(
+  controls: StackDragControls,
+  options: {
+    enabled: boolean
+    width: () => number
+    dragging: () => boolean
+    pop: () => void
+  }
+): PredictiveBackHandlers {
+  return {
+    enabled: options.enabled,
+    onStart: () => {
+      controls.begin()
+    },
+    onProgress: progress => {
+      controls.move(progress * options.width())
+    },
+    onCancel: () => {
+      controls.cancel()
+    },
+    onInvoke: () => {
+      if (options.dragging()) controls.complete()
+      else options.pop()
+    }
+  }
+}
 
 /**
  * The tab stacks' one transition layer: pushed screens slide in from the right
@@ -314,6 +349,16 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
     []
   )
   const swipeEnabled = onSwipeBack != null && Platform.OS !== 'web'
+  usePredictiveBack(
+    backGestureHandlers(controls.current, {
+      enabled: props.predictiveBack === true,
+      width: () => latest.current.width,
+      dragging: () => dragging.current != null,
+      pop: () => {
+        latest.current.onSwipeBack?.()
+      }
+    })
+  )
 
   // Who is mounted, and how each is placed.
   const scenes: Array<{ scene: StackScene; role: SceneRole; place: Place }> = []
