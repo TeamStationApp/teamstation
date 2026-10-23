@@ -390,6 +390,63 @@ const CHOICE_INSTRUCTIONS = `- Preserve every spoken throw on a fielder's choice
   fielders [3B, C], then Safe batter fielders [C, 2B, 1B]. An all-Safe
   3B to 2B to 3B to 2B is Safe batter fielders [3B, 2B, 3B, 2B].`
 
+/**
+ * How a base taken for the out, a force with an overthrow and the third out
+ * are scored: offered beside the game only to a sentence whose words say one.
+ * Offered to every sentence, it drew the model into crediting a ball's catch
+ * to the fielder at the base a runner was thrown out at.
+ */
+const BASE_OUT_INSTRUCTIONS = `- An infielder the scorer says tags, steps on, touches or takes a base for
+  the out — by position, by name, or "he" for the one who fielded the ball —
+  puts out the runner forced there: the runner from the base before it. His
+  tag is the one on GAME's line for that base before it — "On first" for an
+  out at second, "On second" for an out at third — never a tag whose digit
+  matches the base. With "On second: Joe B. #9 ${writeTag('QV2')}", an out
+  at third is runnerMovement with runner QV2 and to 3B, though QV2 ends in
+  2 and the base is third; never the pitcher's or a fielder's tag. The ball in play's fielder is still the one the ball
+  went to. "Grounder
+  to the shortstop, who tags second for a fielder's choice" is ballInPlay to
+  the shortstop, result fielders_choice, and runnerMovement of the runner on
+  first to 2B, out, reason Force Out, fielders [the shortstop]. "Grounder to
+  third, and the third baseman takes third base for the out", with runners
+  on first and second, is ballInPlay to the third baseman, result
+  fielders_choice, and runnerMovement of the runner on second to 3B, out,
+  reason Force Out, fielders [the third baseman] — never field_out: the
+  batter is safe at first. "Second base for the out", "third for the force"
+  and "force at second" are the same out. Only words that also put the
+  batter out at first make it field_out with outBy throw as well: "Grounder
+  to third, he steps on third and throws to first, double play", with
+  runners on first and second, is result field_out with outBy throw and
+  runnerMovement of the runner on second to 3B, out, fielders [the third
+  baseman]. The runner on first is safe at second: he is not the one out,
+  because the base taken was third.
+  A runner who "tags" or "tags up" is going back to his base on a catch:
+  that is never a fielder taking a base, and it does not change who caught
+  the ball. "Pop up to third. The runner tags and is thrown out at second" is
+  the third baseman's catch, and the runner on first thrown out at 2B.
+- A force out and then a wild throw to first is the batter safe on the
+  error. "Grounder to short, he tags second for the out but overthrows first,
+  error, batter safe" is ballInPlay to the shortstop, result field_error,
+  fieldingPlay with fielders [the shortstop, the first baseman], error the
+  shortstop and errorKind throwing, then runnerMovement of the runner on
+  first to 2B, out, reason Force Out, fielders [the shortstop]. "He steps on
+  second, then throws it away at first" is the same play.
+- Nothing happens after the third out. With two out, a catch or a force is
+  the third out, and the inning is over: a runner who "tags and scores" after
+  a catch for the third out does not score, and an overthrow after a force
+  for the third out is no error. "Pop fly to left, caught for the third out,
+  the runner tags and scores" is ballInPlay and result field_out with outBy
+  catch, and nothing else. "With two out, grounder to short, he steps on
+  second for the force, but throws it away at first" is ballInPlay, result
+  fielders_choice and the force at second, and nothing else.`
+
+/**
+ * Words that call for BASE_OUT_INSTRUCTIONS: an infielder taking a base,
+ * a base for the out, a force at one, a wild throw, or the third out.
+ */
+const BASE_OUT_SAID =
+  /\b(?:tags?|tagged|touch(?:es|ed)?|steps?\s+on|stepped\s+on|takes?|took|gets?|got)\s+(?:the\s+)?(?:second|2nd|third|3rd|home|the plate)\b|\b(?:second|2nd|third|3rd|home)(?:\s+base)?\s+for\s+(?:the\s+|a\s+)?(?:out|force|one)\b|\bforce(?:d|out)?(?:\s+out)?\s+at\b|\boverthr\w*|\bthrows?\s+it\s+away\b|\bthrew\s+it\s+away\b|\b(?:wild|bad|errant)\s+throw\b|\bthird\s+out\b|\btwo\s+outs?\b/i
+
 const INSTRUCTIONS = `YOUR JOB
 Report what just happened as tool calls, one per thing that happened, in order.
 Several calls from one sentence are normal.
@@ -1142,7 +1199,10 @@ export class Interpretation {
     const choiceRules = /\bfielder['’]?s? choice\b/i.test(transcript)
       ? `\n\nFIELDER CHOICE RELAYS\n${CHOICE_INSTRUCTIONS}`
       : ''
-    const game = `${gamePrompt(context)}${choiceRules}${placeSections(transcript)}`
+    const baseOutRules = BASE_OUT_SAID.test(transcript)
+      ? `\n\nBASE OUTS AND THE THIRD OUT\n${BASE_OUT_INSTRUCTIONS}`
+      : ''
+    const game = `${gamePrompt(context)}${choiceRules}${baseOutRules}${placeSections(transcript)}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)

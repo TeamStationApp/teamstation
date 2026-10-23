@@ -167,6 +167,48 @@ describe('dictation interpreter', function () {
     })
   })
 
+  describe('base outs, a force with an overthrow, and the third out', function () {
+    async function gameSent(said: string): Promise<string> {
+      const stub = provider([call('c1', 'pitch', { call: 'B' })])
+      await new Interpretation(config(stub.fetch), 'ctx', said).start()
+      return stub.sent[0].body.messages
+        .map(message => message.content ?? '')
+        .join('\n')
+        .replace(/\s+/g, ' ')
+    }
+
+    for (const said of [
+      "Grounder to short, who tags second for a fielder's choice.",
+      'The third baseman takes third base for the out.',
+      'Force at home.',
+      'He steps on second but overthrows first.',
+      'Caught for the third out.',
+      'With two outs, grounder to short.'
+    ])
+      it(`are taught, with two sentences each, beside: ${said}`, async function () {
+        const sent = await gameSent(said)
+        expect(sent).includes('BASE OUTS AND THE THIRD OUT')
+        for (const example of [
+          "who tags second for a fielder's choice",
+          'takes third base for the out',
+          'overthrows first',
+          'throws it away at first',
+          'caught for the third out, the runner tags and scores',
+          'steps on second for the force, but throws it away at first'
+        ])
+          expect(sent, example).includes(example)
+      })
+
+    for (const said of [
+      'Pop up to third. The runner tags and is thrown out at second.',
+      'The runner tags up and scores.',
+      'Single to left.'
+    ])
+      it(`are not offered to a sentence that says none: ${said}`, async function () {
+        expect(await gameSent(said)).not.includes('BASE OUTS AND THE THIRD OUT')
+      })
+  })
+
   describe('a result the model nests in its ball in play', function () {
     const field = `Fielders: CF Sam R. #9 ${writtenTag(16)}, SS Noah D. #5 ${writtenTag(14)}.`
 

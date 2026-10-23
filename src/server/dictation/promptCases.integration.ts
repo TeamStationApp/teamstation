@@ -312,11 +312,12 @@ function hawksBatting(input: {
   first?: string
   second?: string
   third?: string
+  outs?: number
 }): string {
   return game({
     half: 'Top',
     inning: '4th',
-    outs: 0,
+    outs: input.outs ?? 0,
     count: '0-0',
     batting: 'Hawks',
     fielding: 'Owls',
@@ -1355,3 +1356,158 @@ function outAt(
 function said(player: PlayerSaid): string {
   return (player.name ?? '').toLowerCase()
 }
+
+const BLAKE = 2
+
+;(live ? describe : describe.skip)(
+  'dictation prompt cases: base outs and the third out, Haiku 5.5',
+  function () {
+    this.timeout(180_000)
+
+    it("puts the runner out at second when the shortstop tags second for a fielder's choice", async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, first: casey }),
+          "Grounder to the shortstop, who tags second for a fielder's choice."
+        )
+      )
+      handledBy(ball(actions).fielder, SOL, JSON.stringify(actions))
+      expect(resultType(actions), JSON.stringify(actions)).equals(
+        'fielders_choice'
+      )
+      const out = outAt(actions, CASEY, '2B')
+      credited(out.fielders, [[SOL]], JSON.stringify(out))
+    })
+
+    it('puts the runner from second out at third when the third baseman takes third for the out', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({
+            batter: indigo,
+            next: alex,
+            first: casey,
+            second: blake
+          }),
+          'Grounder to third, and the third baseman takes third base for the out.'
+        )
+      )
+      handledBy(ball(actions).fielder, MATT, JSON.stringify(actions))
+      expect(resultType(actions), JSON.stringify(actions)).equals(
+        'fielders_choice'
+      )
+      const out = outAt(actions, BLAKE, '3B')
+      credited(out.fielders, [[MATT]], JSON.stringify(out))
+    })
+
+    it('puts the runner out at second when the second baseman steps on second for the force', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, first: casey }),
+          'Ground ball to second, he steps on second for the force.'
+        )
+      )
+      // A batting player sent as the fielder is no fielder: the screen
+      // finds the second baseman the words name.
+      const fielder = ball(actions).fielder
+      if (fielder == null || fielder > 9)
+        handledBy(fielder, REMY, JSON.stringify(actions))
+      const out = outAt(actions, CASEY, '2B')
+      credited(out.fielders, [[REMY]], JSON.stringify(out))
+    })
+
+    it('charges the shortstop for his overthrow at first after the force at second', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, first: casey }),
+          'Grounder to short, he tags second for the out but overthrows first, error, batter safe.'
+        )
+      )
+      handledBy(ball(actions).fielder, SOL, JSON.stringify(actions))
+      expect(resultType(actions), JSON.stringify(actions)).equals('field_error')
+      outAt(actions, CASEY, '2B')
+      const error = actions.find(action => action.type === 'fieldingPlay')
+      expect(
+        error?.type === 'fieldingPlay' ? error.error : undefined,
+        JSON.stringify(actions)
+      ).equals(SOL)
+    })
+
+    it('scores nobody after a catch for the third out', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({
+            batter: indigo,
+            next: alex,
+            second: blake,
+            third: casey,
+            outs: 2
+          }),
+          'Pop fly to left, caught for the third out, the runner tags and scores.'
+        )
+      )
+      const result = ofType(
+        actions.find(action => action.type === 'result'),
+        'result'
+      )
+      expect(result.eventType).equals('field_out')
+      expect(result.outBy).equals('catch')
+      expect(
+        movements(actions).filter(
+          move => move.out !== true && move.to === 'home'
+        ),
+        JSON.stringify(actions)
+      ).deep.equals([])
+    })
+
+    it('puts the runner out at third and the batter out at first on a double play from third', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({
+            batter: indigo,
+            next: alex,
+            first: casey,
+            second: blake
+          }),
+          'Grounder to third, he steps on third and throws to first, double play.'
+        )
+      )
+      expect(
+        movements(actions).some(
+          move => move.out === true && move.runner === BLAKE && move.to === '3B'
+        ),
+        JSON.stringify(actions)
+      ).equals(true)
+      expect(resultType(actions), JSON.stringify(actions)).equals('field_out')
+    })
+
+    it('puts the runner out at home when he tags up on a fly to right', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, third: casey }),
+          'Fly out to right, the runner tags and is thrown out at home.'
+        )
+      )
+      expect(resultType(actions), JSON.stringify(actions)).equals('field_out')
+      outAt(actions, CASEY, 'home')
+    })
+
+    it('hears "potential walk" as an intentional walk', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex }),
+          'Potential walk.'
+        )
+      )
+      expect(resultType(actions), JSON.stringify(actions)).equals('intent_walk')
+      expect(actions.some(action => action.type === 'pitch')).equals(false)
+    })
+  }
+)
