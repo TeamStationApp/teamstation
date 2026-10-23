@@ -4083,6 +4083,7 @@ export class Scenarios {
     for (const label of ['Link this device', 'Reset chat'])
       await ui.device.assertNotVisible({ text: exactText(label), timeout: 500 })
     const label = replacement.name + ' (this device)'
+    await ui.device.assertVisible({ text: exactText(label), timeout: 15000 })
     return await ui.dom(`
       if(document.querySelector('input[type="password"]'))throw Error('Existing signed-in device required; login forbidden');
       const label=${JSON.stringify(label)};
