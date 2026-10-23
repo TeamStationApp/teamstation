@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   ActivityIndicator,
   Platform,
@@ -45,7 +52,11 @@ import {
   VideoPoster
 } from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
-import { ContentInsetContext, NO_INSET } from '../components/contentInset'
+import {
+  ContentInsetContext,
+  NO_INSET,
+  useContentInset
+} from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
 import {
   CardBand,
@@ -53,7 +64,9 @@ import {
   PinnedContent,
   PinnedSpacer
 } from '../components/PinnedBands'
+import { useSceneShown } from '../components/sceneShown'
 import { useScreenBottom } from '../components/Screen'
+import { TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useScreenScope } from '../hooks/useScreenScope'
@@ -288,6 +301,24 @@ function teamStatsOf(
     away: side(linescore.away, linescore.home),
     home: side(linescore.home, linescore.away)
   }
+}
+
+/**
+ * The inset the section pills run out through. Upright they sit in the
+ * column's pill band, as on the other sections, and keep its inset, so a
+ * strip swiped sideways reaches the screen's edge there as it does on Info;
+ * held sideways, beside the picture, none.
+ */
+function PillStripInset(props: {
+  none: boolean
+  children: React.ReactNode
+}): React.ReactElement {
+  const inherited = useContentInset()
+  return (
+    <ContentInsetContext.Provider value={props.none ? NO_INSET : inherited}>
+      {props.children}
+    </ContentInsetContext.Provider>
+  )
 }
 
 /**
@@ -671,6 +702,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     angles != null &&
     angles.length > 0 &&
     multiAngleSupported(engine, angles.length)
+  // The single player stands down while the angles are up, and while this
+  // screen is covered beneath another or sliding out: a covered game's video
+  // would go on being heard under the screen pushed over it, or under the
+  // scorer, which plays it itself. It picks up where it was, playing or
+  // paused as it was, when shown again.
+  const onShow = useSceneShown()
+  const standDown = showAngles || !onShow
 
   // The card's own content goes up into the header as the card scrolls away:
   // the away team over the home team, small, with their scores beside them.
@@ -855,7 +893,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useVideoListRefresh({
     videos: game?.videos,
     publishing,
-    refresh: refreshVideos
+    refresh: refreshVideos,
+    active: onShow
   })
 
   const seasonId = game?.seasonId
@@ -1079,7 +1118,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const [backFromGrid, setBackFromGrid] = useState(false)
   const suspended = useRef(false)
-  suspended.current = showAngles
+  suspended.current = standDown
   /**
    * Where the single player had got to, sampled as it plays.
    *
@@ -1198,28 +1237,57 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [backFromGrid])
 
+  /**
+   * Where the player stood as its screen was covered, read from the element
+   * before the source is detached (a layout effect runs before the detach's
+   * cleanup): the last time update can be a moment behind, and a play the
+   * page started itself is not an intent the viewer stated.
+   */
+  const covered = useRef<{ sec: number; playing: boolean } | undefined>(
+    undefined
+  )
+  /**
+   * Whether this screen's player has had its source. A screen mounted out
+   * of sight (beneath the top) has played nothing: it keeps the moment it
+   * was opened at (`startAtSec`) rather than standing down at 0.
+   */
+  const attached = useRef(false)
+  useLayoutEffect(() => {
+    const element = playerNode
+    covered.current =
+      onShow || showAngles || element == null
+        ? undefined
+        : {
+            sec:
+              element.currentTime > 0 ? element.currentTime : lastTime.current,
+            playing: viewerWants.current || !element.paused
+          }
+  }, [playerNode, onShow, showAngles])
+
   useEffect(() => {
     const element = playerNode
-    if (element == null || !showAngles || video == null) return
+    if (element == null || !standDown || video == null || !attached.current)
+      return
     // Where it had got to, so the re-attach on the way back picks it up. The
     // source itself is detached below — four tiles on a phone should not be
     // sharing the decoder with a fifth player nobody is looking at.
     setResumeAt({
       videoId: video.id,
-      sec: lastTime.current,
-      playing: viewerWants.current
+      sec: covered.current?.sec ?? lastTime.current,
+      playing: covered.current?.playing ?? viewerWants.current
     })
     element.pause()
-    // Only as the overlay opens.
+    // Only as it stands down.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playerNode, showAngles])
+  }, [playerNode, standDown])
 
   useEffect(() => {
     const element = playerNode
     // Nothing attached while the angles are up: the source, its worker and its
     // buffers go with it, and the resume written above brings the position
     // back when it returns.
-    if (element == null || playbackUrl == null || showAngles) return
+    if (element == null || playbackUrl == null || standDown) return
+    attached.current = true
     mappingRef.current = null
     /** The stream has said it carries no dates, or has been given its time. */
     let datesDone = false
@@ -1418,7 +1486,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       }
     }
     return stand
-  }, [playbackUrl, playerNode, showAngles])
+  }, [playbackUrl, playerNode, standDown])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -1558,7 +1626,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   if (highlightUntil == null) highlightVideo.current = undefined
   else highlightVideo.current ??= initialVideoId
   useEffect(() => {
-    if (highlightUntil == null || video == null || showAngles) return
+    if (highlightUntil == null || video == null || standDown) return
     if (video.id !== highlightVideo.current) return
     if (playback?.url == null || !playable) return
     // The web plays it in the picture, which the page already opens at the
@@ -1572,7 +1640,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
     openPlayer(startAtSec ?? 0, highlightUntil)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlightUntil, video?.id, playback?.url, playable, showAngles])
+  }, [highlightUntil, video?.id, playback?.url, playable, standDown])
 
   // The chosen play's full account clears itself a minute and a half after the
   // moment it seeks to — measured in **played** time, not wall clock. A timer
@@ -1814,13 +1882,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       />
     )
 
+  const pills = gameTabs({
+    game,
+    now: clockNow,
+    onReplay: props.onReplay
+  })
+  // Which way a section change slides: by the pills' order.
+  const tabIndex = pills.findIndex(item => item.id === tab)
   const tabs = (
     <PillTabs
-      tabs={gameTabs({
-        game,
-        now: clockNow,
-        onReplay: props.onReplay
-      })}
+      tabs={pills}
       selected={tab}
       onSelect={next => {
         if (next === 'replay') {
@@ -2103,18 +2174,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
-  // The full-width section band keeps the same horizontal inset in every
-  // layout, above both the picture and the highlight column.
-  const headInset = theme.rem(theme.spaceMdRem)
   const sections = (
     <View
       onLayout={event => {
         setTabsHeight(event.nativeEvent.layout.height)
       }}
     >
-      <ContentInsetContext.Provider
-        value={short ? NO_INSET : { left: headInset, right: headInset }}
-      >
+      <PillStripInset none={short}>
         {short && tab === 'watch' ? actionButtons : null}
         <View
           onLayout={event => {
@@ -2123,7 +2189,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         >
           {tabs}
         </View>
-      </ContentInsetContext.Provider>
+      </PillStripInset>
     </View>
   )
 
@@ -2311,59 +2377,75 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <>
       <View style={styles.watch}>
         <View style={styles.tabPane} testID="gameSection">
-          {tab === 'watch' ? (
-            <GameWatchLayout
-              pinned={pinned}
-              head={scoreboard}
-              player={player}
-              description={description}
-              sections={sections}
-              // A game nothing was recorded of has nothing to have
-              // highlights of: "No videos." is the whole of the tab.
-              highlightList={video == null ? null : highlightList}
-              footer={
-                <>
-                  {/*
+          {/*
+            Watch is a layout of its own, a full-height scroller like the
+            sections' Screen, with the same hero and pills in the same place:
+            crossing it slides only what is under the pills, as Info and Box
+            Score do between themselves. Held sideways it shows no hero, so
+            the two have no head in common and slide whole.
+          */}
+          <TabPages
+            fill
+            keepHead={!short}
+            page={tab === 'watch' ? 'watch' : 'sections'}
+            index={tabIndex}
+          >
+            {tab === 'watch' ? (
+              <GameWatchLayout
+                key="watch"
+                pinned={pinned}
+                head={scoreboard}
+                player={player}
+                description={description}
+                sections={sections}
+                // A game nothing was recorded of has nothing to have
+                // highlights of: "No videos." is the whole of the tab.
+                highlightList={video == null ? null : highlightList}
+                footer={
+                  <>
+                    {/*
                     Under the highlights, and only for the people who run the
                     team: everybody else is answered `404` and sees nothing
                     here at all. A browser lists stream URLs; a phone records
                     with its own camera.
                   */}
-                  <StreamFooter
-                    client={client}
-                    gameId={gameId}
-                    onPublishing={setPublishing}
-                  />
-                </>
-              }
-              layout={layout}
-              short={short}
-              sideBySide={sideBySide}
-              headerHeight={headerHeight}
-              tabsHeight={tabsHeight}
-              height={height}
-              style={styles.tabPane}
-              contentStyle={[
-                styles.watchContent,
-                styles.watchStacked,
-                { paddingBottom: screenBottom }
-              ]}
-              headStyle={styles.head}
-            />
-          ) : (
-            <Screen {...pinned.screen} wide>
-              <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
-              <PillBand part={pinned.pillBand}>{tabs}</PillBand>
-              <PinnedContent
-                key={tab}
-                part={pinned.content}
-                testID="eventTabContent"
-              >
-                {below}
-              </PinnedContent>
-              <PinnedSpacer part={pinned.spacer} />
-            </Screen>
-          )}
+                    <StreamFooter
+                      client={client}
+                      gameId={gameId}
+                      onPublishing={setPublishing}
+                    />
+                  </>
+                }
+                layout={layout}
+                short={short}
+                sideBySide={sideBySide}
+                headerHeight={headerHeight}
+                tabsHeight={tabsHeight}
+                height={height}
+                style={styles.tabPane}
+                contentStyle={[
+                  styles.watchContent,
+                  styles.watchStacked,
+                  { paddingBottom: screenBottom }
+                ]}
+              />
+            ) : (
+              <Screen key="sections" {...pinned.screen} wide>
+                <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
+                <PillBand part={pinned.pillBand}>{tabs}</PillBand>
+                <TabPages page={tab} index={tabIndex}>
+                  <PinnedContent
+                    key={tab}
+                    part={pinned.content}
+                    testID="eventTabContent"
+                  >
+                    {below}
+                  </PinnedContent>
+                </TabPages>
+                <PinnedSpacer part={pinned.spacer} />
+              </Screen>
+            )}
+          </TabPages>
         </View>
       </View>
       {membershipWarning && (
@@ -2628,14 +2710,6 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     watchStacked: {
       flexDirection: 'column'
-    },
-    head: {
-      width: '100%',
-      // The same inset the card keeps at the sides, so the gap under the
-      // header matches the gap at the left and right of the screen.
-      paddingTop: theme.rem(theme.spaceMdRem),
-      paddingHorizontal: theme.rem(theme.spaceMdRem),
-      gap: theme.rem(theme.spaceSmRem)
     },
     // The tables under that card. The same side inset, so they share its
     // edges rather than sitting in a wider column of their own.

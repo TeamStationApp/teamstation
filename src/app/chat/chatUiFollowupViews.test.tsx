@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { ChatPreferences } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { SceneShownProvider } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatListScreen } from './ChatListScreen'
@@ -626,6 +627,43 @@ describe('chat UI follow-up workspace', function () {
     await render(workspace('Aurora'))
     await press('Aurora Members')
     expect(opened).equals(1)
+  })
+})
+
+describe('chat UI follow-up covered conversation', function () {
+  it('reads nothing while a screen covers its conversation, and reads again once Back shows it', async function () {
+    const engine = new FakeEngine()
+    engine.add(item('Aurora'))
+    const state = newChatWorkspaceState()
+    const workspace = (shown: boolean): React.ReactElement => (
+      <SceneShownProvider value={shown}>
+        <ChatWorkspace
+          engine={engine}
+          userId={userIdOfGumbo(1)}
+          state={state}
+          conversationId="Aurora"
+          onOpen={() => {}}
+          onMembers={() => {}}
+          onNewMessage={() => {}}
+          onTitle={() => {}}
+        />
+      </SceneShownProvider>
+    )
+    await render(workspace(true))
+    await layout(document.querySelector('[data-testid="chat-workspace"]')!, 320)
+    const opens = engine.opened.filter(id => id === 'Aurora').length
+    expect(opens).greaterThan(0)
+    // Its members or its info pushed over it: the pane is not on show.
+    await render(workspace(false))
+    expect(engine.closed).contains('Aurora')
+    const reads = engine.reads.length
+    await render(workspace(false))
+    expect(engine.reads.length).equals(reads)
+    // Back shows it again: it is open and reading.
+    await render(workspace(true))
+    expect(engine.opened.filter(id => id === 'Aurora').length).greaterThan(
+      opens
+    )
   })
 })
 

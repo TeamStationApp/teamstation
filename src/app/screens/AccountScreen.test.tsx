@@ -28,9 +28,13 @@ const delay = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 15))
 }
 const text = (): string => document.body.textContent ?? ''
+// A control on show: none in the screen kept hidden beneath the top (Account,
+// under Create API key, has its own "Create API key").
 const button = (label: string): HTMLElement | undefined =>
   [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(
-    node => (node.getAttribute('aria-label') ?? node.textContent) === label
+    node =>
+      (node.getAttribute('aria-label') ?? node.textContent) === label &&
+      node.closest('[data-scene-role="covered"]') == null
   )
 async function press(label: string): Promise<void> {
   const node = button(label)
@@ -41,9 +45,13 @@ async function press(label: string): Promise<void> {
   })
 }
 async function change(label: string, value: string): Promise<void> {
-  const input = document.querySelector<HTMLInputElement>(
-    `input[aria-label="${label}"]`
-  )
+  // The field on show: Account kept beneath has a Name of its own.
+  const input =
+    [
+      ...document.querySelectorAll<HTMLInputElement>(
+        `input[aria-label="${label}"]`
+      )
+    ].find(node => node.closest('[data-scene-role="covered"]') == null) ?? null
   expect(input, label).not.equals(null)
   await act(async () => {
     Object.getOwnPropertyDescriptor(

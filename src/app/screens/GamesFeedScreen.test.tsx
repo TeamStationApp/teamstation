@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { AccessibilityInfo } from 'react-native'
 
 import {
   asSeasonGame,
@@ -14,6 +15,8 @@ import {
   heldTimers,
   revisionStamps
 } from '../../test/fakeScreenScope'
+import { type FrameClock, installFrameClock } from '../../test/frameClock'
+import { PAGE_MS } from '../components/TabPages'
 import { ScreenScopeProvider } from '../hooks/useScreenScope'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { shortDate, shortDateNoWeekday } from './format'
@@ -102,8 +105,33 @@ async function mount(
   return opened
 }
 
+/** What the page on show says: a pill's kept pages are in the DOM, hidden. */
 function text(): string {
-  return host?.textContent ?? ''
+  const kept = [
+    ...(host?.querySelectorAll('[data-page-role="kept"]') ?? [])
+  ].map(node => node.textContent ?? '')
+  return kept.reduce(
+    (shown, hidden) => shown.replace(hidden, ''),
+    host?.textContent ?? ''
+  )
+}
+
+/** Whether the page on show spins, waiting for its games. */
+function spinning(): boolean {
+  return [
+    ...(host?.querySelectorAll('[aria-label="Loading games"]') ?? [])
+  ].some(node => node.closest('[data-page-role="kept"]') == null)
+}
+
+/** Frames turned by hand, in a test that lets the pill pages slide. */
+let clock: FrameClock | undefined
+
+/** Past the length of a pill page's slide, so the arriving page has landed. */
+async function land(): Promise<void> {
+  await act(async () => {
+    clock?.advance(PAGE_MS + 32)
+    await delay(20)
+  })
 }
 
 function control(label: string): HTMLElement {
@@ -342,6 +370,168 @@ describe('the games feed', function () {
     expect(chosen).deep.equals(['past'])
   })
 
+  it('draws each pill from its own games, never the last pill’s', async function () {
+    // The pages slide here, which the test page's reduced motion would stop.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored after.
+    const query = AccessibilityInfo.isReduceMotionEnabled
+    AccessibilityInfo.isReduceMotionEnabled = async () => false
+    clock = installFrameClock()
+    try {
+      let answer!: (games: SeasonGame[]) => void
+      const asked: Array<string | undefined> = []
+      const past = game('gam_past', { venue: 'Past field' })
+      const later = game('gam_later', { venue: 'All field' })
+      await mount('schedule', [], 'past', undefined, async options => {
+        asked.push(options?.when)
+        if (options?.when === 'past') return [past]
+        return await new Promise(resolve => {
+          answer = resolve
+        })
+      })
+      const frame = (key: string): HTMLElement | null =>
+        host?.querySelector<HTMLElement>(`[data-page="schedule-${key}"]`) ??
+        null
+      const page = (key: string): string => frame(key)?.textContent ?? ''
+      const spins = (key: string): boolean =>
+        frame(key)?.querySelector(
+          '[aria-label="Loading games"], [aria-label="Loading"]'
+        ) != null
+      const pill = (label: string): HTMLElement =>
+        host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
+      expect(page('past')).includes('Past field')
+      const pastPage = frame('past')
+      await press(pill('All'))
+      // All's read has not answered: its page slides in spinning, rather than
+      // showing Past's games as All's and swapping them under the slide.
+      expect(asked.at(-1)).equals(undefined)
+      expect(frame('all')?.dataset.pageRole).equals('incoming')
+      expect(spins('all')).equals(true)
+      expect(page('all')).not.includes('Past field')
+      // Its games in mid-slide wait for it to land: drawn now, they would hold
+      // the slide up. The page is not drawn at all until then.
+      await act(async () => {
+        answer([past, later])
+        await delay(20)
+      })
+      expect(spins('all')).equals(true)
+      await land()
+      expect(page('all')).includes('All field')
+      expect(spins('all')).equals(false)
+      // Past's page stayed built, hidden, and comes back as it was.
+      expect(frame('past')).equals(pastPage)
+      expect(frame('past')?.dataset.pageRole).equals('kept')
+      const allCards = frame('all')?.querySelector('[data-testid]') ?? null
+      const reads = asked.length
+      await press(pill('Past'))
+      expect(frame('past')).equals(pastPage)
+      expect(page('past')).includes('Past field')
+      expect(page('past')).not.includes('All field')
+      expect(spins('past')).equals(false)
+      await land()
+      // Read moments ago, Past's list is not read again for a change of pill.
+      expect(asked.length).equals(reads)
+      // And All's, drawn once, is not drawn again.
+      await press(pill('All'))
+      expect(spins('all')).equals(false)
+      expect(page('all')).includes('All field')
+      expect(allCards).not.equals(null)
+      expect(frame('all')?.querySelector('[data-testid]')).equals(allCards)
+    } finally {
+      clock.restore()
+      clock = undefined
+      AccessibilityInfo.isReduceMotionEnabled = query
+    }
+  })
+
+  it('reads a pill whose read failed again when it is chosen again', async function () {
+    const asked: Array<string | undefined> = []
+    let fail = true
+    await mount('schedule', [], 'upcoming', undefined, async options => {
+      asked.push(options?.when)
+      if (options?.when === 'upcoming' && fail) throw new Error('Offline')
+      return [
+        game('gam_next', {
+          venue: 'Next field',
+          awayScore: null,
+          homeScore: null,
+          status: 'scheduled',
+          startAt: '2027-01-02T20:00:00.000Z',
+          videoCount: 0
+        })
+      ]
+    })
+    const pill = (label: string): HTMLElement =>
+      host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
+    expect(text()).includes('Offline')
+    fail = false
+    await press(pill('Past'))
+    await press(pill('Upcoming'))
+    // Within the half minute, but with no list to show: read at once.
+    expect(asked.filter(when => when === 'upcoming')).has.lengthOf(2)
+    expect(text()).includes('Next field')
+  })
+
+  it('lands no failure from the last pill’s read on a pill chosen again within the half minute', async function () {
+    const held: Array<() => void> = []
+    await mount('schedule', [], 'upcoming', undefined, async options => {
+      if (options?.when === 'past') {
+        // Past's read is slow, and fails.
+        await new Promise<void>(resolve => {
+          held.push(resolve)
+        })
+        throw new Error('Past failed')
+      }
+      return [
+        game('gam_next', {
+          venue: 'Next field',
+          awayScore: null,
+          homeScore: null,
+          status: 'scheduled',
+          startAt: '2027-01-02T20:00:00.000Z',
+          videoCount: 0
+        })
+      ]
+    })
+    const pill = (label: string): HTMLElement =>
+      host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
+    expect(text()).includes('Next field')
+    await press(pill('Past'))
+    // Upcoming again, read moments ago: not read again.
+    await press(pill('Upcoming'))
+    await act(async () => {
+      held[0]()
+      await delay(50)
+    })
+    expect(text()).not.includes('Past failed')
+    expect(text()).includes('Next field')
+  })
+
+  it('counts a pill’s read as fresh only once the server has answered it', async function () {
+    const asked: Array<string | undefined> = []
+    const held: Array<() => void> = []
+    await mount('schedule', [], 'upcoming', undefined, async options => {
+      asked.push(options?.when)
+      if (options?.when === 'past' && held.length === 0)
+        // Past's first read is slow.
+        await new Promise<void>(resolve => {
+          held.push(resolve)
+        })
+      return []
+    })
+    const pill = (label: string): HTMLElement =>
+      host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
+    await press(pill('Past'))
+    await press(pill('All'))
+    // Back to Past before its read has answered: nothing has confirmed what
+    // it shows, so it asks again rather than counting the read in flight.
+    await press(pill('Past'))
+    await act(async () => {
+      held[0]()
+      await delay(50)
+    })
+    expect(asked.filter(when => when === 'past')).has.lengthOf(2)
+  })
+
   it('follows a schedule address that changes without remounting', async function () {
     await mount(
       'schedule',
@@ -367,6 +557,7 @@ describe('the games feed', function () {
     expect(upcoming.every(label => label === 'Upcoming')).equals(true)
 
     await applyWhen?.('past')
+    await land()
     expect(text()).includes('Sox')
     expect(text()).not.includes('Aces')
     const past = [
@@ -469,7 +660,7 @@ describe('the games feed’s screen scope', function () {
     })
     expect(asked).deep.equals([])
     expect(keys).deep.equals(['games.upcoming'])
-    expect(text()).not.includes('Loading…')
+    expect(spinning()).equals(false)
   })
 
   it('does not let the foreground refresh’s first call read the schedule before subscribed', async function () {
@@ -478,7 +669,7 @@ describe('the games feed’s screen scope', function () {
     const asked: Array<{ when?: string }> = []
     await mountScoped('schedule', socket, asked)
     expect(asked, 'client.games before subscribed').deep.equals([])
-    expect(text()).includes('Loading…')
+    expect(spinning()).equals(true)
     await act(async () => {
       socket.ack('2')
       await delay(20)
@@ -489,7 +680,7 @@ describe('the games feed’s screen scope', function () {
       'client.games'
     ])
     expect(asked).deep.equals([{ when: 'upcoming' }])
-    expect(text()).not.includes('Loading…')
+    expect(spinning()).equals(false)
   })
 
   it('reads the schedule at once while offline', async function () {

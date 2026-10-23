@@ -59,5 +59,4 @@ export interface GameWatchLayoutProps {
   height: number
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
-  headStyle?: StyleProp<ViewStyle>
 }

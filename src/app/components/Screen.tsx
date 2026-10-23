@@ -12,9 +12,10 @@ import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
-import { ContentInsetContext } from './contentInset'
+import { type ContentInset, ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import { navClearanceAboveInset } from './navClearance'
+import { useActiveRef, usePageSliding } from './TabPages'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface ScreenProps {
@@ -93,6 +94,32 @@ export function useScreenBottom(): number {
 }
 
 /**
+ * The column's side margins, in from the window's edges.
+ *
+ * Held sideways, a phone's insets are at the sides: the camera housing on one
+ * edge and a rounded corner on the other. The margin takes whichever is wider
+ * — the design's, or the hardware's — so a line of text never starts
+ * underneath the island. A layout that draws a screen's hero and pills itself
+ * (the game's Videos) takes them from here, so they land where `Screen` puts
+ * them.
+ */
+export function useColumnSide(): ContentInset {
+  const theme = useTheme()
+  const breakpoint = useBreakpoint()
+  const insets = useInsets()
+  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
+  return {
+    left: Math.max(margin, insets.left),
+    right: Math.max(margin, insets.right)
+  }
+}
+
+/** The column's padding at its top, and its gap between parts. */
+export function columnSpace(theme: Theme): number {
+  return theme.rem(theme.spaceLgRem)
+}
+
+/**
  * The content column.
  *
  * Every design is drawn at phone width, where the answer is simply "the whole
@@ -119,26 +146,25 @@ export function Screen(props: ScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const breakpoint = useBreakpoint()
+  const side = useColumnSide()
+  // Inside a pill page sliding out, the scroller lets go of the shared ref,
+  // and stops feeding the shared scroll and layout handlers: a fling still
+  // coasting there would move the arriving page's pinned head.
+  const scroller = useActiveRef(scrollRef)
+  const handleScroll = useActiveRef(onScroll)
+  const handleLayout = useActiveRef(onLayout)
+  // Clear while it slides against another layout of its screen, whose
+  // content shows beside its own.
+  const clear = usePageSliding()
   // The header is glass and overlays the content, so the content starts at the
   // top of the window and is pushed down by the height the header measured.
   // Anything else and there would be nothing behind the glass to blur.
   const { headerHeight } = useHeaderSlot()
-  const insets = useInsets()
   const bottom = useScreenBottom()
-
-  // Held sideways, a phone's insets are at the sides: the camera housing on
-  // one edge and a rounded corner on the other. The margin takes whichever is
-  // wider — the design's, or the hardware's — so a line of text never starts
-  // underneath the island.
-  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
-  const side = {
-    left: Math.max(margin, insets.left),
-    right: Math.max(margin, insets.right)
-  }
 
   if (!scroll && props.overlayContent === true) {
     return (
-      <View style={[styles.fill, contentStyle]} onLayout={onLayout}>
+      <View style={[styles.fill, contentStyle]} onLayout={handleLayout}>
         <ContentInsetContext.Provider value={side}>
           {children}
         </ContentInsetContext.Provider>
@@ -170,16 +196,24 @@ export function Screen(props: ScreenProps): React.ReactElement {
 
   if (!scroll) {
     return (
-      <View style={[styles.fill, { paddingTop: headerHeight }]}>{inner}</View>
+      <View
+        style={[
+          styles.fill,
+          clear && styles.clear,
+          { paddingTop: headerHeight }
+        ]}
+      >
+        {inner}
+      </View>
     )
   }
 
   return (
     <Animated.ScrollView
-      ref={scrollRef}
-      style={styles.fill}
-      onScroll={onScroll}
-      onLayout={onLayout}
+      ref={scroller}
+      style={[styles.fill, clear && styles.clear]}
+      onScroll={handleScroll}
+      onLayout={handleLayout}
       scrollEventThrottle={16}
       // Without this the first tap on a button while a field has focus only
       // dismisses the keyboard and the button is never pressed — so `Sign in`,
@@ -216,6 +250,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flex: 1,
     backgroundColor: theme.backgroundColor
   },
+  clear: {
+    backgroundColor: 'transparent'
+  },
   scrollContent: {
     flexGrow: 1,
     alignItems: 'center'
@@ -235,8 +272,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     // The margin the header uses too, so the mark in the corner lines up with
     // the first card underneath it.
     paddingHorizontal: theme.rem(edgeMarginRem(theme, 'phone')),
-    paddingVertical: theme.rem(theme.spaceLgRem),
-    gap: theme.rem(theme.spaceLgRem)
+    paddingVertical: columnSpace(theme),
+    gap: columnSpace(theme)
   },
   columnWide: {
     paddingHorizontal: theme.rem(edgeMarginRem(theme, 'tablet'))
