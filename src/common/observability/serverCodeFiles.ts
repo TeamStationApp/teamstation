@@ -296,6 +296,8 @@ export const SERVER_CODE_FILES = new Set([
   'server/teams/teamRoster.js',
   'server/tess/liveUser.js',
   'server/tess/messagesApi.js',
+  'server/tess/sitemapCli.js',
+  'server/tess/sitemapGenerator.js',
   'server/tess/usage.js',
   'server/umpires/admin.js',
   'server/umpires/affiliations.js',
