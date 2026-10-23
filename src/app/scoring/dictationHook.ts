@@ -20,8 +20,8 @@ import type { ScoringSessionState, Side } from './scoringTypes'
 export { upcoming }
 
 /**
- * Dictation on the scoring and roster screens: the socket, the microphone,
- * and what the scorer is shown while they talk.
+ * Dictation on the scoring and roster screens, and in Tess's chat: the
+ * socket, the microphone, and what the speaker is shown while they talk.
  *
  * Turning it on opens the microphone and one socket for the session, and
  * sends the key terms for the at-bat. Holding the button sends a `start`
@@ -29,7 +29,9 @@ export { upcoming }
  * audio; releasing ends the utterance. What comes back — actions and roster
  * commands — goes to `onActions`: the scoring screen puts actions through its
  * reducer exactly as a tap would, and the roster screen stages commands on
- * its draft. Nothing here changes a game.
+ * its draft. Tess has no game: her scope ends at the transcript, which goes
+ * to `onTranscript` and becomes the next chat message. Nothing here changes a
+ * game.
  */
 
 /** A coach's side, when the screen's target names one. */
@@ -100,10 +102,10 @@ export function useDictation(options: UseDictationOptions): Dictation {
 
   /** Sends the key terms for the game as it stands, unless they were the last sent. */
   const sendTerms = useCallback((): void => {
-    const terms = keyterms(
-      upcoming(latest.current.session).state,
-      coachSide(latest.current.target)
-    )
+    const { session, target } = latest.current
+    // Without a game there is nobody to listen out for.
+    if (session == null) return
+    const terms = keyterms(upcoming(session).state, coachSide(target))
     const key = JSON.stringify(terms)
     if (key === sentTerms.current) return
     if (send({ kind: 'keyterms', keyterms: terms })) sentTerms.current = key
@@ -141,9 +143,18 @@ export function useDictation(options: UseDictationOptions): Dictation {
     }
     switch (reply.kind) {
       case 'partial':
-      case 'transcript':
         setText(reply.text)
         return
+      case 'transcript': {
+        setText(reply.text)
+        const { onTranscript } = latest.current
+        // Words that were heard are the answer. Blank ones wait for the
+        // server's error, which says nothing was heard.
+        if (onTranscript == null || reply.text.trim() === '') return
+        settle(null)
+        onTranscript(reply.text)
+        return
+      }
       case 'ask':
         setAsk({
           question: reply.question,
@@ -160,7 +171,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
               )
             : null
         )
-        latest.current.onActions(
+        latest.current.onActions?.(
           reply.transcript,
           reply.actions,
           reply.roster ?? [],
@@ -283,9 +294,13 @@ export function useDictation(options: UseDictationOptions): Dictation {
 
   // A new at-bat, or a change of who is in the game, retargets the recogniser.
   // The next at-bat's, once the play before is decided.
-  const next = useMemo(() => upcoming(options.session).state, [options.session])
-  const atBatIndex = next.liveData.plays.currentPlay?.about.atBatIndex
-  const lineupChanges = options.log.filter(
+  const next = useMemo(
+    () =>
+      options.session == null ? undefined : upcoming(options.session).state,
+    [options.session]
+  )
+  const atBatIndex = next?.liveData.plays.currentPlay?.about.atBatIndex
+  const lineupChanges = (options.log ?? []).filter(
     action => action.type === 'lineup'
   ).length
   useEffect(() => {
@@ -307,7 +322,6 @@ export function useDictation(options: UseDictationOptions): Dictation {
     hold: since => {
       if (utterance.current != null || socket.current?.readyState !== OPEN)
         return
-      const id = `u${Date.now().toString(36)}${(counter.current++).toString(36)}`
       const {
         gameId,
         session,
@@ -316,6 +330,10 @@ export function useDictation(options: UseDictationOptions): Dictation {
         target = { gameId },
         contextOf
       } = latest.current
+      const context =
+        contextOf?.() ?? (session == null ? null : dictationContext(session))
+      if (context == null) return
+      const id = `u${Date.now().toString(36)}${(counter.current++).toString(36)}`
       utterance.current = id
       holdingNow.current = true
       setHolding(true)
@@ -327,8 +345,9 @@ export function useDictation(options: UseDictationOptions): Dictation {
         id,
         scope,
         target,
-        context: contextOf == null ? dictationContext(session) : contextOf(),
-        tagOrder: [...session.meta.tagOrder],
+        context,
+        // Player tags name a game's players; without one there are none.
+        ...(session == null ? {} : { tagOrder: [...session.meta.tagOrder] }),
         ...(model == null ? {} : { model })
       })
       if (since != null)

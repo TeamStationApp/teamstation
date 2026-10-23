@@ -27,6 +27,11 @@ export interface Scope {
   tools: readonly Tool[]
   /** Roster tools, offered beside `tools`. Absent means none. */
   rosterTools?: readonly RosterTool[]
+  /**
+   * The utterance ends at its transcript: the LLM is never asked, and the
+   * socket takes the next `start` as soon as the words are sent.
+   */
+  transcriptOnly?: boolean
   /** Throws, an `HttpError` or a `TypeError`, unless the actor may speak about the target. */
   authorise: (
     db: Kysely<Database>,
@@ -70,7 +75,7 @@ async function authoriseRoster(
   )
 }
 
-export const SCOPES: ReadonlyMap<string, Scope> = new Map([
+export const SCOPES: ReadonlyMap<string, Scope> = new Map<string, Scope>([
   [
     'scoring',
     {
@@ -87,5 +92,12 @@ export const SCOPES: ReadonlyMap<string, Scope> = new Map([
   [
     'roster',
     { tools: [], rosterTools: rosterToolSchema(), authorise: authoriseRoster }
+  ],
+  [
+    // Tess: what was said becomes the person's next chat message, and Tess
+    // reads it with that person's own permissions. Any signed-in actor may
+    // speak; the target is `{}`.
+    'tess',
+    { tools: [], transcriptOnly: true, authorise: async () => undefined }
   ]
 ])
