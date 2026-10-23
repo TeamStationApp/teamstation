@@ -1386,6 +1386,431 @@ describe('chat native adapter compatibility', function () {
     })
     return { actual, page }
   }
+  async function infoSafetyReturn(fault = ''): Promise<{
+    calls: string[]
+    error: unknown
+  }> {
+    const { actual, page } = browserModel()
+    const directory = mkdtempSync(join(tmpdir(), 'chat-info-return-'))
+    directories.push(directory)
+    const sessionFile = join(directory, 'session.json')
+    writeFileSync(sessionFile, JSON.stringify({ token: 'TEST_TOKEN' }), {
+      mode: 0o600
+    })
+    Object.assign(actual, { surface: 'web-narrow' })
+    const viewerId = userIdOfGumbo(7)
+    const memberId = userIdOfGumbo(8)
+    const calls: string[] = []
+    let stack = ['conversation']
+    let safety = false
+    let legacy = false
+    let draft = ''
+    let muted = false
+    const render = (): void => {
+      page.window.document.body.replaceChildren()
+      if (stack.at(-1) !== 'conversation') return
+      const editor = page.window.document.createElement('textarea')
+      editor.dataset.testid = 'chat-composer'
+      editor.value = draft
+      page.window.document.body.append(editor)
+    }
+    page.window.addEventListener('popstate', () => {
+      expect(page.window.location.pathname).equals('/chat/cnv-group/members')
+      legacy = true
+      stack = ['conversation', 'members']
+      calls.push('open-members')
+      render()
+    })
+    actual.replaceDraft = async value => {
+      draft = value
+      render()
+    }
+    actual.shot = async () => {}
+    actual.device.assertNotVisible = async () => ({})
+    actual.device.assertVisible = async args => {
+      if (args.id === 'chat-message-history') {
+        expect(stack.at(-1), 'Conversation must be restored').equals(
+          'conversation'
+        )
+        calls.push('conversation')
+      } else if (args.id != null) {
+        expect(['chat-info-hero', 'chat-info-members']).includes(args.id)
+        expect(['info', 'members']).includes(stack.at(-1))
+        expect(safety, 'Safety must be closed with Done').equals(false)
+      } else {
+        expect(args.text).equals('Safety number.*')
+        expect(safety).equals(true)
+      }
+      return {}
+    }
+    actual.device.tapOn = async args => {
+      if (args.id === 'chat-conversation-identity') stack.push('info')
+      else if (args.id === 'chat-info-member-' + memberId) safety = true
+      else if (args.text === '^Mute$') muted = true
+      else if (args.text === '^Done$') {
+        calls.push('done')
+        expect(safety).equals(true)
+        if (fault === 'done-failed') throw Error('Observed Done failed')
+        safety = false
+      } else throw Error('Unexpected information control')
+      render()
+    }
+    actual.device.back = async () => {
+      calls.push('back')
+      // Browser Back leaves the route; local safety state has no history entry.
+      stack.pop()
+      safety = false
+      if (legacy && fault === 'missing-conversation') stack = []
+      if (legacy && fault === 'lost-draft') draft = ''
+      render()
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      group: 'cnv-group',
+      viewerKey: 'Viewer',
+      viewerId,
+      f: {
+        apiUrl: 'https://fixture.example.test/api/v1',
+        actors: { Viewer: { userId: viewerId, provider: { sessionFile } } }
+      },
+      check: async (name: string, work: () => Promise<void>) => {
+        if (name === 'E4 hero, fixed membership exclusions and same-user mute')
+          await work()
+      },
+      openGroup: async () => {
+        render()
+      },
+      anchor: async () => {},
+      showInfoMember: async () => ({ userId: memberId })
+    }) as Scenarios
+    const fetchBefore = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      if (url.endsWith('/auth/me'))
+        return Response.json({
+          id: viewerId,
+          displayName: 'Cal Ripken',
+          isAdmin: false
+        })
+      if (url.endsWith('/preferences')) {
+        muted = (JSON.parse(init?.body as string) as { muted: boolean }).muted
+        return Response.json({ muted })
+      }
+      if (url.endsWith('/chat/conversations'))
+        return Response.json([
+          {
+            id: 'cnv-group',
+            kind: 'teamMembers',
+            title: 'Synthetic members',
+            scope: { type: 'team', id: 'tem-group' },
+            scopeName: 'Synthetic',
+            lastSeq: 1,
+            lastMessageAt: null,
+            unread: 0,
+            canPost: true,
+            canModerate: false,
+            locked: false,
+            noHolder: false,
+            closed: false,
+            memberCount: 2,
+            preferences: { muted }
+          }
+        ])
+      throw Error('Unexpected external request: ' + url)
+    }
+    let error: unknown
+    try {
+      await scenario.E4()
+    } catch (failure) {
+      error = failure
+    } finally {
+      globalThis.fetch = fetchBefore
+    }
+    return { calls, error }
+  }
+  it('returns from E4 local safety using Done and preserves the narrow conversation draft through the legacy members route', async () => {
+    const result = await infoSafetyReturn()
+    expect(result.error).equals(undefined)
+    expect(result.calls).deep.equals([
+      'done',
+      'back',
+      'conversation',
+      'open-members',
+      'back',
+      'conversation'
+    ])
+  })
+  for (const fault of ['done-failed', 'missing-conversation', 'lost-draft'])
+    it('rejects an unproved E4 return: ' + fault, async () => {
+      const result = await infoSafetyReturn(fault)
+      expect(result.error).instanceOf(Error)
+      if (fault === 'done-failed') {
+        expect(String(result.error)).includes('Observed Done failed')
+        expect(result.calls).deep.equals(['done'])
+      } else if (fault === 'missing-conversation')
+        expect(String(result.error)).includes('Conversation must be restored')
+      else
+        expect(String(result.error)).includes(
+          'Keep this synthetic information draft'
+        )
+    })
+  async function reactionPeerReadiness(fault = ''): Promise<{
+    calls: string[]
+    error: unknown
+  }> {
+    const { actual, page } = browserModel()
+    Object.assign(actual, { surface: 'web-narrow' })
+    const target = { id: 'msg-target', seq: 231 }
+    const viewerId = userIdOfGumbo(7)
+    const glyph = '👍️'
+    const calls: string[] = []
+    page.window.document.body.innerHTML =
+      '<div data-testid="chat-bubble-msg-target"></div>' +
+      '<div role="button" aria-label="thumbs up" style="opacity:1">' +
+      glyph +
+      '</div>'
+    const button = page.window.document.querySelector('[role="button"]')!
+    button.getBoundingClientRect = () => ({
+      x: 10,
+      y: 10,
+      width: 40,
+      height: 40,
+      top: 10,
+      left: 10,
+      right: 50,
+      bottom: 50,
+      toJSON: () => ({})
+    })
+    page.window.document.elementFromPoint = () => button
+    actual.device.dragAndDrop = async () => ({})
+    actual.device.assertNotVisible = async () => ({})
+    actual.device.inputText = async args => {
+      expect(args.text).equals('thumbs up')
+      return {}
+    }
+    actual.device.tapOn = async args => {
+      if (args.css === '[role="button"][aria-label="thumbs up"]') {
+        calls.push('tap-raw-glyph')
+        return { element: { text: glyph } }
+      }
+      expect(args.css != null || args.text === '^More emoji$').equals(true)
+      return {}
+    }
+    let loaded = fault !== 'missing-history'
+    let reads = 0
+    const post = (reaction: unknown): Record<string, unknown> => ({
+      id: target.id,
+      status: 'ok',
+      reactions: reaction == null ? [] : [reaction]
+    })
+    const engine = {
+      open: async (conversation: string) => {
+        expect(conversation).equals('cnv-group')
+        calls.push('open')
+        reads++
+        if (reads > 3) throw Error('No exact reaction observed in fixture')
+        return {
+          hasEarlier: !loaded,
+          messages: loaded
+            ? [
+                post(
+                  reads >= 3
+                    ? {
+                        emoji: fault === 'wrong-glyph' ? '👍' : glyph,
+                        userIds: [
+                          fault === 'wrong-viewer' ? userIdOfGumbo(8) : viewerId
+                        ]
+                      }
+                    : null
+                )
+              ]
+            : []
+        }
+      },
+      loadEarlier: async (conversation: string) => {
+        expect(conversation).equals('cnv-group')
+        calls.push('load-earlier')
+        loaded = true
+        return { hasEarlier: false, messages: [post(null)] }
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      group: 'cnv-group',
+      viewerId,
+      observations: [],
+      f: { messages: { target } },
+      check: async (name: string, work: () => Promise<void>) => {
+        if (
+          name ===
+          'E5 movement before hold cancels; reaction and personal pin remain usable'
+        )
+          await work()
+      },
+      anchor: async () => {},
+      targetBounds: async () => ({ x: 10, y: 20, width: 200, height: 40 }),
+      protocolPeer: async () => ({ engine })
+    }) as Scenarios
+    let error: unknown
+    try {
+      await scenario.E5()
+    } catch (failure) {
+      error = failure
+    }
+    return { calls, error }
+  }
+  for (const fault of ['', 'missing-history'])
+    it(
+      'waits for the exact E5 peer reaction after a verified raw-glyph tap: ' +
+        (fault === '' ? 'delayed-delivery' : fault),
+      async () => {
+        const result = await reactionPeerReadiness(fault)
+        expect(result.error).equals(undefined)
+        expect(result.calls[0]).equals('tap-raw-glyph')
+        expect(result.calls.filter(call => call === 'open')).length(3)
+        expect(result.calls.includes('load-earlier')).equals(
+          fault === 'missing-history'
+        )
+      }
+    )
+  for (const fault of ['wrong-glyph', 'wrong-viewer'])
+    it(
+      'rejects an E5 peer reaction without the exact raw glyph and viewer: ' +
+        fault,
+      async () => {
+        const result = await reactionPeerReadiness(fault)
+        expect(String(result.error)).includes(
+          'No exact reaction observed in fixture'
+        )
+        expect(result.calls.filter(call => call === 'open')).length(4)
+      }
+    )
+  async function browserReplacement(
+    text: string,
+    options: { fault?: string; platform?: string; previous?: string } = {}
+  ): Promise<{ draft: string; calls: string[]; error: unknown }> {
+    const { actual, page } = browserModel()
+    const previous = options.previous ?? '@Juan S edited token 1234567405'
+    const platform = options.platform ?? 'MacIntel'
+    Object.defineProperty(page.window.navigator, 'platform', {
+      value: platform
+    })
+    const editor = page.window.document.createElement('textarea')
+    editor.dataset.testid = 'chat-composer'
+    editor.value = previous
+    page.window.document.body.append(editor)
+    const calls: string[] = []
+    actual.device.tapOn = async args => {
+      expect(args.id).equals('chat-composer')
+      editor.focus()
+      // A real center tap can put the caret before an unselected suffix.
+      editor.setSelectionRange(previous.length - 3, previous.length - 3)
+      calls.push('focus')
+      return {}
+    }
+    actual.device.pressKey = async args => {
+      expect(args.key).equals(platform === 'MacIntel' ? 'Cmd+A' : 'Ctrl+A')
+      calls.push('select-all')
+      if (options.fault !== 'partial-selection')
+        editor.setSelectionRange(0, editor.value.length)
+      return {}
+    }
+    actual.device.eraseText = async (args = {}) => {
+      calls.push('erase')
+      if (options.fault === 'erase-leftover') return {}
+      // The CDP backend sends 50 Backspaces by default, not Select All.
+      for (let i = 0; i < Number(args.characters ?? 50); i++) {
+        const start = editor.selectionStart
+        const end = editor.selectionEnd
+        editor.setRangeText(
+          '',
+          start === end ? Math.max(0, start - 1) : start,
+          end,
+          'end'
+        )
+        editor.dispatchEvent(
+          new page.window.InputEvent('input', {
+            bubbles: true,
+            inputType: 'deleteContentBackward'
+          })
+        )
+      }
+      return {}
+    }
+    actual.device.inputText = async args => {
+      calls.push('input')
+      const value =
+        options.fault === 'lost-input'
+          ? String(args.text).slice(0, -1)
+          : String(args.text)
+      editor.setRangeText(
+        value,
+        editor.selectionStart,
+        editor.selectionEnd,
+        'end'
+      )
+      editor.dispatchEvent(
+        new page.window.InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: value
+        })
+      )
+      return {}
+    }
+    let error: unknown
+    try {
+      await actual.replaceDraft(text)
+    } catch (failure) {
+      error = failure
+    }
+    return { draft: editor.value, calls, error }
+  }
+  it('replaces a browser draft completely when the observed tap leaves a trailing numeric suffix', async () => {
+    const result = await browserReplacement('A newer synthetic draft')
+    expect(result.error).equals(undefined)
+    expect(result.draft).equals('A newer synthetic draft')
+    expect(result.calls).deep.equals(['focus', 'select-all', 'erase', 'input'])
+  })
+  it('selects and replaces an entire long multiline browser draft using the observed non-Mac platform', async () => {
+    const result = await browserReplacement('New first line\nNew second line', {
+      platform: 'Linux x86_64',
+      previous: 'Old line\n' + 'Long synthetic draft '.repeat(8)
+    })
+    expect(result.error).equals(undefined)
+    expect(result.draft).equals('New first line\nNew second line')
+    expect(result.calls).deep.equals(['focus', 'select-all', 'erase', 'input'])
+  })
+  it('clears the entire browser draft for an exact empty replacement', async () => {
+    const result = await browserReplacement('')
+    expect(result.error).equals(undefined)
+    expect(result.draft).equals('')
+    expect(result.calls).deep.equals(['focus', 'select-all', 'erase'])
+  })
+  for (const fault of ['partial-selection', 'erase-leftover', 'lost-input'])
+    it(
+      'rejects an unproved complete browser replacement: ' + fault,
+      async () => {
+        const result = await browserReplacement('A newer synthetic draft', {
+          fault
+        })
+        expect(String(result.error)).includes(
+          fault === 'partial-selection'
+            ? 'select the entire current draft'
+            : fault === 'erase-leftover'
+              ? 'completely clear the prior draft'
+              : 'equal the complete expected draft'
+        )
+        if (fault !== 'lost-input') expect(result.calls).not.includes('input')
+        if (fault === 'partial-selection')
+          expect(result.calls).not.includes('erase')
+      }
+    )
   async function accountSwitchTyping(fault = ''): Promise<{
     calls: string[]
     draft: string

@@ -4380,12 +4380,15 @@ export class Scenarios {
           text: 'Safety number.*',
           timeout: 10000
         })
+        await ui.text('Done')
+        await ui.present('chat-info-members')
         await ui.back()
-        await ui.back()
+        await ui.present('chat-message-history')
         assert.equal(await ui.draft(), before)
         await ui.open('/chat/' + this.group + '/members')
         await ui.present('chat-info-members')
         await ui.back()
+        await ui.present('chat-message-history')
         assert.equal(await ui.draft(), before)
       }
     )
@@ -4723,15 +4726,21 @@ export class Scenarios {
         }
         await ui.absent('chat-message-spotlight')
         const peer = await this.protocolPeer()
-        const view = await peer.engine.open(this.group)
-        assert(
-          view.messages
-            .find(m => m.id === this.f.messages.target.id)
-            ?.reactions.some(
-              r =>
-                r.emoji === expectedEmoji && r.userIds.includes(this.viewerId)
-            ) === true,
-          'Actual selected raw glyph and reacting viewer must reach the peer'
+        await this.peerTarget(peer, this.group, this.f.messages.target.id)
+        await until(
+          async () => {
+            const view = await peer.engine.open(this.group)
+            return view.messages
+              .find(m => m.id === this.f.messages.target.id)
+              ?.reactions.some(
+                r =>
+                  r.emoji === expectedEmoji && r.userIds.includes(this.viewerId)
+              ) === true
+              ? true
+              : undefined
+          },
+          'Actual selected raw glyph and reacting viewer must reach the peer',
+          30000
         )
       }
     )

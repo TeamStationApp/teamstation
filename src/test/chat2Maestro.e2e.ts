@@ -4196,6 +4196,43 @@ export class Chat2UI {
       return
     }
     await this.id('chat-composer')
+    if (!this.native) {
+      const before = await this.dom(
+        `const n=document.querySelector('[data-testid="chat-composer"]');return {focused:n?.isConnected===true&&document.activeElement===n,value:n?.value,platform:navigator.platform}`
+      )
+      assert(
+        before.focused === true &&
+          typeof before.value === 'string' &&
+          typeof before.platform === 'string',
+        'Browser replacement requires the focused composer'
+      )
+      await this.device.pressKey({
+        key: before.platform.includes('Mac') ? 'Cmd+A' : 'Ctrl+A'
+      })
+      const selected = await this.dom(
+        `const n=document.querySelector('[data-testid="chat-composer"]');return {focused:n?.isConnected===true&&document.activeElement===n,value:n?.value,start:n?.selectionStart,end:n?.selectionEnd}`
+      )
+      assert(
+        selected.focused === true &&
+          selected.value === before.value &&
+          selected.start === 0 &&
+          selected.end === before.value.length,
+        'Browser replacement must select the entire current draft'
+      )
+      await this.device.eraseText({ characters: 1 })
+      assert.equal(
+        await this.draft(),
+        '',
+        'Browser replacement must completely clear the prior draft'
+      )
+      if (text !== '') await this.append(text)
+      assert.equal(
+        await this.draft(),
+        text,
+        'Browser replacement must equal the complete expected draft'
+      )
+      return
+    }
     await this.device.eraseText()
     if (text !== '') await this.append(text)
   }
