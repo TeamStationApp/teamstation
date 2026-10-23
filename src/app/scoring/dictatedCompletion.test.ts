@@ -6,9 +6,11 @@ import { nextDecision } from '../../common/scoring/rules'
 import { scoringSession } from '../../test/scoringSession'
 import {
   answerOf,
+  baseOutsSaid,
   completeSentence,
   leadRunnersFirst,
   playDefaults,
+  sentenceDefaults,
   sentenceQuestion,
   settleBetween,
   stealsByBase
@@ -2923,5 +2925,1386 @@ describe('a runner who holds', function () {
     expect(state.session.liveData.linescore.outs).equals(1)
     expect(bases(state)).deep.equals([null, 6, null])
     nothingToTap(state)
+  })
+})
+
+describe('a base an infielder took for the out', function () {
+  function at(
+    outs: number,
+    bases: { first?: number; second?: number; third?: number }
+  ): ScoringState {
+    const state = game(bases)
+    state.session.liveData.linescore.outs = outs
+    return state
+  }
+  const to = (fielder: number): ScoringAction => ({
+    type: 'ballInPlay',
+    contact: 'swing',
+    trajectory: 'ground_ball',
+    fielder
+  })
+  const thrownOut: ScoringAction = {
+    type: 'result',
+    eventType: 'field_out',
+    outBy: 'throw'
+  }
+  const runs = (state: ScoringState): number =>
+    state.session.liveData.linescore.teams.away.runs
+  const outsOf = (state: ScoringState): number =>
+    state.session.liveData.linescore.outs
+  const half = (state: ScoringState): boolean =>
+    state.session.liveData.linescore.isTopInning
+  /** Each out, without the spots the field gives its throws. */
+  const outsIn = (actions: readonly ScoringAction[]): ScoringAction[] =>
+    actions.flatMap(action => {
+      if (action.type !== 'runnerMovement' || action.out !== true) return []
+      const { locations: _spots, ...out } = action
+      return [out]
+    })
+  const shortstop = game().session.gameData.players[SS].fullName
+
+  it("reads the base a fielder took, and never a runner's", function () {
+    const bases = (words: string): string[] =>
+      baseOutsSaid(words).map(out => out.base)
+    expect(
+      bases("Grounder to short, who tags second for fielder's choice.")
+    ).deep.equals(['2B'])
+    expect(bases('He steps on third.')).deep.equals(['3B'])
+    expect(bases('Paul takes third base for the out.')).deep.equals(['3B'])
+    expect(
+      bases('Grounder to third, he tags. Third base for the out.')
+    ).deep.equals(['3B'])
+    expect(bases('Force at home.')).deep.equals(['home'])
+    expect(bases('The runner is forced at second.')).deep.equals(['2B'])
+    expect(
+      bases('The third baseman takes third base for the out.')
+    ).deep.equals(['3B'])
+    expect(bases('He throws to second for the out.')).deep.equals(['2B'])
+    expect(bases('He throws home for the force.')).deep.equals(['home'])
+    for (const words of [
+      'The runner tags up and scores.',
+      'He tagged first.',
+      'Casey takes second on the throw.',
+      'Single, and Remy gets to third.',
+      'The third baseman takes third.',
+      'Sacrifice bunt to the shortstop, and Player 6 takes third.',
+      'Ground ball to short, out at first, and the runner takes third.',
+      'Fly ball to the center fielder, caught, and the runner tags up and takes home.',
+      'Ground out, second to first. The runner touches third and stays.',
+      'Line drive to second base for the out.',
+      'Ground ball to third base for the out.'
+    ])
+      expect(bases(words), words).deep.equals([])
+    expect(baseOutsSaid('The shortstop steps on second.')[0].by).equals('SS')
+    expect(baseOutsSaid('He throws to second for the out.')[0].thrown).equals(
+      true
+    )
+  })
+
+  it("puts the runner out at second, with the shortstop, on a fielder's choice the model left without him", function () {
+    const words =
+      "And it's a grounder to the shortstop. Who tags second for fielder's choice."
+    const sentence = playDefaults(
+      at(1, { first: 7 }).session,
+      [to(SS), choice],
+      words
+    )
+    expect(sentence.slice(0, 2)).deep.equals([to(SS), choice])
+    expect(outsIn(sentence)).deep.equals([
+      {
+        type: 'runnerMovement',
+        runner: 7,
+        to: '2B',
+        out: true,
+        reason: 'Force Out',
+        fielders: [SS]
+      }
+    ])
+    const after = settle(sayAs(words, at(1, { first: 7 }), to(SS), choice))
+    expect(outsOf(after)).equals(2)
+    expect(bases(after)).deep.equals([BATTER, null, null])
+    nothingToTap(after)
+  })
+
+  for (const outs of [0, 2])
+    it(`makes "takes third base for the out" the runner forced at third, not the batter at first (${outs} out)`, function () {
+      const words =
+        'Grounder to third, and the third baseman takes third base for the out.'
+      const sentence = playDefaults(
+        at(outs, { first: 7, second: 8 }).session,
+        [to(THIRD_BASEMAN), thrownOut],
+        words
+      )
+      expect(sentence.filter(action => action.type === 'result')).deep.equals([
+        choice
+      ])
+      expect(outsIn(sentence)).deep.equals([
+        {
+          type: 'runnerMovement',
+          runner: 8,
+          to: '3B',
+          out: true,
+          reason: 'Force Out',
+          fielders: [THIRD_BASEMAN]
+        }
+      ])
+      const after = settle(
+        sayAs(
+          words,
+          at(outs, { first: 7, second: 8 }),
+          to(THIRD_BASEMAN),
+          thrownOut
+        )
+      )
+      if (outs === 2) {
+        expect(outsOf(after)).equals(0)
+        expect(half(after)).equals(false)
+      } else {
+        expect(outsOf(after)).equals(1)
+        expect(bases(after)).deep.equals([BATTER, 7, null])
+      }
+    })
+
+  it('credits a throw to the base to its cover, a runner not forced as thrown out, and leaves a base nobody could be put out at', function () {
+    const thrown = playDefaults(
+      at(0, { first: 7 }).session,
+      [to(THIRD_BASEMAN), choice],
+      'Grounder to third, he throws to second for the out.'
+    )
+    expect(outsIn(thrown)).deep.equals([
+      {
+        type: 'runnerMovement',
+        runner: 7,
+        to: '2B',
+        out: true,
+        reason: 'Force Out',
+        fielders: [THIRD_BASEMAN, SECOND_BASEMAN]
+      }
+    ])
+    const tagged = playDefaults(
+      at(0, { second: 8 }).session,
+      [to(THIRD_BASEMAN), choice],
+      'Grounder to third, and he tags third for the out.'
+    )
+    expect(outsIn(tagged)).deep.equals([
+      {
+        type: 'runnerMovement',
+        runner: 8,
+        to: '3B',
+        out: true,
+        reason: 'Throw Out',
+        fielders: [THIRD_BASEMAN]
+      }
+    ])
+    const empty = [to(THIRD_BASEMAN), thrownOut]
+    expect(
+      playDefaults(at(0, {}).session, empty, 'He steps on third for the out.')
+    ).deep.equals(playDefaults(at(0, {}).session, empty, 'Grounder to third.'))
+  })
+
+  it('keeps the batter out at first when the words put him out there too, and a double play at second', function () {
+    const both = playDefaults(
+      at(0, { first: 7, second: 8 }).session,
+      [to(THIRD_BASEMAN), thrownOut],
+      'Grounder to third, he steps on third and throws to first, double play.'
+    )
+    expect(both.find(action => action.type === 'result')).deep.equals(thrownOut)
+    expect(outsIn(both)[0]).deep.includes({
+      runner: 8,
+      to: '3B',
+      fielders: [THIRD_BASEMAN]
+    })
+    const pivot = playDefaults(
+      at(0, { first: 7, second: 8 }).session,
+      [to(THIRD_BASEMAN), thrownOut],
+      'Grounder to third, he tags. Third base for the out, and double play at second.'
+    )
+    expect(pivot.find(action => action.type === 'result')).deep.equals(choice)
+    expect(
+      outsIn(pivot).map(
+        out => out.type === 'runnerMovement' && [out.runner, out.to]
+      )
+    ).deep.equals([
+      [8, '3B'],
+      [7, '2B']
+    ])
+  })
+
+  describe('a force and an overthrow at first', function () {
+    const words =
+      "And it's a grounder to the shortstop, he tags second for the out, but overthrows first. For an error, and batter is safe."
+    const force: ScoringAction = {
+      type: 'runnerMovement',
+      runner: 7,
+      to: '2B',
+      out: true,
+      reason: 'Force Out'
+    }
+    const error: ScoringAction = {
+      type: 'fieldingPlay',
+      fielders: [SS],
+      error: SS,
+      errorKind: 'throwing'
+    }
+    const bare: ScoringAction = {
+      type: 'fieldingPlay',
+      fielders: [SS],
+      error: SS
+    }
+    const errorResult: ScoringAction = {
+      type: 'result',
+      eventType: 'field_error'
+    }
+    const forms: Array<[string, ScoringAction[]]> = [
+      ['the out before the error', [to(SS), force, errorResult, error]],
+      ['the error before the out', [to(SS), errorResult, error, force]],
+      ['no errorKind', [to(SS), force, errorResult, bare]],
+      ['no fieldingPlay', [to(SS), force, errorResult]],
+      ['no result', [to(SS), error, force]]
+    ]
+    for (const [form, said] of forms)
+      it(`charges the throw to first after the force (${form})`, function () {
+        expect(
+          playDefaults(at(0, { first: 7 }).session, said, words)
+        ).deep.equals([
+          to(SS),
+          errorResult,
+          {
+            type: 'fieldingPlay',
+            fielders: [SS, FIRST_BASEMAN],
+            error: SS,
+            errorKind: 'throwing'
+          },
+          { ...force, fielders: [SS] }
+        ])
+        const after = settle(sayAs(words, at(0, { first: 7 }), ...said))
+        expect(outsOf(after)).equals(1)
+        expect(after.session.liveData.linescore.teams.home.errors).equals(1)
+        expect(bases(after)).deep.equals([BATTER, null, null])
+        expect(after.dictation?.problem).equals(undefined)
+      })
+
+    for (const [form, said] of forms)
+      it(`ends the half on the force with two out, leaving the error out (${form})`, function () {
+        const done = sentenceDefaults(at(2, { first: 7 }).session, said, words)
+        expect(done.actions).deep.equals([
+          to(SS),
+          choice,
+          { ...force, fielders: [SS] }
+        ])
+        expect(done.leftOut).deep.equals([`the error by ${shortstop}`])
+        const after = settle(sayAs(words, at(2, { first: 7 }), ...said))
+        expect(half(after)).equals(false)
+        expect(after.session.liveData.linescore.teams.home.errors).equals(0)
+        expect(after.dictation?.note).equals(
+          `Left out after the third out: the error by ${shortstop}`
+        )
+      })
+
+    for (const wild of [
+      'Grounder to short, he steps on second, but his throw sails past first.',
+      'Grounder to short, he steps on second, then an errant throw to first.',
+      'Grounder to short, he steps on second, and throws it past the first baseman.'
+    ])
+      it(`leaves out an error any wild throw's words put after the third out: ${wild}`, function () {
+        const after = settle(
+          sayAs(wild, at(2, { first: 7 }), to(SS), thrownOut)
+        )
+        expect(after.dictation?.problem).equals(undefined)
+        expect(half(after)).equals(false)
+        expect(after.session.liveData.linescore.teams.home.errors).equals(0)
+        expect(after.dictation?.note).match(/the error by/)
+      })
+  })
+
+  describe('a run after the third out', function () {
+    const popup: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      trajectory: 'popup',
+      fielder: LF
+    }
+    const caught: ScoringAction = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'catch'
+    }
+    const home: ScoringAction = {
+      type: 'runnerMovement',
+      runner: 8,
+      to: 'home'
+    }
+
+    for (const [words, said] of [
+      [
+        "Pop fly to left field. And it's caught for the out, but the runner tags up and takes home.",
+        [popup, caught, home]
+      ],
+      [
+        'Pop fly to left, the runner tags and scores, and the left fielder makes the catch for the third out.',
+        [popup, caught, home]
+      ],
+      [
+        'Pop fly to left, the runner tags and scores, and the left fielder makes the catch for the third out.',
+        [popup, home, caught]
+      ],
+      [
+        'Pop fly to left, the runner tags and scores, and the left fielder makes the catch for the third out.',
+        [home, popup, caught]
+      ]
+    ] as Array<[string, ScoringAction[]]>)
+      it(`scores nothing after a catch makes it: ${said.map(action => action.type).join(', ')}`, function () {
+        const after = settle(
+          sayAs(words, at(2, { second: 7, third: 8 }), ...said)
+        )
+        expect(runs(after)).equals(0)
+        expect(half(after)).equals(false)
+        expect(after.dictation?.note).equals(
+          'Left out after the third out: Player 8 scoring'
+        )
+      })
+
+    it('scores nothing before a ground out at first makes it', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to short, the runner scores, and he throws him out at first.',
+          at(2, { third: 8 }),
+          to(SS),
+          home,
+          thrownOut
+        )
+      )
+      expect(runs(after)).equals(0)
+      expect(half(after)).equals(false)
+    })
+
+    it('keeps a run scored on a wild pitch before the catch', function () {
+      const done = sentenceDefaults(
+        at(2, { first: 7, third: 8 }).session,
+        [
+          { type: 'pitch', call: 'B' },
+          {
+            type: 'batteryEvent',
+            kind: 'wild_pitch',
+            advances: [{ runner: 8, to: 'home' }]
+          },
+          popup,
+          caught
+        ],
+        'Wild pitch, the runner on third scores. Then a fly out to left for the third out.'
+      )
+      expect(done.leftOut).deep.equals([])
+    })
+
+    it('keeps a run sent on its own before the ball, said before it', function () {
+      const done = sentenceDefaults(
+        at(2, { first: 7, third: 8 }).session,
+        [
+          { type: 'pitch', call: 'B' },
+          {
+            type: 'batteryEvent',
+            kind: 'wild_pitch',
+            advances: [{ runner: 7, to: '2B' }]
+          },
+          home,
+          popup,
+          caught
+        ],
+        'Wild pitch, the runner on first takes second and the runner on third scores. Then a fly out to left for the third out.'
+      )
+      expect(done.leftOut).deep.equals([])
+      expect(done.actions).deep.includes(home)
+    })
+
+    it('counts an out the sentence made before the ball toward the third', function () {
+      const after = settle(
+        sayAs(
+          'Player 7 caught stealing second. Then a fly out to left, and Player 8 tags and scores.',
+          at(1, { first: 7, third: 8 }),
+          {
+            type: 'baseRunning',
+            kind: 'caught_stealing',
+            runner: 7,
+            to: '2B'
+          },
+          popup,
+          caught,
+          home
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(runs(after)).equals(0)
+      expect(half(after)).equals(false)
+      expect(after.dictation?.note).match(/scoring/)
+    })
+
+    it('drops nothing when the third out ends the sentence, or the outs stay under three', function () {
+      const words =
+        "Pop fly to left. And it's caught for the out, but the runner tags up and takes home."
+      for (const outs of [0, 1])
+        expect(
+          sentenceDefaults(
+            at(outs, { third: 8 }).session,
+            [popup, caught, home],
+            words
+          ).leftOut
+        ).deep.equals([])
+      expect(
+        sentenceDefaults(
+          at(2, { third: 8 }).session,
+          [popup, caught],
+          'Caught for the third out.'
+        ).leftOut
+      ).deep.equals([])
+    })
+
+    it("counts a run the words put before a runner's third out, sent after it", function () {
+      const words =
+        'Single to left, the runner scores, and the batter is thrown out going to second.'
+      const single: ScoringAction[] = [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'line_drive',
+          fielder: LF
+        },
+        { type: 'result', eventType: 'single' }
+      ]
+      const out: ScoringAction = {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '2B',
+        out: true,
+        reason: 'Throw Out',
+        fielders: [LF, SECOND_BASEMAN]
+      }
+      const done = sentenceDefaults(
+        at(2, { third: 8 }).session,
+        [...single, out, home],
+        words
+      )
+      expect(done.leftOut).deep.equals([])
+      expect(done.actions.indexOf(home)).lessThan(done.actions.indexOf(out))
+      const after = settle(
+        sayAs(words, at(2, { third: 8 }), ...single, out, home)
+      )
+      expect(runs(after)).equals(1)
+      expect(half(after)).equals(false)
+    })
+  })
+
+  it("leaves a fielder's choice's calls after its third out to the rules", function () {
+    const said: ScoringAction[] = [
+      to(THIRD_BASEMAN),
+      choice,
+      {
+        type: 'runnerMovement',
+        runner: 8,
+        to: 'home',
+        out: true,
+        fielders: [THIRD_BASEMAN]
+      },
+      { type: 'runnerMovement', runner: 7, to: '3B' }
+    ]
+    const done = sentenceDefaults(
+      at(2, { second: 7, third: 8 }).session,
+      said,
+      "Ground ball to the third baseman for a fielder's choice. He tags the runner from third out himself at home. The runner from second is safe at third."
+    )
+    expect(done.leftOut).deep.equals([])
+    expect(
+      done.actions.some(
+        action => action.type === 'runnerMovement' && action.runner === 7
+      )
+    ).equals(true)
+  })
+
+  it('puts the base out on the runner there, not on a player the model guessed who is on no base', function () {
+    const pitcher = 10
+    const sentence = playDefaults(
+      at(0, { first: 7, second: 8 }).session,
+      [
+        to(THIRD_BASEMAN),
+        choice,
+        {
+          type: 'runnerMovement',
+          runner: pitcher,
+          to: '3B',
+          out: true,
+          reason: 'Force Out'
+        }
+      ],
+      'Grounder to third, and the third baseman takes third base for the out.'
+    )
+    expect(
+      outsIn(sentence).map(out => out.type === 'runnerMovement' && out.runner)
+    ).deep.equals([8])
+  })
+  it('puts the base out on the runner forced there, not on another runner the model named', function () {
+    const sentence = playDefaults(
+      at(0, { first: 7, second: 8 }).session,
+      [
+        to(THIRD_BASEMAN),
+        {
+          type: 'runnerMovement',
+          runner: 7,
+          to: '3B',
+          out: true,
+          reason: 'Force Out',
+          fielders: [THIRD_BASEMAN]
+        },
+        choice
+      ],
+      'Grounder to third, and the third baseman takes third base for the out.'
+    )
+    expect(
+      outsIn(sentence).map(out => out.type === 'runnerMovement' && out.runner)
+    ).deep.equals([8])
+  })
+
+  describe('words that are no base out', function () {
+    it("leaves out a run the words put after a runner's third out", function () {
+      const after = settle(
+        sayAs(
+          'Single to right, Player 7 is thrown out at third for the third out, and then Player 8 scores.',
+          at(2, { second: 7, third: 8 }),
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'line_drive',
+            fielder: 18,
+            direction: 'right'
+          },
+          { type: 'result', eventType: 'single' },
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '3B',
+            out: true,
+            reason: 'Throw Out',
+            fielders: [18, THIRD_BASEMAN]
+          },
+          { type: 'runnerMovement', runner: 8, to: 'home' }
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(runs(after)).equals(0)
+      expect(half(after)).equals(false)
+      expect(after.dictation?.note).match(/scoring/)
+    })
+
+    it('keeps the double play when the words throw to 1st or to the first baseman', function () {
+      for (const words of [
+        'Grounder to short, he steps on second and throws to 1st.',
+        'Grounder to short, he steps on second and throws to the first baseman.',
+        'Grounder to short, he steps on second and fires it over to the first baseman, two outs.'
+      ]) {
+        const after = settle(
+          sayAs(words, at(0, { first: 7 }), to(SS), thrownOut)
+        )
+        expect(after.dictation?.problem, words).equals(undefined)
+        expect(outsOf(after), words).equals(2)
+        expect(bases(after), words).deep.equals([null, null, null])
+      }
+      // The ball to the first baseman is where it went.
+      const choice = settle(
+        sayAs(
+          'Grounder to the first baseman, he throws to second for the force.',
+          at(0, { first: 7 }),
+          to(FIRST_BASEMAN),
+          thrownOut
+        )
+      )
+      expect(outsOf(choice)).equals(1)
+      expect(bases(choice)).deep.equals([BATTER, null, null])
+    })
+
+    it('holds a runner said to move after the third out at the base the hit forced him to', function () {
+      const single: ScoringAction[] = [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'line_drive',
+          fielder: 18,
+          direction: 'right'
+        },
+        { type: 'result', eventType: 'single' },
+        {
+          type: 'runnerMovement',
+          runner: 8,
+          to: 'home',
+          out: true,
+          reason: 'Throw Out',
+          fielders: [18, 11]
+        }
+      ]
+      // Named as scorers name them: by first name.
+      const named = (): ScoringState => {
+        const state = at(2, { first: 7, second: 8 })
+        state.session.gameData.players[7].firstName = 'Casey'
+        state.session.gameData.players[8].firstName = 'Drew'
+        return state
+      }
+      for (const [base, words, left] of [
+        ['3B', 'Casey goes to third.', true],
+        ['2B', 'Casey goes to second.', false]
+      ] as const) {
+        const said = `Single to right, Drew is thrown out at home for the third out, and ${words}`
+        const after = settle(
+          sayAs(said, named(), ...single, {
+            type: 'runnerMovement',
+            runner: 7,
+            to: base
+          })
+        )
+        expect(after.dictation?.problem, said).equals(undefined)
+        expect(runs(after), said).equals(0)
+        expect(half(after), said).equals(false)
+        expect(after.dictation?.note != null, said).equals(left)
+      }
+    })
+
+    it('leaves a wild throw to second, after a force at third, as the model sent it', function () {
+      const words =
+        'Grounder to third, he steps on third for the force, then throws it away at second, and the batter is safe at first.'
+      const force: ScoringAction = {
+        type: 'runnerMovement',
+        runner: 8,
+        to: '3B',
+        out: true,
+        fielders: [THIRD_BASEMAN]
+      }
+      const safe: ScoringAction[] = [
+        { type: 'runnerMovement', runner: 7, to: '2B' },
+        { type: 'runnerMovement', runner: BATTER, to: '1B' }
+      ]
+      // The words throw it away at second: no overthrow of first.
+      const after = settle(
+        sayAs(
+          words,
+          at(0, { first: 7, second: 8 }),
+          to(THIRD_BASEMAN),
+          choice,
+          force,
+          ...safe
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(after.session.liveData.linescore.teams.home.errors).equals(0)
+      expect(outsOf(after)).equals(1)
+      // The model's own error on the throw to second is not made one to first.
+      const sent = sentenceDefaults(
+        at(0, { first: 7, second: 8 }).session,
+        [
+          to(THIRD_BASEMAN),
+          choice,
+          force,
+          {
+            type: 'fieldingPlay',
+            fielders: [THIRD_BASEMAN, SECOND_BASEMAN],
+            error: THIRD_BASEMAN,
+            errorKind: 'throwing'
+          },
+          ...safe
+        ],
+        'Grounder to third, he steps on third for the force, then throws it away. The batter is safe.'
+      ).actions
+      expect(
+        sent.some(
+          action =>
+            action.type === 'result' && action.eventType === 'field_error'
+        )
+      ).equals(false)
+      expect(sent).deep.includes({
+        type: 'fieldingPlay',
+        fielders: [THIRD_BASEMAN, SECOND_BASEMAN],
+        error: THIRD_BASEMAN,
+        errorKind: 'throwing'
+      })
+    })
+
+    it('never moves a runner back to hold him after a third out', function () {
+      const named = (): ScoringState => {
+        const state = at(2, { second: 8 })
+        state.session.gameData.players[8].firstName = 'Drew'
+        return state
+      }
+      const ball: ScoringAction = {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'line_drive',
+        fielder: 18,
+        direction: 'right'
+      }
+      const batterOut: ScoringAction = {
+        type: 'runnerMovement',
+        runner: BATTER,
+        to: '2B',
+        out: true,
+        reason: 'Throw Out',
+        fielders: [18, SS]
+      }
+      for (const [said, actions] of [
+        [
+          'Single to right, the batter is thrown out trying for second for the third out, and then Drew scores.',
+          [
+            ball,
+            { type: 'result', eventType: 'single' },
+            batterOut,
+            { type: 'runnerMovement', runner: 8, to: 'home' }
+          ]
+        ],
+        [
+          'Single to right, Drew goes to third, the batter is thrown out trying for second for the third out, and then Drew scores.',
+          [
+            ball,
+            { type: 'result', eventType: 'single' },
+            { type: 'runnerMovement', runner: 8, to: '3B' },
+            batterOut,
+            { type: 'runnerMovement', runner: 8, to: 'home' }
+          ]
+        ]
+      ] as Array<[string, ScoringAction[]]>) {
+        const after = settle(sayAs(said, named(), ...actions))
+        expect(after.dictation?.problem, said).equals(undefined)
+        expect(runs(after), said).equals(0)
+        expect(half(after), said).equals(false)
+        expect(
+          after.log.some(
+            action =>
+              action.type === 'runnerMovement' &&
+              action.runner === 8 &&
+              action.to === '2B'
+          ),
+          said
+        ).equals(false)
+      }
+    })
+
+    it('takes a throw to first the batter beat, or none, as no out at first', function () {
+      for (const words of [
+        'Grounder to short, he steps on second, and the batter is safe at first.',
+        'Grounder to short, he steps on second, but the batter beats the throw to first.',
+        'Grounder to short, he steps on second, but his throw to first is late.',
+        'Grounder to short, he steps on second, no throw to first.'
+      ]) {
+        const after = settle(
+          sayAs(words, at(0, { first: 7 }), to(SS), thrownOut)
+        )
+        expect(after.dictation?.problem, words).equals(undefined)
+        expect(outsOf(after), words).equals(1)
+        expect(bases(after), words).deep.equals([BATTER, null, null])
+      }
+    })
+
+    it('takes a wild throw the first baseman saved as no error', function () {
+      for (const [words, extra] of [
+        [
+          'Grounder to short, he steps on second, bad throw to first but the first baseman scoops it, double play.',
+          []
+        ],
+        [
+          'Grounder to short, he steps on second, a bad throw to first but the first baseman digs it out for the double play.',
+          [
+            {
+              type: 'runnerMovement',
+              runner: 7,
+              to: '2B',
+              out: true,
+              reason: 'Force Out'
+            }
+          ]
+        ]
+      ] as Array<[string, ScoringAction[]]>) {
+        const after = settle(
+          sayAs(words, at(0, { first: 7 }), to(SS), thrownOut, ...extra)
+        )
+        expect(after.dictation?.problem, words).equals(undefined)
+        expect(outsOf(after), words).equals(2)
+        expect(
+          after.session.liveData.linescore.teams.home.errors,
+          words
+        ).equals(0)
+      }
+    })
+
+    it('takes "the runner at first" as where he stood, not the batter out', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to short, the runner at first is forced at second.',
+          at(0, { first: 7 }),
+          to(SS),
+          thrownOut
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(1)
+      expect(bases(after)).deep.equals([BATTER, null, null])
+    })
+
+    it('reads a base out from where a steal before the ball left the runner', function () {
+      const after = settle(
+        sayAs(
+          'Player 7 steals second. Grounder to third, and the third baseman takes third base for the out.',
+          at(0, { first: 7 }),
+          { type: 'baseRunning', kind: 'steal', runner: 7, to: '2B' },
+          to(THIRD_BASEMAN),
+          thrownOut
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(1)
+      expect(bases(after)).deep.equals([BATTER, null, null])
+    })
+
+    it('credits the throw to first to the fielder who tagged the runner himself', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to short, he throws to third, the third baseman tags third, then throws to first to get the batter.',
+          at(0, { second: 7 }),
+          to(SS),
+          thrownOut
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      const batterOut = after.log.find(
+        action =>
+          action.type === 'runnerMovement' &&
+          action.runner === BATTER &&
+          action.out === true
+      )
+      expect(
+        batterOut?.type === 'runnerMovement' ? batterOut.fielders : undefined
+      ).deep.equals([THIRD_BASEMAN, FIRST_BASEMAN])
+    })
+
+    it('adds no second out at second when the model sent the double play there', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to third, he steps on third and throws to second, double play at second.',
+          at(0, { first: 7, second: 8 }),
+          to(THIRD_BASEMAN),
+          choice,
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '2B',
+            out: true,
+            fielders: [THIRD_BASEMAN, SECOND_BASEMAN]
+          }
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(2)
+      expect(bases(after)).deep.equals([BATTER, null, null])
+    })
+
+    it('reads no force from a runner doubled off after a catch, then a wild throw', function () {
+      const after = settle(
+        sayAs(
+          'Line drive caught by the shortstop, he steps on second to double off the runner, then throws it away at first.',
+          at(0, { first: 7 }),
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'line_drive',
+            fielder: SS
+          },
+          { type: 'result', eventType: 'field_out', outBy: 'catch' },
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '2B',
+            out: true,
+            fielders: [SS]
+          }
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(2)
+      expect(after.session.liveData.linescore.teams.home.errors).equals(0)
+    })
+
+    it('takes a grounder to first as where the ball went, not the batter out', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to first, he throws to second for the force.',
+          at(0, { first: 7 }),
+          to(FIRST_BASEMAN),
+          thrownOut
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(1)
+      expect(bases(after)).deep.equals([BATTER, null, null])
+    })
+
+    it("keeps a runner's own advance after an out at first, and a sacrifice fly's run", function () {
+      const advance = settle(
+        sayAs(
+          'Ground ball to short, out at first, and the runner takes third.',
+          at(0, { second: 8 }),
+          to(SS),
+          thrownOut,
+          { type: 'runnerMovement', runner: 8, to: '3B' }
+        )
+      )
+      expect(advance.dictation?.problem).equals(undefined)
+      expect(outsOf(advance)).equals(1)
+      expect(bases(advance)).deep.equals([null, null, 8])
+      const fly = settle(
+        sayAs(
+          'Fly ball to the center fielder, caught, and the runner tags up and takes home.',
+          at(1, { third: 8 }),
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'fly_ball',
+            fielder: 17
+          },
+          { type: 'result', eventType: 'field_out', outBy: 'catch' },
+          { type: 'runnerMovement', runner: 8, to: 'home' }
+        )
+      )
+      expect(fly.dictation?.problem).equals(undefined)
+      expect(runs(fly)).equals(1)
+      expect(outsOf(fly)).equals(2)
+    })
+
+    it('keeps a caught liner one out, whatever base it went to', function () {
+      const after = settle(
+        sayAs(
+          'Line drive to second base for the out.',
+          at(0, { first: 7 }),
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'line_drive',
+            fielder: SECOND_BASEMAN
+          },
+          { type: 'result', eventType: 'field_out', outBy: 'catch' }
+        )
+      )
+      expect(outsOf(after)).equals(1)
+      expect(bases(after)).deep.equals([7, null, null])
+    })
+
+    it("counts a run the words put before a runner's later third out", function () {
+      const after = settle(
+        sayAs(
+          'Fly out to right, the runner on third tags and scores, and the runner on first is thrown out at second for the third out.',
+          at(1, { first: 7, third: 8 }),
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'fly_ball',
+            fielder: 18
+          },
+          { type: 'result', eventType: 'field_out', outBy: 'catch' },
+          { type: 'runnerMovement', runner: 8, to: 'home' },
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '2B',
+            out: true,
+            fielders: [18, SS]
+          }
+        )
+      )
+      expect(runs(after)).equals(1)
+      expect(half(after)).equals(false)
+      expect(after.dictation?.note).equals(undefined)
+    })
+
+    for (const [words, out] of [
+      [
+        'Fly out to right, the runner on third tags and scores, and the runner on first is thrown out trying for second for the third out.',
+        {
+          type: 'runnerMovement',
+          runner: 7,
+          to: '2B',
+          out: true,
+          fielders: [18, SS]
+        }
+      ],
+      [
+        'Fly out to right, the runner on third tags and scores, and the runner on first is doubled off first for the third out.',
+        {
+          type: 'runnerMovement',
+          runner: 7,
+          to: '1B',
+          out: true,
+          fielders: [18, FIRST_BASEMAN]
+        }
+      ]
+    ] as Array<[string, ScoringAction]>)
+      for (const order of ['run first', 'out first', 'catch last'] as const)
+        it(`keeps the run before a runner's third out, however worded or sent (${order}): ${words.slice(53, 95)}`, function () {
+          const fly: ScoringAction = {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'fly_ball',
+            fielder: 18
+          }
+          const catchOut: ScoringAction = {
+            type: 'result',
+            eventType: 'field_out',
+            outBy: 'catch'
+          }
+          const run: ScoringAction = {
+            type: 'runnerMovement',
+            runner: 8,
+            to: 'home'
+          }
+          const sent =
+            order === 'run first'
+              ? [fly, catchOut, run, out]
+              : order === 'out first'
+                ? [fly, catchOut, out, run]
+                : [fly, out, run, catchOut]
+          const after = settle(
+            sayAs(words, at(1, { first: 7, third: 8 }), ...sent)
+          )
+          expect(after.dictation?.problem).equals(undefined)
+          expect(runs(after)).equals(1)
+          expect(half(after)).equals(false)
+          expect(after.dictation?.note).equals(undefined)
+        })
+
+    it('leaves a force throw dropped for an error to the error', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to short, he throws to second for the force, but the second baseman drops the ball for an error, and everyone is safe.',
+          at(0, { first: 7 }),
+          to(SS),
+          { type: 'result', eventType: 'field_error' },
+          {
+            type: 'fieldingPlay',
+            fielders: [SS, SECOND_BASEMAN],
+            error: SECOND_BASEMAN,
+            errorKind: 'fielding'
+          }
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(0)
+      expect(bases(after)).deep.equals([BATTER, 7, null])
+    })
+
+    it('reads a fielder who beats the runner to the base for the force', function () {
+      const after = settle(
+        sayAs(
+          'Grounder to the shortstop, he beats the runner to second for the force.',
+          at(1, { first: 7 }),
+          to(SS),
+          thrownOut
+        )
+      )
+      expect(outsOf(after)).equals(2)
+      expect(bases(after)).deep.equals([BATTER, null, null])
+    })
+
+    it("leaves a runner's own touch of a base his, however far from his name", function () {
+      for (const words of [
+        'Grounder to the pitcher, thrown out at first. The runner on second, running hard, steps on third and comes home.',
+        'Sacrifice bunt, pitcher to first. Player 8, running all the way, touches third and scores on the play.',
+        'Ground ball to the second baseman, thrown out at first, and the runner from second goes hard, touches third and scores.',
+        'The runner from second runs hard and touches third safely.'
+      ])
+        expect(
+          baseOutsSaid(words, at(1, { second: 8 }).session).map(
+            out => out.base
+          ),
+          words
+        ).deep.equals([])
+      const after = settle(
+        sayAs(
+          'Grounder to the pitcher, thrown out at first. The runner on second, running hard, steps on third and comes home.',
+          at(1, { second: 8 }),
+          to(10),
+          thrownOut,
+          { type: 'runnerMovement', runner: 8, to: 'home' }
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(outsOf(after)).equals(2)
+      expect(runs(after)).equals(1)
+    })
+
+    it("keeps a run before a runner thrown out at home after the batter's out at first", function () {
+      const after = settle(
+        sayAs(
+          'Grounder to short, he throws to first for the out, the runner from third scores, and the runner from second is thrown out at home trying to score for the third out.',
+          at(1, { second: 7, third: 8 }),
+          to(SS),
+          thrownOut,
+          { type: 'runnerMovement', runner: 8, to: 'home' },
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: 'home',
+            out: true,
+            reason: 'Throw Out',
+            fielders: [FIRST_BASEMAN, 11]
+          }
+        )
+      )
+      expect(runs(after)).equals(1)
+      expect(half(after)).equals(false)
+      expect(after.dictation?.note).equals(undefined)
+    })
+
+    it('leaves a runner\'s touch his when "he", a comma or a fielder comes between', function () {
+      for (const words of [
+        'Ground ball to short. The runner on second sees the shortstop throw to first, touches third, then heads home.',
+        'Grounder to second, thrown out at first, and the runner on second, after the throw to the first baseman, touches third, and scores.',
+        'Ground out to first. The runner on second takes off, he touches third, rounds it, and scores.'
+      ]) {
+        expect(
+          baseOutsSaid(words, at(1, { second: 8 }).session).map(
+            out => out.base
+          ),
+          words
+        ).deep.equals([])
+        const after = settle(
+          sayAs(words, at(1, { second: 8 }), to(SS), thrownOut, {
+            type: 'runnerMovement',
+            runner: 8,
+            to: 'home'
+          })
+        )
+        expect(after.dictation?.problem, words).equals(undefined)
+        expect(outsOf(after), words).equals(2)
+        expect(runs(after), words).equals(1)
+      }
+    })
+
+    it('takes no base out from a runner the model sent on past that base', function () {
+      // "He" is the shortstop here, but the model sent the runner home.
+      const after = settle(
+        sayAs(
+          'Grounder to short, he touches third, and the runner from second comes around to score.',
+          at(1, { second: 8 }),
+          to(SS),
+          thrownOut,
+          { type: 'runnerMovement', runner: 8, to: 'home' }
+        )
+      )
+      expect(after.dictation?.problem).equals(undefined)
+      expect(runs(after)).equals(1)
+    })
+
+    it('counts the batter out last when the throw to first relays a runner out', function () {
+      // Z12: the runner from second is out at third, and the relay gets the
+      // batter for the third out before he reaches first: no run counts.
+      const relayed = settle(
+        sayAs(
+          'Grounder to short, the runner from third scores, the shortstop throws to third to get the runner from second, and the relay to first gets the batter for the double play.',
+          at(1, { second: 7, third: 8 }),
+          to(SS),
+          thrownOut,
+          { type: 'runnerMovement', runner: 8, to: 'home' },
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '3B',
+            out: true,
+            fielders: [SS, THIRD_BASEMAN]
+          },
+          {
+            type: 'runnerMovement',
+            runner: BATTER,
+            to: '1B',
+            out: true,
+            fielders: [THIRD_BASEMAN, FIRST_BASEMAN]
+          }
+        )
+      )
+      expect(relayed.dictation?.problem).equals(undefined)
+      expect(runs(relayed)).equals(0)
+      expect(half(relayed)).equals(false)
+      // Z16: he tags the runner himself, then throws to first.
+      const tagged = settle(
+        sayAs(
+          'Grounder to third, he tags the runner from second coming over, then throws to first for the third out, and the runner from third scores.',
+          at(1, { second: 7, third: 8 }),
+          to(THIRD_BASEMAN),
+          thrownOut,
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '3B',
+            out: true,
+            fielders: [THIRD_BASEMAN]
+          },
+          { type: 'runnerMovement', runner: 8, to: 'home' }
+        )
+      )
+      expect(tagged.dictation?.problem).equals(undefined)
+      expect(runs(tagged)).equals(0)
+      expect(half(tagged)).equals(false)
+    })
+
+    it("does not list the batter's recorded out at first as left out of an inning-ending double play", function () {
+      const done = sentenceDefaults(
+        at(1, { first: 7, third: 8 }).session,
+        [
+          to(SS),
+          thrownOut,
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '2B',
+            out: true,
+            reason: 'Force Out',
+            fielders: [SS, SECOND_BASEMAN]
+          },
+          {
+            type: 'runnerMovement',
+            runner: BATTER,
+            to: '1B',
+            out: true,
+            fielders: [SECOND_BASEMAN, FIRST_BASEMAN]
+          },
+          { type: 'runnerMovement', runner: 8, to: 'home' }
+        ],
+        'Grounder to short, flips to second, on to first, double play. The runner from third scores.'
+      )
+      expect(done.leftOut).deep.equals([
+        'Player 8 scoring'.replace(
+          'Player 8',
+          game().session.gameData.players[8].fullName
+        )
+      ])
+    })
+
+    it('names in the note no run a runner on no base could have made', function () {
+      const done = sentenceDefaults(
+        at(1, { first: 7, third: 8 }).session,
+        [
+          to(SS),
+          thrownOut,
+          {
+            type: 'runnerMovement',
+            runner: 7,
+            to: '2B',
+            out: true,
+            reason: 'Force Out',
+            fielders: [SS, SECOND_BASEMAN]
+          },
+          {
+            type: 'runnerMovement',
+            runner: BATTER,
+            to: '1B',
+            out: true,
+            fielders: [SECOND_BASEMAN, FIRST_BASEMAN]
+          },
+          // The model's run for the pitcher, a fielder on no base.
+          { type: 'runnerMovement', runner: 10, to: 'home' }
+        ],
+        'Grounder to short, flips to second, on to first, double play. The runner from third scores.'
+      )
+      expect(done.leftOut).deep.equals([])
+      expect(
+        done.actions.some(
+          action => action.type === 'runnerMovement' && action.to === 'home'
+        )
+      ).equals(false)
+    })
+
+    it('credits "throws home" to the catcher who took it', function () {
+      const sentence = playDefaults(
+        at(0, { first: 6, second: 7, third: 8 }).session,
+        [
+          to(SS),
+          choice,
+          {
+            type: 'runnerMovement',
+            runner: 8,
+            to: 'home',
+            out: true,
+            reason: 'Force Out'
+          }
+        ],
+        'Grounder to short, he throws home for the force.'
+      )
+      expect(outsIn(sentence)).deep.equals([
+        {
+          type: 'runnerMovement',
+          runner: 8,
+          to: 'home',
+          out: true,
+          reason: 'Force Out',
+          fielders: [SS, 11]
+        }
+      ])
+    })
+  })
+
+  it('takes an error the model charged before its result', function () {
+    const words =
+      'Sky high pop fly, center field, but the center fielder drops it, and it is an error. And everyone advances.'
+    const after = settle(
+      sayAs(
+        words,
+        at(2, { first: 7 }),
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'popup',
+          fielder: 17,
+          direction: 'center'
+        },
+        {
+          type: 'fieldingPlay',
+          fielders: [17],
+          error: 17,
+          errorKind: 'fielding'
+        },
+        { type: 'result', eventType: 'field_error' }
+      )
+    )
+    expect(after.dictation?.problem).equals(undefined)
+    expect(after.session.liveData.linescore.teams.home.errors).equals(1)
+    expect(bases(after)[0]).equals(BATTER)
+  })
+
+  it('keeps the note of a sentence queued behind a reel, and of one answered', function () {
+    const words =
+      "Pop fly to left field. And it's caught for the out, but the runner tags up and takes home."
+    const popup: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      trajectory: 'popup',
+      fielder: LF
+    }
+    const caught: ScoringAction = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'catch'
+    }
+    const home: ScoringAction = {
+      type: 'runnerMovement',
+      runner: 8,
+      to: 'home'
+    }
+    const note = 'Left out after the third out: Player 8 scoring'
+    const answered = sayAs(words, at(2, { third: 8 }), popup, caught, home)
+    expect(answered.dictation?.note).equals(note)
+    const plain = sayAs('Grounder to short.', at(0, {}), to(SS), thrownOut)
+    expect(plain.dictation?.note).equals(undefined)
+    const question: DictationQuestion = {
+      transcript: words,
+      note,
+      question: 'Who caught it?',
+      options: [{ label: 'Left fielder', actions: [popup, caught] }]
+    }
+    const asked: ScoringState = {
+      ...at(2, { third: 8 }),
+      dictationQuestion: question
+    }
+    const done = scoringReducer(asked, { type: 'DICTATION_ANSWER', option: 0 })
+    expect(done.dictation?.note).equals(note)
+    expect(runs(done)).equals(0)
   })
 })

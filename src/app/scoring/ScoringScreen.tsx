@@ -1204,6 +1204,15 @@ function ScoringPanel(props: {
         : undefined,
     [state.dictation, lastEntry, log, past, checkpoints, game]
   )
+  // What the last sentence left out, once per sentence, beside its plays.
+  const leftOut = useMemo(
+    () =>
+      state.dictation?.note != null &&
+      lastEntry?.label === state.dictation.transcript
+        ? { id: entryId(lastEntry), text: state.dictation.note }
+        : undefined,
+    [state.dictation, lastEntry]
+  )
   // A dictated undo: the step back the Undo button takes, but at once, so the
   // rest of the sentence is applied after it. What it took back — the
   // actions, and the game they were applied to — or null for nothing.
@@ -1291,6 +1300,7 @@ function ScoringPanel(props: {
     session,
     log: state.log,
     problem: state.dictation?.problem,
+    note: leftOut,
     question: props.walkUpOpen === true ? undefined : state.dictationQuestion,
     played,
     onAnswer: answer => {

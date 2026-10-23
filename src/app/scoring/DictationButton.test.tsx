@@ -490,6 +490,35 @@ describe('the dictation control', function () {
     expect(text('Dictation message')).equals('There is no runner on second')
   })
 
+  it('logs what a sentence left out after the third out, once per sentence', async function () {
+    const words = 'Left out after the third out: Player 8 scoring'
+    const h = harness()
+    await h.render({ note: { id: 1, text: words } })
+    const messages = (): number =>
+      [...find('Dictation log')!.children].filter(
+        entry => entry.textContent === words
+      ).length
+    expect(messages()).equals(1)
+    // The same sentence's note again is not logged twice.
+    await h.render({ note: { id: 1, text: words } })
+    expect(messages()).equals(1)
+    // The same words said again, as a new sentence, are.
+    await h.render({ note: { id: 2, text: words } })
+    expect(messages()).equals(2)
+    // Logged with its sentence's plays, it comes after them.
+    await h.render({
+      played: { id: 3, lines: ['Casey J. grounds into a force out'] },
+      note: { id: 3, text: 'Left out after the third out: Drew scoring' }
+    })
+    const log = [...find('Dictation log')!.children].map(
+      entry => entry.textContent
+    )
+    expect(log.slice(-2)).deep.equals([
+      'Casey J. grounds into a force out',
+      'Left out after the third out: Drew scoring'
+    ])
+  })
+
   it('asks the LLM’s question, and sends the answer or the dismissal', async function () {
     const h = harness()
     await h.render()

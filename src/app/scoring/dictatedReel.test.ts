@@ -1229,3 +1229,54 @@ describe('a dictated sentence on the field', function () {
     })
   })
 })
+
+describe('a base an infielder took for the out, on the field', function () {
+  /** The pictures the reel draws, a throw as `thrower>receiver:unassisted`. */
+  function picturesOf(state: ScoringState): {
+    state: ScoringState
+    order: string[]
+  } {
+    const order: string[] = []
+    for (let step = 0; step < 40 && !atRest(state); step++) {
+      const sequence = state.presentation
+      if (sequence != null) {
+        order.push(
+          sequence.kind === 'throw'
+            ? `${sequence.thrower}>${sequence.receiver}:${sequence.unassisted}`
+            : sequence.kind
+        )
+        state = finishPicture(state)
+        continue
+      }
+      const motion = state.motions.find(m => !m.complete && m.held !== true)
+      if (motion == null) break
+      state = finishMotion(state, motion.playerId)
+    }
+    return { state, order }
+  }
+
+  it('draws the shortstop carrying the ball to second for the force', function () {
+    const { order } = picturesOf(
+      spoken(
+        game({ first: 7 }),
+        "Grounder to the shortstop, who tags second for fielder's choice.",
+        grounder,
+        { type: 'result', eventType: 'fielders_choice' }
+      )
+    )
+    expect(order).deep.equals(['hit', `${F.SS}>${F.SS}:true`])
+  })
+
+  it('draws the third baseman taking third, and no throw to first', function () {
+    const { order, state } = picturesOf(
+      spoken(
+        game({ first: 7, second: 8 }),
+        'Grounder to third, and the third baseman takes third base for the out.',
+        { ...grounder, fielder: F.B3 },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      )
+    )
+    expect(order).deep.equals(['hit', `${F.B3}>${F.B3}:true`])
+    expect(state.session.liveData.linescore.outs).equals(1)
+  })
+})
