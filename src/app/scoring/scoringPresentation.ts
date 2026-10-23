@@ -135,6 +135,8 @@ export interface ThrowSequence {
   dictated?: boolean
   /** A failed pickoff already recorded; completion must not retire the runner. */
   safe?: boolean
+  /** A throw charged as an error: it goes past its receiver, uncaught. */
+  wild?: boolean
   id: string
   generation: number
   kind: 'throw'
@@ -414,7 +416,12 @@ export function stepPresentation(
       : sequence.kind === 'throw'
         ? [
             ['release', sequence.unassisted ? Infinity : 150, 'swish'],
-            ['catch', sequence.durationMs, 'pop']
+            // A wild throw is never caught.
+            [
+              'catch',
+              sequence.wild === true ? Infinity : sequence.durationMs,
+              'pop'
+            ]
           ]
         : [
             ['swing', sequence.contactMs - 120, 'swish'],

@@ -18,6 +18,8 @@ import { scoringFieldPlayers } from './scoringMotion'
 import {
   type HitSequence,
   outBatterPoint,
+  presentationRuntime,
+  stepPresentation,
   type ThrowSequence
 } from './scoringPresentation'
 import { playerRef } from './scoringSelectors'
@@ -1278,5 +1280,106 @@ describe('a base an infielder took for the out, on the field', function () {
     )
     expect(order).deep.equals(['hit', `${F.B3}>${F.B3}:true`])
     expect(state.session.liveData.linescore.outs).equals(1)
+  })
+})
+
+describe('a force and an overthrow at first, on the field', function () {
+  const BATTER = 1
+  const words =
+    'Grounder to the shortstop, he tags second for the out, but overthrows first. For an error, and batter is safe.'
+  const said: ScoringAction[] = [
+    grounder,
+    {
+      type: 'runnerMovement',
+      runner: 7,
+      to: '2B',
+      out: true,
+      reason: 'Force Out'
+    },
+    { type: 'result', eventType: 'field_error' },
+    {
+      type: 'fieldingPlay',
+      fielders: [F.SS],
+      error: F.SS,
+      errorKind: 'throwing'
+    }
+  ]
+
+  it('draws the carry at second, then the throw sailing past the first baseman', function () {
+    let state = spoken(game({ first: 7 }), words, ...said)
+    const throws: ThrowSequence[] = []
+    const order: string[] = []
+    for (let step = 0; step < 40 && !atRest(state); step++) {
+      const sequence = state.presentation
+      if (sequence != null) {
+        order.push(sequence.kind)
+        if (sequence.kind === 'throw') throws.push(sequence)
+        state = finishPicture(state)
+        continue
+      }
+      const motion = state.motions.find(m => !m.complete && m.held !== true)
+      if (motion == null) break
+      state = finishMotion(state, motion.playerId)
+    }
+    expect(order).deep.equals(['hit', 'throw', 'throw'])
+    expect(throws[0]).includes({
+      thrower: F.SS,
+      receiver: F.SS,
+      unassisted: true
+    })
+    const wild = throws[1]
+    expect(wild).includes({
+      thrower: F.SS,
+      receiver: F.B1,
+      wild: true,
+      safe: true,
+      runner: BATTER
+    })
+    const first = BASES[1]
+    const end = sampleThrow(wild, wild.durationMs).ball
+    // Past the bag, on the line of the throw, about 30 feet on.
+    expect(Math.hypot(end.x - first.x, end.z - first.z)).greaterThan(5)
+    expect(Math.hypot(end.x, end.z)).lessThan(
+      Math.hypot(wild.from.x, wild.from.z) + 200
+    )
+    const line = state.session.liveData.linescore
+    expect(line.outs).equals(1)
+    expect(line.teams.home.errors).equals(1)
+    expect(line.offense.first?.id).equals(BATTER)
+    // The throw that was the error is never caught.
+    const runtime = presentationRuntime()
+    const { cues } = stepPresentation(runtime, wild, wild.durationMs, false)
+    expect(cues).deep.equals(['swish'])
+    expect(
+      stepPresentation(
+        presentationRuntime(),
+        throws[0],
+        throws[0].durationMs,
+        false
+      ).cues
+    ).includes('pop')
+  })
+
+  it('draws no wild throw when the force ends the half', function () {
+    const two = game({ first: 7 })
+    two.session.liveData.linescore.outs = 2
+    let state = spoken(two, words, ...said)
+    const kinds: string[] = []
+    for (let step = 0; step < 40 && !atRest(state); step++) {
+      const sequence = state.presentation
+      if (sequence != null) {
+        kinds.push(
+          sequence.kind === 'throw' && sequence.wild === true
+            ? 'wild'
+            : sequence.kind
+        )
+        state = finishPicture(state)
+        continue
+      }
+      const motion = state.motions.find(m => !m.complete && m.held !== true)
+      if (motion == null) break
+      state = finishMotion(state, motion.playerId)
+    }
+    expect(kinds).not.includes('wild')
   })
 })
