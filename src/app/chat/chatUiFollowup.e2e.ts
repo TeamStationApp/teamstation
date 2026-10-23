@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path'
 
 import puppeteer from 'puppeteer'
 
+import { chatRowById } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
 
 interface Device {
@@ -686,9 +687,6 @@ async function s4Full(daemon: Daemon): Promise<void> {
     await signIn(m, 'Hc')
     await m.openLink({ link: WEB + '/chat/' + conversation })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
-    await m.evalBrowserScript({
-      script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});const chat=(await r.json()).find(x=>x.id===${JSON.stringify(conversation)});window.chatUiResizeTitle=chat?.kind==='dm'?chat.people.filter(x=>!x.left).map(x=>x.shortName).join(', '):chat?.title;if(!window.chatUiResizeTitle)throw new Error('Synthetic DM title unavailable');return true`
-    })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.pressKey({ key: 'Cmd+A' })
     await m.pressKey({ key: 'Backspace' })
@@ -726,7 +724,8 @@ async function s4Full(daemon: Daemon): Promise<void> {
     }
     await m.tapOn({ text: 'Back' })
     await m.evalBrowserScript({
-      script: `const list=document.querySelector('[data-testid="chat-list-pane"]');const buttons=[...list.querySelectorAll('[role="button"][aria-label]')];const row=buttons.find(x=>x.getAttribute('aria-label')===window.chatUiResizeTitle);if(!row)throw new Error('Synthetic DM row unavailable');row.click();return true`
+      // By its id: the row's name is its title and then the latest message.
+      script: `const row=document.querySelector('[data-testid="chat-list-pane"]').querySelector(${JSON.stringify(chatRowById(conversation))});if(!row)throw new Error('Synthetic DM row unavailable');row.click();return true`
     })
     await m.assertVisible({ text: 'Remove notes.txt' })
     console.log(

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import puppeteer from 'puppeteer'
 
+import { chatRowById } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
 
 interface Selector {
@@ -576,9 +577,12 @@ async function paging(device: Device, results: CaseResult[]): Promise<void> {
   console.log(
     '$ S7 delayed own-page request cancelled by a normal conversation selection'
   )
-  const next = await evaluate<{ label: string }>(
+  // The row by its conversation's id: its name is the peer's and then the
+  // latest message, so the peer's name alone no longer names it.
+  const nextRow = `[data-testid="chat-list-pane"] ${chatRowById(target.conversationId)}`
+  await evaluate<{ label: string }>(
     device,
-    `const pane=document.querySelector('[data-testid="chat-list-pane"]');const row=[...pane.querySelectorAll('[role="button"][aria-label]')].find(node=>node.getAttribute('aria-label')===${JSON.stringify(target.peerLabel)});if(!row)throw new Error('Allocated small-room row must be visible');return JSON.stringify({label:row.getAttribute('aria-label')});`
+    `const row=document.querySelector(${JSON.stringify(nextRow)});if(!row)throw new Error('Allocated small-room row must be visible');const label=row.getAttribute('aria-label')||'';if(label!==${JSON.stringify(target.peerLabel)}&&!label.startsWith(${JSON.stringify(target.peerLabel + ', ')}))throw new Error('Allocated small-room row must be named by its peer');return JSON.stringify({label});`
   )
   await device.setNetworkConditions({
     latency: 1500,
@@ -590,7 +594,7 @@ async function paging(device: Device, results: CaseResult[]): Promise<void> {
       device,
       `document.querySelector(${JSON.stringify(quote(fixture.replyId))}).click();return true;`
     )
-    await device.tapOn({ text: next.label })
+    await device.tapOn({ css: nextRow })
     await new Promise(resolve => setTimeout(resolve, 1800))
     const cancelled = await evaluate<{
       selected: boolean

@@ -8,6 +8,7 @@ import { Pool } from 'pg'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 import { presignGetUrl } from '../../server/media/presign'
+import { chatRowSelector } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
 
 /**
@@ -424,20 +425,38 @@ async function dmWith(page: Page, userIds: string[]): Promise<string> {
   })
 }
 
-/** Opens the Chat tab, which sets the device up for chat, and waits. */
-async function openChatTab(page: Page): Promise<void> {
-  await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+const CHAT_LIST = '[data-testid="chat-conversation-list"]'
+
+/**
+ * Waits for the Chat tab's list, which the tab draws once the device is set
+ * up for chat (after a link, or a reset), whatever chats it holds.
+ */
+async function waitForChatList(page: Page): Promise<void> {
   await until('the chat list', async () => {
     const text = await bodyText(page)
-    const list = await page.$('[data-testid="chat-conversation-list"]')
+    const list = await page.$(CHAT_LIST)
     return list != null && !text.includes('Opening chat') ? true : undefined
   })
 }
 
-/** Opens one chat from the Chat tab's list. */
+/** Opens the Chat tab, which sets the device up for chat, and waits. */
+async function openChatTab(page: Page): Promise<void> {
+  await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+  await waitForChatList(page)
+}
+
+/**
+ * Opens one chat from the Chat tab's list. A row is named by its title and
+ * then what it shows (`<title>, <latest message>, <n> unread`), so it is
+ * found by the title as the leading part of its name.
+ */
 async function openChat(page: Page, title: string): Promise<void> {
   await openChatTab(page)
-  await press(page, title)
+  const row = await until(
+    `the chat ${title} in the list`,
+    async () => (await page.$(chatRowSelector(title, CHAT_LIST))) ?? undefined
+  )
+  await row.click()
   await until(`the chat ${title}`, () =>
     /\/chat\/cnv_[^/]+$/.test(page.url()) ? true : undefined
   )
@@ -1034,7 +1053,7 @@ describe('chat scenarios in the browser', function () {
     await waitForText(fresh, 'Link this device')
     await pressText(fresh, 'I can’t reach my other devices')
     await pressText(fresh, 'Reset chat on this device')
-    await waitForText(fresh, 'Follow a team')
+    await waitForChatList(fresh)
     await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
     await waitForText(fresh, 'History is locked')
     await new Promise(resolve => setTimeout(resolve, 3000))
@@ -1102,7 +1121,7 @@ describe('chat scenarios in the browser', function () {
       await waitForText(fresh, 'Link this device')
       await pressText(fresh, 'I can’t reach my other devices')
       await pressText(fresh, 'Reset chat on this device')
-      await waitForText(fresh, 'Follow a team')
+      await waitForChatList(fresh)
       await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
       await send(fresh, 'still here')
       await waitForText(fresh, 'still here')
@@ -1631,29 +1650,32 @@ describe('chat scenarios in the browser', function () {
   })
 
   /**
-   * E17: Eagles parent D2 finds Hawks from Home, follows it, and opens it:
-   * the schedule and the team, and nothing of its games.
+   * E17: Eagles parent D2 finds Hawks on the Search tab, follows it, and
+   * opens it: the schedule and the team, and nothing of its games. Chat's
+   * list no longer offers "Follow a team"; following is the Search tab's,
+   * which gives a signed-in person a Follow button on each result.
    */
   it('E17: a fan follows Hawks and sees its schedule and team only', async function () {
     const page = await signedIn('D2')
     await signIn(page, seed, 'D2')
-    await waitForText(page, 'Follow a team')
-    await shot(page, 'e17-1-home')
-    await pressText(page, 'Follow a team')
-    await until('the follow screen', () =>
-      page.url().endsWith('/teams/follow') ? true : undefined
+    const search = await until(
+      'the Search tab',
+      async () =>
+        (await page.$('[role="tab"][aria-label="Search"]')) ?? undefined
     )
-    await typeInto(page, 'Team name', 'Haw')
+    await search.click()
+    await typeInto(page, 'Search by name or city', 'Haw')
+    await shot(page, 'e17-1-search')
     await press(page, 'Follow Hawks')
     await until(
       'Following',
-      async () => (await page.$('[aria-label="Following Hawks"]')) ?? undefined
+      async () => (await page.$('[aria-label="Unfollow Hawks"]')) ?? undefined
     )
     await shot(page, 'e17-2-following')
 
-    await press(page, 'Hawks, QPLL Spring 2027')
+    await press(page, 'Open Hawks')
     await until('the Hawks page', () =>
-      page.url().includes(`/teams/${seed.ids.Hawks}`) ? true : undefined
+      page.url().includes(`/groups/team/${seed.ids.Hawks}`) ? true : undefined
     )
     await waitForText(page, 'vs Owls')
     expect(await tabs(page)).deep.equals(['Schedule', 'Team'])
