@@ -7,7 +7,8 @@ import {
   taggedAction,
   type Tool,
   toolSchema,
-  untaggedAction
+  untaggedAction,
+  withoutBlankPlayers
 } from '../../common/scoring/actions'
 import {
   fieldingIds,
@@ -24,7 +25,7 @@ import {
   type RosterTool,
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
-import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
+import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
 import { placeSections, placeTools } from './placeInstructions'
 
 /**
@@ -906,6 +907,41 @@ function parse(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** A call's arguments with each player left blank taken as no player. */
+function withoutBlanks(
+  args: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  return args == null ? args : withoutBlankPlayers(args)
+}
+
+/**
+ * A ball in play's call with the result a model sometimes nests in its
+ * arguments taken out, and those results, in order. The model is asked for a
+ * result as for any ball sent without one; a nested result stands only when
+ * the sentence ends with none.
+ */
+function nestedResults(calls: readonly ToolCall[]): {
+  calls: ToolCall[]
+  results: Array<Record<string, unknown>>
+} {
+  const results: Array<Record<string, unknown>> = []
+  const stripped = calls.map(call => {
+    if (call.function.name !== 'ballInPlay') return call
+    const args = parse(call.function.arguments)
+    const nested = args?.result
+    if (args == null || nested == null) return call
+    if (typeof nested === 'string') results.push({ eventType: nested })
+    else if (typeof nested === 'object' && !Array.isArray(nested))
+      results.push(nested as Record<string, unknown>)
+    const { result: _nested, ...ball } = args
+    return {
+      ...call,
+      function: { ...call.function, arguments: JSON.stringify(ball) }
+    }
+  })
+  return { calls: stripped, results }
+}
+
 type Cleaned =
   | { action: ScoringAction }
   | { command: SaidRosterCommand }
@@ -1052,6 +1088,8 @@ export class Interpretation {
   private undo = false
   /** Whether the model was asked once for a result it left out. */
   private nudged = false
+  /** Results the model nested in its balls in play, in the order sent. */
+  private readonly nested: Array<Record<string, unknown>> = []
   /** Whether the model was told once that an undo of its own is not one. */
   private undoAnswered = false
   /** Whether the last reply held an undo after calls the model had kept. */
@@ -1087,6 +1125,7 @@ export class Interpretation {
     readonly transcript: string
   ) {
     const context = withTags(given)
+    const heard = heardAs(transcript)
     const choiceRules = /\bfielder['’]?s? choice\b/i.test(transcript)
       ? `\n\nFIELDER CHOICE RELAYS\n${CHOICE_INSTRUCTIONS}`
       : ''
@@ -1102,13 +1141,13 @@ export class Interpretation {
             { role: 'system', content: systemPrompt() },
             {
               role: 'user',
-              content: `${game}\n\nTHE SCORER SAID\n${transcript}`
+              content: `${game}\n\nTHE SCORER SAID\n${heard}`
             }
           ]
         : [
             { role: 'system', content: systemPrompt() },
             { role: 'system', content: game },
-            { role: 'user', content: transcript }
+            { role: 'user', content: heard }
           ]
   }
 
@@ -1265,7 +1304,9 @@ export class Interpretation {
    * runner's move already kept is not kept twice.
    */
   private read(reply: { calls: ToolCall[]; said: string }): Turn | number {
-    const calls = reply.calls
+    const nested = nestedResults(reply.calls)
+    const calls = nested.calls
+    this.nested.push(...nested.results)
     const ask = calls.find(
       call => call.function.name === ASK_SCORER.function.name
     )
@@ -1345,7 +1386,9 @@ export class Interpretation {
           call.function.name,
           this.rosterNames().has(call.function.name)
             ? parse(call.function.arguments)
-            : this.withTagsForNames(parse(call.function.arguments))
+            : this.withTagsForNames(
+                withoutBlanks(parse(call.function.arguments))
+              )
         ),
         this.rosterNames(),
         this.players
@@ -1567,6 +1610,17 @@ export class Interpretation {
 
   /** The sentence's actions and commands, or why there are none. */
   private finished(said: string): Turn {
+    // A ball still without its result takes the one the model nested in it.
+    const nested = this.nested.at(-1)
+    if (nested != null && this.resultMissing()) {
+      const cleaned = cleanTagged({ ...nested, type: 'result' }, this.players)
+      if ('action' in cleaned) {
+        const ball = this.actions.findLastIndex(
+          action => action.type === 'ballInPlay'
+        )
+        this.actions.splice(ball + 1, 0, cleaned.action)
+      }
+    }
     const { actions, roster, dropped } = this
     if (this.undone() || actions.length > 0 || roster.length > 0)
       return this.settled([...actions], [...roster])

@@ -500,6 +500,32 @@ export function mapPlayers(
   return out
 }
 
+/**
+ * A call with each player left blank — `""` or only spaces — taken as no
+ * player: the field is left out, a chain of fielders loses that entry, and a
+ * chain of nothing but blanks is left out.
+ * A blank slot in a batting order stays, for the unknown-player check: an
+ * order is not shortened silently.
+ */
+export function withoutBlankPlayers(
+  raw: Record<string, unknown>
+): Record<string, unknown> {
+  const blank = (value: unknown): boolean =>
+    typeof value === 'string' && value.trim() === ''
+  const out: Record<string, unknown> = Object.fromEntries(
+    Object.entries(raw).filter(
+      ([field, value]) => !PLAYER_FIELDS.includes(field) || !blank(value)
+    )
+  )
+  if (Array.isArray(out.fielders)) {
+    const fielders = (out.fielders as unknown[]).filter(value => !blank(value))
+    // A chain of blanks is no chain: left out, as a blank fielder is.
+    if (fielders.length > 0) out.fielders = fielders
+    else delete out.fielders
+  }
+  return out
+}
+
 /** The fields of an action that name a fielder: his tag, or his position. */
 const FIELDER_FIELDS = ['fielder', 'error', 'fielders']
 

@@ -5,6 +5,7 @@ import { BATTERY_KINDS, PITCH_CALLS, RESULT_TYPES } from './actions'
 import {
   DICTATION_TERMS,
   DICTATION_VOCABULARY,
+  heardAs,
   VOCABULARY_ENTRIES
 } from './vocabulary'
 
@@ -23,7 +24,8 @@ describe('dictation vocabulary', function () {
     ])
       expect(DICTATION_TERMS).not.includes(term)
     expect(DICTATION_TERMS).includes('six four three')
-    expect(DICTATION_TERMS).to.have.length(43)
+    expect(DICTATION_TERMS).includes('intentional walk')
+    expect(DICTATION_TERMS).to.have.length(44)
     for (const term of [
       'blooper',
       'dribbler',
@@ -51,6 +53,21 @@ describe('dictation vocabulary', function () {
       else expect(BATTERY_KINDS).includes(action.kind)
       expect(entry.phrases.length).greaterThan(0)
     }
+  })
+
+  it('reads the recogniser\'s "potential walk" as an intentional walk', function () {
+    expect(heardAs('Potential walk to Sam.')).equals('intentional walk to Sam.')
+    expect(heardAs('That is a potential  walk')).equals(
+      'That is a intentional  walk'
+    )
+    expect(heardAs('A potential double play.')).equals(
+      'A potential double play.'
+    )
+    expect(heardAs('The potential walk-off run scores.')).equals(
+      'The potential walk-off run scores.'
+    )
+    expect(DICTATION_TERMS).includes('intentional walk')
+    expect(DICTATION_VOCABULARY).not.includes('potential walk')
   })
 
   it('has no walk result, and keeps result strikeout for the dropped third strike', function () {

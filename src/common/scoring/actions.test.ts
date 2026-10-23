@@ -29,7 +29,8 @@ import {
   taggedAction,
   toolSchema,
   TRAJECTORIES,
-  untaggedAction
+  untaggedAction,
+  withoutBlankPlayers
 } from './actions'
 import { storedEventType } from './document'
 import { PITCH_HEIGHTS, PITCH_SIDES } from './pitchLocation'
@@ -1018,5 +1019,36 @@ describe('game state and setup', function () {
     const game = sampleGame() as unknown as Record<string, unknown>
     game.pending = { outcome: 'Single', movements: 'no' }
     expect(() => asGameState(game)).to.throw()
+  })
+})
+
+describe('withoutBlankPlayers', function () {
+  it('takes a blank player as none, and drops a blank fielder from a chain', function () {
+    expect(
+      withoutBlankPlayers({
+        type: 'fieldingPlay',
+        fielders: ['A1', ' ', 'B2'],
+        error: ''
+      })
+    ).deep.equals({ type: 'fieldingPlay', fielders: ['A1', 'B2'] })
+  })
+
+  it('leaves out a chain of fielders that is all blanks', function () {
+    expect(
+      withoutBlankPlayers({
+        type: 'runnerMovement',
+        runner: 'A1',
+        to: '2B',
+        out: true,
+        fielders: ['']
+      })
+    ).deep.equals({ type: 'runnerMovement', runner: 'A1', to: '2B', out: true })
+  })
+
+  it('keeps a blank slot in a batting order, for the unknown-player check', function () {
+    const order = ['A1', '', 'B2']
+    expect(
+      withoutBlankPlayers({ type: 'lineup', kind: 'battingOrder', order })
+    ).deep.equals({ type: 'lineup', kind: 'battingOrder', order })
   })
 })
