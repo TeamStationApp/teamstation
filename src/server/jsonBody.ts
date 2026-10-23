@@ -16,6 +16,19 @@ const gameBody = express.json({ limit: '32mb' })
 const pictureParser = express.json({ limit: '14mb' })
 
 /**
+ * A file for Tess: a 5 MB picture is 6.7 MB of base64. Read, as a picture
+ * is, only for somebody signed in.
+ */
+const tessParser = express.json({ limit: '8mb' })
+const tessBody: RequestHandler = (req, res, next) => {
+  if (req.actor == null) {
+    next(unauthorized())
+    return
+  }
+  tessParser(req, res, next)
+}
+
+/**
  * A picture's body is read only for somebody signed in: anybody else is
  * answered 401 before a byte of it is parsed, so the 14 MB limit is not
  * open to the world. `withActor` runs ahead of this parser for that.
@@ -96,6 +109,11 @@ const LARGE_BODIES: ReadonlyArray<{
     method: 'PATCH',
     path: /^\/api\/v1\/games\/[^/]+\/events$/,
     parser: gameBody
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/v1\/me\/tess\/attachments$/,
+    parser: tessBody
   },
   {
     method: 'PUT',
