@@ -5193,6 +5193,7 @@ export class Scenarios {
       'E5 movement before hold cancels; reaction and personal pin remain usable',
       async () => {
         let expectedEmoji = '👍'
+        let expectedReactionPresent = true
         await this.anchor()
         const b = await this.targetBounds(
           'chat-bubble-' + this.f.messages.target.id
@@ -5214,6 +5215,29 @@ export class Scenarios {
           })
         await ui.absent('chat-message-spotlight')
         if (this.touchActions) {
+          const peer = await this.protocolPeer()
+          await this.peerTarget(peer, this.group, this.f.messages.target.id)
+          const before = need(
+            (await peer.engine.open(this.group)).messages.find(
+              m => m.id === this.f.messages.target.id && m.status === 'ok'
+            ),
+            'Actual quick-reaction target must be verified before toggle'
+          )
+          const present = before.reactions.some(
+            reaction =>
+              reaction.emoji === expectedEmoji &&
+              reaction.userIds.includes(this.viewerId)
+          )
+          expectedReactionPresent = !present
+          this.observations.push({
+            actualQuickReactionToggle: {
+              messageId: before.id,
+              raw: expectedEmoji,
+              viewerId: this.viewerId,
+              beforePresent: present,
+              expectedAfterPresent: expectedReactionPresent
+            }
+          })
           await this.action(this.f.messages.target)
           await ui.text('👍')
         } else {
@@ -5234,12 +5258,13 @@ export class Scenarios {
         await until(
           async () => {
             const view = await peer.engine.open(this.group)
-            return view.messages
-              .find(m => m.id === this.f.messages.target.id)
-              ?.reactions.some(
-                r =>
-                  r.emoji === expectedEmoji && r.userIds.includes(this.viewerId)
-              ) === true
+            const target = view.messages.find(
+              m => m.id === this.f.messages.target.id && m.status === 'ok'
+            )
+            return target?.reactions.some(
+              r =>
+                r.emoji === expectedEmoji && r.userIds.includes(this.viewerId)
+            ) === expectedReactionPresent
               ? true
               : undefined
           },
