@@ -4793,7 +4793,7 @@ export class Scenarios {
           'reply-keyboard',
           'Immediate explicit Reply focus/keyboard verified before typing'
         )
-        await ui.append(body)
+        await ui.appendComposer(body)
         await this.attachPhoto()
         await this.cancelReply()
         assert.equal(await ui.draft(), body)
