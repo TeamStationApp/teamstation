@@ -15,6 +15,7 @@ import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
 import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
+import { analyticsRoutes } from './observability/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
@@ -169,6 +170,7 @@ describe('the API document', function () {
       ...routesOf(lineupRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
+      ...routesOf(analyticsRoutes(db)),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
@@ -228,6 +230,7 @@ describe('the API document', function () {
       ...routesOf(lineupRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
+      ...routesOf(analyticsRoutes(db)),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),

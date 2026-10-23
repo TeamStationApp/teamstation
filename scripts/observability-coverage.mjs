@@ -10,13 +10,25 @@ const directory = 'coverage/observability'
 mkdirSync(directory, { recursive: true })
 const tests = [
   ...globSync('src/**/observability/*.test.ts'),
+  ...globSync('src/logServer/*.test.ts'),
+  'src/server/account/deleteAccount.test.ts',
+  'src/server/jsonBody.test.ts',
+  'src/server/serverConfig.test.ts',
+  'src/server/openapi.test.ts',
   'scripts/observability-line-gate.test.cjs'
 ]
 const include = [
   'src/common/observability/*.ts',
   'src/server/observability/*.ts',
   'src/logServer/*.ts',
-  'scripts/observability-line-gate.cjs'
+  'scripts/observability-line-gate.cjs',
+  'src/migrate/migrations/077analyticsEvents.ts',
+  'src/migrate/migrations/index.ts',
+  'src/server/account/deleteAccount.ts',
+  'src/server/jsonBody.ts',
+  'src/server/serverConfig.ts',
+  'src/server/openapi.ts',
+  'src/server/index.ts'
 ]
 const args = [
   'node_modules/.bin/c8',
@@ -55,6 +67,7 @@ const report = gate(
   path =>
     /^src\/(common|server)\/observability\//.test(path) ||
     path.startsWith('src/logServer/') ||
+    include.includes(path) ||
     path === 'scripts/observability-line-gate.cjs'
 )
 writeFileSync(

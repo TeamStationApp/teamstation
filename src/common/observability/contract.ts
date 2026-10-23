@@ -1,4 +1,51 @@
+import { SERVER_CODE_FILES } from './serverCodeFiles'
+
 /** Compact wire format. D is deliberately inserted first by every serializer. */
+const errorClasses = new Set([
+  'Error',
+  'TypeError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'URIError',
+  'NSException',
+  'NSInvalidArgumentException',
+  'IllegalStateException',
+  'IllegalArgumentException',
+  'RuntimeException',
+  'OutOfMemoryError',
+  'SIGABRT',
+  'SIGSEGV',
+  'EXC_BAD_ACCESS'
+])
+const codeFiles = new Set([
+  'App.tsx',
+  'api.ts',
+  'sentry.ts',
+  'index.ts',
+  'VideoView.tsx',
+  'VideoView.native.tsx',
+  'MultiCamView.tsx',
+  'StreamingScreen.native.tsx',
+  'SentrySetup.swift',
+  'SentrySetup.kt',
+  'MainActivity.kt',
+  'RecordingEngine.swift',
+  'DistributorModel.swift'
+])
+export function errorClass(value: unknown): value is string {
+  return typeof value === 'string' && errorClasses.has(value)
+}
+export function codeFile(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    (codeFiles.has(value) ||
+      SERVER_CODE_FILES.has(value) ||
+      /^(?:app-[A-Z0-9]{8}\.js|index\.android\.bundle|main\.jsbundle)$/.test(
+        value
+      ))
+  )
+}
 export const APPS = [
   'TS',
   'TS web',
@@ -165,7 +212,19 @@ export const EVENT_RULES = {
   video_left: video,
   watch_progress: video,
   api_failed: system,
-  app_error: system,
+  app_error: {
+    ...system,
+    c: errorClass,
+    f0: codeFile,
+    l0: number(1000000, 1),
+    c0: number(100000000, 0),
+    f1: codeFile,
+    l1: number(1000000, 1),
+    c1: number(100000000, 0),
+    f2: codeFile,
+    l2: number(1000000, 1),
+    c2: number(100000000, 0)
+  },
   offline_changed: { on: boolean },
   service_started: system,
   service_stopped: system,
@@ -292,7 +351,7 @@ export function parseEvent(value: unknown, now = Date.now()): EventRecord {
     R: 1,
     P: properties
   }
-  if (V !== undefined) event.V = V as string
+  if (V !== undefined) event.V = V
   if (S !== undefined) event.S = S as string
   // The finite key set and bounded property values keep every event below
   // MAX_EVENT_BYTES; there is no unrestricted string to truncate here.

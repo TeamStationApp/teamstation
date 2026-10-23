@@ -46,6 +46,7 @@ import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
 import { createOAuthProvider } from './oauth/provider'
 import { oauthInteractionRoutes } from './oauth/routes'
+import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
@@ -591,6 +592,7 @@ function runWorker(): void {
   app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
+  const stopAnalytics = startAnalytics(app, db, serverConfig.analyticsReaderUrl)
   app.use('/api/v1', statsRoutes(db, mediaContext))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', walkUpSongRoutes(db))
@@ -746,6 +748,7 @@ function runWorker(): void {
     stopWorker({
       server,
       destroyDatabase: async () => {
+        await stopAnalytics()
         await db.destroy()
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,
