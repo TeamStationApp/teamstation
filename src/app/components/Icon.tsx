@@ -53,6 +53,10 @@ export type IconName =
   | 'filter_alt'
   | 'edit'
   | 'place'
+  | 'auto_awesome'
+  | 'add'
+  | 'send'
+  | 'attach_file'
 
 export interface IconProps {
   name: IconName
