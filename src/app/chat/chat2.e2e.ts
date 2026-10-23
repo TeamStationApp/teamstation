@@ -2050,12 +2050,36 @@ export class Scenarios {
         AbortSignal.timeout(Math.max(1, end - Date.now()))
       ])
     }
-    const read = async (): Promise<{
-      nodes: PublicNode[]
-      box: NonNullable<PublicNode['bounds']>
-      band: { top: number; bottom: number }
-    }> => {
+    let loadedTargetNodes: PublicNode[] | undefined
+    const handoff = (): PublicNode[] => {
+      assert(loadedTargetNodes != null, 'Actual loaded native target required')
+      proof.outcome = 'target-loaded'
+      return loadedTargetNodes
+    }
+    const read = async (): Promise<
+      | {
+          nodes: PublicNode[]
+          box: NonNullable<PublicNode['bounds']>
+          band: { top: number; bottom: number }
+        }
+      | undefined
+    > => {
       const nodes = await ui.nodes(undefined, signal())
+      if (earlier) {
+        const matches = nodes.filter(
+          node => node.id === 'chat-bubble-' + target.id
+        )
+        assert(
+          matches.length <= 1,
+          'Unique exact native history target required'
+        )
+        if (matches.length === 1) {
+          loadedTargetNodes = nodes
+          proof.loadedTarget = { id: target.id, bounds: matches[0].bounds }
+          // Loading is not framing; the caller must still measure this target.
+          return undefined
+        }
+      }
       const one = (
         key: string,
         clipped = false
@@ -2104,7 +2128,9 @@ export class Scenarios {
       ;(proof.samples as unknown[]).push({ box, band })
       return { nodes, box, band }
     }
-    let current = await read()
+    const initial = await read()
+    if (initial == null) return handoff()
+    let current = initial
     const keyboard =
       ui.surface === 'ios'
         ? current.nodes
@@ -2135,7 +2161,7 @@ export class Scenarios {
       current.box.y >= current.band.bottom
         ? current.box.y - current.band.bottom
         : current.band.top - current.box.y - current.box.height
-    const swipe = async (delta: number): Promise<void> => {
+    const swipe = async (delta: number): Promise<boolean> => {
       const { box, band } = current
       const middle = (band.top + band.bottom) / 2
       const input = {
@@ -2154,7 +2180,10 @@ export class Scenarios {
       ;(proof.gestures as unknown[]).push(input)
       await ui.measuredSwipe(input, signal())
       await new Promise(resolve => setTimeout(resolve, 350))
-      current = await read()
+      const next = await read()
+      if (next == null) return true
+      current = next
+      return false
     }
     let crossingLimit = Number.POSITIVE_INFINITY
     let reversed = false
@@ -2183,7 +2212,7 @@ export class Scenarios {
                 Math.max(48, (Math.max(0, before) + height / 4) / 2),
                 crossingLimit
               )
-        await swipe((below ? -1 : 1) * travel)
+        if (await swipe((below ? -1 : 1) * travel)) return handoff()
         const nowBelow = current.box.y >= current.band.bottom
         const crossed =
           ui.surface !== 'ios' && !intersects() && below !== nowBelow
@@ -2242,9 +2271,12 @@ export class Scenarios {
         box.y -
         Math.min(box.height, band.bottom - band.top - 32) / 2
       const limit = Math.max(48, (band.bottom - band.top) / 8)
-      await swipe(
-        Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired)))
+      if (
+        await swipe(
+          Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired)))
+        )
       )
+        return handoff()
     }
     proof.outcome = 'passed'
     return current.nodes
