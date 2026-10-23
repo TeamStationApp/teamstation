@@ -20,8 +20,10 @@ import { userIdOfGumbo, userIdOfValue } from '../common/userId'
 import {
   asIdentityCompatibility,
   CHAT2_APPLICATION_TEST_FILES,
+  CHAT2_SURFACES,
   type Chat2Fixture,
   isChat2HarnessPath,
+  requireAfterArchive,
   sourceBinding,
   verifyChat2HarnessSource
 } from './chat2Fixture.e2e'
@@ -434,5 +436,88 @@ describe('what an application build is made of', () => {
     // Each exception is one a build really takes in, or it is stale.
     for (const path of CHAT2_APPLICATION_TEST_FILES)
       expect(files, path).includes(path)
+  })
+})
+
+describe('matched AFTER archive before an account switch', () => {
+  const kinds = [
+    'chat-list',
+    'conversation',
+    'floating-pins',
+    'message-actions',
+    'reply-keyboard',
+    'info',
+    'info-members',
+    'mentions',
+    'mention-composer',
+    'attention'
+  ]
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1])
+  const current = 'a'.repeat(40)
+  const earlier = 'b'.repeat(40)
+  const roots: string[] = []
+  const previous = process.env.CHAT2_SOURCE
+  afterEach(() => {
+    for (const root of roots.splice(0))
+      rmSync(root, { recursive: true, force: true })
+    if (previous == null) delete process.env.CHAT2_SOURCE
+    else process.env.CHAT2_SOURCE = previous
+  })
+  function archive(sourceOf: (file: string) => string): {
+    fixture: Chat2Fixture
+    root: string
+  } {
+    const root = mkdtempSync(join(tmpdir(), 'chat2-after-archive-'))
+    roots.push(root)
+    const files = CHAT2_SURFACES.filter(s => s !== 'web-320')
+      .flatMap(s => kinds.map(k => s + '-' + k + '-after.png'))
+      .concat([
+        'ios-keyboard-pins-after.png',
+        'android-keyboard-pins-after.png',
+        'web-320-composer-after.png'
+      ])
+    const entries = files.map(file => {
+      const path = join(root, file)
+      writeFileSync(path, png, { mode: 0o600 })
+      return {
+        file,
+        path,
+        source: sourceOf(file),
+        sha256: createHash('sha256').update(png).digest('hex')
+      }
+    })
+    const index = join(root, 'proof-index.json')
+    writeFileSync(index, JSON.stringify({ entries }), { mode: 0o600 })
+    process.env.CHAT2_SOURCE = current
+    return {
+      fixture: { afterArchive: index } as unknown as Chat2Fixture,
+      root
+    }
+  }
+
+  it('requires every frame at the current source for an ordinary switch', () => {
+    const { fixture } = archive(file =>
+      file.startsWith('android-') ? earlier : current
+    )
+    expect(() => {
+      requireAfterArchive(fixture)
+    }).throws('Archived AFTER source differs')
+    expect(() => {
+      requireAfterArchive(fixture, 'ios')
+    }).throws('Archived AFTER source differs')
+  })
+
+  it('lets a capture of one surface switch while its own intact frames are older', () => {
+    const { fixture, root } = archive(file =>
+      file.startsWith('android-') ? earlier : current
+    )
+    requireAfterArchive(fixture, 'android')
+    writeFileSync(
+      join(root, 'android-chat-list-after.png'),
+      Buffer.from(png).fill(2, 9)
+    )
+    expect(() => {
+      requireAfterArchive(fixture, 'android')
+    }).throws('Archived AFTER image changed')
   })
 })
