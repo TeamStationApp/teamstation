@@ -80,7 +80,9 @@ export const GRID_COLUMNS: Column[] = [
   {
     id: 'fieldSize',
     title: 'Size',
-    widthRem: 4.5,
+    // The longest size, 46/60 MP, is 69 px at 0.9375 rem; with the cell's
+    // padding it needs 81 px, so the next quarter rem up.
+    widthRem: 5.25,
     value: season => fieldSizeLabel(season.settings.fieldSize)
   },
   {

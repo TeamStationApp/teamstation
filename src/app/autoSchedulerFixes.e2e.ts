@@ -434,8 +434,9 @@ async function f1(run: Run): Promise<void> {
     'Demo Regular Teams: 7 teams and 2 exhibition teams'
   )
   expect(grid.adjacent).equals(true)
-  // 4.5 rem each, where Teams was 7 and Size 5.
-  expect(grid.teamsWidth).equals(grid.sizeWidth)
+  // Teams is 4.5 rem, where it was 7; Size is a little wider, for 46/60 MP.
+  expect(grid.teamsWidth).equals(72)
+  expect(grid.sizeWidth).greaterThan(grid.teamsWidth)
   expect(grid.textGap).lessThan(40)
   expect(new Set(grid.headerHeights).size).equals(1)
   expect(grid.headerHeights[0]).greaterThan(0)
@@ -460,8 +461,57 @@ async function f1(run: Run): Promise<void> {
     '16x0',
     join(run.artifacts, 'season-grid-after.png')
   ])
+  // The longest size, 46/60 MP, keeps the Size cell on one line, as tall as
+  // the Teams cell beside it.
+  await fx.f.h.db
+    .updateTable('season_schedule_settings')
+    .set({ field_size: '46/60 MP' })
+    .where('season_id', '=', fx.f.seasonA)
+    .execute()
+  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+  await labelled(b, 'Demo Regular Size: 46/60 MP')
+  const size = await b.page.evaluate(() => {
+    const line = (label: string): { lines: number; width: number } => {
+      const node = document.querySelector(`[aria-label="${label}"]`)!
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      const tops = new Set(
+        [...range.getClientRects()].map(rect => Math.round(rect.top))
+      )
+      // Its unwrapped width, measured in the cell's own font.
+      const context = document.createElement('canvas').getContext('2d')!
+      context.font = getComputedStyle(node.firstElementChild!).font
+      return {
+        lines: tops.size,
+        width: context.measureText(String(node.textContent)).width
+      }
+    }
+    const height = (label: string): number =>
+      document
+        .querySelector(`[aria-label^="${label}"]`)!
+        .getBoundingClientRect().height
+    return {
+      ...line('Demo Regular Size: 46/60 MP'),
+      cell: height('Demo Regular Size: '),
+      teams: height('Demo Regular Teams: '),
+      teamsWidth: document
+        .querySelector('[aria-label^="Demo Regular Teams: "]')!
+        .getBoundingClientRect().width,
+      sizeWidth: document
+        .querySelector('[aria-label^="Demo Regular Size: "]')!
+        .getBoundingClientRect().width
+    }
+  })
+  trace(`size ${JSON.stringify(size)}`)
+  await scrollToText(b, 'SCHEDULE SETTINGS')
+  await run.capture(join(run.support, 'season-grid-after-mp.png'))
+  expect(size.lines).equals(1)
+  expect(size.cell).equals(size.teams)
+  // Teams stays 4.5 rem; Size is wider by what 46/60 MP needs.
+  expect(size.teamsWidth).equals(72)
+  expect(size.sizeWidth).greaterThan(size.width)
   await run.pass(
-    'the Auto-Scheduler row is the last card on the Seasons tab, below the seasons and out of the hero; Game MINS, Between MINS, # Regular and # Exhibition edit in place with the whole number selected, Tab and Enter save 100, 5, 6 and 2, 47 is refused with the 5-minute message and Escape restores 100; after a reload the cells read bare numbers under GAME MINS, BETWEEN MINS, # REGULAR and # EXHIBITION, Teams reads 7 + 2 beside Size, and no dialog opens'
+    'the Auto-Scheduler row is the last card on the Seasons tab, below the seasons and out of the hero; Game MINS, Between MINS, # Regular and # Exhibition edit in place with the whole number selected, Tab and Enter save 100, 5, 6 and 2, 47 is refused with the 5-minute message and Escape restores 100; after a reload the cells read bare numbers under GAME MINS, BETWEEN MINS, # REGULAR and # EXHIBITION, Teams reads 7 + 2 beside Size, and no dialog opens; set to 46/60 MP, the Size cell stays one line, as tall as Teams'
   )
 }
 
