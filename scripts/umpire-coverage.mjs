@@ -48,7 +48,7 @@ if (!reportOnly) {
         'src/app/components/Wheel.test.tsx',
         'src/app/navigation/scoringNativeBack.test.tsx',
         'src/app/scoring/scoringShell.test.tsx',
-        'src/app/scoring/ScoringPlayerSettingsFlow.test.tsx',
+        'src/app/navigation/StackNavigator.test.tsx',
         'src/app/components/EventScheduleFields.test.tsx',
         'src/app/screens/GameScreen.eventInfo.test.tsx',
         'src/app/screens/EventInfoTab.test.tsx',
