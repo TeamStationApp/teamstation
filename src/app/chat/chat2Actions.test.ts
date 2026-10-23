@@ -11447,6 +11447,17 @@ describe('web large-text zoomed control captures', function () {
     expect(actual.reveals).deep.equals([])
   })
 
+  it('reveals an unfocused editor before its tap without taking a capture', async () => {
+    const actual = model({ unfocused: true })
+    await actual.scenario.revealZoomedWebControl('zoom-reveal', {
+      name: 'search',
+      css: '[data-testid="chat-picker-content"] [aria-label="Search members"]',
+      requireFocus: false
+    })
+    expect(actual.shots).deep.equals([])
+    expect(actual.observations[0]).includes({ outcome: 'passed' })
+  })
+
   it('does not accept a Search editor without its actual focus', async () => {
     const actual = model({ unfocused: true, deadline: 400 })
     const error = await captureFailure(
