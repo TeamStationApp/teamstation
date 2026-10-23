@@ -1790,7 +1790,9 @@ export class Chat2UI {
         : { noAppInstall: true }),
       artifacts: 'none',
       driverStartTimeout: 180,
-      commandTimeout: 30000
+      // iOS re-reads the whole accessibility tree for each command; a long
+      // conversation pushed single commands past 30 s.
+      commandTimeout: platform === 'ios' ? 90000 : 30000
     })
     await this.device.launchApp({ appId: this.fixture.appId })
     // A cold two-core emulator can raise the system's own ANR dialog over the
