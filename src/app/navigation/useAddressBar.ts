@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 
 import { type ClearedFrame, frameMatchesPath, suffixDropCount } from './history'
+import { noteHistoryMove } from './historyMotion'
 import { parseRoute, type Route, routePath } from './routes'
 
 let guard:
@@ -72,6 +73,11 @@ function initializeHistory(): void {
  * the operating system and cannot do it synchronously, and this is the
  * declaration that keeps the two modules exporting the same names.
  */
+/** Never anything: the browser walks its own history. */
+export function previousRoute(): Route | undefined {
+  return undefined
+}
+
 export function seedRoute(_url: string | null | undefined): void {
   // The address bar is the state.
 }
@@ -217,7 +223,7 @@ export function useBrowserBack(
     initializeHistory()
     let restoring: (() => void) | undefined
     let accepting = false
-    const onPop = (): void => {
+    const onPop = (event?: PopStateEvent): void => {
       if (landing != null) {
         const route = landing
         landing = null
@@ -249,6 +255,14 @@ export function useBrowserBack(
               destination: currentRoute()
             })
       if (held == null || held.allow?.(currentRoute()) === true) {
+        // Read before `position` moves: afterwards every move looks forward.
+        noteHistoryMove({
+          direction:
+            (indexOfHistory() ?? position) < position ? 'back' : 'forward',
+          drawn:
+            (event as { hasUAVisualTransition?: boolean } | undefined)
+              ?.hasUAVisualTransition === true
+        })
         position = indexOfHistory() ?? position
         noteTrail(locationPath())
         onRoute(currentRoute())
@@ -268,6 +282,10 @@ export function useBrowserBack(
               position = nextPosition
               showRoute(held.destination, true)
               held.onAccepted?.()
+              noteHistoryMove({
+                direction: delta < 0 ? 'back' : 'forward',
+                drawn: false
+              })
               onRoute(held.destination)
             }
             if (delta !== 0) {
