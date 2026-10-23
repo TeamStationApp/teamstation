@@ -5164,6 +5164,91 @@ describe('chat native adapter compatibility', function () {
     expect(value).equals('')
     expect(clipboard).equals('Disposable sentinel')
   })
+  async function zoomedInfoMember(fault = ''): Promise<{
+    calls: string[]
+    error: unknown
+  }> {
+    const { actual, page } = browserModel()
+    actual.metrics = () => ({
+      width: 1440,
+      height: 1000,
+      dpr: 2,
+      coarse: false
+    })
+    const memberId = userIdOfGumbo(3)
+    const row = page.window.document.createElement('button')
+    row.dataset.testid = 'chat-info-member-' + memberId
+    page.window.document.body.append(row)
+    const calls: string[] = []
+    let revealed = false
+    row.scrollIntoView = options => {
+      expect(options).deep.equals({ block: 'center' })
+      calls.push('public-dom-reveal')
+      revealed = true
+    }
+    row.getBoundingClientRect = () =>
+      new page.window.DOMRect(
+        revealed ? 320 : -32,
+        150,
+        fault === 'too-wide' ? 1500 : 1000,
+        56
+      )
+    actual.device.scrollUntilVisible = async args => {
+      expect(args.element).deep.equals({ id: row.dataset.testid })
+      calls.push('driver-full-visibility')
+      // The driver's vertical-only wheels cannot reveal an x-clipped row.
+      if (row.getBoundingClientRect().x < 0)
+        throw Error('Exact member stayed partially outside the viewport')
+      return {}
+    }
+    actual.device.assertVisible = async () => ({})
+    actual.observedBounds = async () => {
+      const box = row.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    }
+    actual.nodes = async () => [
+      {
+        type: 'Button',
+        text: 'Back',
+        bounds: { x: 10, y: 20, width: 44, height: 44 }
+      }
+    ]
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId: userIdOfGumbo(9),
+      f: {
+        members: [{ userId: memberId, name: 'Cal Ripken', role: 'Member' }]
+      },
+      observations: []
+    }) as Scenarios
+    let error: unknown
+    try {
+      const selected = await scenario.showInfoMember()
+      expect(selected.userId).equals(memberId)
+      expect(scenario.observations).length(1)
+    } catch (failure) {
+      error = failure
+    }
+    return { calls, error }
+  }
+  it('reveals the exact web member before vertical-only driver scrolling when browser zoom clips it horizontally', async () => {
+    const result = await zoomedInfoMember()
+    expect(result.error).equals(undefined)
+    expect(result.calls).deep.equals([
+      'public-dom-reveal',
+      'driver-full-visibility'
+    ])
+  })
+  it('still rejects a revealed web member that cannot fit the physical reading viewport', async () => {
+    const result = await zoomedInfoMember('too-wide')
+    expect(String(result.error)).includes(
+      'Finite member row must fit the actual viewport and readable band'
+    )
+    expect(result.calls).deep.equals([
+      'public-dom-reveal',
+      'driver-full-visibility'
+    ])
+  })
   it('chooses an actually unique other-member label for native information framing', async () => {
     const actual = ui([])
     const selectors: unknown[] = []

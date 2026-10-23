@@ -2942,15 +2942,15 @@ export class Scenarios {
       'Current other-member with a unique public safety label required'
     )
     const selector = { id: 'chat-info-member-' + member.userId }
+    if (!ui.native)
+      await ui.dom(
+        `const n=document.querySelector(${JSON.stringify('[data-testid="' + selector.id + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
+      )
     await ui.device.scrollUntilVisible({
       element: selector,
       direction: 'DOWN',
       timeout: 15000
     })
-    if (!ui.native)
-      await ui.dom(
-        `const n=document.querySelector(${JSON.stringify('[data-testid="' + selector.id + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
-      )
     const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
     const width = Number('screenWidth' in info ? info.screenWidth : info.width)
     const height = Number(
