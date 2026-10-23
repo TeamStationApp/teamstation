@@ -39,8 +39,13 @@ afterEach(async function () {
   globalThis.fetch = originalFetch
   globalThis.WebSocket = originalSocket
 })
+/** A control on show: none in the screen kept hidden beneath the top. */
 function button(label: string): HTMLElement | null {
-  return document.querySelector(`[aria-label="${label}"]`)
+  return (
+    [...document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)].find(
+      node => node.closest('[data-scene-role="covered"]') == null
+    ) ?? null
+  )
 }
 async function click(label: string): Promise<void> {
   const found = button(label)
@@ -214,6 +219,17 @@ async function type(label: string, value: string): Promise<void> {
   })
 }
 
+/**
+ * The text on show: not the screen kept hidden beneath the top, which the
+ * stack keeps mounted so Back reveals it as it stood.
+ */
+function shownText(): string {
+  const shown = document.body.cloneNode(true) as HTMLElement
+  for (const covered of shown.querySelectorAll('[data-scene-role="covered"]'))
+    covered.remove()
+  return shown.textContent ?? ''
+}
+
 describe('the app, the Score Game screen and the dashboard', function () {
   it('opens the Score Game screen from the pill, and the dashboard from its Scoreboard button, each at its own address', async function () {
     const sockets = fakeSockets()
@@ -226,7 +242,7 @@ describe('the app, the Score Game screen and the dashboard', function () {
       name: 'scoreOptions',
       gameId: 'g1'
     })
-    const text = document.body.textContent ?? ''
+    const text = shownText()
     expect(text).not.includes('Owls')
     expect(button('Score')).equals(null)
     expect(button('Game sections')).equals(null)
@@ -259,7 +275,7 @@ describe('the app, the Score Game screen and the dashboard', function () {
       name: 'scoreOptions',
       gameId: 'g1'
     })
-    expect(document.body.textContent).not.includes('Owls')
+    expect(shownText()).not.includes('Owls')
     expect(document.body.textContent).includes('Full game scoring')
     await click('Back')
     expect(currentRoute()).includes({ name: 'game', gameId: 'g1' })
@@ -272,7 +288,7 @@ describe('the app, the Score Game screen and the dashboard', function () {
     fixtureFetch({ value: true })
     showRoute({ name: 'scoreOptions', gameId: 'g1' }, true)
     await render(<App />)
-    expect(document.body.textContent).not.includes('Owls')
+    expect(shownText()).not.includes('Owls')
     expect(document.body.textContent).includes('Full game scoring')
     await click('Back')
     expect(currentRoute()).includes({ name: 'game', gameId: 'g1' })
