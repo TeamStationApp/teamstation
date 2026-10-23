@@ -63,7 +63,10 @@ function button(label: string): HTMLElement {
     ...document.querySelectorAll<HTMLElement>('[role="button"],button')
   ].find(
     node =>
-      node.getAttribute('aria-label') === label || node.textContent === label
+      node.getAttribute('aria-label') === label ||
+      // A chat row is named "title, preview, unread".
+      node.getAttribute('aria-label')?.startsWith(label + ', ') === true ||
+      node.textContent === label
   )
   expect(found, label).not.equals(undefined)
   return found!

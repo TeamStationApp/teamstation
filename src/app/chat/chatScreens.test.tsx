@@ -99,6 +99,8 @@ function button(label: string): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(
     node =>
       (node.getAttribute('aria-label') ?? '') === label ||
+      // A chat row is named "title, preview, unread".
+      (node.getAttribute('aria-label') ?? '').startsWith(label + ', ') ||
       (node.getAttribute('aria-label') == null &&
         (node.textContent ?? '').endsWith(label))
   )
@@ -1180,8 +1182,9 @@ describe('chat devices in the app', function () {
     await until(
       'the list',
       () =>
-        document.querySelector('[role="button"][aria-label="Hawks Members"]') !=
-        null
+        document.querySelector(
+          '[role="button"][aria-label^="Hawks Members, "]'
+        ) != null
     )
     expect(currentRoute()).deep.equals({ name: 'chat' })
     expect(document.querySelector('[data-testid="chat-unread"]')).not.equals(
