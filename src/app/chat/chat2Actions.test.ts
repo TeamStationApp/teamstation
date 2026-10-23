@@ -15,6 +15,7 @@ import { transform } from 'sucrase'
 
 import { userIdOfGumbo } from '../../common/userId'
 import {
+  asIdentityCompatibility,
   CHAT2_SCENARIOS,
   type Chat2Fixture,
   type Chat2Message,
@@ -10889,5 +10890,190 @@ describe('E5 exact touch quick-reaction toggle', () => {
     expect(result.error).equals(undefined)
     expect(result.observations).has.length(0)
     expect(result.calls).includes('picker-query')
+  })
+})
+
+describe('I2 descriptor-bound retained target session', () => {
+  it('preserves valid descriptor modes and rejects malformed modes without changing non-I2 optional metadata', () => {
+    const ordinary = { legacy: {}, fullWidthActors: [] }
+    expect(asIdentityCompatibility(ordinary).i2Target).equals(undefined)
+    for (const mode of ['retained-linked', 'new-empty'] as const)
+      expect(
+        asIdentityCompatibility({ ...ordinary, i2Target: mode }).i2Target
+      ).equals(mode)
+    expect(() =>
+      asIdentityCompatibility({ ...ordinary, i2Target: 'relink' })
+    ).throws()
+  })
+  function model(
+    options: {
+      mode?: 'retained-linked' | 'new-empty'
+      surface?: 'web-wide' | 'web-narrow' | 'ios' | 'android'
+      scenario?: 'I1' | 'I2'
+      blocked?: string
+      lateLink?: boolean
+      wrongAccount?: boolean
+    } = {}
+  ): { scenario: Scenarios; calls: string[]; boundary: Error } {
+    const calls: string[] = []
+    const boundary = Error(
+      'Actual expected account and conversation list reached'
+    )
+    let links = 0
+    const actor = {
+      email: 'willie@example.test',
+      password: 'TEST_PASSWORD',
+      accountLabel: 'Account, Willie Mays'
+    }
+    const ui = {
+      scenario: options.scenario ?? 'I2',
+      surface: options.surface ?? 'web-narrow',
+      native: options.surface === 'ios' || options.surface === 'android',
+      steps: [],
+      open: async () => {
+        calls.push('open')
+      },
+      back: async () => {
+        calls.push('back')
+      },
+      visible: async (selector: Record<string, unknown>) => {
+        const text = typeof selector.text === 'string' ? selector.text : ''
+        if (text === '^Account,.*$') return true
+        if (text.startsWith('^willie@')) return options.wrongAccount !== true
+        if (text === '^Link this device$' || text === 'Link this device') {
+          links++
+          return (
+            options.blocked === 'Link this device' ||
+            (options.lateLink === true && links > 1)
+          )
+        }
+        if (text === '^' + options.blocked + '$') return true
+        return selector.id === 'chat-conversation-list'
+      },
+      present: async (id: string) => {
+        calls.push(id)
+        if (options.lateLink !== true) throw boundary
+      },
+      device: {
+        tapOn: async () => {
+          calls.push('account-menu')
+        },
+        assertVisible: async (selector: Record<string, unknown>) => {
+          const label =
+            typeof selector.text === 'string'
+              ? selector.text
+              : typeof selector.id === 'string'
+                ? selector.id
+                : ''
+          calls.push('assert:' + label)
+          if (options.mode === 'new-empty' && selector.text === '^Password$')
+            throw boundary
+          return {}
+        },
+        pressKey: async () => {
+          throw Error('No password submission allowed')
+        }
+      },
+      text: async () => {
+        throw Error('No login or link tap allowed')
+      },
+      append: async () => {
+        throw Error('No credential input allowed')
+      }
+    } as unknown as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      viewerKey: 'Willie',
+      viewerId: userIdOfGumbo(9),
+      observations: [],
+      f: {
+        actors: { Willie: actor },
+        identityCompatibility: { i2Target: options.mode ?? 'retained-linked' }
+      }
+    }) as Scenarios
+    return { scenario, calls, boundary }
+  }
+  for (const mode of [undefined, 'relink'])
+    it(
+      'fails closed before navigation for missing or invalid I2 target mode: ' +
+        String(mode),
+      async () => {
+        const m = model()
+        Object.assign(m.scenario.f.identityCompatibility!, { i2Target: mode })
+        expect(String(await captureFailure(m.scenario.signIn()))).includes(
+          'I2 target mode required'
+        )
+        expect(m.calls).has.length(0)
+      }
+    )
+  for (const blocked of [
+    'Sign in',
+    'Password',
+    'Link this device',
+    'Reset chat'
+  ])
+    it(
+      'rejects retained public ' + blocked + ' before any login or approval',
+      async () => {
+        const m = model({ blocked })
+        expect(String(await captureFailure(m.scenario.signIn()))).includes(
+          'Retained I2 target must already be signed in and linked'
+        )
+        expect(m.calls).deep.equals(['open'])
+      }
+    )
+  for (const surface of ['web-narrow', 'ios', 'android'] as const)
+    it(
+      'requires the actual retained account and list without password fallback on ' +
+        surface,
+      async () => {
+        const m = model({ surface })
+        expect(await captureFailure(m.scenario.signIn())).equals(m.boundary)
+        expect(m.calls).includes('assert:^Account, Willie Mays$')
+        expect(m.calls).includes('chat-conversation-list')
+        expect(m.scenario.ui.steps).has.length(0)
+      }
+    )
+  it('rejects a Link that appears after the retained session gate', async () => {
+    const m = model({ lateLink: true })
+    expect(String(await captureFailure(m.scenario.signIn()))).includes(
+      'retained I2 target must not request another device link'
+    )
+    expect(
+      m.scenario.observations.some(row => row.browserLinkApproval != null)
+    ).equals(false)
+  })
+  it('retains account replacement rejection for a wrong retained actor', async () => {
+    const m = model({ wrongAccount: true })
+    expect(String(await captureFailure(m.scenario.signIn()))).includes(
+      'account replacement is prohibited'
+    )
+    expect(m.calls).not.includes('chat-conversation-list')
+  })
+  it('leaves the explicit new wide target on the ordinary password path', async () => {
+    const m = model({
+      mode: 'new-empty',
+      surface: 'web-wide',
+      blocked: 'Password'
+    })
+    expect(await captureFailure(m.scenario.signIn())).equals(m.boundary)
+    expect(m.scenario.ui.steps).has.length(1)
+    expect(m.calls).includes('assert:^Password$')
+  })
+  it('refuses a new-empty descriptor on a retained narrow target', async () => {
+    const m = model({ mode: 'new-empty', surface: 'web-narrow' })
+    expect(String(await captureFailure(m.scenario.signIn()))).includes(
+      'Only an explicit new wide target may link'
+    )
+    expect(m.calls).has.length(0)
+  })
+  it('keeps the original I1 Link rejection independent of I2 descriptor mode', async () => {
+    const m = model({ scenario: 'I1', lateLink: true })
+    expect(String(await captureFailure(m.scenario.signIn()))).includes(
+      'must not request another device link'
+    )
+    expect(
+      m.scenario.observations.some(row => row.browserLinkApproval != null)
+    ).equals(false)
   })
 })

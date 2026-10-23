@@ -1764,7 +1764,37 @@ export class Scenarios {
     const ui = this.ui
     const m = ui.device
     const actor = this.f.actors[key]
+    const i2Target =
+      ui.scenario === 'I2'
+        ? need(
+            this.f.identityCompatibility?.i2Target,
+            'Explicit I2 target mode required'
+          )
+        : undefined
+    if (ui.scenario === 'I2')
+      assert(
+        i2Target === 'retained-linked' || i2Target === 'new-empty',
+        'Valid explicit I2 target mode required'
+      )
+    const retainedI2 = i2Target === 'retained-linked'
+    if (i2Target === 'new-empty')
+      assert.equal(
+        ui.surface,
+        'web-wide',
+        'Only an explicit new wide target may link'
+      )
     await ui.open('/chat')
+    if (retainedI2)
+      for (const label of [
+        'Sign in',
+        'Password',
+        'Link this device',
+        'Reset chat'
+      ])
+        assert(
+          !(await ui.visible({ text: exactText(label) }, 500)),
+          'Retained I2 target must already be signed in and linked: ' + label
+        )
     if (await ui.visible({ text: '^Account,.*$' }, 500)) {
       await m.tapOn({ text: '^Account,.*$' })
       if (await ui.visible({ text: exactText(actor.email) }, 2000))
@@ -1790,7 +1820,13 @@ export class Scenarios {
         await ui.open('/chat')
       }
     }
-    this.observations.push(await submitPasswordSignIn(ui, actor))
+    if (retainedI2) {
+      await m.assertVisible({
+        text: exactText(actor.accountLabel),
+        timeout: 30000
+      })
+      await ui.present('chat-conversation-list')
+    } else this.observations.push(await submitPasswordSignIn(ui, actor))
     if (await ui.visible({ text: exactText('Not Now') }, 500))
       await ui.text('Not Now')
     if (
@@ -1828,8 +1864,8 @@ export class Scenarios {
     }
     if (await ui.visible({ text: 'Link this device' }, 500)) {
       assert(
-        !['I1', 'W1'].includes(ui.scenario),
-        'The preserved legacy profile must not request another device link'
+        !['I1', 'W1'].includes(ui.scenario) && !retainedI2,
+        'The preserved legacy profile or retained I2 target must not request another device link'
       )
       const signal = ui.native
         ? undefined
