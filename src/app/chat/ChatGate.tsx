@@ -5,7 +5,7 @@ import { Button, Screen } from '../components'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'
-import { type ChatKeysClient, leaveChat } from './engine/links'
+import { type ChatKeysClient, resetUnreadableChat } from './engine/links'
 import { type ChatKeyStore, UnreadableKeyRecordError } from './keyRecord'
 import { keyStore } from './keyStore'
 import { LinkDeviceScreen } from './LinkDeviceScreen'
@@ -33,9 +33,10 @@ export interface ChatGateProps {
  *
  * A start that fails offers another try. When it failed because the keys
  * saved on this device cannot be read, trying again cannot help, so it
- * also offers to reset chat on this device: `leaveChat` wipes the record,
- * and chat starts again as a new device. The record is kept until the
- * person asks for that.
+ * also offers to reset chat on this device: `resetUnreadableChat` revokes
+ * the device those keys belonged to and wipes the record, and chat starts
+ * again as a new device. The record is kept until the person asks for
+ * that, and through a reset that could not revoke the device.
  */
 export function ChatGate(props: ChatGateProps): React.ReactElement {
   const { engine, client, userId, children } = props
@@ -93,7 +94,7 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
   const unreadable = failure instanceof UnreadableKeyRecordError
   const reset = (): void => {
     setResetting(true)
-    leaveChat({ client, store: props.store ?? keyStore })
+    resetUnreadableChat({ client, store: props.store ?? keyStore })
       .then(() => {
         if (mounted.current) setRound(current => current + 1)
       })

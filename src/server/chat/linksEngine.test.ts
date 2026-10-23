@@ -3,6 +3,7 @@ import { after, before, describe, it } from 'mocha'
 
 import {
   approveLink,
+  type ChatKeysClient,
   type ChatSetup,
   ensureEnrolled,
   leaveChat,
@@ -11,6 +12,7 @@ import {
   pollLink,
   reasonOf,
   resetIdentity,
+  resetUnreadableChat,
   revokeOtherDevice,
   rotatePuk,
   spacedCode,
@@ -23,6 +25,7 @@ import {
   newRecord,
   recordFromJson,
   recordToJson,
+  UnreadableKeyRecordError,
   withEpochKey
 } from '../../app/chat/keyRecord'
 import { type ChatMyKeys, TeamStationClient } from '../../common/api'
@@ -501,6 +504,190 @@ describe('chat keys on the device', function () {
     })
     await leaveChat({ client: offline, store })
     expect(store.text).equals(undefined)
+  })
+
+  describe('resetting chat on a device whose saved keys cannot be read', function () {
+    /**
+     * Makes the record `store` holds now one that will not open, as the
+     * real stores report it. A record saved later opens as usual.
+     */
+    function unreadable(store: MemoryStore): void {
+      const sealed = store.text
+      const load = store.load.bind(store)
+      store.load = async () => {
+        if (store.text != null && store.text === sealed) {
+          throw new UnreadableKeyRecordError('undecryptable')
+        }
+        return await load()
+      }
+    }
+
+    /** `client`, noting each device revoke and the options it carried. */
+    function noting(client: ChatKeysClient): {
+      client: ChatKeysClient
+      revokes: Array<[string, unknown]>
+    } {
+      const revokes: Array<[string, unknown]> = []
+      const spy = Object.create(client) as ChatKeysClient
+      spy.revokeChatDevice = async (deviceId, options) => {
+        revokes.push([deviceId, options])
+        return await client.revokeChatDevice(deviceId, options)
+      }
+      return { client: spy, revokes }
+    }
+
+    async function revokedAt(deviceId: string): Promise<Date | null> {
+      const device = await f()
+        .db.selectFrom('chat_devices')
+        .select(['revoked_at'])
+        .where('id', '=', deviceId)
+        .executeTakeFirstOrThrow()
+      return device.revoked_at
+    }
+
+    it('revokes the device bound to this session, keeps the session, and starts again at reset, not link', async function () {
+      await f().person('Ru')
+      const one = deviceOf(await session('Ru~1', 'Ru'), 'Ru')
+      const ready = await ensureEnrolled(one)
+      expect(ready.state).equals('ready')
+      unreadable(one.store)
+      const error = await refusal(ensureEnrolled(one))
+      expect(error).instanceOf(UnreadableKeyRecordError)
+
+      const { client, revokes } = noting(one.client)
+      const setup = { ...one, client }
+      await resetUnreadableChat(setup)
+      expect(revokes).deep.equals([
+        [ready.record.deviceId, { keepSession: true }]
+      ])
+      expect(one.store.text).equals(undefined)
+      expect(one.store.wipes).equals(1)
+      expect(await revokedAt(ready.record.deviceId)).not.equals(null)
+      // Still signed in, and bound to nothing.
+      expect((await client.myChatKeys()).deviceId).equals(null)
+
+      // The person's only device is gone: a new identity, not a link
+      // nobody can approve.
+      const again = await ensureEnrolled(setup)
+      expect(again.state).equals('reset')
+      expect(again.record.deviceId).not.equals(ready.record.deviceId)
+      const listed = await client.chatDevices()
+      expect(
+        listed
+          .filter(device => device.revokedAt == null)
+          .map(device => device.id)
+      ).deep.equals([again.record.deviceId])
+      expect((await resetIdentity(setup, again.record)).identity).not.equals(
+        undefined
+      )
+      expect((await ensureEnrolled(setup)).state).equals('ready')
+    })
+
+    it('leaves the person’s other devices able to link this one, without the dead one listed', async function () {
+      await f().person('Rv')
+      const one = deviceOf(await session('Rv~1', 'Rv'), 'Rv')
+      const first = await ensureEnrolled(one)
+      const two = deviceOf(await session('Rv~2', 'Rv'), 'Rv')
+      const asking = await ensureEnrolled(two)
+      expect(asking.state).equals('link')
+      await startLink(two, asking.record)
+      const [pending] = await one.client.chatLinks()
+      await approveLink(one, first.record, pending)
+      const linked = await ensureEnrolled(two)
+      expect(linked.state).equals('ready')
+
+      unreadable(two.store)
+      await resetUnreadableChat(two)
+      expect(await revokedAt(linked.record.deviceId)).not.equals(null)
+      const again = await ensureEnrolled(two)
+      expect(again.state).equals('link')
+      const active = (await one.client.chatDevices()).filter(
+        device => device.revokedAt == null
+      )
+      expect(active.map(device => device.id).sort()).deep.equals(
+        [first.record.deviceId, again.record.deviceId].sort()
+      )
+    })
+
+    it('keeps the record, and passes the failure on, when the device cannot be revoked', async function () {
+      await f().person('Rw')
+      const one = deviceOf(await session('Rw~1', 'Rw'), 'Rw')
+      const ready = await ensureEnrolled(one)
+      unreadable(one.store)
+      const text = one.store.text
+      const offline = Object.create(one.client) as ChatKeysClient
+      offline.revokeChatDevice = async () => {
+        throw new HttpError('offline', 'The request never left')
+      }
+      const failed = await refusal(
+        resetUnreadableChat({ client: offline, store: one.store })
+      )
+      expect((failed as HttpError).code).equals('offline')
+      const unreached = Object.create(one.client) as ChatKeysClient
+      unreached.myChatKeys = async () => {
+        throw new HttpError('offline', 'The request never left')
+      }
+      await refusal(
+        resetUnreadableChat({ client: unreached, store: one.store })
+      )
+      expect(one.store.text).equals(text)
+      expect(one.store.wipes).equals(0)
+      expect(await revokedAt(ready.record.deviceId)).equals(null)
+      // Tried again once the server answers, it goes through.
+      await resetUnreadableChat(one)
+      expect(await revokedAt(ready.record.deviceId)).not.equals(null)
+      expect(one.store.wipes).equals(1)
+    })
+
+    it('wipes without revoking when this session is bound to no device', async function () {
+      await f().person('Rx')
+      const one = deviceOf(await session('Rx~1', 'Rx'), 'Rx')
+      const ready = await ensureEnrolled(one)
+      const later = deviceOf(await session('Rx~2', 'Rx'), 'Rx', one.store)
+      unreadable(later.store)
+      const { client, revokes } = noting(later.client)
+      await resetUnreadableChat({ client, store: later.store })
+      expect(revokes).deep.equals([])
+      expect(later.store.text).equals(undefined)
+      // Nothing here could prove it, so it stays for another device to remove.
+      expect(await revokedAt(ready.record.deviceId)).equals(null)
+    })
+
+    it('touches nothing for a record that reads, none, or another failure to read', async function () {
+      await f().person('Ry')
+      const one = deviceOf(await session('Ry~1', 'Ry'), 'Ry')
+      const ready = await ensureEnrolled(one)
+      const { client, revokes } = noting(one.client)
+      await resetUnreadableChat({ client, store: one.store })
+      await resetUnreadableChat({ client, store: new MemoryStore() })
+      const broken = new MemoryStore()
+      broken.text = 'kept'
+      broken.load = async () => {
+        throw new Error('IndexedDB will not open')
+      }
+      const error = await refusal(
+        resetUnreadableChat({ client, store: broken })
+      )
+      expect((error as Error).message).equals('IndexedDB will not open')
+      expect(revokes).deep.equals([])
+      expect(one.store.wipes + broken.wipes).equals(0)
+      expect(broken.text).equals('kept')
+      expect(await revokedAt(ready.record.deviceId)).equals(null)
+      expect((await ensureEnrolled(one)).state).equals('ready')
+    })
+
+    it('leaves sign-out as it was: the device is revoked with its session, and the keys go', async function () {
+      await f().person('Rz')
+      const one = deviceOf(await session('Rz~1', 'Rz'), 'Rz')
+      const ready = await ensureEnrolled(one)
+      const { client, revokes } = noting(one.client)
+      await leaveChat({ client, store: one.store })
+      expect(revokes).deep.equals([[ready.record.deviceId, undefined]])
+      expect(one.store.text).equals(undefined)
+      expect(((await refusal(client.myChatKeys())) as HttpError).code).equals(
+        'unauthorized'
+      )
+    })
   })
 
   it('goes straight to reset with no active device left, and the reset drops every old key', async function () {

@@ -351,16 +351,22 @@ function checkPukSignature(
   }
 }
 
-/** Revokes devices and kills the sessions they are bound to. */
+/**
+ * Revokes devices and kills the sessions they are bound to, unless
+ * `keepSessions` (the caller's own device, whose session stays signed in).
+ */
 async function revokeDevices(
   trx: Kysely<Database>,
   devices: DeviceRow[],
-  now: Date
+  now: Date,
+  keepSessions = false
 ): Promise<void> {
   if (devices.length === 0) return
-  const sessions = devices.flatMap(device =>
-    device.session_id == null ? [] : [device.session_id]
-  )
+  const sessions = keepSessions
+    ? []
+    : devices.flatMap(device =>
+        device.session_id == null ? [] : [device.session_id]
+      )
   await trx
     .updateTable('chat_devices')
     .set({ revoked_at: now, session_id: null })
@@ -526,13 +532,23 @@ export async function registerDevice(
  * killed. When it held the current identity's keys, every conversation the
  * user is in is flagged for a new epoch, and `GET /chat/me/keys` reports
  * `pukNeedsRotation` until a linked device posts the next PUK generation.
+ *
+ * `keepSession` is for a device whose saved keys cannot be read any more
+ * (the app's "Reset chat on this device"): it revokes the device bound to
+ * the caller's session and leaves the session signed in, so the same
+ * session can register a new device. It is refused (`notThisDevice`) for
+ * any other device, whose session must end with it. It grants nothing a
+ * session lacks: registering a device already takes the binding from the
+ * old one, only without revoking it.
  */
 export async function revokeDevice(
   db: Kysely<Database>,
   caller: ChatCaller,
   deviceId: string,
-  now: Date
+  now: Date,
+  options: { keepSession?: boolean } = {}
 ): Promise<ChatDeviceView> {
+  const keepSession = options.keepSession === true
   return await inTransaction(db, async trx => {
     await lockUser(trx, caller.userId)
     const target = await trx
@@ -544,7 +560,15 @@ export async function revokeDevice(
     if (target == null) throw notFound()
     if (target.revoked_at == null) {
       const own = await boundDevice(trx, caller)
-      if (own?.id !== target.id) await requireHolder(trx, caller)
+      if (own?.id !== target.id) {
+        if (keepSession) {
+          throw refuse(
+            'notThisDevice',
+            'Only the device bound to this session keeps its session'
+          )
+        }
+        await requireHolder(trx, caller)
+      }
       const keys = await currentKeys(trx, caller.userId)
       const held =
         keys != null &&
@@ -554,7 +578,7 @@ export async function revokeDevice(
           .where('device_id', '=', target.id)
           .where('identity_id', '=', keys.identityId)
           .executeTakeFirst()) != null
-      await revokeDevices(trx, [target], now)
+      await revokeDevices(trx, [target], now, keepSession)
       if (held) {
         await flagRotation(trx, await conversationIdsOf(trx, caller.userId))
       }

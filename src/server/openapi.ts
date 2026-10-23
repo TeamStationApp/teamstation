@@ -6379,9 +6379,21 @@ export function openApiDocument(version: string): OpenApiDocument {
             'session is ended. When it held the current identity, every chat ' +
             'of the user is flagged for a new epoch and `GET /chat/me/keys` ' +
             'reports `pukNeedsRotation`. Revoking again changes nothing. ' +
-            'Audited.',
+            '`?keepSession=true` revokes the device bound to this session ' +
+            'and keeps the session signed in (a device whose saved keys ' +
+            'cannot be read, reset in place); 403 `notThisDevice` for any ' +
+            'other device. Audited.',
           security: [{ bearer: [] }],
-          parameters: [pathParam('deviceId')],
+          parameters: [
+            pathParam('deviceId'),
+            {
+              name: 'keepSession',
+              in: 'query',
+              schema: { type: 'boolean' },
+              description:
+                'Keep the session signed in; only for the device bound to it.'
+            }
+          ],
           responses: {
             200: { description: 'The device' },
             401: errorResponse,

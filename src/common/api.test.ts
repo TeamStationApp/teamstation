@@ -1257,6 +1257,11 @@ describe('api client', function () {
       method: 'DELETE',
       url: 'http://x/api/v1/chat/devices/cdv%201'
     })
+    await revoked.client.revokeChatDevice('cdv 1', { keepSession: true })
+    expect(revoked.calls[1]).deep.include({
+      method: 'DELETE',
+      url: 'http://x/api/v1/chat/devices/cdv%201?keepSession=true'
+    })
 
     const challenge = { nonce: 'NN', sessionId: 'ses_1', expiresAt: 'soon' }
     const challenged = client(challenge)

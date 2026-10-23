@@ -141,7 +141,9 @@ export function chatKeyRoutes(
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.deviceId)
-      const device = await revokeDevice(db, caller, id, clock())
+      const device = await revokeDevice(db, caller, id, clock(), {
+        keepSession: req.query.keepSession === 'true'
+      })
       setAudit(res.locals, {
         entityType: 'chatDevice',
         entityId: id,

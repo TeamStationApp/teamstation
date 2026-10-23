@@ -4702,11 +4702,19 @@ export class TeamStationClient {
     return await this.request('GET', '/chat/devices', asArray(asChatDevice))
   }
 
-  /** Revokes one of the caller's devices (this one, to sign out). */
-  async revokeChatDevice(deviceId: string): Promise<ChatDevice> {
+  /**
+   * Revokes one of the caller's devices (this one, to sign out). With
+   * `keepSession`, only the device bound to this session, and the session
+   * stays signed in (a device whose saved keys cannot be read, reset).
+   */
+  async revokeChatDevice(
+    deviceId: string,
+    options: { keepSession?: boolean } = {}
+  ): Promise<ChatDevice> {
+    const query = options.keepSession === true ? '?keepSession=true' : ''
     return await this.request(
       'DELETE',
-      `/chat/devices/${encodeURIComponent(deviceId)}`,
+      `/chat/devices/${encodeURIComponent(deviceId)}${query}`,
       asChatDevice
     )
   }

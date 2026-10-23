@@ -613,11 +613,21 @@ describe('the chat gate', function () {
       await store.load()
       return 'ready'
     }
+    // The session is still bound to the device whose keys those were.
+    const revoked: Array<[string, unknown]> = []
+    const client = {
+      myChatKeys: async () => ({ deviceId: 'cdv_dead' }),
+      revokeChatDevice: async (deviceId: string, options?: unknown) => {
+        expect(kept, 'Revoked before the keys go').equals(true)
+        revoked.push([deviceId, options])
+        return {}
+      }
+    }
     const reported: unknown[] = []
     await render(
       <ChatGate
         engine={engine}
-        client={unusedClient}
+        client={client as never}
         userId={userIdOfGumbo(1)}
         store={store}
         onFailure={error => reported.push(error)}
@@ -643,10 +653,72 @@ describe('the chat gate', function () {
         text().includes('Chat could not be opened.')
     )
     expect(kept, 'Only the person removes the saved keys').equals(true)
+    expect(revoked).deep.equals([])
+    await press('Reset chat on this device')
+    await until('inside', () => text().includes('inside'))
+    expect(revoked).deep.equals([['cdv_dead', { keepSession: true }]])
+    expect(kept).equals(false)
+    expect(engine.calls.filter(call => call === 'start')).length(3)
+  })
+
+  it('keeps the saved keys when the reset cannot revoke their device, and lets the person try again', async function () {
+    let kept = true
+    const store: ChatKeyStore = {
+      load: async () => {
+        if (kept) throw new UnreadableKeyRecordError('undecryptable')
+        return undefined
+      },
+      save: async () => {},
+      wipe: async () => {
+        kept = false
+      },
+      exists: async () => kept
+    }
+    const engine = new FakeEngine()
+    engine.start = async () => {
+      engine.calls.push('start')
+      await store.load()
+      return 'ready'
+    }
+    let online = false
+    const client = {
+      myChatKeys: async () => ({ deviceId: 'cdv_dead' }),
+      revokeChatDevice: async () => {
+        if (!online) throw new HttpError('offline', 'The request never left')
+        return {}
+      }
+    }
+    const reported: unknown[] = []
+    await render(
+      <ChatGate
+        engine={engine}
+        client={client as never}
+        userId={userIdOfGumbo(1)}
+        store={store}
+        onFailure={error => reported.push(error)}
+      >
+        <span>inside</span>
+      </ChatGate>
+    )
+    await until('the failure', () =>
+      text().includes('Chat could not be opened.')
+    )
+    await press('Reset chat on this device')
+    await until('the reset failure', () => reported.length === 2)
+    expect(reported.map(chatStartFailure)).deep.equals([
+      'storedRecord:undecryptable',
+      'http:offline'
+    ])
+    expect(kept, 'Not wiped into a device nobody can revoke').equals(true)
+    await until('Try again', () => button('Try again') != null)
+    await press('Try again')
+    await until('the reset offered again', () =>
+      text().includes('The chat keys saved on this device cannot be read.')
+    )
+    online = true
     await press('Reset chat on this device')
     await until('inside', () => text().includes('inside'))
     expect(kept).equals(false)
-    expect(engine.calls.filter(call => call === 'start')).length(3)
   })
 
   it('offers no reset when chat will not start for a reason other than the saved keys', async function () {
