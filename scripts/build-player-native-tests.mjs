@@ -1,7 +1,8 @@
 // The player's native specs: each `src/app/player/**/*.native.spec.ts(x)`,
-// and any other `*.native.spec.*` a player milestone adds, bundled alone with
-// the web build's settings and `react-native-video` aliased to the stub in
-// `src/test/stubs/reactNativeVideo.tsx`, then run with mocha.
+// and any other `*.native.spec.*` (Tess's among them), bundled alone with the
+// web build's settings and `react-native-video`, `react-native-image-picker`
+// and `@react-native-documents/picker` aliased to the stubs in
+// `src/test/stubs/`, then run with mocha.
 //
 //   npm run test.playerNative
 //
@@ -44,7 +45,13 @@ export async function buildNativeSpecs(outDir) {
         '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',
         '@react-native/assets-registry/registry':
           'react-native-web/dist/modules/AssetRegistry',
-        'react-native-video': resolve('src/test/stubs/reactNativeVideo.tsx')
+        'react-native-video': resolve('src/test/stubs/reactNativeVideo.tsx'),
+        'react-native-image-picker': resolve(
+          'src/test/stubs/reactNativeImagePicker.ts'
+        ),
+        '@react-native-documents/picker': resolve(
+          'src/test/stubs/reactNativeDocumentsPicker.ts'
+        )
       },
       stdin: {
         contents: `import './${spec}'`,

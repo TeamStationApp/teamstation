@@ -107,6 +107,9 @@ const check = spawnSync(
     'src/app/scoring/NativeCueSounds.ts',
     '--exclude',
     'src/app/components/glassViewProps.ts',
+    // Tess's client shapes, which every importer takes as `import type`.
+    '--exclude',
+    'src/app/tess/tessTypes.ts',
     'src/app'
   ],
   { stdio: 'inherit' }
