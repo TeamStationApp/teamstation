@@ -35,11 +35,12 @@ import { type SttHandlers, SttSession } from './stt'
  * `WS /api/v1/dictation` — one socket for everything a person says to
  * TeamStation.
  *
- * It never touches a game. It turns speech into a transcript and a transcript
- * into actions, and sends the actions back; the client applies them through
- * the same reducer a tap goes through, and that is what saves. A connection
- * holds only its recogniser, the utterance in flight, and — while the LLM is
- * asking the scorer something — that utterance's conversation.
+ * It never touches a game. It turns speech into a transcript and, unless the
+ * scope ends at the transcript, a transcript into actions, and sends the
+ * actions back; the client applies them through the same reducer a tap goes
+ * through, and that is what saves. A connection holds only its recogniser,
+ * the utterance in flight, and — while the LLM is asking the scorer
+ * something — that utterance's conversation.
  */
 
 export const DICTATION_PATH = '/api/v1/dictation'
@@ -275,6 +276,11 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
       if (text.trim() === '') {
         fail(flight.start.id, 'Nothing was heard')
         finish(flight, 'heard nothing')
+        return
+      }
+      // The words were the answer; the next hold may start at once.
+      if (flight.scope.transcriptOnly === true) {
+        finish(flight, 'transcribed')
         return
       }
       flight.phase = 'interpreting'
