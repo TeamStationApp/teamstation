@@ -117,6 +117,8 @@ export interface DictationButtonProps extends DictationTopic {
   log: readonly ScoringAction[]
   /** Why the screen refused the last dictated sentence, if it did. */
   problem?: Problem
+  /** What the last sentence left out, logged as a message beside it. */
+  note?: string
   /** What the screen asks about a dictated sentence, with its answers. */
   question?: DictationQuestion
   onAnswer?: (answer: { option?: number; picks?: number[] }) => void

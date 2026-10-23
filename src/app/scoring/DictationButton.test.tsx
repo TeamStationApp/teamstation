@@ -490,6 +490,12 @@ describe('the dictation control', function () {
     expect(text('Dictation message')).equals('There is no runner on second')
   })
 
+  it('logs what a sentence left out after the third out', async function () {
+    const note = 'Left out after the third out: Player 8 scoring'
+    await harness().render({ note })
+    expect(text('Dictation message')).equals(note)
+  })
+
   it('asks the LLM’s question, and sends the answer or the dismissal', async function () {
     const h = harness()
     await h.render()

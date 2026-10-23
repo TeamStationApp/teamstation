@@ -1291,6 +1291,7 @@ function ScoringPanel(props: {
     session,
     log: state.log,
     problem: state.dictation?.problem,
+    note: state.dictation?.note,
     question: props.walkUpOpen === true ? undefined : state.dictationQuestion,
     played,
     onAnswer: answer => {

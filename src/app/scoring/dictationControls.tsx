@@ -76,6 +76,7 @@ export function useDictationControls(
     session,
     log: actions,
     problem,
+    note,
     question,
     played,
     undone,
@@ -161,7 +162,14 @@ export function useDictationControls(
     started.current = true
     setEnabled(true)
   }, [available, startEnabled, suspended, setEnabled])
-  const entries = useLog(dictation, problem?.message, played, undone, refused)
+  const entries = useLog(
+    dictation,
+    problem?.message,
+    note,
+    played,
+    undone,
+    refused
+  )
   const linger = useLinger(
     entries,
     dictation.holding ||
@@ -503,6 +511,7 @@ export function useDictationControls(
 function useLog(
   dictation: ReturnType<typeof useDictation>,
   problem: string | undefined,
+  note: string | undefined,
   played: DictationButtonProps['played'],
   undone: DictationButtonProps['undone'],
   refused: DictationButtonProps['refused']
@@ -534,6 +543,9 @@ function useLog(
   useEffect(() => {
     if (problem != null) add('message', problem)
   }, [problem])
+  useEffect(() => {
+    if (note != null) add('message', note)
+  }, [note])
   // An undo is logged ahead of the plays that replaced it, as it happened.
   const shownUndo = useRef<number | null>(null)
   useEffect(() => {
