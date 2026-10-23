@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { asServerConfig } from './serverConfig'
+import { asServerConfig, tessSettings } from './serverConfig'
 
 const readOnlySource = {
   endpoint: 'https://shared.example-ts.test',
@@ -49,4 +49,68 @@ describe('read-only source configuration', function () {
       ).throws()
     })
   }
+})
+
+describe('Tess configuration', function () {
+  const dictation = {
+    apiKey: 'xai-placeholder',
+    anthropic: { apiKey: 'dictation-anthropic-placeholder' }
+  }
+
+  it('loads a configuration without a tess section, with Tess off', function () {
+    const config = asServerConfig({})
+    expect(config.tess).equals(undefined)
+    expect(tessSettings(config)).equals(null)
+    // Dictation without an Anthropic key gives Tess nothing either.
+    expect(
+      tessSettings(asServerConfig({ dictation: { apiKey: 'xai-placeholder' } }))
+    ).equals(null)
+    expect(tessSettings(asServerConfig({ tess: { apiKey: '' } }))).equals(null)
+  })
+
+  it('falls back to dictation’s Anthropic key, and leaves dictation as it was', function () {
+    const config = asServerConfig({ dictation })
+    expect(tessSettings(config)).deep.equals({
+      apiKey: 'dictation-anthropic-placeholder',
+      baseUrl: 'https://api.anthropic.com/v1',
+      model: 'claude-sonnet-5-5'
+    })
+    expect(config.dictation).deep.equals({
+      apiKey: 'xai-placeholder',
+      baseUrl: 'https://api.x.ai/v1',
+      sttUrl: 'wss://api.x.ai/v1/stt',
+      sttModel: 'grok-voice-transcribe-2.0',
+      model: 'grok-4.3',
+      openai: undefined,
+      anthropic: {
+        apiKey: 'dictation-anthropic-placeholder',
+        baseUrl: 'https://api.anthropic.com/v1'
+      }
+    })
+    // A section without a key still takes its address and model.
+    expect(
+      tessSettings(
+        asServerConfig({
+          dictation,
+          tess: { baseUrl: 'http://127.0.0.1:1/v1', model: 'claude-test' }
+        })
+      )
+    ).deep.equals({
+      apiKey: 'dictation-anthropic-placeholder',
+      baseUrl: 'http://127.0.0.1:1/v1',
+      model: 'claude-test'
+    })
+  })
+
+  it('prefers its own key, and refuses a malformed section', function () {
+    expect(
+      tessSettings(asServerConfig({ dictation, tess: { apiKey: 'tess-key' } }))
+    ).deep.equals({
+      apiKey: 'tess-key',
+      baseUrl: 'https://api.anthropic.com/v1',
+      model: 'claude-sonnet-5-5'
+    })
+    expect(() => asServerConfig({ tess: { apiKey: 42 } })).throws()
+    expect(() => asServerConfig({ tess: 'on' })).throws()
+  })
 })

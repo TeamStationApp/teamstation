@@ -98,7 +98,8 @@ import {
   eventControlIssuerOf,
   primaryHost,
   publicUrl,
-  serverConfig
+  serverConfig,
+  tessSettings
 } from './serverConfig'
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
@@ -512,6 +513,7 @@ function runWorker(): void {
     '/api/v1',
     healthRoutes(db, VERSION, {
       narration: speechSettings(serverConfig) != null,
+      tess: tessSettings(serverConfig) != null,
       dictation: serverConfig.dictation != null,
       dictationModels:
         serverConfig.dictation == null ? [] : modelsOf(serverConfig.dictation)

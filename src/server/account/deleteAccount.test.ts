@@ -401,6 +401,86 @@ describe('deleting an account', function () {
     expect(verified.status).equals(401)
   })
 
+  it('removes everything Tess keeps of the person, and nobody else’s', async () => {
+    const proof = 'b8'.repeat(32)
+    const leaving = await person('Ozzie Smith', 'ozzie@example.test', proof)
+    const staying = await person('Lou Brock', 'lou@example.test', proof)
+    const tessTables = [
+      'tess_conversations',
+      'tess_messages',
+      'tess_attachments',
+      'tess_changes',
+      'tess_usage_weeks'
+    ] as const
+    for (const [n, userId] of [leaving.id, staying.id].entries()) {
+      await h.db
+        .insertInto('tess_conversations')
+        .values({ user_id: userId, summary: 'They asked about the schedule' })
+        .execute()
+      await h.db
+        .insertInto('tess_messages')
+        .values({
+          user_id: userId,
+          role: 'user',
+          content: JSON.stringify([{ type: 'text', text: 'When do we play?' }])
+        })
+        .execute()
+      await h.db
+        .insertInto('tess_attachments')
+        .values({
+          id: `00000000-0000-4000-8000-00000000010${n}`,
+          user_id: userId,
+          name: 'lineup.csv',
+          media_type: 'text/csv',
+          kind: 'csv',
+          data: Buffer.from('name\n')
+        })
+        .execute()
+      await h.db
+        .insertInto('tess_changes')
+        .values({
+          id: `00000000-0000-4000-8000-00000000020${n}`,
+          user_id: userId,
+          method: 'POST',
+          path: '/teams/tem_account/games',
+          body: JSON.stringify({ opponent: 'Demo Eagles' }),
+          summary: 'Add a game against Demo Eagles',
+          expires_at: new Date(Date.now() + 1800000)
+        })
+        .execute()
+      await h.db
+        .insertInto('tess_usage_weeks')
+        .values({
+          user_id: userId,
+          week_start: '2026-10-19',
+          input_tokens: 5000,
+          output_tokens: 700,
+          requests: 2
+        })
+        .execute()
+    }
+    const left = async (
+      table: (typeof tessTables)[number],
+      userId: string
+    ): Promise<number> =>
+      (
+        await h.db
+          .selectFrom(table)
+          .select('user_id')
+          .where('user_id', '=', userId)
+          .execute()
+      ).length
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+
+    for (const table of tessTables) {
+      expect(await left(table, leaving.id), table).equals(0)
+      expect(await left(table, staying.id), table).equals(1)
+    }
+  })
+
   it('keeps the last administrator of a team, and lets a second one go', async () => {
     const proof = 'b8'.repeat(32)
     const first = await person('Willie Mays', 'willie@example.test', proof)
