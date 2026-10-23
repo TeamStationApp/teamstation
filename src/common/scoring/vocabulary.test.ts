@@ -23,7 +23,8 @@ describe('dictation vocabulary', function () {
     ])
       expect(DICTATION_TERMS).not.includes(term)
     expect(DICTATION_TERMS).includes('six four three')
-    expect(DICTATION_TERMS).to.have.length(43)
+    expect(DICTATION_TERMS).includes('intentional walk')
+    expect(DICTATION_TERMS).to.have.length(44)
     for (const term of [
       'blooper',
       'dribbler',
@@ -51,6 +52,18 @@ describe('dictation vocabulary', function () {
       else expect(BATTERY_KINDS).includes(action.kind)
       expect(entry.phrases.length).greaterThan(0)
     }
+  })
+
+  it('reads the recogniser\'s "potential walk" as an intentional walk', function () {
+    const intentional = VOCABULARY_ENTRIES.find(entry =>
+      entry.phrases.includes('intentional walk')
+    )
+    expect(intentional?.phrases).includes('potential walk')
+    expect(intentional?.action).deep.equals({
+      type: 'result',
+      eventType: 'intent_walk'
+    })
+    expect(DICTATION_VOCABULARY).includes('potential walk')
   })
 
   it('has no walk result, and keeps result strikeout for the dropped third strike', function () {

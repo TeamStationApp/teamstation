@@ -500,6 +500,26 @@ export function mapPlayers(
   return out
 }
 
+/**
+ * A call with each player left blank — `""` or only spaces — taken as no
+ * player: the field is left out, and a list of players loses that entry.
+ */
+export function withoutBlankPlayers(
+  raw: Record<string, unknown>
+): Record<string, unknown> {
+  const blank = (value: unknown): boolean =>
+    typeof value === 'string' && value.trim() === ''
+  const out: Record<string, unknown> = Object.fromEntries(
+    Object.entries(raw).filter(
+      ([field, value]) => !PLAYER_FIELDS.includes(field) || !blank(value)
+    )
+  )
+  for (const field of PLAYERS_FIELDS)
+    if (Array.isArray(out[field]))
+      out[field] = (out[field] as unknown[]).filter(value => !blank(value))
+  return out
+}
+
 /** The fields of an action that name a fielder: his tag, or his position. */
 const FIELDER_FIELDS = ['fielder', 'error', 'fielders']
 

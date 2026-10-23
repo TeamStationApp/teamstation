@@ -7,7 +7,8 @@ import {
   taggedAction,
   type Tool,
   toolSchema,
-  untaggedAction
+  untaggedAction,
+  withoutBlankPlayers
 } from '../../common/scoring/actions'
 import {
   fieldingIds,
@@ -906,6 +907,57 @@ function parse(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** A call's arguments with each player left blank taken as no player. */
+function withoutBlanks(
+  args: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  return args == null ? args : withoutBlankPlayers(args)
+}
+
+/**
+ * A ball in play whose arguments carry its result, as a model sometimes sends
+ * it: the ball, then that result as a call of its own. A result the reply
+ * calls for the same ball — between the ball in play before it and the one
+ * after — wins over the nested one.
+ */
+function withNestedResults(calls: readonly ToolCall[]): ToolCall[] {
+  const balls = calls.flatMap((call, index) =>
+    call.function.name === 'ballInPlay' ? [index] : []
+  )
+  return calls.flatMap((call, index) => {
+    if (call.function.name !== 'ballInPlay') return [call]
+    const args = parse(call.function.arguments)
+    const nested = args?.result
+    if (
+      args == null ||
+      nested == null ||
+      typeof nested !== 'object' ||
+      Array.isArray(nested)
+    )
+      return [call]
+    const { result: _nested, ...ball } = args
+    const alone: ToolCall = {
+      ...call,
+      function: { ...call.function, arguments: JSON.stringify(ball) }
+    }
+    const from = balls.findLast(at => at < index) ?? -1
+    const to = balls.find(at => at > index) ?? calls.length
+    const own = calls
+      .slice(from + 1, to)
+      .some(other => other.function.name === 'result')
+    return own
+      ? [alone]
+      : [
+          alone,
+          {
+            id: `${call.id}-result`,
+            type: 'function' as const,
+            function: { name: 'result', arguments: JSON.stringify(nested) }
+          }
+        ]
+  })
+}
+
 type Cleaned =
   | { action: ScoringAction }
   | { command: SaidRosterCommand }
@@ -1265,7 +1317,7 @@ export class Interpretation {
    * runner's move already kept is not kept twice.
    */
   private read(reply: { calls: ToolCall[]; said: string }): Turn | number {
-    const calls = reply.calls
+    const calls = withNestedResults(reply.calls)
     const ask = calls.find(
       call => call.function.name === ASK_SCORER.function.name
     )
@@ -1345,7 +1397,9 @@ export class Interpretation {
           call.function.name,
           this.rosterNames().has(call.function.name)
             ? parse(call.function.arguments)
-            : this.withTagsForNames(parse(call.function.arguments))
+            : this.withTagsForNames(
+                withoutBlanks(parse(call.function.arguments))
+              )
         ),
         this.rosterNames(),
         this.players

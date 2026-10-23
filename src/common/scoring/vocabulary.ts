@@ -17,10 +17,11 @@ import type { BatteryKind, PitchCall, ResultType } from './actions'
  * out because the recogniser already hears them, and a term it already hears
  * costs a slot and biases it toward hearing the word when it was not said.
  *
- * The last four were measured on 2026-09-28: without them the recogniser
- * heard "beaned" as "beamed", "froze him" as "throws him", "whiffed" as "lift"
- * and "dotted" as "that at". The rows above them are kept until a real game
- * shows whether each earns its slot.
+ * The at-bat terms were measured: without them the recogniser heard "beaned"
+ * as "beamed", "froze him" as "throws him", "whiffed" as "lift" and "dotted"
+ * as "that at" (2026-09-28), and "intentional walk" as "potential walk" in a
+ * game on 2026-10-22. The rows above them are kept until a real game shows
+ * whether each earns its slot.
  */
 export const DICTATION_TERMS: readonly string[] = [
   // Double-play chains: the one place these scorers use position numbers.
@@ -63,6 +64,7 @@ export const DICTATION_TERMS: readonly string[] = [
   'froze him',
   'whiffed',
   'dotted',
+  'intentional walk',
   // How far a ball went, and the kind of pitch.
   'blooper',
   'dribbler',
@@ -136,9 +138,10 @@ export const VOCABULARY_ENTRIES: readonly VocabularyEntry[] = [
     note: 'the ball that makes four; the library records the walk'
   },
   {
-    phrases: ['intentional walk', 'put him on', 'IBB'],
+    phrases: ['intentional walk', 'put him on', 'IBB', 'potential walk'],
     means: 'an intentional walk',
-    action: { type: 'result', eventType: 'intent_walk' }
+    action: { type: 'result', eventType: 'intent_walk' },
+    note: 'potential walk is the recogniser mishearing intentional walk'
   },
   {
     phrases: [
