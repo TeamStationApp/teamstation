@@ -390,7 +390,21 @@ describe('Tess sitemap', function () {
       ).throws(/No Route type/)
       expect(() =>
         generateSitemap({ sources: { 'src/app/App.tsx': 'export {}' } })
-      ).throws(/No body chain/)
+      ).throws(/No renderFrame chain/)
+      // Not a function, or a block with no return of its own.
+      for (const source of [
+        'const renderFrame = 1',
+        'const renderFrame = (top: unknown) => { if (top) return 1 }'
+      ])
+        expect(() =>
+          generateSitemap({ sources: { 'src/app/App.tsx': source } })
+        ).throws(/No renderFrame chain/)
+      // An arrow's expression body is the chain itself.
+      expect(() =>
+        generateSitemap({
+          sources: { 'src/app/App.tsx': 'const renderFrame = () => null' }
+        })
+      ).not.throws(/No renderFrame chain/)
       expect(() => generateSitemap({ root: scratch })).throws(
         /No src\/app\/App.tsx/
       )

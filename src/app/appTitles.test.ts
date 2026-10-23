@@ -30,7 +30,8 @@ describe('app titles', function () {
   })
 
   it('shows the mark on a tab, and not on a pushed screen', function () {
-    expect(source).contains('showMark={top == null}')
+    // The mark belongs to the screen drawing the header: a tab's root.
+    expect(source).contains('showMark={chromeFrame == null}')
     // Off unless a screen asks, so a new screen inherits no chrome.
     expect(header).contains('showMark = false')
   })
@@ -87,8 +88,12 @@ describe('app titles', function () {
     }
   })
 
-  it('keeps the pane keyed, so a breakpoint cannot remount the player', function () {
-    expect(source).contains('key="pane"')
+  it('keeps the scenes keyed, so a breakpoint cannot remount the player', function () {
+    const navigator = readFileSync(
+      join(__dirname, 'navigation/StackNavigator.tsx'),
+      'utf8'
+    )
+    expect(navigator).matches(/key=\{`\$\{scene\.key\}~/)
     expect(source).contains('key="nav"')
   })
 
