@@ -34,6 +34,7 @@ import {
   usePinnedHandoff,
   usePinnedTabs
 } from '../components'
+import { TabPages } from '../components/TabPages'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
@@ -574,281 +575,295 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
       {error != null && <Text style={styles.error}>{error}</Text>}
 
-      <PinnedContent
-        key={shownTab}
-        part={pinned.content}
-        testID="playerTabContent"
+      <TabPages
+        page={shownTab}
+        index={tabs.findIndex(item => item.id === shownTab)}
       >
-        {shownTab === 'videos' && (
-          <View style={styles.section}>
-            <View style={styles.pillRow}>
-              <Button
-                label={
-                  stats == null && player == null
-                    ? lstrings.player_filter
-                    : filterName(stats, videoFilter, player?.teams)
-                }
-                accessibilityLabel={lstrings.player_videos_filter}
-                icon="filter_alt"
-                kind="secondary"
-                compact
-                onPress={() => {
-                  setFiltering('videos')
-                }}
-              />
-            </View>
-            {loadingVideos && highlights.length === 0 && (
-              <Card>
-                <Text style={styles.muted}>{lstrings.player_loading}</Text>
-              </Card>
-            )}
-            {!loadingVideos && highlights.length === 0 && (
-              <Card>
-                <Text style={styles.muted}>
-                  {withoutVideo > 0
-                    ? lstrings.player_videos_none_recorded
-                    : isNarrowed(videoFilter)
-                      ? lstrings.player_videos_filter_empty
-                      : lstrings.player_videos_empty}
-                </Text>
-                {isNarrowed(videoFilter) && (
-                  <Button
-                    label={lstrings.player_filter_clear}
-                    kind="secondary"
-                    onPress={() => {
-                      applyVideoFilter({})
-                    }}
-                  />
-                )}
-              </Card>
-            )}
-            {highlights.map(highlight => (
-              <Card key={`${highlight.eventId} ${highlight.videoId}`}>
-                <GameRow
-                  first={highlight.teamName ?? ''}
-                  second={highlight.outcome}
-                  detail={exactDateTime(highlight.playAt)}
-                  posterUrl={highlight.stillUrl}
+        <PinnedContent
+          key={shownTab}
+          part={pinned.content}
+          testID="playerTabContent"
+        >
+          {shownTab === 'videos' && (
+            <View style={styles.section}>
+              <View style={styles.pillRow}>
+                <Button
+                  label={
+                    stats == null && player == null
+                      ? lstrings.player_filter
+                      : filterName(stats, videoFilter, player?.teams)
+                  }
+                  accessibilityLabel={lstrings.player_videos_filter}
+                  icon="filter_alt"
+                  kind="secondary"
+                  compact
                   onPress={() => {
-                    onOpenMoment?.(
-                      highlight.gameId,
-                      highlight.videoId,
-                      highlight.startOffsetSec,
-                      highlight.outcome
-                    )
+                    setFiltering('videos')
                   }}
                 />
-              </Card>
-            ))}
-            {nextBefore != null && (
-              <Button
-                label={lstrings.player_show_more}
-                kind="secondary"
-                onPress={() => {
-                  setBefore(nextBefore)
-                }}
-              />
-            )}
-          </View>
-        )}
-
-        {shownTab === 'walkup' && forTeam != null && (
-          <View style={styles.section}>
-            <WalkUpTab
-              client={client}
-              teamId={forTeam}
-              userId={userId}
-              music={music}
-              resolve={walkUp?.resolve}
-              onPick={
-                walkUp?.onPick == null
-                  ? undefined
-                  : song => {
-                      walkUp.onPick?.(song, shown)
-                    }
-              }
-              fadeAppleMusic={walkUp?.fadeAppleMusic}
-            />
-          </View>
-        )}
-
-        {shownTab === 'teams' && (
-          <View style={styles.section}>
-            <PlayerTeamsTab teams={player?.teams} onOpenTeam={onOpenTeam} />
-          </View>
-        )}
-
-        {shownTab === 'settings' && (
-          <View style={styles.section}>
-            {settingsPending ? (
-              <Text style={styles.muted}>{lstrings.common_loading}</Text>
-            ) : (
-              <PlayerSettingsTab
-                client={client}
-                teamId={forTeam}
-                userId={userId}
-                fullNames={rosterManager === true}
-                onSaved={(hands, entry) => {
-                  if (entry == null) {
-                    // How they bat and throw is on the card above; keep it true.
-                    setPlayer(held =>
-                      held == null
-                        ? held
-                        : { ...held, bats: hands.bats, throws: hands.throws }
-                    )
-                    return
-                  }
-                  // A roster may extend surnames to resolve collisions. The
-                  // ordinary player page always uses its own abbreviated name.
-                  const profileName =
-                    entry.nameDetails == null
-                      ? entry.shortName
-                      : shortName({ id: entry.userId, ...entry.nameDetails })
-                  savedPlayer.current = { userId, entry, profileName }
-                  props.onSettingsSaved?.(entry)
-                  if (entry.nameDetails != null) {
-                    privateNameGeneration.current++
-                    setPrivateNameDenied(false)
-                    setPrivateName(
-                      rosterFullName({ id: entry.userId, ...entry.nameDetails })
-                    )
-                  }
-                  // How they bat and throw is on the card above; keep it true.
-                  setPlayer(held =>
-                    held == null
-                      ? held
-                      : {
-                          ...held,
-                          name: profileName,
-                          bats: entry.bats,
-                          throws: entry.throws
-                        }
-                  )
-                }}
-              />
-            )}
-            {!settingsPending && invitesGuardians && (
-              <GuardianInvite
-                client={client}
-                teamId={inviteAs === 'team' ? forTeam : undefined}
-                playerUserId={player?.userId ?? userId}
-                playerName={shortShown}
-              />
-            )}
-            {
-              // The player's own roles on the team, for its staff.
-              forTeam != null && coachesTeam(roles, forTeam) && (
-                <PlayerTeamRoles
-                  client={client}
-                  teamId={forTeam}
-                  userId={player?.userId ?? userId}
-                />
-              )
-            }
-            {
-              // Last: taking them off the team, for its administrators alone.
-              forTeam != null && removesFromTeam && teamName != null && (
-                <PlayerRemoveFromTeam
-                  client={client}
-                  teamId={forTeam}
-                  teamName={teamName}
-                  userId={player?.userId ?? userId}
-                  shortName={shortShown}
-                  onRemoved={notice => {
-                    onRemovedFromTeam?.(forTeam, teamName, notice)
-                  }}
-                />
-              )
-            }
-          </View>
-        )}
-
-        {shownTab === 'stats' && (
-          <View style={styles.section}>
-            <View style={styles.filterRow}>
-              <Text style={styles.scope}>
-                {scopeOf(stats, filter, player?.teams)}
-              </Text>
-              <Button
-                label={filterName(stats, filter, player?.teams)}
-                accessibilityLabel="Filter stats"
-                icon="filter_alt"
-                kind="secondary"
-                compact
-                onPress={() => {
-                  setFiltering('stats')
-                }}
-              />
-            </View>
-
-            {loadingStats && stats == null && (
-              <Card>
-                <Text style={styles.muted}>{lstrings.player_loading}</Text>
-              </Card>
-            )}
-
-            {stats != null &&
-              stats.batting == null &&
-              stats.pitching == null && (
+              </View>
+              {loadingVideos && highlights.length === 0 && (
                 <Card>
-                  {/*
-                    Two different silences. "Nothing under this filter" is a
-                    narrowing the reader chose and can undo; "no stats yet" is
-                    about the player. Saying the second when the first is true
-                    reads as a boy with twelve games having none.
-                  */}
+                  <Text style={styles.muted}>{lstrings.player_loading}</Text>
+                </Card>
+              )}
+              {!loadingVideos && highlights.length === 0 && (
+                <Card>
                   <Text style={styles.muted}>
-                    {narrowed
-                      ? lstrings.player_filter_empty
-                      : lstrings.player_stats_empty}
+                    {withoutVideo > 0
+                      ? lstrings.player_videos_none_recorded
+                      : isNarrowed(videoFilter)
+                        ? lstrings.player_videos_filter_empty
+                        : lstrings.player_videos_empty}
                   </Text>
-                  {narrowed && (
+                  {isNarrowed(videoFilter) && (
                     <Button
                       label={lstrings.player_filter_clear}
                       kind="secondary"
                       onPress={() => {
-                        setFilter({})
-                        onFilter?.({})
+                        applyVideoFilter({})
                       }}
                     />
                   )}
                 </Card>
               )}
-
-            {stats?.batting != null && (
-              <Card>
-                <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
-                <StatGrid
-                  stats={playerStats(stats.batting, battingColumns)}
-                  columns={4}
+              {highlights.map(highlight => (
+                <Card key={`${highlight.eventId} ${highlight.videoId}`}>
+                  <GameRow
+                    first={highlight.teamName ?? ''}
+                    second={highlight.outcome}
+                    detail={exactDateTime(highlight.playAt)}
+                    posterUrl={highlight.stillUrl}
+                    onPress={() => {
+                      onOpenMoment?.(
+                        highlight.gameId,
+                        highlight.videoId,
+                        highlight.startOffsetSec,
+                        highlight.outcome
+                      )
+                    }}
+                  />
+                </Card>
+              ))}
+              {nextBefore != null && (
+                <Button
+                  label={lstrings.player_show_more}
+                  kind="secondary"
+                  onPress={() => {
+                    setBefore(nextBefore)
+                  }}
                 />
-              </Card>
-            )}
+              )}
+            </View>
+          )}
 
-            {/*
+          {shownTab === 'walkup' && forTeam != null && (
+            <View style={styles.section}>
+              <WalkUpTab
+                client={client}
+                teamId={forTeam}
+                userId={userId}
+                music={music}
+                resolve={walkUp?.resolve}
+                onPick={
+                  walkUp?.onPick == null
+                    ? undefined
+                    : song => {
+                        walkUp.onPick?.(song, shown)
+                      }
+                }
+                fadeAppleMusic={walkUp?.fadeAppleMusic}
+              />
+            </View>
+          )}
+
+          {shownTab === 'teams' && (
+            <View style={styles.section}>
+              <PlayerTeamsTab teams={player?.teams} onOpenTeam={onOpenTeam} />
+            </View>
+          )}
+
+          {shownTab === 'settings' && (
+            <View style={styles.section}>
+              {settingsPending ? (
+                <Text style={styles.muted}>{lstrings.common_loading}</Text>
+              ) : (
+                <PlayerSettingsTab
+                  client={client}
+                  teamId={forTeam}
+                  userId={userId}
+                  fullNames={rosterManager === true}
+                  onSaved={(hands, entry) => {
+                    if (entry == null) {
+                      // How they bat and throw is on the card above; keep it true.
+                      setPlayer(held =>
+                        held == null
+                          ? held
+                          : { ...held, bats: hands.bats, throws: hands.throws }
+                      )
+                      return
+                    }
+                    // A roster may extend surnames to resolve collisions. The
+                    // ordinary player page always uses its own abbreviated name.
+                    const profileName =
+                      entry.nameDetails == null
+                        ? entry.shortName
+                        : shortName({ id: entry.userId, ...entry.nameDetails })
+                    savedPlayer.current = { userId, entry, profileName }
+                    props.onSettingsSaved?.(entry)
+                    if (entry.nameDetails != null) {
+                      privateNameGeneration.current++
+                      setPrivateNameDenied(false)
+                      setPrivateName(
+                        rosterFullName({
+                          id: entry.userId,
+                          ...entry.nameDetails
+                        })
+                      )
+                    }
+                    // How they bat and throw is on the card above; keep it true.
+                    setPlayer(held =>
+                      held == null
+                        ? held
+                        : {
+                            ...held,
+                            name: profileName,
+                            bats: entry.bats,
+                            throws: entry.throws
+                          }
+                    )
+                  }}
+                />
+              )}
+              {!settingsPending && invitesGuardians && (
+                <GuardianInvite
+                  client={client}
+                  teamId={inviteAs === 'team' ? forTeam : undefined}
+                  playerUserId={player?.userId ?? userId}
+                  playerName={shortShown}
+                />
+              )}
+              {
+                // The player's own roles on the team, for its staff.
+                forTeam != null && coachesTeam(roles, forTeam) && (
+                  <PlayerTeamRoles
+                    client={client}
+                    teamId={forTeam}
+                    userId={player?.userId ?? userId}
+                  />
+                )
+              }
+              {
+                // Last: taking them off the team, for its administrators alone.
+                forTeam != null && removesFromTeam && teamName != null && (
+                  <PlayerRemoveFromTeam
+                    client={client}
+                    teamId={forTeam}
+                    teamName={teamName}
+                    userId={player?.userId ?? userId}
+                    shortName={shortShown}
+                    onRemoved={notice => {
+                      onRemovedFromTeam?.(forTeam, teamName, notice)
+                    }}
+                  />
+                )
+              }
+            </View>
+          )}
+
+          {shownTab === 'stats' && (
+            <View style={styles.section}>
+              <View style={styles.filterRow}>
+                <Text style={styles.scope}>
+                  {scopeOf(stats, filter, player?.teams)}
+                </Text>
+                <Button
+                  label={filterName(stats, filter, player?.teams)}
+                  accessibilityLabel="Filter stats"
+                  icon="filter_alt"
+                  kind="secondary"
+                  compact
+                  onPress={() => {
+                    setFiltering('stats')
+                  }}
+                />
+              </View>
+
+              {loadingStats && stats == null && (
+                <Card>
+                  <Text style={styles.muted}>{lstrings.player_loading}</Text>
+                </Card>
+              )}
+
+              {stats != null &&
+                stats.batting == null &&
+                stats.pitching == null && (
+                  <Card>
+                    {/*
+                    Two different silences. "Nothing under this filter" is a
+                    narrowing the reader chose and can undo; "no stats yet" is
+                    about the player. Saying the second when the first is true
+                    reads as a boy with twelve games having none.
+                  */}
+                    <Text style={styles.muted}>
+                      {narrowed
+                        ? lstrings.player_filter_empty
+                        : lstrings.player_stats_empty}
+                    </Text>
+                    {narrowed && (
+                      <Button
+                        label={lstrings.player_filter_clear}
+                        kind="secondary"
+                        onPress={() => {
+                          setFilter({})
+                          onFilter?.({})
+                        }}
+                      />
+                    )}
+                  </Card>
+                )}
+
+              {stats?.batting != null && (
+                <Card>
+                  <Text style={styles.cardTitle}>
+                    {lstrings.player_batting}
+                  </Text>
+                  <StatGrid
+                    stats={playerStats(stats.batting, battingColumns)}
+                    columns={4}
+                  />
+                </Card>
+              )}
+
+              {/*
               A card that says why it is empty, rather than one that is not
               there: a pitcher with no plate appearances and a pitcher we have
               no figures for look identical when the card is simply dropped.
             */}
-            {stats?.batting == null && stats?.pitching != null && (
-              <Card>
-                <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
-                <Text style={styles.muted}>{lstrings.player_no_batting}</Text>
-              </Card>
-            )}
+              {stats?.batting == null && stats?.pitching != null && (
+                <Card>
+                  <Text style={styles.cardTitle}>
+                    {lstrings.player_batting}
+                  </Text>
+                  <Text style={styles.muted}>{lstrings.player_no_batting}</Text>
+                </Card>
+              )}
 
-            {stats?.pitching != null && (
-              <Card>
-                <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
-                <StatGrid
-                  stats={playerStats(stats.pitching, pitchingColumns)}
-                  columns={4}
-                />
-              </Card>
-            )}
-          </View>
-        )}
-      </PinnedContent>
+              {stats?.pitching != null && (
+                <Card>
+                  <Text style={styles.cardTitle}>
+                    {lstrings.player_pitching}
+                  </Text>
+                  <StatGrid
+                    stats={playerStats(stats.pitching, pitchingColumns)}
+                    columns={4}
+                  />
+                </Card>
+              )}
+            </View>
+          )}
+        </PinnedContent>
+      </TabPages>
       <PinnedSpacer part={pinned.spacer} />
 
       {filtering != null && stats != null && (

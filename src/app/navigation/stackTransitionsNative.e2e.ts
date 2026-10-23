@@ -125,8 +125,10 @@ async function main(): Promise<void> {
   ): Promise<void> => {
     await note(`${name}: start`)
     const path = join(artifacts, 'support', `${platform}-${name}.mp4`)
-    // maestro-d records Android; a simulator records itself.
-    const simulator =
+    // Each device records itself: a simulator through simctl, an Android
+    // phone through screenrecord, pulled when the case ends.
+    const onDevice = `/sdcard/ts-${name}.mp4`
+    const recorder =
       platform === 'ios'
         ? spawn('xcrun', [
             'simctl',
@@ -136,23 +138,33 @@ async function main(): Promise<void> {
             '--force',
             path
           ])
-        : undefined
-    if (simulator == null) await m.startRecording({ path })
-    else await new Promise(resolve => setTimeout(resolve, 1000))
+        : spawn('adb', ['-s', device, 'shell', 'screenrecord', onDevice])
+    await new Promise(resolve => setTimeout(resolve, 1000))
     try {
       await run()
       await note(`${name}: passed`)
     } finally {
-      if (simulator == null) await m.stopRecording().catch(() => undefined)
-      else
+      if (platform === 'ios')
         await new Promise(resolve => {
-          simulator.once('exit', resolve)
-          simulator.kill('SIGINT')
+          recorder.once('exit', resolve)
+          recorder.kill('SIGINT')
         })
+      else {
+        execFileSync('adb', [
+          '-s',
+          device,
+          'shell',
+          'pkill',
+          '-INT',
+          'screenrecord'
+        ])
+        await new Promise(resolve => recorder.once('exit', resolve))
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        execFileSync('adb', ['-s', device, 'pull', onDevice, path])
+        execFileSync('adb', ['-s', device, 'shell', 'rm', onDevice])
+      }
     }
   }
-  // Signs in through the mailed link, opened as a deep link: a simulator's
-  // keyboard drops and reorders typed characters.
   const signIn = async (): Promise<void> => {
     await m.launchApp({ appId: APP_ID, stopApp: true })
     if (!(await shown('Sign in to TeamStation', 15000))) return
@@ -256,8 +268,22 @@ async function main(): Promise<void> {
         await tab('Schedule')
         await visible('Upcoming')
         await m.swipe({ start: '50%, 70%', end: '50%, 30%', duration: 400 })
+        await new Promise(resolve => setTimeout(resolve, 800))
+        const pill = async (): Promise<number> => {
+          const node = flatten(await m.hierarchy()).find(
+            entry => entry.text === 'Upcoming' && entry.bounds != null
+          )
+          assert.ok(node?.bounds != null, 'No Upcoming pill')
+          return node.bounds.y
+        }
+        const pinned = await pill()
         await tap('Past')
         await visible('Past')
+        const after = await pill()
+        await note(
+          `  R3: Upcoming pill at y=${pinned} before Past, y=${after} after`
+        )
+        assert.ok(Math.abs(after - pinned) <= 2, 'the pills moved')
         await pastHome()
       })
     if (cases.has('N6')) {
