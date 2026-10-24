@@ -36,9 +36,15 @@ when 'match', 'import'
   # The build reads this directory after Match returns. Keep exactly the
   # profiles Match installed, including when install writes them somewhere else.
   installed_for_build = []
+  installed_bytes = []
   if command == 'match'
     keep_installed = lambda do
       directory = config.fetch('profilesDirectory')
+      FileUtils.mkdir_p(directory)
+      installed_bytes.each do |name, bytes|
+        File.binwrite(File.join(directory, name), bytes)
+        installed_for_build << name unless installed_for_build.include?(name)
+      end
       Dir[File.join(directory, '*.{mobileprovision,provisionprofile}')].each do |other|
         next if installed_for_build.include?(File.basename(other))
         stat = File.lstat(other)
@@ -50,30 +56,9 @@ when 'match', 'import'
       alias_method :teamstation_install, :install unless method_defined?(:teamstation_install)
       define_method(:install) do |path, keychain_path = nil|
         destination = teamstation_install(path, keychain_path)
-        directory = config.fetch('profilesDirectory')
-        FileUtils.mkdir_p(directory)
-        installed = File.join(directory, File.basename(destination))
-        unless File.expand_path(destination) == File.expand_path(installed)
-          stat = File.lstat(destination)
-          raise 'Installed profile is not a regular file' unless stat.file? && !stat.symlink?
-          FileUtils.copy(destination, installed)
-        end
-        installed_for_build << File.basename(installed)
-        keep_installed.call
-        source_file, source_line =
-          FastlaneCore::ProvisioningProfile.method(:teamstation_install).source_location
-        File.write(
-          File.join(directory, 'profile-note.txt'),
-          [
-            Fastlane::VERSION,
-            File.basename(source_file.to_s),
-            source_line,
-            File.basename(path),
-            File.basename(destination),
-            Digest::SHA256.file(path).hexdigest,
-            Digest::SHA256.file(destination).hexdigest
-          ].join(' ')
-        )
+        stat = File.lstat(destination)
+        raise 'Installed profile is not a regular file' unless stat.file? && !stat.symlink?
+        installed_bytes << [File.basename(destination), File.binread(destination)]
         destination
       end
     end
@@ -174,7 +159,13 @@ when 'match', 'import'
     Match::Importer.new.import_cert(params, cert_path: config.fetch('certificate'), p12_path: config.fetch('privateKey'), profile_path: config.fetch('profile', ''))
   else
     Match::Runner.new.run(FastlaneCore::Configuration.create(Match::Options.available_options, options))
+    directory = config.fetch('profilesDirectory')
+    before = Dir.children(directory).join(' ')
     keep_installed.call
+    File.write(
+      File.join(directory, 'profile-note.txt'),
+      'before ' + before + "\nafter " + Dir.children(directory).join(' ')
+    )
   end
 when 'project'
   require 'xcodeproj'
