@@ -33,9 +33,15 @@ export const webSettings = {
   // 1.0's gradient alias, which came with 1.0's scoreboard: the board keeps
   // 1.0's `react-native-linear-gradient` import, and on the web that is the
   // package that draws it.
+  //
+  // react-native-svg draws Tess's hold-to-confirm outline on the web too. Its
+  // image support asks React Native's asset registry, which on the web is
+  // react-native-web's.
   alias: {
     'react-native': 'react-native-web',
-    'react-native-linear-gradient': 'react-native-web-linear-gradient'
+    'react-native-linear-gradient': 'react-native-web-linear-gradient',
+    '@react-native/assets-registry/registry':
+      'react-native-web/dist/modules/AssetRegistry'
   },
   resolveExtensions: [
     '.web.tsx',
