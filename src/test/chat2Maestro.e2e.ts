@@ -1649,9 +1649,10 @@ export class Chat2UI {
   ) {
     this.root = process.cwd()
     this.native = surface === 'ios' || surface === 'android'
-    // An iOS case reads a ~2600-node hierarchy at every step, and the long
-    // ones (E3) need more than 15 minutes on a shared, loaded host.
-    this.deadline = AbortSignal.timeout(surface === 'ios' ? 1800000 : 900000)
+    // An iOS case reads a hierarchy of thousands of nodes at every step, and
+    // the long ones (E5 frames four messages across a long QA history) need
+    // most of an hour on a shared, loaded host.
+    this.deadline = AbortSignal.timeout(surface === 'ios' ? 3600000 : 900000)
     this.artifactRoot = resolve(
       need(process.env.CHAT2_ARTIFACTS, 'CHAT2_ARTIFACTS required')
     )
