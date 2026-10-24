@@ -615,6 +615,22 @@ export function iosSpotlightCaptureGeometry(
     }
   const preview = unique(previews, 'preview')
   geometry.preview = rect(preview)
+  // The preview's animated layer keeps one window-tall frame, so XCUI lists
+  // it right after the preview, at the preview's origin, not inside it.
+  const next = nodes[nodes.indexOf(preview) + 1] as Json | undefined
+  const nextBox = next?.rect as Box | undefined
+  const layer =
+    next != null &&
+    next.identifier == null &&
+    next.parentIndex === preview.parentIndex &&
+    nextBox != null &&
+    Math.abs(nextBox.x - geometry.preview.x) <= 1 &&
+    Math.abs(nextBox.y - geometry.preview.y) <= 1 &&
+    nextBox.height >= geometry.preview.height
+      ? next
+      : undefined
+  const inPreview = (node: Json): boolean =>
+    under(node, preview) || (layer != null && under(node, layer))
   const inside = (child: Box, parent: Box): boolean =>
     child.x >= parent.x - 1 &&
     child.y >= parent.y - 1 &&
@@ -628,7 +644,7 @@ export function iosSpotlightCaptureGeometry(
     'Selected preview must occupy its controls band'
   )
   const scroll = unique(
-    nodes.filter(node => node.type === 'ScrollView' && under(node, preview)),
+    nodes.filter(node => node.type === 'ScrollView' && inPreview(node)),
     'preview ScrollView'
   )
   geometry.scroll = rect(scroll)
@@ -639,7 +655,7 @@ export function iosSpotlightCaptureGeometry(
   const bubble = unique(
     nodes.filter(
       node =>
-        node.identifier === 'chat-bubble-' + expected.id && under(node, preview)
+        node.identifier === 'chat-bubble-' + expected.id && inPreview(node)
     ),
     'bubble inside preview'
   )
@@ -770,8 +786,9 @@ export async function observeSpotlightCaptureReady(
           const preview=root&&root.querySelector('[data-testid="chat-message-spotlight-preview"]');
           const backdrop=root&&root.firstElementChild;
           const geometry={},styles={};
-          for(const [name,node] of [['controls',controls],['panel',panel],['backdrop',backdrop],['preview',preview]]){
-            if(node===null){if(name!=='preview')return {missing:name};continue;}
+          // Each part's fade and motion live on its first child, its animated layer.
+          for(const [name,node] of [['controls',controls],['panel',panel],['panelLayer',panel&&panel.firstElementChild],['backdrop',backdrop],['preview',preview],['previewLayer',preview&&preview.firstElementChild]]){
+            if(node==null){if(name==='controls'||name==='panel'||name==='backdrop')return {missing:name};continue;}
             const box=node.getBoundingClientRect(),style=getComputedStyle(node);
             geometry[name]={x:box.x,y:box.y,width:box.width,height:box.height};
             styles[name]={opacity:Number(style.opacity),transform:style.transform,display:style.display,visibility:style.visibility};
