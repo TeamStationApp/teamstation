@@ -2031,7 +2031,7 @@ export class Scenarios {
         if (await ui.visible({ id: 'chat-pin-' + target.id }, 500)) {
           await ui.id('chat-pin-' + target.id)
           if (ui.native) await this.nativePinJumpReady(target)
-        } else if (ui.native) await ui.text('Cancel')
+        } else if (ui.native) await this.closeNativePinList()
         else await this.dismiss()
     }
     if (!ui.native) await this.webHistoryTarget(target)
@@ -2045,6 +2045,44 @@ export class Scenarios {
         `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')}); if(!n)throw Error('Visible target required');n.scrollIntoView({block:'center'});return {publicDomScroll:true}`
       )
     if (!ui.native) await this.webAnchorReady(target)
+  }
+
+  /**
+   * The pinned list's Cancel is its full-screen backdrop, and the driver taps
+   * an element's centre, which is the list itself. Tap the backdrop where the
+   * list leaves it exposed, then require the list gone.
+   */
+  async closeNativePinList(): Promise<void> {
+    const ui = this.ui
+    type Box = NonNullable<PublicNode['bounds']>
+    const nodes = await ui.nodes()
+    const largest = (text: string): Box =>
+      need(
+        nodes
+          .filter(n => n.text === text && n.bounds != null)
+          .map(n => n.bounds!)
+          .sort((a, b) => b.width * b.height - a.width * a.height)[0],
+        'Actual pinned list element required: ' + text
+      )
+    const frame = largest('Cancel')
+    const list = largest('Pinned messages')
+    const above = { ...frame, height: list.y - frame.y - 8 }
+    const below = {
+      ...frame,
+      y: list.y + list.height + 8,
+      height: frame.y + frame.height - (list.y + list.height + 8)
+    }
+    const clear = [above, below]
+      .filter(b => b.height >= 44)
+      .sort((a, b) => b.height - a.height)[0]
+    const row = need(
+      nodes.find(n => n.id?.startsWith('chat-pin-') === true)?.id,
+      'Actual pinned list row required'
+    )
+    await ui.tapObserved({
+      bounds: need(clear, 'Exposed pinned list backdrop required')
+    })
+    await ui.absent(row)
   }
 
   /** Let an explicitly selected public pin finish before manual history gestures. */
