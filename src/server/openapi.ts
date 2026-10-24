@@ -5064,6 +5064,59 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/swap-sides': {
+        post: {
+          summary: 'Swap home and away before the first pitch',
+          description:
+            'For a scorekeeper of either team, from the scoring screen. The ' +
+            'teams and scores exchange, and everything that names a side ' +
+            'follows its team: the guest and unrostered lists and the open ' +
+            'at-bat’s lineups. The lineups digest changes, so a post built ' +
+            'on the old sides is refused as stale. Refused with 409 once a ' +
+            'pitch, a play, a placed runner or an at-bat TeamStation did not ' +
+            'score is stored. The body names the sides the caller read: sent ' +
+            'again once they are exchanged, the call answers them and ' +
+            'changes nothing; on other sides it is refused with 409.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['homeTeamId', 'awayTeamId'],
+                  properties: {
+                    homeTeamId: { type: 'string' },
+                    awayTeamId: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The game’s teams after the swap',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['homeTeamId', 'awayTeamId'],
+                    properties: {
+                      homeTeamId: { type: 'string' },
+                      awayTeamId: { type: 'string' }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
       '/admin/test-error': {
         post: {
           summary: 'Fail on purpose, to prove crash reporting works',

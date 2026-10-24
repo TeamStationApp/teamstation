@@ -3624,6 +3624,23 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Swaps the game's home and away teams before its first pitch, for whoever
+   * may score it; refused with 409 once the game has begun. `read` is the
+   * sides the caller read: sent again, the call changes nothing.
+   */
+  async swapGameSides(
+    gameId: string,
+    read: { homeTeamId: string; awayTeamId: string }
+  ): Promise<{ homeTeamId: string; awayTeamId: string }> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/swap-sides`,
+      asObject({ homeTeamId: asString, awayTeamId: asString }),
+      read
+    )
+  }
+
   async saveEventTag(
     gameId: string,
     targetId: string,

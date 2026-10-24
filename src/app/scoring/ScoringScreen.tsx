@@ -12,6 +12,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  useWindowDimensions,
   View
 } from 'react-native'
 
@@ -207,6 +208,8 @@ export interface ScoringScreenProps {
 }
 /** How long the notice that home and away were swapped stays up. */
 const SWAP_NOTICE_MS = 8000
+/** The menu's swap, refused while a change has not reached the server. */
+const SWAP_UNSAVED = "Save the game's changes before swapping. Try again."
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
@@ -653,6 +656,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           setCopyPending(!arrived)
           setRetry(value => value + 1)
         }}
+        onSwapped={reopenSwapped}
         openedSides={openedSides}
         game={opened}
         visibleDefaults={visibleDefaults}
@@ -813,6 +817,8 @@ function ScoringPanel(props: {
    * `arrived` is whether the server's copy came back to the phone.
    */
   onReopen: (arrived: boolean) => void
+  /** Home and away were swapped from the menu: open the game again. */
+  onSwapped: () => void
   /**
    * The teams the screen opened on. A guest names its side's team from
    * these, never from a later read, so the server refuses one a swap moved.
@@ -1062,8 +1068,18 @@ function ScoringPanel(props: {
   const [menuButton, setMenuButton] = useState(WEB_MENU_BUTTON)
   const insets = useInsets()
   const [sheet, setSheet] = useState<
-    'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'game'
+    'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'swap' | 'game'
   >()
+  const { height: windowHeight } = useWindowDimensions()
+  const [swapping, setSwapping] = useState(false)
+  const [swapProblem, setSwapProblem] = useState<string>()
+  const swapMounted = useRef(true)
+  useEffect(
+    () => () => {
+      swapMounted.current = false
+    },
+    []
+  )
   const [defensiveSlot, setDefensiveSlot] = useState<{
     position: Position
     side: Side
@@ -1146,6 +1162,58 @@ function ScoringPanel(props: {
       : side === 'home'
         ? props.openedSides.homeTeamId
         : props.openedSides.awayTeamId
+  // Home and away swap on the server, before the first pitch: nothing but
+  // lineups held, the screen at rest.
+  const swappable =
+    props.persistent &&
+    !status.readOnly &&
+    (state.phase === 'ready' || state.phase === 'awaitingBatter') &&
+    state.presentation == null &&
+    state.moreDraft == null &&
+    session.liveData.plays.allPlays.length === 0 &&
+    props.game.actions.every(action => action.type === 'lineup')
+  /**
+   * Saves what is still on its way, then swaps: a lineup change must reach
+   * the server first, or it would arrive stale behind the swap. On a phone
+   * a save is answered from the outbox, so its queue for this game must
+   * empty too.
+   */
+  const confirmSwap = async (): Promise<void> => {
+    setSwapProblem(undefined)
+    setSwapping(true)
+    try {
+      const unsaved = new Error(SWAP_UNSAVED)
+      await props.game.flush().catch(() => {
+        throw unsaved
+      })
+      // A change a rebase dropped is only a notice; what could still be
+      // sent stale behind the swap is a change waiting or a refused game.
+      if (props.game.readOnly)
+        throw new Error(props.game.problem ?? SWAP_UNSAVED)
+      if (props.game.pending > 0) throw unsaved
+      if (props.client instanceof CachingClient) {
+        await props.client.drainOutbox()
+        const queue = await props.client.outboxSummary()
+        if (
+          (queue.chains[`game:${props.gameId}`] ?? 0) > 0 ||
+          queue.games[props.gameId] != null
+        )
+          throw unsaved
+      }
+      await props.client.swapGameSides(props.gameId, {
+        homeTeamId: session.gameData.teams.home.id,
+        awayTeamId: session.gameData.teams.away.id
+      })
+      if (!swapMounted.current) return
+      setSheet(undefined)
+      props.onSwapped()
+    } catch (error) {
+      if (swapMounted.current)
+        setSwapProblem(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (swapMounted.current) setSwapping(false)
+    }
+  }
   const tiebreaker = useTiebreakerSetup(
     state,
     actionsAllowed &&
@@ -2795,7 +2863,15 @@ function ScoringPanel(props: {
             style={{
               position: 'absolute',
               ...scoringMenuFrame(menuButton),
-              maxHeight: '75%',
+              // The space below its top, so all seven rows fit a phone held
+              // sideways; before the window is measured, three quarters.
+              maxHeight:
+                windowHeight > 0
+                  ? Math.max(
+                      SCORING_MENU.rowHeight,
+                      windowHeight - scoringMenuFrame(menuButton).top - 8
+                    )
+                  : '75%',
               zIndex: 100,
               overflow: 'hidden',
               backgroundColor: SCORING_MENU.background,
@@ -2811,40 +2887,46 @@ function ScoringPanel(props: {
                 'Overrides',
                 'End Half Inning',
                 'Set Team Rosters',
+                'Swap Home and Away',
                 'End Game'
               ] as const
             ).map((label, index) => (
               <ScoringMenuButton
                 key={label}
-                danger={index === 5}
+                danger={index === 6}
                 label={label}
                 disabled={
                   // Read-only leaves only leaving and settings.
-                  (status.readOnly && [2, 3, 4, 5].includes(index)) ||
+                  (status.readOnly && [2, 3, 4, 5, 6].includes(index)) ||
                   (index === 5
-                    ? !(
-                        state.phase === 'ready' ||
-                        state.phase === 'awaitingBatter'
-                      ) ||
-                      state.presentation != null ||
-                      state.moreDraft != null ||
-                      state.session.final ||
-                      props.game.atBatOpen
-                    : index === 3
-                      ? state.phase !== 'ready' ||
+                    ? !swappable
+                    : index === 6
+                      ? !(
+                          state.phase === 'ready' ||
+                          state.phase === 'awaitingBatter'
+                        ) ||
                         state.presentation != null ||
-                        state.moreDraft != null
-                      : (index === 2 || index === 4) &&
-                        (state.presentation != null ||
-                          state.moreDraft != null ||
-                          (state.phase !== 'ready' &&
-                            state.phase !== 'awaitingBatter')))
+                        state.moreDraft != null ||
+                        state.session.final ||
+                        props.game.atBatOpen
+                      : index === 3
+                        ? state.phase !== 'ready' ||
+                          state.presentation != null ||
+                          state.moreDraft != null
+                        : (index === 2 || index === 4) &&
+                          (state.presentation != null ||
+                            state.moreDraft != null ||
+                            (state.phase !== 'ready' &&
+                              state.phase !== 'awaitingBatter')))
                 }
                 onPress={() => {
                   setMenu(false)
                   if (index === 0) exit()
-                  else if (index === 5) setSheet('game')
-                  else if (index === 4) openRosters()
+                  else if (index === 6) setSheet('game')
+                  else if (index === 5) {
+                    setSwapProblem(undefined)
+                    setSheet('swap')
+                  } else if (index === 4) openRosters()
                   else
                     setSheet(
                       (['exit', 'settings', 'overrides', 'half'] as const)[
@@ -2874,6 +2956,7 @@ function ScoringPanel(props: {
               overrides: 'Overrides',
               half: 'End Half Inning',
               rosters: 'Set Team Rosters',
+              swap: 'Swap Home and Away',
               game: 'End Game'
             }[sheet]
           }
@@ -2999,6 +3082,38 @@ function ScoringPanel(props: {
                 closeSheet()
               }}
             />
+          )}
+          {sheet === 'swap' && (
+            <>
+              <Text
+                style={{
+                  color: theme.scoringSurface.text,
+                  fontFamily: theme.regularTextFont
+                }}
+              >
+                {session.gameData.teams.home.name} will bat first, and{' '}
+                {session.gameData.teams.away.name} will be at home. Lineups,
+                guests and unavailable players move with their teams.
+              </Text>
+              {swapProblem != null && (
+                <Text
+                  accessibilityRole="alert"
+                  style={{
+                    color: theme.scoringSurface.danger,
+                    fontFamily: theme.regularTextFont
+                  }}
+                >
+                  {swapProblem}
+                </Text>
+              )}
+              <ScoringButton
+                label="Confirm Swap"
+                disabled={swapping}
+                onPress={() => {
+                  confirmSwap().catch(() => undefined)
+                }}
+              />
+            </>
           )}
           {sheet === 'game' && (
             <>

@@ -53,7 +53,9 @@ const ARTIFACTS = process.env.SIDE_SWAP_ARTIFACTS
 const BEFORE = process.env.SIDE_SWAP_MODE === 'before'
 const WIDTH = 1280
 const HEIGHT = 900
-
+/** A phone held sideways. */
+const PHONE_WIDTH = 915
+const PHONE_HEIGHT = 412
 const REFUSED = 'Home and away can be swapped only before the first pitch'
 const UNLOADED = 'Unable to load scoring.'
 const UNREAD = 'could not be read back'
@@ -390,6 +392,42 @@ class Browser {
     )
   }
 
+  /** The scoring menu's rows, top to bottom. */
+  async menuOrder(): Promise<string[]> {
+    return await this.page.evaluate(() => {
+      const rows = [
+        'Exit Current Game',
+        'Settings',
+        'Overrides',
+        'End Half Inning',
+        'Set Team Rosters',
+        'Swap Home and Away',
+        'End Game'
+      ]
+      return Array.from(document.querySelectorAll('[aria-label]'))
+        .map(node => String(node.getAttribute('aria-label')))
+        .filter(label => rows.includes(label))
+    })
+  }
+
+  async isDisabled(label: string): Promise<boolean> {
+    return await this.page.evaluate((label: string) => {
+      const node = document.querySelector(`[aria-label="${label}"]`)
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- sucrase turns ?. into a helper the page lacks
+      return node != null && node.getAttribute('aria-disabled') === 'true'
+    }, label)
+  }
+
+  /** Whether the labelled element lies wholly inside the window. */
+  async onScreen(label: string): Promise<boolean> {
+    return await this.page.evaluate((label: string) => {
+      const node = document.querySelector(`[aria-label="${label}"]`)
+      if (node == null) return false
+      const box = node.getBoundingClientRect()
+      return box.top >= 0 && box.bottom <= window.innerHeight
+    }, label)
+  }
+
   /** Game Settings: Swap home and away, then Save. */
   async swapInSettings(gameId: string): Promise<void> {
     await this.page.goto(`${APP}/games/${gameId}/settings`, {
@@ -464,6 +502,24 @@ describe('home and away swapped before the first pitch', function () {
       await daemon?.shutdown()
     }
   })
+
+  /** A second browser at a phone's size, for what is captured there. */
+  async function phone<T>(run: (phone: Browser) => Promise<T>): Promise<T> {
+    const session = await browserSession(
+      daemon!,
+      'side-swap-phone',
+      PHONE_WIDTH,
+      PHONE_HEIGHT,
+      join(tmpdir(), 'side-swap-e2e')
+    )
+    session.page.setDefaultTimeout(30000)
+    try {
+      return await run(new Browser(session, session.page))
+    } finally {
+      await session.m.detach()
+      await session.browser.close()
+    }
+  }
 
   /** A fresh game with lineups saved, a home guest and an away player out. */
   async function preparedGame(file: string | null): Promise<LineupFixture> {
@@ -559,6 +615,24 @@ describe('home and away swapped before the first pitch', function () {
       )
     })
 
+    it('before: the scoring menu offers no swap, and the upper left no speaker', async function () {
+      const fixture = await preparedGame(null)
+      const batter = `Batter ${fixture.players.away[0].name}`
+      await browser.as(fixture, 'scorekeeper')
+      await browser.scoreGame(fixture.gameId)
+      await browser.waitText(batter, 60000)
+      await browser.capture('scoring-sound-before.png')
+      await browser.tap('Open scoring menu')
+      await browser.waitText('End Game')
+      await browser.capture('scoring-menu-before.png')
+      expect(await browser.text()).not.includes('Swap Home and Away')
+      await phone(async phone => {
+        await phone.as(fixture, 'scorekeeper')
+        await phone.scoreGame(fixture.gameId)
+        await phone.waitText(batter, 60000)
+        await phone.capture('scoring-sound-phone-before.png')
+      })
+    })
     return
   }
 
@@ -800,5 +874,63 @@ describe('home and away swapped before the first pitch', function () {
     ).deep.equals(fixture.players.home.slice(0, 9).map(player => player.name))
     // No matchup is written either way: the Otters, outside TeamStation,
     // have no lineup and no pitcher.
+  })
+
+  it('E8: the scoring menu swaps home and away, from right above End Game', async function () {
+    const file = 'scoring-menu-swap.log'
+    const fixture = await preparedGame(file)
+    const before = await sides(file, fixture.gameId)
+    await browser.as(fixture, 'scorekeeper')
+    await browser.scoreGame(fixture.gameId)
+    await browser.waitText(`Batter ${fixture.players.away[0].name}`, 60000)
+    await browser.tap('Open scoring menu')
+    await browser.waitText('Swap Home and Away')
+    expect(await browser.menuOrder()).deep.equals([
+      'Exit Current Game',
+      'Settings',
+      'Overrides',
+      'End Half Inning',
+      'Set Team Rosters',
+      'Swap Home and Away',
+      'End Game'
+    ])
+    await browser.capture('scoring-menu-after.png')
+    await browser.tap('Swap Home and Away')
+    await browser.tap('Confirm Swap')
+    await browser.waitText(`Batter ${fixture.players.home[0].name}`, 60000)
+    await browser.waitText('Home and away were swapped')
+    await browser.capture('scoring-menu-swapped.png')
+    const after = await sides(file, fixture.gameId)
+    expect(after.home).equals(before.away)
+    expect(after.away).equals(before.home)
+    await note(
+      file,
+      `scoring menu: Swap Home and Away, then Confirm Swap; the screen opened again with ${fixture.players.home[0].name} due up\n`
+    )
+
+    // After a pitch the item is off.
+    const pitched = await preparedGame(null)
+    await score(pitched, [{ type: 'pitch', call: 'B' }])
+    await browser.as(pitched, 'scorekeeper')
+    await browser.scoreGame(pitched.gameId)
+    await browser.tap('Open scoring menu')
+    await browser.waitText('Swap Home and Away')
+    expect(await browser.isDisabled('Swap Home and Away')).equals(true)
+    await note(
+      file,
+      `$ POST ${API}/games/${pitched.gameId}/events  (scorekeeper: one pitch, a ball)\nsaved\nscoring menu after the pitch: Swap Home and Away is disabled\n`
+    )
+
+    // At a phone's size every row shows, End Game included.
+    const small = await preparedGame(null)
+    await phone(async phone => {
+      await phone.as(small, 'scorekeeper')
+      await phone.scoreGame(small.gameId)
+      await phone.waitText(`Batter ${small.players.away[0].name}`, 60000)
+      await phone.tap('Open scoring menu')
+      await phone.waitText('End Game')
+      expect(await phone.onScreen('End Game')).equals(true)
+      await phone.capture('scoring-menu-phone-after.png')
+    })
   })
 })
