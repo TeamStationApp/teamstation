@@ -8,6 +8,7 @@ import type {
 } from '../../common/seasonScheduling'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 
 const SETTINGS: ScheduleSettings = {
@@ -276,6 +277,8 @@ describe('scheduling setup routes', function () {
       ).equals(400)
     expect(await stored()).equals('UTC')
     // A zone sent in another case is stored as the platform names it.
+    const notices = await listenScreenScopes(f.h.db)
+    const mark = notices.mark()
     const adopted = await json<SeasonScheduleSettings>(
       await f.h.request(
         'PUT',
@@ -284,6 +287,12 @@ describe('scheduling setup routes', function () {
         101
       )
     )
+    // Open screens of the season are told its zone changed.
+    try {
+      await notices.named(mark, { seasonId: f.seasonA })
+    } finally {
+      await notices.close()
+    }
     expect(adopted).deep.include({
       saved: true,
       timezone: 'America/Los_Angeles'

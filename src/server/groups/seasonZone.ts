@@ -3,6 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import { badRequest } from '../../common/errors'
 import { DEFAULT_SEASON_TIMEZONE } from '../../common/seasonScheduling'
 import type { Database } from '../db/database'
+import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import type { Clock } from './requests'
 
 /**
@@ -72,5 +73,7 @@ export async function adoptSeasonTimezone(
     .set({ timezone })
     .where('id', '=', seasonId)
     .execute()
+  // Its zone, and its requests, wherever they are shown.
+  noteScopeChange(trx, groupScopeIds('season', seasonId))
   await supersedeSeasonRequests(trx, seasonId, clock)
 }

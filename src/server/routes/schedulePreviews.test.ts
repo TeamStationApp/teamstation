@@ -14,6 +14,7 @@ import {
   seedHarborField
 } from '../../test/autoSchedulerFixture'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 
 describe('schedule preview routes', function () {
   this.timeout(240000)
@@ -468,12 +469,20 @@ describe('schedule preview routes', function () {
         JSON.stringify(timezone)
       ).equals(400)
     expect(await stored()).equals('UTC')
+    const notices = await listenScreenScopes(w.fx.f.h.db)
+    const mark = notices.mark()
     const built = await build({
       mode: 'full',
       existing: 'workAround',
       timezone: 'America/New_York'
     })
     expect(built.status).equals(201)
+    // Open screens of the season are told its zone changed.
+    try {
+      await notices.named(mark, { seasonId: seasonA })
+    } finally {
+      await notices.close()
+    }
     expect(await stored()).equals('America/New_York')
     // The snapshot was read after the zone was adopted.
     expect(built.body.seasons.map(season => season.timezone)).deep.equals([
