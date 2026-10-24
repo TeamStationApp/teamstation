@@ -1730,7 +1730,8 @@ export class Scenarios {
     await until(
       async () => ((await this.count()) === expected ? true : undefined),
       'complete verified attention count ' + expected,
-      45000
+      // A cold iOS workspace counts a long history up page by page.
+      this.ui.surface === 'ios' ? 180000 : 45000
     )
   }
 
