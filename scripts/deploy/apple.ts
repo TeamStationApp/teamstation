@@ -351,7 +351,7 @@ export async function withSigning<T>(
       if (existsSync(note))
         console.log('PROFILE note ' + readFileSync(note, 'utf8').trim())
       const chosen = readdirSync(profilesDirectory).filter(name =>
-        /^chosen-\d+\.mobileprovision$/.test(name)
+        /^chosen-\d+\.cms$/.test(name)
       )
       const entries =
         chosen.length > 0
@@ -361,7 +361,6 @@ export async function withSigning<T>(
             )
       console.log('PROFILE files ' + entries.join(' '))
       for (const name of entries) {
-        if (!name.endsWith('.mobileprovision')) continue
         const file = path.join(profilesDirectory, name)
         noSymlinks(file)
         const xml = path.join(directory, 'profile.plist')
