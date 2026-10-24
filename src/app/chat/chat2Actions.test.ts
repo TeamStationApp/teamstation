@@ -670,6 +670,21 @@ function selectedVariant(mode: string): { nodes: CaptureNode[] } {
   if (mode === 'cycle') body.parentIndex = body.index
   if (mode === 'invalid-number') body.rect.width = NaN
   if (mode === 'tall') body.rect.height = 300
+  if (mode === 'layer-sibling' || mode === 'layer-elsewhere') {
+    // XCUI lists a window-tall animated layer beside its part, at its origin.
+    const layer: CaptureNode = {
+      index: 10,
+      type: 'Other',
+      parentIndex: preview.parentIndex,
+      rect: {
+        ...preview.rect,
+        y: preview.rect.y + (mode === 'layer-elsewhere' ? 40 : 0),
+        height: 800
+      }
+    }
+    raw.nodes.splice(raw.nodes.indexOf(preview) + 1, 0, layer)
+    scroll.parentIndex = layer.index
+  }
   if (mode === 'compact') {
     raw.nodes[7].rect = { ...raw.nodes[1].rect }
     raw.nodes = raw.nodes.filter(node => node !== preview)
@@ -746,7 +761,8 @@ describe('chat capture selected-clone ancestry', function () {
     'outside-ancestry',
     'duplicate-body',
     'cycle',
-    'invalid-number'
+    'invalid-number',
+    'layer-elsewhere'
   ])
     it(
       'rejects selected ' +
@@ -761,6 +777,22 @@ describe('chat capture selected-clone ancestry', function () {
         ).throws()
       }
     )
+  it('reads the preview through its animated layer listed beside it at its origin', function () {
+    const actual = iosSpotlightCaptureGeometry(
+      rawBytes(selectedVariant('layer-sibling')),
+      selectedMessage
+    )
+    expect(actual.compact).equals(false)
+    expect(actual.bodyApplicable).equals(true)
+    expect(actual.geometry).has.keys(
+      'controls',
+      'panel',
+      'preview',
+      'scroll',
+      'bubble',
+      'body'
+    )
+  })
   it('accepts a visible slice of taller scrollable text without requiring the whole body on screen', function () {
     expect(
       iosSpotlightCaptureGeometry(
