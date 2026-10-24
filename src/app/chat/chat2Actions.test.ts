@@ -4960,6 +4960,77 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
+  it('proves a locked web composer is read-only with Send disabled', async () => {
+    for (const [field, send, ok] of [
+      [
+        '<textarea data-testid="chat-composer" readonly></textarea>',
+        '<button aria-label="Send" disabled></button>',
+        true
+      ],
+      [
+        '<textarea data-testid="chat-composer" disabled></textarea>',
+        '<div aria-label="Send" aria-disabled="true"></div>',
+        true
+      ],
+      [
+        '<textarea data-testid="chat-composer"></textarea>',
+        '<button aria-label="Send" disabled></button>',
+        false
+      ],
+      [
+        '<textarea data-testid="chat-composer" readonly></textarea>',
+        '<button aria-label="Send"></button>',
+        false
+      ]
+    ] as const) {
+      const { actual, page } = browserModel()
+      page.window.document.body.innerHTML = field + send
+      if (ok)
+        expect(await actual.assertComposerNotEditable()).deep.includes({
+          readOnly: field.includes('readonly'),
+          sendDisabled: true
+        })
+      else
+        await actual.assertComposerNotEditable().then(
+          () => {
+            throw Error('Unexpected success')
+          },
+          (error: unknown) => {
+            expect(String(error)).not.contains('Unexpected success')
+          }
+        )
+    }
+  })
+  it('proves a locked iOS composer raises no keyboard when tapped and Send is disabled', async () => {
+    const field = node(0, 'TextView', { identifier: 'chat-composer' })
+    const send = node(1, 'Button', { label: 'Send', enabled: false })
+    for (const [nodes, ok] of [
+      [[field, send], true],
+      [[field, send, node(2, 'Keyboard')], false],
+      [[field, { ...send, enabled: true }], false]
+    ] as const) {
+      const actual = ui([...nodes])
+      const taps: unknown[] = []
+      actual.device.tapOn = async args => {
+        taps.push(args)
+      }
+      if (ok) {
+        expect(await actual.assertComposerNotEditable(0)).deep.includes({
+          keyboard: false,
+          sendDisabled: true
+        })
+      } else
+        await actual.assertComposerNotEditable(0).then(
+          () => {
+            throw Error('Unexpected success')
+          },
+          (error: unknown) => {
+            expect(String(error)).not.contains('Unexpected success')
+          }
+        )
+      expect(taps).deep.equals([{ id: 'chat-composer' }])
+    }
+  })
   it('runs the real E5 movement callback with documented endpoints and a sub-hold delay', async () => {
     const actual = ui([])
     const calls: unknown[] = []
