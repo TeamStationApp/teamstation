@@ -18,6 +18,7 @@ import {
   SHOWN_OVERLAY,
   wallTimelineOf
 } from '../../test/overlayFixtures'
+import { type PaneFrame, PaneFrameContext } from '../components/useBreakpoint'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tileRects } from './multiCam/layout'
@@ -102,6 +103,8 @@ async function grid(options: {
   onGone?: (atWallMs: number | null) => void
   /** The moment the grid opens on. */
   atMs?: number
+  /** The pane beside Tess's chat, which the grid covers instead of the window. */
+  frame?: PaneFrame
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -157,18 +160,20 @@ async function grid(options: {
   )
   const view = (order: string[]): React.ReactElement => (
     <ThemeProvider>
-      <MultiCamView
-        client={client}
-        gameId={options.gameId}
-        videos={videos}
-        order={order}
-        audioId={options.audioId ?? 'b'}
-        zoomedId={options.zoomedId ?? null}
-        atMs={options.atMs}
-        onChange={() => undefined}
-        onClose={() => undefined}
-        onGone={atWallMs => options.onGone?.(atWallMs)}
-      />
+      <PaneFrameContext.Provider value={options.frame ?? null}>
+        <MultiCamView
+          client={client}
+          gameId={options.gameId}
+          videos={videos}
+          order={order}
+          audioId={options.audioId ?? 'b'}
+          zoomedId={options.zoomedId ?? null}
+          atMs={options.atMs}
+          onChange={() => undefined}
+          onClose={() => undefined}
+          onGone={atWallMs => options.onGone?.(atWallMs)}
+        />
+      </PaneFrameContext.Provider>
     </ThemeProvider>
   )
   await act(async () => {
@@ -226,6 +231,53 @@ function playingIs(playing: boolean): void {
       value: !playing
     })
 }
+
+/** The grid's own layer, put straight into the document's body. */
+const layer = (): HTMLElement => {
+  const found = [...document.body.children].find(
+    node => node.querySelector('video') != null && node.tagName === 'DIV'
+  )
+  if (!(found instanceof HTMLElement)) throw new Error('No grid layer')
+  return found
+}
+
+describe("the grid beside Tess's chat", function () {
+  afterEach(unmount)
+
+  it("covers the pane's frame, and lays its tiles out in it", async function () {
+    await grid({
+      width: 1280,
+      height: 900,
+      playable: true,
+      frame: { x: 400, y: 0, width: 880, height: 900 }
+    })
+    const { left, top, width, height } = layer().style
+    expect({ left, top, width, height }).deep.equals({
+      left: '400px',
+      top: '0px',
+      width: '880px',
+      height: '900px'
+    })
+    for (const tile of tiles())
+      expect(px(tile.style.left) + px(tile.style.width)).lessThanOrEqual(880)
+  })
+
+  it('covers the window as before with no frame', async function () {
+    await grid({ width: 1280, height: 900, playable: true })
+    const { left, top, width, height } = layer().style
+    expect({ left, top, width, height }).deep.equals({
+      left: '',
+      top: '',
+      width: '',
+      height: ''
+    })
+    expect(
+      Math.max(
+        ...tiles().map(tile => px(tile.style.left) + px(tile.style.width))
+      )
+    ).greaterThan(880)
+  })
+})
 
 describe('the grid coming and going', function () {
   afterEach(unmount)

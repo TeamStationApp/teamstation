@@ -34,6 +34,7 @@ import {
   TeamEmblem,
   useBreakpoint,
   useHeaderHandoff,
+  usePaneWidth,
   usePinnedHandoff,
   usePinnedTabs,
   webStyle,
@@ -189,7 +190,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       onSignIn={() => props.onSignIn?.()}
     />
   )
-  const { width, fontScale } = useWindowDimensions()
+  const { fontScale } = useWindowDimensions()
+  const width = usePaneWidth()
   const [identityWidth, setIdentityWidth] = useState<number>()
 
   // The team's name slides up into the header as its card goes under, and

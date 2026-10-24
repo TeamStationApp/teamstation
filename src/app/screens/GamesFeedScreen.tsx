@@ -1,6 +1,6 @@
 import { asArray } from 'cleaners'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Text, useWindowDimensions, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import {
   asSeasonGame,
@@ -18,7 +18,8 @@ import {
   useBreakpoint,
   useHandoff,
   useHeaderHandoff,
-  useHeaderSlot
+  useHeaderSlot,
+  usePaneWidth
 } from '../components'
 import {
   PillBand,
@@ -83,7 +84,7 @@ export function GamesFeedScreen(
   const { client, mode, initialWhen, onWhenChange, onOpenGame } = props
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
-  const { width } = useWindowDimensions()
+  const width = usePaneWidth()
   // Videos widens into a grid; the schedule stays a single column, where the
   // eye runs down a list of dates rather than across a wall of pictures.
   const columns = mode === 'videos' ? columnsForWidth(width) : 1
