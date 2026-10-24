@@ -3860,7 +3860,10 @@ describe('scoring browser', function () {
           await new Promise(resolve => setTimeout(resolve, 300))
           return {
             before,
-            after: { ...sample(), pixels: Array.from(given.image.data) }
+            after: {
+              ...(sample() as Record<string, unknown>),
+              pixels: Array.from(given.image.data)
+            }
           }
         })) as {
           before: { matrix: number[]; opacity: number; pixels: number[] }
