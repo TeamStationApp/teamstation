@@ -19,7 +19,8 @@ import {
   CHAT2_SCENARIOS,
   type Chat2Fixture,
   type Chat2Message,
-  fixtureClient
+  fixtureClient,
+  fixtureControl
 } from '../../test/chat2Fixture.e2e'
 import {
   androidCaptureImeState,
@@ -11984,6 +11985,46 @@ describe('native below-reader attention count', function () {
     const s = scenario(false)
     expect(await s.belowReaderCount(fixture)).equals(9)
     expect(s.observations).deep.equals([])
+  })
+})
+
+describe('private fixture control output', function () {
+  const controlled = (body: string): Chat2Fixture => {
+    const dir = mkdtempSync(join(tmpdir(), 'chat2-control-'))
+    const script = join(dir, 'control.cjs')
+    const dependency = join(dir, 'dependency.json')
+    writeFileSync(script, body)
+    writeFileSync(dependency, '{}')
+    const sha = (path: string): string =>
+      createHash('sha256').update(readFileSync(path)).digest('hex')
+    return {
+      ownershipId: 'qa-owner',
+      actors: {},
+      control: {
+        executable: process.execPath,
+        args: [script],
+        script,
+        sha256: sha(script),
+        dependencies: [{ path: dependency, sha256: sha(dependency) }]
+      }
+    } as unknown as Chat2Fixture
+  }
+  it('reads a snapshot larger than 1 MiB', function () {
+    this.timeout(30000)
+    const fixture = controlled(
+      "process.stdout.write(JSON.stringify({ownershipId:'qa-owner',uiActions:false,ok:true,events:Array.from({length:20000},(_,n)=>({n,type:'history-response',rows:'x'.repeat(90)}))}))"
+    )
+    const proof = fixtureControl(fixture, 'snapshot')
+    expect((proof.events as unknown[]).length).equals(20000)
+  })
+  it('still reports a refused action as blocked', function () {
+    this.timeout(30000)
+    const fixture = controlled(
+      "process.stdout.write(JSON.stringify({ok:false,error:'refused'}));process.exit(2)"
+    )
+    expect(() => fixtureControl(fixture, 'snapshot')).throws(
+      /Private fixture control failed: .*refused/
+    )
   })
 })
 
