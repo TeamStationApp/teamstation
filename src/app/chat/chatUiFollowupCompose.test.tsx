@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -404,6 +405,27 @@ describe('chat composer current send state', function () {
         await wait()
       })
       expect(sends).equals(1)
+    }
+  })
+
+  it('returns an emptied iOS field to one line when a send clears its draft', async function () {
+    // Seen on an iPhone 13 Pro: the multiline field kept its three-line
+    // height after a send cleared the draft from outside.
+    const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
+    try {
+      const height = (): string =>
+        getComputedStyle(
+          document.querySelector('[data-testid="chat-composer"]')!
+        ).height
+      await render(
+        <Composer {...props({ text: 'First line\nSecond line\nThird line' })} />
+      )
+      expect(height()).not.equals('44px')
+      await render(<Composer {...props({ text: '' })} />)
+      expect(height()).equals('44px')
+    } finally {
+      Object.defineProperty(Platform, 'OS', saved)
     }
   })
 
