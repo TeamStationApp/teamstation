@@ -40,6 +40,7 @@ import { tsDark } from '../theme/tsDark'
 import {
   androidMentionHeaderGeometry,
   compareIosComposerFrames,
+  innermostLabelled,
   iosMentionHeaderGeometry,
   iosSpotlightCaptureGeometry,
   observeComposerCaptureReady,
@@ -11654,5 +11655,40 @@ describe('web large-text zoomed control captures', function () {
     )
     expect(String(error)).matches(/abort|timeout/i)
     expect(actual.shots).deep.equals([])
+  })
+})
+
+describe('innermost labelled native tab', function () {
+  const capsule = { x: 46, y: 770, width: 309, height: 69 }
+  const tab = (
+    x: number
+  ): { x: number; y: number; width: number; height: number } => ({
+    x,
+    y: 779,
+    width: 52,
+    height: 52
+  })
+  it('picks the tab inside a tab list that carries the same label', () => {
+    const nodes: PublicNode[] = [
+      { type: 'Other', text: 'Home', bounds: capsule },
+      { type: 'Other', text: 'Home', bounds: tab(54) },
+      { type: 'Other', text: 'Videos', bounds: tab(114) }
+    ]
+    expect(innermostLabelled(nodes, 'Home')).deep.equals(tab(54))
+    expect(innermostLabelled(nodes, 'Videos')).deep.equals(tab(114))
+  })
+  it('refuses two separate elements with one label, and a missing label', () => {
+    const nodes: PublicNode[] = [
+      { text: 'Home', bounds: tab(54) },
+      { text: 'Home', bounds: tab(114) },
+      { text: 'Chat' }
+    ]
+    expect(() => innermostLabelled(nodes, 'Home')).throws(
+      /One innermost public element required: Home/
+    )
+    expect(() => innermostLabelled(nodes, 'Chat')).throws(/required: Chat/)
+    expect(() => innermostLabelled(nodes, 'Schedule')).throws(
+      /required: Schedule/
+    )
   })
 })
