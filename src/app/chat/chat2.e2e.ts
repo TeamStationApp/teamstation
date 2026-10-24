@@ -6022,6 +6022,28 @@ export class Scenarios {
           : undefined
         const beforeSearch = await webSearch?.()
         await ui.append(first.search)
+        if (ui.surface === 'ios') {
+          const typed = async (): Promise<string | undefined> =>
+            (
+              await ui.iosRead(
+                { text: exactText('Search members') },
+                'TextField'
+              )
+            ).value
+          const observed = await typed()
+          if (observed !== first.search) {
+            // The simulator can drop a repeated key ("Boby"): clear the
+            // field and type the query once more, recorded.
+            this.observations.push({ iosSearchRetyped: observed })
+            await ui.text('Clear Search members')
+            await ui.append(first.search)
+          }
+          assert.equal(
+            await typed(),
+            first.search,
+            'Search must retain the exact typed member query'
+          )
+        }
         if (webSearch != null) {
           const afterSearch = await webSearch()
           assert.equal(
