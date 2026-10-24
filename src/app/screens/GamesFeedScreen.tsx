@@ -25,6 +25,7 @@ import {
   PinnedContent,
   PinnedSpacer
 } from '../components/PinnedBands'
+import { ActiveView, TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -202,137 +203,142 @@ export function GamesFeedScreen(
         </PillBand>
       )}
 
-      <PinnedContent key={`${mode}-${when}`} part={pinned.content}>
-        <View ref={handoff.ref}>
-          <SectionHeader
-            title={mode === 'videos' ? 'Game videos' : 'Schedule'}
-            note={gameCountLabel(sorted.length)}
-          />
-        </View>
+      <TabPages
+        page={`${mode}-${when}`}
+        index={WHEN_TABS.findIndex(item => item.id === when)}
+      >
+        <PinnedContent key={`${mode}-${when}`} part={pinned.content}>
+          <ActiveView ref={handoff.ref}>
+            <SectionHeader
+              title={mode === 'videos' ? 'Game videos' : 'Schedule'}
+              note={gameCountLabel(sorted.length)}
+            />
+          </ActiveView>
 
-        {error != null && <Text style={styles.error}>{error}</Text>}
-        {loading && <Text style={styles.muted}>Loading…</Text>}
+          {error != null && <Text style={styles.error}>{error}</Text>}
+          {loading && <Text style={styles.muted}>Loading…</Text>}
 
-        {!loading && sorted.length === 0 && (
-          <Card>
-            <Text style={styles.muted}>
-              {mode === 'videos'
-                ? 'No recorded games here yet.'
-                : 'No games here yet.'}
-            </Text>
-          </Card>
-        )}
+          {!loading && sorted.length === 0 && (
+            <Card>
+              <Text style={styles.muted}>
+                {mode === 'videos'
+                  ? 'No recorded games here yet.'
+                  : 'No games here yet.'}
+              </Text>
+            </Card>
+          )}
 
-        {/*
+          {/*
         A grid on a wide window, one column on a phone. Reading order is left
         to right and then down, newest first, which is how somebody looks for
         last night's game.
       */}
-        <View style={styles.grid}>
-          {sorted.map(game => {
-            const lines = matchupLines(game)
-            const unplayable = offline && game.isLive
-            const listed = gameListOptions(game, mode)
-            const options =
-              listed == null || !unplayable
-                ? listed
-                : { ...listed, autoPlay: false }
-            return (
-              <View
-                key={game.id}
-                style={[styles.cell, { width: `${100 / columns}%` }]}
-              >
-                <Card>
-                  {mode === 'schedule' ? (
-                    <ScheduleRow
-                      first={lines.first}
-                      second={lines.second}
-                      startAt={game.startAt}
-                      isGameLive={game.isGameLive}
-                      isUmpire={game.isUmpire}
-                      venue={game.venue}
-                      status={game.status}
-                      awayScore={game.awayScore}
-                      homeScore={game.homeScore}
-                      isLive={game.isLive}
-                      videoCount={game.videoCount}
-                      pendingApproval={game.pendingApproval}
-                      cancellationReason={game.cancellationReason}
-                      withdrawnByTeamName={game.withdrawnByTeamName}
-                      onPress={
-                        options == null
-                          ? undefined
-                          : () => {
-                              onOpenGame(
-                                game.id,
-                                [lines.first, lines.second]
-                                  .filter(line => line !== '')
-                                  .join(' '),
-                                options
-                              )
-                            }
-                      }
-                    />
-                  ) : (
-                    <GameRow
-                      first={lines.first}
-                      second={lines.second}
-                      detail={[
-                        narrow
-                          ? shortDateNoWeekday(game.startAt)
-                          : shortDate(game.startAt),
-                        shortTime(game.startAt),
-                        videoCountLabel(game.videoCount)
-                      ]
-                        .filter(part => part !== '')
-                        .join(' · ')}
-                      venue={game.venue}
-                      posterUrl={game.posterUrl}
-                      length={
-                        game.durationSec == null
-                          ? undefined
-                          : clock(game.durationSec)
-                      }
-                      badgeLabel={
-                        game.pendingApproval
-                          ? 'Pending approval'
-                          : game.status === 'cancelled'
-                            ? 'Canceled'
-                            : unplayable
-                              ? OFFLINE_UNPLAYABLE
-                              : game.isLive
-                                ? 'live'
-                                : game.awayScore == null
-                                  ? undefined
-                                  : `${game.awayScore}–${game.homeScore}`
-                      }
-                      badgeTone={
-                        game.isLive && !game.pendingApproval && !unplayable
-                          ? 'live'
-                          : 'neutral'
-                      }
-                      onPress={
-                        options == null
-                          ? undefined
-                          : () => {
-                              onOpenGame(
-                                game.id,
-                                [lines.first, lines.second]
-                                  .filter(line => line !== '')
-                                  .join(' '),
-                                options
-                              )
-                            }
-                      }
-                    />
-                  )}
-                </Card>
-              </View>
-            )
-          })}
-        </View>
-        <View />
-      </PinnedContent>
+          <View style={styles.grid}>
+            {sorted.map(game => {
+              const lines = matchupLines(game)
+              const unplayable = offline && game.isLive
+              const listed = gameListOptions(game, mode)
+              const options =
+                listed == null || !unplayable
+                  ? listed
+                  : { ...listed, autoPlay: false }
+              return (
+                <View
+                  key={game.id}
+                  style={[styles.cell, { width: `${100 / columns}%` }]}
+                >
+                  <Card>
+                    {mode === 'schedule' ? (
+                      <ScheduleRow
+                        first={lines.first}
+                        second={lines.second}
+                        startAt={game.startAt}
+                        isGameLive={game.isGameLive}
+                        isUmpire={game.isUmpire}
+                        venue={game.venue}
+                        status={game.status}
+                        awayScore={game.awayScore}
+                        homeScore={game.homeScore}
+                        isLive={game.isLive}
+                        videoCount={game.videoCount}
+                        pendingApproval={game.pendingApproval}
+                        cancellationReason={game.cancellationReason}
+                        withdrawnByTeamName={game.withdrawnByTeamName}
+                        onPress={
+                          options == null
+                            ? undefined
+                            : () => {
+                                onOpenGame(
+                                  game.id,
+                                  [lines.first, lines.second]
+                                    .filter(line => line !== '')
+                                    .join(' '),
+                                  options
+                                )
+                              }
+                        }
+                      />
+                    ) : (
+                      <GameRow
+                        first={lines.first}
+                        second={lines.second}
+                        detail={[
+                          narrow
+                            ? shortDateNoWeekday(game.startAt)
+                            : shortDate(game.startAt),
+                          shortTime(game.startAt),
+                          videoCountLabel(game.videoCount)
+                        ]
+                          .filter(part => part !== '')
+                          .join(' · ')}
+                        venue={game.venue}
+                        posterUrl={game.posterUrl}
+                        length={
+                          game.durationSec == null
+                            ? undefined
+                            : clock(game.durationSec)
+                        }
+                        badgeLabel={
+                          game.pendingApproval
+                            ? 'Pending approval'
+                            : game.status === 'cancelled'
+                              ? 'Canceled'
+                              : unplayable
+                                ? OFFLINE_UNPLAYABLE
+                                : game.isLive
+                                  ? 'live'
+                                  : game.awayScore == null
+                                    ? undefined
+                                    : `${game.awayScore}–${game.homeScore}`
+                        }
+                        badgeTone={
+                          game.isLive && !game.pendingApproval && !unplayable
+                            ? 'live'
+                            : 'neutral'
+                        }
+                        onPress={
+                          options == null
+                            ? undefined
+                            : () => {
+                                onOpenGame(
+                                  game.id,
+                                  [lines.first, lines.second]
+                                    .filter(line => line !== '')
+                                    .join(' '),
+                                  options
+                                )
+                              }
+                        }
+                      />
+                    )}
+                  </Card>
+                </View>
+              )
+            })}
+          </View>
+          <View />
+        </PinnedContent>
+      </TabPages>
       {mode === 'schedule' && <PinnedSpacer part={pinned.spacer} />}
     </Screen>
   )

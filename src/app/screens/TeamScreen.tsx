@@ -46,6 +46,7 @@ import {
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
+import { TabPages } from '../components/TabPages'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -354,6 +355,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     anchorOnRow: tab === 'schedule' && next >= 0
   })
 
+  // Which way a pill change slides the content.
+  const tabIndex = TABS.findIndex(item => item.id === tab)
+
   return (
     <Screen {...pinned.screen}>
       <CardBand part={pinned.cardBand}>
@@ -433,160 +437,176 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
       {publicDetail != null && (
-        <PublicTeamContent
-          membershipAccess={membershipAccess}
-          detail={publicDetail}
-          tab={tab}
-          onOpenGame={onOpenGame}
-        />
+        <TabPages page={tab} index={tabIndex}>
+          <PublicTeamContent
+            key={tab}
+            membershipAccess={membershipAccess}
+            detail={publicDetail}
+            tab={tab}
+            onOpenGame={onOpenGame}
+          />
+        </TabPages>
       )}
 
       {!loading && publicDetail == null && (
-        <PinnedContent key={tab} part={pinned.content} testID="teamTabContent">
-          {tab === 'videos' && (
-            <View style={styles.section}>
-              <SectionHeader
-                title="Game video library"
-                note={`${withVideo.length} with video`}
-              />
-              {withVideo.length === 0 ? (
-                <Empty text="No game has a video attached yet." />
-              ) : (
-                withVideo.map(game => (
-                  <GameCard
-                    key={game.id}
-                    game={game}
-                    mode="videos"
-                    nonMemberView={nonMemberView}
-                    teamId={team.id}
-                    onOpen={onOpenGame}
-                  />
-                ))
-              )}
-            </View>
-          )}
+        <TabPages page={tab} index={tabIndex}>
+          <PinnedContent
+            key={tab}
+            part={pinned.content}
+            testID="teamTabContent"
+          >
+            {tab === 'videos' && (
+              <View style={styles.section}>
+                <SectionHeader
+                  title="Game video library"
+                  note={`${withVideo.length} with video`}
+                />
+                {withVideo.length === 0 ? (
+                  <Empty text="No game has a video attached yet." />
+                ) : (
+                  withVideo.map(game => (
+                    <GameCard
+                      key={game.id}
+                      game={game}
+                      mode="videos"
+                      nonMemberView={nonMemberView}
+                      teamId={team.id}
+                      onOpen={onOpenGame}
+                    />
+                  ))
+                )}
+              </View>
+            )}
 
-          {tab === 'schedule' && (
-            <View
-              style={styles.section}
-              ref={pinned.rowSection.ref}
-              onLayout={pinned.rowSection.handleLayout}
-            >
-              <SectionHeader
-                title="Schedule"
-                note={`${games.length} games, ${upcoming.length} to play`}
-              />
-              {schedule.length === 0 ? (
-                <Empty text="No games scheduled." />
-              ) : (
-                schedule.map((game, index) => (
-                  <View
-                    // The next game's row is its own element, so it is laid
-                    // out, and measured, again when the next game changes.
-                    key={index === next ? `${game.id}:next` : game.id}
-                    testID="scheduleGame"
-                    ref={index === next ? pinned.nextRow.ref : undefined}
-                    onLayout={
-                      index === next ? pinned.nextRow.handleLayout : undefined
-                    }
-                  >
-                    {nonMemberView ? (
-                      // Visitors can open every published game without
-                      // receiving member-only RSVP controls.
-                      <GameCard
-                        game={game}
-                        mode="schedule"
-                        teamId={team.id}
-                        nonMemberView
-                        onOpen={onOpenGame}
-                      />
-                    ) : (
-                      <ScheduleCard
-                        client={client}
-                        game={game}
-                        teamId={team.id}
-                        onOpen={onOpenGame}
-                      />
-                    )}
-                  </View>
-                ))
-              )}
-              {onCreateGame != null && (
-                <AddEventCard variant="game" onPress={onCreateGame} />
-              )}
-            </View>
-          )}
+            {tab === 'schedule' && (
+              <View
+                style={styles.section}
+                ref={pinned.rowSection.ref}
+                onLayout={pinned.rowSection.handleLayout}
+              >
+                <SectionHeader
+                  title="Schedule"
+                  note={`${games.length} games, ${upcoming.length} to play`}
+                />
+                {schedule.length === 0 ? (
+                  <Empty text="No games scheduled." />
+                ) : (
+                  schedule.map((game, index) => (
+                    <View
+                      // The next game's row is its own element, so it is laid
+                      // out, and measured, again when the next game changes.
+                      key={index === next ? `${game.id}:next` : game.id}
+                      testID="scheduleGame"
+                      ref={index === next ? pinned.nextRow.ref : undefined}
+                      onLayout={
+                        index === next ? pinned.nextRow.handleLayout : undefined
+                      }
+                    >
+                      {nonMemberView ? (
+                        // Visitors can open every published game without
+                        // receiving member-only RSVP controls.
+                        <GameCard
+                          game={game}
+                          mode="schedule"
+                          teamId={team.id}
+                          nonMemberView
+                          onOpen={onOpenGame}
+                        />
+                      ) : (
+                        <ScheduleCard
+                          client={client}
+                          game={game}
+                          teamId={team.id}
+                          onOpen={onOpenGame}
+                        />
+                      )}
+                    </View>
+                  ))
+                )}
+                {onCreateGame != null && (
+                  <AddEventCard variant="game" onPress={onCreateGame} />
+                )}
+              </View>
+            )}
 
-          {tab === 'team' && (
-            <>
-              {roster.length === 0 && (
-                <Empty text="Nobody has been added to this team yet." />
-              )}
-              <PeopleList
-                people={roster}
-                onOpen={person => {
-                  // A player has a page, for anybody who may see it: a
-                  // non-member is answered `404` there, so their rows open
-                  // nothing. Anybody else opens their profile, for the
-                  // team's administrators, coaches and assistants.
-                  if (person.isPlayer && !nonMemberView && onOpenPlayer != null)
-                    return () => {
-                      onOpenPlayer(person.userId, person.shortName, {
-                        onTeam: team.id
-                      })
-                    }
-                  if (!nonMemberView && managesPeople && onOpenPerson != null)
-                    return () => {
-                      onOpenPerson(person.userId, person.shortName, team.id)
-                    }
-                  return undefined
-                }}
-              />
-            </>
-          )}
+            {tab === 'team' && (
+              <>
+                {roster.length === 0 && (
+                  <Empty text="Nobody has been added to this team yet." />
+                )}
+                <PeopleList
+                  people={roster}
+                  onOpen={person => {
+                    // A player has a page, for anybody who may see it: a
+                    // non-member is answered `404` there, so their rows open
+                    // nothing. Anybody else opens their profile, for the
+                    // team's administrators, coaches and assistants.
+                    if (
+                      person.isPlayer &&
+                      !nonMemberView &&
+                      onOpenPlayer != null
+                    )
+                      return () => {
+                        onOpenPlayer(person.userId, person.shortName, {
+                          onTeam: team.id
+                        })
+                      }
+                    if (!nonMemberView && managesPeople && onOpenPerson != null)
+                      return () => {
+                        onOpenPerson(person.userId, person.shortName, team.id)
+                      }
+                    return undefined
+                  }}
+                />
+              </>
+            )}
 
-          {tab === 'stats' && (
-            <View style={styles.section}>
-              <SectionHeader title="Season performance" />
-              <Card>
-                <StatGrid stats={seasonStats(standing)} columns={2} />
-              </Card>
+            {tab === 'stats' && (
+              <View style={styles.section}>
+                <SectionHeader title="Season performance" />
+                <Card>
+                  <StatGrid stats={seasonStats(standing)} columns={2} />
+                </Card>
 
-              {/*
+                {/*
                 A non-member sees how the team is doing, and not how each player
                 is: the batting and pitching are kept for members.
               */}
-              {nonMemberView ? (
-                membershipAccess
-              ) : (
-                <>
-                  <SectionHeader
-                    title="Batting"
-                    note={`${batting.length} players`}
-                  />
-                  {batting.length === 0 ? (
-                    <Empty text="No plays have been ingested for this team yet." />
-                  ) : (
-                    <Card flush>
-                      <StatsTable rows={batting} columns={battingColumns} />
-                    </Card>
-                  )}
-                  {pitching.length > 0 && (
-                    <>
-                      <SectionHeader
-                        title="Pitching"
-                        note={`${pitching.length} players`}
-                      />
+                {nonMemberView ? (
+                  membershipAccess
+                ) : (
+                  <>
+                    <SectionHeader
+                      title="Batting"
+                      note={`${batting.length} players`}
+                    />
+                    {batting.length === 0 ? (
+                      <Empty text="No plays have been ingested for this team yet." />
+                    ) : (
                       <Card flush>
-                        <StatsTable rows={pitching} columns={pitchingColumns} />
+                        <StatsTable rows={batting} columns={battingColumns} />
                       </Card>
-                    </>
-                  )}
-                </>
-              )}
-            </View>
-          )}
-        </PinnedContent>
+                    )}
+                    {pitching.length > 0 && (
+                      <>
+                        <SectionHeader
+                          title="Pitching"
+                          note={`${pitching.length} players`}
+                        />
+                        <Card flush>
+                          <StatsTable
+                            rows={pitching}
+                            columns={pitchingColumns}
+                          />
+                        </Card>
+                      </>
+                    )}
+                  </>
+                )}
+              </View>
+            )}
+          </PinnedContent>
+        </TabPages>
       )}
       <PinnedSpacer part={pinned.spacer} />
     </Screen>

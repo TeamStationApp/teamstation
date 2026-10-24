@@ -22,6 +22,7 @@ import {
 import { ActionList } from '../components/ActionRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { StickySectionLayout } from '../components/StickySectionLayout'
+import { TabPages } from '../components/TabPages'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GroupRelationshipRow } from './GroupRelationshipRow'
 import type { GroupLinkChoice } from './GroupScreen'
@@ -195,156 +196,165 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
           {breaker.error}
         </Text>
       )}
-      {tab === 'seasons' && (
-        <View style={styles.section}>
-          <SectionHeader
-            title="Seasons"
-            note={String(seasons.length)}
-            actions={
-              detail.canManage
-                ? [
-                    {
-                      label: 'Add',
-                      accessibilityLabel: 'Add season',
-                      onPress: () => {
-                        onLink({
-                          subject: league,
-                          targetKind: 'season',
-                          relationship: 'parent',
-                          direction: 'children'
-                        })
-                      }
-                    },
-                    {
-                      label: 'Create',
-                      accessibilityLabel: 'Create season',
-                      onPress: () => {
-                        onCreate('season', league, group.locality)
-                      }
-                    }
-                  ]
-                : undefined
-            }
-          />
-          {seasons.length === 0 && (
-            <Card>
-              <Text style={styles.muted}>No seasons in this league yet.</Text>
-            </Card>
-          )}
-          <ActionList bounded={seasons.length > 0}>
-            {seasons.map(season => (
-              <GroupRelationshipRow
-                key={season.id}
-                group={season}
-                detail={seasonPeriodLabel(season.startsOn, season.endsOn)}
-                onOpen={() => {
-                  onOpen({ kind: 'season', id: season.id })
-                }}
-                label={`Leave ${season.name} from ${group.name}`}
-                disabled={breaker.busy}
-                onLeave={
-                  !detail.canManage
-                    ? undefined
-                    : () => {
-                        breaker.review(
-                          { kind: 'season', id: season.id },
-                          league
-                        )
-                      }
+      <TabPages page={tab} index={tabs.findIndex(item => item.id === tab)}>
+        <View key={tab} style={styles.page}>
+          {tab === 'seasons' && (
+            <View style={styles.section}>
+              <SectionHeader
+                title="Seasons"
+                note={String(seasons.length)}
+                actions={
+                  detail.canManage
+                    ? [
+                        {
+                          label: 'Add',
+                          accessibilityLabel: 'Add season',
+                          onPress: () => {
+                            onLink({
+                              subject: league,
+                              targetKind: 'season',
+                              relationship: 'parent',
+                              direction: 'children'
+                            })
+                          }
+                        },
+                        {
+                          label: 'Create',
+                          accessibilityLabel: 'Create season',
+                          onPress: () => {
+                            onCreate('season', league, group.locality)
+                          }
+                        }
+                      ]
+                    : undefined
                 }
               />
-            ))}
-          </ActionList>
-        </View>
-      )}
-      {tab === 'teams' && (
-        <View style={styles.section}>
-          <SectionHeader
-            title="Teams"
-            note={String(teams.length)}
-            actions={
-              detail.canManage
-                ? [
-                    {
-                      label: 'Add',
-                      accessibilityLabel: 'Add team',
-                      onPress: () => {
-                        onLink({
-                          subject: league,
-                          targetKind: 'team',
-                          relationship: 'parent',
-                          direction: 'children'
-                        })
-                      }
-                    },
-                    {
-                      label: 'Create',
-                      accessibilityLabel: 'Create team',
-                      onPress: () => {
-                        if (props.onCreateExternal == null)
-                          onCreate('team', league, group.locality)
-                        else setCreatingTeam(true)
-                      }
+              {seasons.length === 0 && (
+                <Card>
+                  <Text style={styles.muted}>
+                    No seasons in this league yet.
+                  </Text>
+                </Card>
+              )}
+              <ActionList bounded={seasons.length > 0}>
+                {seasons.map(season => (
+                  <GroupRelationshipRow
+                    key={season.id}
+                    group={season}
+                    detail={seasonPeriodLabel(season.startsOn, season.endsOn)}
+                    onOpen={() => {
+                      onOpen({ kind: 'season', id: season.id })
+                    }}
+                    label={`Leave ${season.name} from ${group.name}`}
+                    disabled={breaker.busy}
+                    onLeave={
+                      !detail.canManage
+                        ? undefined
+                        : () => {
+                            breaker.review(
+                              { kind: 'season', id: season.id },
+                              league
+                            )
+                          }
                     }
-                  ]
-                : undefined
-            }
-          />
-          {teams.length === 0 && (
-            <Card>
-              <Text style={styles.muted}>No teams in this league yet.</Text>
-            </Card>
+                  />
+                ))}
+              </ActionList>
+            </View>
           )}
-          <ActionList>
-            {teams.map(team => (
-              <GroupRelationshipRow
-                key={team.id}
-                group={team}
-                detail={[
-                  team.external ? 'Placeholder team' : undefined,
-                  team.locality == null
-                    ? undefined
-                    : localityLabel(team.locality)
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-                onOpen={() => {
-                  onOpen({ kind: 'team', id: team.id })
-                }}
-                links={(
-                  detail.teamSeasons.find(row => row.teamId === team.id)
-                    ?.seasonIds ?? []
-                )
-                  .filter(id => seasonNames.has(id))
-                  .map(id => ({
-                    label: seasonNames.get(id)!,
-                    onPress: () => {
-                      onOpen({ kind: 'season', id })
-                    }
-                  }))}
-                label={`Leave ${team.name} from ${group.name}`}
-                disabled={breaker.busy}
-                onLeave={
-                  !detail.canManage || !childTeamIds.has(team.id)
-                    ? undefined
-                    : () => {
-                        breaker.review({ kind: 'team', id: team.id }, league)
-                      }
+          {tab === 'teams' && (
+            <View style={styles.section}>
+              <SectionHeader
+                title="Teams"
+                note={String(teams.length)}
+                actions={
+                  detail.canManage
+                    ? [
+                        {
+                          label: 'Add',
+                          accessibilityLabel: 'Add team',
+                          onPress: () => {
+                            onLink({
+                              subject: league,
+                              targetKind: 'team',
+                              relationship: 'parent',
+                              direction: 'children'
+                            })
+                          }
+                        },
+                        {
+                          label: 'Create',
+                          accessibilityLabel: 'Create team',
+                          onPress: () => {
+                            if (props.onCreateExternal == null)
+                              onCreate('team', league, group.locality)
+                            else setCreatingTeam(true)
+                          }
+                        }
+                      ]
+                    : undefined
                 }
               />
-            ))}
-          </ActionList>
+              {teams.length === 0 && (
+                <Card>
+                  <Text style={styles.muted}>No teams in this league yet.</Text>
+                </Card>
+              )}
+              <ActionList>
+                {teams.map(team => (
+                  <GroupRelationshipRow
+                    key={team.id}
+                    group={team}
+                    detail={[
+                      team.external ? 'Placeholder team' : undefined,
+                      team.locality == null
+                        ? undefined
+                        : localityLabel(team.locality)
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    onOpen={() => {
+                      onOpen({ kind: 'team', id: team.id })
+                    }}
+                    links={(
+                      detail.teamSeasons.find(row => row.teamId === team.id)
+                        ?.seasonIds ?? []
+                    )
+                      .filter(id => seasonNames.has(id))
+                      .map(id => ({
+                        label: seasonNames.get(id)!,
+                        onPress: () => {
+                          onOpen({ kind: 'season', id })
+                        }
+                      }))}
+                    label={`Leave ${team.name} from ${group.name}`}
+                    disabled={breaker.busy}
+                    onLeave={
+                      !detail.canManage || !childTeamIds.has(team.id)
+                        ? undefined
+                        : () => {
+                            breaker.review(
+                              { kind: 'team', id: team.id },
+                              league
+                            )
+                          }
+                    }
+                  />
+                ))}
+              </ActionList>
+            </View>
+          )}
+          {tab === 'people' && detail.canSeePeople === true && (
+            <LevelPeopleTab
+              client={client}
+              kind="league"
+              id={group.id}
+              onOpenPlayer={props.onOpenPlayer}
+              onOpenPerson={props.onOpenPerson}
+            />
+          )}
         </View>
-      )}
-      {tab === 'people' && detail.canSeePeople === true && (
-        <LevelPeopleTab
-          client={client}
-          kind="league"
-          id={group.id}
-          onOpenPlayer={props.onOpenPlayer}
-          onOpenPerson={props.onOpenPerson}
-        />
-      )}
+      </TabPages>
       {breaker.sheet}
       {creatingTeam && (
         <ChoiceSheet
@@ -375,6 +385,10 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  // One pill's sections, spaced as the screen spaces them.
+  page: {
+    gap: theme.rem(theme.spaceLgRem)
+  },
   headerHandoff: {
     flexDirection: 'row',
     alignItems: 'center',

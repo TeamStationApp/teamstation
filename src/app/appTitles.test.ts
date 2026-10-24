@@ -30,7 +30,8 @@ describe('app titles', function () {
   })
 
   it('shows the mark on a tab, and not on a pushed screen', function () {
-    expect(source).contains('showMark={top == null}')
+    // The mark belongs to the screen drawing the header: a tab's root.
+    expect(source).contains('showMark={chromeFrame == null}')
     // Off unless a screen asks, so a new screen inherits no chrome.
     expect(header).contains('showMark = false')
   })
@@ -77,18 +78,23 @@ describe('app titles', function () {
       'GameWatchLayout.native.tsx'
     ]) {
       const source = readFileSync(join(__dirname, 'screens', layout), 'utf8')
+      // Each let go inside a pill page sliding out (`useActiveRef`).
       expect(source).match(
-        /ref=\{pinned\.cardBand\.ref\}[\s\S]*?onLayout=\{pinned\.cardBand\.handleLayout\}[\s\S]*?\{short \? null : head\}/
+        /ref=\{useActiveRef\(pinned\.cardBand\.ref\)\}[\s\S]*?onLayout=\{useActiveRef\(pinned\.cardBand\.handleLayout\)\}[\s\S]*?\{short \? null : head\}/
       )
       // The pills have their own measured band, after the card's band.
       expect(source.indexOf('{short ? null : head}')).lessThan(
-        source.indexOf('ref={pinned.pillBand.ref}')
+        source.indexOf('ref={useActiveRef(pinned.pillBand.ref)}')
       )
     }
   })
 
-  it('keeps the pane keyed, so a breakpoint cannot remount the player', function () {
-    expect(source).contains('key="pane"')
+  it('keeps the scenes keyed, so a breakpoint cannot remount the player', function () {
+    const navigator = readFileSync(
+      join(__dirname, 'navigation/StackNavigator.tsx'),
+      'utf8'
+    )
+    expect(navigator).contains('key={scene.key}')
     expect(source).contains('key="nav"')
   })
 
