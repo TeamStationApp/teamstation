@@ -2219,7 +2219,8 @@ export class Scenarios {
     }
     this.observations.push(proof)
     const startedAt = Date.now()
-    let end = startedAt + (ui.surface === 'ios' ? 240000 : 120000)
+    // A long QA history can put an iOS target twenty swipes away.
+    let end = startedAt + (ui.surface === 'ios' ? 600000 : 120000)
     const signal = (): AbortSignal => {
       assert(Date.now() < end, 'Native anchor observation deadline expired')
       return AbortSignal.any([
