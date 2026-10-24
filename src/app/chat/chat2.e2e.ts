@@ -1744,6 +1744,55 @@ export class Scenarios {
     )
   }
 
+  /**
+   * The attention count is the targets below the reading area, and a viewed
+   * target is not counted. The fixture's count assumes no target below the
+   * anchor is on screen; a taller native reader can show a few, so those are
+   * subtracted, and recorded.
+   */
+  async belowReaderCount(
+    fixture: NonNullable<Chat2Fixture['historyStress']>
+  ): Promise<number> {
+    const ui = this.ui
+    if (!ui.native) return fixture.expectedCount
+    const nodes = await ui.nodes()
+    const box = (id: string): NonNullable<PublicNode['bounds']> | undefined =>
+      nodes.find(node => node.id === id)?.bounds
+    const header = need(
+      box('chat-conversation-identity'),
+      'Actual conversation header required'
+    )
+    const pins = box('chat-pinned-band')
+    const composer = need(
+      box('chat-composer-band'),
+      'Actual composer band required'
+    )
+    const top = Math.max(
+      header.y + header.height,
+      pins == null ? 0 : pins.y + pins.height
+    )
+    const anchor = need(
+      box('chat-message-body-' + fixture.readerAnchor.id),
+      'Actual reader anchor body required'
+    )
+    const viewed = fixture.targetIds.filter(id => {
+      const body = box('chat-message-body-' + id)
+      return (
+        body != null &&
+        body.y > anchor.y &&
+        body.y >= top &&
+        body.y + Math.min(24, body.height) <= composer.y
+      )
+    })
+    this.observations.push({
+      belowReaderCount: fixture.expectedCount - viewed.length,
+      fixtureCount: fixture.expectedCount,
+      viewedTargetsBelowAnchor: viewed,
+      readingArea: { top, bottom: composer.y }
+    })
+    return fixture.expectedCount - viewed.length
+  }
+
   async classification(): Promise<void> {
     await until(
       async () =>
@@ -7092,7 +7141,7 @@ export class Scenarios {
             completedAt: new Date().toISOString()
           }
           await this.anchor(fixture.readerAnchor)
-          await this.expectCount(fixture.expectedCount)
+          await this.expectCount(await this.belowReaderCount(fixture))
           this.observations.push({
             classifiedBeforeAnchor,
             explicitBoundaryAnchor: fixture.readerAnchor.id,
@@ -7176,7 +7225,7 @@ export class Scenarios {
             'Discovery Retry must preserve reader'
           )
           await this.anchor(fixture.readerAnchor)
-          await this.expectCount(fixture.expectedCount)
+          await this.expectCount(await this.belowReaderCount(fixture))
         } finally {
           fixtureControl(this.f, 'clear-fault')
         }
@@ -7253,7 +7302,7 @@ export class Scenarios {
           await this.classification()
           assert.equal(await ui.draft(), 'Keep cancelled verification draft')
           await this.anchor(fixture.readerAnchor)
-          await this.expectCount(fixture.expectedCount)
+          await this.expectCount(await this.belowReaderCount(fixture))
           this.observations.push({
             actualPublicBackDuringDeferredVerification: true,
             unseenCountAfterReturn: fixture.expectedCount,
