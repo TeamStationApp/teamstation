@@ -2019,7 +2019,14 @@ export class Scenarios {
     const ui = this.ui
     if (await ui.visible({ id: 'chat-pinned-summary' }, 1000)) {
       await ui.id('chat-pinned-summary')
-      if (await ui.visible({ text: exactText('Pinned messages') }, 1000))
+      // One iOS read can outlast the list's entrance; a missed list stays
+      // open over the history.
+      if (
+        await ui.visible(
+          { text: exactText('Pinned messages') },
+          ui.surface === 'ios' ? 10000 : 1000
+        )
+      )
         if (await ui.visible({ id: 'chat-pin-' + target.id }, 500)) {
           await ui.id('chat-pin-' + target.id)
           if (ui.native) await this.nativePinJumpReady(target)
