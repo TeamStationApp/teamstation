@@ -1784,15 +1784,18 @@ export class Scenarios {
         body.y + Math.min(24, body.height) <= composer.y
       )
     })
-    // A target this case already had in its reading area (a cold open lands
-    // on a few) was viewed then, and the app no longer counts it.
+    // A target the current visit already had in its reading area (a cold
+    // open lands on a few) was viewed then, and the app no longer counts it.
+    // Reopening the conversation starts a new count, so only the latest
+    // reading-area record applies.
+    const latest = [...this.observations]
+      .reverse()
+      .find(row => row.visibleReaderAnchor != null)
     const seenEarlier = new Set(
-      this.observations.flatMap(row =>
-        (
-          ((row.visibleReaderAnchor as Json | undefined)?.visibleBodies ??
-            []) as Json[]
-        ).map(body => String(body.id).replace('chat-message-body-', ''))
-      )
+      (
+        ((latest?.visibleReaderAnchor as Json | undefined)?.visibleBodies ??
+          []) as Json[]
+      ).map(body => String(body.id).replace('chat-message-body-', ''))
     )
     const viewedEarlier = fixture.targetIds.filter(
       id => seenEarlier.has(id) && !viewed.includes(id)
