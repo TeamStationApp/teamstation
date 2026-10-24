@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   Animated,
   BackHandler,
@@ -8,7 +15,8 @@ import {
   ScrollView,
   StyleSheet,
   useWindowDimensions,
-  View
+  View,
+  type ViewStyle
 } from 'react-native'
 
 import { GlassView } from '../components/GlassView'
@@ -73,6 +81,33 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
   )
   const [returnSource, setReturnSource] = useState(props.source?.bounds)
   const progress = useRef(new Animated.Value(0)).current
+  // iOS re-applies a view's own props opacity and transform whenever its
+  // frame changes, and then ignores the prop updates the native driver
+  // manages. A layout change after the native fade ended, but before JS heard
+  // that it ended, left the view at opacity 0 for good: on a busy device the
+  // actions vanished as their measured height arrived. Each animated layer
+  // keeps one frame for the whole spotlight, at its plain outer view's
+  // origin, and the moving offsets are values set below, not style numbers.
+  const sourceX = useRef(new Animated.Value(0)).current
+  const sourceY = useRef(new Animated.Value(0)).current
+  const lift = useRef(new Animated.Value(0)).current
+  const motion = useMemo(() => {
+    const away = Animated.subtract(1, progress)
+    return {
+      fade: { opacity: progress },
+      preview: {
+        opacity: progress,
+        transform: [
+          { translateX: Animated.multiply(sourceX, away) },
+          { translateY: Animated.multiply(sourceY, away) }
+        ]
+      },
+      panel: {
+        opacity: progress,
+        transform: [{ translateY: Animated.multiply(lift, away) }]
+      }
+    }
+  }, [progress, sourceX, sourceY, lift])
   const latest = useRef(props)
   latest.current = { ...props, onClosed: props.onClosed }
   const active = useRef(true)
@@ -215,12 +250,34 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
     [handoff, layout.compact, controlsVisible]
   )
   const moving = !reduced && source != null && layout.animateSource
+  const offsetX = moving ? layout.sourceX : 0
+  const offsetY = moving ? layout.sourceY : 0
+  const panelLift = reduced || layout.compact ? 0 : theme.rem(0.5)
+  // Before the entrance, which starts in an effect.
+  useLayoutEffect(() => {
+    sourceX.setValue(offsetX)
+    sourceY.setValue(offsetY)
+    lift.setValue(panelLift)
+  }, [offsetX, offsetY, panelLift, sourceX, sourceY, lift])
+  const previewWidth = Math.min(source?.width ?? layout.width, layout.width)
+  // A constant frame: as tall as the window, as wide as its content.
+  const layer = (width: number): ViewStyle => ({
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width,
+    height: window.height
+  })
   return (
     <View
       ref={frameRef}
       testID="chat-message-spotlight"
       onLayout={measure}
-      style={[StyleSheet.absoluteFill, { zIndex: 100, elevation: 30 }]}
+      // The animated layers reach below their content; nothing passes the frame.
+      style={[
+        StyleSheet.absoluteFill,
+        { zIndex: 100, elevation: 30, overflow: 'hidden' }
+      ]}
       pointerEvents={props.closing ? 'none' : 'auto'}
       accessibilityViewIsModal={!handoff}
       accessibilityElementsHidden={handoff}
@@ -260,121 +317,106 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
         }}
       >
         {!layout.compact && props.reactions != null && (
-          <Animated.View
+          <View
             testID="chat-message-spotlight-reactions"
-            style={{
-              opacity: progress,
-              height: layout.reactions,
-              overflow: 'hidden'
-            }}
+            style={{ height: layout.reactions, overflow: 'hidden' }}
           >
-            <ScrollView
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              onContentSizeChange={(_width, height) => {
-                setReactions(height)
-              }}
+            <Animated.View
+              pointerEvents="box-none"
+              style={[layer(layout.width), motion.fade]}
             >
-              {props.reactions}
-            </ScrollView>
-          </Animated.View>
+              <ScrollView
+                horizontal
+                keyboardShouldPersistTaps="handled"
+                // A ScrollView grows by default, and its layer is window tall.
+                style={{ height: layout.reactions, flexGrow: 0 }}
+                onContentSizeChange={(_width, height) => {
+                  setReactions(height)
+                }}
+              >
+                {props.reactions}
+              </ScrollView>
+            </Animated.View>
+          </View>
         )}
         {layout.preview > 0 && (
-          <Animated.View
+          <View
             testID="chat-message-spotlight-preview"
             style={{
               position: 'absolute',
               top: layout.previewTop,
               alignSelf: props.mine ? 'flex-end' : 'flex-start',
-              width: Math.min(source?.width ?? layout.width, layout.width),
-              height: layout.preview,
-              opacity: progress,
-              transform: moving
-                ? [
-                    {
-                      translateX: progress.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [layout.sourceX, 0]
-                      })
-                    },
-                    {
-                      translateY: progress.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [layout.sourceY, 0]
-                      })
-                    }
-                  ]
-                : undefined
+              width: previewWidth,
+              height: layout.preview
             }}
           >
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              style={{ maxHeight: layout.preview }}
-              onContentSizeChange={(_width, height) => {
-                setPreview(Math.max(1, height))
-              }}
+            <Animated.View
+              pointerEvents="box-none"
+              style={[layer(previewWidth), motion.preview]}
             >
-              {props.selected}
-            </ScrollView>
-          </Animated.View>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                style={{ maxHeight: layout.preview }}
+                onContentSizeChange={(_width, height) => {
+                  setPreview(Math.max(1, height))
+                }}
+              >
+                {props.selected}
+              </ScrollView>
+            </Animated.View>
+          </View>
         )}
         {controlsVisible && (
-          <Animated.View
+          <View
             testID="chat-message-spotlight-panel"
             style={{
               position: 'absolute',
               top: layout.panelTop,
               width: '100%',
-              height: layout.panel,
-              opacity: progress,
-              transform:
-                reduced || layout.compact
-                  ? undefined
-                  : [
-                      {
-                        translateY: progress.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [theme.rem(0.5), 0]
-                        })
-                      }
-                    ]
+              height: layout.panel
             }}
           >
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              style={{
-                flex: 1,
-                borderRadius: theme.rem(1.25),
-                backgroundColor: theme.cardBackgroundColor,
-                borderColor: theme.defaultBorderColor,
-                borderWidth: 1
-              }}
-              contentContainerStyle={{
-                padding: theme.rem(0.5),
-                gap: theme.rem(0.25)
-              }}
+            <Animated.View
+              pointerEvents="box-none"
+              style={[layer(layout.width), motion.panel]}
             >
-              {layout.compact && props.reactions != null && (
-                <ScrollView
-                  horizontal
-                  keyboardShouldPersistTaps="handled"
-                  onContentSizeChange={(_width, height) => {
-                    setReactions(height)
-                  }}
-                >
-                  {props.reactions}
-                </ScrollView>
-              )}
-              <View
-                onLayout={event => {
-                  setPanel(event.nativeEvent.layout.height + theme.rem(1))
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                style={{
+                  height: layout.panel,
+                  flexGrow: 0,
+                  borderRadius: theme.rem(1.25),
+                  backgroundColor: theme.cardBackgroundColor,
+                  borderColor: theme.defaultBorderColor,
+                  borderWidth: 1
                 }}
-                style={{ gap: theme.rem(0.25) }}
+                contentContainerStyle={{
+                  padding: theme.rem(0.5),
+                  gap: theme.rem(0.25)
+                }}
               >
-                {props.children}
-              </View>
-            </ScrollView>
-          </Animated.View>
+                {layout.compact && props.reactions != null && (
+                  <ScrollView
+                    horizontal
+                    keyboardShouldPersistTaps="handled"
+                    onContentSizeChange={(_width, height) => {
+                      setReactions(height)
+                    }}
+                  >
+                    {props.reactions}
+                  </ScrollView>
+                )}
+                <View
+                  onLayout={event => {
+                    setPanel(event.nativeEvent.layout.height + theme.rem(1))
+                  }}
+                  style={{ gap: theme.rem(0.25) }}
+                >
+                  {props.children}
+                </View>
+              </ScrollView>
+            </Animated.View>
+          </View>
         )}
       </View>
     </View>

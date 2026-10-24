@@ -50,6 +50,12 @@ const originals = replaced.map(([target, key]) => ({
   key,
   descriptor: Object.getOwnPropertyDescriptor(target, key)
 }))
+/** A spotlight part's animated layer: its fade and motion live there. */
+const layerOf = (part: HTMLElement): HTMLElement =>
+  part.firstElementChild as HTMLElement
+/** Whether a part's layer is offset toward its source, not at rest. */
+const moved = (part: HTMLElement): boolean =>
+  /translate[XY]\((?!0px\))/.test(layerOf(part).style.transform)
 let reduced = false
 let animations: Array<{
   config: Animated.TimingAnimationConfig
@@ -539,8 +545,8 @@ describe('chat message presentation', function () {
       const controls = node.querySelector<HTMLElement>(
         '[data-testid="chat-message-spotlight-controls"]'
       )!
-      expect(preview.style.transform).equals('')
-      expect(getComputedStyle(preview).opacity).equals('0')
+      expect(moved(preview)).equals(false)
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0')
       expect(
         parseFloat(getComputedStyle(controls).top) +
           parseFloat(getComputedStyle(controls).height)
@@ -553,7 +559,7 @@ describe('chat message presentation', function () {
       ).length(1)
       expect(history.closest('[aria-hidden="true"]')).not.equals(null)
       await finish()
-      expect(getComputedStyle(preview).opacity).equals('1')
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('1')
       expect(history.scrollTop).equals(137)
     })
 
@@ -610,13 +616,13 @@ describe('chat message presentation', function () {
       const preview = node.querySelector<HTMLElement>(
         '[data-testid="chat-message-spotlight-preview"]'
       )!
-      expect(preview.style.transform).not.equals('')
+      expect(moved(preview)).equals(true)
       await finish()
       await render(<MessageActionOverlay {...props} closing />)
-      expect(preview.style.transform).equals('')
-      expect(getComputedStyle(preview).opacity).equals('1')
+      expect(moved(preview)).equals(false)
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('1')
       await finish()
-      expect(getComputedStyle(preview).opacity).equals('0')
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0')
       expect(closed).equals(1)
     })
 
@@ -746,6 +752,98 @@ describe('chat message presentation', function () {
         null
       )
     })
+    it('keeps every faded layer on one frame however its part is measured', async function () {
+      // iOS re-applies a view's own opacity when its frame changes and then
+      // ignores the native driver's value; a part re-measured after the fade
+      // stayed invisible. Only constant-frame layers may carry the fade.
+      for (const variant of ['short', 'tall', 'compact'] as const) {
+        const windowHeight = variant === 'compact' ? 120 : 844
+        Object.defineProperty(document.documentElement, 'clientHeight', {
+          configurable: true,
+          value: windowHeight
+        })
+        window.dispatchEvent(new window.Event('resize'))
+        const node = await render(
+          <ChatOverlayHost>
+            <MessageActionOverlay
+              {...overlay(
+                variant === 'tall'
+                  ? {
+                      source: {
+                        ...source,
+                        bounds: { ...source.bounds, height: 900 }
+                      }
+                    }
+                  : {}
+              )}
+            />
+          </ChatOverlayHost>
+        )
+        await act(async () => {
+          animations.at(-1)!.value.setValue(0.5)
+        })
+        const parts = (): HTMLElement[] =>
+          [
+            'chat-message-spotlight-reactions',
+            'chat-message-spotlight-preview',
+            'chat-message-spotlight-panel'
+          ].flatMap(id => [
+            ...node.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)
+          ])
+        const frames = (): string[] =>
+          parts().map(part => {
+            const layer = layerOf(part)
+            expect(getComputedStyle(part).opacity, variant).equals('1')
+            expect(getComputedStyle(layer).opacity, variant).equals('0.5')
+            expect(layer.style.position, variant).equals('absolute')
+            return [
+              layer.style.top,
+              layer.style.left,
+              layer.style.width,
+              layer.style.height
+            ].join(' ')
+          })
+        const before = frames()
+        expect(before.length, variant).equals(variant === 'compact' ? 1 : 3)
+        for (const frame of before)
+          expect(frame, variant).match(
+            new RegExp(`^0px 0px \\d+px ${windowHeight}px$`)
+          )
+        // Every part reports its measured content, as a device does late.
+        const heights: Record<string, string> = {}
+        for (const part of parts())
+          heights[part.dataset.testid!] = part.style.height
+        await act(async () => {
+          for (const element of node.querySelectorAll<HTMLElement>('*')) {
+            const handler = (
+              element as HTMLElement & {
+                __reactLayoutHandler?: (event: unknown) => void
+              }
+            ).__reactLayoutHandler
+            if (
+              element.closest(
+                '[data-testid="chat-message-spotlight-controls"]'
+              ) != null
+            )
+              handler?.({
+                nativeEvent: { layout: { x: 0, y: 0, width: 200, height: 37 } }
+              })
+          }
+          await Promise.resolve()
+        })
+        expect(
+          parts().some(
+            part => part.style.height !== heights[part.dataset.testid!]
+          ),
+          variant + ' measured parts resized'
+        ).equals(variant !== 'compact')
+        expect(frames(), variant).deep.equals(before)
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+      }
+    })
     it('keeps the selected preview on the coordinated fade when motion resolves after the entrance begins', async function () {
       let resolveMotion: ((enabled: boolean) => void) | undefined
       AccessibilityInfo.isReduceMotionEnabled = async (): Promise<boolean> =>
@@ -782,8 +880,8 @@ describe('chat message presentation', function () {
         toValue: 1,
         useNativeDriver: true
       })
-      expect(getComputedStyle(preview).opacity).equals('0')
-      expect(preview.style.transform).equals('')
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0')
+      expect(moved(preview)).equals(false)
       await act(async () => {
         resolveMotion!(false)
         await Promise.resolve()
@@ -793,32 +891,33 @@ describe('chat message presentation', function () {
         toValue: 1,
         useNativeDriver: true
       })
-      expect(preview.style.transform).not.equals('')
-      expect(getComputedStyle(preview).opacity).equals('0')
+      expect(moved(preview)).equals(true)
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0')
       await act(async () => {
         animations.at(-1)!.value.setValue(0.5)
       })
-      expect(getComputedStyle(preview).opacity).equals('0.5')
-      expect(getComputedStyle(panel).opacity).equals('0.5')
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0.5')
+      expect(getComputedStyle(layerOf(panel)).opacity).equals('0.5')
       await finish()
-      expect(getComputedStyle(preview).opacity).equals('1')
-      expect(getComputedStyle(panel).opacity).equals('1')
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('1')
+      expect(getComputedStyle(layerOf(panel)).opacity).equals('1')
       await render(scene(true))
       expect(animations.at(-1)!.config).includes({
         duration: 200,
         toValue: 0,
         useNativeDriver: true
       })
-      expect(preview.style.transform).not.equals('')
       await act(async () => {
         animations.at(-1)!.value.setValue(0.5)
       })
-      expect(getComputedStyle(preview).opacity).equals('0.5')
-      expect(getComputedStyle(panel).opacity).equals('0.5')
+      // Halfway back, the preview is on its way to the source.
+      expect(moved(preview)).equals(true)
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0.5')
+      expect(getComputedStyle(layerOf(panel)).opacity).equals('0.5')
       expect(closed).equals(0)
       await finish()
-      expect(getComputedStyle(preview).opacity).equals('0')
-      expect(getComputedStyle(panel).opacity).equals('0')
+      expect(getComputedStyle(layerOf(preview)).opacity).equals('0')
+      expect(getComputedStyle(layerOf(panel)).opacity).equals('0')
       expect(closed).equals(1)
       expect(history.scrollTop).equals(137)
     })
