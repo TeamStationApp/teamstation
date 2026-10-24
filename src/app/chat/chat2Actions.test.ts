@@ -9045,47 +9045,78 @@ describe('iOS spotlight backdrop dismissal', () => {
               : [
                   {
                     id: 'chat-message-spotlight-controls',
-                    bounds: fault === 'covered' ? frame : controls
+                    bounds: controls
                   }
                 ]),
-            ...(fault === 'compact'
-              ? []
-              : [
-                  {
-                    id: 'chat-message-spotlight-preview',
-                    bounds: {
-                      x: 8,
-                      y: top + 56,
-                      width: 281.3333435058594,
-                      height: 128
-                    }
-                  }
-                ]),
-            ...(fault === 'compact'
-              ? []
-              : [
-                  {
-                    id: 'chat-message-spotlight-panel',
-                    bounds: { x: 8, y: top + 192, width: 386, height: 168 }
-                  }
-                ])
+            ...content()
           ]
+    // The controls container lets touches through its empty space; the
+    // reactions, preview and actions take their own.
+    function content(): Array<{
+      id: string
+      bounds: { x: number; y: number; width: number; height: number }
+    }> {
+      if (fault === 'long')
+        // iOS E5's long message: the preview fills the height between the
+        // reactions and the actions, leaving the status bar and its side.
+        return [
+          {
+            id: 'chat-message-spotlight-reactions',
+            bounds: { x: 8, y: 8, width: 300, height: 54 }
+          },
+          {
+            id: 'chat-message-spotlight-preview',
+            bounds: { x: 8, y: 70, width: 281.3333435058594, height: 586 }
+          },
+          {
+            id: 'chat-message-spotlight-panel',
+            bounds: { x: 8, y: 664, width: 386, height: 168 }
+          }
+        ]
+      if (fault === 'compact')
+        return [
+          {
+            id: 'chat-message-spotlight-panel',
+            bounds: { x: 8, y: top, width: 386, height: 48 }
+          }
+        ]
+      return [
+        {
+          id: 'chat-message-spotlight-reactions',
+          bounds: { x: 8, y: top, width: 300, height: 48 }
+        },
+        {
+          id: 'chat-message-spotlight-preview',
+          bounds:
+            fault === 'covered'
+              ? frame
+              : { x: 8, y: top + 56, width: 281.3333435058594, height: 128 }
+        },
+        {
+          id: 'chat-message-spotlight-panel',
+          bounds: { x: 8, y: top + 192, width: 386, height: 168 }
+        }
+      ]
+    }
     const tap = (x: number, y: number): void => {
       calls.push('tap')
-      if (
-        x >= controls.x &&
-        x <= controls.x + controls.width &&
-        y >= controls.y &&
-        y <= controls.y + controls.height
-      ) {
-        if (y >= top + 305 && y <= top + 353) {
-          actions.push('Unpin')
-          pinned = false
-          open = false
-        }
+      const hit = content().find(
+        ({ bounds: b }) =>
+          x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height
+      )
+      if (hit == null) {
+        open = false
         return
       }
-      open = false
+      if (
+        hit.id === 'chat-message-spotlight-panel' &&
+        y >= top + 305 &&
+        y <= top + 353
+      ) {
+        actions.push('Unpin')
+        pinned = false
+        open = false
+      }
     }
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native: true,
@@ -9157,6 +9188,24 @@ describe('iOS spotlight backdrop dismissal', () => {
         expect(m.pinned()).equals(true)
       }
     )
+
+  it('dismisses beside a long message and below the iOS status bar', async () => {
+    const m = model(8, 'long')
+    const taps: Array<{ x: number; y: number }> = []
+    const point = m.scenario.ui.device.tapOnPoint.bind(m.scenario.ui.device)
+    m.scenario.ui.device.tapOnPoint = async (args, options) => {
+      taps.push(args as { x: number; y: number })
+      await point(args, options)
+    }
+    await m.scenario.dismiss()
+    await m.scenario.ui.absent('chat-message-spotlight')
+    expect(m.actions).deep.equals([])
+    expect(taps).has.length(1)
+    expect(taps[0].x).at.least(8 + 281.3333435058594 + 8)
+    expect(taps[0].y)
+      .at.least(70)
+      .and.at.most(70 + 586)
+  })
 
   it('dismisses compact spotlight when only the measured controls remain', async () => {
     const m = model(122.66666412353516, 'compact')
