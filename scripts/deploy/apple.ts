@@ -350,13 +350,17 @@ export async function withSigning<T>(
       const note = path.join(profilesDirectory, 'profile-note.txt')
       if (existsSync(note))
         console.log('PROFILE note ' + readFileSync(note, 'utf8').trim())
-      console.log(
-        'PROFILE files ' +
-          readdirSync(profilesDirectory)
-            .filter(name => name.endsWith('.mobileprovision'))
-            .join(' ')
+      const chosen = readdirSync(profilesDirectory).filter(name =>
+        /^chosen-\d+\.mobileprovision$/.test(name)
       )
-      for (const name of readdirSync(profilesDirectory)) {
+      const entries =
+        chosen.length > 0
+          ? chosen
+          : readdirSync(profilesDirectory).filter(name =>
+              name.endsWith('.mobileprovision')
+            )
+      console.log('PROFILE files ' + entries.join(' '))
+      for (const name of entries) {
         if (!name.endsWith('.mobileprovision')) continue
         const file = path.join(profilesDirectory, name)
         noSymlinks(file)

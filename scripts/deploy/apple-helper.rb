@@ -162,6 +162,12 @@ when 'match', 'import'
     directory = config.fetch('profilesDirectory')
     before = Dir.children(directory).join(' ')
     keep_installed.call
+    installed_bytes.each_with_index do |(_name, bytes), index|
+      File.binwrite(
+        File.join(directory, format('chosen-%d.mobileprovision', index)),
+        bytes
+      )
+    end
     File.write(
       File.join(directory, 'profile-note.txt'),
       'before ' + before + "\nafter " + Dir.children(directory).join(' ')
