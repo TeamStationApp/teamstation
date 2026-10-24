@@ -33,6 +33,37 @@ when 'match', 'import'
   end
   FastlaneCore::ProvisioningProfile.define_singleton_method(:profiles_path) { config.fetch('profilesDirectory') }
   FileUtils.mkdir_p(config.fetch('profilesDirectory'))
+  # The build reads this directory after Match returns. Keep exactly the
+  # profiles Match installed, including when install writes them somewhere else.
+  installed_for_build = []
+  if command == 'match'
+    keep_installed = lambda do
+      directory = config.fetch('profilesDirectory')
+      Dir[File.join(directory, '*.{mobileprovision,provisionprofile}')].each do |other|
+        next if installed_for_build.include?(File.basename(other))
+        stat = File.lstat(other)
+        raise 'Unexpected provisioning file' unless stat.file? && !stat.symlink?
+        File.unlink(other)
+      end
+    end
+    FastlaneCore::ProvisioningProfile.singleton_class.class_eval do
+      alias_method :teamstation_install, :install unless method_defined?(:teamstation_install)
+      define_method(:install) do |path, keychain_path = nil|
+        destination = teamstation_install(path, keychain_path)
+        directory = config.fetch('profilesDirectory')
+        FileUtils.mkdir_p(directory)
+        installed = File.join(directory, File.basename(destination))
+        unless File.expand_path(destination) == File.expand_path(installed)
+          stat = File.lstat(destination)
+          raise 'Installed profile is not a regular file' unless stat.file? && !stat.symlink?
+          FileUtils.copy(destination, installed)
+        end
+        installed_for_build << File.basename(installed)
+        keep_installed.call
+        destination
+      end
+    end
+  end
   options = {
     type: config.fetch('type'), readonly: true, storage_mode: 'git',
     git_url: config.fetch('repository'), git_branch: config.fetch('branch'),
@@ -129,6 +160,7 @@ when 'match', 'import'
     Match::Importer.new.import_cert(params, cert_path: config.fetch('certificate'), p12_path: config.fetch('privateKey'), profile_path: config.fetch('profile', ''))
   else
     Match::Runner.new.run(FastlaneCore::Configuration.create(Match::Options.available_options, options))
+    keep_installed.call
   end
 when 'project'
   require 'xcodeproj'
