@@ -752,6 +752,32 @@ describe('chat message presentation', function () {
         null
       )
     })
+    it('sends the end value to its views again once the native entrance ends, not after an interrupted one', async function () {
+      for (const finished of [true, false]) {
+        await render(
+          <ChatOverlayHost>
+            <MessageActionOverlay {...overlay()} />
+          </ChatOverlayHost>
+        )
+        const animation = animations.at(-1)!
+        expect(animation.config.toValue).equals(1)
+        const sent: number[] = []
+        const setValue = animation.value.setValue.bind(animation.value)
+        animation.value.setValue = (value: number) => {
+          sent.push(value)
+          setValue(value)
+        }
+        await act(async () => {
+          animation.end?.({ finished })
+          await Promise.resolve()
+        })
+        expect(sent, String(finished)).deep.equals(finished ? [1] : [])
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+      }
+    })
     it('keeps every faded layer on one frame however its part is measured', async function () {
       // iOS re-applies a view's own opacity when its frame changes and then
       // ignores the native driver's value; a part re-measured after the fade

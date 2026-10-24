@@ -181,13 +181,11 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
         useNativeDriver: true
       })
       animation.start(({ finished }) => {
-        if (
-          finished &&
-          active.current &&
-          version === epoch.current &&
-          props.closing
-        )
-          latest.current.onClosed()
+        if (!finished || !active.current || version !== epoch.current) return
+        if (props.closing) latest.current.onClosed()
+        // A view iOS reset after the native fade ended, but before JS heard
+        // that it ended, keeps its first opacity; send it the end value again.
+        else progress.setValue(1)
       })
     }
     if (props.closing && props.source != null) {
