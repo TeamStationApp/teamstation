@@ -30,6 +30,7 @@ import {
   androidScopedBounds,
   Chat2UI,
   iosPublicRead,
+  pollNotVisible,
   type PublicNode,
   readAndroidComposerKeyboard
 } from '../../test/chat2Maestro.e2e'
@@ -11706,5 +11707,60 @@ describe('innermost labelled native tab', function () {
     expect(() => innermostLabelled(nodes, 'Schedule')).throws(
       /required: Schedule/
     )
+  })
+})
+
+describe('iOS absence polling', function () {
+  const visible = (): Error =>
+    new Error(
+      'assertNotVisible: element visible (cause: element unexpectedly visible)'
+    )
+  it('asks again until a visible element is gone', async () => {
+    let calls = 0
+    const result = await pollNotVisible(
+      async () => {
+        calls++
+        if (calls < 3) throw visible()
+        return 'gone'
+      },
+      { id: 'chat-message-spotlight', timeout: 15000 },
+      async () => {}
+    )
+    expect(result).equals('gone')
+    expect(calls).equals(3)
+  })
+  it('keeps one look without a timeout, and rethrows other errors at once', async () => {
+    let calls = 0
+    const once = async (): Promise<unknown> => {
+      calls++
+      throw visible()
+    }
+    await captureFailure(pollNotVisible(once, { id: 'x' }, async () => {}))
+    expect(calls).equals(1)
+    let other = 0
+    const broken = async (): Promise<unknown> => {
+      other++
+      throw new Error('driver disconnected')
+    }
+    const error = await captureFailure(
+      pollNotVisible(broken, { id: 'x', timeout: 15000 }, async () => {})
+    )
+    expect(String(error)).contains('driver disconnected')
+    expect(other).equals(1)
+  })
+  it('reports the element once its timeout has passed', async () => {
+    let calls = 0
+    const error = await captureFailure(
+      pollNotVisible(
+        async () => {
+          calls++
+          throw visible()
+        },
+        { id: 'x', timeout: 0 },
+        async () => {}
+      )
+    )
+    expect(String(error)).contains('unexpectedly visible')
+    expect(calls).equals(1)
   })
 })
