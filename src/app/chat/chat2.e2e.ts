@@ -18,6 +18,8 @@ import type {
   ChatMyKeys,
   TeamStationClient
 } from '../../common/api'
+import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
+import { blobLength } from '../../common/chatCrypto/stream'
 import { HttpError } from '../../common/errors'
 import { gumboOfUserId } from '../../common/userId'
 import {
@@ -6564,7 +6566,9 @@ export class Scenarios {
           )
           await ui.present('chat-attachment-chip')
           const expected = await ui.draft()
-          await ui.device.pressKey({ key: 'ENTER' })
+          // Enter sends only with a fine pointer; on touch it is a newline.
+          if (ui.metrics().coarse) await ui.text('Send')
+          else await ui.device.pressKey({ key: 'ENTER' })
           const received = await this.delivered(expected)
           assert.equal(received.attachments.length, 1)
         } else {
@@ -6611,7 +6615,9 @@ export class Scenarios {
           async () =>
             await client.createChatAttachment({
               conversationId: this.group,
-              size: 101 * 1024 * 1024,
+              // The declared size is the sealed blob's: a 100 MiB file seals
+              // to about 102.4 MiB, so the first refused size is one past it.
+              size: blobLength(MAX_ATTACHMENT_SIZE) + 1,
               digest: 'A'.repeat(43)
             }),
           e => e instanceof HttpError && [400, 413].includes(e.status)
