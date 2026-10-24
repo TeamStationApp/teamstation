@@ -15,6 +15,7 @@ import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Composer } from './Composer'
 import { TessMessage } from './TessMessage'
+import { useTessOverlay } from './TessOverlay'
 import type { TessChatState } from './useTess'
 
 export interface TessChatProps {
@@ -40,7 +41,14 @@ export function TessChat({
   const styles = getStyles(theme)
   const insets = useInsets()
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const overlay = useTessOverlay()
   const { send, upload, showError } = tess
+  // A table or chart open over the pane would hide the page a link goes to,
+  // so the link closes it first.
+  const navigate = (path: string): void => {
+    overlay?.dismiss()
+    onNavigate(path)
+  }
   const confirm = (changeId: string): void => {
     tess.confirm(changeId).catch(() => undefined)
   }
@@ -96,7 +104,7 @@ export function TessChat({
           <TessMessage
             key={message.id}
             message={message}
-            onNavigate={onNavigate}
+            onNavigate={navigate}
             onConfirm={confirm}
           />
         ))}

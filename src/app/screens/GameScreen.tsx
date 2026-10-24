@@ -40,6 +40,7 @@ import {
   useHandoff,
   useHeaderHandoff,
   useHeaderSlot,
+  usePaneWidth,
   VideoPoster
 } from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
@@ -348,7 +349,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const recording = props.recording ?? deviceRecording
   const theme = useTheme()
   const styles = getStyles(theme)
-  const { height, width } = useWindowDimensions()
+  // The pane's width, which beside Tess's chat is less than the window's.
+  const { height } = useWindowDimensions()
+  const width = usePaneWidth()
   /**
    * Nothing in a browser, and the reason a phone on its side used to break.
    *

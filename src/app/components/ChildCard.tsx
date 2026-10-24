@@ -1,11 +1,12 @@
 import React, { useRef, useState } from 'react'
-import { Dimensions, Modal, Pressable, Text, View } from 'react-native'
+import { Modal, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Card } from './Card'
 import { Emblem } from './Emblem'
 import { initialsOf } from './initials'
 import { TeamEmblem } from './TeamEmblem'
+import { usePaneFrame } from './useBreakpoint'
 
 export interface ChildCardPill {
   label: string
@@ -43,6 +44,9 @@ export function ChildCard(props: ChildCardProps): React.ReactElement {
   const styles = getStyles(useTheme())
   const anchor = useRef<React.ComponentRef<typeof View>>(null)
   const [menuAt, setMenuAt] = useState<{ top: number; right: number }>()
+  // The menu is in a modal over the whole window, and the pane's right edge
+  // is the window's: beside Tess's chat only its left edge moves.
+  const pane = usePaneFrame()
   const openMenu = (): void => {
     const place = (
       x: number,
@@ -50,10 +54,9 @@ export function ChildCard(props: ChildCardProps): React.ReactElement {
       width: number,
       height: number
     ): void => {
-      const screenWidth = Dimensions.get('window').width
       setMenuAt({
         top: y + height,
-        right: Math.max(0, screenWidth - x - width)
+        right: Math.max(0, pane.x + pane.width - x - width)
       })
     }
     if (anchor.current?.measureInWindow == null) place(0, 0, 0, 0)

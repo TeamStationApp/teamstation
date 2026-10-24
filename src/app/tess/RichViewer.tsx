@@ -27,15 +27,11 @@ export function RichViewer({
   close.current = onClose
   useEffect(() => {
     if (overlay == null) return
-    const layer = (
-      <ViewerLayer
-        html={html}
-        onClose={() => {
-          close.current()
-        }}
-      />
-    )
-    overlay.show(layer)
+    const closing = (): void => {
+      close.current()
+    }
+    const layer = <ViewerLayer html={html} onClose={closing} />
+    overlay.show(layer, closing)
     return () => {
       overlay.hide(layer)
     }

@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React from 'react'
+import React, { act } from 'react'
 import { View } from 'react-native'
 
 import {
@@ -13,7 +13,12 @@ import {
 } from '../../test/tessTestKit'
 import { RICH_PREVIEW_HEIGHT, RichBlock } from './RichBlock'
 import { RICH_POLICY } from './richDocument'
-import { TessOverlayHost, TessOverlayProvider } from './TessOverlay'
+import {
+  TessOverlayHost,
+  TessOverlayProvider,
+  type TessOverlaySlot,
+  useTessOverlay
+} from './TessOverlay'
 
 const TABLE = '<table><tr><th>Team</th></tr><tr><td>Comets</td></tr></table>'
 
@@ -110,5 +115,34 @@ describe('RichBlock', function () {
     expect(
       byTestId('Tess overlay')!.querySelector('iframe')!.getAttribute('srcdoc')
     ).includes('<svg></svg>')
+  })
+
+  it('closes the open viewer through its card when the slot is dismissed', async function () {
+    let slot: TessOverlaySlot | null = null
+    const Reader = (): null => {
+      slot = useTessOverlay()
+      return null
+    }
+    await render(
+      <TessOverlayProvider>
+        <Reader />
+        <RichBlock html={TABLE} />
+        <TessOverlayHost />
+      </TessOverlayProvider>
+    )
+    // Nothing open: nothing to close.
+    await act(async () => {
+      slot!.dismiss()
+    })
+    expect(byTestId('Tess overlay')).equals(null)
+    await click(byLabel('Open full screen'))
+    expect(byTestId('Tess overlay')).not.equals(null)
+    await act(async () => {
+      slot!.dismiss()
+    })
+    expect(byTestId('Tess overlay')).equals(null)
+    // The card knows it closed, so a tap opens it again.
+    await click(byLabel('Open full screen'))
+    expect(byTestId('Tess rich viewer')).not.equals(null)
   })
 })
