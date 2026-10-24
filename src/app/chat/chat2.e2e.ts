@@ -3672,23 +3672,32 @@ export class Scenarios {
           keyboards.length === 0
             ? scene.y + scene.height
             : Math.min(scene.y + scene.height, measured(keyboards[0]).y)
-        const frame = { ...scene, y: frameTop, height: frameBottom - frameTop }
+        // iOS reports no status bar element, and a touch on it is the
+        // system's scroll to top, not the app's backdrop.
+        const safeTop = ui.surface === 'ios' ? Math.max(frameTop, 60) : frameTop
+        const frame = { ...scene, y: safeTop, height: frameBottom - safeTop }
+        // The controls container lets touches through its empty space, so
+        // only the reactions, the preview and the actions block the backdrop.
+        assert(
+          nodes.filter(node => node.id === 'chat-message-spotlight-controls')
+            .length === 1,
+          'Unique actual spotlight region required: chat-message-spotlight-controls'
+        )
         const blocked = [
-          'chat-message-spotlight-controls',
+          'chat-message-spotlight-reactions',
           'chat-message-spotlight-preview',
           'chat-message-spotlight-panel'
         ]
           .map(id => {
             const found = nodes.filter(node => node.id === id)
             assert(
-              found.length <= 1 &&
-                (id !== 'chat-message-spotlight-controls' ||
-                  found.length === 1),
+              found.length <= 1,
               'Unique actual spotlight region required: ' + id
             )
             return found.map(measured)
           })
           .flat()
+        assert(blocked.length > 0, 'Actual spotlight content required')
         const left = Math.min(...blocked.map(b => b.x))
         const top = Math.min(...blocked.map(b => b.y))
         const right = Math.max(...blocked.map(b => b.x + b.width))
@@ -3707,8 +3716,29 @@ export class Scenarios {
             height: inset.y + inset.height - bottom - 8
           },
           { ...inset, width: left - 8 - inset.x },
-          { ...inset, x: right + 8, width: inset.x + inset.width - right - 8 }
-        ].filter(b => b.width >= 44 && b.height >= 44)
+          { ...inset, x: right + 8, width: inset.x + inset.width - right - 8 },
+          // Beside each content region, inside its own rows: next to a long
+          // message is the only exposed backdrop left.
+          ...blocked.flatMap(b => [
+            { x: inset.x, y: b.y, width: b.x - 8 - inset.x, height: b.height },
+            {
+              x: b.x + b.width + 8,
+              y: b.y,
+              width: inset.x + inset.width - b.x - b.width - 8,
+              height: b.height
+            }
+          ])
+        ]
+          .filter(b => b.width >= 44 && b.height >= 44)
+          .filter(c =>
+            blocked.every(
+              b =>
+                c.x + c.width <= b.x ||
+                c.x >= b.x + b.width ||
+                c.y + c.height <= b.y ||
+                c.y >= b.y + b.height
+            )
+          )
         choices.sort((a, b) => b.width * b.height - a.width * a.height)
         const clear = need(
           choices[0],
