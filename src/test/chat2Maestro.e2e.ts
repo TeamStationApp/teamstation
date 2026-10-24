@@ -3473,12 +3473,14 @@ export class Chat2UI {
     }
     await this.openNativeLink(path)
     // A link sent while a just-relaunched app is still starting can be
-    // dropped; the app then stays on Home. Send it once more, recorded.
+    // dropped; the app then stays on Home. Send it once more, recorded. A
+    // slow start routes the first link late, and a second one would open the
+    // conversation again, so the resend waits well past a slow start.
     const routed =
       path === '/chat' ? 'chat-conversation-list' : 'chat-message-history'
     if (
       (path === '/chat' || /^\/chat\/cnv_[^/]+$/.test(path)) &&
-      !(await this.visible({ id: routed }, 15000))
+      !(await this.visible({ id: routed }, 45000))
     ) {
       this.steps.push({
         name: 'Native chat link resent after an unrouted first delivery',
