@@ -1839,6 +1839,16 @@ export class Scenarios {
         )
     if (await ui.visible({ text: '^Account,.*$' }, 500)) {
       await m.tapOn({ text: '^Account,.*$' })
+      // On a native device the page can fail to open, or be routed away
+      // before it is read; its first section proves it is the Account page.
+      if (
+        ui.native &&
+        !(await ui.visible({ text: exactText('Name') }, 10000))
+      ) {
+        this.observations.push({ accountPageRetapped: true })
+        await m.tapOn({ text: '^Account,.*$' })
+        await m.assertVisible({ text: exactText('Name'), timeout: 15000 })
+      }
       if (await ui.visible({ text: exactText(actor.email) }, 2000))
         await ui.back()
       else {
