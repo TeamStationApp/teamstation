@@ -8380,7 +8380,7 @@ describe('native scenario navigation and mention handoff', function () {
         ) => {
           expect(surface).equals('ios')
           expect(args.holdDuration).equals(16)
-          expect(args.duration).equals(200)
+          expect([80, 200, 1000]).includes(args.duration)
           expect(options?.signal).instanceOf(AbortSignal)
           expect(options?.signal.aborted).equals(false)
           const from = args.from as { point: string }
@@ -8459,11 +8459,13 @@ describe('native scenario navigation and mention handoff', function () {
     })
     await model.scenario.reply(target)
     expect(model.calls).includes('hold')
-    expect(
-      model.calls.filter(
-        call => typeof call === 'object' && call != null && 'from' in call
-      ).length
-    ).greaterThan(1)
+    const drags = model.calls.filter(
+      (call): call is { duration: number } =>
+        typeof call === 'object' && call != null && 'from' in call
+    )
+    expect(drags.length).greaterThan(1)
+    // More than eight screens away: a momentum flick covers the distance.
+    expect(drags[0].duration).equals(80)
     expect(
       model.calls.some(
         call => typeof call === 'object' && call != null && 'direction' in call
@@ -9344,7 +9346,7 @@ describe('native absent history paging', function () {
           duration: number
         }) => {
           expect(args.holdDuration).equals(16)
-          expect(args.duration).equals(200)
+          expect([80, 200, 1000]).includes(args.duration)
           const start = args.from.point.split(',').map(Number)
           const end = args.to.point.split(',').map(Number)
           expect(Math.min(start[1], end[1])).greaterThan(170.6666717529297)
@@ -10168,7 +10170,7 @@ describe('native earlier-control exact-target handoff', function () {
           const b = band()
           expect(Math.min(args.startY, args.endY)).greaterThan(b.top)
           expect(Math.max(args.startY, args.endY)).lessThan(b.bottom)
-          expect(args.duration).equals(200)
+          expect([80, 200, 1000]).includes(args.duration)
           if (!loaded) {
             expect(args.endY).greaterThan(args.startY)
             earlierMoves++

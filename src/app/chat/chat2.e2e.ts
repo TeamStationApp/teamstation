@@ -2417,7 +2417,7 @@ export class Scenarios {
       current.box.y >= current.band.bottom
         ? current.box.y - current.band.bottom
         : current.band.top - current.box.y - current.box.height
-    const swipe = async (delta: number): Promise<boolean> => {
+    const swipe = async (delta: number, duration = 200): Promise<boolean> => {
       const { box, band } = current
       const middle = (band.top + band.bottom) / 2
       const input = {
@@ -2425,7 +2425,7 @@ export class Scenarios {
         endX: Math.round(box.x + box.width / 2),
         startY: Math.round(middle - delta / 2),
         endY: Math.round(middle + delta / 2),
-        duration: 200
+        duration
       }
       assert(
         Math.abs(delta) >= 48 &&
@@ -2468,7 +2468,11 @@ export class Scenarios {
                 Math.max(48, (Math.max(0, before) + height / 4) / 2),
                 crossingLimit
               )
-        if (await swipe((below ? -1 : 1) * travel)) return handoff()
+        // A target many screens away (a long QA history) is reached with
+        // momentum flicks; the measured drags take over near it.
+        const far = ui.surface === 'ios' && before > height * 8
+        if (await swipe((below ? -1 : 1) * travel, far ? 80 : 200))
+          return handoff()
         const nowBelow = current.box.y >= current.band.bottom
         const crossed =
           ui.surface !== 'ios' && !intersects() && below !== nowBelow
@@ -2518,7 +2522,7 @@ export class Scenarios {
     }
     for (let step = 0; !safe(); step++) {
       assert(
-        step < 4 && current.box.height > 0,
+        step < (ui.surface === 'ios' ? 8 : 4) && current.box.height > 0,
         'Positive native target must clear header, pins and composer'
       )
       const { box, band } = current
@@ -2527,9 +2531,12 @@ export class Scenarios {
         box.y -
         Math.min(box.height, band.bottom - band.top - 32) / 2
       const limit = Math.max(48, (band.bottom - band.top) / 8)
+      // A quick short drag still flings an iOS history about 200 pt (E10's
+      // tall target never landed in its 17 pt window); a slow one does not.
       if (
         await swipe(
-          Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired)))
+          Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired))),
+          ui.surface === 'ios' ? 1000 : 200
         )
       )
         return handoff()
