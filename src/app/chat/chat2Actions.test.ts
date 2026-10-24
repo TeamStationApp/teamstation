@@ -11797,3 +11797,77 @@ describe('iOS absence polling', function () {
     expect(calls).equals(1)
   })
 })
+
+describe('native below-reader attention count', function () {
+  const message = (id: string): Chat2Message => ({
+    id,
+    seq: 1,
+    body: 'Synthetic',
+    authorId: userIdOfGumbo(2)
+  })
+  function scenario(native: boolean): Scenarios {
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native,
+      surface: native ? 'ios' : 'web-wide',
+      nodes: async () => [
+        {
+          id: 'chat-conversation-identity',
+          bounds: { x: 0, y: 60, width: 400, height: 50 }
+        },
+        {
+          id: 'chat-pinned-band',
+          bounds: { x: 0, y: 110, width: 400, height: 60 }
+        },
+        {
+          id: 'chat-composer-band',
+          bounds: { x: 0, y: 700, width: 400, height: 54 }
+        },
+        {
+          id: 'chat-message-body-msg-anchor',
+          bounds: { x: 0, y: 200, width: 300, height: 40 }
+        },
+        // Above the anchor: not part of the fixture count.
+        {
+          id: 'chat-message-body-msg-above',
+          bounds: { x: 0, y: 180, width: 300, height: 10 }
+        },
+        // Below the anchor and viewed: no longer counted by the app.
+        {
+          id: 'chat-message-body-msg-viewed',
+          bounds: { x: 0, y: 600, width: 300, height: 40 }
+        },
+        // Below the anchor and still below the reading area: counted.
+        {
+          id: 'chat-message-body-msg-below',
+          bounds: { x: 0, y: 690, width: 300, height: 40 }
+        }
+      ]
+    })
+    return Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+  }
+  const fixture = {
+    expectedCount: 9,
+    readerAnchor: message('msg-anchor'),
+    targetIds: ['msg-above', 'msg-viewed', 'msg-below', 'msg-unmounted']
+  } as unknown as NonNullable<Parameters<Scenarios['belowReaderCount']>[0]>
+  it('subtracts only targets a native reader already shows below its anchor', async () => {
+    const s = scenario(true)
+    expect(await s.belowReaderCount(fixture)).equals(8)
+    expect(s.observations).deep.equals([
+      {
+        belowReaderCount: 8,
+        fixtureCount: 9,
+        viewedTargetsBelowAnchor: ['msg-viewed'],
+        readingArea: { top: 170, bottom: 700 }
+      }
+    ])
+  })
+  it('keeps the fixture count on web', async () => {
+    const s = scenario(false)
+    expect(await s.belowReaderCount(fixture)).equals(9)
+    expect(s.observations).deep.equals([])
+  })
+})
