@@ -1845,6 +1845,9 @@ describe('chat native adapter compatibility', function () {
       native: false,
       deadline: AbortSignal.timeout(10000),
       metrics: () => ({ width, height: width === 390 ? 844 : 1000 }),
+      appendComposer: async (text: string) => {
+        draft += text
+      },
       append: async (text: string) => {
         draft += text
       },
