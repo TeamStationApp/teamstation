@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -61,6 +61,16 @@ const UNLOADED = 'Unable to load scoring.'
 const UNREAD = 'could not be read back'
 
 type Person = keyof LineupFixture['users']
+
+const pause = async (ms: number): Promise<void> => {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** A command's report on stderr, which ffmpeg writes its measures to. */
+function spawnText(command: string, args: string[]): string {
+  const result = spawnSync(command, args, { encoding: 'utf8' })
+  return `${result.stdout}${result.stderr}`
+}
 
 /** The local stack's database, from the API's own config. */
 function databaseUrl(): string {
@@ -278,6 +288,60 @@ async function sides(
   return row
 }
 
+/**
+ * Taps the page's game audio, before the app loads: every audio context
+ * also feeds a stream, and everything played to the speakers is played into
+ * it, so `window.__gameAudio` can record what the page sounded. No ?. or ??
+ * here: sucrase turns them into helpers the page lacks.
+ */
+const AUDIO_TAP = `(() => {
+  const Base = window.AudioContext
+  if (Base == null) return
+  const connect = AudioNode.prototype.connect
+  window.AudioContext = class extends Base {
+    constructor(...args) {
+      super(...args)
+      this.__tap = this.createMediaStreamDestination()
+      // A silent source keeps the stream flowing between sounds, so the
+      // recording runs the whole time, quiet stretches included.
+      const quiet = this.createConstantSource()
+      quiet.offset.value = 0
+      quiet.connect(this.__tap)
+      quiet.start()
+      window.__gameAudioTap = this.__tap
+    }
+  }
+  AudioNode.prototype.connect = function (target, ...rest) {
+    const result = connect.call(this, target, ...rest)
+    if (target instanceof AudioDestinationNode && target.context.__tap != null)
+      connect.call(this, target.context.__tap)
+    return result
+  }
+  let recorder = null
+  const chunks = []
+  window.__gameAudio = {
+    start() {
+      if (window.__gameAudioTap == null) return false
+      chunks.length = 0
+      recorder = new MediaRecorder(window.__gameAudioTap.stream)
+      recorder.ondataavailable = event => chunks.push(event.data)
+      recorder.start(100)
+      return true
+    },
+    stop() {
+      return new Promise(resolve => {
+        recorder.onstop = async () => {
+          const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer())
+          let text = ''
+          for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i])
+          resolve(btoa(text))
+        }
+        recorder.stop()
+      })
+    }
+  }
+})()`
+
 /** One browser, and what the scenarios do in it. */
 class Browser {
   readonly errors: string[] = []
@@ -285,6 +349,7 @@ class Browser {
     readonly session: BrowserSession,
     readonly page: Page
   ) {
+    page.evaluateOnNewDocument(AUDIO_TAP).catch(() => undefined)
     page.on('pageerror', (error: unknown) => {
       this.errors.push(
         error instanceof Error ? String(error.stack) : String(error)
@@ -415,6 +480,35 @@ class Browser {
       const node = document.querySelector(`[aria-label="${label}"]`)
       // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- sucrase turns ?. into a helper the page lacks
       return node != null && node.getAttribute('aria-disabled') === 'true'
+    }, label)
+  }
+
+  async has(label: string): Promise<boolean> {
+    return (await this.page.$(`[aria-label="${label}"]`)) != null
+  }
+
+  /** Whether the labelled switch is on. */
+  async switchOn(label: string): Promise<boolean> {
+    return await this.page.evaluate((label: string) => {
+      // react-native's Switch on the web is the labelled checkbox itself.
+      const node = document.querySelector(`[aria-label="${label}"]`)
+      return node instanceof HTMLInputElement
+        ? node.checked
+        : node !== null && node.getAttribute('aria-checked') === 'true'
+    }, label)
+  }
+
+  /** Whether the labelled element is what a tap at its middle reaches. */
+  async uncovered(label: string): Promise<boolean> {
+    return await this.page.evaluate((label: string) => {
+      const node = document.querySelector(`[aria-label="${label}"]`)
+      if (node == null) return false
+      const box = node.getBoundingClientRect()
+      const hit = document.elementFromPoint(
+        box.left + box.width / 2,
+        box.top + box.height / 2
+      )
+      return hit != null && (hit === node || node.contains(hit))
     }, label)
   }
 
@@ -931,6 +1025,140 @@ describe('home and away swapped before the first pitch', function () {
       await phone.waitText('End Game')
       expect(await phone.onScreen('End Game')).equals(true)
       await phone.capture('scoring-menu-phone-after.png')
+    })
+  })
+
+  it('E9: the speaker at the upper left mutes the game, and stays muted', async function () {
+    const file = 'scoring-sound-cues.log'
+    const fixture = await preparedGame(file)
+    await browser.as(fixture, 'scorekeeper')
+    await browser.scoreGame(fixture.gameId)
+    await browser.waitText(`Batter ${fixture.players.away[0].name}`, 60000)
+    // The browser keeps the scorekeeper's preferences from run to run: start
+    // from sounds on.
+    await browser.waitText('game sounds')
+    if (await browser.has('Unmute game sounds')) {
+      await browser.tap('Unmute game sounds')
+      await browser.waitText('Mute game sounds')
+    }
+    await browser.capture('scoring-sound-after.png')
+
+    // The first pitch opens the page's audio; the recording takes two
+    // pitches with the speaker on, then two after the tap.
+    await browser.tap('Called Strike')
+    await pause(2500)
+    expect(await browser.page.evaluate('window.__gameAudio.start()')).equals(
+      true
+    )
+    const started = Date.now()
+    for (let pitch = 0; pitch < 2; pitch++) {
+      await browser.tap('Called Strike')
+      await pause(2500)
+    }
+    const muted = (Date.now() - started) / 1000
+    await browser.tap('Mute game sounds')
+    await browser.waitText('Unmute game sounds')
+    await browser.capture('scoring-sound-muted.png')
+    for (let pitch = 0; pitch < 2; pitch++) {
+      await browser.tap('Called Strike')
+      await pause(2500)
+    }
+    const recorded = String(
+      await browser.page.evaluate('window.__gameAudio.stop()')
+    )
+    const length = (Date.now() - started) / 1000
+    const scratch = join(tmpdir(), 'side-swap-e2e', 'scoring-sound-cues.webm')
+    await mkdir(join(tmpdir(), 'side-swap-e2e'), { recursive: true })
+    await writeFile(scratch, Buffer.from(recorded, 'base64'))
+    const ogg = join(
+      ARTIFACTS ?? join(tmpdir(), 'side-swap-e2e'),
+      'scoring-sound-cues.ogg'
+    )
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', scratch, ogg])
+    await note(
+      file,
+      `$ ffmpeg -i <the page's recording>.webm scoring-sound-cues.ogg\n(the speaker tapped at ${muted.toFixed(1)} s of ${length.toFixed(1)} s)\n`
+    )
+    const loudness = async (
+      from: number,
+      span: number,
+      which: string
+    ): Promise<number> => {
+      const args = [
+        '-hide_banner',
+        '-ss',
+        from.toFixed(2),
+        '-t',
+        span.toFixed(2),
+        '-i',
+        ogg,
+        '-af',
+        'volumedetect',
+        '-f',
+        'null',
+        '-'
+      ]
+      const report = spawnText('ffmpeg', args)
+      const lines = report
+        .split('\n')
+        .filter(line => /mean_volume|max_volume/.test(line))
+        .map(line => line.replace(/^.*\] /, ''))
+      await note(
+        file,
+        `$ ffmpeg ${args.join(' ')}   (${which})\n${lines.join('\n')}\n`
+      )
+      const max = /max_volume: (-?[\d.]+|-inf) dB/.exec(report)
+      return max == null || max[1] === '-inf' ? -Infinity : Number(max[1])
+    }
+    const on = await loudness(0, muted, 'speaker on: two pitches')
+    const off = await loudness(
+      muted + 0.5,
+      length - muted - 0.5,
+      'speaker off: two pitches'
+    )
+    expect(on, 'the cues with the speaker on').above(-40)
+    expect(off, 'nothing after the tap').below(-60)
+
+    // Opened again, it is still muted, and Settings agrees.
+    await browser.scoreGame(fixture.gameId)
+    await browser.waitText('Unmute game sounds')
+    await browser.tap('Open scoring menu')
+    await browser.tap('Settings')
+    await browser.waitText('Scoring sound')
+    expect(await browser.switchOn('Toggle scoring sound')).equals(false)
+    await note(
+      file,
+      'opened again: the speaker reads Unmute game sounds, and Settings has Scoring sound off\n'
+    )
+    // Settings' switch is the same setting: turned on there, the speaker
+    // follows. Sounds stay on for the next run.
+    await browser.tap('Toggle scoring sound')
+    await browser.waitText('Mute game sounds')
+    expect(await browser.switchOn('Toggle scoring sound')).equals(true)
+    await note(
+      file,
+      "Settings' Scoring sound switched back on: the speaker reads Mute game sounds\n"
+    )
+
+    // At a phone's size: the speaker clear of the scoreboard and ☰, and the
+    // instruction toast between them.
+    const small = await preparedGame(null)
+    await phone(async phone => {
+      await phone.as(small, 'scorekeeper')
+      await phone.scoreGame(small.gameId)
+      await phone.waitText(`Batter ${small.players.away[0].name}`, 60000)
+      await phone.waitText('game sounds')
+      const speaker = (await phone.has('Mute game sounds'))
+        ? 'Mute game sounds'
+        : 'Unmute game sounds'
+      await phone.capture('scoring-sound-phone-after.png')
+      // A single: the screen asks where the ball went.
+      await phone.tap('Swing in Play')
+      await phone.tap('Single')
+      await pause(800)
+      expect(await phone.uncovered(speaker)).equals(true)
+      expect(await phone.uncovered('Open scoring menu')).equals(true)
+      await phone.capture('scoring-sound-phone-instruction.png')
     })
   })
 })

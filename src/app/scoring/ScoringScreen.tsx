@@ -1019,6 +1019,17 @@ function ScoringPanel(props: {
     })
   }, [props.game, model.savedUndos, model.savedUndone, state.log])
   const [sound, setSound] = useState(true)
+  // Once the scorer has tapped the speaker, the stored setting read as the
+  // screen opened no longer decides it.
+  const soundTouched = useRef(false)
+  const toggleSound = (): void => {
+    const next = !sound
+    soundTouched.current = true
+    setSound(next)
+    scoringPreferences
+      .update(props.userId, stored => ({ ...stored, sound: next }))
+      .catch(() => undefined)
+  }
   const [dictationModel, setDictationModel] = useState<DictationModel>()
   useEffect(() => {
     let live = true
@@ -1026,7 +1037,7 @@ function ScoringPanel(props: {
       .read(props.userId)
       .then(value => {
         if (live) {
-          setSound(value.sound !== false)
+          if (!soundTouched.current) setSound(value.sound !== false)
           setDictationModel(value.dictationModel)
           dispatch({
             type: 'PRESENTATION',
@@ -2101,15 +2112,11 @@ function ScoringPanel(props: {
     )
       return
     scoringPreferences
-      .read(props.userId)
-      .then(async preferences => {
-        if (!live || !preferences.help || preferences.shown >= 3) return
+      .update(props.userId, preferences => {
+        if (!live || !preferences.help || preferences.shown >= 3) return null
         shownAppearances.current.add(helpKey)
         setHint(true)
-        await scoringPreferences.write(props.userId, {
-          ...preferences,
-          shown: preferences.shown + 1
-        })
+        return { ...preferences, shown: preferences.shown + 1 }
       })
       .catch(() => undefined)
     return () => {
@@ -2596,6 +2603,7 @@ function ScoringPanel(props: {
         />
       }
       onMenuButton={setMenuButton}
+      sound={{ on: sound, onToggle: toggleSound }}
       onMenu={() => {
         if (tiebreaker.active) return
         pauseClock()

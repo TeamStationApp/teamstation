@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
 import { GlassView } from '../components/GlassView'
+import { Icon } from '../components/Icon'
 import { PillButton } from '../components/PillTabs'
 import { lstrings, sprintf } from '../locales/strings'
 import {
@@ -33,6 +34,7 @@ import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
 import { FieldCanvas } from './FieldCanvas'
 import {
+  compactToastBounds,
   type MenuButtonEdges,
   menuButtonEdges,
   toastTopBelow,
@@ -98,8 +100,16 @@ export interface BaseballScreenProps {
   walkUpControl?: React.ReactNode
   /** Sits directly above the column that holds Bunt and Swing. */
   dictationControl?: React.ReactNode
-  /** Sits in the top-left corner, ending left of the menu button. */
+  /**
+   * Sits in the top-left corner, ending left of the menu button; with the
+   * speaker, between it and the menu button.
+   */
   dictationLog?: React.ReactNode
+  /**
+   * The speaker at the top-left corner, opposite ☰: the game's sounds, on
+   * or off. Walk-up songs are not its to stop.
+   */
+  sound?: { on: boolean; onToggle: () => void }
   onDismissHint?: () => void
 }
 /** Immersive scoring surface, with one fixed responsive camera. */
@@ -141,7 +151,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   }, [menuBottom, menuRight, onMenuButton])
   const compact = viewportHeight > 0 && viewportHeight < 480 && header != null
   const toastBounds = compact
-    ? { ...header, width: Math.max(100, header.width - 56) }
+    ? compactToastBounds(header, props.sound != null)
     : bounds
   const button = { ...controlFrame, flex: 1 } as const
   return (
@@ -201,7 +211,47 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           >
             {props.summary}
           </Text>
-          {props.dictationLog != null && (
+          {props.sound != null && (
+            <GlassView
+              radius={24}
+              interactive
+              androidBlur
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+                overflow: 'hidden',
+                marginRight: 8
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  props.sound.on ? 'Mute game sounds' : 'Unmute game sounds'
+                }
+                onPress={() => {
+                  props.sound?.onToggle()
+                }}
+                style={{
+                  width: 48,
+                  height: 48,
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <Icon
+                  name={props.sound.on ? 'volume_up' : 'volume_off'}
+                  size={1.5}
+                  color={
+                    props.sound.on
+                      ? CONTROL_COLORS.micOn.text
+                      : CONTROL_COLORS.micOff.text
+                  }
+                />
+              </Pressable>
+            </GlassView>
+          )}
+          {(props.dictationLog != null || props.sound != null) && (
             <View
               pointerEvents="box-none"
               style={{ flex: 1, minWidth: 0, height: 48, marginRight: 8 }}

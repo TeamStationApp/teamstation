@@ -1,13 +1,14 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { TeamStationClient } from '../../common/api'
+import { DICTATION_MODELS, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { scoringRoster } from '../../test/scoringSession'
 import { App, stackFor } from '../App'
 import { BaseballScreen } from '../field/BaseballScreen'
+import { compactToastBounds } from '../field/fieldSafeArea'
 import { StandaloneField } from '../field/StandaloneField'
 import { parseRoute } from '../navigation/routes'
 import {
@@ -20,6 +21,8 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic from '../walkup/walkUpMusic'
 import type { PlaybackState, WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { gameFixture } from './isUnscoredGame.test'
+import { scoringAudio } from './scoringAudio'
+import { scoringPreferences } from './scoringPreferences'
 import { ScoringScreen } from './ScoringScreen'
 import { useScoringExit as nativeExit } from './useScoringExit.native'
 
@@ -718,5 +721,243 @@ describe('scoring shell and exit', function () {
       root?.unmount()
     })
     root = undefined
+  })
+})
+
+describe('muting the game', function () {
+  const MUTE = 'Mute game sounds'
+  const UNMUTE = 'Unmute game sounds'
+  const song = {
+    provider: 'localFile',
+    providerId: 'lf:000000000000000b',
+    isrc: null,
+    title: 'Walk This Way',
+    artist: 'Band',
+    album: null,
+    artworkUrl: null,
+    durationMs: 90000,
+    startMs: 10000,
+    endMs: 25000
+  }
+  const roster = (base: number): unknown[] =>
+    Array.from({ length: 9 }, (_, index) => ({
+      userId: userIdOfGumbo(base + index),
+      gumboId: base + index,
+      shortName: `P${base + index}`,
+      fullName: null,
+      avatarUrl: null,
+      jersey: String(index + 1),
+      positions: [],
+      isPlayer: true,
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
+      walkUpSong: song
+    }))
+  const originalFetch = globalThis.fetch
+
+  const setEnabled = scoringAudio.setEnabled
+  let enabled: boolean[] = []
+  beforeEach(function () {
+    enabled = []
+    scoringAudio.setEnabled = value => {
+      enabled.push(value)
+      setEnabled(value)
+    }
+    globalThis.fetch = async input => {
+      const path = (
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      ).split('?')[0]
+      const data = path.endsWith('/games/g1')
+        ? gameFixture
+        : path.endsWith('/teams/away/roster')
+          ? roster(100)
+          : path.endsWith('/teams/home/roster')
+            ? roster(200)
+            : []
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+  })
+  afterEach(async function () {
+    scoringAudio.setEnabled = setEnabled
+    globalThis.fetch = originalFetch
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+  }
+  async function scoring(music: WalkUpMusic = webMusic): Promise<void> {
+    await render(
+      <ScoringScreen
+        client={new TeamStationClient({ baseUrl: 'http://api.test' })}
+        gameId="g1"
+        userId="muter"
+        onExit={() => undefined}
+        music={music}
+        resolveSong={async () => 'content://walk'}
+      />
+    )
+    await settle()
+  }
+
+  it('mutes and unmutes the game from the upper left, keeping every other preference', async function () {
+    await scoringPreferences.write('muter', {
+      help: false,
+      shown: 2,
+      animations: false,
+      dictationModel: DICTATION_MODELS[0]
+    })
+    await scoring()
+    expect(enabled.at(-1)).equals(true)
+    await click(MUTE)
+    await settle()
+    expect(enabled.at(-1)).equals(false)
+    expect(document.querySelector(`[aria-label="${UNMUTE}"]`)).not.equals(null)
+    expect(await scoringPreferences.read('muter')).deep.equals({
+      help: false,
+      shown: 2,
+      animations: false,
+      dictationModel: DICTATION_MODELS[0],
+      sound: false
+    })
+    await click(UNMUTE)
+    await settle()
+    expect(enabled.at(-1)).equals(true)
+    expect(document.querySelector(`[aria-label="${MUTE}"]`)).not.equals(null)
+    expect(await scoringPreferences.read('muter')).deep.include({
+      help: false,
+      shown: 2,
+      animations: false,
+      sound: true
+    })
+  })
+
+  it('opens muted when the game’s sounds were turned off', async function () {
+    await scoringPreferences.write('muter', {
+      help: false,
+      shown: 0,
+      sound: false
+    })
+    await scoring()
+    expect(enabled.at(-1)).equals(false)
+    expect(document.querySelector(`[aria-label="${UNMUTE}"]`)).not.equals(null)
+  })
+
+  it('still plays a walk-up song while muted', async function () {
+    await scoringPreferences.write('muter', { help: false, shown: 0 })
+    const listeners = new Set<(state: PlaybackState) => void>()
+    const played: string[] = []
+    const phone: WalkUpMusic = {
+      ...webMusic,
+      available: true,
+      play: async handle => {
+        played.push(handle)
+        for (const listener of listeners)
+          listener({ kind: 'playing', handle, positionMs: 0 })
+      },
+      stop: async () => undefined,
+      onState: listener => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      }
+    }
+    await scoring(phone)
+    await click(MUTE)
+    await settle()
+    expect(enabled.at(-1)).equals(false)
+    const note = document.querySelector<HTMLElement>(
+      '[data-testid="walk-up-note"]'
+    )
+    expect(note, 'note').not.equals(null)
+    await act(async () => {
+      note?.click()
+    })
+    await settle()
+    expect(played).deep.equals(['content://walk'])
+    expect(document.querySelector(`[aria-label="${UNMUTE}"]`)).not.equals(null)
+  })
+
+  it('keeps every field when the speaker and other writers update at once', async function () {
+    await scoringPreferences.write('muter', { help: true, shown: 1 })
+    await Promise.all([
+      scoringPreferences.update('muter', stored => ({
+        ...stored,
+        sound: false
+      })),
+      scoringPreferences.update('muter', stored => ({
+        ...stored,
+        shown: stored.shown + 1
+      })),
+      scoringPreferences.update('muter', stored => ({
+        ...stored,
+        animations: false
+      })),
+      scoringPreferences.update('muter', () => null)
+    ])
+    expect(await scoringPreferences.read('muter')).deep.equals({
+      help: true,
+      shown: 2,
+      sound: false,
+      animations: false
+    })
+  })
+
+  it('keeps a tap made before the stored setting is read', async function () {
+    await scoringPreferences.write('muter', { help: false, shown: 0 })
+
+    const read = scoringPreferences.read
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    scoringPreferences.read = async userId => {
+      await held
+      return await read(userId)
+    }
+    try {
+      await scoring()
+      await click(MUTE)
+      release()
+      await settle()
+      expect(enabled.at(-1)).equals(false)
+      expect(document.querySelector(`[aria-label="${UNMUTE}"]`)).not.equals(
+        null
+      )
+      expect((await read('muter')).sound).equals(false)
+    } finally {
+      scoringPreferences.read = read
+    }
+  })
+
+  it('keeps the speaker first in the header row, and the compact toast clear of it', async function () {
+    await scoring()
+    const speaker = document.querySelector(`[aria-label="${MUTE}"]`)
+    const menu = document.querySelector('[aria-label="Open scoring menu"]')
+    expect(speaker, 'speaker').not.equals(null)
+    expect(
+      speaker!.compareDocumentPosition(menu!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    const header = { x: 8, y: 8, width: 899, height: 48 }
+    const toast = compactToastBounds(header, true)
+    expect(toast.x).at.least(header.x + 56)
+    expect(toast.x + toast.width).at.most(header.x + header.width - 56)
+    const plain = compactToastBounds(header, false)
+    expect(plain.x).equals(header.x)
+    expect(plain.x + plain.width).at.most(header.x + header.width - 56)
   })
 })

@@ -53,3 +53,16 @@ export function scoringMenuFrame(button: MenuButtonEdges): {
 export function toastTopBelow(button: MenuButtonEdges): number {
   return button.bottom + 6
 }
+
+/**
+ * The instruction toast laid over the header row at a phone's height: clear
+ * of ☰ on the right and, with the speaker there, of it on the left.
+ */
+export function compactToastBounds<T extends { x: number; width: number }>(
+  header: T,
+  speaker: boolean
+): T {
+  return speaker
+    ? { ...header, x: header.x + 56, width: Math.max(100, header.width - 112) }
+    : { ...header, width: Math.max(100, header.width - 56) }
+}
