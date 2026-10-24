@@ -2265,7 +2265,9 @@ export class Scenarios {
           ? [(await ui.readAndroidIme()).bounds]
           : []
     if (keyboard.length > 0) end = startedAt + 120000
-    if (earlier) end = startedAt + 180000
+    // iOS swipes about a screen per read of a ~2600-node tree, and the
+    // earlier control sits a long history above the reader.
+    if (earlier) end = startedAt + (ui.surface === 'ios' ? 420000 : 180000)
     assert(keyboard.length <= 1, 'Unique actual native Keyboard required')
     const intersects = (): boolean =>
       current.box.height > 0 &&
