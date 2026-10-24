@@ -64,7 +64,11 @@ export {
   type Breakpoint,
   breakpointFor,
   columnsFor,
-  useBreakpoint
+  type PaneFrame,
+  PaneFrameContext,
+  useBreakpoint,
+  usePaneFrame,
+  usePaneWidth
 } from './useBreakpoint'
 export {
   HeaderSlotProvider,

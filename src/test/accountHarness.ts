@@ -1,4 +1,4 @@
-import { createServer } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 
@@ -244,6 +244,7 @@ export async function accountHarness(
     objects,
     controls,
     origin,
+    server,
     tokens,
     async request(
       method: string,
@@ -293,6 +294,8 @@ export interface AccountHarness {
   objects: Map<string, Buffer>
   controls: { failMail: boolean; failPut: boolean }
   origin: string
+  /** The API's HTTP server, for a fixture that adds a socket to it. */
+  server: Server
   tokens: Map<number, string>
   request: (
     method: string,
