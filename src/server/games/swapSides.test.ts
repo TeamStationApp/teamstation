@@ -20,6 +20,7 @@ import {
   type SessionContext
 } from '../../common/scoring/session'
 import { type GameSetup, setupOf } from '../../common/scoring/state'
+import { recordBySide } from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
@@ -33,6 +34,7 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import { type Database, makeDatabase } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
@@ -169,9 +171,10 @@ describe('swapping a game’s home and away teams', function () {
   const store = (id: string): EventStore => ({
     load: async () => {
       const game = await row(id)
+      const plays = await readPlays(db, id)
       return {
-        plays: (await readPlays(db, id)).map(play => play.gumbo as GumboPlay),
-        currentPlay: game.currentPlay as CurrentPlay | null,
+        plays: plays.map(play => play.gumbo as GumboPlay),
+        currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null,
         lineupsDigest: await storedLineupsDigest(db, game)
       }
     },
@@ -299,7 +302,7 @@ describe('swapping a game’s home and away teams', function () {
             source: { system: 'teamstation' },
             lineupsBase: base,
             plays: [],
-            currentPlay: (await row(id)).currentPlay as CurrentPlay
+            currentPlay: atBatOf(await row(id), false) as CurrentPlay
           })
         )
     )
@@ -362,15 +365,18 @@ describe('swapping a game’s home and away teams', function () {
       lineups.away.current!.batters.map(batter => batter.gumboId)
     ).deep.equals([10, 11, 12, 13, 14, 15, 16, 17, 18])
 
-    // The at-bat in progress: the hosts, now away, bat first against the
+    // No at-bat is stored before the first pitch: the lineups are the
+    // pregame record, and the hosts, now away, bat first against the
     // visitors' pitcher.
-    expect(game.currentPlay).nested.property('matchup.batter.id', 10)
-    const setup = recordOf(game.currentPlay, {
+    expect(game.currentPlay).equals(null)
+    expect(game.pregame).not.equals(null)
+    const setup = recordOf(atBatOf(game, false), {
       away: { id: game.away_team_id },
       home: { id: game.home_team_id }
     })!.setupBefore
-    expect(game.currentPlay).nested.property(
-      'matchup.pitcher.id',
+    const reopened = await open('gam_saved', true)
+    expect(reopened.state.liveData.linescore.offense.batter?.id).equals(10)
+    expect(reopened.state.liveData.boxscore.teams.home.defense.P).equals(
       setup.sides.home.defense.P
     )
     expect(setup.sides.home.players).include(1)
@@ -434,6 +440,14 @@ describe('swapping a game’s home and away teams', function () {
       .insertInto('teams')
       .values({ id: replacement, name: 'Replacement' })
       .execute()
+    await db
+      .updateTable('games')
+      .set({
+        guests: { [TEAMS.home.id]: [7], [TEAMS.away.id]: [] },
+        unrostered: { [TEAMS.home.id]: [3], [TEAMS.away.id]: [] }
+      })
+      .where('id', '=', 'gam_retarget')
+      .execute()
     await atomic(db, async trx => {
       await trx
         .updateTable('games')
@@ -455,6 +469,14 @@ describe('swapping a game’s home and away teams', function () {
       home: { id: replacement }
     }
     expect(recordOf(game.currentPlay, teams)).not.equals(null)
+    expect(game.guests).deep.equals({
+      [replacement]: [7],
+      [TEAMS.away.id]: []
+    })
+    expect(game.unrostered).deep.equals({
+      [replacement]: [3],
+      [TEAMS.away.id]: []
+    })
     expect(
       recordOf(plays[0].gumbo, teams)!.setupBefore.sides.home.battingOrder
     ).length(9)
@@ -464,6 +486,26 @@ describe('swapping a game’s home and away teams', function () {
       JSON.stringify(game.currentPlay)
     )
     await retargetGameTeams(db, [], TEAMS.away.id, replacement)
+  })
+
+  it('swaps a game whose pregame is still stored by side, each team keeping its lineup (P9)', async function () {
+    await prepared('gam_side_pregame')
+    const before = await row('gam_side_pregame')
+    const teams = teamsOfRow(before)
+    // As an older write left it: version 2, by side.
+    await db
+      .updateTable('games')
+      .set({ pregame: recordBySide(before.pregame, teams) as never })
+      .where('id', '=', 'gam_side_pregame')
+      .execute()
+    const was = await lineupsAnswer(db, await row('gam_side_pregame'))
+    await swap('gam_side_pregame')
+    const game = await row('gam_side_pregame')
+    expect(game.pregame).deep.include({ version: 3 })
+    const now = await lineupsAnswer(db, game)
+    expect(now.home.teamId).equals(was.away.teamId)
+    expect(now.home.current).deep.equals(was.away.current)
+    expect(now.away.current).deep.equals(was.home.current)
   })
 
   it('leaves a record that replays on the new teams and their rosters', async function () {
@@ -501,6 +543,32 @@ describe('swapping a game’s home and away teams', function () {
     const stale = await staleRoster('gam_digest', base)
     expect(stale).property('code', 'conflict')
     expect(stale).nested.property('details.stale', true)
+  })
+
+  it('stores lists an older write left keyed by side under their teams as it swaps', async function () {
+    await newGame('gam_sideLists')
+    await db
+      .updateTable('games')
+      .set({
+        guests: { away: [], home: [7] },
+        unrostered: { away: [19], home: [] }
+      })
+      .where('id', '=', 'gam_sideLists')
+      .execute()
+    await swap('gam_sideLists')
+    const game = await row('gam_sideLists')
+    expect(game.guests).deep.equals({
+      [TEAMS.away.id]: [],
+      [TEAMS.home.id]: [7]
+    })
+    expect(game.unrostered).deep.equals({
+      [TEAMS.away.id]: [19],
+      [TEAMS.home.id]: []
+    })
+    expect(storedUnrostered(game.unrostered, teamsOfRow(game))).deep.equals({
+      away: [],
+      home: [19]
+    })
   })
 
   it('changes the digest of a game with no record, so a stale device is refused', async function () {
@@ -556,7 +624,9 @@ describe('swapping a game’s home and away teams', function () {
     await refused('gam_walked')
 
     await prepared('gam_placed')
-    const current = (await row('gam_placed')).currentPlay as CurrentPlay
+    // A runner placed before any pitch begins the game: the at-bat that
+    // holds it is stored.
+    const current = atBatOf(await row('gam_placed'), false) as CurrentPlay
     const record = (current as { teamStation?: { actions: unknown[] } })
       .teamStation!
     await db
@@ -598,8 +668,10 @@ describe('swapping a game’s home and away teams', function () {
 
   it('refuses an at-bat TeamStation did not score', async function () {
     await prepared('gam_outside')
-    const { teamStation, ...outside } = (await row('gam_outside'))
-      .currentPlay as CurrentPlay & { teamStation?: unknown }
+    const { teamStation, ...outside } = atBatOf(
+      await row('gam_outside'),
+      false
+    ) as CurrentPlay & { teamStation?: unknown }
     expect(teamStation).not.equals(undefined)
     await db
       .updateTable('games')
@@ -621,23 +693,23 @@ describe('swapping a game’s home and away teams', function () {
       'home_score',
       'away_score',
       'guests',
-      'unrostered',
-      'lineups_digest'
+      'unrostered'
     ] as const)
       expect(game[key], key).deep.equals(before[key])
-    const was = recordOf(before.currentPlay, {
+    // Each swap changes the lineups digest, so a device that missed both is
+    // still refused.
+    expect(game.lineups_digest).not.equals(before.lineups_digest)
+    const was = recordOf(atBatOf(before, false), {
       away: { id: before.away_team_id },
       home: { id: before.home_team_id }
     })!
-    const now = recordOf(game.currentPlay, {
+    const now = recordOf(atBatOf(game, false), {
       away: { id: game.away_team_id },
       home: { id: game.home_team_id }
     })!
     expect(now.setupBefore).deep.equals(was.setupBefore)
     expect(now.actions).deep.equals(was.actions)
-    expect((game.currentPlay as CurrentPlay).matchup).deep.equals(
-      (before.currentPlay as CurrentPlay).matchup
-    )
+    expect(game.pregame).deep.equals(before.pregame)
   })
 
   it('leaves nothing and says nothing when its transaction rolls back', async function () {

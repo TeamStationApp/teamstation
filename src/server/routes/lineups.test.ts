@@ -47,6 +47,7 @@ import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
@@ -571,6 +572,51 @@ describe('the lineup routes (U11)', function () {
       expect(dj.atBat?.side).equals('away')
     })
 
+    it('names no batter for a begun game with no at-bat stored, its pregame lineups kept', async function () {
+      const row = await db!
+        .selectFrom('games')
+        .select(['currentPlay', 'pregame'])
+        .where('id', '=', scored)
+        .executeTakeFirstOrThrow()
+      const play = row.currentPlay as {
+        about: Record<string, unknown>
+        teamStation: unknown
+      }
+      // As a replace post leaves a game TeamStation set up: plays, no at-bat.
+      const id = makeId('event')
+      await db!
+        .insertInto('events')
+        .values({
+          id,
+          gameId: scored,
+          gumbo: { ...play, about: { ...play.about, isComplete: true } },
+          startTime: null,
+          endTime: null,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        })
+        .execute()
+      await db!
+        .updateTable('games')
+        .set({ currentPlay: null, pregame: play.teamStation as never })
+        .where('id', '=', scored)
+        .execute()
+      try {
+        const dj = asDjGame((await get(`/games/${scored}/dj`, ADMIN)).body)
+        expect(dj.atBat).equals(null)
+      } finally {
+        await db!.deleteFrom('events').where('id', '=', id).execute()
+        await db!
+          .updateTable('games')
+          .set({
+            currentPlay: row.currentPlay as never,
+            pregame: row.pregame as never
+          })
+          .where('id', '=', scored)
+          .execute()
+      }
+    })
+
     it("lists each team's default before the game has a record", async function () {
       const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
       expect(dj.home.source).equals('default')
@@ -958,7 +1004,7 @@ describe("saving a side's lineup (U8)", function () {
           currentPlay: (
             await database
               .selectFrom('games')
-              .select('currentPlay')
+              .select(atBatInProgress().as('currentPlay'))
               .where('id', '=', gameId)
               .executeTakeFirstOrThrow()
           ).currentPlay as CurrentPlay | null
@@ -1059,12 +1105,19 @@ describe("saving a side's lineup (U8)", function () {
   async function gameRow(gameId: string): Promise<{
     status: string
     currentPlay: unknown
+    pregame: unknown
     lineups_digest: string | null
     updated_at: Date
   }> {
     return await db!
       .selectFrom('games')
-      .select(['status', 'currentPlay', 'lineups_digest', 'updated_at'])
+      .select([
+        'status',
+        'currentPlay',
+        'pregame',
+        'lineups_digest',
+        'updated_at'
+      ])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
   }
@@ -1116,7 +1169,9 @@ describe("saving a side's lineup (U8)", function () {
     expect(read.home.current?.defense.P?.gumboId).equals(homePlayers[9].userId)
     const row = await gameRow(games.fresh)
     expect(row.status).equals('scheduled')
-    expect(row.currentPlay).not.equals(null)
+    // Before the first pitch the save is the pregame record, with no Gumbo.
+    expect(row.currentPlay).equals(null)
+    expect(row.pregame).not.equals(null)
     expect(read.digest).equals(row.lineups_digest)
     // The answer is what reading the lineups now says, digest and all.
     const again = await ask('GET', `/games/${games.fresh}/lineups`, FAN)
@@ -1160,7 +1215,9 @@ describe("saving a side's lineup (U8)", function () {
     )
     const row = await gameRow(games.unheld)
     expect(row.status).equals('scheduled')
-    expect(row.currentPlay).not.equals(null)
+    // Before the first pitch the save is the pregame record, with no Gumbo.
+    expect(row.currentPlay).equals(null)
+    expect(row.pregame).not.equals(null)
     expect(written).includes(games.unheld)
     // Held now: the same save again changes nothing.
     const writes = written.length

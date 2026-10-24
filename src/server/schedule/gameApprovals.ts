@@ -204,6 +204,7 @@ async function requireEditableTeams(
   if (
     played != null ||
     old.currentPlay != null ||
+    old.pregame != null ||
     old.status === 'inProgress' ||
     old.status === 'final'
   )

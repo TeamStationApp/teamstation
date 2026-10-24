@@ -41,24 +41,34 @@ export async function retargetGameTeams(
   }
   const games = await trx
     .selectFrom('games')
-    .select(['id', 'currentPlay'])
+    .select(['id', 'currentPlay', 'pregame'])
     .where('id', 'in', [...gameIds])
-    .where(sql<string>`"currentPlay"->'teamStation'->>'version'`, '=', '3')
+    .where(
+      sql<boolean>`strpos(coalesce("currentPlay"->'teamStation', 'null')::text
+        || coalesce(pregame, 'null')::text, ${fromTeamId}) > 0`
+    )
     .execute()
   for (const game of games) {
-    const current = game.currentPlay as Record<string, unknown>
+    const current = game.currentPlay as Record<string, unknown> | null
+    const record =
+      current == null
+        ? undefined
+        : retargetRecord(current.teamStation, fromTeamId, toTeamId)
+    const pregame = retargetRecord(game.pregame, fromTeamId, toTeamId)
+    // Written only where a record changed.
+    const changed = {
+      ...(current == null || same(record, current.teamStation)
+        ? {}
+        : { currentPlay: { ...current, teamStation: record } }),
+      ...(same(pregame, game.pregame) ? {} : { pregame: pregame as never })
+    }
+    if (Object.keys(changed).length === 0) continue
     await trx
       .updateTable('games')
-      .set({
-        currentPlay: {
-          ...current,
-          teamStation: retargetRecord(current.teamStation, fromTeamId, toTeamId)
-        }
-      })
+      .set(changed)
       .where('id', '=', game.id)
       .execute()
   }
-
   // A game's guests and players left off are kept under its teams' ids.
   for (const column of ['guests', 'unrostered'] as const)
     await sql`update games set ${sql.ref(column)} =
@@ -67,4 +77,8 @@ export async function retargetGameTeams(
       where id in (${sql.join([...gameIds])}) and ${sql.ref(column)} ? ${fromTeamId}::text`.execute(
       trx
     )
+}
+
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
 }

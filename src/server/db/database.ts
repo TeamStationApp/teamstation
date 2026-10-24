@@ -303,6 +303,8 @@ export interface GamesTable {
   ingest_message: string | null
   /** The at-bat TeamStation is scoring now, as a Gumbo document. */
   currentPlay: Json | null
+  /** The team-keyed lineups before the first pitch; see `atBatInProgress`. */
+  pregame: Json | null
   /** Feet from home plate to the fence. Null takes the season's. */
   fence_distance_ft: number | null
   /** When the starting lineup was taken as the teams' defaults. */

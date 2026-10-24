@@ -253,17 +253,17 @@ describe('home and away swapped before the first pitch', function () {
     const after = await sides(file, fixture.gameId)
     expect(after.home).equals(before.away)
     expect(after.away).equals(before.home)
-    expect((after.guests as { away: number[] }).away).deep.equals(
-      (before.guests as { home: number[] }).home
-    )
-    expect((after.unrostered as { home: unknown[] }).home).deep.equals(
-      (before.unrostered as { away: unknown[] }).away
-    )
+    // Kept by team, the guests and absences are as they were.
+    expect(after.guests).deep.equals(before.guests)
+    expect(after.unrostered).deep.equals(before.unrostered)
     expect(after.lineups_digest).not.equals(before.lineups_digest)
-    expect(after.due_up).equals(fixture.players.home[0].name)
     const lineups = await (
       await clientOf(fixture, 'scorekeeper')
     ).gameLineups(fixture.gameId)
+    // The hosts, away now, bat first.
+    expect(lineups.away.current?.batters[0]?.name).equals(
+      fixture.players.home[0].name
+    )
     await note(
       file,
       `$ GET ${API}/games/${fixture.gameId}/lineups\n${JSON.stringify(lineups, null, 2).slice(0, 4000)}\n`

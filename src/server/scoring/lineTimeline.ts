@@ -11,6 +11,7 @@ import {
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { contextOf } from './replayContext'
 
 /**
@@ -79,7 +80,7 @@ export async function computeLineTimeline(
         .select([
           'games.home_team_id',
           'games.away_team_id',
-          'games.currentPlay',
+          atBatInProgress('games').as('currentPlay'),
           'games.start_at',
           'home.name as homeTeam',
           'away.name as awayTeam'

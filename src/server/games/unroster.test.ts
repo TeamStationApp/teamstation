@@ -27,6 +27,7 @@ import { after as score, game as fixture } from '../../test/scoringGames'
 import { closeInto } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { type Database, makeDatabase } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { createGuestPlayer } from './guestPlayers'
@@ -187,10 +188,16 @@ describe('atomic game availability', function () {
   const open = async (id: string): Promise<ScoringSession> =>
     await ScoringSession.open(
       {
-        load: async () => ({
-          plays: (await readPlays(db, id)).map(row => row.gumbo as GumboPlay),
-          currentPlay: (await row(id)).currentPlay as CurrentPlay | null
-        }),
+        load: async () => {
+          const plays = await readPlays(db, id)
+          return {
+            plays: plays.map(row => row.gumbo as GumboPlay),
+            currentPlay: atBatOf(
+              await row(id),
+              plays.length > 0
+            ) as CurrentPlay | null
+          }
+        },
         save: async () => {
           throw new Error('Read only')
         }
@@ -441,7 +448,7 @@ describe('atomic game availability', function () {
   })
   it('rolls back the switch when persistence fails and refuses unreadable history', async () => {
     const before = await row('gam_saved')
-    await sql`create function reject_test_lineup() returns trigger language plpgsql as $$ begin if new."currentPlay" is distinct from old."currentPlay" then raise exception 'Test lineup write refused'; end if; return new; end $$`.execute(
+    await sql`create function reject_test_lineup() returns trigger language plpgsql as $$ begin if new."currentPlay" is distinct from old."currentPlay" or new.pregame is distinct from old.pregame then raise exception 'Test lineup write refused'; end if; return new; end $$`.execute(
       db
     )
     await sql`create trigger reject_test_lineup before update on games for each row execute function reject_test_lineup()`.execute(

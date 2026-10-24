@@ -26,6 +26,7 @@ import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
+import { atBatOf } from './atBatInProgress'
 import { readPlays } from './postPlays'
 
 type Trx = Kysely<Database>
@@ -66,14 +67,12 @@ export async function gameLineups(
     home_team_id: string
     away_team_id: string
     currentPlay: unknown
+    pregame?: unknown
   }
 ): Promise<Record<Side, TeamSideLineups>> {
   const context = await lineupContext(db, game)
   const sides = lineupHistory(
-    await resolveScoringGame(
-      db,
-      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
-    ),
+    await resolveScoringGame(db, await storedOrPregame(db, game)),
     context
   )
   return {
@@ -104,15 +103,13 @@ export async function lineupsAnswer(
     home_team_id: string
     away_team_id: string
     currentPlay: unknown
+    pregame?: unknown
     lineups_digest: string | null
   }
 ): Promise<Record<Side, TeamSideLineups> & { digest: string }> {
   const context = await lineupContext(db, game)
   const read = readLineups(
-    await resolveScoringGame(
-      db,
-      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
-    ),
+    await resolveScoringGame(db, await storedOrPregame(db, game)),
     context
   )
   const sides = {
@@ -146,15 +143,13 @@ export async function storedLineupsDigest(
     home_team_id: string
     away_team_id: string
     currentPlay: unknown
+    pregame?: unknown
     lineups_digest: string | null
   }
 ): Promise<string> {
   if (game.lineups_digest != null) return game.lineups_digest
   const read = readLineups(
-    await resolveScoringGame(
-      db,
-      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
-    ),
+    await resolveScoringGame(db, await storedOrPregame(db, game)),
     await lineupContext(db, game)
   )
   return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
@@ -173,6 +168,24 @@ export async function changedLineupsDigest(
   return createHash('sha256')
     .update(JSON.stringify([await storedLineupsDigest(db, game), ...changed]))
     .digest('hex')
+}
+
+/**
+ * A game's plays and at-bat in progress as the lineups read them: before the
+ * first pitch, its pregame lineups (`atBatOf`).
+ */
+async function storedOrPregame(
+  db: Trx,
+  game: { id: string; currentPlay: unknown; pregame?: unknown }
+): Promise<StoredLineupGame> {
+  const plays = await readPlays(db, game.id)
+  return storedLineupGame(
+    plays,
+    atBatOf(
+      { currentPlay: game.currentPlay, pregame: game.pregame ?? null },
+      plays.length > 0
+    )
+  )
 }
 
 /** A game's stored plays and current play, as the lineups are read from. */

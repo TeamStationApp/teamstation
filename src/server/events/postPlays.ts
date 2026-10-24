@@ -16,6 +16,7 @@ import {
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import { pregameRecord } from '../../common/scoring/sideSwap'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
@@ -29,6 +30,8 @@ import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
+import { atBatOf } from './atBatInProgress'
+import { gameCurrentPlay } from './currentPlay'
 import { reconcileEventTags } from './eventTags'
 import {
   type PlaySource,
@@ -131,6 +134,7 @@ export async function postGamePlays(
         'ingest_status',
         'ingest_message',
         'currentPlay',
+        'pregame',
         'lineup_started_at',
         'lineups_digest'
       ])
@@ -171,8 +175,9 @@ export async function postGamePlays(
     // its own changes on top.
     // The game as this post finds it, which tells its sender whether
     // anybody else wrote to it since.
+    const priorRows = await readPlays(trx, gameId)
     const prior = live
-      ? playsDigest(await readPlays(trx, gameId), game.currentPlay)
+      ? playsDigest(priorRows, atBatOf(game, priorRows.length > 0))
       : null
     if (
       live &&
@@ -186,8 +191,8 @@ export async function postGamePlays(
       )
 
     const previous = {
-      plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
+      plays: priorRows.map(row => row.gumbo as GumboPlay),
+      currentPlay: atBatOf(game, priorRows.length > 0) as CurrentPlay | null
     }
     const nextPlays = new Map(
       (live ? previous.plays : []).map(play => [play.about.atBatIndex, play])
@@ -226,10 +231,12 @@ export async function postGamePlays(
       awayTeamId: game.away_team_id
     }
     const priorCurrent = game.currentPlay as Partial<GumboPlay> | null
+    // A live post that sends no at-bat keeps the one readers see: before
+    // the first pitch, the pregame lineups.
     let currentPlay =
       live && body.currentPlay !== undefined
         ? body.currentPlay
-        : game.currentPlay
+        : atBatOf(game, priorRows.length > 0)
     if (currentPlay != null && typeof currentPlay === 'object') {
       const incoming = currentPlay as Partial<GumboPlay>
       if (typeof incoming.about?.atBatIndex === 'number') {
@@ -395,7 +402,15 @@ export async function postGamePlays(
           : {}),
         ingest_status: decision.ingestStatus,
         ingest_message: decision.ingestMessage,
-        ...(live && body.currentPlay !== undefined ? { currentPlay } : {}),
+        ...(live && body.currentPlay !== undefined
+          ? atBatWrite(
+              stored,
+              currentPlay,
+              game.pregame,
+              // This post finds no play and no at-bat stored: it may begin it.
+              priorRows.length === 0 && game.currentPlay == null
+            )
+          : {}),
         ...lineups,
         updated_at: new Date()
       })
@@ -405,9 +420,10 @@ export async function postGamePlays(
     const taggedStored = await readPlays(trx, gameId)
     const taggedGame = await trx
       .selectFrom('games')
-      .select('currentPlay')
+      .select(['currentPlay', 'pregame'])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
+    const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
     // Told to the game socket when this commits. The lineups only when a
     // reader of them would see something new: the digest is of what they
     // show, so a pitch leaves it alone and an undone change moves it.
@@ -435,7 +451,7 @@ export async function postGamePlays(
     else noteScopeChange(trx, { gameId })
     const resolved = await resolveScoringGame(trx, {
       plays: taggedStored.map(row => row.gumbo as GumboPlay),
-      currentPlay: taggedGame.currentPlay as CurrentPlay | null
+      currentPlay: taggedCurrent as CurrentPlay | null
     })
     const sides = teamsOfRow(game)
     const answer: PostedPlays = {
@@ -443,9 +459,17 @@ export async function postGamePlays(
         ...playJson(row),
         gumbo: playForWire(resolved.plays[index], sides)
       })),
-      currentPlay: playForWire(resolved.currentPlay, sides),
+      currentPlay: playForWire(
+        await gameCurrentPlay(
+          trx,
+          gameId,
+          { ...game, currentPlay: taggedGame.currentPlay },
+          resolved
+        ),
+        sides
+      ),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
-      playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
+      playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior
     }
     await written?.(trx, answer)
@@ -569,6 +593,73 @@ export async function readPlays(
     .where('gameId', '=', gameId)
     .orderBy('atBatIndex')
     .execute()
+}
+
+/**
+ * What a live post that sends the at-bat in progress stores of it. Before
+ * the first pitch no Gumbo is: a post that leaves no stored play, and whose
+ * at-bat holds lineup changes only, keeps its record as the game's pregame
+ * lineups, as does the post that takes the first pitch back. The first post
+ * past them (`begins`) stores the at-bat, and keeps the lineups it began
+ * from as the pregame: what was saved before, and any lineup change it
+ * carries ahead of the first pitch. A later post keeps the pregame as it is,
+ * or fills it when none was kept. A post that clears a game of plays and
+ * at-bat alike clears its pregame too.
+ */
+function atBatWrite(
+  stored: Array<{ gumbo: unknown }>,
+  currentPlay: unknown,
+  pregame: unknown,
+  begins: boolean
+): { currentPlay: unknown; pregame?: unknown } {
+  if (stored.length === 0 && currentPlay == null)
+    return { currentPlay: null, pregame: null }
+  if (
+    stored.length === 0 &&
+    currentPlay != null &&
+    storedRecordOf(currentPlay) != null &&
+    pregameRecord(currentPlay)
+  )
+    return {
+      currentPlay: null,
+      pregame: (currentPlay as { teamStation: unknown }).teamStation
+    }
+  const began =
+    pregame == null || begins
+      ? lineupsBefore(
+          [...stored.map(row => row.gumbo), currentPlay].find(
+            play => storedRecordOf(play) != null
+          )
+        )
+      : null
+  return {
+    currentPlay,
+    ...(began == null ? {} : { pregame: began })
+  }
+}
+
+/**
+ * The lineups a record began from: its setup and the lineup changes before
+ * its first other action, with their times. Null without a record.
+ */
+function lineupsBefore(play: unknown): unknown {
+  const raw = (play as { teamStation?: Record<string, unknown> } | undefined)
+    ?.teamStation
+  const actions = Array.isArray(raw?.actions) ? raw.actions : null
+  if (raw == null || actions == null) return null
+  const first = actions.findIndex(
+    action => (action as { type?: unknown }).type !== 'lineup'
+  )
+  const count = first < 0 ? actions.length : first
+  const { playbackTimes: _playback, detail: _detail, ...kept } = raw
+  const lineups: Record<string, unknown> = {
+    ...kept,
+    actions: actions.slice(0, count),
+    ...(Array.isArray(raw.actionTimes)
+      ? { actionTimes: raw.actionTimes.slice(0, count) }
+      : {})
+  }
+  return lineups
 }
 
 export function playJson(row: StoredPlay): {

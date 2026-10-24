@@ -13,6 +13,7 @@ import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
 import { type Database, makeDatabase } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest } from '../events/postPlays'
 import { readWalkUpSong } from '../routes/walkUpSongs'
 import { GameFanout } from './fanout'
@@ -253,6 +254,44 @@ describe('the game socket fan-out (U15)', function () {
     await notify({ game: today, kind: 'plays' })
     await until(() => heard.sent.length === 2, 'the second plays')
     await one.close()
+  })
+
+  it('sends a game before its first pitch with its pregame lineups as the at-bat', async function () {
+    const pregame = {
+      version: 3,
+      setupBefore: { players: {}, teams: {}, tagOrder: [] },
+      actions: []
+    }
+    await db!
+      .updateTable('games')
+      .set({ pregame })
+      .where('id', '=', today)
+      .execute()
+    const one = fanout()
+    try {
+      const heard = subscriber()
+      one.watch(today, scopeOf(team, rival), heard)
+      await one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
+      const data = heard.sent[0].data as {
+        currentPlay: { about: { atBatIndex: number; inning: number } }
+        digest: string
+      }
+      expect(data.currentPlay.about).deep.include({ atBatIndex: 0, inning: 1 })
+      // The digest is of what is stored, as `GET /events` gives it.
+      const stored = await db!
+        .selectFrom('games')
+        .select(['currentPlay', 'pregame'])
+        .where('id', '=', today)
+        .executeTakeFirstOrThrow()
+      expect(data.digest).equals(playsDigest([], atBatOf(stored, false)))
+    } finally {
+      await one.close()
+      await db!
+        .updateTable('games')
+        .set({ pregame: null })
+        .where('id', '=', today)
+        .execute()
+    }
   })
 
   it('sends two players’ songs, to every game of the team, whenever it is', async function () {

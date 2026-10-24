@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import type { Kysely } from 'kysely'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
@@ -15,13 +16,36 @@ import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import type { Database } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
+import { lineupsAnswer } from '../events/teamLineups'
 import { realClock } from '../groups/requests'
 import { setScopeRoles } from '../invites/people'
 import { eventRoutes } from './events'
 import { gameApprovalRoutes } from './gameApprovals'
 
 /** S15: a request that changed a game tells its scoreboard; no other does. */
+
+/** The away leadoff, due up before the first pitch. */
+async function awayLeadoff(
+  database: Kysely<Database>,
+  gameId: string
+): Promise<number | null | undefined> {
+  const game = await database
+    .selectFrom('games')
+    .select([
+      'id',
+      'home_team_id',
+      'away_team_id',
+      'currentPlay',
+      'pregame',
+      'lineups_digest'
+    ])
+    .where('id', '=', gameId)
+    .executeTakeFirstOrThrow()
+  return (await lineupsAnswer(database, game)).away.current?.batters[0]?.gumboId
+}
+
 describe('the game approval routes and the scoreboard', function () {
   this.timeout(60000)
   let f: GroupFixture
@@ -377,7 +401,9 @@ describe('swapping home and away from the scoring screen', function () {
       f.teamB
     ])
     // Team B, away now, bats first.
-    expect(game.currentPlay).nested.property('matchup.batter.id', players - 9)
+    // No at-bat is stored before the first pitch; the away leadoff is up.
+    expect(game.currentPlay).equals(null)
+    expect(await awayLeadoff(f.h.db, gameId)).equals(players - 9)
     expect(written).deep.equals([gameId])
 
     // Sent again from the sides read before, as after a lost answer: the

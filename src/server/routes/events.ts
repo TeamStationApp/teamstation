@@ -23,6 +23,8 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
+import { atBatOf } from '../events/atBatInProgress'
+import { gameCurrentPlay } from '../events/currentPlay'
 import {
   reconcileEventTags,
   tagChoices,
@@ -403,12 +405,19 @@ async function storedGameAnswer(
   const stored = await readPlays(db, gameId)
   const game = await db
     .selectFrom('games')
-    .select(['home_team_id', 'away_team_id', 'currentPlay', 'lineups_digest'])
+    .select([
+      'home_team_id',
+      'away_team_id',
+      'currentPlay',
+      'pregame',
+      'lineups_digest'
+    ])
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
+  const current = atBatOf(game, stored.length > 0)
   const resolved = await resolveScoringGame(db, {
     plays: stored.map(row => row.gumbo as GumboPlay),
-    currentPlay: game.currentPlay as CurrentPlay | null
+    currentPlay: current as CurrentPlay | null
   })
   const teams = teamsOfRow(game)
   return {
@@ -416,8 +425,11 @@ async function storedGameAnswer(
       ...playJson(row),
       gumbo: playForWire(resolved.plays[index], teams)
     })),
-    currentPlay: playForWire(resolved.currentPlay, teams),
-    playsDigest: playsDigest(stored, game.currentPlay),
+    currentPlay: playForWire(
+      await gameCurrentPlay(db, gameId, game, resolved),
+      teams
+    ),
+    playsDigest: playsDigest(stored, current),
     lineupsDigest: await storedLineupsDigest(db, {
       id: gameId,
       ...game

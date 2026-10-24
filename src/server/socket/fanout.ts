@@ -2,15 +2,19 @@ import type { Kysely } from 'kysely'
 import { Client } from 'pg'
 
 import type { GameChange } from '../../common/gameSocket'
+import type { CurrentPlay } from '../../common/gumboPlay'
 import { teamsOfRow } from '../../common/teamLists'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
+import { gameCurrentPlay } from '../events/currentPlay'
 import { playJson, playsDigest, readPlays } from '../events/postPlays'
 import { lineupsAnswer } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
 import { readWalkUpSong } from '../routes/walkUpSongs'
+import { resolveScoringGame } from '../scoring/openRow'
 import {
   asGameChangePayload,
   GAME_CHANGES_CHANNEL,
@@ -240,6 +244,7 @@ export class GameFanout {
                       home_team_id: game.home_team_id,
                       away_team_id: game.away_team_id,
                       currentPlay: game.currentPlay,
+                      pregame: game.pregame,
                       lineups_digest: game.lineups_digest
                     })
                   }
@@ -252,8 +257,14 @@ export class GameFanout {
                         gumbo: playForWire(row.gumbo, teamsOfRow(game))
                       })),
                       currentPlay:
-                        playForWire(game.currentPlay, teamsOfRow(game)) ?? null,
-                      digest: playsDigest(plays, game.currentPlay)
+                        playForWire(
+                          await noticedAtBat(trx, game, plays.length > 0),
+                          teamsOfRow(game)
+                        ) ?? null,
+                      digest: playsDigest(
+                        plays,
+                        atBatOf(game, plays.length > 0)
+                      )
                     }
                   }
         await Promise.all(
@@ -300,4 +311,29 @@ export class GameFanout {
       this.listen().catch(() => undefined)
     }, this.retryMs)
   }
+}
+
+/**
+ * The at-bat a `plays` notice carries, as `GET /games/:gameId/events`
+ * answers it: before the first pitch, the pregame lineups folded into a
+ * current play (`gameCurrentPlay`).
+ */
+async function noticedAtBat(
+  db: Kysely<Database>,
+  game: {
+    id: string
+    home_team_id: string
+    away_team_id: string
+    currentPlay: unknown
+    pregame: unknown
+  },
+  hasPlays: boolean
+): Promise<unknown> {
+  const atBat = atBatOf(game, hasPlays)
+  if (game.currentPlay != null || hasPlays || atBat == null) return atBat
+  const resolved = await resolveScoringGame(db, {
+    plays: [],
+    currentPlay: atBat as CurrentPlay
+  })
+  return await gameCurrentPlay(db, game.id, game, resolved)
 }

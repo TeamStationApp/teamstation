@@ -11,6 +11,7 @@ import type { GameState } from '../../common/scoring/state'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { resolveGumboIds } from './gumboIds'
 import {
   projectScoringGame,
@@ -227,10 +228,16 @@ export async function assertMergeScoringSafe(
   // Read full games only when both account families appear in their history.
   const games = await db
     .selectFrom('games')
-    .select(['id', 'home_team_id', 'away_team_id', 'currentPlay'])
+    .select([
+      'id',
+      'home_team_id',
+      'away_team_id',
+      atBatInProgress('games').as('currentPlay')
+    ])
     .where(eb =>
       eb.or([
         matches('games.currentPlay', closing),
+        matches('games.pregame', closing),
         eb.exists(
           eb
             .selectFrom('events')
@@ -243,6 +250,7 @@ export async function assertMergeScoringSafe(
     .where(eb =>
       eb.or([
         matches('games.currentPlay', keeping),
+        matches('games.pregame', keeping),
         eb.exists(
           eb
             .selectFrom('events')

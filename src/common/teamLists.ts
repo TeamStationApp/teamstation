@@ -24,6 +24,15 @@ export function listsBySide(
   return { away: raw[teams.away.id] ?? [], home: raw[teams.home.id] ?? [] }
 }
 
+/** Whether stored lists still name sides, as written before they named teams. */
+export function keyedBySide(raw: unknown, teams: SideTeams): boolean {
+  if (!object(raw)) return false
+  const ids = [teams.away.id, teams.home.id]
+  return Object.keys(raw).some(
+    key => (key === 'away' || key === 'home') && !ids.includes(key)
+  )
+}
+
 /** Lists by side, as stored: under each side's team's id. */
 export function listsByTeam<T>(
   lists: { away: T; home: T },

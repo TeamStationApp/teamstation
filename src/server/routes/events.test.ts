@@ -3395,7 +3395,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     home: rosterOf(homeIds)
   })
   setup.sides.away.battingOrder = setup.sides.away.battingOrder.slice(0, 9)
-  const games = Array.from({ length: 8 }, () => makeId('game'))
+  const games = Array.from({ length: 12 }, () => makeId('game'))
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -3800,5 +3800,139 @@ describe('the team default lineup a live post keeps (U10)', function () {
       message: "This game's teams changed since this was scored",
       details: { stale: true }
     })
+  })
+
+  /** A game's at-bat and pregame columns, as stored. */
+  async function atBatColumns(
+    gameId: string
+  ): Promise<{ currentPlay: unknown; pregame: unknown }> {
+    return await db!
+      .selectFrom('games')
+      .select(['currentPlay', 'pregame'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+  }
+  const actionsOf = (raw: unknown): unknown[] =>
+    (raw as { actions: unknown[] }).actions
+
+  it('keeps lineups saved before the first pitch as the pregame record, and stores the first pitch’s at-bat (P2, P3)', async function () {
+    const gameId = games[7]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    let stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).equals(null)
+    expect(stored.pregame).deep.include({ version: 3 })
+    expect(actionsOf(stored.pregame)).length(1)
+    // The lineups it holds: the setup and the lineup changes.
+    const lineupsOf = (record: unknown): unknown => {
+      const { setupBefore, actions } = record as {
+        setupBefore: unknown
+        actions: unknown
+      }
+      return { setupBefore, actions }
+    }
+    const pregame = lineupsOf(stored.pregame)
+
+    await apply(session, ball)
+    stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(lineupsOf(stored.pregame)).deep.equals(pregame)
+    const began = stored.pregame
+    // The plate appearance completes: a play is stored, and the next
+    // at-bat's empty record is the at-bat in progress, not a pregame.
+    await apply(session, { type: 'result', eventType: 'intent_walk' }, close)
+    stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(stored.pregame).deep.equals(began)
+    // Read back, the game opens as it was scored.
+    const again = await scoring(gameId)
+    expect(again.state.liveData.plays.allPlays).length(1)
+  })
+
+  it('takes a first pitch back to the pregame record, and keeps lineup changes made after it (P13)', async function () {
+    const gameId = games[8]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]), ball)
+    expect((await atBatColumns(gameId)).currentPlay).not.equals(null)
+    session.undo()
+    await session.flush()
+    let stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).equals(null)
+    expect(actionsOf(stored.pregame)).length(1)
+    await apply(session, reorder([3, 1, 2, 4, 5, 6, 7, 8, 9]))
+    stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).equals(null)
+    expect(actionsOf(stored.pregame)).length(2)
+    // A live post that sends no at-bat leaves the pregame lineups, and the
+    // digest of them, as they were.
+    const lineups = async (): Promise<unknown> =>
+      await db!
+        .selectFrom('games')
+        .select(['pregame', 'lineups_digest', 'currentPlay'])
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+    const before = await lineups()
+    const quiet = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: []
+    })
+    expect(quiet.status, JSON.stringify(quiet.body)).equals(200)
+    expect(await lineups()).deep.equals(before)
+  })
+
+  it('answers lineups saved before the first pitch folded into an at-bat it never stores (P4, P5)', async function () {
+    const gameId = games[11]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    expect((await atBatColumns(gameId)).currentPlay).equals(null)
+    const read = await store(gameId).load(gameId)
+    const current = read.currentPlay as unknown as {
+      matchup: { batter: { id: number } }
+      about: { atBatIndex: number }
+      teamStation: { version: number }
+    }
+    // The away leadoff, as the order now has it, against the home pitcher:
+    // what the scorer's own screen folds.
+    expect(current.matchup.batter.id).equals(awayIds[1])
+    expect(current.matchup).deep.equals(session.picture().current?.matchup)
+    expect(current.about.atBatIndex).equals(0)
+    // Its record is the pregame lineups, by side on the wire.
+    expect(current.teamStation.version).equals(2)
+    expect((await atBatColumns(gameId)).currentPlay).equals(null)
+  })
+
+  it('keeps a lineup change sent with the first pitch in the pregame lineups', async function () {
+    const gameId = games[10]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    expect(actionsOf((await atBatColumns(gameId)).pregame)).length(1)
+    // A change made just before the pitch, saved with it in one post.
+    for (const action of [reorder([3, 1, 2, 4, 5, 6, 7, 8, 9]), ball])
+      expect(session.apply(action).problems).deep.equals([])
+    await session.flush()
+    const stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(actionsOf(stored.pregame)).length(2)
+    expect(actionsOf(stored.pregame)).deep.equals(
+      actionsOf(
+        (stored.currentPlay as { teamStation: unknown }).teamStation
+      ).slice(0, 2)
+    )
+  })
+
+  it('keeps the lineups a first post began from when none were saved before it (P14)', async function () {
+    const gameId = games[9]
+    const session = await scoring(gameId)
+    for (const action of [reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]), ball])
+      expect(session.apply(action).problems).deep.equals([])
+    await session.flush()
+    const stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(actionsOf(stored.pregame)).deep.equals(
+      actionsOf(
+        (stored.currentPlay as { teamStation: unknown }).teamStation
+      ).slice(0, 1)
+    )
   })
 })

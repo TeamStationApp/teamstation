@@ -24,6 +24,7 @@ import {
 import type { Actor } from '../auth/sessions'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { changedLineupsDigest } from '../events/teamLineups'
 import { resolveScoringGame } from '../scoring/openRow'
@@ -93,9 +94,10 @@ export async function setRostered(
       if (!(error instanceof Error)) throw error
       throw conflict(error.message)
     }
+    const rows = await readPlays(trx, gameId)
     const stored = await resolveScoringGame(trx, {
-      plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
     })
     if (
       [...stored.plays, stored.currentPlay].some(

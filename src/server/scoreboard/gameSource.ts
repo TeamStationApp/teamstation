@@ -5,6 +5,7 @@ import type { GameScoreboard } from '../../common/scoreboard'
 import { replayPlays } from '../../common/scoring/gumbo'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { readPlays } from '../events/postPlays'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
@@ -50,7 +51,7 @@ export async function scoreboardFromGame(
         .select([
           'home_team_id',
           'away_team_id',
-          'currentPlay',
+          atBatInProgress().as('currentPlay'),
           'start_at',
           sql<string>`(extract(epoch from updated_at) * 1000000)::bigint`.as(
             'version'

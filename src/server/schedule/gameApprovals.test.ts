@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import type { Kysely } from 'kysely'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
@@ -21,11 +22,32 @@ import {
   groupFixture
 } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import type { Database } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
-import { storedLineupsDigest } from '../events/teamLineups'
+import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { applyParents, previewParents } from '../groups/relationships'
 import { setScopeRoles } from '../invites/people'
 import { withdrawFromGame } from './gameApprovals'
+
+/** The away leadoff, due up before the first pitch. */
+async function awayLeadoff(
+  database: Kysely<Database>,
+  gameId: string
+): Promise<number | null | undefined> {
+  const game = await database
+    .selectFrom('games')
+    .select([
+      'id',
+      'home_team_id',
+      'away_team_id',
+      'currentPlay',
+      'pregame',
+      'lineups_digest'
+    ])
+    .where('id', '=', gameId)
+    .executeTakeFirstOrThrow()
+  return (await lineupsAnswer(database, game)).away.current?.batters[0]?.gumboId
+}
 
 describe('approved games and shared schedule ownership', function () {
   this.timeout(60000)
@@ -690,7 +712,7 @@ describe('approved games and shared schedule ownership', function () {
         f.teamB
       ])
       // The visitors' leadoff, now at home, waits; the hosts bat first.
-      expect(game.currentPlay).nested.property('matchup.batter.id', 210)
+      expect(await awayLeadoff(f.h.db, gameId)).equals(210)
     })
 
     it('refuses a swap of a game final with no play stored', async () => {

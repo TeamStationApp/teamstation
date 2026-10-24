@@ -29,6 +29,7 @@ export async function gameAvailability(
     guests: unknown
     unrostered: unknown
     currentPlay: unknown
+    pregame?: unknown
   }
 ): Promise<GameAvailability> {
   const guests = storedGuests(game.guests, teamsOfRow(game))
@@ -72,14 +73,11 @@ export async function gameAvailability(
       ? []
       : [
           game.currentPlay,
-          ...(await readPlays(db, game.id)).reverse().map(row => row.gumbo)
+          ...(await readPlays(db, game.id)).reverse().map(row => row.gumbo),
+          // The lineups the game began with: older than any play.
+          ...(game.pregame == null ? [] : [{ teamStation: game.pregame }])
         ]
-          .map(play =>
-            recordOf(play, {
-              away: { id: game.away_team_id },
-              home: { id: game.home_team_id }
-            })
-          )
+          .map(play => recordOf(play, teamsOfRow(game)))
           .filter(record => record != null)
   const guestPlayers: GameAvailability['guestPlayers'] = { away: [], home: [] }
   const names = shortNames(

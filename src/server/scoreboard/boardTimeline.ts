@@ -16,6 +16,7 @@ import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 
@@ -76,7 +77,7 @@ export async function computeBoardTimeline(
           'games.home_team_id',
           'games.away_team_id',
           'games.start_at',
-          'games.currentPlay',
+          atBatInProgress('games').as('currentPlay'),
           'home.name as homeTeam',
           'away.name as awayTeam'
         ])

@@ -285,6 +285,63 @@ describe('team-keyed lineups, and reset with swap', function () {
     )
   })
 
+  it('T3: lineups before the first pitch are kept off Gumbo, and a pregame swap exchanges only the teams', async function () {
+    const file = 'pregame-storage-after.log'
+    const fixture = await lineupsSaved(file)
+    const columns = `select "currentPlay" is null as "noAtBatStored",
+        pregame->>'version' as "pregameVersion",
+        (select array_agg(k order by k) from jsonb_object_keys(pregame->'setupBefore'->'teams') k) as "pregameTeams",
+        jsonb_array_length(pregame->'actions') as "pregameActions",
+        away_team_id as "awayTeam", home_team_id as "homeTeam", lineups_digest is not null as "digest"
+      from games where id = $1`
+    await query(file, columns, [fixture.gameId])
+    const scorer = await clientOf(fixture, 'scorekeeper')
+    const events = await scorer.gameEvents(fixture.gameId)
+    const current = events.currentPlay as {
+      about: unknown
+      teamStation: { version: number }
+    } | null
+    await note(
+      file,
+      `$ GET ${API}/games/${fixture.gameId}/events\n${JSON.stringify({ plays: events.plays.length, currentPlay: current == null ? null : { about: current.about, recordVersion: current.teamStation.version } }, null, 2)}\n`
+    )
+    const lineups = await scorer.gameLineups(fixture.gameId)
+    await note(
+      file,
+      `$ GET ${API}/games/${fixture.gameId}/lineups\naway leadoff: ${String(lineups.away.current?.batters[0]?.name)} (${String(lineups.away.current?.batters[0]?.gumboId)}), expected ${fixture.players.away[0].name}\n`
+    )
+    const dj = await scorer.djGame(fixture.gameId)
+    await note(
+      file,
+      `$ GET ${API}/games/${fixture.gameId}/dj\nat bat: ${JSON.stringify(dj.atBat)}\n`
+    )
+    await score(fixture, [{ type: 'pitch', call: 'B' }])
+    await note(
+      file,
+      `$ POST ${API}/games/${fixture.gameId}/events  (scorekeeper: the first pitch, a ball)\nsaved\n`
+    )
+    await query(file, columns, [fixture.gameId])
+
+    const swapFile = 'pregame-swap.log'
+    const other = await lineupsSaved(swapFile)
+    const state = `select home_team_id as "homeTeam", away_team_id as "awayTeam", home_score, away_score,
+        md5(pregame::text) as "pregame", md5(guests::text) as "guests", md5(unrostered::text) as "unrostered",
+        lineups_digest as "digest", "currentPlay" is null as "noAtBatStored"
+      from games where id = $1`
+    await query(swapFile, state, [other.gameId])
+    const scorekeeper = await clientOf(other, 'scorekeeper')
+    const read = await scorekeeper.game(other.gameId)
+    await scorekeeper.swapGameSides(other.gameId, {
+      homeTeamId: read.homeTeamId,
+      awayTeamId: read.awayTeamId
+    })
+    await note(
+      swapFile,
+      `$ POST ${API}/games/${other.gameId}/swap-sides  {"homeTeamId":"${read.homeTeamId}","awayTeamId":"${read.awayTeamId}"}\nswapped\n`
+    )
+    await query(swapFile, state, [other.gameId])
+  })
+
   it('is driven per milestone', async function () {
     await phone(async () => undefined)
   })

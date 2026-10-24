@@ -86,6 +86,8 @@ export const SERVER_CODE_FILES = new Set([
   'server/events/eventInfoOpenApi.js',
   'server/events/eventListQuery.js',
   'server/events/eventTags.js',
+  'server/events/atBatInProgress.js',
+  'server/events/currentPlay.js',
   'server/events/eventWrite.js',
   'server/events/playEventTimes.js',
   'server/events/playedTogether.js',
