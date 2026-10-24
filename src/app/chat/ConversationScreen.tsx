@@ -1934,6 +1934,9 @@ export function ConversationScreen(
 
   const onText = (next: string, change?: ComposerChange): void => {
     const before = textNow.current
+    // iOS can report the same text again once a send has cleared the draft;
+    // that is no edit, and must not close a chooser the at-sign just opened.
+    if (next === before) return
     const reconciled = reconcileMentions(
       before,
       next,

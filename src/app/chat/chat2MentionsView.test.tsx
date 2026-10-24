@@ -973,6 +973,40 @@ describe('current-member mention picker', function () {
 })
 
 describe('mention send/edit and draft compatibility', function () {
+  it('keeps the chooser open when the field repeats its unchanged text after a send', async () => {
+    const state = fixture()
+    await render(screen(state.engine))
+    const input = host!.querySelector<HTMLTextAreaElement>(
+      '[data-testid="chat-composer"]'
+    )!
+    await type(input, 'A sent synthetic note')
+    await click(button('Send'))
+    expect(input.value).equals('')
+    await type(input, '@')
+    const scene = (): Element | null =>
+      host!.querySelector('[data-testid="chat-picker-scene"]')
+    expect(scene()).not.equals(null)
+    // iOS can deliver the same text again once a send has cleared the draft
+    // (seen on an iPhone 13 Pro); that is no edit, and must not close what the
+    // at-sign opened. A DOM input event with an unchanged value never reaches
+    // React, so call the field's own change handler as the native event does.
+    const key = Object.keys(input).find(name =>
+      name.startsWith('__reactProps')
+    )!
+    const props = (input as unknown as Record<string, Record<string, unknown>>)[
+      key
+    ]
+    await act(async () => {
+      ;(props.onChange as (event: unknown) => void)({
+        target: input,
+        nativeEvent: {},
+        persist: () => {}
+      })
+      await wait()
+    })
+    expect(scene()).not.equals(null)
+    expect(input.value).equals('@')
+  })
   it('passes existing encrypted IDs for file replies and edits while leaving the payload shape unchanged', async function () {
     for (const editing of [false, true]) {
       const state = fixture()
