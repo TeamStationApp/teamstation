@@ -282,6 +282,11 @@ export async function run(
                 })`
               : ''
           output(`${os} build failed${tool}; no package was published`)
+          if (error instanceof Error)
+            output(
+              'CAUSE ' +
+                error.message.replace(/\/\S+/g, '[path]').slice(0, 240)
+            )
           for (const line of describeFailure(error)) output(line)
         }
         state.save(record)

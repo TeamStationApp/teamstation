@@ -122,10 +122,38 @@ export function validateProfile(
       ? profile.devices.length === 0 ||
         apple.requiredDevices.some(device => !profile.devices.includes(device))
       : profile.devices.length > 0 || profile.provisionsAllDevices === true)
-  )
+  ) {
+    const expected = names?.[appId] ?? ''
+    const missing =
+      apple == null
+        ? -1
+        : apple.requiredDevices.filter(
+            device => !profile.devices.includes(device)
+          ).length
+    const flags = [
+      apple == null ? 'apple' : '',
+      names?.[appId] == null ? 'missingName' : '',
+      profile.name !== expected ? 'name' : '',
+      apple != null && !profile.teams.includes(apple.teamId) ? 'team' : '',
+      !profile.platforms.includes('iOS') ? 'platform' : '',
+      profile.entitlements['get-task-allow'] ? 'task' : '',
+      !Number.isFinite(Date.parse(profile.expires)) ||
+      Date.parse(profile.expires) <= Date.now() + 60000
+        ? 'expiry'
+        : '',
+      missing !== 0 && kind === 'adHoc' ? 'devices' : ''
+    ].filter(flag => flag !== '')
     throw new Error(
-      'Signing profile identity, expiry or registered devices did not match'
+      'Signing profile did not match ' +
+        flags.join(',') +
+        ' uuid=' +
+        profile.uuid +
+        ' n=' +
+        String(profile.devices.length) +
+        ' missing=' +
+        String(missing)
     )
+  }
   return profile
 }
 export async function ruby(
@@ -319,6 +347,12 @@ export async function withSigning<T>(
       )
       const profiles = new Map<string, Profile>()
       if (context.target.platform !== 'ios') return profiles
+      console.log(
+        'PROFILE files ' +
+          readdirSync(profilesDirectory)
+            .filter(name => name.endsWith('.mobileprovision'))
+            .join(' ')
+      )
       for (const name of readdirSync(profilesDirectory)) {
         if (!name.endsWith('.mobileprovision')) continue
         const file = path.join(profilesDirectory, name)
