@@ -6331,9 +6331,16 @@ export class Scenarios {
         await ui.selectMention(this.f.members[0])
         await ui.deleteBackward()
         await ui.deleteBackward()
-        const body = (await ui.draft()) + ' edited token ' + Date.now()
-        await ui.appendComposer(
-          ' edited token ' + body.split(' edited token ')[1]
+        const edited = await ui.draft()
+        const suffix = ' edited token ' + Date.now()
+        await ui.appendComposer(suffix)
+        // iOS reads a value without its trailing space ("@Bobby " as
+        // "@Bobby"), so the draft is read again once the suffix ends it.
+        const body = await ui.draft()
+        assert(
+          body.endsWith(suffix) &&
+            body.slice(0, -suffix.length).trimEnd() === edited.trimEnd(),
+          'Actual edited token followed by the typed suffix required'
         )
         await this.withFault('send', async () => {
           await ui.text('Send')
