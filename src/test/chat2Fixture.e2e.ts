@@ -177,7 +177,12 @@ const asFixture = asObject({
   formerActor: asOptional(asString),
   controls: asOptional(asObject(asString), {}),
   authorization: asOptional(
-    asObject({ playerIds: asArray(asUserId), acceptedAdult: asUserId })
+    asObject({
+      playerIds: asArray(asUserId),
+      acceptedAdult: asUserId,
+      // The actor who asks: one the probe players are candidates for.
+      asker: asOptional(asString)
+    })
   ),
   avatarProbe: asOptional(
     asObject({
@@ -868,6 +873,7 @@ export type Chat2ControlAction =
   | 'restore-attention'
   | 'fault'
   | 'clear-fault'
+  | 'set-lao'
   | 'cleanup'
 
 /** Optional private fixture/proxy process; never a second UI driver. */
