@@ -275,11 +275,12 @@ describe('scheduling setup routes', function () {
         JSON.stringify(timezone)
       ).equals(400)
     expect(await stored()).equals('UTC')
+    // A zone sent in another case is stored as the platform names it.
     const adopted = await json<SeasonScheduleSettings>(
       await f.h.request(
         'PUT',
         path,
-        { ...SETTINGS, timezone: 'America/Los_Angeles' },
+        { ...SETTINGS, timezone: 'america/los_angeles' },
         101
       )
     )

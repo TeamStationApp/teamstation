@@ -293,6 +293,26 @@ describe('current authority and immutable relationship request terms', function 
         )
       ).status
     ).equals(400)
+    // A zone sent in another case is stored as the platform names it.
+    expect(
+      (
+        await f.h.request(
+          'PUT',
+          `/groups/season/${f.seasonB}`,
+          { timezone: 'america/chicago' },
+          102
+        )
+      ).status
+    ).equals(200)
+    expect(
+      (
+        await f.h.db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', f.seasonB)
+          .executeTakeFirstOrThrow()
+      ).timezone
+    ).equals('America/Chicago')
   })
   it('supersedes a pending request once when only the season’s dates change', async () => {
     const id = await send()

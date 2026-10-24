@@ -6,6 +6,21 @@ import type { Database } from '../db/database'
 import type { Clock } from './requests'
 
 /**
+ * A zone a request names, as the platform names it: `america/los_angeles`
+ * is stored as `America/Los_Angeles`, so it compares equal to the zone a
+ * browser reports. An unknown zone is refused.
+ */
+export function canonicalTimezone(timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en', {
+      timeZone: timezone
+    }).resolvedOptions().timeZone
+  } catch {
+    throw badRequest('Choose a timezone')
+  }
+}
+
+/**
  * Supersedes a season's pending participation and parent requests: their
  * terms carry the season's dates and zone, so a change to either needs a
  * fresh request.
@@ -37,14 +52,10 @@ export async function supersedeSeasonRequests(
 export async function adoptSeasonTimezone(
   trx: Kysely<Database>,
   seasonId: string,
-  timezone: string,
+  requested: string,
   clock: Clock
 ): Promise<void> {
-  try {
-    new Intl.DateTimeFormat('en', { timeZone: timezone }).format()
-  } catch {
-    throw badRequest('Choose a timezone')
-  }
+  const timezone = canonicalTimezone(requested)
   const season = await trx
     .selectFrom('seasons')
     .select('timezone')

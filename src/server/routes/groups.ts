@@ -71,7 +71,10 @@ import {
   currentActor,
   requireGroupAdmin
 } from '../groups/rights'
-import { supersedeSeasonRequests } from '../groups/seasonZone'
+import {
+  canonicalTimezone,
+  supersedeSeasonRequests
+} from '../groups/seasonZone'
 import type { AddedMail } from '../invites/grants'
 import { setScopeRoles } from '../invites/people'
 import {
@@ -1190,12 +1193,11 @@ export function groupRoutes(
           if (start == null || end == null)
             throw badRequest('A season needs a start and an end')
           if (end < start) throw badRequest('End date precedes start date')
-          const timezone = req.body.timezone ?? row.timezone
-          try {
-            new Intl.DateTimeFormat('en', { timeZone: timezone }).format()
-          } catch {
-            throw badRequest('Choose a timezone')
-          }
+          // A zone sent is stored as the platform names it.
+          const timezone =
+            req.body.timezone == null
+              ? row.timezone
+              : canonicalTimezone(req.body.timezone)
           await trx
             .updateTable('seasons')
             .set({
