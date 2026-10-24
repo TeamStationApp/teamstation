@@ -905,12 +905,15 @@ export function fixtureControl(
     }),
     encoding: 'utf8',
     timeout: 60000,
-    maxBuffer: 1024 * 1024
+    // A snapshot carries every recorded history page's metadata; a long
+    // stress history passes 1 MiB.
+    maxBuffer: 32 * 1024 * 1024
   })
   // A refused action answers on stdout ({ok: false, error}) and exits 2.
   if (result.status !== 0)
     throw new Chat2Blocked(
       'Private fixture control failed: ' +
+        (result.error == null ? '' : result.error.message + ': ') +
         redact(
           fixture,
           result.stderr === '' ? result.stdout : result.stderr
