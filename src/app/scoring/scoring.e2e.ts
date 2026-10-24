@@ -4481,6 +4481,17 @@ describe('scoring browser', function () {
           await waitReady(page)
           await dropRunnerWithKeyboard(page, decision, advance)
           await click(page, reason)
+          // A pitch the catcher did not hold is the Ball just thrown; an
+          // error names the defender who made it.
+          if (reason === 'Wild Pitch')
+            await click(page, 'Use previous pitch as wild pitch')
+          else if (reason === 'Passed Ball') await click(page, 'YES')
+          else if (reason === 'Throwing Error' || reason === 'Fielding Error') {
+            await page.waitForSelector(
+              '[aria-label^="Tap the defender who made the"]'
+            )
+            await placeDefenderWithKeyboard(page)
+          }
           if (decision === 'Out') {
             await page.waitForSelector(
               '[aria-label^="Tap or drag a player to where the ball was fielded."]'
