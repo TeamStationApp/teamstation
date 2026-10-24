@@ -248,6 +248,9 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
         ref={panelRef}
         testID="chat-message-spotlight-controls"
         accessibilityLabel={props.label}
+        // Touch the backdrop through the space the controls leave empty, such
+        // as beside a long message, which otherwise left nowhere to close.
+        pointerEvents="box-none"
         style={{
           position: 'absolute',
           left: layout.left,
@@ -258,6 +261,7 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
       >
         {!layout.compact && props.reactions != null && (
           <Animated.View
+            testID="chat-message-spotlight-reactions"
             style={{
               opacity: progress,
               height: layout.reactions,

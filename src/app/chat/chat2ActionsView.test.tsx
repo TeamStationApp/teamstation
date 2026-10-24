@@ -557,6 +557,40 @@ describe('chat message presentation', function () {
       expect(history.scrollTop).equals(137)
     })
 
+    it('lets a touch beside a long message reach the closing backdrop', async function () {
+      // Seen in iOS E5: the controls covered the whole width, so a touch
+      // beside a long preview reached nothing and only the status bar strip
+      // was left to close the actions.
+      const clipped = { x: 42, y: -2000, width: 210, height: 2400 }
+      const tallSource: MessageSource = {
+        bounds: clipped,
+        measure: accept => {
+          accept(clipped)
+          return () => {}
+        }
+      }
+      const node = await render(
+        <ChatOverlayHost>
+          <MessageActionOverlay
+            {...overlay({
+              source: tallSource,
+              selected: <div>{'Long message words '.repeat(500)}</div>
+            })}
+          />
+        </ChatOverlayHost>
+      )
+      const pointer = (id: string): string =>
+        getComputedStyle(
+          node.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
+        ).pointerEvents
+      expect(pointer('chat-message-spotlight-controls')).equals('none')
+      expect(pointer('chat-message-spotlight-preview')).not.equals('none')
+      expect(pointer('chat-message-spotlight-reactions')).not.equals('none')
+      expect(
+        node.querySelector('[role="button"][aria-label="Cancel"]')
+      ).not.equals(null)
+    })
+
     it('fades the return when a previously visible source becomes horizontally clipped', async function () {
       const returning: MessageSource = {
         bounds,
