@@ -2422,7 +2422,11 @@ export class Scenarios {
     // Android normalized hierarchy omits enabled:true; raw iOS must prove it.
     const enabled = (node: PublicNode): boolean =>
       ui.surface === 'android' ? node.enabled !== false : node.enabled === true
-    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(300000)])
+    // Each iOS page is a long climb to its earlier control (see nativeAnchorReady).
+    const signal = AbortSignal.any([
+      ui.deadline,
+      AbortSignal.timeout(ui.surface === 'ios' ? 1200000 : 300000)
+    ])
     const targetCount = (nodes: PublicNode[]): number => {
       const count = nodes.filter(node => node.id === id).length
       assert(count <= 1, 'Unique exact native history target required')
