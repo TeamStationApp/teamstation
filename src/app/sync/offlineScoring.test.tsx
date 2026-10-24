@@ -500,6 +500,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     const { client } = await preparedPhone()
     client.outboxSummary = async () => ({
       count: 1,
+      chains: { 'game:g1': 1 },
       games: { g1: { state: 'dead', message: 'That inning is closed.' } },
       teams: {}
     })
@@ -523,6 +524,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     let held = true
     client.outboxSummary = async (): Promise<OutboxSummary> => ({
       count: held ? 1 : 0,
+      chains: held ? { 'game:g1': 1 } : {},
       games: held
         ? { g1: { state: 'dead', message: 'Only the head coach.' } }
         : {},

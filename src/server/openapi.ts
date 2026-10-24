@@ -4609,6 +4609,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                   ],
                   properties: {
                     side: { type: 'string', enum: ['away', 'home'] },
+                    teamId: {
+                      type: 'string',
+                      description:
+                        'The team the caller means; 409 when the side holds another, as after a swap of home and away'
+                    },
                     firstName: {
                       type: 'string',
                       maxLength: PLAYER_NAME_MAX_LENGTH
@@ -5056,6 +5061,59 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: { description: '{ halves: [ ... ] }' },
             401: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/swap-sides': {
+        post: {
+          summary: 'Swap home and away before the first pitch',
+          description:
+            'For a scorekeeper of either team, from the scoring screen. The ' +
+            'teams and scores exchange, and everything that names a side ' +
+            'follows its team: the guest and unrostered lists and the open ' +
+            'at-bat’s lineups. The lineups digest changes, so a post built ' +
+            'on the old sides is refused as stale. Refused with 409 once a ' +
+            'pitch, a play, a placed runner or an at-bat TeamStation did not ' +
+            'score is stored. The body names the sides the caller read: sent ' +
+            'again once they are exchanged, the call answers them and ' +
+            'changes nothing; on other sides it is refused with 409.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['homeTeamId', 'awayTeamId'],
+                  properties: {
+                    homeTeamId: { type: 'string' },
+                    awayTeamId: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The game’s teams after the swap',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['homeTeamId', 'awayTeamId'],
+                    properties: {
+                      homeTeamId: { type: 'string' },
+                      awayTeamId: { type: 'string' }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },

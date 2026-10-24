@@ -103,7 +103,11 @@ describe('field cues on a phone', function () {
       'play pop 0'
     ])
     native.calls = []
+    // Muting the game stops the cues only: a walk-up song sounding stays so.
+    setOtherAudio('walkUp', true)
     audio.setEnabled(false)
+    expect(otherAudioSounding()).equals(true)
+    setOtherAudio('walkUp', false)
     audio.cue('bat')
     expect(native.calls).deep.equals(['stop'])
     audio.setEnabled(true)

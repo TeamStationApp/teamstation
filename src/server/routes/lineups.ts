@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 
+import { asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
@@ -89,6 +90,7 @@ import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { withRevision } from '../socket/syncRevision'
+import { tellGameWritten } from './gameWritten'
 import { teamWalkUpSongs } from './walkUpSongs'
 
 type Trx = Kysely<Database>
@@ -171,11 +173,7 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asUnrosterBody, req.body)
       res.json(await setRostered(db, actor, gameId, body))
-      try {
-        options.onGameWritten?.(gameId)
-      } catch {
-        /* Notification does not fail a committed switch. */
-      }
+      tellGameWritten(options.onGameWritten, gameId)
     })
   )
 
@@ -188,9 +186,13 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const side = cleanBody(asLiteral('away', 'home'), req.body?.side)
       const player = cleanBody(asNewRosterPlayer, req.body)
+      const teamId =
+        req.body?.teamId == null
+          ? undefined
+          : cleanBody(asString, req.body.teamId)
       res
         .status(201)
-        .json(await createGuestPlayer(db, actor, gameId, side, player))
+        .json(await createGuestPlayer(db, actor, gameId, side, player, teamId))
     })
   )
 
@@ -333,11 +335,7 @@ export function lineupRoutes(
           }
           if (saved.outcome === 'saved') {
             await options.afterSave?.(gameId)
-            try {
-              options.onGameWritten?.(gameId)
-            } catch (error) {
-              console.error(`onGameWritten ${gameId}`, error)
-            }
+            tellGameWritten(options.onGameWritten, gameId)
           }
           return await answerFor(saved.digest)
         },

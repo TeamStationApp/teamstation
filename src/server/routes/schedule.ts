@@ -26,6 +26,7 @@ import {
   scheduleRights
 } from '../schedule/scheduleGames'
 import { noteScopeChange } from '../socket/syncRevision'
+import { tellGameWritten } from './gameWritten'
 
 /**
  * A team's schedule, and a game's field, written through the API.
@@ -36,7 +37,18 @@ import { noteScopeChange } from '../socket/syncRevision'
  * rights stand on their own: a season admin with no membership anywhere
  * still passes.
  */
-export function scheduleRoutes(db: Kysely<Database>): Router {
+export interface ScheduleRouteOptions {
+  /**
+   * Told each game an import row updated, as `lineupRoutes`' hook is, so its
+   * scoreboard follows a moved time or a side flip. Fire and forget.
+   */
+  onGameWritten?: (gameId: string) => void
+}
+
+export function scheduleRoutes(
+  db: Kysely<Database>,
+  options: ScheduleRouteOptions = {}
+): Router {
   const router = Router()
 
   router.post(
@@ -80,7 +92,15 @@ export function scheduleRoutes(db: Kysely<Database>): Router {
         )
       }
 
-      res.json(await scheduleGames(db, { teamId, rows: body.games, actor }))
+      const scheduled = await scheduleGames(db, {
+        teamId,
+        rows: body.games,
+        actor
+      })
+      res.json(scheduled)
+      for (const row of scheduled.results)
+        if (row.result === 'updated' && row.gameId != null)
+          tellGameWritten(options.onGameWritten, row.gameId)
     })
   )
 

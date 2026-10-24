@@ -58,6 +58,7 @@ import {
   ServerScoringSource
 } from '../scoring/scoringSource'
 import type { ScoringState } from '../scoring/scoringTypes'
+import { useSidesSwapped } from '../scoring/sidesSwapped'
 import { dictationUrl } from '../scoring/useDictation'
 import { useScoringExit } from '../scoring/useScoringExit'
 import {
@@ -226,6 +227,10 @@ export function CoachGameScreen(
   )
 }
 
+/** Shown over a staged change when home and away were swapped under it. */
+const SIDES_SWAPPED =
+  'Home and away were swapped. Your unsaved changes are for your old side and are dropped when the game is read again.'
+
 function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const { client, gameId, teamId, socket, onExit } = props
   const theme = useTheme()
@@ -299,6 +304,30 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const sideRef = useRef<Side | undefined>(undefined)
   sideRef.current = side
 
+  // Home and away swapped under the open game: it is read again, so his
+  // side, and the side his saves and guests go to, is his team's new one.
+  // Over a staged change he is asked first, since it names his old side.
+  const [sidesSwapped, setSidesSwapped] = useState(false)
+  const dirtyNow = useRef(dirty)
+  dirtyNow.current = dirty
+  const readSides = useCallback(
+    async (): Promise<GameDetail> => await client.game(gameId),
+    [client, gameId]
+  )
+  // Once for each opened game: the swap's notice, a resync's read and a
+  // lineup reload can each find it.
+  const openedNow = useRef(opened)
+  openedNow.current = opened
+  const reopenedFrom = useRef<Opened | undefined>(undefined)
+  const reopenSwapped = useCallback((): void => {
+    if (dirtyNow.current) {
+      setSidesSwapped(true)
+      return
+    }
+    if (reopenedFrom.current === openedNow.current) return
+    reopenedFrom.current = openedNow.current
+    setReopened(value => value + 1)
+  }, [])
   const reload = useCallback(
     async (remount = false): Promise<void> => {
       const session = opened?.session
@@ -309,7 +338,19 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         session.reload(),
         client.gameLineups(gameId)
       ])
+      // The screen moved on to another read of the game meanwhile.
+      if (openedNow.current !== opened) return
       sessionRef.current = session
+      // Home and away swapped under it: the session now replays on the new
+      // teams, and his side is no longer the one the screen opened on.
+      const teams = session.state.gameData.teams
+      if (
+        teams.home.id !== opened!.game.homeTeamId ||
+        teams.away.id !== opened!.game.awayTeamId
+      ) {
+        reopenSwapped()
+        return
+      }
       heard(lineups, opened!.side)
       const next = presented(session, opened!.side, ownDefault.current)
       setState(next)
@@ -335,7 +376,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       }))
       setRead(value => value + 1)
     },
-    [opened, client, gameId, heard]
+    [opened, client, gameId, heard, reopenSwapped]
   )
 
   const live = useRosterLive({
@@ -460,6 +501,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         refreshBox()
     })
   }, [socket, gameId, refreshBox])
+  useSidesSwapped(socket, gameId, opened?.game, readSides, reopenSwapped)
 
   // The dictation model the coach chose in the scoring screen's Settings.
   const [model, setModel] = useState<RosterDictationOptions['model']>()
@@ -600,6 +642,21 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         </Text>
       </View>
       {problem != null && <ScoringError message={problem} />}
+      {sidesSwapped && (
+        <View style={{ padding: 12, gap: 8 }}>
+          <Text accessibilityRole="alert" style={text}>
+            {SIDES_SWAPPED}
+          </Text>
+          <Button
+            label="Read the game again"
+            accessibilityLabel="Read the game again"
+            onPress={() => {
+              setSidesSwapped(false)
+              setReopened(value => value + 1)
+            }}
+          />
+        </View>
+      )}
       {heldGame != null ? (
         <HeldGameNotice
           held={heldGame}
@@ -707,7 +764,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                 await client.createGuestPlayer(
                   gameId,
                   side,
-                  rosterPlayerBody(player)
+                  rosterPlayerBody(player),
+                  teamId
                 )
               }
               unaccepted={unaccepted}

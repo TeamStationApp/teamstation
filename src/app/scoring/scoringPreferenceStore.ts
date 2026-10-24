@@ -17,11 +17,22 @@ export type PreferenceStorage = UserSettingStorage
 export function scoringPreferenceStore(storage: PreferenceStorage): {
   read: (userId: string) => Promise<ScoringPreferences>
   write: (userId: string, value: ScoringPreferences) => Promise<void>
+  /**
+   * Reads the stored preferences and writes back what `change` makes of
+   * them, one update after another: they are all kept under one key, so a
+   * change never rolls back another's field. `change` may answer null to
+   * write nothing. Answers what was written, or null.
+   */
+  update: (
+    userId: string,
+    change: (stored: ScoringPreferences) => ScoringPreferences | null
+  ) => Promise<ScoringPreferences | null>
 } {
   const key = (id: string): string =>
     `teamstation:scoring:${encodeURIComponent(id)}:switch-hitter`
-  return {
-    async read(userId) {
+  let updates: Promise<unknown> = Promise.resolve()
+  const store = {
+    async read(userId: string): Promise<ScoringPreferences> {
       try {
         const raw = await readUserSetting(storage, userId, key)
         if (raw == null) return { help: true, shown: 0 }
@@ -52,12 +63,25 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
         return { help: true, shown: 0 }
       }
     },
-    async write(userId, value) {
+    async write(userId: string, value: ScoringPreferences): Promise<void> {
       try {
         await storage.setItem(key(userId), JSON.stringify(value))
       } catch {
         /* Restricted device storage must not block scoring. */
       }
+    },
+    async update(
+      userId: string,
+      change: (stored: ScoringPreferences) => ScoringPreferences | null
+    ): Promise<ScoringPreferences | null> {
+      const next = updates.then(async () => {
+        const value = change(await store.read(userId))
+        if (value != null) await store.write(userId, value)
+        return value
+      })
+      updates = next.catch(() => undefined)
+      return await next
     }
   }
+  return store
 }

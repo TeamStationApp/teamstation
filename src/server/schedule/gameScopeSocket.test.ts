@@ -285,7 +285,8 @@ describe('private socket access follows approved game revisions', function () {
         expect(sent.status).equals(201)
         const revision = (await sent.json()) as { id: string }
         // Pending changes retain the published matchup and its viewers. The
-        // game nudge carries only published status/scores, never proposed terms.
+        // game nudge carries only the published status, scores and teams,
+        // never proposed terms.
         expect(
           (
             await f.h.request(
@@ -310,7 +311,9 @@ describe('private socket access follows approved game revisions', function () {
             expect(frame.data).deep.equals({
               status: 'scheduled',
               awayScore: null,
-              homeScore: null
+              homeScore: null,
+              homeTeamId: f.teamA,
+              awayTeamId: f.teamB
             })
           }
         const privateFrom = oldViewer.length

@@ -6,8 +6,15 @@ import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
-import type { GumboPlay } from '../../common/gumboPlay'
+import {
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import type { ScoringAction } from '../../common/scoring/actions'
+import { newSetup } from '../../common/scoring/lineup'
+import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -18,6 +25,8 @@ import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { replaceGameEvents } from '../events/eventWrite'
+import { postGamePlays, readPlays } from '../events/postPlays'
+import { storedLineupsDigest } from '../events/teamLineups'
 import { jsonBody } from '../jsonBody'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
@@ -267,7 +276,10 @@ describe('scheduling a team’s games over HTTP', function () {
     app.use(jsonBody)
     app.use(withActor(db))
     app.use(withAudit(db))
-    app.use('/api/v1', scheduleRoutes(db))
+    app.use(
+      '/api/v1',
+      scheduleRoutes(db, { onGameWritten: gameId => written.push(gameId) })
+    )
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -285,6 +297,8 @@ describe('scheduling a team’s games over HTTP', function () {
     }
   })
 
+  /** The games the routes told the scoreboard about, in order. */
+  const written: string[] = []
   let minute = 0
   const springRow = (): object => {
     minute += 1
@@ -747,6 +761,92 @@ describe('scheduling a team’s games over HTTP', function () {
     )
   }
 
+  let nextPlayer = 7001
+  /**
+   * Nine players a side saved as the scoring screen saves lineups, then
+   * `after`. The away side's leadoff is returned.
+   */
+  const saveLineups = async (
+    gameId: string,
+    after: ScoringAction[] = []
+  ): Promise<{ awayLeadoff: number; homeLeadoff: number }> => {
+    const start = nextPlayer
+    nextPlayer += 18
+    await insertFixtureUsers(
+      db!,
+      Array.from({ length: 18 }, (_, i) => ({
+        id: start + i,
+        legacyId: makeId('user'),
+        display_name: `Player ${i + 1}`
+      }))
+    )
+    const game = await sidesOf(gameId)
+    const teams = {
+      away: { id: game.away_team_id, name: 'Away' },
+      home: { id: game.home_team_id, name: 'Home' }
+    }
+    const roster = (first: number): Parameters<typeof newSetup>[1]['away'] =>
+      Array.from({ length: 9 }, (_, i) => ({
+        userId: userIdOfGumbo(first + i),
+        gumboId: first + i,
+        shortName: `Player ${first + i}`,
+        jersey: String(i + 1)
+      }))
+    const setup = newSetup(teams, {
+      away: roster(start),
+      home: roster(start + 9)
+    })
+    const session = await ScoringSession.open(
+      {
+        load: async () => {
+          const row = await db!
+            .selectFrom('games')
+            .selectAll()
+            .where('id', '=', gameId)
+            .executeTakeFirstOrThrow()
+          return {
+            plays: (await readPlays(db!, gameId)).map(
+              play => play.gumbo as GumboPlay
+            ),
+            currentPlay: row.currentPlay as CurrentPlay | null,
+            lineupsDigest: await storedLineupsDigest(db!, row)
+          }
+        },
+        save: async (_id, change) => {
+          const posted = await postGamePlays(
+            db!,
+            gameId,
+            asPostEventsBody({
+              ...change,
+              mode: 'live',
+              source: { system: 'teamstation' }
+            })
+          )
+          return {
+            plays: posted.plays.map(play => play.gumbo as GumboPlay),
+            currentPlay: posted.currentPlay as CurrentPlay | null
+          }
+        }
+      },
+      gameId,
+      { gamePk: gameId, teams, setup },
+      { setTimer: () => null, clearTimer: () => undefined }
+    )
+    for (const action of [
+      {
+        type: 'lineup',
+        kind: 'roster',
+        setup,
+        confirmed: ['away', 'home']
+      } satisfies ScoringAction,
+      ...after
+    ])
+      expect(session.apply(action).problems).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+    return { awayLeadoff: start, homeLeadoff: start + 9 }
+  }
+
   it('swaps home and away on a matched game with no plays, and announces it', async function () {
     const { row, gameId, dunlins } = await sidedGame('side-1')
     const listener = new Client({ connectionString: scratchUrl })
@@ -825,17 +925,73 @@ describe('scheduling a team’s games over HTTP', function () {
     expect(stored.body.results[0].result).equals('unchanged')
     expect(await sidesOf(gameId)).deep.include(kept)
 
-    // An at-bat under way is a play too, though none is stored yet. Other
-    // fields still apply.
+    // An at-bat with a pitch thrown is under way, though no play is stored
+    // yet: the game is in progress, and the import leaves it as it is.
     await db!.deleteFrom('events').where('gameId', '=', gameId).execute()
-    await sql`update games set "currentPlay" = '{}'::jsonb where id = ${gameId}`.execute(
+    await saveLineups(gameId, [{ type: 'pitch', call: 'B' }])
+    const pitched = await schedule('owner', {
+      games: [{ ...row, side: 'away' }]
+    })
+    expect(pitched.body.results[0]).deep.include({
+      result: 'unchanged',
+      status: 'inProgress'
+    })
+    expect(await sidesOf(gameId)).deep.include(kept)
+
+    // An at-bat TeamStation did not score is under way too. Other fields
+    // still apply.
+    await sql`update games set "currentPlay" = '{}'::jsonb, status = 'scheduled' where id = ${gameId}`.execute(
       db!
     )
-    const current = await schedule('owner', {
-      games: [{ ...row, side: 'away', venue: 'Field 9' }]
+    const outside = await schedule('owner', {
+      games: [{ ...row, side: 'away', venue: 'Field 10' }]
     })
-    expect(current.body.results[0].result).equals('updated')
+    expect(outside.body.results[0].result).equals('updated')
     expect(await sidesOf(gameId)).deep.include(kept)
+  })
+
+  it('swaps a game holding saved lineups, with its guests, and tells the scoreboard', async function () {
+    const { row, gameId, dunlins } = await sidedGame('side-lineups')
+    const { homeLeadoff } = await saveLineups(gameId)
+    await insertFixtureUsers(db!, {
+      id: 7999,
+      legacyId: makeId('user'),
+      display_name: 'Gus Guest'
+    })
+    await db!
+      .updateTable('games')
+      .set({ guests: { home: [7999], away: [] } })
+      .where('id', '=', gameId)
+      .execute()
+    written.length = 0
+    const swapped = await schedule('owner', {
+      games: [{ ...row, side: 'away' }]
+    })
+    expect(swapped.body.results[0]).deep.include({
+      result: 'updated',
+      gameId
+    })
+    expect(await sidesOf(gameId)).deep.include({
+      home_team_id: dunlins,
+      away_team_id: hawks
+    })
+    const game = await db!
+      .selectFrom('games')
+      .select(['guests', 'currentPlay'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(game.guests).deep.equals({ home: [], away: [7999] })
+    // The Hawks, away now, bat first.
+    expect(game.currentPlay).nested.property('matchup.batter.id', homeLeadoff)
+    expect(written).deep.equals([gameId])
+
+    // The same side again is no write, and the scoreboard hears nothing.
+    written.length = 0
+    const again = await schedule('owner', {
+      games: [{ ...row, side: 'away' }]
+    })
+    expect(again.body.results[0].result).equals('unchanged')
+    expect(written).deep.equals([])
   })
 
   it('keeps the sides of a game between two full teams', async function () {

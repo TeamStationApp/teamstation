@@ -7,13 +7,17 @@ import { type GameLineupsResponse, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
+import { recordOf } from '../../common/scoring/gumbo'
 import {
+  type EventStore,
   ScoringSession as GameSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { swapRecordSides } from '../../common/scoring/sideSwap'
 import { setupOf } from '../../common/scoring/state'
 import { scoringRoster } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
+import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { startingSetup, teamsOf } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -551,5 +555,367 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
         id => stored.state.gameData.players[id].fullName
       )
     ).deep.equals(mine)
+  })
+})
+
+describe('a game swapped under the scoring screen on the socket', function () {
+  const UNLOADED = 'Unable to load scoring.'
+  const UNREAD = 'could not be read back'
+  /**
+   * A scoring screen on a game whose lineups are saved, and the server's
+   * swap of its home and away teams, as a test makes it.
+   */
+  async function swappable(
+    options: {
+      /** The swap commits just after the screen first reads the game. */
+      swapAfterFirstRead?: boolean
+      /** Saves wait until the test releases them. */
+      holdSaves?: boolean
+      /** The held save is refused as stale once released. */
+      staleOnRelease?: boolean
+      /** A phone, whose outbox holds this many writes per chain. */
+      phone?: Record<string, number>
+      /** How long the swap notice stays up once drawn. */
+      swapNoticeMs?: number
+      /** Each read of the game after the first takes this long. */
+      slowReadsMs?: number
+    } = {}
+  ): Promise<{
+    changes: FakeChanges
+    opens: () => number
+    reloads: () => number
+    session: () => GameSession
+    release: () => void
+    /** The games whose queued writes were given up. */
+    discarded: string[]
+    /** The opened sessions' listeners still subscribed. */
+    listening: () => number
+    swap: () => void
+    notice: (teams: {
+      homeTeamId?: string
+      awayTeamId?: string
+    }) => Promise<void>
+  }> {
+    const store = memoryStore()
+    let game = gameFixture
+    const context = (
+      detail: typeof gameFixture
+    ): Parameters<typeof GameSession.open>[2] => ({
+      gamePk: 'g1',
+      teams: teamsOf(detail),
+      setup: startingSetup(
+        detail,
+        scoringRoster(detail.awayTeamId === 'away' ? 1 : 10),
+        scoringRoster(detail.homeTeamId === 'home' ? 10 : 1)
+      )
+    })
+    const seed = await GameSession.open(store, 'g1', context(game))
+    seed.apply({
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(seed.state),
+      confirmed: ['away', 'home']
+    })
+    await seed.flush()
+    let opens = 0
+    let reloads = 0
+    let listening = 0
+    let opened: GameSession | undefined
+    // As the server source does: every read gives the context for the
+    // game's teams as they stand.
+    const reads: EventStore = {
+      load: async gameId => ({
+        ...(await store.load(gameId)),
+        context: context(game)
+      }),
+      save: async (gameId, change) => await store.save(gameId, change)
+    }
+    const source: ScoringSource = {
+      persistent: true,
+      open: async detail => {
+        opens++
+        const session = await GameSession.open(reads, 'g1', context(detail))
+        const subscribe = session.subscribe.bind(session)
+        session.subscribe = listener => {
+          listening++
+          const stop = subscribe(listener)
+          let stopped = false
+          return () => {
+            if (!stopped) listening--
+            stopped = true
+            stop()
+          }
+        }
+        const reload = session.reload.bind(session)
+        session.reload = async () => {
+          reloads++
+          return await reload()
+        }
+        opened = session
+        return session
+      }
+    }
+    const swap = (): void => {
+      game = {
+        ...gameFixture,
+        homeTeamId: gameFixture.awayTeamId,
+        awayTeamId: gameFixture.homeTeamId,
+        homeTeamName: gameFixture.awayTeamName,
+        awayTeamName: gameFixture.homeTeamName
+      }
+      const stored = store.games.get('g1')!
+      store.games.set('g1', {
+        ...stored,
+        currentPlay: {
+          ...stored.currentPlay!,
+          teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+        }
+      })
+    }
+    let release = (): void => undefined
+    if (options.holdSaves === true) {
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const save = store.save.bind(store)
+      let refused = options.staleOnRelease !== true
+      store.save = async (gameId, change) => {
+        await held
+        if (!refused) {
+          refused = true
+          throw new HttpError('conflict', 'The lineups changed', {
+            stale: true
+          })
+        }
+        return await save(gameId, change)
+      }
+    }
+    let gameReads = 0
+    const discarded: string[] = []
+    const queued = options.phone
+    const client: TeamStationClient =
+      queued == null
+        ? new TeamStationClient({ baseUrl: '/api/v1' })
+        : Object.assign(
+            new CachingClient({
+              baseUrl: '/api/v1',
+              openCache: async () => {
+                throw new Error('No cache in this test')
+              },
+              outbox: { setTimer: () => 0, clearTimer: () => undefined }
+            }),
+            {
+              drainOutbox: async () => undefined,
+              outboxSummary: async () => ({
+                count: Object.values(queued).reduce((sum, n) => sum + n, 0),
+                chains: discarded.length > 0 ? {} : queued,
+                games: {},
+                teams: {}
+              }),
+              discardGame: async (gameId: string) => {
+                discarded.push(gameId)
+                return true
+              }
+            }
+          )
+    client.game = async () => {
+      if (options.slowReadsMs != null && gameReads > 0)
+        await new Promise(resolve => setTimeout(resolve, options.slowReadsMs))
+      const read = game
+      if (options.swapAfterFirstRead === true && gameReads === 0) swap()
+      gameReads++
+      return read
+    }
+    client.roster = async teamId => scoringRoster(teamId === 'away' ? 1 : 10)
+    client.gameLineups = async () =>
+      ({ digest: 'd1' }) as unknown as GameLineupsResponse
+    const changes = new FakeChanges()
+    HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
+    const node = document.createElement('div')
+    document.body.appendChild(node)
+    root = createRoot(node)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            userId="scorer"
+            onExit={() => undefined}
+            source={source}
+            socket={changes}
+            swapNoticeMs={options.swapNoticeMs}
+          />
+        </ThemeProvider>
+      )
+    })
+    await settle()
+    if (shown('OK')) await click('OK')
+    return {
+      changes,
+      opens: () => opens,
+      reloads: () => reloads,
+      session: () => opened!,
+      release,
+      discarded,
+      listening: () => listening,
+      swap,
+      notice: async teams => {
+        await changes.emit({
+          type: 'change',
+          gameId: 'g1',
+          kind: 'game',
+          at: '2026-10-23T12:00:00Z',
+          data: {
+            status: 'scheduled',
+            awayScore: null,
+            homeScore: null,
+            ...teams
+          }
+        })
+      }
+    }
+  }
+
+  it('opens the game again on its new sides when a notice names swapped teams', async function () {
+    const screen = await swappable()
+    expect(screen.opens()).equals(1)
+    expect(screen.session().state.liveData.linescore.offense.batter?.id).equals(
+      1
+    )
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await settle()
+    expect(screen.opens()).equals(2)
+    const state = screen.session().state
+    expect(state.gameData.teams.home.id).equals('away')
+    expect(state.gameData.teams.away.id).equals('home')
+    // The hosts, away now, bat first.
+    expect(state.liveData.linescore.offense.batter?.id).equals(10)
+    expect(document.body.textContent).not.includes(UNLOADED)
+    expect(document.body.textContent).not.includes(UNREAD)
+    expect(shown('Called Strike')).equals(true)
+  })
+
+  it('passes over a notice naming the teams it opened, as its own saves’ echoes do', async function () {
+    const screen = await swappable()
+    await screen.notice({ homeTeamId: 'home', awayTeamId: 'away' })
+    await settle()
+    expect(screen.opens()).equals(1)
+    expect(screen.reloads()).equals(0)
+  })
+
+  it('passes over a notice from an older server, naming no teams', async function () {
+    const screen = await swappable()
+    screen.swap()
+    await screen.notice({})
+    await settle()
+    expect(screen.opens()).equals(1)
+    expect(screen.reloads()).equals(0)
+  })
+
+  it('opens the game again when the swap came while it was opening, its notice unheard', async function () {
+    const screen = await swappable({ swapAfterFirstRead: true })
+    await settle()
+    expect(screen.opens()).equals(2)
+    const state = screen.session().state
+    expect(state.gameData.teams.home.id).equals('away')
+    expect(state.liveData.linescore.offense.batter?.id).equals(10)
+    expect(document.body.textContent).not.includes(UNREAD)
+    expect(document.body.textContent).includes('Home and away were swapped.')
+  })
+
+  it('waits for a save on its way before opening the game again, and says why', async function () {
+    const screen = await swappable({ holdSaves: true })
+    await click('Called Strike')
+    await settle()
+    expect(screen.session().saving).equals(true)
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await settle()
+    expect(screen.opens()).equals(1)
+    screen.release()
+    await settle()
+    await settle()
+    expect(screen.opens()).equals(2)
+    // The pitch was saved before the swap and went with it: nothing lost.
+    expect(document.body.textContent).includes('Home and away were swapped.')
+    expect(document.body.textContent).not.includes('were not kept')
+  })
+
+  it('tells the scorer of changes a stale save lost to the swap', async function () {
+    const screen = await swappable({ holdSaves: true, staleOnRelease: true })
+    await click('Called Strike')
+    await settle()
+    expect(screen.session().saving).equals(true)
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    screen.release()
+    await settle()
+    await settle()
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes(
+      'Home and away were swapped, so changes not yet saved before the swap were not kept.'
+    )
+    expect(screen.session().state.gameData.teams.home.id).equals('away')
+  })
+
+  it('on a phone, gives up the writes queued for the game before the swap', async function () {
+    const screen = await swappable({ phone: { 'game:g1': 1 } })
+    const before = screen.session()
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await settle()
+    expect(screen.discarded).deep.equals(['g1'])
+    expect(screen.opens()).equals(2)
+    expect(screen.session()).not.equals(before)
+    expect(screen.session().readOnly).equals(false)
+    expect(document.body.textContent).includes(
+      'changes not yet saved before the swap were not kept'
+    )
+  })
+
+  it('stops waiting for a save on its way when the screen goes', async function () {
+    const screen = await swappable({ holdSaves: true })
+    await click('Called Strike')
+    await settle()
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    expect(screen.listening()).equals(0)
+    screen.release()
+    await settle()
+    expect(screen.opens()).equals(1)
+  })
+
+  it('opens the game again when a swap made while the socket was down comes to light on resync', async function () {
+    const screen = await swappable()
+    screen.swap()
+    await screen.changes.emit({ type: 'resync', gameId: 'g1' })
+    await settle()
+    expect(screen.opens()).equals(2)
+    expect(screen.session().state.gameData.teams.home.id).equals('away')
+    expect(document.body.textContent).includes('Home and away were swapped.')
+  })
+
+  it('keeps the notice up for its time once the slow reopen is drawn', async function () {
+    const screen = await swappable({ swapNoticeMs: 100, slowReadsMs: 300 })
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    await settle()
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes('Home and away were swapped.')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(document.body.textContent).not.includes(
+      'Home and away were swapped.'
+    )
   })
 })

@@ -333,6 +333,54 @@ describe('scoring screen field wiring', function () {
       expect(baseIds(live.state)).deep.equals([2, null, null])
       expect(live.state.liveData.linescore.teams.home.errors).equals(0)
     })
+  it('names the team it opened on for a placeholder, so a swap read since is refused', async () => {
+    // A reload took up another device's swap before its notice came: the
+    // session holds the swapped teams, the screen the ones it opened on.
+    const swapped = {
+      ...gameFixture,
+      homeTeamId: gameFixture.awayTeamId,
+      awayTeamId: gameFixture.homeTeamId,
+      homeTeamName: gameFixture.awayTeamName,
+      awayTeamName: gameFixture.homeTeamName
+    }
+    const initial = scoringSession(swapped)
+    initial.liveData.boxscore.teams.home.defense.P = null
+    const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+      requireCurrentSetup: true
+    })
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => gameFixture
+    client.roster = async teamId =>
+      scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
+    const sent: Array<string | undefined> = []
+    client.createGuestPlayer = async (_gameId, side, player, teamId) => {
+      sent.push(teamId)
+      // As the server does: the side is the other team's now.
+      if (
+        teamId !== (side === 'home' ? swapped.homeTeamId : swapped.awayTeamId)
+      )
+        throw new Error("This game's teams changed. Open it again.")
+      return mintedRosterEntry(player)
+    }
+    await mount({ persistent: false, open: async () => live }, {}, { client })
+    const players = live.state.liveData.boxscore.teams.home.players.length
+    const click = async (label: string): Promise<void> => {
+      await step(() => {
+        Array.from(
+          document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+        )
+          .at(-1)!
+          .click()
+      })
+    }
+    await step(() => field().onPlayerTap?.('empty-P'))
+    await click('Create Player')
+    await click('Create Placeholder Player')
+    await click('Player count 2')
+    await click('Create')
+    expect(sent[0]).equals(gameFixture.homeTeamId)
+    expect(live.state.liveData.boxscore.teams.home.players).has.length(players)
+  })
   it('does not overwrite a defensive choice when cancelled roster player creation finishes', async () => {
     const initial = scoringSession(gameFixture)
     initial.liveData.boxscore.teams.home.defense.P = null

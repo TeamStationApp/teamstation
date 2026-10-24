@@ -1,8 +1,10 @@
+import { asObject, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import {
   badRequest,
+  conflict,
   forbidden,
   notFound,
   unauthorized
@@ -15,6 +17,8 @@ import {
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
+import { lockPlayerEdits } from '../admin/people'
+import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
@@ -33,6 +37,7 @@ import {
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
+import { swapGameSides } from '../games/swapSides'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
@@ -42,6 +47,7 @@ import {
   readSyncClock,
   REVISION_HEADER
 } from '../socket/syncRevision'
+import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
@@ -190,11 +196,7 @@ export function eventRoutes(
       // game's updated_at having moved; a viewer watching it is told now, as
       // after a post. The live board itself does not change: nothing it reads
       // from a play's result does, and an imported game writes none.
-      try {
-        options.onGameWritten?.(gameId)
-      } catch (error) {
-        console.error(`onGameWritten ${gameId}`, error)
-      }
+      tellGameWritten(options.onGameWritten, gameId)
       res.json(added)
     })
   )
@@ -263,12 +265,7 @@ export function eventRoutes(
           return { status: 200, body: { ...current, ...kept } }
         }
       })
-      if (wrote)
-        try {
-          options.onGameWritten?.(gameId)
-        } catch (error) {
-          console.error(`onGameWritten ${gameId}`, error)
-        }
+      if (wrote) tellGameWritten(options.onGameWritten, gameId)
       res.status(answer.status).json(answer.body)
     })
   )
@@ -312,7 +309,74 @@ export function eventRoutes(
     })
   )
 
+  /**
+   * Swaps home and away before the first pitch, from the scoring screen:
+   * for whoever may score the game, a scorekeeper of either team. Refused
+   * with 409 once the game has begun. The body names the sides the scorer
+   * read: a call sent again after its answer was lost finds them already
+   * exchanged and changes nothing, rather than swapping them back.
+   */
+  router.post(
+    '/games/:gameId/swap-sides',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const read = cleanBody(asSwapSidesBody, req.body)
+      await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+      const teams = await atomic(db, async trx => {
+        await lockKeys(trx, ['creation:parent-graph', `game:${gameId}`])
+        await lockPlayerEdits(trx)
+        const game = await trx
+          .selectFrom('games')
+          .select(['home_team_id', 'away_team_id'])
+          .where('id', '=', gameId)
+          .forUpdate()
+          .executeTakeFirst()
+        if (game == null) throw notFound()
+        const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
+        if (
+          !canScore(scorers, game.home_team_id) &&
+          !canScore(scorers, game.away_team_id)
+        )
+          throw forbidden('Only someone who can score this game may swap it')
+        if (
+          game.home_team_id === read.awayTeamId &&
+          game.away_team_id === read.homeTeamId
+        )
+          return { ...read.swapped, swapped: false }
+        if (
+          game.home_team_id !== read.homeTeamId ||
+          game.away_team_id !== read.awayTeamId
+        )
+          throw conflict("This game's teams changed. Open it again.")
+        await swapGameSides(trx, gameId)
+        return { ...read.swapped, swapped: true }
+      })
+      if (teams.swapped) tellGameWritten(options.onGameWritten, gameId)
+      res.json({ homeTeamId: teams.homeTeamId, awayTeamId: teams.awayTeamId })
+    })
+  )
+
   return router
+}
+
+/** The sides a swap was asked from, and the sides it makes. */
+function asSwapSidesBody(raw: unknown): {
+  homeTeamId: string
+  awayTeamId: string
+  swapped: { homeTeamId: string; awayTeamId: string }
+} {
+  const { homeTeamId, awayTeamId } = asObject({
+    homeTeamId: asString,
+    awayTeamId: asString
+  })(raw)
+  return {
+    homeTeamId,
+    awayTeamId,
+    swapped: { homeTeamId: awayTeamId, awayTeamId: homeTeamId }
+  }
 }
 
 /** What a live post's key keeps of its answer: the rest is read again. */

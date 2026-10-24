@@ -55,9 +55,12 @@ export function ScoringSettings({
       live = false
     }
   }, [health])
-  const update = (next: ScoringPreferences): void => {
-    setValue(next)
-    scoringPreferences.write(userId, next).catch(() => undefined)
+  /** Changes these fields, here and in the stored preferences, alone. */
+  const update = (patch: Partial<ScoringPreferences>): void => {
+    setValue(shown => (shown == null ? shown : { ...shown, ...patch }))
+    scoringPreferences
+      .update(userId, stored => ({ ...stored, ...patch }))
+      .catch(() => undefined)
   }
   const chosen =
     offered == null
@@ -129,7 +132,7 @@ export function ScoringSettings({
                 disabled={!available || value == null}
                 onPress={() => {
                   if (value == null) return
-                  update({ ...value, dictationModel: model })
+                  update({ dictationModel: model })
                   onDictationModelChange?.(model)
                 }}
                 style={{ ...row, opacity: available ? 1 : 0.45 }}
@@ -150,7 +153,7 @@ export function ScoringSettings({
         value?.sound !== false,
         on => {
           if (value == null) return
-          update({ ...value, sound: on })
+          update({ sound: on })
           onSoundChange?.(on)
         }
       )}
@@ -160,7 +163,7 @@ export function ScoringSettings({
         value?.animations !== false,
         on => {
           if (value == null) return
-          update({ ...value, animations: on })
+          update({ animations: on })
           onAnimationsChange?.(on)
         }
       )}
@@ -169,7 +172,7 @@ export function ScoringSettings({
         'Switch-hitter help',
         value?.help !== false,
         on => {
-          if (value != null) update({ ...value, help: on })
+          if (value != null) update({ help: on })
         }
       )}
       <View style={row}>
@@ -181,7 +184,7 @@ export function ScoringSettings({
           text="Reset"
           disabled={value == null}
           onPress={() => {
-            if (value != null) update({ ...value, shown: 0 })
+            if (value != null) update({ shown: 0 })
           }}
         />
       </View>

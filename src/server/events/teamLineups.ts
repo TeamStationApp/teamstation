@@ -158,6 +158,21 @@ export async function storedLineupsDigest(
   return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
 }
 
+/**
+ * A new digest for a game whose lineups changed with no roster action left
+ * to write one (it has no record yet): the stored digest, salted with what
+ * changed, so a scorer's earlier view is refused as stale.
+ */
+export async function changedLineupsDigest(
+  db: Trx,
+  game: Parameters<typeof storedLineupsDigest>[1],
+  ...changed: unknown[]
+): Promise<string> {
+  return createHash('sha256')
+    .update(JSON.stringify([await storedLineupsDigest(db, game), ...changed]))
+    .digest('hex')
+}
+
 /** A game's stored plays and current play, as the lineups are read from. */
 export function storedLineupGame(
   plays: Array<{ gumbo: unknown }>,

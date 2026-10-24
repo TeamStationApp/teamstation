@@ -3624,6 +3624,23 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Swaps the game's home and away teams before its first pitch, for whoever
+   * may score it; refused with 409 once the game has begun. `read` is the
+   * sides the caller read: sent again, the call changes nothing.
+   */
+  async swapGameSides(
+    gameId: string,
+    read: { homeTeamId: string; awayTeamId: string }
+  ): Promise<{ homeTeamId: string; awayTeamId: string }> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/swap-sides`,
+      asObject({ homeTeamId: asString, awayTeamId: asString }),
+      read
+    )
+  }
+
   async saveEventTag(
     gameId: string,
     targetId: string,
@@ -3791,16 +3808,22 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * A guest on one side of the game. `teamId` is the team the caller means:
+   * when home and away were swapped since it read the game, the server
+   * refuses rather than add the guest to the other team.
+   */
   async createGuestPlayer(
     gameId: string,
     side: 'away' | 'home',
-    player: NewRosterPlayer
+    player: NewRosterPlayer,
+    teamId?: string
   ): Promise<RosterEntry> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asRosterEntry,
-      { side, ...player }
+      { side, ...(teamId == null ? {} : { teamId }), ...player }
     )
   }
 

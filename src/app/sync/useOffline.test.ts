@@ -18,6 +18,7 @@ const queue = (
   held: 'game' | 'team' | undefined = undefined
 ): Parameters<typeof offlineBannerText>[1] => ({
   count,
+  chains: {},
   games: held === 'game' ? { g1: { state: 'parked', message: 'stale' } } : {},
   teams: held === 'team' ? { t1: { state: 'dead', message: 'No' } } : {}
 })

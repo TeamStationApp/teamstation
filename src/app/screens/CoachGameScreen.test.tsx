@@ -17,7 +17,9 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { recordOf } from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
+import { swapRecordSides } from '../../common/scoring/sideSwap'
 import {
   copyState,
   type GameState,
@@ -39,7 +41,9 @@ import {
 } from '../navigation/useAddressBar'
 import {
   addDevelopmentPlayer,
-  createDevelopmentSession
+  createDevelopmentSession,
+  startingSetup,
+  teamsOf
 } from '../scoring/developmentSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import type { GameChanges } from '../scoring/rosterLive'
@@ -1108,6 +1112,260 @@ describe('Coach Game (U25)', function () {
       () => document.body.textContent!.includes('Unable to load the game'),
       'the failure'
     )
+  })
+})
+
+describe('a game swapped under the coach screen', function () {
+  /** The game after the swap: the Owls at home, his Hawks away. */
+  const swappedGame = (held: Server): GameDetail => ({
+    ...held.game,
+    homeTeamId: 'away',
+    awayTeamId: 'home',
+    homeTeamName: 'Owls',
+    awayTeamName: 'Hawks',
+    coachSides: ['away']
+  })
+  const swappedLineups = (digest: string): GameLineupsResponse => {
+    const read = lineups(digest, true)
+    return {
+      home: { ...read.away },
+      away: { ...read.home },
+      digest
+    }
+  }
+  const notice = async (changes: FakeChanges): Promise<void> => {
+    await changes.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'game',
+      at: '2026-10-23T12:00:00Z',
+      data: {
+        status: 'scheduled',
+        awayScore: null,
+        homeScore: null,
+        homeTeamId: 'away',
+        awayTeamId: 'home'
+      }
+    })
+  }
+
+  for (const recorded of [false, true])
+    it(`saves his lineup and adds his guest on his team’s new side, ${recorded ? 'with' : 'without'} a record`, async function () {
+      const held = server()
+      const changes = new FakeChanges()
+      const store = memoryStore()
+      const context = (
+        game: GameDetail,
+        away: RosterEntry[],
+        home: RosterEntry[]
+      ): Parameters<typeof ScoringSession.open>[2] => ({
+        gamePk: 'g1',
+        teams: teamsOf(game),
+        setup: startingSetup(game, away, home)
+      })
+      if (recorded) {
+        const seed = await ScoringSession.open(
+          store,
+          'g1',
+          context(held.game, roster('away'), roster('home'))
+        )
+        seed.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: setupOf(seed.state),
+          confirmed: ['away', 'home']
+        })
+        await seed.flush()
+      }
+      let opens = 0
+      await coach(held, {
+        socket: changes,
+        source: {
+          open: async (game, away, home) => {
+            opens++
+            return await ScoringSession.open(
+              store,
+              'g1',
+              context(game, away, home)
+            )
+          }
+        }
+      })
+      expect(opens).equals(1)
+
+      held.game = swappedGame(held)
+      held.client.gameLineups = async () => swappedLineups('swapped')
+      if (recorded) {
+        const stored = store.games.get('g1')!
+        store.games.set('g1', {
+          ...stored,
+          currentPlay: {
+            ...stored.currentPlay!,
+            teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+          }
+        })
+      }
+      await notice(changes)
+      await waitFor(() => opens === 2, 'the game read again')
+      await waitFor(() => node('Save Rosters') != null, 'the roster screen')
+
+      const guests: unknown[] = []
+      held.client.createGuestPlayer = async (gameId, side, player) => {
+        guests.push({ gameId, side, player })
+        return {
+          ...roster('home')[0],
+          userId: userIdOfGumbo(9000002),
+          gumboId: 9000002,
+          shortName: 'Hawks G'
+        }
+      }
+      await click('Create Player')
+      await click('Create Placeholder Player')
+      await click('Create')
+      expect(guests).has.length(1)
+      expect(guests[0]).includes({ gameId: 'g1', side: 'away' })
+
+      held.answer = async () => swappedLineups('mine')
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the saved lineup')
+      expect(held.saved[0].side).equals('away')
+      expect(held.saved[0].players.map(player => player.gumboId)).includes(201)
+    })
+
+  it('asks before reading the game again over a staged change', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    let opens = 0
+    const games = new DevelopmentScoringSource()
+    await coach(held, {
+      socket: changes,
+      source: {
+        open: async (game, away, home) => {
+          opens++
+          return await games.open(game, away, home)
+        }
+      }
+    })
+    await stageChange()
+    held.game = swappedGame(held)
+    await notice(changes)
+    await waitFor(
+      () => document.body.textContent!.includes('Home and away were swapped'),
+      'the swap notice'
+    )
+    expect(opens).equals(1)
+    await click('Read the game again')
+    await waitFor(() => opens === 2, 'the game read again')
+    expect(document.body.textContent).not.includes('Home and away were swapped')
+  })
+
+  /**
+   * A source over a game kept in memory with a saved lineup, giving the
+   * context for the game's teams as `held` now has them, as the server
+   * source does.
+   */
+  async function recorded(held: Server): Promise<{
+    source: NonNullable<React.ComponentProps<typeof CoachGameScreen>['source']>
+    opens: () => number
+    swap: () => void
+  }> {
+    const store = memoryStore()
+    const context = (
+      game: GameDetail,
+      away: RosterEntry[],
+      home: RosterEntry[]
+    ): Parameters<typeof ScoringSession.open>[2] => ({
+      gamePk: 'g1',
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    const seed = await ScoringSession.open(
+      store,
+      'g1',
+      context(held.game, roster('away'), roster('home'))
+    )
+    seed.apply({
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(seed.state),
+      confirmed: ['away', 'home']
+    })
+    await seed.flush()
+    let opens = 0
+    return {
+      opens: () => opens,
+      source: {
+        open: async (game, away, home) => {
+          opens++
+          return await ScoringSession.open(
+            {
+              load: async id => ({
+                ...(await store.load(id)),
+                context: context(
+                  held.game,
+                  roster(held.game.awayTeamId),
+                  roster(held.game.homeTeamId)
+                )
+              }),
+              save: async (id, change) => await store.save(id, change)
+            },
+            'g1',
+            context(game, away, home)
+          )
+        }
+      },
+      swap: () => {
+        held.game = swappedGame(held)
+        held.client.gameLineups = async () => swappedLineups('swapped')
+        const stored = store.games.get('g1')!
+        store.games.set('g1', {
+          ...stored,
+          currentPlay: {
+            ...stored.currentPlay!,
+            teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+          }
+        })
+      }
+    }
+  }
+
+  it('reads the game again when a swap made while the socket was down comes to light on resync', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    const game = await recorded(held)
+    await coach(held, { socket: changes, source: game.source })
+    expect(game.opens()).equals(1)
+    game.swap()
+    await changes.emit({ type: 'resync', gameId: 'g1' })
+    await waitFor(() => game.opens() === 2, 'the game read again')
+    // Once, though the resync's read and its lineup reload both found it.
+    await settle()
+    expect(game.opens()).equals(2)
+  })
+
+  it('hands a lineup change read after a swap to the swap, never his old side', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    const game = await recorded(held)
+    await coach(held, { socket: changes, source: game.source })
+    await waitFor(() => held.reads.lineups >= 2, 'the digest read')
+    await stageChange()
+    game.swap()
+    // The lineups notice arrives before the game's: the staged change is
+    // warned over, and Cancel reads the game again.
+    await changes.change('lineups', 'swapped')
+    await waitFor(
+      () => document.querySelector('[data-testid="Roster conflict"]') != null,
+      'the warning'
+    )
+    await click('Cancel')
+    await waitFor(
+      () =>
+        game.opens() === 2 ||
+        document.body.textContent!.includes('Home and away were swapped'),
+      'the swap taken up'
+    )
+    expect(held.saved).deep.equals([])
   })
 })
 

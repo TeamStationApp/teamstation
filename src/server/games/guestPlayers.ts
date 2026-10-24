@@ -25,7 +25,9 @@ export async function createGuestPlayer(
   actor: Actor,
   gameId: string,
   side: Side,
-  player: NewRosterPlayer
+  player: NewRosterPlayer,
+  /** The team the caller means: refused when the side holds another now. */
+  expectedTeamId?: string
 ): Promise<RosterEntry> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
@@ -38,6 +40,8 @@ export async function createGuestPlayer(
     if (game == null) throw notFound()
     const roles = await roleScopes(trx, actor.userId, actor.isAdmin)
     const teamId = side === 'home' ? game.home_team_id : game.away_team_id
+    if (expectedTeamId != null && expectedTeamId !== teamId)
+      throw conflict("This game's teams changed. Open it again.")
     if (
       !canManageRoster(roles, teamId) &&
       !canScore(roles, game.home_team_id) &&

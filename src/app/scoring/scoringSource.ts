@@ -118,42 +118,78 @@ export class ServerScoringSource implements ScoringSource {
     let currentGame = game
     let rosters = { away, home }
     let first = true
+    // The defaults shape only a new game: one with records is rebuilt from
+    // them, whatever the defaults say now.
+    const defaults = await defaultsOf(client, game)
+    // The context for the game's teams as last read, rebuilt only when they
+    // change: every read gives the one its teams call for, whether or not
+    // the session keeps that read.
+    let held = {
+      home: game.homeTeamId,
+      away: game.awayTeamId,
+      context: context(game, away, home, defaults, false)
+    }
     const store: EventStore = {
       load: async gameId => {
-        if (!first) {
-          currentGame = await client.game(gameId)
+        const readTeams = async (game: GameDetail): Promise<void> => {
+          currentGame = game
           const [away, home] = await Promise.all([
-            client.roster(currentGame.awayTeamId),
-            client.roster(currentGame.homeTeamId)
+            client.roster(game.awayTeamId),
+            client.roster(game.homeTeamId)
           ])
           rosters = { away, home }
         }
+        const later = !first
+        if (later) await readTeams(await client.game(gameId))
         first = false
-        return await client.gameEvents(gameId)
+        let stored = await client.gameEvents(gameId)
+        // On a reload or a rebase, the game read again after its plays: a
+        // swap between the two reads would pair the swapped record with the
+        // old teams. Read both again until they agree. (The screen checks
+        // the first read itself, as it starts listening.)
+        for (let tries = later ? 0 : 3; tries < 3; tries++) {
+          const after = await client.game(gameId)
+          if (
+            after.homeTeamId === currentGame.homeTeamId &&
+            after.awayTeamId === currentGame.awayTeamId
+          )
+            break
+          await readTeams(after)
+          stored = await client.gameEvents(gameId)
+        }
+        // Home and away were swapped: the record now names the new sides.
+        if (
+          currentGame.homeTeamId !== held.home ||
+          currentGame.awayTeamId !== held.away
+        )
+          held = {
+            home: currentGame.homeTeamId,
+            away: currentGame.awayTeamId,
+            context: context(
+              currentGame,
+              rosters.away,
+              rosters.home,
+              await defaultsOf(client, currentGame),
+              false
+            )
+          }
+        return { ...stored, context: held.context }
       },
       save: async (gameId, change) =>
         await client.saveGameEvents(gameId, change)
     }
-    // The defaults shape only a new game: one with records is rebuilt from
-    // them, whatever the defaults say now.
-    const defaults = await defaultsOf(client, game)
-    return await ScoringSession.open(
-      store,
-      game.id,
-      context(game, away, home, defaults, false),
-      {
-        requireCurrentSetup: true,
-        now: () => this.clock.now(),
-        reconcileSetup: setup =>
-          reconcileRoster(
-            setup,
-            teamsOf(currentGame),
-            rosters,
-            currentGame.guestPlayers,
-            currentGame.unrostered
-          )
-      }
-    )
+    return await ScoringSession.open(store, game.id, held.context, {
+      requireCurrentSetup: true,
+      now: () => this.clock.now(),
+      reconcileSetup: setup =>
+        reconcileRoster(
+          setup,
+          teamsOf(currentGame),
+          rosters,
+          currentGame.guestPlayers,
+          currentGame.unrostered
+        )
+    })
   }
 }
 

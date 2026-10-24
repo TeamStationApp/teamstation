@@ -12,6 +12,7 @@ import {
   type ScheduleGamesResponse
 } from '../../common/scheduleGames'
 import { adminScopes } from '../access'
+import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { gameNeedsAttention } from '../autoScheduler/attention'
 import { lockKeys } from '../db/advisoryLocks'
@@ -24,6 +25,7 @@ import {
 } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
 import { scoredInTeamStation } from '../games/opponentFixed'
+import { maySwapSides, swapGameSides } from '../games/swapSides'
 import { currentActor, requireGroupAdmin } from '../groups/rights'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
@@ -190,6 +192,8 @@ export async function scheduleGames(
         // This is also the service boundary for importers. Precomputed rights
         // cannot authorize publication or outlive an unlink or role revocation.
         await lockKeys(trx, ['creation:parent-graph'])
+        // Before any game row: a side flip rewrites the game's lineups.
+        await lockPlayerEdits(trx)
         if (options.actor == null)
           throw new RowError('forbidden', 'Sign in to schedule games')
         const actor = await currentActor(trx, options.actor)
@@ -575,8 +579,8 @@ function mustMaySchedule(
  *
  * `sidesFor` is the team whose row the game's own id matched: when the row
  * puts that team on the other side, the other team is external and the game
- * has no plays — none stored and none under way — its home and away teams,
- * and their scores, swap. Between two full teams each schedules the game
+ * is before its first pitch, its home and away teams swap, with everything
+ * that names a side (`swapGameSides`). Between two full teams each schedules the game
  * under its own id and may claim the same side, so neither row moves it.
  * Otherwise its teams and scores are never touched.
  */
@@ -595,8 +599,6 @@ async function updateHeld(
     .select([
       'home_team_id',
       'away_team_id',
-      'home_score',
-      'away_score',
       'currentPlay',
       'start_at',
       'end_at',
@@ -622,11 +624,8 @@ async function updateHeld(
     }
   }
   const played = await gameHasPlays(trx, held.id)
+  let swapped = false
   const changes: {
-    home_team_id?: string
-    away_team_id?: string
-    home_score?: number | null
-    away_score?: number | null
     start_at?: Date
     end_at?: Date
     venue?: string
@@ -639,17 +638,18 @@ async function updateHeld(
     sidesFor != null &&
     row.side != null &&
     (game.home_team_id === sidesFor) !== (row.side === 'home') &&
-    !played &&
-    game.currentPlay == null &&
+    (await maySwapSides(trx, {
+      id: held.id,
+      currentPlay: game.currentPlay,
+      status: game.status
+    })) &&
     (await isExternal(
       trx,
       game.home_team_id === sidesFor ? game.away_team_id : game.home_team_id
     ))
   ) {
-    changes.home_team_id = game.away_team_id
-    changes.away_team_id = game.home_team_id
-    changes.home_score = game.away_score
-    changes.away_score = game.home_score
+    await swapGameSides(trx, held.id)
+    swapped = true
   }
   if (new Date(game.start_at).getTime() !== startAt.getTime()) {
     changes.start_at = startAt
@@ -693,14 +693,14 @@ async function updateHeld(
     )
       await refreshFieldWarnings(trx, [game.field_id], undefined, [held.id])
     // A screen holding the game open, a scorer's among them, learns of it
-    // when this commits: above all of a swap, or it credits the wrong side.
+    // when this commits.
     await notifyGameChange(trx, { game: held.id, kind: 'game' })
-    // A score, a status or a side changed moves its teams' records.
+    // A status changed moves its teams' records.
     await noteGameFigures(trx, held.id)
     if (changes.status === 'cancelled')
       await gameNeedsAttention(trx, held.id, 'cancelled', null)
   }
-  const written = alreadyWritten || Object.keys(changes).length > 0
+  const written = alreadyWritten || swapped || Object.keys(changes).length > 0
   return {
     result: written ? 'updated' : 'unchanged',
     gameId: held.id,

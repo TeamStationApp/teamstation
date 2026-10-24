@@ -83,6 +83,12 @@ export interface StoredGame {
   playsDigest?: string
   /** On a save's answer, the same digest of the game as the save found it. */
   priorPlaysDigest?: string
+  /**
+   * The context to replay with when the game's teams are no longer the ones
+   * the session was opened with, as after a swap of home and away; absent
+   * while they are, and from every store that cannot tell.
+   */
+  context?: SessionContext
 }
 export interface SaveChange {
   plays: GumboPlay[]
@@ -271,6 +277,9 @@ export class ScoringSession {
   private timer: unknown = null
   private retryMs = FIRST_RETRY_MS
   private blocked = false
+  /** Closed for good: nothing more is saved from it. */
+  private closed = false
+  private swapLost = 0
   private refusal: string | null = null
   private failure: string | null = null
   private isOffline = false
@@ -340,9 +349,9 @@ export class ScoringSession {
     options: SessionOptions = {}
   ): Promise<ScoringSession> {
     const loaded = await store.load(gameId)
-    const replayed = replayPlays(loaded, context)
+    const replayed = replayPlays(loaded, loaded.context ?? context)
     const session = new ScoringSession(store, gameId, replayed.base, options)
-    session.context = context
+    session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
     session.heldPlays = loaded.playsDigest == null ? [] : [loaded.playsDigest]
     session.heldLineups =
@@ -629,6 +638,24 @@ export class ScoringSession {
     return this.rebaseCount
   }
 
+  /** Changes of this session's a rebase dropped because home and away were swapped. */
+  get lostToSwap(): number {
+    return this.swapLost
+  }
+
+  /**
+   * Saves nothing more: the screen that held it moved on to another read of
+   * the game, as after a swap of home and away, whose sides this session's
+   * unsaved changes no longer name. A save already on its way finishes.
+   */
+  close(): void {
+    this.closed = true
+    if (this.timer != null) {
+      this.clearTimer(this.timer)
+      this.timer = null
+    }
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => {
@@ -818,6 +845,7 @@ export class ScoringSession {
 
   /** Takes up everything `fresh`, a new read of the same game, holds. */
   private adopt(fresh: ScoringSession): void {
+    this.context = fresh.context
     this.readActions = fresh.readActions
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
@@ -902,6 +930,18 @@ export class ScoringSession {
     const ourPlaybackTimes = this.playbackTimes.slice(same)
     const theirPlaybackTimes = fresh.playbackTimes.slice(kept)
     const times = new Map(this.times)
+    // Home and away were swapped meanwhile: this session's own actions name
+    // the old sides, so only the server's are put back.
+    const swapped =
+      fresh.context?.teams.home.id !== this.context?.teams.home.id ||
+      fresh.context?.teams.away.id !== this.context?.teams.away.id
+    const lost = swapped ? ours.length : 0
+    this.swapLost += lost
+    if (swapped) {
+      ours.length = 0
+      ourTimes.length = 0
+      ourPlaybackTimes.length = 0
+    }
     this.adopt(fresh)
     // An action of this session's undone before the server's came after it.
     const replay = same < kept ? [...theirs, ...ours] : ours
@@ -946,9 +986,11 @@ export class ScoringSession {
       this.record(roster, applied, time ?? this.now().toISOString())
     }
     this.dropped =
-      refused.length === 0
-        ? null
-        : `${refused.length === 1 ? 'A change' : `${refused.length} changes`} could not follow another device's lineup change: ${refused[0]}`
+      lost > 0
+        ? `Home and away were swapped, so ${lost === 1 ? 'a change' : `${lost} changes`} not yet saved before the swap ${lost === 1 ? 'was' : 'were'} not kept.`
+        : refused.length === 0
+          ? null
+          : `${refused.length === 1 ? 'A change' : `${refused.length} changes`} could not follow another device's lineup change: ${refused[0]}`
     this.rebaseCount++
     this.notify()
   }
@@ -1326,7 +1368,7 @@ export class ScoringSession {
   }
 
   private schedule(ms: number): void {
-    if (this.refusal != null || this.blocked) return
+    if (this.refusal != null || this.blocked || this.closed) return
     if (this.timer != null) this.clearTimer(this.timer)
     this.timer = this.setTimer(() => {
       this.timer = null
@@ -1337,7 +1379,7 @@ export class ScoringSession {
   private async save(): Promise<void> {
     let rebased = 0
     for (;;) {
-      if (this.refusal != null || this.blocked) return
+      if (this.refusal != null || this.blocked || this.closed) return
       const covering = [...this.log]
       const coveringTimes = [...this.actionTimes]
       const coveringPlaybackTimes = [...this.playbackTimes]

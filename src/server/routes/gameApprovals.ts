@@ -23,6 +23,7 @@ import {
   withdrawFromGame,
   withdrawGameRequest
 } from '../schedule/gameApprovals'
+import { tellGameWritten } from './gameWritten'
 
 function actor(req: Request): Actor {
   if (req.actor == null) throw unauthorized()
@@ -36,11 +37,27 @@ function clean<T>(fn: (value: unknown) => T, value: unknown): T {
     throw error
   }
 }
+export interface GameApprovalOptions {
+  /**
+   * Told the game a committed request changed, as `lineupRoutes`' hook is,
+   * so its scoreboard follows: a swap of home and away above all. Fire and
+   * forget: whatever it throws is logged and never fails the request.
+   */
+  onGameWritten?: (gameId: string) => void
+}
+
 export function gameApprovalRoutes(
   db: Kysely<Database>,
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  options: GameApprovalOptions = {}
 ): Router {
   const router = Router()
+  /** An existing game this call's acceptance changed is told on, once. */
+  const accepted = {
+    onAccepted: (gameId: string) => {
+      tellGameWritten(options.onGameWritten, gameId)
+    }
+  }
   router.use(
     withAsync(async (req, res, next) => {
       if (
@@ -70,7 +87,9 @@ export function gameApprovalRoutes(
         db,
         actor(req),
         clean(asGameProposal, req.body),
-        clock
+        clock,
+        undefined,
+        accepted
       )
       res.status(201).json({
         id: request.id,
@@ -104,7 +123,8 @@ export function gameApprovalRoutes(
           actor(req),
           String(req.params.id),
           decision,
-          clock
+          clock,
+          accepted
         )
         res.json({
           id: request.id,
@@ -151,7 +171,8 @@ export function gameApprovalRoutes(
         actor(req),
         String(req.params.id),
         key,
-        clock
+        clock,
+        accepted
       )
       res.status(201).json({
         ...(request.status === 'accepted'

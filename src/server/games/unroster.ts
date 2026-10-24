@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 import type { Kysely } from 'kysely'
 
 import type { UnrosterBody } from '../../common/api'
@@ -26,7 +24,7 @@ import type { Actor } from '../auth/sessions'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
-import { storedLineupsDigest } from '../events/teamLineups'
+import { changedLineupsDigest } from '../events/teamLineups'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
@@ -114,14 +112,7 @@ export async function setRostered(
         // Still invalidate a scorer's earlier view of who may play.
         ...(context == null
           ? {
-              lineups_digest: createHash('sha256')
-                .update(
-                  JSON.stringify([
-                    await storedLineupsDigest(trx, game),
-                    unrostered
-                  ])
-                )
-                .digest('hex')
+              lineups_digest: await changedLineupsDigest(trx, game, unrostered)
             }
           : {})
       })

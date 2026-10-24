@@ -23,6 +23,7 @@ import {
 } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
+import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import {
   gameNeedsAttention,
@@ -31,6 +32,7 @@ import {
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
+import { maySwapSides, SWAP_REFUSED, swapGameSides } from '../games/swapSides'
 import {
   approvesSide,
   type Clock,
@@ -145,6 +147,41 @@ async function matchesVersion(
   const { exhibition, timezone, ...legacy } = material
   return gameVersion(legacy) === expected
 }
+/**
+ * Takes the shared player-edit lock, before any games row lock as every
+ * roster writer does, when these terms exchange an existing game's two
+ * teams: the swap rewrites its lineups. The teams are read unlocked; a
+ * change to them meanwhile changes the game's version, which refuses the
+ * request under the row lock.
+ */
+async function lockForSwap(
+  trx: Transaction<Database>,
+  gameId: string | null | undefined,
+  game: GameIntent
+): Promise<void> {
+  if (gameId == null) return
+  const teams = await trx
+    .selectFrom('games')
+    .select(['home_team_id', 'away_team_id'])
+    .where('id', '=', gameId)
+    .executeTakeFirst()
+  if (
+    teams?.home_team_id === game.awayTeamId &&
+    teams.away_team_id === game.homeTeamId
+  )
+    await lockPlayerEdits(trx)
+}
+/** Whether a change keeps the game's two teams and exchanges their sides. */
+function swapsSides(old: GameRow, game: GameIntent): boolean {
+  return (
+    old.home_team_id === game.awayTeamId && old.away_team_id === game.homeTeamId
+  )
+}
+/**
+ * Home and away may swap until the first pitch. Another team may replace
+ * one only while nothing has been scored: no play, no at-bat open, not
+ * under way.
+ */
 async function requireEditableTeams(
   db: Kysely<Database>,
   old: GameRow,
@@ -155,6 +192,10 @@ async function requireEditableTeams(
     old.away_team_id === game.awayTeamId
   )
     return
+  if (swapsSides(old, game)) {
+    if (!(await maySwapSides(db, old))) throw conflict(SWAP_REFUSED)
+    return
+  }
   const played = await db
     .selectFrom('events')
     .select('id')
@@ -611,6 +652,9 @@ export async function finishGameRequest(
         )
     }
     await requireEditableTeams(trx, current, terms.game)
+    // Everything naming a side follows its team; the update below then
+    // finds the team ids already in place.
+    if (swapsSides(current, terms.game)) await swapGameSides(trx, gameId)
     previousFieldId = current.field_id
     cancelsSchedulerGame =
       current.schedule_preview_id != null &&
@@ -718,15 +762,24 @@ export async function proposeGame(
   body: GameProposal,
   clock: Clock = realClock,
   resumingRequestId?: string,
-  /** Server-only: the Auto-Scheduler preview publishing this game. */
-  options: { schedulePreviewId?: string } = {}
+  options: {
+    /** Server-only: the Auto-Scheduler preview publishing this game. */
+    schedulePreviewId?: string
+    /**
+     * Told, once its transaction commits, of an existing game this call's
+     * own acceptance changed; never for a replay or a pending request.
+     */
+    onAccepted?: (gameId: string) => void
+  } = {}
 ): Promise<StoredRequest> {
-  return await atomic(db, async trx => {
+  let acceptedGame: string | undefined
+  const request = await atomic(db, async trx => {
     await lockKeys(trx, [
       'creation:parent-graph',
       `creation:game:${actor.userId}:${body.idempotencyKey}`,
       ...(body.gameId == null ? [] : [`game:${body.gameId}`])
     ])
+    await lockForSwap(trx, body.gameId, body.game)
     const fresh = await currentActor(trx, actor)
     const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex')
     const held = await trx
@@ -1053,7 +1106,8 @@ export async function proposeGame(
         response: { id, gameProposalVersion: 2 }
       })
       .execute()
-    await finishGameRequest(trx, id, clock)
+    if ((await finishGameRequest(trx, id, clock)) && terms.gameId != null)
+      acceptedGame = terms.gameId
     // A proposal left pending holds its field too.
     await refreshFieldWarnings(trx, [game.fieldId, old?.field_id], clock)
     await notifyGameChange(trx, { game: terms.proposedGameId!, kind: 'game' })
@@ -1061,6 +1115,8 @@ export async function proposeGame(
     noteProposedGame(trx, terms)
     return await requestById(trx, id)
   })
+  if (acceptedGame != null) options.onAccepted?.(acceptedGame)
+  return request
 }
 
 export async function decideGameRequest(
@@ -1068,13 +1124,17 @@ export async function decideGameRequest(
   actor: Actor,
   id: string,
   decision: 'accept' | 'decline',
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  /** Told, once committed, of an existing game this acceptance changed. */
+  options: { onAccepted?: (gameId: string) => void } = {}
 ): Promise<StoredRequest> {
-  return await atomic(db, async trx => {
+  let acceptedGame: string | undefined
+  const request = await atomic(db, async trx => {
     await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
     const fresh = await currentActor(trx, actor)
     const request = await requestById(trx, id)
     const terms = request.terms as GameRequestTerms
+    if (decision === 'accept') await lockForSwap(trx, terms.gameId, terms.game)
     const permitted = []
     for (const side of relationshipSides(terms))
       if (await approvesSide(trx, fresh, side, request)) permitted.push(side)
@@ -1112,11 +1172,14 @@ export async function decideGameRequest(
           .where('scope_type', '=', side.kind)
           .where('scope_id', '=', side.id)
           .execute()
-      await finishGameRequest(trx, id, clock)
+      if ((await finishGameRequest(trx, id, clock)) && terms.gameId != null)
+        acceptedGame = terms.gameId
     }
     await notifyProposalChange(trx, terms)
     return await requestById(trx, id)
   })
+  if (acceptedGame != null) options.onAccepted?.(acceptedGame)
+  return request
 }
 
 /** First committing team withdrawal wins, even after a final result or loss of parent/competition links. */
@@ -1334,9 +1397,12 @@ export async function resendGameRequest(
   actor: Actor,
   id: string,
   idempotencyKey: string,
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  /** Told, once committed, of an existing game the resent request changed. */
+  options: { onAccepted?: (gameId: string) => void } = {}
 ): Promise<StoredRequest> {
-  return await atomic(db, async trx => {
+  let acceptedGame: string | undefined
+  const request = await atomic(db, async trx => {
     await lockKeys(trx, [
       'creation:parent-graph',
       `request:${id}`,
@@ -1401,9 +1467,15 @@ export async function resendGameRequest(
       proposal,
       clock,
       terms.replacesGameId == null ? undefined : original.id,
-      terms.schedulePreviewId == null
-        ? {}
-        : { schedulePreviewId: terms.schedulePreviewId }
+      {
+        ...(terms.schedulePreviewId == null
+          ? {}
+          : { schedulePreviewId: terms.schedulePreviewId }),
+        // Told only once this outer transaction commits.
+        onAccepted: gameId => {
+          acceptedGame = gameId
+        }
+      }
     )
     await trx
       .updateTable('group_requests')
@@ -1437,6 +1509,8 @@ export async function resendGameRequest(
     }
     return await requestById(trx, next.id)
   })
+  if (acceptedGame != null) options.onAccepted?.(acceptedGame)
+  return request
 }
 
 /** Private schedule proposals; only the sending scope keeps a declined entry. */
