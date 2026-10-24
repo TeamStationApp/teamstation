@@ -1455,6 +1455,15 @@ export async function submitPasswordSignIn(
     await ui.append(value)
   }
   await ui.device.pressKey({ key: 'ENTER' })
+  // A fresh iOS install offers to save the typed password, over whatever the
+  // app shows next; the synthetic password is never saved.
+  if (
+    ui.surface === 'ios' &&
+    (await ui.visible({ text: exactText('Not Now') }, 5000))
+  ) {
+    await ui.text('Not Now')
+    observation.savePasswordDeclined = true
+  }
   observation.outcome = 'passed'
   observation.fieldsReplaced = true
   observation.submit = 'Focused password input Enter'
