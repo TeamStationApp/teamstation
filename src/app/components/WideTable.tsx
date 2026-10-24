@@ -27,6 +27,9 @@ export function WideTable(props: WideTableProps): React.ReactElement {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator
+      // A tap on another cell's input while one has the keyboard reaches
+      // that cell, rather than only putting the keyboard away.
+      keyboardShouldPersistTaps="handled"
       // The rows size themselves; the scroll view must not stretch them to its
       // own width, or there would be nothing to scroll.
       contentContainerStyle={styles.content}

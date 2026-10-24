@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
+import { ScrollView } from 'react-native'
 
 import type { SetupSeason } from '../../common/seasonScheduling'
 import { fill, mount, settle, text, unmount } from '../../test/gameFormDom'
@@ -156,4 +157,36 @@ describe('the season schedule grid', () => {
       )?.textContent
     ).equals('Choose a season of this league')
   })
+
+  it('lets a tap on another cell through while one has the keyboard', async () => {
+    await mount(
+      <SeasonScheduleGrid
+        seasons={[SEASON]}
+        onEdit={() => undefined}
+        onSaveNumber={async () => null}
+        onOpenSeason={() => undefined}
+      />
+    )
+    await tapLabel('Demo Regular Game MINS: 120')
+    // The scroll views the open cell's input sits in, innermost first.
+    const input = document.querySelector('input')!
+    const key = Object.keys(input).find(one => one.startsWith('__reactFiber'))!
+    const scrolls: Array<Record<string, unknown>> = []
+    for (
+      let fiber = (input as unknown as Record<string, Fiber | null>)[key];
+      fiber != null;
+      fiber = fiber.return
+    )
+      if (fiber.type === ScrollView) scrolls.push(fiber.memoizedProps ?? {})
+    expect(scrolls.length).greaterThan(0)
+    expect(scrolls[0].horizontal).equals(true)
+    for (const props of scrolls)
+      expect(props.keyboardShouldPersistTaps).equals('handled')
+  })
 })
+
+interface Fiber {
+  type: unknown
+  memoizedProps: Record<string, unknown> | null
+  return: Fiber | null
+}
