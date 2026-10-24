@@ -44,6 +44,9 @@ mkdirSync(temp, { recursive: true })
 const test = spawnSync(
   'node_modules/.bin/mocha',
   [
+    // A suite that leaves a handle open would otherwise hold the run, and
+    // the report after it, forever.
+    '--exit',
     '--timeout',
     '20000',
     '-r',
@@ -91,6 +94,7 @@ if (rosterEdit) {
     const result = spawnSync(
       'node_modules/.bin/mocha',
       [
+        '--exit',
         '--timeout',
         '20000',
         '-r',
