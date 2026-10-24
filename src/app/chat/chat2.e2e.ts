@@ -5073,7 +5073,18 @@ export class Scenarios {
       this.viewerId,
       'Exact own outgoing quote author required'
     )
-    const current = await (await this.protocolPeer()).engine.open(this.group)
+    const peer = await this.protocolPeer()
+    let current = await peer.engine.open(this.group)
+    // The seeded reply ages out of the newest page as runs add history; once
+    // the original itself is loaded, every reply to it is too.
+    for (
+      let page = 0;
+      page < 60 &&
+      current.hasEarlier &&
+      !current.messages.some(message => message.id === target.id);
+      page++
+    )
+      current = await peer.engine.loadEarlier(this.group)
     const replies = current.messages.filter(
       message => message.status === 'ok' && message.quote?.id === target.id
     )
