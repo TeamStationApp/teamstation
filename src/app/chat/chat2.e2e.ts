@@ -2074,6 +2074,33 @@ export class Scenarios {
     await this.ui.present('chat-message-history')
   }
 
+  /**
+   * Runs an iOS history drag. On a loaded simulator a drag can register as a
+   * hold and open the message actions over the history, sometimes seconds
+   * after the drag; they are closed and the drag repeated, at most three
+   * times, each recorded under `key`.
+   */
+  async withoutDragActions(
+    drag: () => Promise<unknown>,
+    key: string,
+    target: string
+  ): Promise<void> {
+    const ui = this.ui
+    await drag()
+    for (
+      let attempt = 0;
+      ui.surface === 'ios' &&
+      attempt < 3 &&
+      (await ui.visible({ id: 'chat-message-spotlight' }, 3000));
+      attempt++
+    ) {
+      this.observations.push({ [key]: target, attempt })
+      await this.dismiss()
+      await ui.absent('chat-message-spotlight')
+      await drag()
+    }
+  }
+
   async anchor(target = this.f.messages.target): Promise<void> {
     const ui = this.ui
     if (await ui.visible({ id: 'chat-pinned-summary' }, 1000)) {
@@ -2095,7 +2122,11 @@ export class Scenarios {
     if (!ui.native) await this.webHistoryTarget(target)
     else {
       await this.nativeHistoryTarget(target)
-      await this.nativeAnchorReady(target)
+      await this.withoutDragActions(
+        async () => await this.nativeAnchorReady(target),
+        'nativeFramingOpenedActions',
+        target.id
+      )
     }
     await ui.present('chat-bubble-' + target.id)
     if (!ui.native)
@@ -6629,7 +6660,12 @@ export class Scenarios {
             roundTripResize: { before: beforeResize, after: afterResize }
           })
         } else {
-          await ui.device.swipe({ direction: 'DOWN', duration: 500 })
+          await this.withoutDragActions(
+            async () =>
+              await ui.device.swipe({ direction: 'DOWN', duration: 500 }),
+            'nativeOldestSwipeOpenedActions',
+            oldest.id
+          )
           await ui.device.assertNotVisible({
             text: exactText('Load earlier messages'),
             timeout: 2000

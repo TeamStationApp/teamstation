@@ -8415,7 +8415,9 @@ describe('native scenario navigation and mention handoff', function () {
         }
       },
       visible: async (args: Record<string, unknown>) =>
-        args.id === 'chat-pinned-summary' ? mode === 'pin' : true,
+        args.id === 'chat-pinned-summary'
+          ? mode === 'pin'
+          : args.id !== 'chat-message-spotlight',
       readAndroidIme: async () => ({
         bounds: { x: 0, y: 600, width: 400, height: 400 }
       }),
@@ -9892,7 +9894,9 @@ describe('native pinned jump settlement', function () {
       visible: async (selector: { id?: string; text?: string }) =>
         selector.id === 'chat-pinned-summary'
           ? mode !== 'no-summary'
-          : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
+          : selector.id === 'chat-message-spotlight'
+            ? false
+            : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
       present: async (id: string) => {
         expect(id).equals('chat-bubble-' + target.id)
         events.push('present')
@@ -11869,5 +11873,180 @@ describe('native below-reader attention count', function () {
     const s = scenario(false)
     expect(await s.belowReaderCount(fixture)).equals(9)
     expect(s.observations).deep.equals([])
+  })
+})
+
+describe('iOS drags that opened message actions', function () {
+  const scenarioFor = (
+    surface: string,
+    openings: number
+  ): { scenario: Scenarios; events: string[] } => {
+    const events: string[] = []
+    let open = 0
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: surface !== 'web-touch',
+      surface,
+      visible: async (selector: { id?: string }, timeout: number) => {
+        expect(selector.id).equals('chat-message-spotlight')
+        expect(timeout).equals(3000)
+        return open > 0
+      },
+      absent: async (id: string) => {
+        events.push('absent:' + id)
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      dismiss: async () => {
+        events.push('dismiss')
+        open--
+      }
+    }) as Scenarios
+    open = openings
+    return { scenario, events }
+  }
+  it('closes late actions and repeats the swipe, recorded under its key', async () => {
+    const { scenario, events } = scenarioFor('ios', 2)
+    await scenario.withoutDragActions(
+      async () => {
+        events.push('swipe')
+      },
+      'nativeOldestSwipeOpenedActions',
+      'msg-oldest'
+    )
+    expect(events).deep.equals([
+      'swipe',
+      'dismiss',
+      'absent:chat-message-spotlight',
+      'swipe',
+      'dismiss',
+      'absent:chat-message-spotlight',
+      'swipe'
+    ])
+    expect(scenario.observations).deep.equals([
+      { nativeOldestSwipeOpenedActions: 'msg-oldest', attempt: 0 },
+      { nativeOldestSwipeOpenedActions: 'msg-oldest', attempt: 1 }
+    ])
+  })
+  it('drags once without looking for actions off iOS', async () => {
+    const { scenario, events } = scenarioFor('android', 1)
+    await scenario.withoutDragActions(
+      async () => {
+        events.push('swipe')
+      },
+      'nativeOldestSwipeOpenedActions',
+      'msg-oldest'
+    )
+    expect(events).deep.equals(['swipe'])
+    expect(scenario.observations).deep.equals([])
+  })
+})
+
+describe('native framing that opened message actions', function () {
+  it('closes actions a framing drag opened on iOS and frames again, recorded', async () => {
+    const target: Chat2Message = {
+      id: 'msg-framed',
+      seq: 3,
+      body: 'Synthetic framed target',
+      authorId: userIdOfGumbo(2)
+    }
+    const events: string[] = []
+    let open = true
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      visible: async (selector: { id?: string }) =>
+        selector.id === 'chat-message-spotlight' ? open : false,
+      absent: async (id: string) => {
+        events.push('absent:' + id)
+      },
+      present: async (id: string) => {
+        events.push('present:' + id)
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target } },
+      nativeHistoryTarget: async () => {
+        events.push('history')
+      },
+      nativeAnchorReady: async () => {
+        events.push('frame')
+        return []
+      },
+      dismiss: async () => {
+        events.push('dismiss')
+        open = false
+      }
+    }) as Scenarios
+    await scenario.anchor(target)
+    expect(events).deep.equals([
+      'history',
+      'frame',
+      'dismiss',
+      'absent:chat-message-spotlight',
+      'frame',
+      'present:chat-bubble-msg-framed'
+    ])
+    expect(scenario.observations).deep.equals([
+      { nativeFramingOpenedActions: 'msg-framed', attempt: 0 }
+    ])
+  })
+
+  it('waits for late actions and closes them again after each reframe, at most three times', async () => {
+    const target: Chat2Message = {
+      id: 'msg-late',
+      seq: 4,
+      body: 'Synthetic late-held target',
+      authorId: userIdOfGumbo(2)
+    }
+    const events: string[] = []
+    const timeouts: number[] = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      visible: async (selector: { id?: string }, timeout: number) => {
+        if (selector.id !== 'chat-message-spotlight') return false
+        timeouts.push(timeout)
+        return true
+      },
+      absent: async () => {},
+      present: async (id: string) => {
+        events.push('present:' + id)
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target } },
+      nativeHistoryTarget: async () => {},
+      nativeAnchorReady: async () => {
+        events.push('frame')
+        return []
+      },
+      dismiss: async () => {
+        events.push('dismiss')
+      }
+    }) as Scenarios
+    await scenario.anchor(target)
+    // An actions sheet can appear seconds after the drag, so each check waits.
+    expect(timeouts).deep.equals([3000, 3000, 3000])
+    expect(events).deep.equals([
+      'frame',
+      'dismiss',
+      'frame',
+      'dismiss',
+      'frame',
+      'dismiss',
+      'frame',
+      'present:chat-bubble-msg-late'
+    ])
+    expect(scenario.observations).deep.equals([
+      { nativeFramingOpenedActions: 'msg-late', attempt: 0 },
+      { nativeFramingOpenedActions: 'msg-late', attempt: 1 },
+      { nativeFramingOpenedActions: 'msg-late', attempt: 2 }
+    ])
   })
 })
