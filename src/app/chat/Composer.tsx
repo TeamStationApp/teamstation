@@ -306,7 +306,13 @@ export function Composer(props: ComposerProps): React.ReactElement {
             enabled ? lstrings.chat_composer : lstrings.chat_composer_locked
           }
           placeholderTextColor={theme.placeholderTextColor}
-          style={[styles.input, !enabled && styles.inputOff]}
+          style={[
+            styles.input,
+            // iOS keeps a multiline field at its old height when a send
+            // clears the draft from outside; an empty field is one line.
+            Platform.OS === 'ios' && text === '' && styles.inputEmpty,
+            !enabled && styles.inputOff
+          ]}
         />
         <Pressable
           accessibilityRole="button"
@@ -380,6 +386,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     paddingHorizontal: theme.rem(0.875),
     paddingTop: theme.rem(0.5),
     paddingBottom: theme.rem(0.5)
+  },
+  inputEmpty: {
+    height: theme.rem(2.75)
   },
   inputOff: {
     backgroundColor: theme.inactiveBackgroundColor
