@@ -2096,6 +2096,17 @@ export class Scenarios {
     else {
       await this.nativeHistoryTarget(target)
       await this.nativeAnchorReady(target)
+      // On a loaded simulator a framing drag can register as a hold and open
+      // the message actions over the history; close them and frame again.
+      if (
+        ui.surface === 'ios' &&
+        (await ui.visible({ id: 'chat-message-spotlight' }, 500))
+      ) {
+        this.observations.push({ nativeFramingOpenedActions: target.id })
+        await this.dismiss()
+        await ui.absent('chat-message-spotlight')
+        await this.nativeAnchorReady(target)
+      }
     }
     await ui.present('chat-bubble-' + target.id)
     if (!ui.native)

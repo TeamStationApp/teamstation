@@ -8415,7 +8415,9 @@ describe('native scenario navigation and mention handoff', function () {
         }
       },
       visible: async (args: Record<string, unknown>) =>
-        args.id === 'chat-pinned-summary' ? mode === 'pin' : true,
+        args.id === 'chat-pinned-summary'
+          ? mode === 'pin'
+          : args.id !== 'chat-message-spotlight',
       readAndroidIme: async () => ({
         bounds: { x: 0, y: 600, width: 400, height: 400 }
       }),
@@ -9892,7 +9894,9 @@ describe('native pinned jump settlement', function () {
       visible: async (selector: { id?: string; text?: string }) =>
         selector.id === 'chat-pinned-summary'
           ? mode !== 'no-summary'
-          : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
+          : selector.id === 'chat-message-spotlight'
+            ? false
+            : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
       present: async (id: string) => {
         expect(id).equals('chat-bubble-' + target.id)
         events.push('present')
@@ -11869,5 +11873,58 @@ describe('native below-reader attention count', function () {
     const s = scenario(false)
     expect(await s.belowReaderCount(fixture)).equals(9)
     expect(s.observations).deep.equals([])
+  })
+})
+
+describe('native framing that opened message actions', function () {
+  it('closes actions a framing drag opened on iOS and frames again, recorded', async () => {
+    const target: Chat2Message = {
+      id: 'msg-framed',
+      seq: 3,
+      body: 'Synthetic framed target',
+      authorId: userIdOfGumbo(2)
+    }
+    const events: string[] = []
+    let open = true
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      visible: async (selector: { id?: string }) =>
+        selector.id === 'chat-message-spotlight' ? open : false,
+      absent: async (id: string) => {
+        events.push('absent:' + id)
+      },
+      present: async (id: string) => {
+        events.push('present:' + id)
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target } },
+      nativeHistoryTarget: async () => {
+        events.push('history')
+      },
+      nativeAnchorReady: async () => {
+        events.push('frame')
+        return []
+      },
+      dismiss: async () => {
+        events.push('dismiss')
+        open = false
+      }
+    }) as Scenarios
+    await scenario.anchor(target)
+    expect(events).deep.equals([
+      'history',
+      'frame',
+      'dismiss',
+      'absent:chat-message-spotlight',
+      'frame',
+      'present:chat-bubble-msg-framed'
+    ])
+    expect(scenario.observations).deep.equals([
+      { nativeFramingOpenedActions: 'msg-framed' }
+    ])
   })
 })
