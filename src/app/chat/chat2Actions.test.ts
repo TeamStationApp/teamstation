@@ -9973,10 +9973,38 @@ describe('native pinned jump settlement', function () {
         mode,
       async () => {
         const m = model(mode)
+        const taps: Array<PublicNode['bounds']> = []
+        if (mode === 'missing-pin')
+          Object.assign(m.scenario.ui, {
+            // The open list: a full-screen Cancel backdrop under its card.
+            nodes: async () => [
+              {
+                text: 'Cancel',
+                bounds: { x: 0, y: 0, width: 1080, height: 2400 }
+              },
+              {
+                text: 'Pinned messages',
+                bounds: { x: 42, y: 900, width: 996, height: 600 }
+              },
+              { text: 'Pinned messages' },
+              { id: 'chat-pin-msg-other' }
+            ],
+            tapObserved: async (node: PublicNode) => {
+              taps.push(node.bounds)
+            },
+            absent: async (id: string) => {
+              m.events.push('absent:' + id)
+            }
+          })
         await m.scenario.anchor(target)
         expect(m.reads()).equals(0)
         expect(m.events.slice(-3)).deep.equals(['history', 'frame', 'present'])
-        if (mode === 'missing-pin') expect(m.events).includes('^Cancel$')
+        if (mode === 'missing-pin') {
+          // The backdrop is tapped where the card leaves it exposed (above).
+          expect(taps).deep.equals([{ x: 0, y: 0, width: 1080, height: 892 }])
+          expect(m.events).includes('absent:chat-pin-msg-other')
+          expect(m.events).not.includes('^Cancel$')
+        }
       }
     )
 })
