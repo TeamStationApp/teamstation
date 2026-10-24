@@ -24,7 +24,7 @@ import type { Database, SchedulePreviewsTable } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { requireGroupAdmin } from '../groups/rights'
 import { adoptSeasonTimezone } from '../groups/seasonZone'
-import { scheduleSetup } from '../scheduler/setup'
+import { chosenSeasonIds } from '../scheduler/setup'
 import { occupancy } from '../venues/occupancy'
 import { buildOffThread } from './buildOffThread'
 import { noticeTeams, type Tallies } from './cancel'
@@ -142,8 +142,7 @@ export async function buildPreview(
     // Seasons still at the UTC default are built in the zone the admin set
     // them up in.
     if (request.timezone != null) {
-      const { seasonIds } = await scheduleSetup(trx, leagueId, clock)
-      for (const seasonId of seasonIds)
+      for (const seasonId of await chosenSeasonIds(trx, leagueId))
         await adoptSeasonTimezone(trx, seasonId, request.timezone, clock)
     }
     let existing = request.existing
@@ -190,9 +189,9 @@ export async function buildPreview(
     }
     if (request.mode === 'partial' && existing == null) existing = 'replace'
     if (existing == null) {
-      const setup = await scheduleSetup(trx, leagueId, clock)
       const now = clock.now()
-      const ahead = (await runGames(trx, setup.seasonIds)).filter(game =>
+      const seasonIds = await chosenSeasonIds(trx, leagueId)
+      const ahead = (await runGames(trx, seasonIds)).filter(game =>
         upcoming(game, now)
       )
       if (ahead.length > 0)

@@ -9,6 +9,7 @@ import type {
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { listenScreenScopes } from '../../test/screenScopeNotices'
+import { chosenSeasonIds, scheduleSetup } from '../scheduler/setup'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 
 const SETTINGS: ScheduleSettings = {
@@ -322,6 +323,21 @@ describe('scheduling setup routes', function () {
       )
     ).deep.include({ timezone: 'America/Los_Angeles' })
     expect(await stored()).equals('America/Los_Angeles')
+  })
+
+  it('reads the chosen seasons still of the league, in the order the setup lists them', async () => {
+    expect(await chosenSeasonIds(f.h.db, f.leagueA)).deep.equals([])
+    // Another league's season is not one of this league's run.
+    await f.h.db
+      .insertInto('league_schedule_setups')
+      .values({
+        league_id: f.leagueA,
+        season_ids: [f.playoffs, f.seasonB, f.seasonA]
+      })
+      .execute()
+    const ids = await chosenSeasonIds(f.h.db, f.leagueA)
+    expect(ids).deep.equals([f.playoffs, f.seasonA])
+    expect(ids).deep.equals((await scheduleSetup(f.h.db, f.leagueA)).seasonIds)
   })
 
   it('chooses the league’s seasons and any field in the registry, for a league admin only', async () => {
