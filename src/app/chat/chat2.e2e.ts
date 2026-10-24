@@ -6367,7 +6367,8 @@ export class Scenarios {
         await this.openGroup()
         await this.anchor()
         await this.reply()
-        await ui.append('Keep a multiline\nreader draft')
+        // Name the field: after the Reply action, iOS inputText checks the last tapped control.
+        await ui.appendComposer('Keep a multiline\nreader draft')
         await this.attachPhoto()
         if (ui.native) await ui.hideKeyboard()
         const draft = await ui.draft()
