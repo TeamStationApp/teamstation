@@ -38,6 +38,12 @@ export interface GameChangeData {
     status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
     awayScore: number | null
     homeScore: number | null
+    /**
+     * The teams as the game now stands: a screen opened on others reopens.
+     * An older server sends none.
+     */
+    homeTeamId?: string
+    awayTeamId?: string
   }
 }
 

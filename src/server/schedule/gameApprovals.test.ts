@@ -4,8 +4,15 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { asGameProposal, type GameIntent } from '../../common/gameApprovals'
 import { asParentActions } from '../../common/groupLinks'
-import { asPostEventsBody } from '../../common/gumboPlay'
+import {
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import type { ScoringAction } from '../../common/scoring/actions'
+import { newSetup } from '../../common/scoring/lineup'
+import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
@@ -13,7 +20,9 @@ import {
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
-import { postGamePlays } from '../events/postPlays'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { postGamePlays, readPlays } from '../events/postPlays'
+import { storedLineupsDigest } from '../events/teamLineups'
 import { applyParents, previewParents } from '../groups/relationships'
 import { setScopeRoles } from '../invites/people'
 import { withdrawFromGame } from './gameApprovals'
@@ -543,6 +552,234 @@ describe('approved games and shared schedule ownership', function () {
         .where('id', '=', published.gameId!)
         .executeTakeFirstOrThrow()
     ).deep.equals({ away_team_id: f.teamA, status: 'scheduled' })
+  })
+  describe('home and away swapped before the first pitch', function () {
+    const SWAP_REFUSED =
+      'Home and away can be swapped only before the first pitch'
+    /** Nine players a side, saved as the scoring screen saves lineups. */
+    async function saveLineups(
+      gameId: string,
+      after: ScoringAction[] = []
+    ): Promise<void> {
+      const known = await f.h.db
+        .selectFrom('gumbo_ids')
+        .select('gumbo_id')
+        .where('gumbo_id', '=', 201)
+        .executeTakeFirst()
+      if (known == null)
+        await insertFixtureUsers(
+          f.h.db,
+          Array.from({ length: 18 }, (_, i) => ({
+            id: 201 + i,
+            legacyId: makeId('user'),
+            display_name: `Player ${i + 1}`
+          }))
+        )
+      const roster = (start: number): Parameters<typeof newSetup>[1]['away'] =>
+        Array.from({ length: 9 }, (_, i) => ({
+          userId: userIdOfGumbo(start + i),
+          gumboId: start + i,
+          shortName: `Player ${start + i}`,
+          jersey: String(start + i)
+        }))
+      const teams = {
+        away: { id: f.teamA, name: 'A' },
+        home: { id: f.teamB, name: 'B' }
+      }
+      const setup = newSetup(teams, { away: roster(201), home: roster(210) })
+      const session = await ScoringSession.open(
+        {
+          load: async () => {
+            const row = await f.h.db
+              .selectFrom('games')
+              .selectAll()
+              .where('id', '=', gameId)
+              .executeTakeFirstOrThrow()
+            return {
+              plays: (await readPlays(f.h.db, gameId)).map(
+                play => play.gumbo as GumboPlay
+              ),
+              currentPlay: row.currentPlay as CurrentPlay | null,
+              lineupsDigest: await storedLineupsDigest(f.h.db, row)
+            }
+          },
+          save: async (_id, change) => {
+            const posted = await postGamePlays(
+              f.h.db,
+              gameId,
+              asPostEventsBody({
+                ...change,
+                mode: 'live',
+                source: { system: 'teamstation' }
+              })
+            )
+            return {
+              plays: posted.plays.map(play => play.gumbo as GumboPlay),
+              currentPlay: posted.currentPlay as CurrentPlay | null
+            }
+          }
+        },
+        gameId,
+        { gamePk: gameId, teams, setup },
+        { setTimer: () => null, clearTimer: () => undefined }
+      )
+      for (const action of [
+        {
+          type: 'lineup',
+          kind: 'roster',
+          setup,
+          confirmed: ['away', 'home']
+        } satisfies ScoringAction,
+        ...after
+      ])
+        expect(session.apply(action).problems).deep.equals([])
+      await session.flush()
+      expect(session.problem).equals(null)
+    }
+    /** Game Settings' swap, sent as a season administrator of both teams. */
+    async function proposeSwap(gameId: string, key: string): Promise<Response> {
+      await setScopeRoles(
+        f.h.db,
+        'team',
+        f.teamA,
+        userIdOfGumbo(102),
+        { admin: true, flags: [] },
+        userIdOfGumbo(101)
+      )
+      const snapshot = (await (
+        await f.h.request('GET', `/games/${gameId}/scheduling`, undefined, 102)
+      ).json()) as { version: string }
+      return await f.h.request(
+        'POST',
+        '/game-requests',
+        {
+          sender: { kind: 'season', id: f.seasonB },
+          game: { ...game(), homeTeamId: f.teamA, awayTeamId: f.teamB },
+          gameId,
+          expected: snapshot.version,
+          idempotencyKey: key
+        },
+        102
+      )
+    }
+    const sides = async (
+      gameId: string
+    ): Promise<{
+      home_team_id: string
+      away_team_id: string
+      currentPlay: unknown
+    }> =>
+      await f.h.db
+        .selectFrom('games')
+        .select(['home_team_id', 'away_team_id', 'currentPlay'])
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+
+    it('swaps a game whose lineup was saved before it began', async () => {
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await saveLineups(gameId)
+      const response = await proposeSwap(gameId, 'swap-after-lineup')
+      expect(response.status).equals(201)
+      const request = (await response.json()) as { id: string; status: string }
+      if (request.status === 'pending')
+        expect((await accept(request.id)).status).equals('accepted')
+      const game = await sides(gameId)
+      expect([game.home_team_id, game.away_team_id]).deep.equals([
+        f.teamA,
+        f.teamB
+      ])
+      // The visitors' leadoff, now at home, waits; the hosts bat first.
+      expect(game.currentPlay).nested.property('matchup.batter.id', 210)
+    })
+
+    it('refuses a swap of a game final with no play stored', async () => {
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await f.h.db
+        .updateTable('games')
+        .set({ status: 'final' })
+        .where('id', '=', gameId)
+        .execute()
+      const response = await proposeSwap(gameId, 'swap-final-elsewhere')
+      expect(response.status).equals(409)
+      expect(((await response.json()) as { message: string }).message).equals(
+        SWAP_REFUSED
+      )
+      const game = await sides(gameId)
+      expect([game.home_team_id, game.away_team_id]).deep.equals([
+        f.teamB,
+        f.teamA
+      ])
+    })
+
+    it('refuses a swap after a pitch, and at acceptance once a pitch came in between', async () => {
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await saveLineups(gameId, [{ type: 'pitch', call: 'B' }])
+      const response = await proposeSwap(gameId, 'swap-after-pitch')
+      expect(response.status).equals(409)
+      expect(((await response.json()) as { message: string }).message).equals(
+        SWAP_REFUSED
+      )
+
+      const other = await accept(
+        await send(game(), 102, 'game-invitation-second')
+      )
+      const pendingId = other.gameId!
+      await saveLineups(pendingId)
+      // Proposed by one team's administrator, it waits for the other team.
+      const snapshot = (await (
+        await f.h.request(
+          'GET',
+          `/games/${pendingId}/scheduling`,
+          undefined,
+          101
+        )
+      ).json()) as { version: string }
+      const proposed = await f.h.request(
+        'POST',
+        '/game-requests',
+        {
+          sender: { kind: 'team', id: f.teamA },
+          initiatingTeamId: f.teamA,
+          game: { ...game(), homeTeamId: f.teamA, awayTeamId: f.teamB },
+          gameId: pendingId,
+          expected: snapshot.version,
+          idempotencyKey: 'swap-pending-pitch'
+        },
+        101
+      )
+      expect(proposed.status).equals(201)
+      const pending = (await proposed.json()) as { id: string; status: string }
+      expect(pending.status).equals('pending')
+      const before = await sides(pendingId)
+      await f.h.db
+        .updateTable('games')
+        .set({
+          currentPlay: {
+            ...(before.currentPlay as CurrentPlay),
+            playEvents: [{ details: { code: 'B' } }]
+          }
+        })
+        .where('id', '=', pendingId)
+        .execute()
+      const refused = await f.h.request(
+        'POST',
+        `/game-requests/${pending.id}/accept`,
+        {},
+        102
+      )
+      expect(refused.status).equals(409)
+      expect(((await refused.json()) as { message: string }).message).equals(
+        SWAP_REFUSED
+      )
+      const after = await sides(pendingId)
+      expect([after.home_team_id, after.away_team_id]).deep.equals([
+        f.teamB,
+        f.teamA
+      ])
+    })
   })
   it('expires exactly at seven days, atomically resends and serializes racing acceptance with withdrawal', async () => {
     const id = await send()

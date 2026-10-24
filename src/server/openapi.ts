@@ -4609,6 +4609,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                   ],
                   properties: {
                     side: { type: 'string', enum: ['away', 'home'] },
+                    teamId: {
+                      type: 'string',
+                      description:
+                        'The team the caller means; 409 when the side holds another, as after a swap of home and away'
+                    },
                     firstName: {
                       type: 'string',
                       maxLength: PLAYER_NAME_MAX_LENGTH

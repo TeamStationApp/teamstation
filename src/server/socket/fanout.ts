@@ -224,7 +224,9 @@ export class GameFanout {
                   data: {
                     status: game.status,
                     awayScore: game.away_score,
-                    homeScore: game.home_score
+                    homeScore: game.home_score,
+                    homeTeamId: game.home_team_id,
+                    awayTeamId: game.away_team_id
                   }
                 }
               : change.kind === 'lineups'

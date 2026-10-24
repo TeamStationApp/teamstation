@@ -570,7 +570,12 @@ function runWorker(): void {
     })
   )
   app.use('/api/v1', nodeAdministrationRoutes(db, mediaContext.space))
-  app.use('/api/v1', gameApprovalRoutes(db))
+  app.use(
+    '/api/v1',
+    gameApprovalRoutes(db, undefined, {
+      onGameWritten: scoreboard.onGameWritten
+    })
+  )
   app.use('/api/v1', umpireRoutes(db, mediaContext))
   app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
@@ -589,7 +594,10 @@ function runWorker(): void {
     })
   )
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
-  app.use('/api/v1', scheduleRoutes(db))
+  app.use(
+    '/api/v1',
+    scheduleRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+  )
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
     '/api/v1',

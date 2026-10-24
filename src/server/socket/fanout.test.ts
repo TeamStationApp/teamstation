@@ -216,10 +216,13 @@ describe('the game socket fan-out (U15)', function () {
         gameId: today,
         kind: 'game'
       })
+      // The teams too, so a screen opened on others reopens after a swap.
       expect(heard.sent[0].data).deep.equals({
         status: 'inProgress',
         awayScore: 3,
-        homeScore: 2
+        homeScore: 2,
+        homeTeamId: team,
+        awayTeamId: rival
       })
       expect(new Date(heard.sent[0].at).getTime()).above(0)
     }
