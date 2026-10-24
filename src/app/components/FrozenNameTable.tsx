@@ -3,6 +3,7 @@ import { ScrollView, Text, useWindowDimensions, View } from 'react-native'
 
 import { type StatColumn, statColumnWidths } from '../screens/statColumns'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { usePaneWidth } from './useBreakpoint'
 
 /** Names remain visible on both platforms while only the figures scroll. */
 export function FrozenNameTable<T>({
@@ -20,7 +21,8 @@ export function FrozenNameTable<T>({
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
-  const { width, fontScale } = useWindowDimensions()
+  const { fontScale } = useWindowDimensions()
+  const width = usePaneWidth()
   const widths = statColumnWidths(columns, rows, 0.875, 0.6875, 0.05, fontScale)
   const size = (index: number): { width: number } => ({
     width: theme.rem(widths[index] + 0.65)

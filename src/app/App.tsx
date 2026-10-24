@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, AppState, Image, Text, View } from 'react-native'
+import {
+  ActivityIndicator,
+  AppState,
+  Image,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -22,6 +29,8 @@ import {
   AppNav,
   HeaderSlotProvider,
   type NavTabId,
+  type PaneFrame,
+  PaneFrameContext,
   useBreakpoint,
   useHandoffSlot
 } from './components'
@@ -33,6 +42,7 @@ import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
 import { lstrings, sprintf } from './locales/strings'
+import { routeOfUrl } from './navigation/deepLink'
 import {
   anglesOpenPage,
   type PlayerFrom,
@@ -143,6 +153,12 @@ import {
   useOutboxSummary,
   usePhoneOffline
 } from './sync/useOffline'
+import { TESS_COLUMN_WIDTH, tessIsWide } from './tess/tessLayout'
+import { TessOverlayHost, TessOverlayProvider } from './tess/TessOverlay'
+import { TessPanel } from './tess/TessPanel'
+import type { TessScreen } from './tess/tessTypes'
+import { useTessAvailable } from './tess/useTessAvailable'
+import { useTessBack } from './tess/useTessBack'
 import {
   cacheStyles,
   type Theme,
@@ -1163,6 +1179,92 @@ function Shell(props: AppProps): React.ReactElement {
   useBrowserBack(
     goToRoute,
     top?.name === 'umpireSchedule' ? checkUmpireLeave : undefined
+  )
+
+  // DJ Game as an iPhone draws it, its own screen; elsewhere its address
+  // shows the game.
+  const djScreen = top?.name === 'djGame' && walkUpMusic.djSupported
+  // The screens that take the whole window: the field preview, scoring,
+  // coaching and replay, which hide the header too.
+  const immersiveField =
+    props.fieldPreview === true ||
+    top?.name === 'scoreGame' ||
+    top?.name === 'coachGame' ||
+    top?.name === 'gameReplay'
+  /**
+   * Tess, the assistant, for whoever is signed in where the server offers
+   * her. Her button opens a chat that covers the app on a narrow window and
+   * sits in a column beside it on a wide one.
+   *
+   * Not beside or over the screens that take the whole window — those above,
+   * DJ Game on an iPhone and the scoreboard override — on either width:
+   * they keep the window they read, and scoring keeps the browser's Back for
+   * its own save-before-leaving. Whether the chat is open is kept, so it is
+   * back when the person leaves.
+   */
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions()
+  const health = useCallback(async () => await client.health(), [client])
+  const tessAvailable = useTessAvailable(health, signedInAs)
+  const [tessOpen, setTessOpen] = useState(false)
+  useEffect(() => {
+    if (signedInAs == null) setTessOpen(false)
+  }, [signedInAs])
+  const tessSuppressed =
+    immersiveField || djScreen || top?.name === 'scoreboardOverride'
+  const tessWide = tessIsWide(windowWidth)
+  const onboarded =
+    session?.user.onboarding == null ||
+    session.user.onboarding.step === 'complete'
+  const tessShown =
+    tessAvailable &&
+    tessOpen &&
+    !tessSuppressed &&
+    onboarded &&
+    joining == null &&
+    route.name !== 'oauthApprove' &&
+    route.name !== 'oauthNative'
+  const closeTess = useCallback(() => {
+    setTessOpen(false)
+  }, [])
+  useTessBack(tessShown && !tessWide, closeTess)
+  /**
+   * A link in the chat. On a wide screen the pane beside it goes there and
+   * the chat stays; on a narrow one the chat closes to show it.
+   */
+  const openTessLink = (path: string): void => {
+    if (!tessWide) setTessOpen(false)
+    goToRoute(routeOfUrl(path))
+  }
+  // What the pane shows, for Tess on a wide screen, read when a message is
+  // sent: its address and title, and the steps of the tab that led there.
+  const paneScreen = useRef<() => TessScreen | undefined>(() => undefined)
+  paneScreen.current = () => {
+    if (!tessWide) return undefined
+    const describe = (frame: Pushed | undefined): TessScreen['stack'][0] => ({
+      path: routePath(routeOf(tab, frame, filters)),
+      title: screenTitle(tab, frame)
+    })
+    return {
+      ...describe(top),
+      stack: top == null ? [] : [undefined, ...stack.slice(0, -1)].map(describe)
+    }
+  }
+  const tessScreen = useCallback(() => paneScreen.current(), [])
+  const tessColumn = tessShown && tessWide
+  // The pane's place beside the column, for the screens that size themselves
+  // to it: the column's fixed width in from the left, the window's height.
+  // None while the column is closed, and the pane is the window again.
+  const paneFrame = useMemo<PaneFrame | null>(
+    () =>
+      tessColumn
+        ? {
+            x: TESS_COLUMN_WIDTH,
+            y: 0,
+            width: Math.max(0, windowWidth - TESS_COLUMN_WIDTH),
+            height: windowHeight
+          }
+        : null,
+    [tessColumn, windowWidth, windowHeight]
   )
 
   /** The tab, or — pressed on the tab already showing — that tab's root. */
@@ -2735,6 +2837,16 @@ function Shell(props: AppProps): React.ReactElement {
           />
         )
       }
+      tess={
+        tessAvailable && !tessSuppressed
+          ? {
+              open: tessOpen,
+              onPress: () => {
+                setTessOpen(open => !open)
+              }
+            }
+          : undefined
+      }
       notifications={
         session == null
           ? undefined
@@ -2777,105 +2889,131 @@ function Shell(props: AppProps): React.ReactElement {
   // crossed the boundary and unmount everything below it — the `<video>`
   // element with it, which is what used to stop playback dead mid-drag. Keyed,
   // the pane is matched to the pane and nothing below it notices.
-  const immersiveField =
-    props.fieldPreview === true ||
-    top?.name === 'scoreGame' ||
-    top?.name === 'coachGame' ||
-    top?.name === 'gameReplay'
+  //
+  // Tess's column is keyed for the same reason: opening it on a wide window
+  // turns the root into a row, the column first, and the pane — the video
+  // playing in it — carries on. On a narrow one her chat is a layer over the
+  // whole app, and the pane stays mounted underneath.
+  const tessLayer = tessShown && !tessWide
+  const tessPanel = tessShown && (
+    <TessPanel
+      client={client}
+      onClose={closeTess}
+      onNavigate={openTessLink}
+      screen={tessScreen}
+    />
+  )
   const bannerShown =
     bannerText != null || createRefused || heldTeams.length > 0
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <View style={styles.app}>
-        <View key="pane" style={styles.pane}>
-          <HeaderSlotProvider
-            headerHeight={
-              immersiveField
-                ? 0
-                : headerHeight + (bannerShown ? bannerHeight : 0)
-            }
-            onHandoff={setHandoff}
-            onBackOverride={setBack}
-          >
-            <View style={styles.body}>
-              <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
-                <ScoringPlayerSettingsFlow
-                  scoring={scoringBody}
-                  active={scoringActive}
-                >
-                  {body}
-                </ScoringPlayerSettingsFlow>
-              </ScreenScopeProvider>
-            </View>
-          </HeaderSlotProvider>
-          {!immersiveField && (
-            <View style={styles.headerLayer}>
-              {header}
-              <OfflineBanner
-                text={bannerText}
-                refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-                held={heldTeams}
-                onLayout={setBannerHeight}
-              />
+      <TessOverlayProvider active={tessColumn}>
+        <View style={[styles.app, tessColumn && styles.split]}>
+          {tessColumn && (
+            <View key="tess" testID="Tess column" style={styles.tessColumn}>
+              {tessPanel}
             </View>
           )}
-        </View>
-        {!isWide && !immersiveField && (
-          <AppNav
-            key="nav"
-            mode="floating"
-            selected={tab}
-            onSelect={selectTab}
-          />
-        )}
-        <SuccessToast notice={successNotice} />
-        {confirmingSignOut && (
-          <ChoiceSheet
-            title="Sign Out?"
-            choices={[
-              {
-                label: 'Sign Out',
-                detail: unsentLossText(outbox?.count ?? 0),
-                destructive: true,
-                onPress: signOutNow
-              }
-            ]}
-            onClose={() => {
-              setConfirmingSignOut(false)
-            }}
-          />
-        )}
-        {askingTeam != null && caching != null && (
-          <ChoiceSheet
-            title="Player Not Saved"
-            choices={[
-              ...(askingTeam.state === 'dead'
-                ? [
-                    {
-                      label: 'Try Again',
-                      onPress: () => {
-                        caching.retryTeam(askingTeam.id).catch(() => undefined)
-                      }
-                    }
-                  ]
-                : []),
-              {
-                label: "Use Server's Copy",
-                detail:
-                  "Takes the player off this phone and shows the team's roster as the server has it.",
-                destructive: true,
-                onPress: () => {
-                  caching.discardTeam(askingTeam.id).catch(() => false)
+          <View key="pane" style={styles.pane}>
+            <PaneFrameContext.Provider value={paneFrame}>
+              <HeaderSlotProvider
+                headerHeight={
+                  immersiveField
+                    ? 0
+                    : headerHeight + (bannerShown ? bannerHeight : 0)
                 }
-              }
-            ]}
-            onClose={() => {
-              setAskingTeam(undefined)
-            }}
-          />
-        )}
-      </View>
+                onHandoff={setHandoff}
+                onBackOverride={setBack}
+              >
+                <View style={styles.body}>
+                  <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
+                    <ScoringPlayerSettingsFlow
+                      scoring={scoringBody}
+                      active={scoringActive}
+                    >
+                      {body}
+                    </ScoringPlayerSettingsFlow>
+                  </ScreenScopeProvider>
+                </View>
+              </HeaderSlotProvider>
+              {!immersiveField && (
+                <View style={styles.headerLayer}>
+                  {header}
+                  <OfflineBanner
+                    text={bannerText}
+                    refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
+                    held={heldTeams}
+                    onLayout={setBannerHeight}
+                  />
+                </View>
+              )}
+              <TessOverlayHost />
+            </PaneFrameContext.Provider>
+          </View>
+          {!isWide && !immersiveField && (
+            <AppNav
+              key="nav"
+              mode="floating"
+              selected={tab}
+              onSelect={selectTab}
+            />
+          )}
+          {tessLayer && (
+            <View key="tessLayer" testID="Tess layer" style={styles.tessLayer}>
+              {tessPanel}
+            </View>
+          )}
+          <SuccessToast notice={successNotice} />
+          {confirmingSignOut && (
+            <ChoiceSheet
+              title="Sign Out?"
+              choices={[
+                {
+                  label: 'Sign Out',
+                  detail: unsentLossText(outbox?.count ?? 0),
+                  destructive: true,
+                  onPress: signOutNow
+                }
+              ]}
+              onClose={() => {
+                setConfirmingSignOut(false)
+              }}
+            />
+          )}
+          {askingTeam != null && caching != null && (
+            <ChoiceSheet
+              title="Player Not Saved"
+              choices={[
+                ...(askingTeam.state === 'dead'
+                  ? [
+                      {
+                        label: 'Try Again',
+                        onPress: () => {
+                          caching
+                            .retryTeam(askingTeam.id)
+                            .catch(() => undefined)
+                        }
+                      }
+                    ]
+                  : []),
+                {
+                  label: "Use Server's Copy",
+                  detail:
+                    "Takes the player off this phone and shows the team's roster as the server has it.",
+                  destructive: true,
+                  onPress: () => {
+                    caching.discardTeam(askingTeam.id).catch(() => false)
+                  }
+                }
+              ]}
+              onClose={() => {
+                setAskingTeam(undefined)
+              }}
+            />
+          )}
+        </View>
+      </TessOverlayProvider>
     </GestureHandlerRootView>
   )
 }
@@ -3187,6 +3325,29 @@ function routeOf(
   return { name: 'home' }
 }
 
+/** What Tess is told a screen is called: the header's title, or its subject. */
+export function screenTitle(tab: NavTabId, top: Pushed | undefined): string {
+  const title =
+    titleFor(tab, top) ??
+    (top == null
+      ? TAB_TITLES[tab]
+      : top.name === 'team'
+        ? top.team.name
+        : top.name === 'season'
+          ? top.season.name
+          : top.name === 'game' || top.name === 'player'
+            ? top.title
+            : top.name)
+  return title.slice(0, 200)
+}
+
+const TAB_TITLES: Record<NavTabId, string> = {
+  home: 'Your Home',
+  videos: 'Videos',
+  schedule: 'Schedule',
+  search: 'Search'
+}
+
 /**
  * What the header says, where it says anything at all.
  *
@@ -3241,6 +3402,26 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   root: {
     flex: 1
+  },
+  // Tess's column on the left of a wide window, and the pane beside it.
+  split: {
+    flexDirection: 'row'
+  },
+  tessColumn: {
+    width: TESS_COLUMN_WIDTH,
+    borderRightWidth: 1,
+    borderRightColor: theme.defaultBorderColor
+  },
+  // Her chat over the whole of a narrow window, above the header and the
+  // floating destinations.
+  tessLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 50,
+    elevation: 50
   },
   pane: {
     flex: 1
