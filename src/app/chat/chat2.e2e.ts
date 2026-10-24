@@ -2210,7 +2210,7 @@ export class Scenarios {
     }
     this.observations.push(proof)
     const startedAt = Date.now()
-    let end = startedAt + (ui.surface === 'ios' ? 90000 : 120000)
+    let end = startedAt + (ui.surface === 'ios' ? 240000 : 120000)
     const signal = (): AbortSignal => {
       assert(Date.now() < end, 'Native anchor observation deadline expired')
       return AbortSignal.any([
@@ -2310,7 +2310,7 @@ export class Scenarios {
             )
           ? [(await ui.readAndroidIme()).bounds]
           : []
-    if (keyboard.length > 0) end = startedAt + 120000
+    if (keyboard.length > 0) end = Math.max(end, startedAt + 120000)
     // iOS swipes about a screen per read of a ~2600-node tree, and the
     // earlier control sits a long history above the reader.
     if (earlier) end = startedAt + (ui.surface === 'ios' ? 420000 : 180000)

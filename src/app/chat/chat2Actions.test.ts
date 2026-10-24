@@ -9567,8 +9567,8 @@ describe('native absent history paging', function () {
             )
             m.scenario.ui.device.dragAndDrop = async (args, options) => {
               await drag(args, options)
-              // Past the iOS earlier-control (420 s) and ordinary (90 s) budgets.
-              advance(fault === 'earlier-budget' ? 430000 : 100000)
+              // Past the iOS earlier-control (420 s) and ordinary (240 s) budgets.
+              advance(fault === 'earlier-budget' ? 430000 : 250000)
             }
           }
           const error = await captureFailure(m.scenario.anchor(target))
