@@ -3416,7 +3416,12 @@ export class Chat2UI {
   }
 
   async absent(id: string): Promise<void> {
-    await this.device.assertNotVisible({ id, timeout: 3000 })
+    // One iOS hierarchy read takes seconds, so 3 s can be a single look taken
+    // while an overlay is still animating out.
+    await this.device.assertNotVisible({
+      id,
+      timeout: this.surface === 'ios' ? 15000 : 3000
+    })
   }
 
   async open(path: string): Promise<void> {
