@@ -251,5 +251,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.875),
     color: theme.dangerColor
   },
-  mic: { alignItems: 'center' }
+  // Room above the button for its status, which sits over it.
+  mic: { alignItems: 'center', paddingTop: theme.rem(theme.spaceLgRem) }
 }))

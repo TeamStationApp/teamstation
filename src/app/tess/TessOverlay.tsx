@@ -25,11 +25,18 @@ export function useTessOverlay(): TessOverlaySlot | null {
   return useContext(SlotContext)
 }
 
-/** Holds the one open layer for the chat and the pane that shows it. */
+/**
+ * Holds the one open layer for the chat and the pane that shows it. Not
+ * `active` (a narrow screen), it offers no place, and the viewer opens as a
+ * modal instead; the provider stays in the tree so the pane under it is
+ * never remounted when the window crosses the boundary.
+ */
 export function TessOverlayProvider({
-  children
+  children,
+  active = true
 }: {
   children: ReactNode
+  active?: boolean
 }): React.ReactElement {
   const [layer, setLayer] = useState<ReactElement | null>(null)
   const slot = useMemo<TessOverlaySlot>(
@@ -44,8 +51,10 @@ export function TessOverlayProvider({
     []
   )
   return (
-    <SlotContext.Provider value={slot}>
-      <LayerContext.Provider value={layer}>{children}</LayerContext.Provider>
+    <SlotContext.Provider value={active ? slot : null}>
+      <LayerContext.Provider value={active ? layer : null}>
+        {children}
+      </LayerContext.Provider>
     </SlotContext.Provider>
   )
 }
@@ -55,8 +64,11 @@ export function TessOverlayHost(): React.ReactElement | null {
   const layer = useContext(LayerContext)
   if (layer == null) return null
   return (
-    <View testID="Tess overlay" style={StyleSheet.absoluteFill}>
+    <View testID="Tess overlay" style={[StyleSheet.absoluteFill, LAYER]}>
       {layer}
     </View>
   )
 }
+
+/** Above the pane's header and banner, which float over the pane too. */
+const LAYER = { zIndex: 10 }
