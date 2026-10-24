@@ -6598,19 +6598,39 @@ export class Scenarios {
           this.f.authorization,
           'Included-adult probe parameters required'
         )
-        const client = await this.client()
-        const adults = await client.includedAdults(permission.playerIds)
-        assert(
-          adults.some(a => a.userId === permission.acceptedAdult),
-          'Actual authorized included adult required'
-        )
-        await assert.rejects(
-          async () => await client.createDm(permission.playerIds),
-          e =>
-            e instanceof HttpError &&
-            e.status === 409 &&
-            (e.details as Json)?.reason === 'adultRequired'
-        )
+        // The asker must be someone the players are candidates for, or the
+        // pair rule refuses first (notCandidate).
+        const client =
+          permission.asker == null
+            ? await this.client()
+            : await fixtureClient(this.f, permission.asker)
+        const player = need(permission.playerIds[0], 'Probe player required')
+        // The adult rule covers minors in SafeSport LAO leagues; the synthetic
+        // league is one only for this check, so other cases' DMs stand.
+        const lao = fixtureControl(this.f, 'set-lao', {
+          playerId: player,
+          on: true
+        })
+        try {
+          const adults = await client.includedAdults(permission.playerIds)
+          assert(
+            adults.some(a => a.userId === permission.acceptedAdult),
+            'Actual authorized included adult required'
+          )
+          await assert.rejects(
+            async () => await client.createDm(permission.playerIds),
+            e =>
+              e instanceof HttpError &&
+              e.status === 409 &&
+              (e.details as Json)?.reason === 'adultRequired'
+          )
+        } finally {
+          fixtureControl(this.f, 'set-lao', { playerId: player, on: false })
+        }
+        this.observations.push({
+          adultRuleLeagues: lao.leagues,
+          adultRuleAsker: permission.asker ?? this.viewerKey
+        })
         await assert.rejects(
           async () =>
             await client.createChatAttachment({
