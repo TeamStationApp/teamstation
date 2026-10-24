@@ -5,6 +5,7 @@ import type { TeamStationClient } from '../../common/api'
 import { zoneLongName } from '../../common/eventTime'
 import { addDays, type WindowPeriod } from '../../common/fieldAvailability'
 import {
+  addWindowPeriod,
   asWindowPeriods,
   copyWindowPeriods,
   type ScheduleSettings,
@@ -381,16 +382,10 @@ export function ScheduleSeasonScreen({
                 setError('A period already starts on that date.')
                 return
               }
-              // A new period starts as a copy of the one before it, with no
-              // end date.
-              const before = [...settings.windows]
-                .reverse()
-                .find(period => period.from < date)
+              // A new period starts as a copy of the one before it, which
+              // it splits when the date falls inside it.
               setWindows(
-                [
-                  ...settings.windows,
-                  { from: date, hours: before?.hours ?? [] }
-                ].sort((a, b) => a.from.localeCompare(b.from)),
+                addWindowPeriod(settings.windows, date),
                 'Period added.'
               )
             }}

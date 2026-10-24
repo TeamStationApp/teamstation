@@ -125,6 +125,34 @@ export function asWindowPeriods(raw: unknown): WindowPeriod[] {
   return periods
 }
 
+/**
+ * The periods with one more starting on `date`, a copy of the weekly hours
+ * of the period before it. A date inside a dated period splits it: that
+ * period ends the day before, and the new one ends where it did. Otherwise
+ * the new period has no end date. A date no period comes before starts
+ * with no hours.
+ */
+export function addWindowPeriod(
+  windows: readonly WindowPeriod[],
+  date: string
+): WindowPeriod[] {
+  const before = [...windows].reverse().find(period => period.from < date)
+  const hours = (before?.hours ?? []).map(day => ({ ...day }))
+  const until = before?.until
+  const splits = until != null && until >= date
+  const added: WindowPeriod = splits
+    ? { from: date, until, hours }
+    : { from: date, hours }
+  return [
+    ...windows.map(period =>
+      splits && period === before
+        ? { ...period, until: addDays(date, -1) }
+        : period
+    ),
+    added
+  ].sort((a, b) => a.from.localeCompare(b.from))
+}
+
 /** The days from one calendar date to another; negative when it is earlier. */
 function daysBetween(from: string, to: string): number {
   return Math.round(

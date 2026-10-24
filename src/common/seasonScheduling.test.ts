@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import { viewerTimezone } from './eventTime'
 import type { WindowPeriod } from './fieldAvailability'
 import {
+  addWindowPeriod,
   asSeasonScheduleSettings,
   asTimezoneOption,
   asWindowPeriods,
@@ -106,6 +107,46 @@ describe('season scheduling', () => {
     })
     expect(answer.settings.windows).deep.equals(SPRING.windows)
     expect(Object.keys(answer.settings.windows[1])).not.includes('until')
+  })
+
+  it('splits a dated period when a period is added from a date inside it', () => {
+    const added = addWindowPeriod(SPRING.windows, '2027-04-15')
+    expect(added).deep.equals([
+      { from: '2027-03-01', until: '2027-04-14', hours: EVENINGS },
+      { from: '2027-04-15', until: '2027-05-31', hours: EVENINGS },
+      { from: '2027-06-01', hours: LATER }
+    ])
+    // Periods a save accepts, and a copy of the hours, not the same list.
+    expect(asWindowPeriods(added)).deep.equals(added)
+    expect(added[1].hours).not.equals(added[0].hours)
+    // A date on a period's last day splits it into one day each side.
+    expect(
+      addWindowPeriod(SPRING.windows, '2027-05-31').slice(0, 2)
+    ).deep.equals([
+      { from: '2027-03-01', until: '2027-05-30', hours: EVENINGS },
+      { from: '2027-05-31', until: '2027-05-31', hours: EVENINGS }
+    ])
+    expect(SPRING.windows[0].until).equals('2027-05-31')
+  })
+
+  it('adds a period with no end date after an open period, in a gap, or before the first', () => {
+    expect(addWindowPeriod(SPRING.windows, '2027-07-01')).deep.equals([
+      ...SPRING.windows,
+      { from: '2027-07-01', hours: LATER }
+    ])
+    const gap = [
+      { from: '2027-03-01', until: '2027-03-31', hours: EVENINGS },
+      { from: '2027-06-01', hours: LATER }
+    ]
+    expect(addWindowPeriod(gap, '2027-05-01')).deep.equals([
+      gap[0],
+      { from: '2027-05-01', hours: EVENINGS },
+      gap[1]
+    ])
+    expect(addWindowPeriod(SPRING.windows, '2027-02-01')[0]).deep.equals({
+      from: '2027-02-01',
+      hours: []
+    })
   })
 
   it('copies another season’s periods as they are when the seasons start together', () => {

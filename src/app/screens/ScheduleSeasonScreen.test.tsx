@@ -209,6 +209,30 @@ describe('a season of the next schedule', () => {
     ])
   })
 
+  it('splits a dated period when a period is added from a date inside it', async () => {
+    const dated = [
+      { from: '2027-03-01', until: '2027-05-31', hours: EVENINGS },
+      PERIODS[1]
+    ]
+    const fake = fakeClient({
+      ...SEASON,
+      settings: { ...SEASON.settings, windows: dated }
+    })
+    await show(fake.client)
+    await tapText('Add a period from a date')
+    await chooseCalendarDate('2027-04-15')
+    await settle(20)
+    expect(text()).not.includes('can’t overlap')
+    expect(fake.saves.at(-1)?.windows).deep.equals([
+      { from: '2027-03-01', until: '2027-04-14', hours: EVENINGS },
+      { from: '2027-04-15', until: '2027-05-31', hours: EVENINGS },
+      PERIODS[1]
+    ])
+    expect(text()).includes('Mar 1 – Apr 14')
+    expect(text()).includes('Apr 15 – May 31')
+    expect(text()).includes('Period added.')
+  })
+
   it('gives a period an end date, then takes it away again', async () => {
     const fake = fakeClient({
       ...SEASON,
