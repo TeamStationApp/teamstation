@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
@@ -43,6 +43,8 @@ const game = asGameDetail({
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
+  // The scorer is the home team's assigned scorekeeper: Score is theirs.
+  assignedRoles: { away: [], home: ['scorekeeper'] },
   videos: []
 })
 interface ProbeFiber {
@@ -59,6 +61,10 @@ interface SceneProbeWindow {
   __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
 }
 const base = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+/** Screenshots every run keeps: the named directory, or a scratch one. */
+const artifactDir =
+  process.env.TS_SCORING_ARTIFACT_DIR ??
+  join(tmpdir(), 'teamstation-scoring-e2e')
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
@@ -185,13 +191,39 @@ async function open(
       }
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
-    else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
+    // The scorer keeps the book for both teams, so may add to their rosters.
+    else if (url.pathname === '/api/v1/me/roles')
+      body = { teams: { away: ['scorekeeper'], home: ['scorekeeper'] } }
     else if (analytics) {
       status = 202
       body = { accepted: true }
     } else if (url.pathname === '/api/v1/me/umpire-leagues')
       body = { leagues: [] }
-    else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
+    // The game page's Info tab: a scheduled game nobody has answered yet.
+    else if (url.pathname === '/api/v1/events/g1/info')
+      body = {
+        id: 'g1',
+        eventKind: 'game',
+        title: null,
+        teamId: 'home',
+        teamName: 'Hawks',
+        startAt: null,
+        endAt: null,
+        timezone: 'America/Los_Angeles',
+        venue: null,
+        address: null,
+        latitude: null,
+        longitude: null,
+        status: 'scheduled',
+        canManage: false,
+        attendees: [],
+        replyUserIds: []
+      }
+    // The game page asks whether this scorer manages its schedule: no.
+    else if (url.pathname === '/api/v1/games/g1/scheduling') {
+      status = 403
+      body = { error: 'Not allowed' }
+    } else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
     else if (url.pathname === '/api/v1/me/notifications/summary')
       body = { hasPending: false }
     else if (url.pathname === '/api/v1/games/g1/lineups') {
@@ -558,6 +590,7 @@ async function placeDefenderWithKeyboard(
 describe('scoring browser', function () {
   this.timeout(60000)
   before(async function () {
+    await mkdir(artifactDir, { recursive: true })
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
@@ -1419,11 +1452,14 @@ describe('scoring browser', function () {
             subtitleSize: getComputedStyle(button.lastElementChild!).fontSize,
             align: getComputedStyle(button.lastElementChild!).textAlign
           }))
-          expect(copy.text).equals(
-            label + (scenario.startsWith('loaded') ? 'At Home' : 'At First')
-          )
-          expect(copy.subtitleSize).equals('10.5px')
-          expect(copy.align).equals('center')
+          // The plate's pair sits beside home and names no base; a runner's
+          // decision at a base says which.
+          if (scenario.startsWith('loaded')) expect(copy.text).equals(label)
+          else {
+            expect(copy.text).equals(label + 'At First')
+            expect(copy.subtitleSize).equals('10.5px')
+            expect(copy.align).equals('center')
+          }
         }
         await page.screenshot({
           path: join(
@@ -1746,7 +1782,7 @@ describe('scoring browser', function () {
         ).equals(true)
       }
       await click(page, 'Clear 2B')
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const target = '[data-roster-target="defense-SS"]'
       const firstBase = await page.$eval(
         '[data-roster-target="defense-1B"]',
@@ -1899,7 +1935,7 @@ describe('scoring browser', function () {
           const r = node.getBoundingClientRect()
           return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width }
         })
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const from = await point(source)
       await page.mouse.move(from.x, from.y)
       await page.mouse.down()
@@ -2108,7 +2144,7 @@ describe('scoring browser', function () {
       await click(page, 'Defense')
       expect(await page.$$('[data-roster-target^="defense-"]')).length(9)
       await click(page, 'Clear P')
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const target = '[data-roster-target="defense-P"]'
       const point = async (
         selector: string
@@ -2174,7 +2210,7 @@ describe('scoring browser', function () {
           .getAnimations()
           .every(animation => animation.playState !== 'running')
       )
-      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="102"]'
       const target = '[data-roster-target="lineup-0"]'
       await page.$eval(source, node => {
         node.scrollIntoView({ block: 'center' })
@@ -2441,7 +2477,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-2"]')!
-            .getAttribute('data-roster-player') === '1',
+            .getAttribute('data-roster-player') === '101',
         { timeout: 20000 }
       )
       expect(
@@ -2532,7 +2568,7 @@ describe('scoring browser', function () {
           nodes =>
             nodes.map(n => n.getAttribute('data-roster-player')).slice(-2)
         )
-      ).deep.equals(['3', '2'])
+      ).deep.equals(['103', '102'])
       expect(await page.$$('[aria-label^="Move Player"]')).length(0)
       await swipe('[aria-label="Away Team"]', '[aria-label="Home Team"]')
       await page.waitForSelector(
@@ -2547,7 +2583,7 @@ describe('scoring browser', function () {
         await page.$eval('[data-roster-target="defense-P"]', n => n.textContent)
       ).includes('Unassigned')
       await swipe(
-        '[data-roster-target="roster"] [data-roster-player="10"]',
+        '[data-roster-target="roster"] [data-roster-player="201"]',
         '[data-roster-target="defense-C"]'
       )
       await page.waitForFunction(() =>
@@ -2556,7 +2592,7 @@ describe('scoring browser', function () {
           .textContent!.includes('Player 1')
       )
       expect(
-        await page.$('[data-roster-target="roster"] [data-roster-player="11"]')
+        await page.$('[data-roster-target="roster"] [data-roster-player="202"]')
       ).not.equals(null)
       await swipe('[aria-label="Home Team"]', '[aria-label="Away Team"]')
       await swipe('[aria-label="Defense"]', '[aria-label="Lineup"]')
@@ -2588,7 +2624,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-0"]')!
-            .getAttribute('data-roster-player') !== '1'
+            .getAttribute('data-roster-player') !== '101'
       )
       if (process.env.TS_SCORING_ARTIFACT_DIR != null)
         await page.screenshot({
@@ -2601,7 +2637,7 @@ describe('scoring browser', function () {
         await page.$eval('[data-roster-target="lineup-0"]', n =>
           n.getAttribute('data-roster-player')
         )
-      ).equals('1')
+      ).equals('101')
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()
@@ -2625,8 +2661,8 @@ describe('scoring browser', function () {
           nodes => nodes.map(n => n.getAttribute('data-roster-player'))
         )
       const before = await order()
-      expect(before.slice(0, 3)).deep.equals(['4', '5', '1'])
-      expect(before.slice(-2)).deep.equals(['3', '2'])
+      expect(before.slice(0, 3)).deep.equals(['104', '105', '101'])
+      expect(before.slice(-2)).deep.equals(['103', '102'])
       await page.keyboard.press('Space')
       await page.keyboard.press('ArrowDown')
       await page.keyboard.press('Escape')
@@ -2671,7 +2707,7 @@ describe('scoring browser', function () {
       for (const [list, selector] of [
         [
           'Roster players',
-          '[data-roster-target="roster"] [data-roster-player="2"]'
+          '[data-roster-target="roster"] [data-roster-player="102"]'
         ],
         ['Batting lineup', '[data-roster-target="lineup-1"]']
       ]) {
@@ -2709,7 +2745,7 @@ describe('scoring browser', function () {
       )
       await new Promise(resolve => setTimeout(resolve, 300))
       const from = await page.$eval(
-        '[data-roster-target="roster"] [data-roster-player="2"]',
+        '[data-roster-target="roster"] [data-roster-player="102"]',
         n => {
           const r = n.getBoundingClientRect()
           return { x: r.x + 20, y: r.y + 20 }
@@ -2728,7 +2764,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-1"]')!
-            .getAttribute('data-roster-player') === '2'
+            .getAttribute('data-roster-player') === '102'
       )
       expect(await order()).length(before.length + 1)
     } finally {
@@ -2748,7 +2784,7 @@ describe('scoring browser', function () {
       await click(page, 'Set Team Rosters')
       await click(page, 'Defense')
       await click(page, 'Clear P')
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const target = '[data-roster-target="defense-P"]'
       const from = await page.$eval(source, node => {
         const rect = node.getBoundingClientRect()
@@ -3785,7 +3821,7 @@ describe('scoring browser', function () {
         expect(samples.before.pixels).deep.equals(samples.after.pixels)
         await page.screenshot({
           path: join(
-            process.env.TS_SCORING_ARTIFACT_DIR!,
+            artifactDir,
             `celebration-${outside ? 'stands' : 'park'}.png`
           )
         })
@@ -5181,10 +5217,7 @@ describe('scoring browser', function () {
           })
         ).deep.equals({ font: '13px', weight: '700' })
         await page.screenshot({
-          path: join(
-            process.env.TS_SCORING_ARTIFACT_DIR!,
-            `paired-controls-${width}.png`
-          )
+          path: join(artifactDir, `paired-controls-${width}.png`)
         })
       } finally {
         await page.close()
@@ -5222,10 +5255,7 @@ describe('scoring browser', function () {
         await page.waitForSelector('[aria-label*="Batter Player 2"]')
         await page.locator('[aria-label^="Undo "]').click()
         await page.screenshot({
-          path: join(
-            process.env.TS_SCORING_ARTIFACT_DIR!,
-            `bunt-${outcome}.png`
-          )
+          path: join(artifactDir, `bunt-${outcome}.png`)
         })
       } finally {
         await page.close()
@@ -5754,7 +5784,7 @@ describe('scoring browser', function () {
         expect(data.arrows).equals(6)
         expect(data.grassBack).closeTo(15.24, 0.01)
         await page.screenshot({
-          path: `${process.env.TS_SCORING_ARTIFACT_DIR}/trajectory-polish-${outcome}-${width}.png`
+          path: join(artifactDir, `trajectory-polish-${outcome}-${width}.png`)
         })
         await page.mouse.move(data.x, data.y)
         await page.mouse.down()
@@ -6076,8 +6106,8 @@ describe('scoring browser', function () {
         }
       )
       await new Promise(resolve => setTimeout(resolve, 1200))
-      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
-      const third = '[data-roster-target="roster"] [data-roster-player="3"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="102"]'
+      const third = '[data-roster-target="roster"] [data-roster-player="103"]'
       const a = await rect(source)
       const following = await rect(third)
       expect(following.y - a.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
@@ -6098,7 +6128,7 @@ describe('scoring browser', function () {
       // The lifted card's place closes to one gap between its neighbours.
       await new Promise(resolve => setTimeout(resolve, 250))
       const above = await rect(
-        '[data-roster-target="roster"] [data-roster-player="1"]'
+        '[data-roster-target="roster"] [data-roster-player="101"]'
       )
       expect((await rect(third)).y - above.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
       await page.touchscreen.touchMove(destination.x + 17, destination.y + 10)
@@ -6132,7 +6162,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-1"]')!
-            .getAttribute('data-roster-player') === '2'
+            .getAttribute('data-roster-player') === '102'
       )
       expect(await page.$(ghost)).equals(null)
       await page.waitForFunction(
@@ -6248,6 +6278,7 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
   // Own browser lifecycle so `--grep unforced` still launches Puppeteer
   // (sibling of `scoring browser`, whose before/after would otherwise be skipped).
   before(async function () {
+    await mkdir(artifactDir, { recursive: true })
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
