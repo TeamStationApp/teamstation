@@ -87,7 +87,9 @@ function api(): TeamStationClient {
     version: 'a'.repeat(64),
     canPropose: true,
     withdrawTeamIds: [team.id],
-    administeredTeamIds: [team.id]
+    administeredTeamIds: [team.id],
+    canSwap: false,
+    plays: undefined
   })
   client.gameProposals = async () => []
   return client

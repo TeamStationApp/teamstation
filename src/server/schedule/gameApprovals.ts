@@ -23,6 +23,8 @@ import {
 } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
+import { type PlaysLost, playsLost } from '../../common/scoring/playsLost'
+import { canScore, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import {
@@ -32,6 +34,8 @@ import {
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
+import { playsDigest, readPlays } from '../events/postPlays'
 import { maySwapSides, SWAP_REFUSED, swapGameSides } from '../games/swapSides'
 import {
   approvesSide,
@@ -165,9 +169,12 @@ async function lockForSwap(
     .select(['home_team_id', 'away_team_id'])
     .where('id', '=', gameId)
     .executeTakeFirst()
+  if (teams == null) return
+  // Compared as the request will be, a merged-away team named as the one it
+  // became.
   if (
-    teams?.home_team_id === game.awayTeamId &&
-    teams.away_team_id === game.homeTeamId
+    teams.home_team_id === (await followMerges(trx, game.awayTeamId)) &&
+    teams.away_team_id === (await followMerges(trx, game.homeTeamId))
   )
     await lockPlayerEdits(trx)
 }
@@ -176,6 +183,124 @@ function swapsSides(old: GameRow, game: GameIntent): boolean {
   return (
     old.home_team_id === game.awayTeamId && old.away_team_id === game.homeTeamId
   )
+}
+
+/** The refusal of a scorekeeper's swap from Game Settings once play began. */
+export const SCORER_SWAP_BEGUN =
+  'This game has plays. Swap it from the scoring menu, which resets them.'
+
+/**
+ * Whether `game` is the stored game with home and away exchanged and
+ * nothing else changed: its time, place, field and notes all as they are.
+ */
+async function onlySidesSwapped(
+  db: Kysely<Database>,
+  old: GameRow,
+  game: GameIntent
+): Promise<boolean> {
+  if (!swapsSides(old, game)) return false
+  const kept: GameIntent = {
+    ...materialGame(old),
+    homeTeamId: old.away_team_id,
+    awayTeamId: old.home_team_id
+  }
+  const canonical = async (intent: GameIntent): Promise<GameIntent> => ({
+    ...(await normalizedIntent(db, intent, old.timezone)),
+    fieldId: intent.fieldId ?? null,
+    fieldSize: intent.fieldId == null ? null : (intent.fieldSize ?? null)
+  })
+  return (
+    gameVersion(await canonical(game)) === gameVersion(await canonical(kept))
+  )
+}
+
+/**
+ * A proposal that only exchanges an existing game's home and away, sent
+ * by a scorekeeper of either team, as an app not yet updated sends Game
+ * Settings' swap: applied at once, before any scheduling authority is
+ * asked for, and recorded as an accepted request (`scorerSwap`). Refused
+ * once the game has begun, whose swap resets its plays from the scoring
+ * menu. Undefined for anything else, which is proposed as before.
+ */
+async function scorerSwap(
+  trx: Transaction<Database>,
+  fresh: Actor,
+  body: GameProposal,
+  hash: string,
+  clock: Clock
+): Promise<StoredRequest | undefined> {
+  if (body.gameId == null) return undefined
+  const old = await trx
+    .selectFrom('games')
+    .selectAll()
+    .where('id', '=', body.gameId)
+    .forUpdate()
+    .executeTakeFirst()
+  if (old == null || systemCancelled(old.cancellation_reason)) return undefined
+  // The game's own time zone: a form sends its device's, which a swap
+  // does not change.
+  const game: GameIntent = {
+    ...body.game,
+    ...preservedEventFields(body.game, old),
+    homeTeamId: await followMerges(trx, body.game.homeTeamId),
+    awayTeamId: await followMerges(trx, body.game.awayTeamId),
+    timezone: old.timezone,
+    exhibition: body.game.exhibition ?? old.exhibition,
+    ...preservedField(body.game, old)
+  }
+  if (!(await onlySidesSwapped(trx, old, game))) return undefined
+  const roles = await roleScopes(trx, fresh.userId, fresh.isAdmin)
+  // Sent for the team the scorekeeper keeps the score of, whatever the body
+  // names: nobody else speaks for it here.
+  const scoredTeam = [old.home_team_id, old.away_team_id].find(teamId =>
+    canScore(roles, teamId)
+  )
+  if (scoredTeam == null) return undefined
+  if (!(await matchesVersion(trx, old, body.expected)))
+    throw conflict('Review the current game before changing its schedule')
+  if (!(await maySwapSides(trx, old))) throw conflict(SCORER_SWAP_BEGUN)
+  const teamIds = [old.home_team_id, old.away_team_id]
+  const terms: GameRequestTerms = {
+    kind: 'game',
+    game,
+    gameId: old.id,
+    proposedGameId: old.id,
+    replacesGameId: null,
+    consentTeamIds: [game.homeTeamId, game.awayTeamId],
+    expected: gameVersion(materialGame(old)),
+    previous: materialGame(old),
+    affectedTeamIds: [...teamIds].sort(),
+    hostSeasonIds: old.season_id == null ? [] : [old.season_id],
+    scorerSwap: true
+  }
+  const id = makeId('invite')
+  const sent = clock.now()
+  await trx
+    .insertInto('group_requests')
+    .values({
+      id,
+      kind: 'game',
+      sender_id: fresh.userId,
+      sender_scope_type: 'team',
+      sender_scope_id: scoredTeam,
+      terms,
+      sent_at: sent,
+      expires_at: new Date(sent.getTime() + 7 * 24 * 3600 * 1000),
+      game_id: old.id,
+      initiating_team_id: null
+    })
+    .execute()
+  await trx
+    .insertInto('creation_idempotency')
+    .values({
+      user_id: fresh.userId,
+      key: body.idempotencyKey,
+      body_hash: hash,
+      response: { id, gameProposalVersion: 2 }
+    })
+    .execute()
+  await finishGameRequest(trx, id, clock)
+  return await requestById(trx, id)
 }
 /**
  * Home and away may swap until the first pitch. Another team may replace
@@ -542,12 +667,14 @@ export async function finishGameRequest(
   clock: Clock
 ): Promise<boolean> {
   const request = await requestById(trx, id)
+  const terms = request.terms as GameRequestTerms
+  // A scorekeeper's swap asks for no scheduling authority (`scorerSwap`).
+  const scorer = terms.scorerSwap === true
   if (
     requestStatus(request, clock) !== 'pending' ||
-    !(await recordedAuthorities(trx, id))
+    (!scorer && !(await recordedAuthorities(trx, id)))
   )
     return false
-  const terms = request.terms as GameRequestTerms
   await validateGame(trx, terms.game)
   // The game's teams and season before a change moved it, to tell both.
   let before: GameFigureIds | undefined
@@ -603,6 +730,7 @@ export async function finishGameRequest(
     if (current.season_id !== terms.game.seasonId)
       throw conflict('Game settings keep the hosting season unchanged')
     if (
+      !scorer &&
       !(await originalAdministrator(
         trx,
         request.sender_id,
@@ -811,6 +939,13 @@ export async function proposeGame(
           'This action was already submitted with different game details'
         )
       return repeated
+    }
+    if (resumingRequestId == null) {
+      const swapped = await scorerSwap(trx, fresh, body, hash, clock)
+      if (swapped != null) {
+        acceptedGame = body.gameId
+        return swapped
+      }
     }
     await requireScheduler(trx, fresh, body.sender)
     let resumedTerms: GameRequestTerms | undefined
@@ -1611,26 +1746,62 @@ export async function schedulingGame(
   canPropose: boolean
   withdrawTeamIds: string[]
   administeredTeamIds: string[]
+  canSwap: boolean
+  plays: PlaysLost & {
+    playsDigest: string
+    generation: number
+    resets: boolean
+  }
   field: GameFieldSummary | null
 }> {
   const fresh = await currentActor(db, actor)
-  const row = await db
-    .selectFrom('games')
-    .selectAll()
-    .where('id', '=', id)
-    .executeTakeFirst()
+  // The game and its plays as of one moment, so the digest the form
+  // confirms is of plays the game held.
+  const { row, stored } = await db
+    .transaction()
+    .setIsolationLevel('repeatable read')
+    .execute(async trx => {
+      const row = await trx
+        .selectFrom('games')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirst()
+      return { row, stored: row == null ? [] : await readPlays(trx, id) }
+    })
   if (row == null) throw notFound()
   const teamIds = []
   for (const teamId of [row.home_team_id, row.away_team_id])
     if (await canScheduleFor(db, fresh, { kind: 'team', id: teamId }))
       teamIds.push(teamId)
-  if (teamIds.length === 0) throw forbidden()
+  // A scorekeeper of either team may swap home and away, and nothing else.
+  const roles = await roleScopes(db, fresh.userId, fresh.isAdmin)
+  const scorer =
+    canScore(roles, row.home_team_id) || canScore(roles, row.away_team_id)
+  if (teamIds.length === 0 && !scorer) throw forbidden()
+  const withdrawn = systemCancelled(row.cancellation_reason)
+  const current = atBatOf(row, stored.length > 0)
   return {
     game: materialGame(row),
     version: gameVersion(materialGame(row)),
-    canPropose: !systemCancelled(row.cancellation_reason),
+    canPropose: teamIds.length > 0 && !withdrawn,
     withdrawTeamIds: teamIds,
     administeredTeamIds: teamIds,
+    canSwap: scorer && !withdrawn,
+    plays: {
+      ...playsLost({
+        plays: stored.map(play => play.gumbo),
+        currentPlay: current
+      }),
+      playsDigest: playsDigest(stored, current),
+      generation: row.play_generation,
+      // As the swap route decides it (`gameBegun`): a swap resets a game
+      // with a play or an at-bat stored, or one under way or final.
+      resets:
+        stored.length > 0 ||
+        row.currentPlay != null ||
+        row.status === 'inProgress' ||
+        row.status === 'final'
+    },
     field: await fieldSummary(db, row.field_id, row.field_size)
   }
 }

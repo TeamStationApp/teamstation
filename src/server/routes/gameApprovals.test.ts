@@ -28,6 +28,7 @@ import {
 } from '../games/resetSwap'
 import { realClock } from '../groups/requests'
 import { setScopeRoles } from '../invites/people'
+import { SCORER_SWAP_BEGUN } from '../schedule/gameApprovals'
 import { eventRoutes } from './events'
 import { gameApprovalRoutes } from './gameApprovals'
 
@@ -204,9 +205,7 @@ describe('the game approval routes and the scoreboard', function () {
     written.length = 0
     const refused = await proposeSwap(gameId, intent(), 'hooked-swap-back')
     expect(refused.status).equals(409)
-    expect(refused.body.message).equals(
-      'Home and away can be swapped only before the first pitch'
-    )
+    expect(refused.body.message).equals(SCORER_SWAP_BEGUN)
     expect(written).deep.equals([])
   })
 })

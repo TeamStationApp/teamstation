@@ -80,7 +80,9 @@ function fixture(): { client: TeamStationClient; game: GameDetail } {
     version: 'a'.repeat(64),
     canPropose: false,
     withdrawTeamIds: [],
-    administeredTeamIds: []
+    administeredTeamIds: [],
+    canSwap: false,
+    plays: undefined
   })
   client.eventInfo = async () =>
     asEventInfo({
@@ -518,7 +520,9 @@ describe('the event page’s automatic and explicit sections', () => {
     ).equals('Info')
   })
   it('keeps the Settings action stable during refresh and removes it when rights are revoked', async () => {
-    const { client } = fixture()
+    const { client, game } = fixture()
+    // Who keeps the score may open it whatever the scheduling rights say.
+    game.canScore = false
     const state = await client.gameScheduling('g1')
     client.gameScheduling = async () => ({
       ...state,
@@ -545,6 +549,17 @@ describe('the event page’s automatic and explicit sections', () => {
     expect(
       document.querySelector('[aria-label="Event settings"][role="button"]')
     ).equals(null)
+  })
+  it('shows the Settings action to a scorekeeper with no scheduling rights (F9)', async () => {
+    const { client, game } = fixture()
+    expect(game.canScore).equals(true)
+    client.gameScheduling = async () => {
+      throw new Error('Not a scheduler')
+    }
+    await render({ client, gameId: 'g1', onSettings: () => undefined })
+    expect(
+      document.querySelector('[aria-label="Event settings"][role="button"]')
+    ).not.equals(null)
   })
   it('refreshes the viewer-local hero zone on foreground even while offline', async () => {
     const { client, game } = fixture()

@@ -579,6 +579,8 @@ describe('approved games and shared schedule ownership', function () {
   describe('home and away swapped before the first pitch', function () {
     const SWAP_REFUSED =
       'Home and away can be swapped only before the first pitch'
+    const SCORER_SWAP_BEGUN =
+      'This game has plays. Swap it from the scoring menu, which resets them.'
     /** Nine players a side, saved as the scoring screen saves lineups. */
     async function saveLineups(
       gameId: string,
@@ -698,6 +700,227 @@ describe('approved games and shared schedule ownership', function () {
         .where('id', '=', gameId)
         .executeTakeFirstOrThrow()
 
+    /** 104 keeps team A's score and schedules neither team. */
+    const scorekeeper = async (): Promise<void> => {
+      await setScopeRoles(
+        f.h.db,
+        'team',
+        f.teamA,
+        userIdOfGumbo(104),
+        { admin: false, flags: ['scorekeeper'] },
+        userIdOfGumbo(101)
+      )
+    }
+    const scheduling = async (
+      gameId: string,
+      user: number
+    ): Promise<{ status: number; body: Record<string, unknown> }> => {
+      const response = await f.h.request(
+        'GET',
+        `/games/${gameId}/scheduling`,
+        undefined,
+        user
+      )
+      return {
+        status: response.status,
+        body: (await response.json()) as Record<string, unknown>
+      }
+    }
+    /** Game Settings' swap as an app not yet updated sends it. */
+    const scorerProposal = async (
+      gameId: string,
+      key: string,
+      change: Partial<GameIntent> = {}
+    ): Promise<Response> => {
+      const read = await scheduling(gameId, 104)
+      return await f.h.request(
+        'POST',
+        '/game-requests',
+        {
+          sender: { kind: 'team', id: f.teamA },
+          game: {
+            ...game(),
+            homeTeamId: f.teamA,
+            awayTeamId: f.teamB,
+            ...change
+          },
+          gameId,
+          expected: read.body.version,
+          idempotencyKey: key
+        },
+        104
+      )
+    }
+
+    it('answers a scorekeeper of either team that he may swap, with the plays a reset would delete (F1)', async () => {
+      await scorekeeper()
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      const read = await scheduling(gameId, 104)
+      expect(read.status).equals(200)
+      expect(read.body).deep.include({
+        canPropose: false,
+        canSwap: true,
+        withdrawTeamIds: [],
+        administeredTeamIds: []
+      })
+      expect(read.body.plays).deep.include({
+        atBats: 0,
+        innings: 0,
+        generation: 0,
+        resets: false
+      })
+      await saveLineups(gameId, [{ type: 'pitch', call: 'B' }])
+      expect((await scheduling(gameId, 104)).body.plays).deep.include({
+        atBats: 1,
+        innings: 1,
+        resets: true
+      })
+      // A team member with no role is refused, as before.
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          team_id: f.teamA,
+          user_id: userIdOfGumbo(106),
+          role: 'member'
+        })
+        .execute()
+      expect((await scheduling(gameId, 106)).status).equals(403)
+    })
+
+    it("accepts a scorekeeper's swap at once before the first pitch, and answers a repeat the same (F2, F5)", async () => {
+      await scorekeeper()
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await saveLineups(gameId)
+      const read = await scheduling(gameId, 104)
+      const zone = (
+        await f.h.db
+          .selectFrom('games')
+          .select('timezone')
+          .where('id', '=', gameId)
+          .executeTakeFirstOrThrow()
+      ).timezone
+      // As the form sends it: with its device's time zone, which stays.
+      const body = {
+        sender: { kind: 'team', id: f.teamA },
+        game: {
+          ...game(),
+          homeTeamId: f.teamA,
+          awayTeamId: f.teamB,
+          timezone: 'Pacific/Honolulu'
+        },
+        gameId,
+        expected: read.body.version,
+        idempotencyKey: 'scorer-swap'
+      }
+      const response = await f.h.request('POST', '/game-requests', body, 104)
+      expect(response.status).equals(201)
+      const request = (await response.json()) as { id: string; status: string }
+      expect(request.status).equals('accepted')
+      const swapped = await sides(gameId)
+      expect([swapped.home_team_id, swapped.away_team_id]).deep.equals([
+        f.teamA,
+        f.teamB
+      ])
+      expect(await awayLeadoff(f.h.db, gameId)).equals(210)
+      expect(
+        (
+          await f.h.db
+            .selectFrom('games')
+            .select('timezone')
+            .where('id', '=', gameId)
+            .executeTakeFirstOrThrow()
+        ).timezone
+      ).equals(zone)
+      const pending = await f.h.db
+        .selectFrom('group_requests')
+        .select('id')
+        .where('game_id', '=', gameId)
+        .where('status', '=', 'pending')
+        .execute()
+      expect(pending).deep.equals([])
+      // Sent again with its key, as after a lost answer: the same request,
+      // and the game is not swapped back.
+      const again = await f.h.request('POST', '/game-requests', body, 104)
+      expect(((await again.json()) as { id: string }).id).equals(request.id)
+      expect((await sides(gameId)).home_team_id).equals(f.teamA)
+    })
+
+    it("records a scorekeeper's swap as his team's, whatever sender it names", async () => {
+      await scorekeeper()
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      const read = await scheduling(gameId, 104)
+      const response = await f.h.request(
+        'POST',
+        '/game-requests',
+        {
+          sender: { kind: 'season', id: f.seasonB },
+          game: { ...game(), homeTeamId: f.teamA, awayTeamId: f.teamB },
+          gameId,
+          expected: read.body.version,
+          idempotencyKey: 'scorer-swap-foreign'
+        },
+        104
+      )
+      expect(response.status).equals(201)
+      const request = (await response.json()) as { id: string; status: string }
+      expect(request.status).equals('accepted')
+      const row = await f.h.db
+        .selectFrom('group_requests')
+        .select(['sender_scope_type', 'sender_scope_id', 'initiating_team_id'])
+        .where('id', '=', request.id)
+        .executeTakeFirstOrThrow()
+      expect(row).deep.equals({
+        sender_scope_type: 'team',
+        sender_scope_id: f.teamA,
+        initiating_team_id: null
+      })
+    })
+
+    it("refuses a scorekeeper's swap of a begun game, and any other change he sends (F3, F4)", async () => {
+      await scorekeeper()
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await saveLineups(gameId, [{ type: 'pitch', call: 'B' }])
+      const begun = await scorerProposal(gameId, 'scorer-swap-begun')
+      expect(begun.status).equals(409)
+      expect(((await begun.json()) as { message: string }).message).equals(
+        SCORER_SWAP_BEGUN
+      )
+      const fresh = await accept(
+        await send(game(), 102, 'game-invitation-scorer')
+      )
+      const moved = await scorerProposal(fresh.gameId!, 'scorer-swap-moved', {
+        venue: 'Other Field'
+      })
+      expect(moved.status).equals(403)
+      expect((await sides(fresh.gameId!)).home_team_id).equals(f.teamB)
+    })
+
+    it('answers no swap for a withdrawn game (F10)', async () => {
+      await scorekeeper()
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await f.h.db
+        .updateTable('games')
+        .set({
+          status: 'cancelled',
+          cancellation_reason: 'withdrawal',
+          withdrawn_by_team_id: f.teamA,
+          withdrawn_at: new Date()
+        })
+        .where('id', '=', gameId)
+        .execute()
+      for (const user of [104, 101]) {
+        const read = await scheduling(gameId, user)
+        expect(read.status, String(user)).equals(200)
+        expect(read.body).deep.include({ canSwap: false, canPropose: false })
+      }
+    })
+
     it('swaps a game whose lineup was saved before it began', async () => {
       const published = await accept(await send())
       const gameId = published.gameId!
@@ -727,7 +950,7 @@ describe('approved games and shared schedule ownership', function () {
       const response = await proposeSwap(gameId, 'swap-final-elsewhere')
       expect(response.status).equals(409)
       expect(((await response.json()) as { message: string }).message).equals(
-        SWAP_REFUSED
+        SCORER_SWAP_BEGUN
       )
       const game = await sides(gameId)
       expect([game.home_team_id, game.away_team_id]).deep.equals([
@@ -740,10 +963,11 @@ describe('approved games and shared schedule ownership', function () {
       const published = await accept(await send())
       const gameId = published.gameId!
       await saveLineups(gameId, [{ type: 'pitch', call: 'B' }])
+      // From a scorekeeper (an administrator is one): the scoring menu's.
       const response = await proposeSwap(gameId, 'swap-after-pitch')
       expect(response.status).equals(409)
       expect(((await response.json()) as { message: string }).message).equals(
-        SWAP_REFUSED
+        SCORER_SWAP_BEGUN
       )
 
       const other = await accept(
@@ -751,7 +975,8 @@ describe('approved games and shared schedule ownership', function () {
       )
       const pendingId = other.gameId!
       await saveLineups(pendingId)
-      // Proposed by one team's administrator, it waits for the other team.
+      // Proposed by one team's administrator with another change, it waits
+      // for the other team.
       const snapshot = (await (
         await f.h.request(
           'GET',
@@ -766,7 +991,12 @@ describe('approved games and shared schedule ownership', function () {
         {
           sender: { kind: 'team', id: f.teamA },
           initiatingTeamId: f.teamA,
-          game: { ...game(), homeTeamId: f.teamA, awayTeamId: f.teamB },
+          game: {
+            ...game(),
+            homeTeamId: f.teamA,
+            awayTeamId: f.teamB,
+            venue: 'Other Field'
+          },
           gameId: pendingId,
           expected: snapshot.version,
           idempotencyKey: 'swap-pending-pitch'

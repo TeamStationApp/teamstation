@@ -523,6 +523,114 @@ describe('team-keyed lineups, and reset with swap', function () {
     await query(file, playsState, [fixture.gameId])
   })
 
+  /** Game Settings from the game screen's gear: Swap home and away, Save. */
+  async function settingsSwap(gameId: string, form?: string): Promise<void> {
+    await browser.page.goto(`${APP}/games/${gameId}`, {
+      waitUntil: 'domcontentloaded'
+    })
+    await browser.tap('Event settings')
+    await browser.waitText(
+      "As this game's scorekeeper you can swap home and away."
+    )
+    if (form != null) await browser.capture(form)
+    await browser.tap('Swap home and away')
+    await browser.tap('Save')
+  }
+
+  it('T7: a one-team scorekeeper swaps from Game Settings, resetting a begun game', async function () {
+    const file = 'settings-scorekeeper-swap.log'
+    const fresh = await lineupsSaved(file)
+    await oneTeamScorekeeper(fresh, file)
+    await query(file, playsState, [fresh.gameId])
+    await browser.as(fresh, 'member')
+    await settingsSwap(fresh.gameId, 'settings-scorekeeper-after.png')
+    await browser.waitText('Home and away swapped: Visitors vs Hosts')
+    await browser.capture('settings-scorekeeper-swapped.png')
+    await note(
+      file,
+      'member (scorekeeper of the home team only): game screen gear, Swap home and away, Save; swapped at once\n'
+    )
+    await query(file, playsState, [fresh.gameId])
+
+    const begun = await lineupsSaved(file)
+    await oneTeamScorekeeper(begun, file)
+    await score(begun, intoTheSecond)
+    await browser.as(begun, 'member')
+    await settingsSwap(begun.gameId)
+    await browser.waitText(
+      'Resets all game plays: 7 at-bats in 2 innings will be lost.'
+    )
+    await browser.capture('settings-reset-confirm.png')
+    await browser.tap('Reset and Swap')
+    await browser.waitText('Home and away swapped: Visitors vs Hosts')
+    await note(
+      file,
+      'member on a game with plays: Save asked "Resets all game plays: 7 at-bats in 2 innings will be lost.", then Reset and Swap\n'
+    )
+    await query(file, playsState, [begun.gameId])
+  })
+
+  it("T8: an older app's swap-only proposal from a scorekeeper is accepted at once, and refused on a begun game", async function () {
+    const file = 'settings-old-app-swap.log'
+    const propose = async (
+      fixture: LineupFixture,
+      key: string
+    ): Promise<{ status: number; answer: Record<string, unknown> }> => {
+      const token = await tokenOf(fixture, 'member')
+      const read = (await (
+        await fetch(`${API}/games/${fixture.gameId}/scheduling`, {
+          headers: { authorization: `Bearer ${token}` }
+        })
+      ).json()) as { version: string; game: Record<string, unknown> }
+      // As Game Settings' Save builds it (gameProposalFields): the stored
+      // game with its sides exchanged and this device's time zone.
+      const body = {
+        sender: { kind: 'team', id: fixture.teams.home },
+        initiatingTeamId: fixture.teams.home,
+        gameId: fixture.gameId,
+        expected: read.version,
+        game: {
+          ...read.game,
+          homeTeamId: read.game.awayTeamId,
+          awayTeamId: read.game.homeTeamId,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        },
+        idempotencyKey: key
+      }
+      const response = await fetch(`${API}/game-requests`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      })
+      const answer = (await response.json()) as Record<string, unknown>
+      await note(
+        file,
+        `$ POST ${API}/game-requests  (member, scorekeeper of the home team only: Swap home and away)\n${response.status} ${JSON.stringify({ status: answer.status, message: answer.message })}\n`
+      )
+      return { status: response.status, answer }
+    }
+    const fresh = await lineupsSaved(file)
+    await oneTeamScorekeeper(fresh, file)
+    const accepted = await propose(fresh, `t8-fresh-${fresh.gameId}`)
+    if (accepted.status !== 201 || accepted.answer.status !== 'accepted')
+      throw new Error('The swap was not accepted at once')
+    await query(file, playsState, [fresh.gameId])
+    const begun = await lineupsSaved(file)
+    await oneTeamScorekeeper(begun, file)
+    await score(begun, [{ type: 'pitch', call: 'B' }])
+    const refused = await propose(begun, `t8-begun-${begun.gameId}`)
+    if (
+      refused.status !== 409 ||
+      refused.answer.message !==
+        'This game has plays. Swap it from the scoring menu, which resets them.'
+    )
+      throw new Error('The swap of a begun game was not refused')
+    await query(file, playsState, [begun.gameId])
+  })
+
   it('is driven per milestone', async function () {
     await phone(async () => undefined)
   })

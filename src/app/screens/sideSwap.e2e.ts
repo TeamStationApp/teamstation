@@ -352,7 +352,7 @@ describe('home and away swapped before the first pitch', function () {
     )
   })
 
-  it('E5, E6: after a pitch the swap is refused, through the API and in Game Settings', async function () {
+  it("E5, E6: after a pitch a coach's swap is refused through the API, and a scorekeeper's in Game Settings resets the game", async function () {
     const file = 'swap-after-pitch-refused.log'
     const fixture = await preparedGame(file)
     await score(fixture, [{ type: 'pitch', call: 'B' }])
@@ -373,10 +373,22 @@ describe('home and away swapped before the first pitch', function () {
     }
     expect((await sides(file, fixture.gameId)).home).equals(before.home)
 
-    await browser.as(fixture, 'headCoach')
+    // A scorekeeper may swap there: the game's plays are reset first.
+    await browser.as(fixture, 'scorekeeper')
     await browser.swapInSettings(fixture.gameId)
-    await browser.waitText(REFUSED, 30000)
+    await browser.waitText(
+      'Resets all game plays: 1 at-bat in 1 inning will be lost.',
+      30000
+    )
     await browser.capture('game-settings-after-pitch.png')
+    await browser.tap('Reset and Swap')
+    await browser.waitText('Home and away swapped', 30000)
+    const reset = await sides(file, fixture.gameId)
+    expect(reset.home).equals(before.away)
+    await note(
+      file,
+      'scorekeeper in Game Settings: Swap home and away, Save, Reset and Swap; the game was reset and swapped\n'
+    )
   })
 
   it('E7: the schedule import flips a game holding lineups', async function () {

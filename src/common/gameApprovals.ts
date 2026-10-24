@@ -1,4 +1,11 @@
-import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asNumber,
+  asObject,
+  asOptional,
+  asString
+} from 'cleaners'
 
 import { asLiteral } from './asLiteral'
 import {
@@ -53,7 +60,20 @@ const asGameSchedulingBase = asObject({
   version: asString,
   canPropose: asBoolean,
   withdrawTeamIds: asArray(asString),
-  administeredTeamIds: asOptional(asArray(asString), () => [])
+  administeredTeamIds: asOptional(asArray(asString), () => []),
+  /** Whether the caller may swap home and away at once. Older servers: no. */
+  canSwap: asOptional(asBoolean, false),
+  /** What a swap's reset would delete, and the plays it would confirm. */
+  plays: asOptional(
+    asObject({
+      atBats: asNumber,
+      innings: asNumber,
+      playsDigest: asString,
+      generation: asNumber,
+      /** Whether a swap resets the game. Older servers: when it loses at-bats. */
+      resets: asOptional(asBoolean)
+    })
+  )
 })
 const asGameFieldSummary = asObject({
   venueId: asString,
@@ -136,6 +156,12 @@ export interface GameRequestTerms {
    * server when it publishes a preview; a client can't send it.
    */
   schedulePreviewId?: string
+  /**
+   * A scorekeeper's swap of home and away, accepted as it was sent, with no
+   * scheduling authority asked for. Set only by the server; a client can't
+   * send it.
+   */
+  scorerSwap?: true
 }
 
 export function asGameTimezone(raw: unknown): string {
