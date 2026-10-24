@@ -6191,15 +6191,31 @@ export class Scenarios {
                 'TextField'
               )
             ).value
-          const observed = await typed()
-          if (observed !== first.search) {
-            // The loaded simulator drops keys from fast typing ("Boby",
-            // "Bby"): clear the field and type the query once more, one key
-            // at a time as a person types, recorded.
-            this.observations.push({ iosSearchRetyped: observed })
+          // The loaded simulator drops keys from fast typing ("Boby", "Bby").
+          // Clear the field, put the focus back on the field itself (an
+          // id-less type focuses the last tapped point, which would be the
+          // Clear button), and type the query again; at most three times.
+          const retyped: Array<string | undefined> = []
+          for (
+            let observed = await typed();
+            observed !== first.search && retyped.length < 3;
+            observed = await typed()
+          ) {
+            retyped.push(observed)
             await ui.text('Clear Search members')
-            for (const key of first.search) await ui.append(key)
+            const field = need(
+              (await ui.nodes()).find(
+                node =>
+                  node.text === 'Search members' &&
+                  (node.type ?? '').endsWith('TextField')
+              ),
+              'Actual member Search field required'
+            )
+            await ui.tapObserved(field)
+            await ui.append(first.search)
           }
+          if (retyped.length > 0)
+            this.observations.push({ iosSearchRetyped: retyped })
           assert.equal(
             await typed(),
             first.search,
