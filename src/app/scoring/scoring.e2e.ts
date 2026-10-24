@@ -68,6 +68,8 @@ const artifactDir =
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
+/** Answers every team roster read with 503 while set, as a server that cannot. */
+let rosterReadsFail = false
 /** The away team's name in the mocked game, when a test needs another. */
 let awayTeamName: string | undefined
 async function open(
@@ -166,10 +168,21 @@ async function open(
     if (saving && holdSaves) return
     const creatingPlayer =
       request.method() === 'POST' && url.pathname.endsWith('/roster-players')
+    // A game-only player: placeholders, and players for a team this scorer
+    // cannot add to.
+    const creatingGuest =
+      request.method() === 'POST' &&
+      url.pathname === '/api/v1/games/g1/guest-players'
     // The app reports its own product analytics; the server takes any batch.
     const analytics =
       request.method() === 'POST' && url.pathname === '/api/v1/analytics/events'
-    if (request.method() !== 'GET' && !saving && !creatingPlayer && !analytics)
+    if (
+      request.method() !== 'GET' &&
+      !saving &&
+      !creatingPlayer &&
+      !creatingGuest &&
+      !analytics
+    )
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
       body = {
@@ -194,7 +207,20 @@ async function open(
     // The scorer keeps the book for both teams, so may add to their rosters.
     else if (url.pathname === '/api/v1/me/roles')
       body = { teams: { away: ['scorekeeper'], home: ['scorekeeper'] } }
-    else if (analytics) {
+    else if (creatingGuest) {
+      const answer = async (): Promise<void> => {
+        const entry = rosterEntryFromBody(
+          JSON.parse((await request.fetchPostData()) ?? '{}')
+        )
+        await request.respond({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(entry)
+        })
+      }
+      answer().catch(() => undefined)
+      return
+    } else if (analytics) {
       status = 202
       body = { accepted: true }
     } else if (url.pathname === '/api/v1/me/umpire-leagues')
@@ -310,7 +336,7 @@ async function open(
       answer().catch(() => undefined)
       return
     } else if (url.pathname.endsWith('/roster')) {
-      if (failedRoster) status = 503
+      if (failedRoster || rosterReadsFail) status = 503
       body = url.pathname.includes('/away/')
         ? [
             {
@@ -444,8 +470,7 @@ async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
   await page.waitForSelector('[aria-label="Number of placeholder players"]', {
     hidden: true
   })
-  await new Promise(resolve => setTimeout(resolve, 400))
-  await page.keyboard.press('Escape')
+  // Creating placeholders closes Create Player too, back to the rosters.
   await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
 }
 async function click(page: Page, label: string): Promise<void> {
@@ -2170,10 +2195,8 @@ describe('scoring browser', function () {
       await click(page, 'Defense')
       await page.waitForSelector('[aria-label="Clear P"]')
       await click(page, 'Create Player')
-      await page.waitForFunction(
-        () =>
-          document.activeElement!.getAttribute('aria-label') === 'First Name'
-      )
+      // A new player's sheet opens without raising the keyboard: tap the field.
+      await page.locator('[aria-label="First Name"]').click()
       await page.keyboard.type('Alex')
       await page.keyboard.press('Enter')
       await page.waitForFunction(
@@ -2264,10 +2287,8 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Create Player')
-      await page.waitForFunction(
-        () =>
-          document.activeElement!.getAttribute('aria-label') === 'First Name'
-      )
+      // A new player's sheet opens without raising the keyboard: tap the field.
+      await page.locator('[aria-label="First Name"]').click()
       await page.locator('[aria-label="First Name"]').fill('Mookie')
       await page.locator('[aria-label="Last Name"]').fill('Betts')
       await page.locator('[aria-label="Jersey Number"]').fill('07')
@@ -2302,8 +2323,11 @@ describe('scoring browser', function () {
       await click(page, 'Undo Set team roster')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      // Undo removes the game-roster entry; the team player remains persisted.
-      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).equals(null)
+      // Undo takes back the roster save, not the player: Create Player put
+      // him on the team, so the team's roster still offers him.
+      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).not.equals(
+        null
+      )
       await click(page, 'Cancel')
       expect(unexpected).deep.equals([])
     } finally {
@@ -4858,13 +4882,21 @@ describe('scoring browser', function () {
     } finally {
       await scored.page.close()
     }
-    const { page } = await open('/games/g1/score', false, false, true)
+    // An unread roster is not an empty team: scoring waits for a retry
+    // rather than reconcile the saved lineup against nobody.
+    rosterReadsFail = true
+    const { page } = await open('/games/g1/score')
     try {
+      await page.waitForSelector('[aria-label="Retry loading scoring"]')
+      expect(await page.$('[aria-label*="Owls 0 · Hawks 0"]')).equals(null)
+      rosterReadsFail = false
+      await click(page, 'Retry loading scoring')
       await page.waitForSelector('[aria-label*="Owls 0 · Hawks 0"]')
-      await page.waitForSelector('[aria-label*="Batter Player 1"]')
+      await page.waitForSelector('[aria-label*="Batter Jordan K."]')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label*="1 balls"]')
     } finally {
+      rosterReadsFail = false
       await page.close()
     }
   })
@@ -5915,10 +5947,8 @@ describe('scoring browser', function () {
         jersey: string
       ): Promise<void> => {
         await click(page, 'Create Player')
-        await page.waitForFunction(
-          () =>
-            document.activeElement!.getAttribute('aria-label') === 'First Name'
-        )
+        // A new player's sheet opens without raising the keyboard: tap the field.
+        await page.locator('[aria-label="First Name"]').click()
         await page.locator('[aria-label="First Name"]').fill(first)
         await page.locator('[aria-label="Last Name"]').fill(last)
         if (jersey !== '')
@@ -5947,8 +5977,6 @@ describe('scoring browser', function () {
         '[aria-label="Number of placeholder players"]',
         { hidden: true }
       )
-      await new Promise(resolve => setTimeout(resolve, 400))
-      await page.keyboard.press('Escape')
       await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
       const roster = async (): Promise<string[]> =>
         await page.$$eval(
