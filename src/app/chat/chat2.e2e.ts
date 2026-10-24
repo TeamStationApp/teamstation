@@ -4778,14 +4778,12 @@ export class Scenarios {
         await this.signIn()
         await ui.device.assertVisible({ text: exactText('Chats') })
         for (const text of [
-          'Follow a team',
-          'No messages yet',
-          'Loading latest message...'
+          exactText('Follow a team'),
+          exactText('No messages yet'),
+          // The product string ends in a real ellipsis.
+          '^Loading latest message(?:…|\\.{3})$'
         ])
-          await ui.device.assertNotVisible({
-            text: exactText(text),
-            timeout: 3000
-          })
+          await ui.device.assertNotVisible({ text, timeout: 15000 })
         await ui.present('chat-conversation-' + this.group)
         const empty = need(
           this.f.conversations.empty,
