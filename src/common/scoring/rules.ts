@@ -1,4 +1,4 @@
-import type { ScoringAction, Trajectory } from './actions'
+import type { RunnerReason, ScoringAction, Trajectory } from './actions'
 import {
   addPlayer,
   applyOverride,
@@ -147,14 +147,41 @@ export const STATIONARY_OUT_REASONS = [
   'Other'
 ] as const
 
-/** The reasons a scorer chooses from for a runner who moved between pitches. */
+/** A runner who left his base on a ball caught in the air and was put out getting back. */
+export const DID_NOT_TAG_UP = 'Did Not Tag Up'
+/**
+ * The reasons for a runner put out back at his base while the play of a ball
+ * caught in the air is still open. A pickoff is a throw before a pitch, so it
+ * is not among them.
+ */
+export const CAUGHT_BALL_RETURN_OUT_REASONS = [
+  DID_NOT_TAG_UP,
+  'Offensive Interference',
+  'Out on Appeal',
+  'Other'
+] as const
+
+/**
+ * The reasons a scorer chooses from for a runner who moved between pitches,
+ * or, with `caughtBall`, for one put out back at his base on a caught ball.
+ */
 export function runnerReasons(move: {
   decision?: 'safe' | 'out'
   from: number
   to: number
+  caughtBall?: boolean
 }): readonly string[] {
   if (move.decision === 'safe') return ADVANCE_SAFE_REASONS
-  return move.from === move.to ? STATIONARY_OUT_REASONS : ADVANCE_OUT_REASONS
+  if (move.from !== move.to) return ADVANCE_OUT_REASONS
+  return move.caughtBall === true
+    ? CAUGHT_BALL_RETURN_OUT_REASONS
+    : STATIONARY_OUT_REASONS
+}
+
+/** The engine's reason for a runner out the scorer chose from a menu. */
+export function runnerOutReason(reason: string): RunnerReason {
+  // Not tagging up on a catch is the batter's catch putting him out: doubled off.
+  return reason === DID_NOT_TAG_UP ? 'Ball Caught' : (reason as RunnerReason)
 }
 
 /** How many bases each hit, and an error, gives every runner. */

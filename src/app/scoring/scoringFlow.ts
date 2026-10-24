@@ -10,12 +10,14 @@ import { revealedSides } from '../../common/scoring/lineupHistory'
 import {
   closesAutomatically,
   completesHitOffer,
+  DID_NOT_TAG_UP,
   forcedFrom,
   hasEligiblePitch,
   homeBackProposal,
   nextDecision,
   previousRunnerError,
   runnerDecisionError as gameRunnerError,
+  runnerOutReason,
   runnerReasons as gameRunnerReasons
 } from '../../common/scoring/rules'
 import { type Applied, applyAction } from '../../common/scoring/session'
@@ -34,6 +36,7 @@ import { throwPresentation, type ThrowSequence } from './scoringPresentation'
 import { baseIds, battingSide } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
+  type RunnerAction,
   type ScoringEvent,
   type ScoringSnapshot,
   type ScoringState
@@ -427,7 +430,7 @@ export function finishOut(state: ScoringState, defender: number): void {
     // The batter of a dropped third strike is out for the outcome itself.
     ...(action.reason == null || action.purpose === 'droppedThirdStrike'
       ? {}
-      : { reason: action.reason as RunnerReason }),
+      : { reason: runnerOutReason(action.reason) }),
     fielders,
     ...(route == null
       ? {}
@@ -445,7 +448,29 @@ export function runnerReasons(state: ScoringState): readonly string[] {
   if (state.moreDraft != null) return [state.moreDraft.action]
   const action = state.runnerAction
   if (action == null) return gameRunnerReasons({ from: 0, to: 0 })
-  return gameRunnerReasons(action)
+  return gameRunnerReasons({
+    ...action,
+    caughtBall: returningAfterCatch(state, action)
+  })
+}
+
+/**
+ * A runner put back on the base he stood on when a ball was caught in the
+ * air, while that play is still open: he did not tag up, or something else
+ * put him out there.
+ */
+function returningAfterCatch(
+  state: ScoringState,
+  action: RunnerAction
+): boolean {
+  const pending = state.session.pending
+  return (
+    action.origin === 'current' &&
+    action.purpose == null &&
+    action.from === action.to &&
+    pending?.outcome === 'Ball Caught' &&
+    pending.originalBases[action.from - 1] === action.playerId
+  )
 }
 
 export function runnerDecisionError(state: ScoringState): string | undefined {
@@ -894,8 +919,9 @@ export function runnerReducer(
       next => {
         next.runnerAction!.decision = event.decision
         if (
-          action.origin === 'between' &&
-          !(event.decision === 'safe' && action.from === action.to)
+          (action.origin === 'between' &&
+            !(event.decision === 'safe' && action.from === action.to)) ||
+          (event.decision === 'out' && returningAfterCatch(state, action))
         )
           next.phase = 'runnerReason'
         else if (event.decision === 'out') beginDefense(next)
@@ -915,7 +941,16 @@ export function runnerReducer(
       return state
     return accepted(state, event.reason, next => {
       next.runnerAction!.reason = event.reason
-      if (next.runnerAction!.decision === 'out') beginDefense(next)
+      // Only a runner who did not tag up is put out by a throw from the
+      // fielder who made the catch; any other reason, during a play as
+      // between pitches, starts from whoever the scorer says fielded it.
+      if (
+        next.runnerAction!.decision === 'out' &&
+        next.runnerAction!.origin === 'current' &&
+        event.reason !== DID_NOT_TAG_UP
+      )
+        next.phase = 'chooseThrower'
+      else if (next.runnerAction!.decision === 'out') beginDefense(next)
       else if (['Throwing Error', 'Fielding Error'].includes(event.reason))
         next.phase = 'runnerError'
       else if (['Wild Pitch', 'Passed Ball'].includes(event.reason))

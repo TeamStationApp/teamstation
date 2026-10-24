@@ -11,12 +11,15 @@ import {
   allowedAngle,
   awaitingResult,
   canSwitchBatter,
+  CAUGHT_BALL_RETURN_OUT_REASONS,
   closesAutomatically,
+  DID_NOT_TAG_UP,
   hasEligiblePitch,
   MAX_LAUNCH_ANGLE,
   moreEligibility,
   nextDecision,
   outcomeAvailable,
+  runnerOutReason,
   runnerReasons,
   STATIONARY_OUT_REASONS,
   trajectoryLabel
@@ -81,6 +84,25 @@ describe('what the game allows between pitches', function () {
       ADVANCE_OUT_REASONS
     )
     expect(runnerReasons({ from: 1, to: 1 })).equals(STATIONARY_OUT_REASONS)
+  })
+
+  it('offers Did Not Tag Up for a runner put out back at his base on a catch', function () {
+    expect(
+      runnerReasons({ decision: 'out', from: 1, to: 1, caughtBall: true })
+    ).equals(CAUGHT_BALL_RETURN_OUT_REASONS)
+    expect(CAUGHT_BALL_RETURN_OUT_REASONS[0]).equals(DID_NOT_TAG_UP)
+    expect(
+      runnerReasons({ decision: 'out', from: 1, to: 2, caughtBall: true })
+    ).equals(ADVANCE_OUT_REASONS)
+    expect(runnerReasons({ decision: 'out', from: 1, to: 1 })).equals(
+      STATIONARY_OUT_REASONS
+    )
+  })
+
+  it('records Did Not Tag Up as the catch that doubled the runner off', function () {
+    expect(runnerOutReason(DID_NOT_TAG_UP)).equals('Ball Caught')
+    expect(runnerOutReason('Picked Off')).equals('Picked Off')
+    expect(runnerOutReason('Other')).equals('Other')
   })
 
   it('needs a ball or a missed strike before a wild pitch', function () {

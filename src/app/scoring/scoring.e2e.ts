@@ -168,7 +168,12 @@ async function open(
     } else if (uiAnimations && url.pathname.endsWith('/highlights')) {
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
-      body = { id: 100, displayName: 'Scorer', isAdmin: false }
+      body = {
+        id: userIdOfGumbo(100),
+        gumboId: 100,
+        displayName: 'Scorer',
+        isAdmin: false
+      }
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
     else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
@@ -447,6 +452,38 @@ async function waitReady(page: Page): Promise<void> {
         .getAttribute('aria-disabled') !== 'true',
     { timeout: 30000 }
   )
+}
+/** Where a base's point at height `y` sits on the canvas, in the home view. */
+async function projectBase(
+  page: Page,
+  base: number,
+  y = 0
+): Promise<[number, number]> {
+  const rect = await page.$eval('canvas', canvas => {
+    const r = canvas.getBoundingClientRect()
+    return { x: r.x, y: r.y, width: r.width, height: r.height }
+  })
+  const camera = new PerspectiveCamera()
+  applyFieldCamera(camera, {
+    width: rect.width,
+    height: rect.height,
+    view: 'home',
+    zoom: 1.25,
+    tilt: (-11 * Math.PI) / 180,
+    heightOffset: 33,
+    bottomExtension: 112
+  })
+  const point = new Vector3(BASES[base].x, y, BASES[base].z).project(camera)
+  return [
+    rect.x + ((point.x + 1) * rect.width) / 2,
+    rect.y + ((1 - point.y) * rect.height) / 2
+  ]
+}
+/** Taps a sheet's control once the sheet has stopped sliding. */
+async function tapSettled(page: Page, label: string): Promise<void> {
+  await page
+    .locator(`[aria-label="${label}"]:not([aria-disabled="true"])`)
+    .click()
 }
 async function dropRunnerWithKeyboard(
   page: Page,
@@ -4393,6 +4430,176 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  describe('did not tag up', function () {
+    const returnOutReasons = [
+      'Did Not Tag Up',
+      'Offensive Interference',
+      'Out on Appeal',
+      'Other'
+    ]
+    async function phoneWithRunnerOnFirst(page: Page): Promise<void> {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      for (const label of [
+        'Overrides',
+        'First base',
+        'Choose First base Player 6',
+        'Apply Override'
+      ])
+        await tapSettled(page, label)
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+    }
+    async function caughtFly(page: Page): Promise<void> {
+      await click(page, 'Swing in Play')
+      await click(page, 'Batter Out')
+      await click(page, 'Ball Caught')
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      await placeDefenderWithKeyboard(page)
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      await page.keyboard.press('Enter')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+    }
+    /** Holds the runner on `base` and lets go on the Out target beside him. */
+    async function holdRunnerOut(page: Page, base: 1 | 2): Promise<void> {
+      const [x, y] = await projectBase(page, base, 6)
+      await page.touchscreen.touchStart(x, y)
+      await new Promise(resolve => setTimeout(resolve, 450))
+      await page.waitForSelector('[aria-label="Out drag target"]')
+      const out = await page.$eval('[aria-label="Out drag target"]', e => {
+        const r = e.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      })
+      await page.touchscreen.touchMove(out.x, out.y)
+      await page.touchscreen.touchEnd()
+    }
+    async function shot(page: Page, name: string): Promise<void> {
+      const directory = process.env.TS_SCORING_ARTIFACT_DIR
+      if (directory == null) return
+      await new Promise(resolve => setTimeout(resolve, 900))
+      await page.screenshot({ path: join(directory, `${name}.png`) })
+    }
+    it('records a runner returning to first on a caught fly as doubled off', async function () {
+      this.timeout(120000)
+      const { page } = await open('/games/g1/score')
+      interface SavedPlay {
+        result: { eventType: string }
+        runners: Array<{
+          movement: { isOut: boolean }
+          details: { movementReason: string | null }
+        }>
+      }
+      const saves: Array<Promise<{ plays?: SavedPlay[] }>> = []
+      page.on('request', request => {
+        if (
+          request.method() === 'POST' &&
+          new URL(request.url()).pathname.endsWith('/events')
+        )
+          saves.push(
+            request.fetchPostData().then(body => JSON.parse(body ?? '{}'))
+          )
+      })
+      try {
+        await phoneWithRunnerOnFirst(page)
+        await caughtFly(page)
+        await holdRunnerOut(page, 1)
+        await shot(page, 'did-not-tag-up-after')
+        for (const reason of returnOutReasons)
+          await page.waitForSelector(`[aria-label="${reason}"]`)
+        expect(await page.$('[aria-label="Picked Off"]')).equals(null)
+        await tapSettled(page, 'Did Not Tag Up')
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag the next defender"]'
+        )
+        await placeDefenderWithKeyboard(page, true)
+        await click(page, 'Finish defensive play')
+        await page.waitForSelector('[aria-label*="0 balls 0 strikes 2 outs"]')
+        await shot(page, 'did-not-tag-up-recorded')
+        await page.waitForSelector('[aria-label^="Undo Out by "]')
+        await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+          timeout: 30000
+        })
+        // The outbox posts the closed play on its own schedule: wait for it.
+        let play: SavedPlay | undefined
+        for (let wait = 0; play == null && wait < 60; wait++) {
+          play = (await Promise.all(saves))
+            .flatMap(body => body.plays ?? [])
+            .find(row => row.result.eventType === 'double_play')
+          if (play == null)
+            await new Promise(resolve => setTimeout(resolve, 250))
+        }
+        expect(play, 'saved double play').not.equals(undefined)
+        expect(
+          play!.runners
+            .filter(row => row.movement.isOut)
+            .map(row => row.details.movementReason)
+        ).includes('r_doubled_off')
+      } finally {
+        await page.close()
+      }
+    })
+    it('keeps the runner on first when the reason menu is closed', async function () {
+      this.timeout(90000)
+      const { page } = await open('/games/g1/score')
+      try {
+        await phoneWithRunnerOnFirst(page)
+        await caughtFly(page)
+        await holdRunnerOut(page, 1)
+        await page.waitForSelector('[aria-label="Did Not Tag Up"]')
+        await tapSettled(page, 'Cancel')
+        await page.waitForSelector('[aria-label="Did Not Tag Up"]', {
+          hidden: true
+        })
+        await page.waitForSelector('[aria-label="Time to edit play"]')
+        await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+          timeout: 30000
+        })
+        await page.waitForSelector('[aria-label*="0 balls 0 strikes 1 outs"]')
+      } finally {
+        await page.close()
+      }
+    })
+    it('asks no reason for a runner put out at his base after a single', async function () {
+      this.timeout(90000)
+      const { page } = await open('/games/g1/score')
+      try {
+        await phoneWithRunnerOnFirst(page)
+        await chooseHit(page, 'Single')
+        await page.waitForSelector('[aria-label="Time to edit play"]', {
+          timeout: 30000
+        })
+        await holdRunnerOut(page, 2)
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag the next defender"]'
+        )
+        expect(await page.$('[aria-label="Did Not Tag Up"]')).equals(null)
+      } finally {
+        await page.close()
+      }
+    })
+    it('offers no Did Not Tag Up between pitches', async function () {
+      this.timeout(90000)
+      const { page } = await open('/games/g1/score')
+      try {
+        await phoneWithRunnerOnFirst(page)
+        await click(page, 'Ball')
+        await waitReady(page)
+        await holdRunnerOut(page, 1)
+        await page.waitForSelector('[aria-label="Picked Off"]')
+        expect(await page.$('[aria-label="Did Not Tag Up"]')).equals(null)
+      } finally {
+        await page.close()
+      }
+    })
+  })
   for (const walk of [true, false])
     it(`completes a terminal ${walk ? 'walk' : 'strikeout'} with the appropriate play completion`, async function () {
       const { page } = await open('/games/g1/score')
@@ -6009,32 +6216,6 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
   after(async function () {
     await browser?.close()
   })
-
-  async function projectBase(
-    page: Page,
-    base: number,
-    y = 0
-  ): Promise<[number, number]> {
-    const rect = await page.$eval('canvas', canvas => {
-      const r = canvas.getBoundingClientRect()
-      return { x: r.x, y: r.y, width: r.width, height: r.height }
-    })
-    const camera = new PerspectiveCamera()
-    applyFieldCamera(camera, {
-      width: rect.width,
-      height: rect.height,
-      view: 'home',
-      zoom: 1.25,
-      tilt: (-11 * Math.PI) / 180,
-      heightOffset: 33,
-      bottomExtension: 112
-    })
-    const point = new Vector3(BASES[base].x, y, BASES[base].z).project(camera)
-    return [
-      rect.x + ((point.x + 1) * rect.width) / 2,
-      rect.y + ((1 - point.y) * rect.height) / 2
-    ]
-  }
 
   async function overrideBases(
     page: Page,
