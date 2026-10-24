@@ -8,6 +8,8 @@ import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import {
+  HIT_UNPITCHED_CONTACT_MS,
+  type HitSequence,
   PITCH_TIMING,
   pitchPresentation,
   presentationRuntime,
@@ -158,8 +160,12 @@ describe('hit presentation coordination', function () {
       expect(sampleHit(seq, seq.fielderEndMs).fielder).deep.equals(
         seq.fielderTarget
       )
+      // The bat meets the pitch as it reaches the plate.
+      expect(seq.contactMs).equals(PITCH_TIMING.plate)
       const clock = presentationRuntime()
-      expect(stepPresentation(clock, seq, 449, false).contact).equals(false)
+      expect(
+        stepPresentation(clock, seq, seq.contactMs - 1, false).contact
+      ).equals(false)
       expect(stepPresentation(clock, seq, 1, false).contact).equals(true)
       const contact = {
         type: 'PRESENTATION_CONTACT' as const,
@@ -373,5 +379,69 @@ describe('defensive presentation barriers', function () {
         stage: seq.stage
       })
     ).equals(undone)
+  })
+})
+
+describe('the pitch before a ball in play', function () {
+  function single(start = initial()): HitSequence {
+    let state = scoringReducer(start, {
+      type: 'OUTCOME',
+      outcome: 'Single'
+    })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 10,
+      point: { x: 25, z: -75 },
+      generation: 0
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 10,
+      generation: 0
+    })
+    const seq = state.presentation!
+    if (seq.kind !== 'hit') throw new Error('Expected hit')
+    return seq
+  }
+
+  it('winds the pitcher up and throws the ball to the plate, where the bat meets it', function () {
+    const seq = single()
+    expect(seq.pitcher).equals(10)
+    expect(seq.from).not.equals(undefined)
+    expect(seq.plate).deep.equals({ x: 0, y: seq.plate!.y, z: 0 })
+    // Before the release the ball is in the pitcher's hand, and shown.
+    const early = sampleHit(seq, 100)
+    expect(early.visible).equals(true)
+    expect(early.windup).greaterThan(0)
+    // Between the release and the plate it is on the pitch's line.
+    const halfway = (PITCH_TIMING.release + seq.contactMs) / 2
+    const flying = sampleHit(seq, halfway).ball
+    // The mound is out toward center, at negative z; the plate is at 0.
+    expect(flying.z).greaterThan(seq.from!.z)
+    expect(flying.z).lessThan(seq.plate!.z)
+    // At contact it is at the plate.
+    const met = sampleHit(seq, seq.contactMs - 1).ball
+    expect(Math.hypot(met.x, met.z)).lessThan(1.5)
+    // The swing is at its height as the pitch arrives.
+    expect(sampleHit(seq, seq.contactMs).swing).closeTo(1, 1e-9)
+    expect(sampleHit(seq, seq.contactMs - 400).swing).equals(0)
+  })
+
+  it('meets the ball at once when no pitcher stands on the field to pitch it', function () {
+    const start = initial()
+    // A pitcher the field does not hold: no pitch to draw.
+    start.session.liveData.plays.currentPlay!.matchup.pitcher.id = 999
+    const seq = single(start)
+    expect(seq.pitcher).equals(undefined)
+    expect(seq.contactMs).equals(HIT_UNPITCHED_CONTACT_MS)
+    expect(seq.fielderStartMs).equals(HIT_UNPITCHED_CONTACT_MS)
+    expect(seq.flightEndMs).lessThan(single().flightEndMs)
+  })
+
+  it('keeps every timing after contact where it was, 600 ms later', function () {
+    const seq = single()
+    expect(seq.fielderStartMs).equals(seq.contactMs)
+    expect(seq.flightEndMs).greaterThan(seq.contactMs + 1000)
+    expect(sampleHit(seq, seq.contactMs).fielder).deep.equals(seq.fielderStart)
   })
 })

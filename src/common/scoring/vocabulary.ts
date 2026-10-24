@@ -17,10 +17,11 @@ import type { BatteryKind, PitchCall, ResultType } from './actions'
  * out because the recogniser already hears them, and a term it already hears
  * costs a slot and biases it toward hearing the word when it was not said.
  *
- * The last four were measured on 2026-09-28: without them the recogniser
- * heard "beaned" as "beamed", "froze him" as "throws him", "whiffed" as "lift"
- * and "dotted" as "that at". The rows above them are kept until a real game
- * shows whether each earns its slot.
+ * The at-bat terms were measured: without them the recogniser heard "beaned"
+ * as "beamed", "froze him" as "throws him", "whiffed" as "lift" and "dotted"
+ * as "that at" (2026-09-28), and "intentional walk" as "potential walk".
+ * The rows above them are kept until a real game shows whether each earns
+ * its slot.
  */
 export const DICTATION_TERMS: readonly string[] = [
   // Double-play chains: the one place these scorers use position numbers.
@@ -63,6 +64,7 @@ export const DICTATION_TERMS: readonly string[] = [
   'froze him',
   'whiffed',
   'dotted',
+  'intentional walk',
   // How far a ball went, and the kind of pitch.
   'blooper',
   'dribbler',
@@ -323,6 +325,24 @@ const RULES = [
   'A strikeout or a walk the count cannot reach is a question. Pitches are usually tapped, so the count in the context is normally current; "struck out" on a one-strike count means pitches went unrecorded. Call askScorer rather than inventing the missing pitches. "Four pitches, a strike" is not that question and not a walk: he named one pitch, the called strike, so it is one pitch C. Do not fill in balls to make four, and do not ask.',
   '"High and tight", "chin music" and "brushback" are balls unless the batter is hit. They describe a pitch near the batter, not one that hit him.'
 ]
+
+/**
+ * What the recogniser has been heard to write for a scoring word, and the
+ * word. The LLM is sent the word, rather than told the mishearing in its
+ * vocabulary: a change to the system prompt moved its readings of sentences
+ * that have nothing to do with the word.
+ */
+const MISHEARD: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bpotential(\s+)walk(?![-\w])/gi, 'intentional$1walk']
+]
+
+/** What the scorer said, with each word the recogniser misheard put right. */
+export function heardAs(transcript: string): string {
+  return MISHEARD.reduce(
+    (text, [heard, meant]) => text.replace(heard, meant),
+    transcript
+  )
+}
 
 /** The vocabulary block, as the LLM reads it in its system prompt. */
 export const DICTATION_VOCABULARY: string = [

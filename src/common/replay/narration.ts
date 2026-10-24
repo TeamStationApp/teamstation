@@ -554,7 +554,10 @@ export function* stepsWithStates(
     for (const action of step.actions) {
       // `copyGame` shares the finished plays, as `replayPlays` does: a copy of
       // the whole game per action makes narrating a long game quadratic.
-      const applied = applyAction(copyGame(state), action, { inPlace: true })
+      const applied = applyAction(copyGame(state), action, {
+        inPlace: true,
+        replay: true
+      })
       if (applied.problems.length > 0) break
       transitions.push(...applied.transitions)
       state = applied.state

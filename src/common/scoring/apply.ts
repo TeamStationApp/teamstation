@@ -1353,6 +1353,20 @@ function runnerMovement(
     to === 4
   )
     return
+  // Nothing moves on after the third out: the half ended with it. A stored
+  // record replays as it was saved, and a fielder's choice's calls describe
+  // one defensive sequence rather than its order.
+  if (
+    !ctx.replay &&
+    pending?.outcome !== "Fielder's Choice" &&
+    line(ctx).outs >= 3 &&
+    action.out !== true &&
+    to > where
+  )
+    refuse(
+      'illegal',
+      `The third out ended the half: ${state.gameData.players[action.runner]?.fullName ?? 'the runner'} cannot ${to === 4 ? 'score' : 'advance'}`
+    )
   // A late relay may repeat a Safe call without advancing that runner again.
   if (
     action.out !== true &&

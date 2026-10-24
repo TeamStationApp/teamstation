@@ -167,6 +167,249 @@ describe('dictation interpreter', function () {
     })
   })
 
+  describe('base outs, a force with an overthrow, and the third out', function () {
+    async function gameSent(said: string): Promise<string> {
+      const stub = provider([call('c1', 'pitch', { call: 'B' })])
+      await new Interpretation(config(stub.fetch), 'ctx', said).start()
+      return stub.sent[0].body.messages
+        .map(message => message.content ?? '')
+        .join('\n')
+        .replace(/\s+/g, ' ')
+    }
+
+    for (const said of [
+      "Grounder to short, who tags second for a fielder's choice.",
+      'The third baseman takes third base for the out.',
+      'Force at home.',
+      'He steps on second but overthrows first.',
+      'Grounder to the shortstop, he beats the runner to second for the force.'
+    ])
+      it(`are taught, with two sentences each, beside: ${said}`, async function () {
+        const sent = await gameSent(said)
+        expect(sent).includes('BASE OUTS AND THE THIRD OUT')
+        for (const example of [
+          "who tags second for a fielder's choice",
+          'takes third base for the out',
+          'overthrows first',
+          'throws it away at first',
+          'caught for the third out, the runner tags and scores',
+          'steps on second for the force, but throws it away at first'
+        ])
+          expect(sent, example).includes(example)
+      })
+
+    for (const said of [
+      'Pop up to third. The runner tags and is thrown out at second.',
+      'The runner tags up and scores.',
+      'Single to left.',
+      'Caught for the third out.',
+      'With two outs, grounder to short.',
+      'Ground ball to short. The runner on second sees the shortstop throw to first, touches third, then heads home.',
+      'Ground out to first. The runner on second takes off, he touches third, rounds it, and scores.',
+      'Single to right, and the runner takes third.',
+      'Wild pitch, the runner takes second.',
+      'Grounder to second for the out.',
+      'Ground ball to third base for the out.',
+      "Ground ball to the third baseman for a fielder's choice. He steps on third himself to retire the runner from second, then throws to the second baseman for the out at second."
+    ])
+      it(`are not offered to a sentence that says none: ${said}`, async function () {
+        expect(await gameSent(said)).not.includes('BASE OUTS AND THE THIRD OUT')
+      })
+  })
+
+  describe('a result the model nests in its ball in play', function () {
+    const field = `Fielders: CF Sam R. #9 ${writtenTag(16)}, SS Noah D. #5 ${writtenTag(14)}.`
+    const ball = (result: unknown): object =>
+      call('c1', 'ballInPlay', {
+        contact: 'swing',
+        trajectory: 'popup',
+        fielder: tagOf(16),
+        result
+      })
+
+    for (const [form, nested, expected] of [
+      [
+        'an object',
+        { eventType: 'field_out', outBy: 'catch', foulCaught: true },
+        {
+          type: 'result',
+          eventType: 'field_out',
+          outBy: 'catch',
+          foulCaught: true
+        }
+      ],
+      [
+        'a bare event type',
+        'field_out',
+        { type: 'result', eventType: 'field_out' }
+      ]
+    ] as const)
+      it(`is the ball's result when, asked for one, the model sends none (${form})`, async function () {
+        const stub = provider([ball(nested)], [])
+        const turn = await new Interpretation(
+          config(stub.fetch),
+          field,
+          'Pop up behind the plate, caught by the center fielder.'
+        ).start()
+        expect(turn).deep.equals({
+          kind: 'actions',
+          actions: [
+            {
+              type: 'ballInPlay',
+              contact: 'swing',
+              trajectory: 'popup',
+              fielder: 16
+            },
+            expected
+          ],
+          dropped: []
+        })
+        // It was asked for the result as for any ball sent without one.
+        expect(stub.sent).to.have.length(2)
+        expect(stub.sent[1].body.messages.at(-1)?.content).equals(
+          RESULT_MISSING
+        )
+      })
+
+    it('gives way to the result the model sends when asked', async function () {
+      const stub = provider(
+        [ball({ eventType: 'field_error' })],
+        [call('c2', 'result', { eventType: 'single' })]
+      )
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        field,
+        'Pop up to center, it drops for a single.'
+      ).start()
+      expect(turn.kind, JSON.stringify(turn)).equals('actions')
+      if (turn.kind !== 'actions') return
+      expect(
+        turn.actions.filter(action => action.type === 'result')
+      ).deep.equals([{ type: 'result', eventType: 'single' }])
+    })
+
+    for (const order of ['after', 'before'] as const)
+      it(`gives way to a result the same reply calls (${order})`, async function () {
+        const nestedBall = ball({ eventType: 'field_error' })
+        const result = call('c2', 'result', { eventType: 'single' })
+        const stub = provider(
+          order === 'after' ? [nestedBall, result] : [result, nestedBall]
+        )
+        const turn = await new Interpretation(
+          config(stub.fetch),
+          field,
+          'Pop up to center, it drops for a single.'
+        ).start()
+        expect(turn.kind, JSON.stringify(turn)).equals('actions')
+        if (turn.kind !== 'actions') return
+        expect(
+          turn.actions.filter(action => action.type === 'result')
+        ).deep.equals([{ type: 'result', eventType: 'single' }])
+        expect(
+          turn.actions.find(action => action.type === 'ballInPlay')
+        ).deep.equals({
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'popup',
+          fielder: 16
+        })
+      })
+  })
+
+  describe('a player the model left blank', function () {
+    const field = `Fielders: SS Noah D. #5 ${writtenTag(14)}, 1B Liam O. #6 ${writtenTag(12)}.`
+
+    for (const blank of ['', '   '])
+      it(`is no player, and the ball in play stands (${JSON.stringify(blank)})`, async function () {
+        const stub = provider([
+          call('c1', 'ballInPlay', {
+            contact: 'swing',
+            trajectory: 'line_drive',
+            direction: 'left_center',
+            fielder: blank
+          }),
+          call('c2', 'result', { eventType: 'double' })
+        ])
+        const turn = await new Interpretation(
+          config(stub.fetch),
+          field,
+          'Line drive double to left center field.'
+        ).start()
+        expect(turn).deep.equals({
+          kind: 'actions',
+          actions: [
+            {
+              type: 'ballInPlay',
+              contact: 'swing',
+              trajectory: 'line_drive',
+              direction: 'left_center'
+            },
+            { type: 'result', eventType: 'double' }
+          ],
+          dropped: []
+        })
+      })
+
+    it('leaves a blank out of a list of fielders', async function () {
+      const stub = provider([
+        call('c1', 'fieldingPlay', {
+          fielders: [tagOf(14), '', tagOf(12)],
+          error: tagOf(14),
+          errorKind: 'throwing'
+        })
+      ])
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        field,
+        'Throwing error by the shortstop.'
+      ).start()
+      expect(turn.kind, JSON.stringify(turn)).equals('actions')
+      if (turn.kind !== 'actions') return
+      expect(turn.actions).deep.equals([
+        {
+          type: 'fieldingPlay',
+          fielders: [14, 12],
+          error: 14,
+          errorKind: 'throwing'
+        }
+      ])
+    })
+
+    it('still drops a call naming a tag that is no player', async function () {
+      const stub = provider([
+        call('c1', 'ballInPlay', {
+          contact: 'swing',
+          trajectory: 'line_drive',
+          fielder: 'ZZ9'
+        }),
+        call('c2', 'result', { eventType: 'double' })
+      ])
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        field,
+        'Line drive double.'
+      ).start()
+      expect(turn.kind, JSON.stringify(turn)).equals('actions')
+      if (turn.kind !== 'actions') return
+      expect(turn.dropped.map(problem => problem.code)).deep.equals([
+        'unknownPlayer'
+      ])
+    })
+  })
+
+  it('sends the model "intentional walk" where the recogniser wrote "potential walk"', async function () {
+    const stub = provider([call('c1', 'result', { eventType: 'intent_walk' })])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      'ctx',
+      'Potential walk.'
+    ).start()
+    const sent = stub.sent[0].body.messages.map(m => m.content ?? '')
+    expect(sent.at(-1)).equals('intentional walk.')
+    expect(sent.join('\n')).not.includes('otential walk')
+    expect(turn.kind).equals('actions')
+  })
+
   it('keeps several actions in order, and drops what the library refuses', async function () {
     const stub = provider([
       call('c1', 'pitch', { call: 'C' }),

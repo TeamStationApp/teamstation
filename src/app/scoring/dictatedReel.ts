@@ -14,7 +14,7 @@ import {
   type GroundPoint,
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
-import { homeRunLanding } from '../field/stadiumBoundary'
+import { homeRunLanding, OUTFIELD_RADIUS } from '../field/stadiumBoundary'
 import {
   depthUnits,
   foulFielder,
@@ -181,6 +181,22 @@ export function hitGeometry(
   }
 }
 
+/** How far past its base a throw charged as an error comes down. */
+const WILD_THROW_FT = 30
+
+/** The base a fielder covers: the one he stands nearest. */
+function baseOf(point: GroundPoint): keyof typeof BASE_INDEX {
+  const bases = ['1B', '2B', '3B', 'home'] as const
+  return bases.reduce((near, base) => {
+    const at = BASES[BASE_INDEX[base]]
+    const was = BASES[BASE_INDEX[near]]
+    return Math.hypot(at.x - point.x, at.z - point.z) <
+      Math.hypot(was.x - point.x, was.z - point.z)
+      ? base
+      : near
+  })
+}
+
 /** Where a runner stands in this game: his base, or the plate for the batter. */
 function standingPoint(state: ScoringState, runner: number): GroundPoint {
   const queued = state.session.homeQueue.indexOf(runner)
@@ -238,6 +254,14 @@ export class ReelBuilder {
   }
 
   private safeRelays: RunnerMovementAction[] = []
+  /** A throw charged as an error, drawn once the play's outs are. */
+  private wildThrow: {
+    thrower: number
+    receiver: number
+    batter: number
+    /** The batter reached on it: the throw was to first, whoever covered. */
+    toFirst: boolean
+  } | null = null
 
   private finishSafeRelay(state: ScoringState): void {
     let actions = this.safeRelays
@@ -306,6 +330,7 @@ export class ReelBuilder {
     switch (action.type) {
       case 'pitch':
         this.finishSafeRelay(state)
+        this.finishWildThrow(state)
         this.choice = false
         this.defenderPoints.clear()
         this.hitOpen = false
@@ -321,6 +346,7 @@ export class ReelBuilder {
         return
       case 'ballInPlay': {
         this.finishSafeRelay(state)
+        this.finishWildThrow(state)
         const result = rest.find(
           (next): next is ResultAction => next.type === 'result'
         )
@@ -452,6 +478,23 @@ export class ReelBuilder {
         this.hitOpen = false
         if (this.group !== 'battery') this.open('battery')
         return
+      case 'fieldingPlay':
+        // A throw that was the error goes past the one it was thrown to,
+        // after whatever outs the play made first.
+        if (
+          action.errorKind === 'throwing' &&
+          action.fielders.length > 1 &&
+          action.error === action.fielders[0] &&
+          state.session.liveData.plays.currentPlay != null
+        )
+          this.wildThrow = {
+            thrower: action.fielders[0],
+            receiver: action.fielders.at(-1)!,
+            batter: state.session.liveData.plays.currentPlay.matchup.batter.id,
+            toFirst: state.session.pending?.outcome === 'Error'
+          }
+        if (this.current == null) this.open('other')
+        return
       default:
         // A lineup change or a game-flow step moves nobody on its own.
         if (this.current == null) this.open('other')
@@ -555,6 +598,7 @@ export class ReelBuilder {
   /** The reel, with every picture flagged and named for its place in it. */
   finish(state: ScoringState): Beat[] {
     this.finishSafeRelay(state)
+    this.finishWildThrow(state)
     this.placeBatterRuns()
     const beats = this.beats.filter(
       beat => beat.presentation != null || beat.motions.length > 0
@@ -568,6 +612,37 @@ export class ReelBuilder {
         }
       beat.motions = beat.motions.filter(motion => !motion.complete)
     })
+    // A throw's picture draws each other runner where the beats before it
+    // took him, not back where the play found him. This is the one place
+    // that sets it, once the beats' final order is known.
+    const reached = new Map<number, GroundPoint>()
+    for (const beat of beats) {
+      const picture = beat.presentation
+      if (picture?.kind === 'throw')
+        beat.presentation = {
+          ...picture,
+          players: picture.players.map(player => {
+            const at =
+              player.team === 'runner' &&
+              player.playerId != null &&
+              player.playerId !== picture.runner
+                ? reached.get(player.playerId)
+                : undefined
+            return at == null
+              ? player
+              : {
+                  ...player,
+                  position: { ...at },
+                  target: { ...at },
+                  batting: false
+                }
+          })
+        }
+      for (const motion of beat.motions) {
+        const end = motion.waypoints.at(-1)
+        if (end != null) reached.set(motion.playerId, { ...end })
+      }
+    }
     return beats
   }
 
@@ -622,6 +697,73 @@ export class ReelBuilder {
       z: start.z + (target.z - start.z) * share
     }
     run.point = outBatterPoint(hit)
+  }
+
+  /**
+   * The throw charged as an error, from where its thrower last was toward
+   * the base of the one it was thrown to: past him at the bag, coming down
+   * 30 feet beyond it, inside the fence. Nobody is put out by it.
+   */
+  private finishWildThrow(state: ScoringState): void {
+    const wild = this.wildThrow
+    this.wildThrow = null
+    if (wild == null || !this.animate) return
+    const players = scoringFieldPlayers(state).map(player => ({
+      ...player,
+      motion: undefined,
+      suppressed: false,
+      hasBall: false
+    }))
+    const standing = (id: number): GroundPoint | undefined =>
+      this.defenderPoints.get(id) ??
+      players.find(p => p.team === 'defense' && p.playerId === id)?.position
+    const from = standing(wild.thrower)
+    // The base thrown to: first for the batter's error, whoever covered it
+    // (a pitcher covering stands nearer home than first); else the one the
+    // receiver stood nearest.
+    const covering = standing(wild.receiver)
+    const { batter } = wild
+    if (from == null || covering == null) return
+    const base = {
+      ...BASES[BASE_INDEX[wild.toFirst ? '1B' : baseOf(covering)]]
+    }
+    const length = Math.hypot(base.x - from.x, base.z - from.z)
+    if (length === 0) return
+    const beyond = unitsOfFeet(WILD_THROW_FT, fenceOf(state.session))
+    let to = {
+      x: base.x + ((base.x - from.x) / length) * beyond,
+      z: base.z + ((base.z - from.z) / length) * beyond
+    }
+    const reach = Math.hypot(to.x, to.z)
+    if (reach > OUTFIELD_RADIUS)
+      to = {
+        x: (to.x * OUTFIELD_RADIUS) / reach,
+        z: (to.z * OUTFIELD_RADIUS) / reach
+      }
+    const sequence = throwSequence(state, {
+      players,
+      thrower: wild.thrower,
+      receiver: wild.receiver,
+      runner: batter,
+      from,
+      to: base,
+      runnerPoint: standingPoint(state, batter),
+      final: false,
+      safe: true
+    })
+    this.open('throw', {
+      ...sequence,
+      wild: true,
+      to: { ...to, y: 2 },
+      durationMs: Math.round(
+        (sequence.durationMs * Math.hypot(to.x - from.x, to.z - from.z)) /
+          length
+      )
+    })
+    // It follows the play's last picture without waiting on its walk-offs,
+    // and passes the batter, who ran from the crack of the bat, at the bag.
+    this.current!.after = 'presentation'
+    this.defenderPoints.set(wild.receiver, base)
   }
 
   /**
@@ -723,6 +865,11 @@ export class ReelBuilder {
         sequence.durationMs = tagMs(from, target, runnerPoint, 900)
       }
       this.open('throw', sequence)
+      // A fielder's choice's out follows its hit at once: its runner, out on
+      // the books, is drawn by this picture, not left unseen while the hit's
+      // other runs finish.
+      if (index === 0 && this.choiceOut != null)
+        this.current!.after = 'presentation'
       this.defenderPoints.set(step.thrower, { ...from })
       this.defenderPoints.set(step.receiver, { ...target })
     })
@@ -796,6 +943,41 @@ export function beginReel(state: ScoringSnapshot, beats: Beat[]): void {
   }
   state.reel = beats
   advanceReel(state)
+}
+
+/**
+ * A runner the play put out is on no base, so once his motion ends nobody
+ * draws him. One a later beat of the reel goes on with, as a fielder's
+ * choice's runner carried out at the bag, waits where it left him.
+ */
+export function holdForLaterBeat(
+  state: ScoringSnapshot,
+  done: MotionCommand
+): void {
+  const end = done.waypoints.at(-1)
+  if (state.reel == null || end == null || done.held === true) return
+  const session = state.session
+  const offense = session.liveData.linescore.offense
+  if (
+    [offense.first, offense.second, offense.third].some(
+      ref => ref?.id === done.playerId
+    ) ||
+    session.homeQueue.includes(done.playerId) ||
+    session.liveData.plays.currentPlay?.matchup.batter.id === done.playerId ||
+    !state.reel.some(beat =>
+      beat.motions.some(motion => motion.playerId === done.playerId)
+    )
+  )
+    return
+  state.motions = state.motions.filter(motion => motion !== done)
+  state.motions.push({
+    id: `${done.id}:held`,
+    generation: state.generation,
+    playerId: done.playerId,
+    waypoints: [{ ...end }],
+    complete: false,
+    held: true
+  })
 }
 
 /**

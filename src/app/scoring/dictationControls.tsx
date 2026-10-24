@@ -76,6 +76,7 @@ export function useDictationControls(
     session,
     log: actions,
     problem,
+    note,
     question,
     played,
     undone,
@@ -161,7 +162,14 @@ export function useDictationControls(
     started.current = true
     setEnabled(true)
   }, [available, startEnabled, suspended, setEnabled])
-  const entries = useLog(dictation, problem?.message, played, undone, refused)
+  const entries = useLog(
+    dictation,
+    problem?.message,
+    note,
+    played,
+    undone,
+    refused
+  )
   const linger = useLinger(
     entries,
     dictation.holding ||
@@ -503,6 +511,7 @@ export function useDictationControls(
 function useLog(
   dictation: ReturnType<typeof useDictation>,
   problem: string | undefined,
+  note: DictationButtonProps['note'],
   played: DictationButtonProps['played'],
   undone: DictationButtonProps['undone'],
   refused: DictationButtonProps['refused']
@@ -553,6 +562,13 @@ function useLog(
     shownPlay.current = played.id
     for (const line of played.lines) add('play', line)
   }, [played])
+  // After the plays it qualifies: effects run in the order declared.
+  const shownNote = useRef<number | null>(null)
+  useEffect(() => {
+    if (note == null || note.id === shownNote.current) return
+    shownNote.current = note.id
+    add('message', note.text)
+  }, [note])
   useEffect(() => {
     if (!dictation.enabled) said.current = null
   }, [dictation.enabled])

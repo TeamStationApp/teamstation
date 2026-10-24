@@ -13,7 +13,8 @@ import ts from 'typescript'
  * scorer's field scoreboard and the public one agree; it changes nothing.
  * `startingSetup` makes the lineups a game starts from, `rosterCommands`
  * changes a draft of the lineups, never the game, `playerTags` names a
- * player to a dictation model, and `depth` names how far a ball went.
+ * player to a dictation model, `depth` names how far a ball went, and
+ * `baseOutWords` reads the words that say a fielder took a base for an out.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -26,7 +27,8 @@ export const APP_MAY_IMPORT = [
   'rosterCommands',
   'playerTags',
   'depth',
-  'pitchType'
+  'pitchType',
+  'baseOutWords'
 ]
 const LIBRARY = 'src/common/scoring'
 

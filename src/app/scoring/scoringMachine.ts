@@ -21,7 +21,7 @@ import {
   answerOf,
   completeSentence,
   leadRunnersFirst,
-  playDefaults,
+  sentenceDefaults,
   sentenceQuestion,
   settleBetween,
   stealsByBase
@@ -609,7 +609,8 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
         event.acceptedLineup === undefined
           ? question.acceptedLineup
           : event.acceptedLineup,
-      answered: true
+      answered: true,
+      ...(question.note == null ? {} : { note: question.note })
     })
   }
   if (event.type === 'DICTATION_DISMISS') {
@@ -969,7 +970,7 @@ function playSentence(
   edit: ScoringState,
   sentence: readonly ScoringAction[],
   presentationEnabled: boolean,
-  options: { requireCurrentSetup?: boolean } = {}
+  options: { requireCurrentSetup?: boolean; replay?: boolean } = {}
 ): void {
   const reel = new ReelBuilder(presentationEnabled)
   sentence.forEach((action, index) => {
@@ -1001,7 +1002,8 @@ function replayed(
   if (actions.length === 0) return state
   return accepted(state, '', edit => {
     playSentence(edit, actions, state.presentationEnabled === true, {
-      requireCurrentSetup: false
+      requireCurrentSetup: false,
+      replay: true
     })
   })
 }
@@ -1041,6 +1043,8 @@ function dictated(
     acceptedLineup?: string | null
     /** The whole sentence an answer came to: not asked about again. */
     answered?: boolean
+    /** What the sentence left out after the third out, said before. */
+    note?: string
   }
 ): ScoringState {
   const { transcript } = event
@@ -1062,15 +1066,18 @@ function dictated(
   // What was left to be assumed is filled in, a steal is the runner's on the
   // base before the one taken, and runners who move together go lead runner
   // first, however they were said.
+  const defaults = sentenceDefaults(state.session, event.actions, transcript)
+  // What the third out left out is told the scorer with the sentence, once
+  // it is played, however long it waits for a reel or an answer.
+  const note =
+    defaults.leftOut.length > 0
+      ? `Left out after the third out: ${defaults.leftOut.join('; ')}`
+      : event.note
   const between = settleBetween(
     state.session,
     leadRunnersFirst(
       state.session,
-      stealsByBase(
-        state.session,
-        playDefaults(state.session, event.actions, transcript),
-        transcript
-      )
+      stealsByBase(state.session, defaults.actions, transcript)
     ),
     transcript
   )
@@ -1093,7 +1100,8 @@ function dictated(
         {
           transcript,
           actions: [...actions],
-          acceptedLineup: event.acceptedLineup
+          acceptedLineup: event.acceptedLineup,
+          ...(note == null ? {} : { note })
         }
       ]
     }
@@ -1112,6 +1120,7 @@ function dictated(
       dictationQuestion: {
         transcript,
         acceptedLineup: event.acceptedLineup,
+        ...(note == null ? {} : { note }),
         ...asked
       }
     }
@@ -1122,6 +1131,7 @@ function dictated(
       dictationQuestion: {
         transcript,
         acceptedLineup: event.acceptedLineup,
+        ...(note == null ? {} : { note }),
         ...between.question
       }
     }
@@ -1161,6 +1171,7 @@ function dictated(
       dictationQuestion: {
         transcript,
         acceptedLineup: event.acceptedLineup,
+        ...(note == null ? {} : { note }),
         ...done.question
       }
     }
@@ -1174,7 +1185,8 @@ function dictated(
     ...next,
     dictation: {
       transcript,
-      ...(setupProblem == null ? {} : { problem: setupProblem })
+      ...(setupProblem == null ? {} : { problem: setupProblem }),
+      ...(note == null ? {} : { note })
     }
   }
 }

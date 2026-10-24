@@ -169,7 +169,12 @@ export interface ScoringSnapshot {
    * The last utterance dictated, and why it was refused when it was. Cleared
    * at each utterance and by Undo, so it never describes an older sentence.
    */
-  dictation?: { transcript: string; problem?: Problem }
+  dictation?: {
+    transcript: string
+    problem?: Problem
+    /** What the sentence left out, told the scorer beside it. */
+    note?: string
+  }
   /**
    * The beats of a dictated sentence still to play, first first. Present from
    * the moment the sentence is accepted until its last picture and motion end.
@@ -180,6 +185,7 @@ export interface ScoringSnapshot {
     transcript: string
     actions: ScoringAction[]
     acceptedLineup?: string | null
+    note?: string
   }>
   /**
    * What a dictated sentence left open that only the scorer can answer. The
@@ -195,6 +201,8 @@ export interface ScoringSnapshot {
 export interface DictationQuestion {
   transcript: string
   acceptedLineup?: string | null
+  /** What the sentence left out after the third out, told once answered. */
+  note?: string
   question: string
   options?: Array<{ label: string; actions: ScoringAction[] }>
   pick?: {

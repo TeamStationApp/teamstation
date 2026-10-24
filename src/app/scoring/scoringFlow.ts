@@ -21,7 +21,7 @@ import {
 import { type Applied, applyAction } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { BASES } from '../field/fieldModel'
-import { advanceReel } from './dictatedReel'
+import { advanceReel, holdForLaterBeat } from './dictatedReel'
 import {
   closePlay,
   copyGame,
@@ -81,14 +81,15 @@ function recordSeenLineup(next: ScoringSnapshot): void {
 function applyLogged(
   next: ScoringSnapshot,
   action: ScoringAction,
-  options: { requireCurrentSetup?: boolean } = {}
+  options: { requireCurrentSetup?: boolean; replay?: boolean } = {}
 ): Applied {
   const before = next.session
   // On a copy that shares the finished plays (`copyGame`): `applyAction`'s
   // own copy is of the whole game, a stall that grew with it.
   const applied = applyAction(copyGame(before), action, {
     inPlace: true,
-    requireCurrentSetup: options.requireCurrentSetup ?? true
+    requireCurrentSetup: options.requireCurrentSetup ?? true,
+    replay: options.replay === true
   })
   if (applied.problems.length > 0) throw new Refused(applied.problems)
   next.session = applied.state
@@ -116,7 +117,7 @@ function applyLogged(
 export function act(
   next: ScoringSnapshot,
   action: ScoringAction,
-  options: { requireCurrentSetup?: boolean } = {}
+  options: { requireCurrentSetup?: boolean; replay?: boolean } = {}
 ): Applied {
   if (next.readOnly === true)
     throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])
@@ -801,7 +802,9 @@ export function runnerReducer(
       past: state.past,
       checkpoints: state.checkpoints
     }
-    next.motions.find(motion => motion.id === event.id)!.complete = true
+    const done = next.motions.find(motion => motion.id === event.id)!
+    done.complete = true
+    holdForLaterBeat(next, done)
     if (command.purpose === 'approachFirst' && next.pendingPlay != null)
       next.pendingPlay.batterPoint = {
         ...command.waypoints[command.waypoints.length - 1]

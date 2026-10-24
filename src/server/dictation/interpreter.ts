@@ -7,8 +7,10 @@ import {
   taggedAction,
   type Tool,
   toolSchema,
-  untaggedAction
+  untaggedAction,
+  withoutBlankPlayers
 } from '../../common/scoring/actions'
+import { baseOutWordsSaid } from '../../common/scoring/baseOutWords'
 import {
   fieldingIds,
   TAGGED_IDS,
@@ -24,7 +26,7 @@ import {
   type RosterTool,
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
-import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
+import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
 import { placeSections, placeTools } from './placeInstructions'
 
 /**
@@ -388,6 +390,57 @@ const CHOICE_INSTRUCTIONS = `- Preserve every spoken throw on a fielder's choice
   [3B, 2B, 1B]. A force at home followed by C to 2B to 1B late is Out
   fielders [3B, C], then Safe batter fielders [C, 2B, 1B]. An all-Safe
   3B to 2B to 3B to 2B is Safe batter fielders [3B, 2B, 3B, 2B].`
+
+/**
+ * How a base taken for the out, a force with an overthrow and the third out
+ * are scored: offered beside the game only to a sentence whose words say one.
+ * Offered to every sentence, it drew the model into crediting a ball's catch
+ * to the fielder at the base a runner was thrown out at.
+ */
+const BASE_OUT_INSTRUCTIONS = `- An infielder the scorer says tags, steps on, touches or takes a base for
+  the out — by position, by name, or "he" for the one who fielded the ball —
+  puts out the runner forced there: the runner from the base before it. His
+  tag is the one on GAME's line for that base before it — "On first" for an
+  out at second, "On second" for an out at third — never a tag whose digit
+  matches the base. With "On second: Joe B. #9 ${writeTag('QV2')}", an out
+  at third is runnerMovement with runner QV2 and to 3B, though QV2 ends in
+  2 and the base is third; never the pitcher's or a fielder's tag. The ball in play's fielder is still the one the ball
+  went to. "Grounder
+  to the shortstop, who tags second for a fielder's choice" is ballInPlay to
+  the shortstop, result fielders_choice, and runnerMovement of the runner on
+  first to 2B, out, reason Force Out, fielders [the shortstop]. "Grounder to
+  third, and the third baseman takes third base for the out", with runners
+  on first and second, is ballInPlay to the third baseman, result
+  fielders_choice, and runnerMovement of the runner on second to 3B, out,
+  reason Force Out, fielders [the third baseman] — never field_out: the
+  batter is safe at first. "Second base for the out", "third for the force"
+  and "force at second" are the same out. Only words that also put the
+  batter out at first make it field_out with outBy throw as well: "Grounder
+  to third, he steps on third and throws to first, double play", with
+  runners on first and second, is result field_out with outBy throw and
+  runnerMovement of the runner on second to 3B, out, fielders [the third
+  baseman]. Put out every runner the words put out, and only those: there,
+  the runner from second at third and nobody at second. When the words
+  also say the runner from first is out at second, he is out there too.
+  A runner who "tags" or "tags up" is going back to his base on a catch:
+  that is never a fielder taking a base, and it does not change who caught
+  the ball. "Pop up to third. The runner tags and is thrown out at second" is
+  the third baseman's catch, and the runner on first thrown out at 2B.
+- A force out and then a wild throw to first is the batter safe on the
+  error. "Grounder to short, he tags second for the out but overthrows first,
+  error, batter safe" is ballInPlay to the shortstop, result field_error,
+  fieldingPlay with fielders [the shortstop, the first baseman], error the
+  shortstop and errorKind throwing, then runnerMovement of the runner on
+  first to 2B, out, reason Force Out, fielders [the shortstop]. "He steps on
+  second, then throws it away at first" is the same play.
+- Nothing happens after the third out. With two out, a catch or a force is
+  the third out, and the inning is over: a runner who "tags and scores" after
+  a catch for the third out does not score, and an overthrow after a force
+  for the third out is no error. "Pop fly to left, caught for the third out,
+  the runner tags and scores" is ballInPlay and result field_out with outBy
+  catch, and nothing else. "With two out, grounder to short, he steps on
+  second for the force, but throws it away at first" is ballInPlay, result
+  fielders_choice and the force at second, and nothing else.`
 
 const INSTRUCTIONS = `YOUR JOB
 Report what just happened as tool calls, one per thing that happened, in order.
@@ -906,6 +959,41 @@ function parse(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** A call's arguments with each player left blank taken as no player. */
+function withoutBlanks(
+  args: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  return args == null ? args : withoutBlankPlayers(args)
+}
+
+/**
+ * A ball in play's call with the result a model sometimes nests in its
+ * arguments taken out, and those results, in order. The model is asked for a
+ * result as for any ball sent without one; a nested result stands only when
+ * the sentence ends with none.
+ */
+function nestedResults(calls: readonly ToolCall[]): {
+  calls: ToolCall[]
+  results: Array<Record<string, unknown>>
+} {
+  const results: Array<Record<string, unknown>> = []
+  const stripped = calls.map(call => {
+    if (call.function.name !== 'ballInPlay') return call
+    const args = parse(call.function.arguments)
+    const nested = args?.result
+    if (args == null || nested == null) return call
+    if (typeof nested === 'string') results.push({ eventType: nested })
+    else if (typeof nested === 'object' && !Array.isArray(nested))
+      results.push(nested as Record<string, unknown>)
+    const { result: _nested, ...ball } = args
+    return {
+      ...call,
+      function: { ...call.function, arguments: JSON.stringify(ball) }
+    }
+  })
+  return { calls: stripped, results }
+}
+
 type Cleaned =
   | { action: ScoringAction }
   | { command: SaidRosterCommand }
@@ -1052,6 +1140,8 @@ export class Interpretation {
   private undo = false
   /** Whether the model was asked once for a result it left out. */
   private nudged = false
+  /** Results the model nested in its balls in play, in the order sent. */
+  private readonly nested: Array<Record<string, unknown>> = []
   /** Whether the model was told once that an undo of its own is not one. */
   private undoAnswered = false
   /** Whether the last reply held an undo after calls the model had kept. */
@@ -1087,10 +1177,17 @@ export class Interpretation {
     readonly transcript: string
   ) {
     const context = withTags(given)
+    const heard = heardAs(transcript)
     const choiceRules = /\bfielder['’]?s? choice\b/i.test(transcript)
       ? `\n\nFIELDER CHOICE RELAYS\n${CHOICE_INSTRUCTIONS}`
       : ''
-    const game = `${gamePrompt(context)}${choiceRules}${placeSections(transcript)}`
+    // A fielder's choice whose throws are spelled out has its own section.
+    const baseOutRules =
+      baseOutWordsSaid(transcript) &&
+      !(choiceRules !== '' && /\bthr(?:ows?|ew|own)\b/i.test(transcript))
+        ? `\n\nBASE OUTS AND THE THIRD OUT\n${BASE_OUT_INSTRUCTIONS}`
+        : ''
+    const game = `${gamePrompt(context)}${choiceRules}${baseOutRules}${placeSections(transcript)}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)
@@ -1102,13 +1199,13 @@ export class Interpretation {
             { role: 'system', content: systemPrompt() },
             {
               role: 'user',
-              content: `${game}\n\nTHE SCORER SAID\n${transcript}`
+              content: `${game}\n\nTHE SCORER SAID\n${heard}`
             }
           ]
         : [
             { role: 'system', content: systemPrompt() },
             { role: 'system', content: game },
-            { role: 'user', content: transcript }
+            { role: 'user', content: heard }
           ]
   }
 
@@ -1265,7 +1362,9 @@ export class Interpretation {
    * runner's move already kept is not kept twice.
    */
   private read(reply: { calls: ToolCall[]; said: string }): Turn | number {
-    const calls = reply.calls
+    const nested = nestedResults(reply.calls)
+    const calls = nested.calls
+    this.nested.push(...nested.results)
     const ask = calls.find(
       call => call.function.name === ASK_SCORER.function.name
     )
@@ -1345,7 +1444,9 @@ export class Interpretation {
           call.function.name,
           this.rosterNames().has(call.function.name)
             ? parse(call.function.arguments)
-            : this.withTagsForNames(parse(call.function.arguments))
+            : this.withTagsForNames(
+                withoutBlanks(parse(call.function.arguments))
+              )
         ),
         this.rosterNames(),
         this.players
@@ -1567,6 +1668,17 @@ export class Interpretation {
 
   /** The sentence's actions and commands, or why there are none. */
   private finished(said: string): Turn {
+    // A ball still without its result takes the one the model nested in it.
+    const nested = this.nested.at(-1)
+    if (nested != null && this.resultMissing()) {
+      const cleaned = cleanTagged({ ...nested, type: 'result' }, this.players)
+      if ('action' in cleaned) {
+        const ball = this.actions.findLastIndex(
+          action => action.type === 'ballInPlay'
+        )
+        this.actions.splice(ball + 1, 0, cleaned.action)
+      }
+    }
     const { actions, roster, dropped } = this
     if (this.undone() || actions.length > 0 || roster.length > 0)
       return this.settled([...actions], [...roster])
