@@ -3529,9 +3529,11 @@ export class Chat2UI {
 
   async absent(id: string): Promise<void> {
     // One iOS hierarchy read takes seconds, so 3 s can be a single look taken
-    // while an overlay is still animating out.
+    // while an overlay is still animating out. The iOS driver falls back to a
+    // substring id match when no id is exact, so `chat-composer` would find
+    // `chat-composer-band`; anchor the id.
     await this.device.assertNotVisible({
-      id,
+      id: this.surface === 'ios' ? exactText(id) : id,
       timeout: this.surface === 'ios' ? 15000 : 3000
     })
   }
