@@ -306,6 +306,26 @@ describe('atomic game availability', function () {
       home: []
     })
   })
+  it('writes on a game a reset left on a later play generation (S15)', async () => {
+    await db
+      .updateTable('games')
+      .set({ play_generation: 3 })
+      .where('id', '=', 'gam_empty')
+      .execute()
+    expect(await toggle('gam_empty', 1, false)).deep.equals({
+      away: [1],
+      home: []
+    })
+    expect(await toggle('gam_empty', 1, true)).deep.equals({
+      away: [],
+      home: []
+    })
+    await db
+      .updateTable('games')
+      .set({ play_generation: 0 })
+      .where('id', '=', 'gam_empty')
+      .execute()
+  })
   it('refuses every non-head-coach role, the other team, missing users, nonplayers and guests', async () => {
     for (const userId of [124, 125, 126, 127, 128, 129])
       await rejected(

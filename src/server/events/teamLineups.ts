@@ -105,8 +105,11 @@ export async function lineupsAnswer(
     currentPlay: unknown
     pregame?: unknown
     lineups_digest: string | null
+    play_generation: number
   }
-): Promise<Record<Side, TeamSideLineups> & { digest: string }> {
+): Promise<
+  Record<Side, TeamSideLineups> & { digest: string; generation: number }
+> {
   const context = await lineupContext(db, game)
   const read = readLineups(
     await resolveScoringGame(db, await storedOrPregame(db, game)),
@@ -128,7 +131,8 @@ export async function lineupsAnswer(
     ...sides,
     digest:
       game.lineups_digest ??
-      lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+      lineupsDigest(read.sides, read.bench, read.courtesy, read.due),
+    generation: game.play_generation
   }
 }
 

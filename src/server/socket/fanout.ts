@@ -232,7 +232,8 @@ export class GameFanout {
                     awayScore: game.away_score,
                     homeScore: game.home_score,
                     homeTeamId: game.home_team_id,
-                    awayTeamId: game.away_team_id
+                    awayTeamId: game.away_team_id,
+                    generation: game.play_generation
                   }
                 }
               : change.kind === 'lineups'
@@ -245,7 +246,8 @@ export class GameFanout {
                       away_team_id: game.away_team_id,
                       currentPlay: game.currentPlay,
                       pregame: game.pregame,
-                      lineups_digest: game.lineups_digest
+                      lineups_digest: game.lineups_digest,
+                      play_generation: game.play_generation
                     })
                   }
                 : {

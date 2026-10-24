@@ -38,7 +38,7 @@ import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
-import { postGamePlays } from '../events/postPlays'
+import { postGamePlays, RESET_SINCE_READ } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -168,6 +168,7 @@ describe('posting and reading plays', function () {
   const ownerlessFinalId = makeId('game')
   const flagsId = makeId('game')
   const staleId = makeId('game')
+  const generationId = makeId('game')
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -362,7 +363,8 @@ describe('posting and reading plays', function () {
           liveFinalId,
           liveRefusedId,
           flagsId,
-          staleId
+          staleId,
+          generationId
         ].map(id => ({
           id,
           home_team_id: home,
@@ -1580,7 +1582,8 @@ describe('posting and reading plays', function () {
     const { lineupsDigest, playsDigest, ...events } = read.body
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
-      currentPlay: current(0)
+      currentPlay: current(0),
+      generation: 0
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
@@ -1678,6 +1681,51 @@ describe('posting and reading plays', function () {
       lineupsBase: 'not-the-lineups'
     })
     expect(replaced.status).equals(200)
+  })
+
+  it('refuses a live post made on another play generation, and checks one naming none by its lineups (S2)', async function () {
+    await db!
+      .updateTable('games')
+      .set({ play_generation: 2 })
+      .where('id', '=', generationId)
+      .execute()
+    const read = await ask(`/games/${generationId}/events`)
+    expect(read.body.generation).equals(2)
+    const old = await live(generationId, {
+      currentPlay: current(0),
+      generation: 1
+    })
+    expect(old.status).equals(409)
+    expect(old.body).deep.equals({
+      code: 'conflict',
+      message: RESET_SINCE_READ,
+      details: { stale: true, generation: 2 }
+    })
+    expect((await gameRow(generationId)).currentPlay).equals(null)
+    // The generation is checked before the lineups: both stale, it says so.
+    const both = await live(generationId, {
+      currentPlay: current(0),
+      generation: 0,
+      lineupsBase: 'not-the-lineups'
+    })
+    expect(both.body.message).equals(RESET_SINCE_READ)
+    const current2 = await live(generationId, {
+      currentPlay: current(0),
+      generation: 2
+    })
+    expect(current2.status).equals(200)
+    // Naming none, as an app not yet updated: only its lineups are checked.
+    const unnamed = await live(generationId, {
+      currentPlay: current(0, 2),
+      lineupsBase: 'not-the-lineups'
+    })
+    expect(unnamed.status).equals(409)
+    expect(unnamed.body.message).equals(
+      'Somebody else changed the lineups since this game was read'
+    )
+    expect(
+      (await live(generationId, { currentPlay: current(0, 2) })).status
+    ).equals(200)
   })
 
   it('leaves a cancelled game cancelled and refuses a teammate who cannot score', async function () {

@@ -48,7 +48,7 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
 import { atBatInProgress } from '../events/atBatInProgress'
-import { postGamePlays, readPlays } from '../events/postPlays'
+import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
@@ -732,7 +732,8 @@ describe("saving a side's lineup (U8)", function () {
     accept: makeId('game'),
     keeper: makeId('game'),
     shown: makeId('game'),
-    availability: makeId('game')
+    availability: makeId('game'),
+    generation: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -2268,6 +2269,37 @@ describe("saving a side's lineup (U8)", function () {
     expect(home.defense.LF).equals(
       session.state.liveData.boxscore.teams.home.defense.CF
     )
+  })
+
+  it('refuses a save made on another play generation, and saves on the current one or none (S3)', async function () {
+    await db!
+      .updateTable('games')
+      .set({ play_generation: 1 })
+      .where('id', '=', games.generation)
+      .execute()
+    const read = await ask('GET', `/games/${games.generation}/lineups`, FAN)
+    expect(read.body.generation).equals(1)
+    const session = await scoring(games.generation)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    const before = await gameRow(games.generation)
+    const old = await save(games.generation, COACH, { ...body, generation: 0 })
+    expect(old.status).equals(409)
+    expect(old.body).deep.include({
+      message: RESET_SINCE_READ,
+      details: { stale: true, generation: 1 }
+    })
+    expect(await gameRow(games.generation)).deep.equals(before)
+    const saved = await save(games.generation, COACH, {
+      ...body,
+      generation: 1
+    })
+    expect(saved.status, JSON.stringify(saved.body)).equals(200)
+    expect(saved.body.generation).equals(1)
+    // Naming none, as an app not yet updated sends it.
+    body.battingOrder.reverse()
+    const unnamed = await save(games.generation, COACH, body)
+    expect(unnamed.status, JSON.stringify(unnamed.body)).equals(200)
   })
 
   it('refuses a scorer’s post built on the lineups a coach has saved over since', async function () {

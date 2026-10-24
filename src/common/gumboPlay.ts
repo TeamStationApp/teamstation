@@ -26,7 +26,7 @@ const ISO_TIME =
   /^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
 
 /** A count Postgres can hold in an `integer`: 0 up to `MAX_INT4`. */
-function asCount(raw: unknown): number {
+export function asCount(raw: unknown): number {
   if (
     typeof raw !== 'number' ||
     !Number.isInteger(raw) ||
@@ -262,7 +262,12 @@ const asPostEventsShape = asObject({
    * the game's lineups have moved on since, the post is refused, so a
    * scorer's save never undoes a lineup somebody else saved meanwhile.
    */
-  lineupsBase: asOptional(asString)
+  lineupsBase: asOptional(asString),
+  /**
+   * On a live post: the play generation the sender opened the game on. A
+   * game reset since refuses the post. An older app sends none.
+   */
+  generation: asOptional(asCount)
 })
 
 export type PostEventsBody = ReturnType<typeof asPostEventsShape>

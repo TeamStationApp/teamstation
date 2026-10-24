@@ -24,6 +24,7 @@ import {
   rosterSaves,
   score,
   spawnText,
+  tokenOf,
   WIDTH,
   writeArtifactsTo
 } from '../../test/scoringBrowser.e2e'
@@ -340,6 +341,96 @@ describe('team-keyed lineups, and reset with swap', function () {
       `$ POST ${API}/games/${other.gameId}/swap-sides  {"homeTeamId":"${read.homeTeamId}","awayTeamId":"${read.awayTeamId}"}\nswapped\n`
     )
     await query(swapFile, state, [other.gameId])
+  })
+
+  it('T4: a begun game resets and swaps once its plays are confirmed, and a post on the old plays is refused', async function () {
+    const file = 'reset-swap.log'
+    const fixture = await lineupsSaved(file)
+    // Two half-innings of strikeouts, then a ball to the 2nd's leadoff.
+    await score(fixture, [
+      ...Array.from({ length: 18 }, (): ScoringAction => ({
+        type: 'pitch',
+        call: 'C'
+      })),
+      { type: 'pitch', call: 'B' }
+    ])
+    await note(
+      file,
+      `$ POST ${API}/games/${fixture.gameId}/events  (scorekeeper: six strikeouts, then a ball)\nsaved\n`
+    )
+    const state = `select home_team_id as "homeTeam", away_team_id as "awayTeam", status, home_score, away_score,
+        "currentPlay" is null as "noAtBatStored", pregame->>'version' as "pregameVersion",
+        play_generation as generation,
+        (select count(*) from events e where e."gameId" = g.id)::int as plays,
+        (select count(*) from game_play_archives a where a.game_id = g.id)::int as archives,
+        (select status from game_stats_state s where s.game_id = g.id) as stats,
+        (select count(*) from game_player_stats s where s.game_id = g.id)::int as "statLines"
+      from games g where id = $1`
+    await query(file, state, [fixture.gameId])
+    const token = await tokenOf(fixture, 'scorekeeper')
+    const call = async (
+      method: string,
+      path: string,
+      body: unknown
+    ): Promise<{ status: number; body: unknown }> => {
+      const response = await fetch(`${API}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      })
+      const answer = { status: response.status, body: await response.json() }
+      await note(
+        file,
+        `$ ${method} ${API}${path}  ${JSON.stringify(body)}\n${answer.status} ${JSON.stringify(answer.body, null, 2)}\n`
+      )
+      return answer
+    }
+    const scorer = await clientOf(fixture, 'scorekeeper')
+    const read = await scorer.game(fixture.gameId)
+    const events = (await (
+      await fetch(`${API}/games/${fixture.gameId}/events`, {
+        headers: { authorization: `Bearer ${token}` }
+      })
+    ).json()) as { playsDigest: string; generation: number }
+    await note(
+      file,
+      `$ GET ${API}/games/${fixture.gameId}/events\nplaysDigest ${events.playsDigest}, generation ${events.generation}\n`
+    )
+    const sides = { homeTeamId: read.homeTeamId, awayTeamId: read.awayTeamId }
+    const refused = await call(
+      'POST',
+      `/games/${fixture.gameId}/swap-sides`,
+      sides
+    )
+    if (refused.status !== 409) throw new Error('The unconfirmed reset went')
+    const reset = await call('POST', `/games/${fixture.gameId}/swap-sides`, {
+      ...sides,
+      playsDigest: events.playsDigest,
+      generation: events.generation
+    })
+    if (reset.status !== 200) throw new Error('The confirmed reset failed')
+    await query(file, state, [fixture.gameId])
+    // The hosts, away now, bat first: their leadoff is due up.
+    const lineups = await scorer.gameLineups(fixture.gameId)
+    const leadoff = lineups.away.current?.batters[0]
+    await note(
+      file,
+      `$ GET ${API}/games/${fixture.gameId}/lineups\naway (${lineups.away.teamName}) leadoff: ${String(leadoff?.name)}, expected ${fixture.players.home[0].name}\n`
+    )
+    if (leadoff?.gumboId !== fixture.players.home[0].gumboId)
+      throw new Error('The hosts do not lead off')
+    const stale = await call('POST', `/games/${fixture.gameId}/events`, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [],
+      currentPlay: null,
+      generation: events.generation
+    })
+    if (stale.status !== 409) throw new Error('The stale post went')
+    await query(file, state, [fixture.gameId])
   })
 
   it('is driven per milestone', async function () {

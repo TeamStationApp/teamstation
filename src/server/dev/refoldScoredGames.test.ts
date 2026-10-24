@@ -382,6 +382,13 @@ describe('refolding the stored plays (U11)', function () {
   })
 
   it('refolds every game it can, skips the one that does not replay, and changes nothing the second time', async function () {
+    // A reset left this game on a later play generation; the refold, a
+    // server write, is not checked against it (S15).
+    await db
+      .updateTable('games')
+      .set({ play_generation: 2 })
+      .where('id', '=', finished)
+      .execute()
     const importedBefore = await snapshot(imported)
     const brokenBefore = await snapshot(broken)
     const finishedBefore = (await snapshot(finished)) as {

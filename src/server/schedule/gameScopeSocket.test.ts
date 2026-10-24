@@ -313,7 +313,8 @@ describe('private socket access follows approved game revisions', function () {
               awayScore: null,
               homeScore: null,
               homeTeamId: f.teamA,
-              awayTeamId: f.teamB
+              awayTeamId: f.teamB,
+              generation: 0
             })
           }
         const privateFrom = oldViewer.length

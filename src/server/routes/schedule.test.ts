@@ -986,7 +986,8 @@ describe('scheduling a team’s games over HTTP', function () {
         'away_team_id',
         'currentPlay',
         'pregame',
-        'lineups_digest'
+        'lineups_digest',
+        'play_generation'
       ])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()

@@ -102,6 +102,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/games/gameLive.js',
   'server/games/guestPlayers.js',
   'server/games/opponentFixed.js',
+  'server/games/resetSwap.js',
   'server/games/retargetTeams.js',
   'server/games/rosterAvailability.js',
   'server/games/scoringActivity.js',

@@ -234,6 +234,7 @@ export function lineupRoutes(
           'currentPlay',
           'pregame',
           'lineups_digest',
+          'play_generation',
           'guests',
           'unrostered'
         ])
@@ -301,6 +302,7 @@ export function lineupRoutes(
             'currentPlay',
             'pregame',
             'lineups_digest',
+            'play_generation',
             'guests',
             'unrostered'
           ])
@@ -495,6 +497,7 @@ async function saveSide(
           'currentPlay',
           'pregame',
           'lineups_digest',
+          'play_generation',
           'guests',
           'unrostered'
         ])
@@ -571,7 +574,8 @@ async function saveSide(
                 await claim(trx, {
                   resultId: posted.lineupsDigest ?? read.digest
                 })
-              }
+              },
+          { expectedGeneration: body.generation }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest

@@ -295,6 +295,16 @@ export interface ScoreboardStore {
    * state deleted, in one write.
    */
   resetScoreboard: (gameId: string, startAt: number) => Promise<WriteResult>
+  /**
+   * The game's own scoring deleted, for a game reset to no plays and no
+   * lineups: `closed` when the board holds none. An older game write than
+   * the one stored is `stale`.
+   */
+  clearGame: (
+    gameId: string,
+    startAt: number,
+    sourceVersion: number
+  ) => Promise<WriteResult>
   readScoreboard: (gameId: string) => Promise<ScoreboardHash | undefined>
   /** Tells every worker that the game's board timeline has changed. */
   announceTimeline: (gameId: string) => Promise<void>
@@ -337,7 +347,7 @@ export function makeScoreboardStore(options: {
     gameId: string,
     field: ScoreboardField,
     json: string,
-    mode: 'replace' | 'merge' | 'mergeUncontested' | 'reset',
+    mode: 'replace' | 'merge' | 'mergeUncontested' | 'reset' | 'clearGame',
     startAt: number,
     sourceVersion = ''
   ): Promise<WriteResult> {
@@ -400,6 +410,15 @@ export function makeScoreboardStore(options: {
         JSON.stringify(NO_OVERRIDES),
         'reset',
         startAt
+      ),
+    clearGame: async (gameId, startAt, sourceVersion) =>
+      await write(
+        gameId,
+        'game',
+        'null',
+        'clearGame',
+        startAt,
+        String(sourceVersion)
       ),
     readScoreboard: async gameId => {
       const hash = await command(

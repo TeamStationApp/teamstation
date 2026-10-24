@@ -79,7 +79,21 @@ export interface PostedPlays {
    * sender's own, and a notice carrying `playsDigest` is its own echo.
    */
   priorPlaysDigest: string | null
+  /** The game's play generation, which a post never changes. */
+  generation: number
 }
+
+/** What a client's post says about the game it was made against. */
+export interface PostOptions {
+  /**
+   * The play generation the sender opened the game on. A client route
+   * passes it; the server's own writes pass none and are not checked.
+   */
+  expectedGeneration?: number
+}
+
+/** The refusal of a post made against the game before its last reset. */
+export const RESET_SINCE_READ = 'This game was reset since it was read'
 
 /**
  * Writes a checked post to a game: the plays, the half's outs on each half's
@@ -96,7 +110,8 @@ export async function postGamePlays(
   gameId: string,
   sentBody: PostEventsBody,
   authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
-  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>
+  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>,
+  options: PostOptions = {}
 ): Promise<PostedPlays> {
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
@@ -136,7 +151,8 @@ export async function postGamePlays(
         'currentPlay',
         'pregame',
         'lineup_started_at',
-        'lineups_digest'
+        'lineups_digest',
+        'play_generation'
       ])
       .where('id', '=', gameId)
       .forUpdate()
@@ -170,6 +186,16 @@ export async function postGamePlays(
     if (system === 'external' && game.scoringOwner === 'teamstation') {
       throw conflict('This game is scored in TeamStation')
     }
+    // A post made against the plays a reset deleted belongs to none of
+    // these: its sender reads the game again and opens it afresh.
+    if (
+      options.expectedGeneration !== undefined &&
+      options.expectedGeneration !== game.play_generation
+    )
+      throw conflict(RESET_SINCE_READ, {
+        stale: true,
+        generation: game.play_generation
+      })
     // A live post built on lineups somebody has saved over since would
     // write the old ones back: the sender reads the game again and posts
     // its own changes on top.
@@ -470,7 +496,8 @@ export async function postGamePlays(
       ),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
-      priorPlaysDigest: prior
+      priorPlaysDigest: prior,
+      generation: game.play_generation
     }
     await written?.(trx, answer)
     return answer
@@ -642,7 +669,7 @@ function atBatWrite(
  * The lineups a record began from: its setup and the lineup changes before
  * its first other action, with their times. Null without a record.
  */
-function lineupsBefore(play: unknown): unknown {
+export function lineupsBefore(play: unknown): unknown {
   const raw = (play as { teamStation?: Record<string, unknown> } | undefined)
     ?.teamStation
   const actions = Array.isArray(raw?.actions) ? raw.actions : null
@@ -681,6 +708,18 @@ export function playsDigest(
   return createHash('sha256')
     .update(JSON.stringify([rows.map(row => row.gumbo), currentPlay ?? null]))
     .digest('hex')
+}
+
+/**
+ * The digest of a game's plays as `GET /games/:gameId/events` gives it, read
+ * through `db`: what a reset is confirmed against.
+ */
+export async function gamePlaysDigest(
+  db: Trx,
+  game: { id: string; currentPlay: unknown; pregame: unknown }
+): Promise<string> {
+  const rows = await readPlays(db, game.id)
+  return playsDigest(rows, atBatOf(game, rows.length > 0))
 }
 
 /**

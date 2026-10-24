@@ -217,13 +217,15 @@ describe('the game socket fan-out (U15)', function () {
         gameId: today,
         kind: 'game'
       })
-      // The teams too, so a screen opened on others reopens after a swap.
+      // The teams and the generation too, so a screen opened on others, or
+      // on the plays a reset deleted, reopens.
       expect(heard.sent[0].data).deep.equals({
         status: 'inProgress',
         awayScore: 3,
         homeScore: 2,
         homeTeamId: team,
-        awayTeamId: rival
+        awayTeamId: rival,
+        generation: 0
       })
       expect(new Date(heard.sent[0].at).getTime()).above(0)
     }

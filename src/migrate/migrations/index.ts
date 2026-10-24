@@ -86,6 +86,8 @@ import { migration079SeasonScheduling } from './079seasonScheduling'
 import { migration080SchedulePreviews } from './080schedulePreviews'
 import { migration081TeamKeyedAvailability } from './081teamKeyedAvailability'
 import { migration082GamePregame } from './082gamePregame'
+import { migration083PlayGeneration } from './083playGeneration'
+import { migration084GamePlayArchives } from './084gamePlayArchives'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -175,5 +177,7 @@ export const migrations: Migration[] = [
   migration080SchedulePreviews,
   migration077AnalyticsEvents,
   migration081TeamKeyedAvailability,
-  migration082GamePregame
+  migration082GamePregame,
+  migration083PlayGeneration,
+  migration084GamePlayArchives
 ]

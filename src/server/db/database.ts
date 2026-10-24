@@ -311,6 +311,8 @@ export interface GamesTable {
   lineup_started_at: Timestamp | null
   /** A sha256 of both sides' lineups after the last live post. */
   lineups_digest: string | null
+  /** Which set of plays the game holds: one more after each reset. */
+  play_generation: Generated<number>
   created_at: Timestamp
   updated_at: Timestamp
   /** The registry field the game is on, and the size it is set up in. */
@@ -595,6 +597,29 @@ export interface RateEventsTable {
   key: string
   /** `Timestamp` already allows undefined on insert, which the default fills. */
   at: Timestamp
+}
+
+/** Every play a reset deleted, with the game as it stood. */
+export interface GamePlayArchivesTable {
+  id: string
+  game_id: string
+  archived_at: Generated<Timestamp>
+  actor_user_id: string | null
+  reason: 'resetSwap'
+  home_team_id: string
+  away_team_id: string
+  status: string
+  home_score: number | null
+  away_score: number | null
+  linescore: Json | null
+  current_play: Json | null
+  pregame: Json | null
+  lineups_digest: string | null
+  fence_distance_ft: number | null
+  play_generation: number
+  plays: Json
+  players: Json
+  tags: Json
 }
 
 export interface AuditLogTable {
@@ -1097,6 +1122,7 @@ export interface Database {
   season_team_parents: SeasonTeamParentsTable
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
+  game_play_archives: GamePlayArchivesTable
   auth_sessions: AuthSessionsTable
   email_codes: EmailCodesTable
   rate_events: RateEventsTable

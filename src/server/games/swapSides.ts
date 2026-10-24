@@ -74,7 +74,8 @@ export async function swapGameSides(
     game,
     'sides',
     teams.home_team_id,
-    teams.away_team_id
+    teams.away_team_id,
+    game.play_generation
   )
   await trx
     .updateTable('games')

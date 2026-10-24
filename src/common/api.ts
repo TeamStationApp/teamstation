@@ -53,7 +53,7 @@ import {
   type ParentPreview
 } from './groupLinks'
 import { asGuests } from './guests'
-import { asCurrentPlay, asGumboPlay } from './gumboPlay'
+import { asCount, asCurrentPlay, asGumboPlay } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
   asNodeAccounts,
@@ -379,6 +379,8 @@ export const asGameDetail = withEventMetadata(
     id: asString,
     homeTeamId: asString,
     awayTeamId: asString,
+    /** The game's play generation; an older server sends none. */
+    generation: asOptional(asNumber, 0),
     homeTeamName: asString,
     awayTeamName: asString,
     seasonId: asNullable(asString),
@@ -1638,6 +1640,11 @@ export interface SaveLineupsBody {
   nextBatter?: number
   /** Pinch runners who keep the batting order, each on the base he takes. */
   runners?: Array<{ base: '1B' | '2B' | '3B'; player: number }>
+  /**
+   * The play generation the saver opened the game on: a game reset since
+   * refuses the save. An older app sends none.
+   */
+  generation?: number
 }
 
 const asIndex: Cleaner<number> = raw => {
@@ -1666,7 +1673,8 @@ const asSaveLineupsShape = asObject({
   nextBatter: asOptional(asIndex),
   runners: asOptional(
     asArray(asObject({ base: asLiteral('1B', '2B', '3B'), player: asIndex }))
-  )
+  ),
+  generation: asOptional(asCount)
 })
 
 /** Cleans a lineup save, and refuses an index past the players it names. */
@@ -1702,7 +1710,8 @@ export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
     battingOrder: body.battingOrder,
     defense,
     ...(body.nextBatter == null ? {} : { nextBatter: body.nextBatter }),
-    ...(body.runners == null ? {} : { runners: body.runners })
+    ...(body.runners == null ? {} : { runners: body.runners }),
+    ...(body.generation == null ? {} : { generation: body.generation })
   }
 }
 
