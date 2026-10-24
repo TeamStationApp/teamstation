@@ -11914,9 +11914,28 @@ describe('native below-reader attention count', function () {
         belowReaderCount: 8,
         fixtureCount: 9,
         viewedTargetsBelowAnchor: ['msg-viewed'],
+        viewedTargetsEarlier: [],
         readingArea: { top: 170, bottom: 700 }
       }
     ])
+  })
+  it('also subtracts targets this case already had in its reading area', async () => {
+    const s = scenario(true)
+    s.observations.push({
+      visibleReaderAnchor: {
+        visibleBodies: [
+          { id: 'chat-message-body-msg-unmounted' },
+          { id: 'chat-message-body-msg-viewed' },
+          { id: 'chat-message-body-msg-neutral' }
+        ]
+      }
+    })
+    expect(await s.belowReaderCount(fixture)).equals(7)
+    expect(s.observations[1]).deep.includes({
+      belowReaderCount: 7,
+      viewedTargetsBelowAnchor: ['msg-viewed'],
+      viewedTargetsEarlier: ['msg-unmounted']
+    })
   })
   it('keeps the fixture count on web', async () => {
     const s = scenario(false)

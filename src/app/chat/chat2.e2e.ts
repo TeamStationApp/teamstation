@@ -1746,9 +1746,9 @@ export class Scenarios {
 
   /**
    * The attention count is the targets below the reading area, and a viewed
-   * target is not counted. The fixture's count assumes no target below the
-   * anchor is on screen; a taller native reader can show a few, so those are
-   * subtracted, and recorded.
+   * target is not counted. The fixture's count assumes none was viewed; on
+   * native, targets on screen below the anchor or seen earlier in this case
+   * (iOS E11's cold open showed four) are subtracted, and recorded.
    */
   async belowReaderCount(
     fixture: NonNullable<Chat2Fixture['historyStress']>
@@ -1784,13 +1784,28 @@ export class Scenarios {
         body.y + Math.min(24, body.height) <= composer.y
       )
     })
+    // A target this case already had in its reading area (a cold open lands
+    // on a few) was viewed then, and the app no longer counts it.
+    const seenEarlier = new Set(
+      this.observations.flatMap(row =>
+        (
+          ((row.visibleReaderAnchor as Json | undefined)?.visibleBodies ??
+            []) as Json[]
+        ).map(body => String(body.id).replace('chat-message-body-', ''))
+      )
+    )
+    const viewedEarlier = fixture.targetIds.filter(
+      id => seenEarlier.has(id) && !viewed.includes(id)
+    )
+    const count = fixture.expectedCount - viewed.length - viewedEarlier.length
     this.observations.push({
-      belowReaderCount: fixture.expectedCount - viewed.length,
+      belowReaderCount: count,
       fixtureCount: fixture.expectedCount,
       viewedTargetsBelowAnchor: viewed,
+      viewedTargetsEarlier: viewedEarlier,
       readingArea: { top, bottom: composer.y }
     })
-    return fixture.expectedCount - viewed.length
+    return count
   }
 
   async classification(): Promise<void> {
