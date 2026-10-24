@@ -140,6 +140,8 @@ function fakeClient(
     listed?: GameToReschedule[]
     /** Fields of other venues, listed once chosen, as the server does. */
     registry?: SetupField[]
+    /** What the first settings save waits for before it answers. */
+    holdFirstSave?: Promise<void>
   } = {}
 ): {
   client: TeamStationClient
@@ -227,6 +229,7 @@ function fakeClient(
     ) => {
       record.saves.push([seasonId, settings])
       record.zones.push(save.timezone)
+      if (record.saves.length === 1) await options.holdFirstSave
       if (options.failSave === true) throw new Error('')
       // The server adopts a zone only for a season at the UTC default.
       const held = setup.seasons.find(item => item.id === seasonId)!.timezone
@@ -458,6 +461,38 @@ describe('the Auto-Scheduler setup', () => {
     await tapText('Build schedule')
     await settle(20)
     expect(fake.builds).deep.equals([{ mode: 'full', timezone: VIEWER }])
+  })
+
+  it('saves a sheet’s choice after a cell’s save still in flight, onto what that save stored', async () => {
+    let release = (): void => undefined
+    const fake = fakeClient(
+      setupOf({ seasons: [season({ timezone: 'UTC' })] }),
+      {
+        holdFirstSave: new Promise(resolve => {
+          release = resolve
+        })
+      }
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Game MINS: 90')
+    await fill('Edit Demo Regular Game MINS', '75')
+    await key('Enter')
+    // The cell's save is still on its way when the size is chosen.
+    await tapLabel('Demo Regular Size: 50/70')
+    await press('60/90')
+    await settle(20)
+    expect(fake.saves).length(1)
+    release()
+    await settle(50)
+    expect(fake.saves).deep.equals([
+      ['sea_a', { ...SETTINGS, gameMinutes: 75 }],
+      ['sea_a', { ...SETTINGS, gameMinutes: 75, fieldSize: '60/90' }]
+    ])
+    // The first save stored the zone, so the second sends none.
+    expect(fake.zones).deep.equals([VIEWER, undefined])
+    expect(hasLabel('Demo Regular Game MINS: 75')).equals(true)
+    expect(hasLabel('Demo Regular Size: 60/90')).equals(true)
   })
 
   it('adds any field in the registry to the run, and names whose venue it is', async () => {

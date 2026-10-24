@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
@@ -88,6 +88,13 @@ export function AutoSchedulerScreen({
   const [asking, setAsking] = useState<{ existing: number }>()
   const [building, setBuilding] = useState(false)
   const [picking, setPicking] = useState(false)
+  // Each season's save in flight, which its next save waits for, and the
+  // settings and zone its last save stored, which that next save builds on,
+  // so a sheet's save can't send back a number a cell's save just changed.
+  const saving = useRef(new Map<string, Promise<unknown>>())
+  const stored = useRef(
+    new Map<string, Pick<SetupSeason, 'settings' | 'timezone'>>()
+  )
   const begin = useLatestRequest()
   useEffect(() => {
     const current = begin()
@@ -98,6 +105,7 @@ export function AutoSchedulerScreen({
     ]).then(
       ([found, listed]) => {
         if (!current()) return
+        stored.current.clear()
         setSetup(found)
         setToReschedule(listed)
       },
@@ -156,12 +164,31 @@ export function AutoSchedulerScreen({
   /**
    * Saves a season's settings and merges the answer into the setup. It
    * resolves null, or the message saying why it failed, and leaves the rest
-   * of the screen usable, so a grid cell can show its own failure.
+   * of the screen usable, so a grid cell can show its own failure. A
+   * season's saves go one at a time, each onto what the one before stored.
    */
   const storeSettings = async (
     season: SetupSeason,
     changes: Partial<ScheduleSettings>
   ): Promise<string | null> => {
+    const before = saving.current.get(season.id)
+    const next = (async () => {
+      await before
+      return await sendSettings(season, changes)
+    })()
+    saving.current.set(season.id, next)
+    try {
+      return await next
+    } finally {
+      if (saving.current.get(season.id) === next)
+        saving.current.delete(season.id)
+    }
+  }
+  const sendSettings = async (
+    shown: SetupSeason,
+    changes: Partial<ScheduleSettings>
+  ): Promise<string | null> => {
+    const season = { ...shown, ...stored.current.get(shown.id) }
     // A season still at the UTC default is set up in the viewer's zone,
     // which the save stores on it.
     const zone = seasonZone(season)
@@ -171,6 +198,10 @@ export function AutoSchedulerScreen({
         { ...season.settings, ...changes },
         zone === season.timezone ? {} : { timezone: zone }
       )
+      stored.current.set(season.id, {
+        settings: saved.settings,
+        timezone: saved.timezone
+      })
       setSetup(current =>
         current == null
           ? current
