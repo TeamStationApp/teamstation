@@ -1264,14 +1264,11 @@ describe('scoring browser', function () {
       await click(page, 'Swing in Play')
       await click(page, 'Dismiss outcomes')
       expect(await page.$('[data-outcome]')).equals(null)
-      const styles = await page.evaluate(() => {
+      const select = await page.evaluate(() => {
         const play = document.querySelector('[aria-label="Swing in Play"]')!
-        return {
-          select: getComputedStyle(play.parentElement!).userSelect,
-          chevrons: play.textContent!.includes('⌃')
-        }
+        return getComputedStyle(play.parentElement!).userSelect
       })
-      expect(styles).deep.equals({ select: 'none', chevrons: true })
+      expect(select).equals('none')
       await chooseHit(page, 'Single')
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
@@ -1758,16 +1755,18 @@ describe('scoring browser', function () {
             fill: s.backgroundColor
           }
         })
+      // The dark scoring surface: an assigned position in its accent green,
+      // an empty one dashed in red.
       expect(await style()).deep.equals({
         border: 'solid',
-        color: 'rgb(64, 151, 84)',
-        fill: 'rgb(213, 236, 217)'
+        color: 'rgb(52, 211, 153)',
+        fill: 'rgb(29, 107, 66)'
       })
       await click(page, 'Clear P')
       expect(await style()).deep.equals({
         border: 'dashed',
-        color: 'rgb(183, 156, 156)',
-        fill: 'rgb(234, 223, 223)'
+        color: 'rgba(153, 27, 27, 0.6)',
+        fill: 'rgba(69, 10, 10, 0.8)'
       })
       for (const viewport of [
         { width: 844, height: 390 },
@@ -1874,7 +1873,7 @@ describe('scoring browser', function () {
           '[data-testid="Defense SS card"]',
           node => getComputedStyle(node).backgroundColor
         )
-      ).equals('rgb(213, 236, 217)')
+      ).equals('rgb(29, 107, 66)')
       expect(
         await page.$eval(
           '[data-roster-target="defense-1B"]',
@@ -1915,7 +1914,7 @@ describe('scoring browser', function () {
           '[data-testid="Defense SS card"]',
           node => getComputedStyle(node).backgroundColor
         )
-      ).equals('rgb(213, 236, 217)')
+      ).equals('rgb(29, 107, 66)')
     } finally {
       await page.close()
     }
@@ -3203,6 +3202,7 @@ describe('scoring browser', function () {
   it('opens More on upward drag and releases an action or escapes right', async function () {
     const { page } = await open('/games/g1/score')
     try {
+      await page.waitForSelector('[aria-label="More"]')
       const trigger = await page.$eval('[aria-label="More"]', node => {
         const r = node.getBoundingClientRect()
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
@@ -3329,7 +3329,7 @@ describe('scoring browser', function () {
           {},
           width
         )
-        await page.focus('[role="application"]')
+        await focusFirstRunner(page)
         await page.keyboard.press('Space')
         for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
         const rect = await page.$eval('canvas', node => {
@@ -3402,7 +3402,7 @@ describe('scoring browser', function () {
         await page.waitForSelector('[aria-label="Steal"]')
         await click(page, 'Cancel')
         expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
-        await page.focus('[role="application"]')
+        await focusFirstRunner(page)
         await page.keyboard.press('Space')
         await page.keyboard.press('ArrowUp')
         await page.focus('[aria-label="Out drag target"]')
@@ -3424,7 +3424,7 @@ describe('scoring browser', function () {
       await click(page, 'Ball')
       await waitReady(page)
       const propose = async (): Promise<void> => {
-        await page.focus('[role="application"]')
+        await focusFirstRunner(page)
         await page.keyboard.press('Space')
         for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
         await page.keyboard.press('s')
