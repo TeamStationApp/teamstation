@@ -7,13 +7,12 @@ import { type GameLineupsResponse, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
-import { recordOf } from '../../common/scoring/gumbo'
+import {} from '../../common/scoring/gumbo'
 import {
   type EventStore,
   ScoringSession as GameSession,
   type StoredGame
 } from '../../common/scoring/session'
-import { swapRecordSides } from '../../common/scoring/sideSwap'
 import { setupOf } from '../../common/scoring/state'
 import { scoringRoster } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
@@ -668,7 +667,8 @@ describe('a game swapped under the scoring screen on the socket', function () {
         ...stored,
         currentPlay: {
           ...stored.currentPlay!,
-          teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+          teamStation: (stored.currentPlay as { teamStation?: unknown })
+            .teamStation
         }
       })
     }

@@ -232,15 +232,23 @@ describe('historical scoring identities', function () {
     const setupBefore = historical()
     setupBefore.identities.sessionToSource[19] = 9000000
     setupBefore.identities.sourceToSession['number:9000000'] = 19
-    const record = recordOf({
-      teamStation: {
-        version: 1,
-        setupBefore,
-        actions: [
-          { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Babe Ruth' }
-        ]
-      }
-    })!
+    const record = recordOf(
+      {
+        teamStation: {
+          version: 1,
+          setupBefore,
+          actions: [
+            {
+              type: 'lineup',
+              kind: 'addPlayer',
+              side: 'away',
+              name: 'Babe Ruth'
+            }
+          ]
+        }
+      },
+      TEAMS
+    )!
     expect(record.actions[0]).includes({ player: 9000000 })
     expect(record.setupBefore.tagOrder.at(-1)).equals(9000000)
   })
@@ -250,7 +258,10 @@ describe('historical scoring identities', function () {
       const setupBefore = historical()
       setupBefore.identities.sessionToSource[1] = value
       expect(
-        recordOf({ teamStation: { version: 1, setupBefore, actions: [] } })
+        recordOf(
+          { teamStation: { version: 1, setupBefore, actions: [] } },
+          TEAMS
+        )
       ).equals(null)
     }
     const setupBefore = historical()

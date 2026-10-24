@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely'
 
 import { recordOf } from '../../common/scoring/gumbo'
 import type { SessionContext, StoredGame } from '../../common/scoring/session'
+import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
 
@@ -21,8 +22,9 @@ export async function contextOf(
   stored: StoredGame,
   parts?: ContextParts
 ): Promise<SessionContext | null> {
+  const sides = teamsOfRow(game)
   const first = [...stored.plays, stored.currentPlay]
-    .map(recordOf)
+    .map(play => recordOf(play, sides))
     .find(record => record != null)
   if (first == null) return null
   const { teams, fenceDistanceFt } =

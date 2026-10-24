@@ -27,6 +27,7 @@ import {
   type StoredGame
 } from './session'
 import { type GameSetup, lineupsOf, type Position, POSITIONS } from './state'
+import type { TeamSetup } from './teamRecord'
 
 /**
  * Two teams of real players: the visitors are users 101-110, session ids
@@ -441,9 +442,9 @@ describe('lineup history (U9)', function () {
     const broken = JSON.parse(JSON.stringify(kept.game)) as StoredGame
     for (const play of [...broken.plays, broken.currentPlay]) {
       const setupBefore = (
-        play as unknown as { teamStation: { setupBefore: GameSetup } }
+        play as unknown as { teamStation: { setupBefore: TeamSetup } }
       ).teamStation.setupBefore
-      setupBefore.sides.away.battingOrder = []
+      setupBefore.teams[context.teams.away.id].battingOrder = []
     }
     read = readLineups(broken, context)
     expect(read.problem).includes('batter')

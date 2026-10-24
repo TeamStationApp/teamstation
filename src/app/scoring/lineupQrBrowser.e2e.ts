@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import express from 'express'
 import puppeteer from 'puppeteer'
 
-import { recordOf } from '../../common/scoring/gumbo'
+import { storedRecordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
 import { recordBrowserCoverage } from '../browserCoverage.e2e'
 import { encodeLineupQr } from './lineupQrCodec'
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
         ? []
         : [fixture.stored().currentPlay!])
     ]
-      .flatMap(play => recordOf(play)?.actions ?? [])
+      .flatMap(play => storedRecordOf(play)?.actions ?? [])
       .flatMap(action =>
         action.type === 'lineup' &&
         action.kind === 'roster' &&

@@ -15,6 +15,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { ownTeams } from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
@@ -160,8 +161,10 @@ describe('opening scoring through account merges', function () {
       (await lineupsAnswer(fixture.db, gameRow)).digest
     )
     const projected = await resolveScoringGame(fixture.db, before)
-    const projectedPlayer = recordOf(projected.currentPlay)!.setupBefore
-      .players[survivor]
+    const projectedPlayer = recordOf(
+      projected.currentPlay,
+      ownTeams(projected.currentPlay?.teamStation)
+    )!.setupBefore.players[survivor]
     expect(projectedPlayer.fullName).equals('Miguel C')
     expect(projectedPlayer.firstName).equals(undefined)
     expect(projectedPlayer.lastName).equals(undefined)
@@ -194,7 +197,8 @@ describe('opening scoring through account merges', function () {
     const after = await raw()
     expect(JSON.stringify(after.plays)).equals(historical)
     expect(
-      recordOf(after.currentPlay)!.setupBefore.sides.away.battingOrder[0]
+      recordOf(after.currentPlay, ownTeams(after.currentPlay?.teamStation))!
+        .setupBefore.sides.away.battingOrder[0]
     ).equals(survivor)
     expect(
       (after.currentPlay!.matchup as { batter: { id: number } }).batter.id
@@ -240,7 +244,7 @@ describe('opening scoring through account merges', function () {
       userIdOfGumbo(survivor.userId)
     )
     const projected = await resolveScoringGame(fixture.db, saved)
-    const record = recordOf(projected.currentPlay)!
+    const record = recordOf(projected.currentPlay, teams)!
     expect(record.actions[3]).includes({
       runner: users[1].userId
     })
@@ -265,7 +269,10 @@ describe('opening scoring through account merges', function () {
     const original = users[0].userId
     const survivor = fixture.ids[0]
     const saved = await raw()
-    const record = recordOf(saved.plays[0])!
+    const record = recordOf(
+      saved.plays[0],
+      ownTeams(saved.plays[0].teamStation)
+    )!
     const aliasSetup = structuredClone(record.setupBefore)
     aliasSetup.players[survivor] = {
       ...aliasSetup.players[original],
@@ -307,7 +314,10 @@ describe('opening scoring through account merges', function () {
     }
     const expectedSource = JSON.stringify(source)
     const projected = await resolveScoringGame(fixture.db, source)
-    const result = recordOf(projected.plays[0])!.setupBefore
+    const result = recordOf(
+      projected.plays[0],
+      ownTeams(projected.plays[0].teamStation)
+    )!.setupBefore
     expect(result.sides.away.players.filter(id => id === survivor)).has.length(
       1
     )
@@ -320,7 +330,10 @@ describe('opening scoring through account merges', function () {
     expect(projected.plays[0].teamStation.extraMetadata).deep.equals({
       kept: true
     })
-    expect(recordOf(projected.plays[0])!.detail).deep.equals({
+    expect(
+      recordOf(projected.plays[0], ownTeams(projected.plays[0].teamStation))!
+        .detail
+    ).deep.equals({
       fieldingRoute: [{ player: { id: survivor }, location: { x: 1, z: 2 } }],
       runnerActions: [
         {

@@ -4,7 +4,7 @@ import { conflict, HttpError } from '../../common/errors'
 import { asGuests } from '../../common/guests'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { applyAction } from '../../common/scoring/apply'
-import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { nextDecision } from '../../common/scoring/rules'
 import type { SessionContext, StoredGame } from '../../common/scoring/session'
 import type { GameState } from '../../common/scoring/state'
@@ -26,7 +26,7 @@ function assertAffectedHistoryRecorded(
   affected: ReadonlySet<number>
 ): void {
   for (const document of [...stored.plays, stored.currentPlay]) {
-    if (document == null || recordOf(document) != null) continue
+    if (document == null || storedRecordOf(document) != null) continue
     const ids = scoringIdsIn({
       plays: [],
       currentPlay: document as CurrentPlay

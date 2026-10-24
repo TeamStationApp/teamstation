@@ -33,6 +33,7 @@ import {
   setupOf,
   type Side
 } from './state'
+import { ownTeams, recordBySide, type SideTeams } from './teamRecord'
 
 /**
  * A play as TeamStation stores it: a Gumbo document naming every player by
@@ -69,26 +70,84 @@ const asRecord: Cleaner<TeamStationRecord> = asObject({
 }) as Cleaner<TeamStationRecord>
 
 /**
- * Each stored record, as `recordOf` read it. A save reads the game's lineups,
- * which reads every record and then replays them, reading each again;
- * cleaning a record's setup was half of what that cost.
+ * Each stored record, as `recordOf` read it, by the teams it was read with.
+ * A save reads the game's lineups, which reads every record and then
+ * replays them, reading each again; cleaning a record's setup was half of
+ * what that cost.
  */
-const readRecords = new WeakMap<object, TeamStationRecord | null>()
+const readRecords = new WeakMap<object, Map<string, TeamStationRecord | null>>()
 
-/** The record on a stored play, or null for one TeamStation did not score. */
-export function recordOf(play: unknown): TeamStationRecord | null {
+/**
+ * The record on a stored play, with its lineups by side under the game's
+ * teams, or null for a play TeamStation did not score. A record from version
+ * 3 names teams, so it reads by `teams`; an older one names sides already.
+ */
+export function recordOf(
+  play: unknown,
+  teams: SideTeams
+): TeamStationRecord | null {
   if (play == null || typeof play !== 'object') return null
   const raw = (play as { teamStation?: unknown }).teamStation
   if (raw == null) return null
-  if (typeof raw !== 'object') return cleanRecord(raw)
-  if (!readRecords.has(raw)) readRecords.set(raw, cleanRecord(raw))
-  return readRecords.get(raw) ?? null
+  if (typeof raw !== 'object') return cleanRecord(raw, teams)
+  const key = `${teams.away.id}\u0000${teams.home.id}`
+  let read = readRecords.get(raw)
+  if (read == null) {
+    read = new Map()
+    readRecords.set(raw, read)
+  }
+  if (!read.has(key)) read.set(key, cleanRecord(raw, teams))
+  return read.get(key) ?? null
 }
 
-function cleanRecord(raw: unknown): TeamStationRecord | null {
+/**
+ * What a stored record holds that names no side: its actions, with every
+ * lineup change's sides, setup and confirmed or unseen sides left out, and
+ * their times. For whether a play has a record, what kinds of action it
+ * holds, and when each was taken, without the game's teams.
+ */
+export interface RecordActions {
+  version: number
+  actions: ScoringAction[]
+  actionTimes?: string[]
+  playbackTimes?: string[]
+  detail?: unknown
+}
+
+/** Each stored record's side-free view, read once. */
+const readActions = new WeakMap<object, RecordActions | null>()
+
+/** The record's side-free view (`RecordActions`), or null without one. */
+export function storedRecordOf(play: unknown): RecordActions | null {
+  if (play == null || typeof play !== 'object') return null
+  const raw = (play as { teamStation?: unknown }).teamStation
+  if (raw == null || typeof raw !== 'object') return null
+  if (!readActions.has(raw)) readActions.set(raw, actionsOf(play, raw))
+  return readActions.get(raw) ?? null
+}
+
+function actionsOf(play: object, raw: object): RecordActions | null {
+  const version = (raw as { version?: unknown }).version
+  // Which team a version 3 record reads as home does not matter here: every
+  // side it would name is left out.
+  const record = recordOf(play, ownTeams(raw))
+  if (record == null) return null
+  const { setupBefore, version: _version, ...rest } = record
+  return {
+    ...rest,
+    version: typeof version === 'number' ? version : 2,
+    actions: record.actions.map(action => {
+      if (action.type !== 'lineup') return action
+      const { side, setup, confirmed, unseen, ...kept } = action
+      return kept
+    })
+  }
+}
+
+function cleanRecord(raw: unknown, teams: SideTeams): TeamStationRecord | null {
   try {
     const { actionTimes, playbackTimes, ...record } = asRecord(
-      upgradeRecord(raw)
+      upgradeRecord(recordBySide(raw, teams))
     )
     const actions: ScoringAction[] = []
     for (const action of record.actions) {
@@ -254,9 +313,9 @@ export function replayPlays(
   const plays = [...stored.plays]
     .filter(play => play.about.atBatIndex !== reopened)
     .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
-  const records = plays.map(recordOf)
+  const records = plays.map(play => recordOf(play, context.teams))
   const firstLogged = records.findIndex(record => record != null)
-  const currentRecord = recordOf(stored.currentPlay)
+  const currentRecord = recordOf(stored.currentPlay, context.teams)
   const prefix = firstLogged < 0 ? plays : plays.slice(0, firstLogged)
   const setup =
     (firstLogged < 0 ? null : records[firstLogged]?.setupBefore) ??

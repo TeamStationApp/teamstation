@@ -15,6 +15,7 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
+import { teamsOfRow } from '../../common/teamLists'
 import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
@@ -37,6 +38,7 @@ import {
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
+import { playForWire } from '../events/wireRecords'
 import { swapGameSides } from '../games/swapSides'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -408,12 +410,13 @@ async function storedGameAnswer(
     plays: stored.map(row => row.gumbo as GumboPlay),
     currentPlay: game.currentPlay as CurrentPlay | null
   })
+  const teams = teamsOfRow(game)
   return {
     plays: stored.map((row, index) => ({
       ...playJson(row),
-      gumbo: resolved.plays[index]
+      gumbo: playForWire(resolved.plays[index], teams)
     })),
-    currentPlay: resolved.currentPlay,
+    currentPlay: playForWire(resolved.currentPlay, teams),
     playsDigest: playsDigest(stored, game.currentPlay),
     lineupsDigest: await storedLineupsDigest(db, {
       id: gameId,

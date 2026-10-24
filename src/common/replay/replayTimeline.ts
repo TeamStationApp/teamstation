@@ -1,5 +1,5 @@
 import type { ScoringAction } from '../scoring/actions'
-import { recordOf, replayPlays } from '../scoring/gumbo'
+import { recordOf, replayPlays, storedRecordOf } from '../scoring/gumbo'
 import type { SessionContext, StoredGame } from '../scoring/session'
 import type { GameState } from '../scoring/state'
 
@@ -183,7 +183,7 @@ export function extendTimeline(
 /** Whether any stored play, or the at-bat in progress, has a record. */
 export function hasRecords(stored: StoredGame): boolean {
   return [...stored.plays, stored.currentPlay].some(
-    play => recordOf(play) != null
+    play => storedRecordOf(play) != null
   )
 }
 
@@ -204,8 +204,12 @@ export function replayContextOf(
   },
   stored: StoredGame
 ): SessionContext | null {
+  const teams = {
+    away: { id: game.awayTeamId },
+    home: { id: game.homeTeamId }
+  }
   const first = [...stored.plays, stored.currentPlay]
-    .map(recordOf)
+    .map(play => recordOf(play, teams))
     .find(record => record != null)
   if (first == null) return null
   return {

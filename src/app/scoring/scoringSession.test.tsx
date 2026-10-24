@@ -9,12 +9,11 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { recordOf } from '../../common/scoring/gumbo'
+import {} from '../../common/scoring/gumbo'
 import {
   applyAction,
   ScoringSession as GameSession
 } from '../../common/scoring/session'
-import { swapRecordSides } from '../../common/scoring/sideSwap'
 import { setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
@@ -845,7 +844,8 @@ describe('swapping from the scoring menu', function () {
         ...stored,
         currentPlay: {
           ...stored.currentPlay!,
-          teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+          teamStation: (stored.currentPlay as { teamStation?: unknown })
+            .teamStation
         }
       })
       return { homeTeamId: game.homeTeamId, awayTeamId: game.awayTeamId }

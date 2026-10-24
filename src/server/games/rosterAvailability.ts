@@ -73,7 +73,12 @@ export async function gameAvailability(
           game.currentPlay,
           ...(await readPlays(db, game.id)).reverse().map(row => row.gumbo)
         ]
-          .map(recordOf)
+          .map(play =>
+            recordOf(play, {
+              away: { id: game.away_team_id },
+              home: { id: game.home_team_id }
+            })
+          )
           .filter(record => record != null)
   const guestPlayers: GameAvailability['guestPlayers'] = { away: [], home: [] }
   const names = shortNames(

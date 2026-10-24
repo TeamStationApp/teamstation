@@ -5,7 +5,7 @@ import { conflict, forbidden, notFound } from '../../common/errors'
 import { asGuests } from '../../common/guests'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import type { NewRosterPlayer } from '../../common/playerSettings'
-import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { awaitingResult } from '../../common/scoring/rules'
 import type { Side } from '../../common/scoring/state'
 import { canManageRoster, canScore, roleScopes } from '../access'
@@ -61,7 +61,10 @@ export async function createGuestPlayer(
       const replay = replayPlays(stored, context)
       if (replay.problems.length > 0 || awaitingResult(replay.state))
         throw conflict('Finish the current play before creating a player')
-    } else if (game.currentPlay != null && recordOf(game.currentPlay) == null) {
+    } else if (
+      game.currentPlay != null &&
+      storedRecordOf(game.currentPlay) == null
+    ) {
       throw conflict('The stored game cannot be read')
     }
     const fullName = [player.firstName, player.lastName]

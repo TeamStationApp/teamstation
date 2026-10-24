@@ -16,7 +16,7 @@ export function assertAuthoredRosters(
   context: SessionContext
 ): void {
   const oldRecords = [...previous.plays, previous.currentPlay].flatMap(play => {
-    const record = recordOf(play)
+    const record = recordOf(play, context.teams)
     return record == null ? [] : [record]
   })
   const oldActions = oldRecords.flatMap(record => record.actions)
@@ -25,7 +25,7 @@ export function assertAuthoredRosters(
     if (action.type === 'lineup' && action.setup != null)
       priorSides.push(action.setup.sides)
   for (const play of [...next.plays, next.currentPlay]) {
-    const record = recordOf(play)
+    const record = recordOf(play, context.teams)
     if (record == null) continue
     const draft = {
       gameData: { teams: context.teams, players: record.setupBefore.players },

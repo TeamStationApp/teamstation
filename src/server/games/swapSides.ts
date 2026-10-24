@@ -9,11 +9,8 @@ import {
 } from '../../common/gumboPlay'
 import { recordOf } from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
-import {
-  pregameRecord,
-  swapRecordSides,
-  swapSideLists
-} from '../../common/scoring/sideSwap'
+import { pregameRecord, swapSideLists } from '../../common/scoring/sideSwap'
+import { recordByTeam } from '../../common/scoring/teamRecord'
 import { asUnrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { postGamePlays } from '../events/postPlays'
@@ -72,7 +69,12 @@ export async function swapGameSides(
     home_team_id: game.away_team_id,
     away_team_id: game.home_team_id
   }
-  const record = recordOf(game.currentPlay)
+  // The record names teams, so it reads the same with the sides exchanged:
+  // one stored before records did is written by team, as the game stood.
+  const record = recordOf(game.currentPlay, {
+    away: { id: game.away_team_id },
+    home: { id: game.home_team_id }
+  })
   const swapped = {
     ...teams,
     home_score: game.away_score,
@@ -97,7 +99,10 @@ export async function swapGameSides(
   } else {
     const currentPlay = {
       ...(game.currentPlay as CurrentPlay),
-      teamStation: swapRecordSides(record)
+      teamStation: recordByTeam(record, {
+        away: { id: game.away_team_id },
+        home: { id: game.home_team_id }
+      })
     }
     await trx
       .updateTable('games')

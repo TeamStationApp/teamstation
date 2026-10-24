@@ -7,7 +7,7 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { recordOf } from '../../common/scoring/gumbo'
+import { storedRecordOf } from '../../common/scoring/gumbo'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import {
   addGame,
@@ -102,12 +102,12 @@ describe('action times on the server (U4)', function () {
       ])
     )
     expect(records).deep.equals([sent.get(0), sent.get(1)])
-    expect(recordOf(stored.plays[0])?.actionTimes).deep.equals([
+    expect(storedRecordOf(stored.plays[0])?.actionTimes).deep.equals([
       '2026-09-25T18:00:01.623Z',
       '2026-09-25T18:00:03.123Z',
       '2026-09-25T18:00:04.623Z'
     ])
-    expect(recordOf(stored.currentPlay)?.actionTimes).deep.equals([
+    expect(storedRecordOf(stored.currentPlay)?.actionTimes).deep.equals([
       '2026-09-25T18:00:06.123Z'
     ])
   })

@@ -17,7 +17,8 @@ import {
   recordOf,
   replayPlays,
   type Segment,
-  segmentAfter
+  segmentAfter,
+  storedRecordOf
 } from './gumbo'
 import {
   halfOutcomes,
@@ -192,7 +193,7 @@ describe('folding a play for the server', function () {
       startTime: '2026-09-25T10:00:00Z'
     })
     expect(single.result).includes({ eventType: 'single', event: 'Single' })
-    const record = recordOf(single)!
+    const record = recordOf(single, TEAMS)!
     expect(record.actions).deep.equals(inning.slice(0, 3))
     expect(record.setupBefore.sides.away.battingIndex).equals(0)
     expect(single.credits).deep.equals([
@@ -263,7 +264,7 @@ describe('folding a play for the server', function () {
       awayScore: 1,
       homeScore: 0
     })
-    expect(recordOf(final)!.actions).deep.equals([
+    expect(storedRecordOf(final)!.actions).deep.equals([
       { type: 'gameFlow', kind: 'endGame' }
     ])
   })
@@ -485,10 +486,12 @@ describe('reading a game back', function () {
   it('reads each stored record once, and no record from one that is not an object', function () {
     const scored = score(game(), inning)
     const play = scored.plays[0]
-    expect(recordOf(play)).not.equals(null)
-    expect(recordOf(play)).equals(recordOf(play))
-    expect(recordOf({ ...play, teamStation: 'version 1' })).equals(null)
-    expect(recordOf({ ...play, teamStation: { version: 2 } })).equals(null)
+    expect(storedRecordOf(play)).not.equals(null)
+    expect(storedRecordOf(play)).equals(storedRecordOf(play))
+    expect(storedRecordOf({ ...play, teamStation: 'version 1' })).equals(null)
+    expect(storedRecordOf({ ...play, teamStation: { version: 2 } })).equals(
+      null
+    )
   })
 
   it('takes what the server writes on a play in its stride', function () {
@@ -681,11 +684,11 @@ describe('reading a game back', function () {
   })
 
   it('ignores a record it cannot read', function () {
-    expect(recordOf(null)).equals(null)
-    expect(recordOf({})).equals(null)
-    expect(recordOf({ teamStation: { version: 2 } })).equals(null)
+    expect(storedRecordOf(null)).equals(null)
+    expect(storedRecordOf({})).equals(null)
+    expect(storedRecordOf({ teamStation: { version: 2 } })).equals(null)
     expect(
-      recordOf({
+      storedRecordOf({
         teamStation: {
           version: 1,
           setupBefore: setupOf(game()),

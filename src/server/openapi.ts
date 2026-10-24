@@ -1352,14 +1352,18 @@ const gumboSchemas = {
       "engine's own vocabulary, and `detail` the scorer's own picks and " +
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
-      ' New records use `version` 2 with persistent numeric player ids and ' +
-      'an append-only `tagOrder`. Historical version 1 records are read ' +
+      ' New records use `version` 3 with persistent numeric player ids and ' +
+      'an append-only `tagOrder`, and name every lineup by its team id, ' +
+      "never by home or away: `setupBefore.teams` holds each team's " +
+      'lineup, and a lineup change names `teamId`, its `setup.teams`, and ' +
+      'the team ids it `confirmed` or left `unseen`. Version 2 records name ' +
+      'sides and are still read; historical version 1 records are read ' +
       'through their saved identity maps. Invalid or unsupported records are ' +
       'refused with 400. Scoring sessions preserve historical playback times ' +
       'and the server adds radar measurement provenance when necessary.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
-      version: { type: 'integer', enum: [1, 2] },
+      version: { type: 'integer', enum: [1, 2, 3] },
       setupBefore: { type: 'object' },
       actions: { type: 'array', items: { type: 'object' } },
       actionTimes: {

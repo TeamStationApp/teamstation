@@ -19,6 +19,7 @@ import {
 } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
+import { recordOf } from '../../common/scoring/gumbo'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { newSetup } from '../../common/scoring/lineup'
 import {
@@ -26,6 +27,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { retargetRecord } from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -1280,7 +1282,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 2: teamStation must be a valid version 1 or 2 record'
+        'Play 2: teamStation must be a valid version 1, 2 or 3 record'
       ],
       [
         {
@@ -1295,7 +1297,7 @@ describe('posting and reading plays', function () {
             teamStation: record('2')
           }
         },
-        'Play 5: teamStation must be a valid version 1 or 2 record'
+        'Play 5: teamStation must be a valid version 1, 2 or 3 record'
       ],
       [
         {
@@ -1306,7 +1308,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 0: teamStation must be a valid version 1 or 2 record'
+        'Play 0: teamStation must be a valid version 1, 2 or 3 record'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {
@@ -3725,5 +3727,78 @@ describe('the team default lineup a live post keeps (U10)', function () {
     expect(await store(g7).load(g7)).deep.equals(stored)
     expect(await defaultOf(awayTeam)).equals(null)
     expect((await gameRow(g7)).lineup_started_at).equals(null)
+  })
+
+  it('stores records by team and answers them by side, and stores by team what an older app posts by side (R10)', async function () {
+    const gameId = games[6]
+    await apply(
+      await scoring(gameId),
+      reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]),
+      ball
+    )
+    const stored = await db!
+      .selectFrom('games')
+      .select('currentPlay')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    const storedRecord = (stored.currentPlay as { teamStation: object })
+      .teamStation as { version: number; setupBefore: object }
+    expect(storedRecord.version).equals(3)
+    expect(storedRecord.setupBefore).not.have.property('sides')
+
+    const read = await store(gameId).load(gameId)
+    const answered = (read.currentPlay as unknown as { teamStation: object })
+      .teamStation as { version: number; setupBefore: { sides: object } }
+    expect(answered.version).equals(2)
+    expect(answered.setupBefore.sides).have.keys('away', 'home')
+    expect(recordOf(read.currentPlay, TEAMS)).deep.equals(
+      recordOf(stored.currentPlay, TEAMS)
+    )
+
+    // What an app not yet updated sends back: the record by side.
+    const again = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [],
+      currentPlay: read.currentPlay
+    })
+    expect(again.status, JSON.stringify(again.body)).equals(200)
+    const rewritten = await db!
+      .selectFrom('games')
+      .select('currentPlay')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(
+      (rewritten.currentPlay as { teamStation: { version: number } })
+        .teamStation.version
+    ).equals(3)
+    expect(recordOf(rewritten.currentPlay, TEAMS)).deep.equals(
+      recordOf(stored.currentPlay, TEAMS)
+    )
+    expect(
+      (
+        again.body.currentPlay as unknown as {
+          teamStation: { version: number }
+        }
+      ).teamStation.version
+    ).equals(2)
+
+    // A record made for teams this game no longer has, as a phone queued
+    // before a team was replaced: refused, and nothing written.
+    const elsewhere = {
+      ...(stored.currentPlay as object),
+      teamStation: retargetRecord(storedRecord, awayTeam, 'tem_elsewhere')
+    }
+    const refused = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [],
+      currentPlay: elsewhere
+    })
+    expect(refused.status).equals(409)
+    expect(refused.body).deep.include({
+      message: "This game's teams changed since this was scored",
+      details: { stale: true }
+    })
   })
 })

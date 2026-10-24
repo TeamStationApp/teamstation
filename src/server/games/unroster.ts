@@ -7,7 +7,7 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { recordOf } from '../../common/scoring/gumbo'
+import { storedRecordOf } from '../../common/scoring/gumbo'
 import { newSetup } from '../../common/scoring/lineup'
 import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
@@ -98,7 +98,7 @@ export async function setRostered(
     })
     if (
       [...stored.plays, stored.currentPlay].some(
-        play => play?.teamStation != null && recordOf(play) == null
+        play => play?.teamStation != null && storedRecordOf(play) == null
       )
     )
       throw conflict('The stored game cannot be read')

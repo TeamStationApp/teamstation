@@ -269,7 +269,7 @@ describe('the game as a scoreboard source', function () {
         currentPlay: JSON.stringify({
           ...(stored.currentPlay ?? { about: { atBatIndex: 2 } }),
           teamStation: {
-            version: 2,
+            version: 3,
             setupBefore: record.setupBefore,
             actions: [{ type: 'result', eventType: 'strikeout' }]
           }

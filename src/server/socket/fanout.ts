@@ -2,12 +2,14 @@ import type { Kysely } from 'kysely'
 import { Client } from 'pg'
 
 import type { GameChange } from '../../common/gameSocket'
+import { teamsOfRow } from '../../common/teamLists'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { playJson, playsDigest, readPlays } from '../events/postPlays'
 import { lineupsAnswer } from '../events/teamLineups'
+import { playForWire } from '../events/wireRecords'
 import { readWalkUpSong } from '../routes/walkUpSongs'
 import {
   asGameChangePayload,
@@ -245,8 +247,12 @@ export class GameFanout {
                     ...head,
                     kind: 'plays',
                     data: {
-                      plays: plays.map(playJson),
-                      currentPlay: game.currentPlay ?? null,
+                      plays: plays.map(row => ({
+                        ...playJson(row),
+                        gumbo: playForWire(row.gumbo, teamsOfRow(game))
+                      })),
+                      currentPlay:
+                        playForWire(game.currentPlay, teamsOfRow(game)) ?? null,
                       digest: playsDigest(plays, game.currentPlay)
                     }
                   }

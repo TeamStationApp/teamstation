@@ -9,13 +9,14 @@ import type {
   GumboPlay,
   PostEventsBody
 } from '../../common/gumboPlay'
-import { recordOf } from '../../common/scoring/gumbo'
+import { recordOf, storedRecordOf } from '../../common/scoring/gumbo'
 import {
   halfOutcomes,
   lineScore,
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
@@ -42,8 +43,12 @@ import {
   storedLineupGame,
   storedLineupsDigest
 } from './teamLineups'
+import { bodyFromWire, playForWire } from './wireRecords'
 
 type Trx = Kysely<Database>
+
+/** The refusal of a record made for teams this game no longer has. */
+export const OTHER_TEAMS = "This game's teams changed since this was scored"
 
 /** The game row a post is checked against, locked until it commits. */
 export interface PostedGame {
@@ -86,27 +91,26 @@ export interface PostedPlays {
 export async function postGamePlays(
   db: Kysely<Database>,
   gameId: string,
-  body: PostEventsBody,
+  sentBody: PostEventsBody,
   authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
   written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>
 ): Promise<PostedPlays> {
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
-  const sent = body.source?.system
+  const sent = sentBody.source?.system
   const system: PlaySource =
     sent === 'teamstation' || sent === 'manual' ? sent : 'external'
-  const indexes = body.plays.map(play => play.about.atBatIndex)
+  const indexes = sentBody.plays.map(play => play.about.atBatIndex)
   if (new Set(indexes).size !== indexes.length) {
     throw badRequest('Two plays share an about.atBatIndex')
   }
-  const unread = [...body.plays, body.currentPlay].find(
+  const unread = [...sentBody.plays, sentBody.currentPlay].find(
     play => play != null && !readableVersion(play)
   )
   if (unread != null)
     throw badRequest(
-      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1 or 2 record`
+      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1, 2 or 3 record`
     )
-  const prepared = withHalfOuts(body.plays)
   let refreshDelay: number | undefined
 
   return await atomic(db, async (trx): Promise<PostedPlays> => {
@@ -134,6 +138,20 @@ export async function postGamePlays(
       .forUpdate()
       .executeTakeFirst()
     if (game == null) throw notFound()
+    // Stored by team: a record posted by side, as an app not yet updated
+    // sends it, is turned to the game's teams.
+    const body = bodyFromWire(sentBody, teamsOfRow(game))
+    // A record naming other teams was made before this game's teams were
+    // replaced: read under them, it would hold nothing.
+    if (
+      [...body.plays, body.currentPlay].some(
+        play =>
+          storedRecordOf(play) != null &&
+          recordOf(play, teamsOfRow(game)) == null
+      )
+    )
+      throw conflict(OTHER_TEAMS, { stale: true })
+    const prepared = withHalfOuts(body.plays)
     // Read on its own, after the lock and before this post's writes: a
     // post that held the lock first has fixed the fence already.
     const hadPlays = await gameHasPlays(trx, gameId)
@@ -184,7 +202,9 @@ export async function postGamePlays(
           : previous.currentPlay
     }
     if (
-      [...next.plays, next.currentPlay].some(play => recordOf(play) != null)
+      [...next.plays, next.currentPlay].some(
+        play => storedRecordOf(play) != null
+      )
     ) {
       const projected = await resolveScoringGame(trx, next)
       await assertStoredScoringRoles(
@@ -417,12 +437,13 @@ export async function postGamePlays(
       plays: taggedStored.map(row => row.gumbo as GumboPlay),
       currentPlay: taggedGame.currentPlay as CurrentPlay | null
     })
+    const sides = teamsOfRow(game)
     const answer: PostedPlays = {
       plays: taggedStored.map((row, index) => ({
         ...playJson(row),
-        gumbo: resolved.plays[index]
+        gumbo: playForWire(resolved.plays[index], sides)
       })),
-      currentPlay: resolved.currentPlay,
+      currentPlay: playForWire(resolved.currentPlay, sides),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
       priorPlaysDigest: prior
@@ -436,13 +457,14 @@ export async function postGamePlays(
       return result
     })
     .catch((error: unknown) => {
-      throw unknownUser(error, prepared) ?? error
+      // Which user a failed post named reads the same in either record.
+      throw unknownUser(error, withHalfOuts(sentBody.plays)) ?? error
     })
 }
 
 /**
- * A play TeamStation scored is replayed from its record, which is version 1:
- * a record in any other version would be dropped when the game is read
+ * A play TeamStation scored is replayed from its record, of version 1, 2 or
+ * 3: a record in any other version would be dropped when the game is read
  * back. A play with no record is read from its document.
  */
 function readableVersion(play: object): boolean {
@@ -452,7 +474,10 @@ function readableVersion(play: object): boolean {
     typeof record === 'object'
       ? (record as { version?: unknown }).version
       : undefined
-  return (version === 1 || version === 2) && recordOf(play) != null
+  return (
+    (version === 1 || version === 2 || version === 3) &&
+    storedRecordOf(play) != null
+  )
 }
 
 /**

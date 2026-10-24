@@ -1,7 +1,7 @@
 import type { RadarSettings } from '../nodeSettings'
 import { isPitchSpeed } from '../pitchData'
 import { radarActionCategory } from './actionTimes'
-import { recordOf } from './gumbo'
+import { storedRecordOf } from './gumbo'
 
 export interface RadarReading {
   at: number
@@ -40,7 +40,7 @@ export function radarTargets(play: unknown): Array<{
   foul: boolean
   speed?: number
 }> {
-  const record = recordOf(play)
+  const record = storedRecordOf(play)
   if (
     record?.actionTimes == null ||
     !object(play) ||

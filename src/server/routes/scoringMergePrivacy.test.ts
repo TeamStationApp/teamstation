@@ -5,6 +5,7 @@ import { TeamStationClient } from '../../common/api'
 import { recordOf } from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
+import { ownTeams } from '../../common/scoring/teamRecord'
 import type { AccountHarness } from '../../test/accountHarness'
 import { creationHarness } from '../../test/creationHarness'
 import {
@@ -125,7 +126,10 @@ describe('merged scoring names on public reads', function () {
     expect(board.state.batterName).equals('Hank Aa')
     expect(board.state.pitcherName).equals('Hank Al')
     const stored = await member.gameEvents(f.gameId)
-    const players = recordOf(stored.currentPlay)!.setupBefore.players
+    const players = recordOf(
+      stored.currentPlay,
+      ownTeams(stored.currentPlay?.teamStation)
+    )!.setupBefore.players
     for (const [id, label] of [
       [batter.gumboId, 'Hank Aa'],
       [pitcher.gumboId, 'Hank Al']

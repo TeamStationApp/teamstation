@@ -20,6 +20,8 @@ import {
   type StoredLineupGame
 } from '../../common/scoring/lineupHistory'
 import type { Side } from '../../common/scoring/state'
+import type { SideTeams } from '../../common/scoring/teamRecord'
+import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
 import { resolveGumboIds } from '../scoring/gumboIds'
@@ -311,7 +313,7 @@ export async function keepLineups(
   const home = read.sides.home.start
   if (game.lineup_started_at != null || away == null || home == null)
     return { lineups_digest: digest }
-  const placeholder = placeholderSides(stored)
+  const placeholder = placeholderSides(stored, teamsOfRow(game))
   for (const [teamId, lineup, side] of [
     [game.away_team_id, away, 'away'],
     [game.home_team_id, home, 'home']
@@ -343,7 +345,10 @@ export async function keepLineups(
  * Sides whose starting lineup is still the roster order a save wrote because
  * the saver could not see that team. See `placeholderSidesOf`.
  */
-function placeholderSides(stored: StoredLineupGame): ReadonlySet<Side> {
+function placeholderSides(
+  stored: StoredLineupGame,
+  teams: SideTeams
+): ReadonlySet<Side> {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays: Array<GumboPlay | CurrentPlay> = stored.plays.filter(
     play => play.about.atBatIndex !== reopened
@@ -351,6 +356,6 @@ function placeholderSides(stored: StoredLineupGame): ReadonlySet<Side> {
   if (stored.currentPlay != null) plays.push(stored.currentPlay)
   plays.sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
   return placeholderSidesOf(
-    plays.flatMap(play => recordOf(play)?.actions ?? [])
+    plays.flatMap(play => recordOf(play, teams)?.actions ?? [])
   )
 }

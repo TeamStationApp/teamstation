@@ -17,9 +17,8 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameSocketEvent } from '../../common/gameSocket'
-import { recordOf } from '../../common/scoring/gumbo'
+import {} from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
-import { swapRecordSides } from '../../common/scoring/sideSwap'
 import {
   copyState,
   type GameState,
@@ -1201,7 +1200,8 @@ describe('a game swapped under the coach screen', function () {
           ...stored,
           currentPlay: {
             ...stored.currentPlay!,
-            teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+            teamStation: (stored.currentPlay as { teamStation?: unknown })
+              .teamStation
           }
         })
       }
@@ -1322,7 +1322,8 @@ describe('a game swapped under the coach screen', function () {
           ...stored,
           currentPlay: {
             ...stored.currentPlay!,
-            teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+            teamStation: (stored.currentPlay as { teamStation?: unknown })
+              .teamStation
           }
         })
       }

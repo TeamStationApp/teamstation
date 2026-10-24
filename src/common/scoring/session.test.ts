@@ -9,7 +9,7 @@ import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
 import { PlayFolder } from './document'
-import { recordOf } from './gumbo'
+import { storedRecordOf } from './gumbo'
 import { addPlayer } from './lineup'
 import { readLineups } from './lineupHistory'
 import { baseIds, overrideOf, tiebreakerSetupError } from './rules'
@@ -20,7 +20,6 @@ import {
   type SessionContext,
   type StoredGame
 } from './session'
-import { swapRecordSides } from './sideSwap'
 import { asGameState, type GameState, setupOf, type Side } from './state'
 
 /** A server in memory that records every post and can be made to fail. */
@@ -454,7 +453,7 @@ describe('a scoring session', function () {
     expect(store.posts).length(1)
     expect(store.posts[0].plays).deep.equals([])
     expect(store.posts[0].remove).deep.equals([])
-    const record = recordOf(store.current)!
+    const record = storedRecordOf(store.current)!
     expect(record.actions).length(1)
     expect(store.current!.about).deep.include({
       atBatIndex: 0,
@@ -479,7 +478,7 @@ describe('a scoring session', function () {
       endTime: '2026-09-25T12:00:00.000Z'
     })
     expect(second.currentPlay!.about.atBatIndex).equals(1)
-    expect(recordOf(store.plays.get(0)!.play)!.actions).deep.equals([
+    expect(storedRecordOf(store.plays.get(0)!.play)!.actions).deep.equals([
       ball,
       { type: 'result', eventType: 'single' }
     ])
@@ -2419,7 +2418,7 @@ describe('a scoring session', function () {
       swap(): void {
         this.current = {
           ...this.current!,
-          teamStation: swapRecordSides(recordOf(this.current)!)
+          teamStation: (this.current as { teamStation?: unknown }).teamStation
         }
         this.context = {
           ...context,
@@ -2458,18 +2457,17 @@ describe('a scoring session', function () {
       expect(session.state.gameData.teams.home.id).equals(TEAMS.away.id)
     })
 
-    it('reloads on the context it was opened with when its store gives none', async function () {
+    it('reloads on the context it was opened with when its store gives none, its record read by team', async function () {
       const store = new SwappingStore()
       const { session } = await open(store)
       session.apply(roster)
       await session.flush()
-      store.current = {
-        ...store.current!,
-        teamStation: swapRecordSides(recordOf(store.current)!)
-      }
+      store.swap()
+      store.context = undefined
       await session.reload()
       expect(session.state.gameData.teams.home.id).equals(TEAMS.home.id)
-      expect(session.problem).match(/could not be read back/)
+      expect(session.problem).equals(null)
+      expect(session.readOnly).equals(false)
     })
 
     it('rebases on the context its store gives after a stale save, dropping its own actions from before the swap', async function () {

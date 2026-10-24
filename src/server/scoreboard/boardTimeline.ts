@@ -12,7 +12,7 @@ import {
   type ScoreboardState,
   type SourceState
 } from '../../common/scoreboard'
-import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
@@ -468,7 +468,7 @@ export function importedBoards(
   reopened: number | undefined
 ): Array<{ at: number | undefined; state: GameScoreboard }> {
   const boards: Array<{ at: number | undefined; state: GameScoreboard }> = []
-  const firstLogged = plays.findIndex(row => recordOf(row.gumbo) != null)
+  const firstLogged = plays.findIndex(row => storedRecordOf(row.gumbo) != null)
   const last = firstLogged < 0 ? plays.length : firstLogged
   const pitches = new Map<number, number>()
   /** The pitcher each side last had on the mound. */
