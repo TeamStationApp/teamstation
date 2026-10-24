@@ -136,6 +136,9 @@ export function Screen(props: ScreenProps): React.ReactElement {
 
   const inner = (
     <View
+      // `data-breakpoint` on the web: the width this screen laid out at,
+      // which tests read beside Tess's chat.
+      dataSet={{ breakpoint }}
       style={[
         styles.column,
         breakpoint !== 'phone' && styles.columnWide,

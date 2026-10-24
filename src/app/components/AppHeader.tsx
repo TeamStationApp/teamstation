@@ -43,6 +43,11 @@ export interface AppHeaderProps {
   /** Whether the signed-in person is a site administrator. */
   isAdmin?: boolean
   notifications?: { pending: boolean; onPress: () => void }
+  /**
+   * The button that opens Tess's chat, and closes it again, between the
+   * umpire's and Notifications. Absent where Tess is not offered.
+   */
+  tess?: { onPress: () => void; open: boolean }
 }
 
 /**
@@ -158,6 +163,26 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         <View style={[styles.side, styles.sideEnd]}>
           {nav}
           {props.umpire}
+          {props.tess != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={lstrings.tess_title}
+              aria-expanded={props.tess.open}
+              onPress={() => {
+                props.tess?.onPress()
+              }}
+              style={({ pressed }) => [
+                styles.headerButton,
+                pressed && styles.pressed
+              ]}
+            >
+              <Icon
+                name="auto_awesome"
+                size={1.5}
+                color={theme.headerTextColor}
+              />
+            </Pressable>
+          )}
           {props.notifications != null && (
             <Pressable
               accessibilityRole="button"
@@ -321,6 +346,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1.125),
     fontWeight: '700',
     color: theme.headerTextColor
+  },
+  headerButton: {
+    width: theme.rem(3),
+    height: theme.rem(3),
+    justifyContent: 'center',
+    alignItems: 'center'
   },
   account: {
     minWidth: theme.rem(2.75),

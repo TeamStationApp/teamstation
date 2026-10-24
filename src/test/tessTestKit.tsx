@@ -111,3 +111,40 @@ export function manualClock(fromMs = 600): ManualClock {
     }
   }
 }
+
+/**
+ * The window's size as React Native reads it in a browser, until `restore`:
+ * the document's client box, and a resize to tell the listeners.
+ */
+export async function windowSize(
+  width: number,
+  height = 900
+): Promise<{ restore: () => Promise<void> }> {
+  const html = document.documentElement
+  const saved = ['clientWidth', 'clientHeight'].map(
+    key => [key, Object.getOwnPropertyDescriptor(html, key)] as const
+  )
+  Object.defineProperty(html, 'clientWidth', {
+    configurable: true,
+    value: width
+  })
+  Object.defineProperty(html, 'clientHeight', {
+    configurable: true,
+    value: height
+  })
+  await act(async () => {
+    window.dispatchEvent(new window.Event('resize'))
+  })
+  return {
+    restore: async () => {
+      // The document's own box lives on the prototype: taking the
+      // instance's property away shows it again.
+      for (const [key, descriptor] of saved)
+        if (descriptor == null) Reflect.deleteProperty(html, key)
+        else Object.defineProperty(html, key, descriptor)
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+    }
+  }
+}

@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Text, useWindowDimensions, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import { webStyle } from '../components/glass'
+import { PaneFrameContext, usePaneFrame } from '../components/useBreakpoint'
 import { lstrings } from '../locales/strings'
 import { useVideoAnalytics } from '../observability/useVideoAnalytics'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -82,7 +83,9 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const { onClose } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const { height, width } = useWindowDimensions()
+  // The pane it covers: the window, or beside Tess's chat the rest of it.
+  const frame = useContext(PaneFrameContext)
+  const { height, width } = usePaneFrame()
   // Either way up: sideways a two-by-two grid, upright one column.
   const landscape = width > height
   /**
@@ -164,16 +167,22 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 
   // A mouse over the bottom third calls the bar up, as a tap there does. A
   // mouse only: a finger's `pointermove` is a drag, and belongs to the tiles.
+  const frameTop = frame?.y
+  const frameHeight = frame?.height
   useEffect(() => {
     const hover = (event: PointerEvent): void => {
       if (event.pointerType !== 'mouse') return
-      if (event.clientY >= (window.innerHeight * 2) / 3) showBar()
+      const bottomThird =
+        frameTop == null || frameHeight == null
+          ? (window.innerHeight * 2) / 3
+          : frameTop + (frameHeight * 2) / 3
+      if (event.clientY >= bottomThird) showBar()
     }
     document.addEventListener('pointermove', hover)
     return () => {
       document.removeEventListener('pointermove', hover)
     }
-  }, [showBar])
+  }, [showBar, frameTop, frameHeight])
 
   /**
    * The keyboard calls the bar up too, and Tab takes the focus into it.
@@ -280,8 +289,24 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   // ancestor rather than the window, which a scroll view up the tree supplies
   // — so the grid started below the header and ran off the bottom by the same
   // amount.
+  //
+  // Beside Tess's chat it covers the pane rather than the window, so the
+  // chat stays in view: the same fixed layer, placed on the pane's frame.
   return createPortal(
-    <View style={styles.overlay}>
+    <View
+      style={[
+        styles.overlay,
+        frame != null &&
+          webStyle({
+            top: frame.y,
+            left: frame.x,
+            width: frame.width,
+            height: frame.height,
+            right: 'auto',
+            bottom: 'auto'
+          })
+      ]}
+    >
       {/* The black around the tiles, which takes the same squares they do. */}
       <div
         style={{
