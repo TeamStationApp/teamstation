@@ -2115,12 +2115,19 @@ export class Scenarios {
       await this.nativeHistoryTarget(target)
       await this.nativeAnchorReady(target)
       // On a loaded simulator a framing drag can register as a hold and open
-      // the message actions over the history; close them and frame again.
-      if (
+      // the message actions over the history, sometimes seconds after the
+      // drag; close them and frame again.
+      for (
+        let attempt = 0;
         ui.surface === 'ios' &&
-        (await ui.visible({ id: 'chat-message-spotlight' }, 500))
+        attempt < 3 &&
+        (await ui.visible({ id: 'chat-message-spotlight' }, 3000));
+        attempt++
       ) {
-        this.observations.push({ nativeFramingOpenedActions: target.id })
+        this.observations.push({
+          nativeFramingOpenedActions: target.id,
+          attempt
+        })
         await this.dismiss()
         await ui.absent('chat-message-spotlight')
         await this.nativeAnchorReady(target)

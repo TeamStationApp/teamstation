@@ -12000,7 +12000,62 @@ describe('native framing that opened message actions', function () {
       'present:chat-bubble-msg-framed'
     ])
     expect(scenario.observations).deep.equals([
-      { nativeFramingOpenedActions: 'msg-framed' }
+      { nativeFramingOpenedActions: 'msg-framed', attempt: 0 }
+    ])
+  })
+
+  it('waits for late actions and closes them again after each reframe, at most three times', async () => {
+    const target: Chat2Message = {
+      id: 'msg-late',
+      seq: 4,
+      body: 'Synthetic late-held target',
+      authorId: userIdOfGumbo(2)
+    }
+    const events: string[] = []
+    const timeouts: number[] = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      visible: async (selector: { id?: string }, timeout: number) => {
+        if (selector.id !== 'chat-message-spotlight') return false
+        timeouts.push(timeout)
+        return true
+      },
+      absent: async () => {},
+      present: async (id: string) => {
+        events.push('present:' + id)
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      f: { messages: { target } },
+      nativeHistoryTarget: async () => {},
+      nativeAnchorReady: async () => {
+        events.push('frame')
+        return []
+      },
+      dismiss: async () => {
+        events.push('dismiss')
+      }
+    }) as Scenarios
+    await scenario.anchor(target)
+    // An actions sheet can appear seconds after the drag, so each check waits.
+    expect(timeouts).deep.equals([3000, 3000, 3000])
+    expect(events).deep.equals([
+      'frame',
+      'dismiss',
+      'frame',
+      'dismiss',
+      'frame',
+      'dismiss',
+      'frame',
+      'present:chat-bubble-msg-late'
+    ])
+    expect(scenario.observations).deep.equals([
+      { nativeFramingOpenedActions: 'msg-late', attempt: 0 },
+      { nativeFramingOpenedActions: 'msg-late', attempt: 1 },
+      { nativeFramingOpenedActions: 'msg-late', attempt: 2 }
     ])
   })
 })
