@@ -520,4 +520,31 @@ describe('matched AFTER archive before an account switch', () => {
       requireAfterArchive(fixture, 'android')
     }).throws('Archived AFTER image changed')
   })
+
+  it('keeps an owner-excluded surface at its archived frames, and only that one', () => {
+    const saved = process.env.CHAT2_OUT_OF_SCOPE_SURFACES
+    try {
+      process.env.CHAT2_OUT_OF_SCOPE_SURFACES = 'android,unknown'
+      const { fixture, root } = archive(file =>
+        file.startsWith('android-') ? earlier : current
+      )
+      requireAfterArchive(fixture)
+      const other = archive(file =>
+        file.startsWith('ios-') ? earlier : current
+      )
+      expect(() => {
+        requireAfterArchive(other.fixture)
+      }).throws('Archived AFTER source differs')
+      writeFileSync(
+        join(root, 'android-chat-list-after.png'),
+        Buffer.from(png).fill(2, 9)
+      )
+      expect(() => {
+        requireAfterArchive(fixture)
+      }).throws('Archived AFTER image changed')
+    } finally {
+      if (saved == null) delete process.env.CHAT2_OUT_OF_SCOPE_SURFACES
+      else process.env.CHAT2_OUT_OF_SCOPE_SURFACES = saved
+    }
+  })
 })
