@@ -462,6 +462,34 @@ export async function observeMentionHeader(
   }
 }
 
+/**
+ * The innermost public node with an exact label. iOS reports a navigation tab
+ * as Other (role tab has no trait) and labels the tab list with the selected
+ * tab's label too, so the first match can be the whole capsule.
+ */
+export function innermostLabelled(
+  nodes: PublicNode[],
+  label: string
+): NonNullable<PublicNode['bounds']> {
+  type Box = NonNullable<PublicNode['bounds']>
+  const area = (b: Box): number => b.width * b.height
+  const contains = (outer: Box, inner: Box): boolean =>
+    outer.x <= inner.x &&
+    outer.y <= inner.y &&
+    outer.x + outer.width >= inner.x + inner.width &&
+    outer.y + outer.height >= inner.y + inner.height
+  const own = nodes
+    .filter(n => n.text === label)
+    .map(n => n.bounds)
+    .filter((b): b is Box => b != null && b.width > 0 && b.height > 0)
+    .sort((a, b) => area(a) - area(b))
+  assert(
+    own.length > 0 && own.slice(1).every(b => contains(b, own[0])),
+    'One innermost public element required: ' + label
+  )
+  return own[0]
+}
+
 function captureRaster(bytes: Buffer): { width: number; height: number } {
   if (
     bytes.length >= 24 &&
@@ -3359,7 +3387,7 @@ export class Scenarios {
           label,
           bounds: need(
             ui.surface === 'ios'
-              ? await ui.observedBounds({ text: exactText(label) }, 'Button')
+              ? innermostLabelled(nodes, label)
               : (await ui.device.copyTextFrom({ text: exactText(label) }))
                   .element?.bounds,
             'Visible public navigation tab bounds required'
@@ -6479,17 +6507,19 @@ export class Scenarios {
     await this.check(
       'E9 ordinary shared chrome routes return to selected chat',
       async () => {
+        // A native tab list carries the selected tab's label too.
+        const tab = async (label: string): Promise<PublicNode> => {
+          const nodes = await ui.nodes()
+          if (ui.native)
+            return { text: label, bounds: innermostLabelled(nodes, label) }
+          return need(
+            nodes.find(n => n.text === label && n.bounds != null),
+            'Public shared-shell tab fixture missing: ' + label
+          )
+        }
         for (const label of ['Home', 'Videos', 'Schedule']) {
-          const tab = (await ui.nodes()).find(
-            n => n.text === label && n.bounds != null
-          )
-          await ui.tapObserved(
-            need(tab, 'Public shared-shell tab fixture missing: ' + label)
-          )
-          const chat = (await ui.nodes()).find(
-            n => n.text === 'Chat' && n.bounds != null
-          )
-          await ui.tapObserved(need(chat, 'Public Chat tab required'))
+          await ui.tapObserved(await tab(label))
+          await ui.tapObserved(await tab('Chat'))
           await ui.present('chat-message-history')
         }
       }
