@@ -1,3 +1,15 @@
+/**
+ * The scoring screen in a headless browser, against the web build with the
+ * API answered by `open()` below. The build must ask its own origin for the
+ * API, or the browser blocks the answers:
+ *
+ *   TS_API_BASE_URL=/api/v1 node src/build.mjs --serve &
+ *   TS_SCORING_TEST_URL=http://127.0.0.1:8080 node_modules/.bin/mocha \
+ *     -r sucrase/register --extension ts --timeout 120000 --exit \
+ *     src/app/scoring/scoring.e2e.ts
+ *
+ * `TS_SCORING_ARTIFACT_DIR` keeps the screenshots the tests take.
+ */
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
