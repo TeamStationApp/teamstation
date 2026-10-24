@@ -3791,16 +3791,22 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * A guest on one side of the game. `teamId` is the team the caller means:
+   * when home and away were swapped since it read the game, the server
+   * refuses rather than add the guest to the other team.
+   */
   async createGuestPlayer(
     gameId: string,
     side: 'away' | 'home',
-    player: NewRosterPlayer
+    player: NewRosterPlayer,
+    teamId?: string
   ): Promise<RosterEntry> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asRosterEntry,
-      { side, ...player }
+      { side, ...(teamId == null ? {} : { teamId }), ...player }
     )
   }
 

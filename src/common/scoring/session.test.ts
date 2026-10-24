@@ -17,8 +17,10 @@ import {
   type EventStore,
   type SaveChange,
   ScoringSession,
+  type SessionContext,
   type StoredGame
 } from './session'
+import { swapRecordSides } from './sideSwap'
 import { asGameState, type GameState, setupOf, type Side } from './state'
 
 /** A server in memory that records every post and can be made to fail. */
@@ -2386,5 +2388,108 @@ describe('a scoring session', function () {
     const next = session.picture()
     expect(next).not.equals(first)
     expect(next.current).not.deep.equals(first.current)
+  })
+
+  describe('a game swapped under it', function () {
+    /** The server after a swap: the record on its new sides, and a context. */
+    class SwappingStore extends FakeStore {
+      context: SessionContext | undefined
+      staleOnce = false
+
+      override async load(): Promise<StoredGame> {
+        const stored = await super.load()
+        return this.context == null
+          ? stored
+          : { ...stored, context: this.context }
+      }
+
+      override async save(
+        gameId: string,
+        change: SaveChange
+      ): Promise<StoredGame> {
+        if (this.staleOnce) {
+          this.staleOnce = false
+          throw new HttpError('conflict', 'Somebody else changed the lineups', {
+            stale: true
+          })
+        }
+        return await super.save(gameId, change)
+      }
+
+      swap(): void {
+        this.current = {
+          ...this.current!,
+          teamStation: swapRecordSides(recordOf(this.current)!)
+        }
+        this.context = {
+          ...context,
+          teams: { home: TEAMS.away, away: TEAMS.home },
+          setup: {
+            ...context.setup,
+            sides: {
+              home: context.setup.sides.away,
+              away: context.setup.sides.home
+            }
+          }
+        }
+      }
+    }
+    const roster: ScoringAction = {
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(game()),
+      confirmed: ['away', 'home']
+    }
+
+    it('reloads on the context its store gives, and keeps it', async function () {
+      const store = new SwappingStore()
+      const { session } = await open(store)
+      session.apply(roster)
+      await session.flush()
+      store.swap()
+      expect(await session.reload()).equals(true)
+      expect(session.readOnly).equals(false)
+      expect(session.state.gameData.teams.home.id).equals(TEAMS.away.id)
+      expect(session.state.liveData.linescore.offense.batter?.id).equals(10)
+      // The store gives no context on the next read: the one it gave holds.
+      store.context = undefined
+      await session.reload()
+      expect(session.readOnly).equals(false)
+      expect(session.state.gameData.teams.home.id).equals(TEAMS.away.id)
+    })
+
+    it('reloads on the context it was opened with when its store gives none', async function () {
+      const store = new SwappingStore()
+      const { session } = await open(store)
+      session.apply(roster)
+      await session.flush()
+      store.current = {
+        ...store.current!,
+        teamStation: swapRecordSides(recordOf(store.current)!)
+      }
+      await session.reload()
+      expect(session.state.gameData.teams.home.id).equals(TEAMS.home.id)
+      expect(session.problem).match(/could not be read back/)
+    })
+
+    it('rebases on the context its store gives after a stale save, dropping its own actions from before the swap', async function () {
+      const store = new SwappingStore()
+      const { session } = await open(store)
+      session.apply(roster)
+      await session.flush()
+      store.swap()
+      store.staleOnce = true
+      expect(session.apply(ball).problems).deep.equals([])
+      await session.flush()
+      expect(session.readOnly).equals(false)
+      expect(session.state.gameData.teams.home.id).equals(TEAMS.away.id)
+      // The ball was thrown at the old sides: it is not put back, and the
+      // scorer is told.
+      expect(session.problem).equals(
+        'Home and away were swapped, so a change not yet saved before the swap was not kept.'
+      )
+      expect(store.current?.playEvents).deep.equals([])
+      expect(session.state.liveData.linescore.offense.batter?.id).equals(10)
+    })
   })
 })

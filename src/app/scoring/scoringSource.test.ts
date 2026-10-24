@@ -10,8 +10,10 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { recordOf } from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
-import { type Position, POSITIONS } from '../../common/scoring/state'
+import { swapRecordSides } from '../../common/scoring/sideSwap'
+import { type Position, POSITIONS, setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { deviceStorage } from '../platform/deviceStorage'
 import { startingSetup, teamsOf } from './developmentSession'
@@ -335,5 +337,103 @@ describe('the server scoring source’s clock (U43)', function () {
     const source = new ServerScoringSource(fake)
     await source.clock.measure()
     expect(source.clock.offset).within(11_000, 13_000)
+  })
+})
+
+describe('the server scoring source after a swap of home and away', function () {
+  it('replays on the new teams from any read after they change, reading their defaults once', async function () {
+    const store = memoryStore()
+    const { client: fake, asked } = client(async () => none, store)
+    const session = await new ServerScoringSource(fake).open(game, away, home)
+    expect(
+      session.apply({
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupOf(session.state),
+        confirmed: ['away', 'home']
+      }).problems
+    ).deep.equals([])
+    await session.flush()
+    const opened = asked.length
+
+    // Read again with nothing changed: no new teams, no defaults read.
+    await session.reload()
+    expect(asked).length(opened)
+    expect(session.state.gameData.teams.home.id).equals('home')
+
+    // The server swaps the game: the game reads with its teams exchanged,
+    // and the record on its new sides.
+    const swapped = {
+      ...game,
+      homeTeamId: game.awayTeamId,
+      awayTeamId: game.homeTeamId,
+      homeTeamName: game.awayTeamName,
+      awayTeamName: game.homeTeamName,
+      unrostered: { away: [], home: [109] }
+    }
+    fake.game = async () => swapped
+    const stored = store.games.get(game.id)!
+    store.games.set(game.id, {
+      ...stored,
+      currentPlay: {
+        ...stored.currentPlay!,
+        teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+      }
+    })
+    // A read the session throws away first, as a tag read does: the next
+    // read still replays on the new teams.
+    expect(await session.readEventTag('nothing')).equals(undefined)
+    expect(await session.reload()).equals(true)
+    expect(session.readOnly).equals(false)
+    expect(session.state.gameData.teams.home).deep.include({
+      id: 'away',
+      name: 'Owls'
+    })
+    expect(session.state.liveData.linescore.offense.batter?.id).equals(201)
+    // The new teams' defaults were read for the context, once.
+    expect(asked.slice(opened)).members(['away', 'home'])
+    await session.reload()
+    expect(asked).length(opened + 2)
+    expect(session.readOnly).equals(false)
+  })
+
+  it('reads the game and its plays again when a swap lands between them', async function () {
+    const store = memoryStore()
+    const { client: fake } = client(async () => none, store)
+    const session = await new ServerScoringSource(fake).open(game, away, home)
+    session.apply({
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(session.state),
+      confirmed: ['away', 'home']
+    })
+    await session.flush()
+    const swapped = {
+      ...game,
+      homeTeamId: game.awayTeamId,
+      awayTeamId: game.homeTeamId,
+      homeTeamName: game.awayTeamName,
+      awayTeamName: game.homeTeamName
+    }
+    // The reload reads the game with its old teams; the swap then commits
+    // before its plays are read.
+    let reads = 0
+    fake.game = async () => {
+      reads++
+      if (reads > 1) return swapped
+      const stored = store.games.get(game.id)!
+      store.games.set(game.id, {
+        ...stored,
+        currentPlay: {
+          ...stored.currentPlay!,
+          teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+        }
+      })
+      return game
+    }
+    expect(await session.reload()).equals(true)
+    expect(session.readOnly).equals(false)
+    expect(session.state.gameData.teams.home.id).equals('away')
+    expect(session.state.liveData.linescore.offense.batter?.id).equals(201)
   })
 })

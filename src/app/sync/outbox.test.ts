@@ -295,7 +295,12 @@ describe('the phone outbox', function () {
     // The phone's copy is what a read of the game answers while it waits.
     expect((await p.client.gameEvents('g1')).plays).length(2)
     const summary = await p.client.outboxSummary()
-    expect(summary).deep.equals({ count: 1, games: {}, teams: {} })
+    expect(summary).deep.equals({
+      count: 1,
+      chains: { 'game:g1': 1 },
+      games: {},
+      teams: {}
+    })
   })
 
   it('answers a queued lineup save with both sides, the saved one replaced (Optimistic lineups)', async function () {
@@ -645,6 +650,7 @@ describe('the phone outbox', function () {
     expect(p.rows()).deep.equals([])
     expect(await p.client.outboxSummary()).deep.equals({
       count: 0,
+      chains: {},
       games: {},
       teams: {}
     })
@@ -899,6 +905,7 @@ describe('the phone outbox', function () {
     expect(JSON.parse(String(kept.body)).plays).length(3)
     expect(await p.client.outboxSummary()).deep.equals({
       count: 2,
+      chains: { 'game:g1': 2 },
       games: {
         g1: {
           state: 'parked',
@@ -952,6 +959,7 @@ describe('the phone outbox', function () {
     )
     expect(await p.client.outboxSummary()).deep.equals({
       count: 2,
+      chains: { 'game:g1': 1, 'team:tem_home': 1 },
       games: {
         g1: { state: 'parked', message: 'firstName: Too long', cause: 'player' }
       },
@@ -1209,6 +1217,7 @@ describe('the phone outbox', function () {
       expect(p.document(key)!.pending, key).equals(0)
     expect(await p.client.outboxSummary()).deep.equals({
       count: 0,
+      chains: {},
       games: {},
       teams: {}
     })
@@ -1254,6 +1263,7 @@ describe('the phone outbox', function () {
     ).deep.equals([])
     expect(await p.client.outboxSummary()).deep.equals({
       count: 0,
+      chains: {},
       games: {},
       teams: {}
     })
@@ -1475,6 +1485,7 @@ describe('the phone outbox', function () {
     expect(p.rows()).deep.equals([])
     expect(await p.client.outboxSummary()).deep.equals({
       count: 0,
+      chains: {},
       games: {},
       teams: {}
     })
@@ -1895,6 +1906,7 @@ describe('the phone outbox', function () {
     expect(sent).deep.equals(['none'])
     expect(await client.outboxSummary()).deep.equals({
       count: 0,
+      chains: {},
       games: {},
       teams: {}
     })

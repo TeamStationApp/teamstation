@@ -125,6 +125,8 @@ export interface HeldChain {
 export interface OutboxSummary {
   /** Writes still on the phone, sent or not. */
   count: number
+  /** Those writes by chain (`game:<id>`, `team:<id>`): a game's own wait. */
+  chains: Record<string, number>
   /** Each game whose queue is held, by its id. */
   games: Record<string, HeldChain>
   /** Each team whose queue of new players is held, by its id. */
@@ -517,7 +519,14 @@ export class Outbox {
       const localId = localIdOfRow(id)
       return localId != null && !made.has(localId)
     }
-    const summary: OutboxSummary = { count: rows.length, games: {}, teams: {} }
+    const summary: OutboxSummary = {
+      count: rows.length,
+      chains: {},
+      games: {},
+      teams: {}
+    }
+    for (const row of rows)
+      summary.chains[row.chain] = (summary.chains[row.chain] ?? 0) + 1
     const heads = new Set<string>()
     for (const row of rows) {
       if (heads.has(row.chain)) continue
