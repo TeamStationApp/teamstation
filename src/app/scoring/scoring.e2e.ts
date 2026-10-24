@@ -195,6 +195,22 @@ async function open(
       }
     } else if (uiAnimations && url.pathname.endsWith('/highlights')) {
       body = { withheld: null, droppedCount: 0, highlights: [] }
+    } else if (uiAnimations && url.pathname.endsWith('/scoreboard-overlay')) {
+      // The game's board stays off its video.
+      body = {
+        show: false,
+        single: { x: 0.01, y: 0.01, height: 0.15 },
+        landscape: { x: 0.01, y: 0.01, height: 0.15 },
+        portraitHeight: 0.15
+      }
+    } else if (uiAnimations && url.pathname.endsWith('/wall-timeline')) {
+      body = {
+        anchors: [],
+        source: 'start',
+        confidence: 'approximate',
+        live: true,
+        startAt: null
+      }
     } else if (url.pathname === '/api/v1/auth/me')
       body = {
         id: userIdOfGumbo(100),
@@ -4331,8 +4347,9 @@ describe('scoring browser', function () {
                 const group = document.querySelector(
                   `[aria-label="Fielder's choice decision for Player ${id}"]`
                 )!
+                // Away's Player N is the player with id 100 + N.
                 const plate = document.querySelector(
-                  `[data-nameplate="offense-${id}"]`
+                  `[data-nameplate="offense-${100 + id}"]`
                 )!
                 return {
                   control: group.getBoundingClientRect().toJSON(),
@@ -4930,13 +4947,15 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      // An incomplete roster saves; the scoring screen asks for the missing
+      // lineup or pitcher before the next pitch.
       await click(page, 'Remove Jordan K.')
       for (let i = 2; i <= 9; i++) await click(page, `Remove Player ${i}`)
       expect(
         await page.$eval('[aria-label="Save Rosters"]', node =>
           node.getAttribute('aria-disabled')
         )
-      ).equals('true')
+      ).not.equals('true')
       await click(page, 'Add Jordan K. to Lineup')
       await click(page, 'Defense')
       await click(page, 'Clear P')
@@ -4944,7 +4963,7 @@ describe('scoring browser', function () {
         await page.$eval('[aria-label="Save Rosters"]', node =>
           node.getAttribute('aria-disabled')
         )
-      ).equals('true')
+      ).not.equals('true')
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Overrides')
@@ -5627,7 +5646,7 @@ describe('scoring browser', function () {
           await page.close()
         }
       })
-  it('animates the live badge with live reduced-motion changes', async () => {
+  it("holds the live badge still over the browser's picture, whatever the motion setting", async () => {
     const { page, unexpected } = await open(
       '/games/g1',
       false,
@@ -5639,6 +5658,10 @@ describe('scoring browser', function () {
       true
     )
     try {
+      // The game page opens on Info; the badge is on the game's video.
+      await page
+        .locator('[aria-label="Game sections"] [aria-label="Videos"]')
+        .click()
       await page.waitForSelector('[aria-label="Live now"]')
       const sample = async (
         selector: string,
@@ -5663,24 +5686,17 @@ describe('scoring browser', function () {
           selector,
           transform
         )
-      const pulse = await sample('[aria-label="Live now"]')
-      expect(Math.min(...pulse)).within(0.71, 0.76)
-      expect(Math.max(...pulse)).within(0.96, 1)
+      // Any movement over a live picture costs the browser frames of it: the
+      // pill pulses in the apps only.
+      expect(
+        (await sample('[aria-label="Live now"]')).every(value => value === 1)
+      ).equals(true)
       await page.emulateMediaFeatures([
         { name: 'prefers-reduced-motion', value: 'reduce' }
       ])
-      await page.waitForFunction(
-        () =>
-          getComputedStyle(document.querySelector('[aria-label="Live now"]')!)
-            .opacity === '1'
-      )
-      const still = await sample('[aria-label="Live now"]')
-      expect(still.every(value => value === 1)).equals(true)
-      await page.emulateMediaFeatures([
-        { name: 'prefers-reduced-motion', value: 'no-preference' }
-      ])
-      const resumed = await sample('[aria-label="Live now"]')
-      expect(Math.min(...resumed)).within(0.71, 0.76)
+      expect(
+        (await sample('[aria-label="Live now"]')).every(value => value === 1)
+      ).equals(true)
       await page.screenshot({
         path: join(
           process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
