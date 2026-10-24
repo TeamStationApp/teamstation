@@ -11987,6 +11987,73 @@ describe('native below-reader attention count', function () {
   })
 })
 
+describe('iOS drags that opened message actions', function () {
+  const scenarioFor = (
+    surface: string,
+    openings: number
+  ): { scenario: Scenarios; events: string[] } => {
+    const events: string[] = []
+    let open = 0
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: surface !== 'web-touch',
+      surface,
+      visible: async (selector: { id?: string }, timeout: number) => {
+        expect(selector.id).equals('chat-message-spotlight')
+        expect(timeout).equals(3000)
+        return open > 0
+      },
+      absent: async (id: string) => {
+        events.push('absent:' + id)
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      dismiss: async () => {
+        events.push('dismiss')
+        open--
+      }
+    }) as Scenarios
+    open = openings
+    return { scenario, events }
+  }
+  it('closes late actions and repeats the swipe, recorded under its key', async () => {
+    const { scenario, events } = scenarioFor('ios', 2)
+    await scenario.withoutDragActions(
+      async () => {
+        events.push('swipe')
+      },
+      'nativeOldestSwipeOpenedActions',
+      'msg-oldest'
+    )
+    expect(events).deep.equals([
+      'swipe',
+      'dismiss',
+      'absent:chat-message-spotlight',
+      'swipe',
+      'dismiss',
+      'absent:chat-message-spotlight',
+      'swipe'
+    ])
+    expect(scenario.observations).deep.equals([
+      { nativeOldestSwipeOpenedActions: 'msg-oldest', attempt: 0 },
+      { nativeOldestSwipeOpenedActions: 'msg-oldest', attempt: 1 }
+    ])
+  })
+  it('drags once without looking for actions off iOS', async () => {
+    const { scenario, events } = scenarioFor('android', 1)
+    await scenario.withoutDragActions(
+      async () => {
+        events.push('swipe')
+      },
+      'nativeOldestSwipeOpenedActions',
+      'msg-oldest'
+    )
+    expect(events).deep.equals(['swipe'])
+    expect(scenario.observations).deep.equals([])
+  })
+})
+
 describe('native framing that opened message actions', function () {
   it('closes actions a framing drag opened on iOS and frames again, recorded', async () => {
     const target: Chat2Message = {
