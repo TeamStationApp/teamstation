@@ -6152,11 +6152,12 @@ export class Scenarios {
             ).value
           const observed = await typed()
           if (observed !== first.search) {
-            // The simulator can drop a repeated key ("Boby"): clear the
-            // field and type the query once more, recorded.
+            // The loaded simulator drops keys from fast typing ("Boby",
+            // "Bby"): clear the field and type the query once more, one key
+            // at a time as a person types, recorded.
             this.observations.push({ iosSearchRetyped: observed })
             await ui.text('Clear Search members')
-            await ui.append(first.search)
+            for (const key of first.search) await ui.append(key)
           }
           assert.equal(
             await typed(),
