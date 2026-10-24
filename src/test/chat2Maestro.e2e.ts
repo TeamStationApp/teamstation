@@ -1590,7 +1590,7 @@ export class Chat2UI {
   readonly captures: Args[] = []
   readonly runDir: string
   readonly binding: ReturnType<typeof sourceBinding>
-  readonly deadline = AbortSignal.timeout(900000)
+  readonly deadline: AbortSignal
   device!: Chat2Device
   daemon?: Daemon
   browser?: Browser
@@ -1621,6 +1621,9 @@ export class Chat2UI {
   ) {
     this.root = process.cwd()
     this.native = surface === 'ios' || surface === 'android'
+    // An iOS case reads a ~2600-node hierarchy at every step, and the long
+    // ones (E3) need more than 15 minutes on a shared, loaded host.
+    this.deadline = AbortSignal.timeout(surface === 'ios' ? 1800000 : 900000)
     this.artifactRoot = resolve(
       need(process.env.CHAT2_ARTIFACTS, 'CHAT2_ARTIFACTS required')
     )
