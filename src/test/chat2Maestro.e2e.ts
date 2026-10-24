@@ -2587,6 +2587,49 @@ export class Chat2UI {
     await this.tapObserved(key)
   }
 
+  /**
+   * A locked conversation keeps its composer on screen but not editable. The
+   * driver counts a read-only web field as enabled and iOS reports such a
+   * field enabled too, so prove it: on web the field is read-only or disabled;
+   * on iOS a tap on it raises no keyboard. Send is disabled on both.
+   */
+  async assertComposerNotEditable(settle = 1500): Promise<Args> {
+    if (!this.native) {
+      const state = await this.dom(
+        "const n=document.querySelector('[data-testid=\"chat-composer\"]');const s=document.querySelector('[aria-label=\"Send\"]');return {present:n!=null,readOnly:n!=null&&n.readOnly===true,disabled:n!=null&&n.disabled===true,sendDisabled:s!=null&&(s.disabled===true||s.getAttribute('aria-disabled')==='true')}"
+      )
+      assert(
+        state.present !== true ||
+          state.readOnly === true ||
+          state.disabled === true,
+        'A locked composer must not accept text'
+      )
+      assert(state.sendDisabled === true, 'Send must be positively disabled')
+      return { surface: this.surface, ...state }
+    }
+    assert(this.surface === 'ios', 'Composer editability is proven on iOS')
+    await this.device.tapOn({ id: 'chat-composer' })
+    await new Promise(resolve => setTimeout(resolve, settle))
+    const raw = await this.iosRaw()
+    const keyboard = iosPublicRead(raw, {}, 'Keyboard').element
+    const send = iosPublicRead(
+      raw,
+      { text: exactText('Send') },
+      'Button'
+    ).element
+    assert(
+      keyboard == null,
+      'A tap on a locked composer must raise no keyboard'
+    )
+    assert(send?.enabled === false, 'Send must be positively disabled')
+    return {
+      surface: this.surface,
+      tapped: true,
+      keyboard: false,
+      sendDisabled: true
+    }
+  }
+
   async assertEmptyDraft(): Promise<void> {
     if (this.surface !== 'ios') {
       assert.equal(await this.draft(), '')

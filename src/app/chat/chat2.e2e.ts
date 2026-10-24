@@ -6465,11 +6465,13 @@ export class Scenarios {
             'Read-only audience fixture required'
           ).id
         )
-        await ui.device.assertNotVisible({
-          id: 'chat-composer',
-          enabled: true,
-          timeout: 3000
+        // Prove the read-only conversation is the one on screen before the
+        // composer's absence counts; the previous screen can still be up.
+        await ui.device.assertVisible({
+          text: exactText('Only season staff post here. You can react.'),
+          timeout: ui.surface === 'ios' ? 45000 : 15000
         })
+        await ui.absent('chat-composer')
         await ui.device.assertNotVisible({
           text: exactText('Mention a member'),
           timeout: 1000
@@ -6494,10 +6496,14 @@ export class Scenarios {
           'Actual new probe must still be locked; never reset a previously granted identity'
         )
         await this.openGroup(locked.conversation.id)
-        await ui.device.assertNotVisible({
-          id: 'chat-composer',
-          enabled: true,
-          timeout: 3000
+        await ui.device.assertVisible({
+          text: exactText(
+            'History is locked — it unlocks when another member opens TeamStation'
+          ),
+          timeout: ui.surface === 'ios' ? 45000 : 15000
+        })
+        this.observations.push({
+          lockedComposer: await ui.assertComposerNotEditable()
         })
         await ui.device.assertNotVisible({
           text: exactText(locked.message.body),
