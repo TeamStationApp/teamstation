@@ -2182,6 +2182,9 @@ export class Chat2UI {
       !this.native && this.cdp != null,
       'No-WASM is a browser capability case'
     )
+    // A script added on a session without the Page domain is never run on
+    // the next document (checked in Chrome), so WebAssembly stayed.
+    await this.cdp.send('Page.enable')
     const script = await this.cdp.send(
       'Page.addScriptToEvaluateOnNewDocument',
       { source: 'delete globalThis.WebAssembly;' }
