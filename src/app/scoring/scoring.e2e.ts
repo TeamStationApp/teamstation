@@ -4,7 +4,12 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer, {
+  type BoundingBox,
+  type Browser,
+  type ElementHandle,
+  type Page
+} from 'puppeteer'
 import {
   type Mesh,
   type MeshStandardMaterial,
@@ -14,6 +19,7 @@ import {
 } from 'three'
 
 import { asGameDetail, type RosterEntry } from '../../common/api'
+import { POSITIONS } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -150,11 +156,14 @@ async function open(
     let body: unknown
     let status = 200
     const saving =
-      request.method() === 'POST' && url.pathname.endsWith('/events')
+      request.method() === 'POST' && url.pathname === '/api/v1/games/g1/events'
     if (saving && holdSaves) return
     const creatingPlayer =
       request.method() === 'POST' && url.pathname.endsWith('/roster-players')
-    if (request.method() !== 'GET' && !saving && !creatingPlayer)
+    // The app reports its own product analytics; the server takes any batch.
+    const analytics =
+      request.method() === 'POST' && url.pathname === '/api/v1/analytics/events'
+    if (request.method() !== 'GET' && !saving && !creatingPlayer && !analytics)
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
       body = {
@@ -177,6 +186,11 @@ async function open(
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
     else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
+    else if (analytics) {
+      status = 202
+      body = { accepted: true }
+    } else if (url.pathname === '/api/v1/me/umpire-leagues')
+      body = { leagues: [] }
     else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
     else if (url.pathname === '/api/v1/me/notifications/summary')
       body = { hasPending: false }
@@ -415,13 +429,34 @@ async function click(page: Page, label: string): Promise<void> {
     {},
     selector
   )
-  for (const match of (await page.$$(selector)).reverse()) {
-    if (!(await match.isVisible())) continue
-    await match.click()
-    // Let the sheet transition finish before targeting its next control.
-    await new Promise(resolve => setTimeout(resolve, 350))
-    break
+  // Sheets slide and menus grow in, and React may replace the control while
+  // they do: take the topmost visible match afresh each time, and click it
+  // once it has held the same place and size for a few frames.
+  const last = async (): Promise<ElementHandle | undefined> => {
+    for (const match of (await page.$$(selector)).reverse())
+      if (await match.isVisible()) return match
   }
+  let box: BoundingBox | null = null
+  for (let tries = 0, still = 0; ; tries++) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const match = await last()
+    const next = (await match?.boundingBox()) ?? null
+    still =
+      next != null && JSON.stringify(next) === JSON.stringify(box)
+        ? still + 1
+        : 0
+    box = next
+    if (match == null || (still < 3 && tries < 60)) continue
+    try {
+      await match.click()
+      break
+    } catch (error) {
+      if (tries > 160) throw error
+      still = 0
+    }
+  }
+  // Let the sheet transition finish before targeting its next control.
+  await new Promise(resolve => setTimeout(resolve, 350))
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
 
@@ -485,13 +520,23 @@ async function tapSettled(page: Page, label: string): Promise<void> {
     .locator(`[aria-label="${label}"]:not([aria-disabled="true"])`)
     .click()
 }
+/**
+ * Brackets move the field's keyboard focus through its players in order: the
+ * fielders, then the runners from first base up, then the batter. Space on a
+ * fielder opens his position's roster, so step past the nine fielders this
+ * suite's fixture always puts on the field to the runner on the lowest base.
+ */
+async function focusFirstRunner(page: Page): Promise<void> {
+  await page.focus('[role="application"]')
+  for (let i = 0; i <= POSITIONS.length; i++) await page.keyboard.press(']')
+}
 async function dropRunnerWithKeyboard(
   page: Page,
   decision: 'Safe' | 'Out',
   advance = false
 ): Promise<void> {
   await page.waitForSelector('canvas[data-field-ready="true"]')
-  await page.focus('[role="application"]')
+  await focusFirstRunner(page)
   await page.keyboard.press('Space')
   if (advance) for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
   await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
