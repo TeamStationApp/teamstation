@@ -6238,10 +6238,21 @@ describe('scoring browser', function () {
         {},
         source
       )
-      // The dropped card lands in the gap the drag held open: full height,
-      // one gap from each neighbour, drawn over neither.
+      // The dropped card lands in the gap the drag held open, growing from a
+      // roster card to a lineup row's full height, one gap from each
+      // neighbour, drawn over neither.
+      await page.waitForFunction(() => {
+        const height = (index: number): number =>
+          document
+            .querySelector(`[data-roster-target="lineup-${index}"]`)!
+            .getBoundingClientRect().height
+        return Math.abs(height(1) - height(0)) < 1
+      })
       const landed = await rect('[data-roster-target="lineup-1"]')
-      expect(landed.height).closeTo(a.height, 1)
+      expect(landed.height).closeTo(
+        (await rect('[data-roster-target="lineup-0"]')).height,
+        1
+      )
       expect(
         landed.y - (await rect('[data-roster-target="lineup-0"]')).bottom
       ).closeTo(ROSTER_CARD_GAP, 0.5)
