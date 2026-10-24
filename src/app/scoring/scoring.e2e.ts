@@ -168,7 +168,12 @@ async function open(
     } else if (uiAnimations && url.pathname.endsWith('/highlights')) {
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
-      body = { id: 100, displayName: 'Scorer', isAdmin: false }
+      body = {
+        id: userIdOfGumbo(100),
+        gumboId: 100,
+        displayName: 'Scorer',
+        isAdmin: false
+      }
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
     else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
