@@ -572,6 +572,10 @@ describe('a game swapped under the scoring screen on the socket', function () {
       holdSaves?: boolean
       /** The held save is refused as stale once released. */
       staleOnRelease?: boolean
+      /** The held save is refused once released: the game was reset. */
+      resetOnRelease?: boolean
+      /** That reset swapped home and away too, as Reset and Swap does. */
+      swapOnReset?: boolean
       /** A phone, whose outbox holds this many writes per chain. */
       phone?: Record<string, number>
       /** How long the swap notice stays up once drawn. */
@@ -590,9 +594,12 @@ describe('a game swapped under the scoring screen on the socket', function () {
     /** The opened sessions' listeners still subscribed. */
     listening: () => number
     swap: () => void
+    /** The server's reset: the plays gone, the next generation. */
+    reset: () => void
     notice: (teams: {
       homeTeamId?: string
       awayTeamId?: string
+      generation?: number
     }) => Promise<void>
   }> {
     const store = memoryStore()
@@ -616,6 +623,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
       confirmed: ['away', 'home']
     })
     await seed.flush()
+    const pregame = store.games.get('g1')!
     let opens = 0
     let reloads = 0
     let listening = 0
@@ -672,6 +680,10 @@ describe('a game swapped under the scoring screen on the socket', function () {
         }
       })
     }
+    const reset = (): void => {
+      game = { ...game, generation: game.generation + 1 }
+      store.games.set('g1', pregame)
+    }
     let release = (): void => undefined
     if (options.holdSaves === true) {
       const held = new Promise<void>(resolve => {
@@ -681,6 +693,18 @@ describe('a game swapped under the scoring screen on the socket', function () {
       let refused = options.staleOnRelease !== true
       store.save = async (gameId, change) => {
         await held
+        if (options.resetOnRelease === true) {
+          if (options.swapOnReset === true) swap()
+          reset()
+          throw new HttpError(
+            'conflict',
+            'This game was reset since it was read',
+            {
+              stale: true,
+              generation: game.generation
+            }
+          )
+        }
         if (!refused) {
           refused = true
           throw new HttpError('conflict', 'The lineups changed', {
@@ -760,6 +784,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
       discarded,
       listening: () => listening,
       swap,
+      reset,
       notice: async teams => {
         await changes.emit({
           type: 'change',
@@ -899,6 +924,102 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.opens()).equals(2)
     expect(screen.session().state.gameData.teams.home.id).equals('away')
     expect(document.body.textContent).includes('Home and away were swapped.')
+  })
+
+  it('opens the game again, and says it was reset, when a notice names another generation (A6)', async function () {
+    const screen = await swappable()
+    await click('Called Strike')
+    await settle()
+    expect(
+      screen.session().state.liveData.plays.currentPlay?.count.strikes
+    ).equals(1)
+    await screen.notice({
+      homeTeamId: 'home',
+      awayTeamId: 'away',
+      generation: 0
+    })
+    await settle()
+    expect(screen.opens()).equals(1)
+    screen.reset()
+    await screen.notice({
+      homeTeamId: 'home',
+      awayTeamId: 'away',
+      generation: 1
+    })
+    await settle()
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes('This game was reset.')
+    const state = screen.session().state
+    expect(state.liveData.plays.currentPlay?.count.strikes ?? 0).equals(0)
+    expect(state.gameData.teams.home.id).equals('home')
+  })
+
+  it('waits for a save on its way, and counts what a reset left unsaved (A6)', async function () {
+    const waits = await swappable({ holdSaves: true })
+    await click('Called Strike')
+    await settle()
+    waits.reset()
+    await waits.notice({
+      homeTeamId: 'home',
+      awayTeamId: 'away',
+      generation: 1
+    })
+    await settle()
+    expect(waits.opens()).equals(1)
+    waits.release()
+    await settle()
+    await settle()
+    expect(waits.opens()).equals(2)
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+
+    // The save itself is refused: the plays it was made on are gone.
+    const refused = await swappable({ holdSaves: true, resetOnRelease: true })
+    await click('Called Strike')
+    await settle()
+    refused.release()
+    await settle()
+    await settle()
+    expect(refused.opens()).equals(2)
+    expect(document.body.textContent).includes(
+      'This game was reset, so 1 change not yet saved before the reset was not kept.'
+    )
+  })
+
+  it('says home and away were swapped too when the refused save comes before any notice (A6)', async function () {
+    const screen = await swappable({
+      holdSaves: true,
+      resetOnRelease: true,
+      swapOnReset: true
+    })
+    await click('Called Strike')
+    await settle()
+    screen.release()
+    await settle()
+    await settle()
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes(
+      'Home and away were swapped and the game was reset, so 1 change not yet saved before the reset was not kept.'
+    )
+    expect(screen.session().state.gameData.teams.home.id).equals('away')
+  })
+
+  it('on a phone, gives up the writes queued before a reset (A7)', async function () {
+    const screen = await swappable({ phone: { 'game:g1': 1 } })
+    screen.reset()
+    await screen.notice({
+      homeTeamId: 'home',
+      awayTeamId: 'away',
+      generation: 1
+    })
+    await settle()
+    expect(screen.discarded).deep.equals(['g1'])
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes(
+      'This game was reset, so 1 change not yet saved before the reset was not kept.'
+    )
   })
 
   it('keeps the notice up for its time once the slow reopen is drawn', async function () {

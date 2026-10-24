@@ -433,6 +433,96 @@ describe('team-keyed lineups, and reset with swap', function () {
     await query(file, state, [fixture.gameId])
   })
 
+  /** Two half-innings of strikeouts, then a ball: the top of the 2nd. */
+  const intoTheSecond: ScoringAction[] = [
+    ...Array.from({ length: 18 }, (): ScoringAction => ({
+      type: 'pitch',
+      call: 'C'
+    })),
+    { type: 'pitch', call: 'B' }
+  ]
+  const playsState = `select home_team_id as "homeTeam", away_team_id as "awayTeam", status,
+      play_generation as generation,
+      (select count(*) from events e where e."gameId" = g.id)::int as plays,
+      (select count(*) from game_play_archives a where a.game_id = g.id)::int as archives
+    from games g where id = $1`
+
+  it('T5: the scoring menu resets and swaps a begun game, and a phone open on it follows', async function () {
+    const file = 'reset-menu.log'
+    const fixture = await lineupsSaved(file)
+    await score(fixture, intoTheSecond)
+    await note(
+      file,
+      `$ POST ${API}/games/${fixture.gameId}/events  (scorekeeper: six strikeouts, then a ball)\nsaved\n`
+    )
+    await query(file, playsState, [fixture.gameId])
+    await phone(async small => {
+      await small.as(fixture, 'scorekeeper')
+      await small.scoreGame(fixture.gameId)
+      // The top of the 2nd: the visitors' fourth batter is up.
+      await small.waitText(`Batter ${fixture.players.away[3].name}`, 60000)
+      await browser.as(fixture, 'scorekeeper')
+      await browser.scoreGame(fixture.gameId)
+      await browser.waitText(`Batter ${fixture.players.away[3].name}`, 60000)
+      await browser.tap('Open scoring menu')
+      await browser.waitText('resets all game plays')
+      const row = await browser.labelText('Swap Home and Away')
+      if (row !== 'Swap Home and Away\nresets all game plays')
+        throw new Error(`The menu row reads ${JSON.stringify(row)}`)
+      await browser.capture('scoring-menu-after-pitch-after.png')
+      await browser.tap('Swap Home and Away')
+      await browser.waitText(
+        'Resets all game plays: 7 at-bats in 2 innings will be lost.'
+      )
+      await browser.capture('reset-confirm.png')
+      await note(
+        file,
+        `scoring menu: "${row.replace('\n', ' / ')}"; the sheet: "Resets all game plays: 7 at-bats in 2 innings will be lost." with Reset and Swap\n`
+      )
+      await browser.tap('Reset and Swap')
+      await browser.waitText(`Batter ${fixture.players.home[0].name}`, 60000)
+      await browser.waitText(
+        'Home and away were swapped and the game was reset.'
+      )
+      await browser.capture('reset-swapped.png')
+      await small.waitText(`Batter ${fixture.players.home[0].name}`, 60000)
+      await small.waitText('the game was reset')
+      await small.capture('reset-phone-notice.png')
+      await note(
+        file,
+        `both screens opened again at the top of the 1st with ${fixture.players.home[0].name} due up; the phone says the game was reset\n`
+      )
+    })
+    await query(file, playsState, [fixture.gameId])
+  })
+
+  it('T6: before the first pitch the menu swaps with no subtext and no reset', async function () {
+    const file = 'swap-pregame-menu.log'
+    const fixture = await lineupsSaved(file)
+    await browser.as(fixture, 'scorekeeper')
+    await browser.scoreGame(fixture.gameId)
+    await browser.waitText(`Batter ${fixture.players.away[0].name}`, 60000)
+    await browser.tap('Open scoring menu')
+    await browser.waitText('Swap Home and Away')
+    const row = await browser.labelText('Swap Home and Away')
+    if (row !== 'Swap Home and Away')
+      throw new Error(`The menu row reads ${JSON.stringify(row)}`)
+    await browser.capture('scoring-menu-pregame.png')
+    await browser.tap('Swap Home and Away')
+    await browser.waitText('will bat first')
+    if ((await browser.text()).includes('Resets all game plays'))
+      throw new Error('A pregame swap names plays lost')
+    await browser.capture('swap-confirm-pregame.png')
+    await browser.tap('Confirm Swap')
+    await browser.waitText(`Batter ${fixture.players.home[0].name}`, 60000)
+    await browser.waitText('Home and away were swapped.')
+    await note(
+      file,
+      `scoring menu: "${row}"; the sheet names no plays; Confirm Swap; ${fixture.players.home[0].name} due up\n`
+    )
+    await query(file, playsState, [fixture.gameId])
+  })
+
   it('is driven per milestone', async function () {
     await phone(async () => undefined)
   })

@@ -922,6 +922,51 @@ describe('the phone outbox', function () {
     expect(p.posts()).length(sends)
   })
 
+  it('queues each write with the generation it was made on, and parks a game reset since (A10)', async function () {
+    let online = false
+    const RESET = 'This game was reset since it was read'
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': eventsDoc('g1', 'D0'),
+          '/games/g1/lineups': lineupsDoc('D0')
+        },
+        () =>
+          online
+            ? refusal(409, 'conflict', RESET, { stale: true, generation: 1 })
+            : 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    await p.client.gameLineups('g1')
+    await p.client.saveGameEvents('g1', {
+      plays: [play(1)],
+      remove: [],
+      generation: 0
+    })
+    await p.client.saveLineups('g1', { ...lineupSave('D0'), generation: 0 })
+    const queued = p.rows()
+    expect(queued).length(2)
+    for (const row of queued)
+      expect(JSON.parse(String(row.body))).deep.include({ generation: 0 })
+    online = true
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    const sentWith = p
+      .posts()
+      .filter(call => call.key != null)
+      .map(call => (call.body as { generation?: unknown }).generation)
+    expect(sentWith).includes(0)
+    expect(p.rows().map(row => [row.chain, row.state])).deep.equals([
+      ['game:g1', 'parked'],
+      ['game:g1', 'parked']
+    ])
+    expect((await p.client.outboxSummary()).games.g1).deep.equals({
+      state: 'parked',
+      message: RESET
+    })
+  })
+
   it('parks the lineup that waits for a create the server refused (Dead dependency)', async function () {
     let online = false
     const p = phone(

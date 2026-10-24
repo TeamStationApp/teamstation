@@ -763,7 +763,8 @@ const asStoredGame = asObject({
   currentPlay: asOptional(asNullable(asCurrentPlay), null),
   playsDigest: asOptional(asNullable(asString), null),
   priorPlaysDigest: asOptional(asNullable(asString), null),
-  lineupsDigest: asOptional(asNullable(asString), null)
+  lineupsDigest: asOptional(asNullable(asString), null),
+  generation: asOptional(asNullable(asNumber), null)
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -777,9 +778,30 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
       : { priorPlaysDigest: stored.priorPlaysDigest }),
     ...(stored.lineupsDigest == null
       ? {}
-      : { lineupsDigest: stored.lineupsDigest })
+      : { lineupsDigest: stored.lineupsDigest }),
+    ...(stored.generation == null ? {} : { generation: stored.generation })
   }
 }
+
+/** The sides a swap is asked from, and the plays a reset confirmed. */
+export interface SwapSidesRead {
+  homeTeamId: string
+  awayTeamId: string
+  generation?: number
+  playsDigest?: string
+}
+
+/** A swap's answer; an older server sends only the sides. */
+const asSwapSidesAnswer = asObject({
+  homeTeamId: asString,
+  awayTeamId: asString,
+  generation: asOptional(asNumber, 0),
+  reset: asOptional(asObject({ atBats: asNumber, innings: asNumber }), () => ({
+    atBats: 0,
+    innings: 0
+  }))
+})
+export type SwapSidesAnswer = ReturnType<typeof asSwapSidesAnswer>
 
 /**
  * A replay step as the announcer reads it: its key, and how many of its
@@ -1603,6 +1625,8 @@ export interface GameLineupsResponse {
    * to tell its own save from somebody else's. Empty from an older server.
    */
   digest: string
+  /** The game's play generation; absent from an older server. */
+  generation?: number
 }
 const asTeamLineups: Cleaner<TeamLineups> = raw => {
   const team = asObject({ teamId: asString, teamName: asString })(raw)
@@ -1611,7 +1635,8 @@ const asTeamLineups: Cleaner<TeamLineups> = raw => {
 export const asGameLineupsResponse: Cleaner<GameLineupsResponse> = asObject({
   away: asTeamLineups,
   home: asTeamLineups,
-  digest: asOptional(asString, '')
+  digest: asOptional(asString, ''),
+  generation: asOptional(asNumber)
 })
 
 /** A player in a saved lineup, named by who he is, never by a session id. */
@@ -3634,18 +3659,20 @@ export class TeamStationClient {
   }
 
   /**
-   * Swaps the game's home and away teams before its first pitch, for whoever
-   * may score it; refused with 409 once the game has begun. `read` is the
-   * sides the caller read: sent again, the call changes nothing.
+   * Swaps the game's home and away teams, for whoever may score it. A begun
+   * game is reset first, once `read` names the plays digest and generation
+   * its scorer confirmed losing; the answer names the at-bats and innings
+   * the reset deleted. `read` is the sides the caller read: sent again, the
+   * call changes nothing.
    */
   async swapGameSides(
     gameId: string,
-    read: { homeTeamId: string; awayTeamId: string }
-  ): Promise<{ homeTeamId: string; awayTeamId: string }> {
+    read: SwapSidesRead
+  ): Promise<SwapSidesAnswer> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/swap-sides`,
-      asObject({ homeTeamId: asString, awayTeamId: asString }),
+      asSwapSidesAnswer,
       read
     )
   }
@@ -3772,7 +3799,10 @@ export class TeamStationClient {
           : { fenceDistanceFt: change.fenceDistanceFt }),
         ...(change.lineupsBase === undefined
           ? {}
-          : { lineupsBase: change.lineupsBase })
+          : { lineupsBase: change.lineupsBase }),
+        ...(change.generation === undefined
+          ? {}
+          : { generation: change.generation })
       }
     )
     return storedGameOf(stored)

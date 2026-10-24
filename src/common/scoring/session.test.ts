@@ -1371,6 +1371,55 @@ describe('a scoring session', function () {
       setup.tagOrder.push(id)
     }
 
+    it('names the generation it opened on, and on a refusal naming another is replaced rather than rebased (A8)', async function () {
+      /** A server whose game a reset moved to generation 1 after it was read. */
+      class ResetStore extends LineupStore {
+        generation = 0
+        override async load(): Promise<StoredGame> {
+          return { ...(await super.load()), generation: this.generation }
+        }
+
+        override async save(
+          gameId: string,
+          change: SaveChange
+        ): Promise<StoredGame> {
+          if (
+            change.generation !== undefined &&
+            change.generation !== this.generation
+          ) {
+            this.posts.push(JSON.parse(JSON.stringify(change)) as SaveChange)
+            throw new HttpError(
+              'conflict',
+              'This game was reset since it was read',
+              { stale: true, generation: this.generation }
+            )
+          }
+          return await super.save(gameId, change)
+        }
+      }
+      const store = new ResetStore()
+      const { session } = await open(store)
+      expect(session.generation).equals(0)
+      session.apply(ball)
+      await session.flush()
+      expect(store.posts.at(-1)!.generation).equals(0)
+      expect(session.replaced).equals(false)
+      store.generation = 1
+      let told = 0
+      session.subscribe(() => told++)
+      session.apply(strike)
+      await session.flush()
+      expect(session.replaced).equals(true)
+      expect(told).above(0)
+      // Neither taken up under the reset game nor sent again.
+      const posts = store.posts.length
+      session.apply(ball)
+      await session.flush()
+      expect(store.posts.length).equals(posts)
+      expect(session.pending).above(0)
+      expect(session.rebases).equals(0)
+    })
+
     it('names the digest each answer and each read leaves as the next base', async function () {
       const store = new LineupStore()
       const { session } = await open(store)

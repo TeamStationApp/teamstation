@@ -472,6 +472,15 @@ export class Browser {
     })
   }
 
+  /** The text of the element labelled `label`, a second line included. */
+  async labelText(label: string): Promise<string> {
+    // Plain JavaScript: the page has none of the compiler's helpers.
+    return await this.page.evaluate((label: string) => {
+      const node = document.querySelector(`[aria-label="${label}"]`)
+      return node == null ? '' : String(node.textContent)
+    }, label)
+  }
+
   async isDisabled(label: string): Promise<boolean> {
     return await this.page.evaluate((label: string) => {
       const node = document.querySelector(`[aria-label="${label}"]`)

@@ -513,17 +513,17 @@ describe('home and away swapped before the first pitch', function () {
       `scoring menu: Swap Home and Away, then Confirm Swap; the screen opened again with ${fixture.players.home[0].name} due up\n`
     )
 
-    // After a pitch the item is off.
+    // After a pitch the item is on, and says it resets the game's plays.
     const pitched = await preparedGame(null)
     await score(pitched, [{ type: 'pitch', call: 'B' }])
     await browser.as(pitched, 'scorekeeper')
     await browser.scoreGame(pitched.gameId)
     await browser.tap('Open scoring menu')
-    await browser.waitText('Swap Home and Away')
-    expect(await browser.isDisabled('Swap Home and Away')).equals(true)
+    await browser.waitText('resets all game plays')
+    expect(await browser.isDisabled('Swap Home and Away')).equals(false)
     await note(
       file,
-      `$ POST ${API}/games/${pitched.gameId}/events  (scorekeeper: one pitch, a ball)\nsaved\nscoring menu after the pitch: Swap Home and Away is disabled\n`
+      `$ POST ${API}/games/${pitched.gameId}/events  (scorekeeper: one pitch, a ball)\nsaved\nscoring menu after the pitch: Swap Home and Away, "resets all game plays"\n`
     )
 
     // At a phone's size every row shows, End Game included.
