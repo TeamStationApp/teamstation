@@ -140,7 +140,7 @@
     "kysely": "^0.29.6",
     "leaflet": "1.9.4",
     "node-media-server": "4.2.4",
-    "nodemailer": "^10.0.10",
+    "nodemailer": "^10.2.1",
     "oidc-provider": "9.12.2",
     "pg": "^8.13.1",
     "pgsql-ast-parser": "12.0.2",
@@ -206,9 +206,12 @@
     "rimraf": "^6.0.1",
     "sucrase": "^3.35.0",
     "typescript": "^5.6.3",
-    "undici": "7.29.1"
+    "undici": "7.30.1"
   },
   "overrides": {
+    "@sentry/cli": {
+      "undici": "6.29.1"
+    },
     "expo-modules-core": {
       "expo-modules-jsi": "58.0.3",
       "react-native-worklets": "$react-native-worklets"
