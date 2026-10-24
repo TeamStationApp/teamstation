@@ -329,6 +329,34 @@ export function iosPublicRead(
   return { nodes, element: matches[0] }
 }
 
+/**
+ * The iOS driver answers assertNotVisible from one snapshot and ignores its
+ * timeout. Ask again until the element is gone or the timeout passes, so an
+ * overlay that is still animating out, or a row an event is about to update,
+ * is not read as one that stays.
+ */
+export async function pollNotVisible(
+  once: (args: Args) => Promise<unknown>,
+  args: Args,
+  pause = async (): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+): Promise<unknown> {
+  if (typeof args.timeout !== 'number') return await once(args)
+  const until = Date.now() + args.timeout
+  for (;;) {
+    try {
+      return await once(args)
+    } catch (error) {
+      const visible = /unexpectedly visible|element visible/.test(
+        error instanceof Error ? error.message : String(error)
+      )
+      if (!visible || Date.now() >= until) throw error
+      await pause()
+    }
+  }
+}
+
 /** iOS exposes no focus flag: require the actual composer above an observed IME. */
 export async function readIosComposerKeyboard(
   ui: Pick<Chat2UI, 'device'>,
@@ -1797,6 +1825,11 @@ export class Chat2UI {
       // conversation pushed single commands past 30 s.
       commandTimeout: platform === 'ios' ? 90000 : 30000
     })
+    if (platform === 'ios') {
+      const device = this.device
+      const once = device.assertNotVisible.bind(device)
+      device.assertNotVisible = async args => await pollNotVisible(once, args)
+    }
     await this.device.launchApp({ appId: this.fixture.appId })
     // A cold two-core emulator can raise the system's own ANR dialog over the
     // app; wait for System UI rather than closing anything, and record it.
