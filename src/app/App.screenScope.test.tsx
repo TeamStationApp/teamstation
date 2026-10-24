@@ -56,6 +56,15 @@ describe('the scope the visible route holds', () => {
       })
     api.myRoles = async () => ({ teams: {}, guardianOf: [] })
     api.umpireLeagues = async () => []
+    // A server without Tess: the shell asks once someone is signed in.
+    api.health = async () => ({
+      status: 'ok',
+      version: '1',
+      database: 'ok',
+      migrations: 1,
+      dictation: false,
+      dictationModels: []
+    })
     api.hasNotifications = async () => false
     api.teams = async () => {
       reads.push('teams')
