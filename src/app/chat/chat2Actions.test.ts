@@ -4960,6 +4960,20 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
+  it('anchors an iOS absence id, which the driver would match as a substring', async () => {
+    for (const [surface, expected] of [
+      ['ios', { id: '^chat-composer$', timeout: 15000 }],
+      ['web-wide', { id: 'chat-composer', timeout: 3000 }]
+    ] as const) {
+      const actual = ui([], surface)
+      const asked: unknown[] = []
+      actual.device.assertNotVisible = async args => {
+        asked.push(args)
+      }
+      await actual.absent('chat-composer')
+      expect(asked).deep.equals([expected])
+    }
+  })
   it('proves a locked web composer is read-only with Send disabled', async () => {
     for (const [field, send, ok] of [
       [
