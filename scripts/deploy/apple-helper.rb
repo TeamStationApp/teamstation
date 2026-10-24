@@ -60,6 +60,20 @@ when 'match', 'import'
         end
         installed_for_build << File.basename(installed)
         keep_installed.call
+        source_file, source_line =
+          FastlaneCore::ProvisioningProfile.method(:teamstation_install).source_location
+        File.write(
+          File.join(directory, 'profile-note.txt'),
+          [
+            Fastlane::VERSION,
+            File.basename(source_file.to_s),
+            source_line,
+            File.basename(path),
+            File.basename(destination),
+            Digest::SHA256.file(path).hexdigest,
+            Digest::SHA256.file(destination).hexdigest
+          ].join(' ')
+        )
         destination
       end
     end

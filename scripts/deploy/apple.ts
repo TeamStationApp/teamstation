@@ -347,6 +347,9 @@ export async function withSigning<T>(
       )
       const profiles = new Map<string, Profile>()
       if (context.target.platform !== 'ios') return profiles
+      const note = path.join(profilesDirectory, 'profile-note.txt')
+      if (existsSync(note))
+        console.log('PROFILE note ' + readFileSync(note, 'utf8').trim())
       console.log(
         'PROFILE files ' +
           readdirSync(profilesDirectory)
