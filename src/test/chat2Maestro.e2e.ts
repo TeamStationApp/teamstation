@@ -3446,7 +3446,12 @@ export class Chat2UI {
   }
 
   async present(id: string): Promise<void> {
-    await this.device.assertVisible({ id, timeout: 15000 })
+    // An iOS tree of thousands of nodes can outlast 15 s on a loaded host
+    // while a screen is still arriving (E9's return to the chat).
+    await this.device.assertVisible({
+      id,
+      timeout: this.surface === 'ios' ? 45000 : 15000
+    })
   }
 
   async absent(id: string): Promise<void> {
