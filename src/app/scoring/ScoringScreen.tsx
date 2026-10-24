@@ -2227,7 +2227,8 @@ function ScoringPanel(props: {
     tiebreaker.active
   useHomeRunCelebration(state.celebration, celebrationPaused, dispatch)
   const fieldScoreboard = {
-    ...scoreboardFor(session),
+    // The roster's current numbers, as the fielders' uniforms show them.
+    ...scoreboardFor(displaySession),
     celebration:
       state.celebration == null
         ? undefined

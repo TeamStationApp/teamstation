@@ -93,6 +93,16 @@ import {
  *     The rally game's grand slam names its three runners in one sentence,
  *     and the announcer reads it. Writes scorers-after.mp3.
  *
+ *   REPLAY_SCENARIO=board REPLAY_PHASE=before|after
+ *     The field scoreboard at 402 x 874 on the scorer's screen for the game
+ *     in progress, then after one Ball, and on the final game's replay
+ *     paused at its first pitch: scoring-board-<phase>.png and
+ *     replay-board-<phase>.png in REPLAY_ARTIFACTS, and the after-one-Ball
+ *     scoring-board-<phase>-ball.png in the temporary directory. `after`
+ *     shows the batter's and the pitcher's jersey numbers, as `#12`, before
+ *     their names. Adds a ball to the scorer's at-bat in progress, so
+ *     reseed before another live scenario.
+ *
  * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
  * REPLAY_IMPORTED override them.
  */
@@ -1222,6 +1232,40 @@ async function controls(
   }
 }
 
+async function board(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
+  const phase = required('REPLAY_PHASE')
+  const scorer = await attachWeb(daemon, '402x874', 'boardScorer')
+  try {
+    await signInWeb(scorer, SCORER)
+    await scorer.openBrowser({
+      url: `${required('REPLAY_WEB_URL')}/games/${LIVE}/score`
+    })
+    await scorer.assertVisible({ text: 'Ball', timeout: 30000 })
+    // The board is drawn in a task after the render that brought it.
+    await wait(2000)
+    await shot(scorer, `scoring-board-${phase}`)
+    await tapButton(scorer, 'Ball')
+    await wait(2000)
+    const ball = join(tmpdir(), `scoring-board-${phase}-ball.png`)
+    await writeFile(ball, await scorer.screenshot())
+    console.log(`after one ball: ${ball}`)
+  } finally {
+    await scorer.detach()
+  }
+  const m = await attachWeb(daemon, '402x874', 'boardReplay')
+  try {
+    await signInWeb(m, LEAGUE)
+    await openReplay(m, FINAL)
+    await evalJson<boolean>(m, CARD_LOG)
+    await eventsAfter(m, 0, 1, 30000)
+    await m.tapOn({ id: 'replay-pause' })
+    await wait(1000)
+    await shot(m, `replay-board-${phase}`)
+  } finally {
+    await m.detach()
+  }
+}
+
 async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
   const out = await artifactsDir()
   const log: string[] = [
@@ -1913,6 +1957,7 @@ async function main(): Promise<void> {
     else if (scenario === 'noAnnouncer')
       await noAnnouncer((m = await attachWeb(daemon)))
     else if (scenario === 'controls') await controls(daemon)
+    else if (scenario === 'board') await board(daemon)
     else if (scenario === 'rewind') await rewind(daemon)
     else if (scenario === 'rewindLive') await rewindLive(daemon)
     else if (scenario === 'rewindAnnouncer')

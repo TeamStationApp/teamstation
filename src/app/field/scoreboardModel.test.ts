@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import {
   countLights,
   DEMO_SCOREBOARD,
+  numberedName,
   pitchLabel,
   scoreDigits,
   shortName
@@ -26,6 +27,14 @@ describe('vintage scoreboard', function () {
     expect(shortName({ firstName: ' Alex ', lastName: 'Rivera' })).equals(
       'ALEX R.'
     )
+  })
+  it('puts a jersey number before the name, and the name alone without one', function () {
+    const alex = DEMO_SCOREBOARD.batter
+    expect(numberedName(alex, '12')).equals('#12 ALEX R.')
+    expect(numberedName(alex, ' 7 ')).equals('#7 ALEX R.')
+    for (const jersey of ['', '  ', undefined])
+      expect(numberedName(alex, jersey)).equals('ALEX R.')
+    expect(numberedName({ firstName: '', lastName: '' }, '12')).equals('#12')
   })
   it('keeps counts within three green, two yellow and two red lamps', function () {
     expect(countLights(4, 3)).deep.equals([true, true, true])

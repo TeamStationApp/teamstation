@@ -738,6 +738,39 @@ describe('scoring screen field wiring', function () {
     expect(document.querySelector('[aria-label="Set Outs 0"]')).equals(null)
     expect(props().canPitch).equals(true)
   })
+  it("numbers the board's batter from the team roster, as the batter's uniform is", async function () {
+    const initial = scoringSession(gameFixture)
+    const batter = initial.liveData.linescore.offense.batter
+    if (batter == null) throw new Error('Missing batter')
+    const person = initial.gameData.players[batter.id]
+    person.local = false
+    person.jersey = '7'
+    const live = ScoringSession.start(memoryStore(), 'g1', initial)
+    await mount(
+      { open: async () => live },
+      {
+        [person.teamId]: [
+          asRosterEntry({
+            userId: userIdOfGumbo(batter.id),
+            gumboId: batter.id,
+            shortName: person.fullName,
+            jersey: '12',
+            positions: [],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          })
+        ]
+      }
+    )
+    expect(live.state.gameData.players[batter.id].jersey).equals('7')
+    expect(
+      field().players.find(player => player.playerId === batter.id)?.jersey
+    ).equals('12')
+    expect(field().scoreboard?.batterJersey).equals('12')
+  })
   for (const route of ['menu', 'lineup'] as const)
     for (const jersey of ['99', null])
       it(`keeps saved player details when saving ${route} with current jersey ${String(jersey)}`, async function () {

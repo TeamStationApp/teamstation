@@ -156,7 +156,10 @@ not provided. B/S/O lamp colors and jersey numbers are unchanged.
 
 The scoreboard uses a 1024×256 bulb texture and an 18-unit-high housing (previously
 34), with no title. After the team scores, a single line shows the batter name,
-hits–at-bats, pitcher name and `P:64`. Balls/strikes/outs labels and lamps share the
+hits–at-bats, pitcher name and `P:64`. When `ScoreboardState.batterJersey` or `pitcherJersey`
+is set, that line starts with the number, as `#12 ALEX R.`; the bulb font has a `#`
+glyph for it, and a line too long for the board loses the name's tail while the
+number stays. Balls/strikes/outs labels and lamps share the
 last row. Names are always present again. Its center is `(0, 28.2, -135)`; the bottom
 trim is about 0.5m above the rear railing, with the face overhanging the central back
 row slightly. The light banks sit at radius 136m, x ±68m, tangent to the stands.
