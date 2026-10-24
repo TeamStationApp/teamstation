@@ -4092,14 +4092,36 @@ export class Chat2UI {
         })
         return bytes
       }
-      const remove = async (): Promise<void> => {
+      const remove = async (current?: string): Promise<void> => {
         await api.longPressOn({ id: 'chat-composer', duration: 600 }, options)
         let raw = await actionRaw()
-        const menu = iosPublicRead(
+        let menu = iosPublicRead(
           raw,
           { text: exactText('Select All') },
           'MenuItem'
         ).element
+        if (menu == null && current != null && /\s/.test(current)) {
+          // A long press selects the word under it: all of a one-word draft,
+          // but only part of a longer one, and iOS then offers no Select All.
+          // A caret placed after the text, tapped again, does.
+          const field = need(
+            iosPublicRead(raw, { id: 'chat-composer' }, 'TextView').element
+              ?.bounds,
+            'Actual editor bounds required for its end caret'
+          )
+          const end = {
+            point: `${Math.round(field.x + field.width - 12)},${Math.round(field.y + field.height - 10)}`
+          }
+          await api.tapOnPoint(end, options)
+          await new Promise(resolve => setTimeout(resolve, 700))
+          await api.tapOnPoint(end, options)
+          raw = await actionRaw()
+          menu = iosPublicRead(
+            raw,
+            { text: exactText('Select All') },
+            'MenuItem'
+          ).element
+        }
         if (menu != null) {
           assert(menu.enabled === true, 'Enabled observed Select All required')
           await tap(menu)
@@ -4129,7 +4151,7 @@ export class Chat2UI {
         await api.tapOn({ id: 'chat-composer' }, options)
         const before = await read()
         proof.before = before
-        if (!rawEmpty(before)) await remove()
+        if (!rawEmpty(before)) await remove(exact(before))
         if (text !== '') {
           await api.inputText({ id: 'chat-composer', text }, options)
           const after = await read()

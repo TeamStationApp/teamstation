@@ -2830,6 +2830,7 @@ describe('chat native adapter compatibility', function () {
     let selected = false
     let sentinelTyped = false
     let choosing = false
+    let caretTaps = 0
     const emptyName = (): string =>
       mode === 'dynamic-empty-name' || mode === 'raw-empty-name' || complete
         ? 'Message Message'
@@ -2896,6 +2897,7 @@ describe('chat native adapter compatibility', function () {
         complete ||
         mode === 'raw' ||
         mode === 'raw-empty-name' ||
+        mode === 'word-selection' ||
         (mode === 'literal-placeholder-after' &&
           sentinelTyped &&
           value === 'Message')
@@ -2917,7 +2919,8 @@ describe('chat native adapter compatibility', function () {
       if (
         menu &&
         !['no-select-all', 'missing-menu'].includes(mode) &&
-        !(mode === 'dynamic-empty-name' && value === '')
+        !(mode === 'dynamic-empty-name' && value === '') &&
+        (mode !== 'word-selection' || caretTaps >= 2)
       ) {
         nodes.push(
           node(3, 'MenuItem', {
@@ -3000,7 +3003,10 @@ describe('chat native adapter compatibility', function () {
     }
     actual.device.tapOnPoint = async args => {
       calls.push('point:' + String(args.point))
-      if (args.point === '50,215') {
+      if (mode === 'word-selection' && args.point === '198,50') {
+        caretTaps++
+        selected = false
+      } else if (args.point === '50,215') {
         selected = mode !== 'partial-delete'
         menu = false
       } else if (args.point === '270,470') {
@@ -3276,6 +3282,16 @@ describe('chat native adapter compatibility', function () {
     const incomplete = editable('missing-menu', 'Two words')
     await captureFailure(incomplete.actual.replaceDraft(''))
     expect(incomplete.value()).not.equals('')
+  })
+  it('clears a multi-word draft whose long press selected one word, through a tapped end caret', async () => {
+    const model = editable('word-selection', 'First synthetic line')
+    await model.actual.replaceDraft('')
+    expect(model.value()).equals('')
+    expect(model.calls.filter(call => call === 'point:198,50')).length(2)
+    expect(model.calls).includes('point:50,215')
+    const word = editable('no-select-all')
+    await word.actual.replaceDraft('')
+    expect(word.calls).not.includes('point:198,50')
   })
   it('uses actual raw empty editor evidence without rejecting retained reply/file chips', async () => {
     const model = editable('raw', '', true)
