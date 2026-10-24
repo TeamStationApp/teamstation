@@ -15,7 +15,9 @@ import { freshGame } from '../../common/scoring/lineup'
 import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { teamsOfRow } from '../../common/teamLists'
 import type { Unrostered } from '../../common/unroster'
+import { storedUnrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -147,6 +149,12 @@ describe('atomic game availability', function () {
     await admin.query(`drop database if exists ${name}`)
     await admin.end()
   })
+  const unrosteredOf = async (
+    id: string
+  ): Promise<{ away: number[]; home: number[] }> => {
+    const game = await row(id)
+    return storedUnrostered(game.unrostered, teamsOfRow(game))
+  }
   const row = async (id: string): Promise<Selectable<Database['games']>> =>
     await db
       .selectFrom('games')
@@ -266,7 +274,7 @@ describe('atomic game availability', function () {
       })
     )
     expect(saved.currentPlay).nested.property('matchup.batter.id', 2)
-    expect((await row(id)).unrostered).deep.equals({ away: [1], home: [] })
+    expect(await unrosteredOf(id)).deep.equals({ away: [1], home: [] })
   })
 
   it('changes only this game and side, is idempotent, and does not start a new game', async () => {
@@ -282,7 +290,7 @@ describe('atomic game availability', function () {
       home: []
     })
     expect(await row('gam_empty')).deep.equals(before)
-    expect((await row('gam_saved')).unrostered).deep.equals({
+    expect(await unrosteredOf('gam_saved')).deep.equals({
       away: [],
       home: []
     })
@@ -488,7 +496,7 @@ describe('atomic game availability', function () {
       })
       .execute()
     expect((await toggle(id, 129, false)).away).deep.equals([3129])
-    expect((await row(id)).unrostered).deep.equals({ away: [3129], home: [] })
+    expect(await unrosteredOf(id)).deep.equals({ away: [3129], home: [] })
     const available = await gameAvailability(db, await row(id))
     expect(
       available.roster.away.find(player => player.userId === userIdOfGumbo(129))

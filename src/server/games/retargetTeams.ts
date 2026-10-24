@@ -4,10 +4,10 @@ import { retargetRecord } from '../../common/scoring/teamRecord'
 import type { Database } from '../db/database'
 
 /**
- * Keeps these games' records readable after one of their teams was
- * replaced by another: every place a record names the old team by its id
- * names the new one. A record stored before records named teams names sides,
- * and needs nothing.
+ * Keeps these games readable after one of their teams was replaced by
+ * another: every place a record, or a list kept by team, names the old team
+ * by its id names the new one. A record stored before records named teams
+ * names sides, and needs nothing.
  */
 export async function retargetGameTeams(
   trx: Kysely<Database>,
@@ -58,4 +58,13 @@ export async function retargetGameTeams(
       .where('id', '=', game.id)
       .execute()
   }
+
+  // A game's guests and players left off are kept under its teams' ids.
+  for (const column of ['guests', 'unrostered'] as const)
+    await sql`update games set ${sql.ref(column)} =
+        (${sql.ref(column)} - ${fromTeamId}::text) ||
+        jsonb_build_object(${toTeamId}::text, ${sql.ref(column)}->${fromTeamId}::text)
+      where id in (${sql.join([...gameIds])}) and ${sql.ref(column)} ? ${fromTeamId}::text`.execute(
+      trx
+    )
 }

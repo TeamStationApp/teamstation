@@ -2,12 +2,13 @@ import type { Kysely } from 'kysely'
 
 import type { RosterEntry } from '../../common/api'
 import { conflict, forbidden, notFound } from '../../common/errors'
-import { asGuests } from '../../common/guests'
+import { storedGuests } from '../../common/guests'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { awaitingResult } from '../../common/scoring/rules'
 import type { Side } from '../../common/scoring/state'
+import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { canManageRoster, canScore, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
@@ -90,11 +91,12 @@ export async function createGuestPlayer(
       })
       .execute()
     const gumboId = await ensureGumboId(trx, userId)
-    const guests = asGuests(game.guests)
+    const teams = teamsOfRow(game)
+    const guests = storedGuests(game.guests, teams)
     guests[side].push(gumboId)
     await trx
       .updateTable('games')
-      .set({ guests })
+      .set({ guests: listsByTeam(guests, teams) })
       .where('id', '=', gameId)
       .execute()
     noteScopeChange(trx, { gameId })

@@ -1,7 +1,6 @@
 import type { Kysely, Transaction } from 'kysely'
 
 import { conflict, notFound } from '../../common/errors'
-import { asGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -9,9 +8,8 @@ import {
 } from '../../common/gumboPlay'
 import { recordOf } from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
-import { pregameRecord, swapSideLists } from '../../common/scoring/sideSwap'
+import { pregameRecord } from '../../common/scoring/sideSwap'
 import { recordByTeam } from '../../common/scoring/teamRecord'
-import { asUnrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { postGamePlays } from '../events/postPlays'
 import { changedLineupsDigest } from '../events/teamLineups'
@@ -79,8 +77,6 @@ export async function swapGameSides(
     ...teams,
     home_score: game.away_score,
     away_score: game.home_score,
-    guests: swapSideLists(asGuests(game.guests)),
-    unrostered: swapSideLists(asUnrostered(game.unrostered)),
     updated_at: new Date()
   }
   if (record == null) {

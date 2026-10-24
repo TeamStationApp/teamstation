@@ -1,14 +1,15 @@
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { conflict, HttpError } from '../../common/errors'
-import { asGuests } from '../../common/guests'
+import { storedGuests } from '../../common/guests'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { applyAction } from '../../common/scoring/apply'
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { nextDecision } from '../../common/scoring/rules'
 import type { SessionContext, StoredGame } from '../../common/scoring/session'
 import type { GameState } from '../../common/scoring/state'
-import { asUnrostered } from '../../common/unroster'
+import { teamsOfRow } from '../../common/teamLists'
+import { storedUnrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { resolveGumboIds } from './gumboIds'
 import {
@@ -170,8 +171,8 @@ async function assertMergeAvailabilitySafe(
     .orderBy('id')
     .execute()
   for (const game of games) {
-    const guests = asGuests(game.guests)
-    const excluded = asUnrostered(game.unrostered)
+    const guests = storedGuests(game.guests, teamsOfRow(game))
+    const excluded = storedUnrostered(game.unrostered, teamsOfRow(game))
     const participants = (['away', 'home'] as const).flatMap(side => {
       const teamId = game[`${side}_team_id`]
       const members = memberships.filter(row => row.team_id === teamId)

@@ -16,7 +16,7 @@ import {
   ScoringSession,
   type StoredGame
 } from './session'
-import { pregameRecord, swapSideLists } from './sideSwap'
+import { pregameRecord } from './sideSwap'
 import { type GameSetup, setupOf } from './state'
 import { recordByTeam, retargetRecord, setupByTeam } from './teamRecord'
 
@@ -274,18 +274,6 @@ describe('swapping home and away', function () {
       expect(teams.home.battingOrder.slice(0, 2)).deep.equals([1, 2])
       expect(teams.away.players).includes(30)
       expect(replayed.state.liveData.linescore.offense.batter?.id).equals(10)
-    })
-  })
-
-  describe('a side-keyed column', function () {
-    it('exchanges its lists and keeps anything else it holds', function () {
-      const guests = { home: [7], away: [], note: 'kept' }
-      expect(swapSideLists(guests)).deep.equals({
-        home: [],
-        away: [7],
-        note: 'kept'
-      })
-      expect(guests).deep.equals({ home: [7], away: [], note: 'kept' })
     })
   })
 })

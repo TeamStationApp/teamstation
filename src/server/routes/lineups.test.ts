@@ -11,6 +11,7 @@ import {
   asGameLineupsResponse,
   type SaveLineupsBody
 } from '../../common/api'
+import { storedGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -37,6 +38,7 @@ import {
   setupOf,
   type Side
 } from '../../common/scoring/state'
+import { teamsOfRow } from '../../common/teamLists'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -427,10 +429,13 @@ describe('the lineup routes (U11)', function () {
     const body = (await created.json()) as { userId: string; gumboId: number }
     const game = await db!
       .selectFrom('games')
-      .select('guests')
+      .select(['guests', 'home_team_id', 'away_team_id'])
       .where('id', '=', fresh)
       .executeTakeFirstOrThrow()
-    expect(game.guests).deep.equals({ away: [body.gumboId], home: [] })
+    expect(storedGuests(game.guests, teamsOfRow(game))).deep.equals({
+      away: [body.gumboId],
+      home: []
+    })
   })
 
   it("reads a team's default lineup, or nulls for none", async function () {

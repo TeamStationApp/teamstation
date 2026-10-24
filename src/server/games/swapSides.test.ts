@@ -3,6 +3,7 @@ import { type Kysely, type Selectable, sql } from 'kysely'
 import { after, before, beforeEach, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
+import { storedGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -19,6 +20,8 @@ import {
   type SessionContext
 } from '../../common/scoring/session'
 import { type GameSetup, setupOf } from '../../common/scoring/state'
+import { teamsOfRow } from '../../common/teamLists'
+import { storedUnrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -139,6 +142,12 @@ describe('swapping a game’s home and away teams', function () {
     heard = []
   })
 
+  const guestsOf = async (
+    id: string
+  ): Promise<{ away: number[]; home: number[] }> => {
+    const game = await row(id)
+    return storedGuests(game.guests, teamsOfRow(game))
+  }
   const row = async (id: string): Promise<Selectable<Database['games']>> =>
     await db
       .selectFrom('games')
@@ -321,13 +330,27 @@ describe('swapping a game’s home and away teams', function () {
   it('carries saved lineups, guests and absences to their teams’ new sides', async function () {
     await prepared('gam_saved')
     const before = await row('gam_saved')
-    const guest = (before.guests as { home: number[] }).home[0]
+    const guest = storedGuests(before.guests, teamsOfRow(before)).home[0]
     expect(guest).a('number')
-    expect(before.unrostered).deep.equals({ away: [19], home: [] })
+    expect(storedUnrostered(before.unrostered, teamsOfRow(before))).deep.equals(
+      {
+        away: [19],
+        home: []
+      }
+    )
     await swap('gam_saved')
     const game = await row('gam_saved')
-    expect(game.guests).deep.equals({ away: [guest], home: [] })
-    expect(game.unrostered).deep.equals({ away: [], home: [19] })
+    // Stored by team, the lists are what they were; by side they moved.
+    expect(game.guests).deep.equals(before.guests)
+    expect(game.unrostered).deep.equals(before.unrostered)
+    expect(storedGuests(game.guests, teamsOfRow(game))).deep.equals({
+      away: [guest],
+      home: []
+    })
+    expect(storedUnrostered(game.unrostered, teamsOfRow(game))).deep.equals({
+      away: [],
+      home: [19]
+    })
 
     const lineups = await lineupsAnswer(db, game)
     expect(lineups.home.teamId).equals(TEAMS.away.id)
@@ -381,7 +404,7 @@ describe('swapping a game’s home and away teams', function () {
       'message',
       "This game's teams changed. Open it again."
     )
-    expect((await row('gam_guest_after')).guests)
+    expect(await guestsOf('gam_guest_after'))
       .property('home')
       .deep.equals([])
     // Read again, his team is away.
@@ -393,7 +416,7 @@ describe('swapping a game’s home and away teams', function () {
       guest,
       TEAMS.home.id
     )
-    expect((await row('gam_guest_after')).guests)
+    expect(await guestsOf('gam_guest_after'))
       .property('away')
       .includes(added.gumboId)
   })
@@ -494,7 +517,10 @@ describe('swapping a game’s home and away teams', function () {
     const game = await row('gam_unrecorded')
     expect(game.lineups_digest).not.equals(null)
     expect(game.lineups_digest).not.equals(base)
-    expect(game.unrostered).deep.equals({ away: [], home: [19] })
+    expect(storedUnrostered(game.unrostered, teamsOfRow(game))).deep.equals({
+      away: [],
+      home: [19]
+    })
     const stale = await failure(
       async () =>
         await postGamePlays(

@@ -1,5 +1,4 @@
 import { storedRecordOf } from './gumbo'
-import type { Side } from './state'
 
 /**
  * Home and away exchanged on a game nobody has pitched to yet. A record
@@ -20,9 +19,4 @@ export function pregameRecord(currentPlay: unknown): boolean {
   const events = (currentPlay as { playEvents?: unknown }).playEvents
   if (Array.isArray(events) && events.length > 0) return false
   return record.actions.every(action => action.type === 'lineup')
-}
-
-/** A side-keyed column, such as a game's guests, with its lists exchanged. */
-export function swapSideLists<T extends Record<Side, unknown>>(lists: T): T {
-  return { ...lists, home: lists.away, away: lists.home }
 }

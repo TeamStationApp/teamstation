@@ -13,6 +13,7 @@ import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import type { Unrostered } from '../../common/unroster'
 import { isHeadCoach, roleScopes } from '../access'
 import {
@@ -106,7 +107,7 @@ export async function setRostered(
     await trx
       .updateTable('games')
       .set({
-        unrostered,
+        unrostered: listsByTeam(unrostered, teamsOfRow(game)),
         updated_at: new Date(),
         // Before the first setup exists, no roster action can update this token.
         // Still invalidate a scorer's earlier view of who may play.

@@ -12,6 +12,7 @@ import {
   API,
   APP,
   Browser,
+  clientOf,
   databaseUrl,
   HEIGHT,
   lineupFixture,
@@ -237,6 +238,50 @@ describe('team-keyed lineups, and reset with swap', function () {
     await note(
       file,
       `$ npm run refold-scored-games -- --game ${String(older.id)} --preview\n${preview}`
+    )
+  })
+
+  it('T2: guests and players left off are stored by team, and the game still answers by side', async function () {
+    const file = 'availability-by-team.log'
+    const fixture = lineupFixture()
+    await note(
+      file,
+      `$ npm run lineup-fixture -- --password <the fixture password>\ngame ${fixture.gameId}: Hosts (home) vs Visitors (away)\n`
+    )
+    const coach = await clientOf(fixture, 'headCoach')
+    const guest = await coach.createGuestPlayer(fixture.gameId, 'home', {
+      firstName: 'Gus',
+      lastName: 'Guest',
+      jersey: '77',
+      positions: [],
+      bats: null,
+      throws: null
+    })
+    await note(
+      file,
+      `$ POST ${API}/games/${fixture.gameId}/guest-players  {"side":"home","firstName":"Gus","lastName":"Guest","jersey":"77"}\n${JSON.stringify({ gumboId: guest.gumboId })}\n`
+    )
+    const bench = fixture.players.away[12]
+    await (
+      await clientOf(fixture, 'awayCoach')
+    ).setRostered(fixture.gameId, {
+      side: 'away',
+      userId: bench.userId,
+      rostered: false
+    })
+    await note(
+      file,
+      `$ PUT ${API}/games/${fixture.gameId}/unroster  {"side":"away","userId":"<${bench.name}>","rostered":false}\nunrostered (gumbo id ${bench.gumboId})\n`
+    )
+    await query(
+      file,
+      `select away_team_id as "awayTeam", home_team_id as "homeTeam", guests, unrostered from games where id = $1`,
+      [fixture.gameId]
+    )
+    const detail = await coach.game(fixture.gameId)
+    await note(
+      file,
+      `$ GET ${API}/games/${fixture.gameId}\n${JSON.stringify({ guests: detail.guests, unrostered: detail.unrostered }, null, 2)}\n`
     )
   })
 
