@@ -11921,8 +11921,14 @@ describe('native below-reader attention count', function () {
       }
     ])
   })
-  it('also subtracts targets this case already had in its reading area', async () => {
+  it('also subtracts targets the latest visit already had in its reading area', async () => {
     const s = scenario(true)
+    // An earlier visit's record no longer applies once the chat is reopened.
+    s.observations.push({
+      visibleReaderAnchor: {
+        visibleBodies: [{ id: 'chat-message-body-msg-above' }]
+      }
+    })
     s.observations.push({
       visibleReaderAnchor: {
         visibleBodies: [
@@ -11933,7 +11939,7 @@ describe('native below-reader attention count', function () {
       }
     })
     expect(await s.belowReaderCount(fixture)).equals(7)
-    expect(s.observations[1]).deep.includes({
+    expect(s.observations[2]).deep.includes({
       belowReaderCount: 7,
       viewedTargetsBelowAnchor: ['msg-viewed'],
       viewedTargetsEarlier: ['msg-unmounted']
