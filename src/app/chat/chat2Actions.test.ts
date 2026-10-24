@@ -4898,6 +4898,41 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
+  it('proves empty UI from the label-plus-placeholder name when the driver omits placeholderValue', async () => {
+    const nodes = [
+      node(0, 'TextView', {
+        identifier: 'chat-composer',
+        label: 'Message Message'
+      }),
+      node(1, 'Other', {
+        identifier: 'chat-composer-band',
+        rect: { x: 0, y: 0, width: 300, height: 100 }
+      }),
+      node(2, 'Button', { label: 'Send', enabled: false })
+    ]
+    const actual = ui(nodes)
+    actual.device.screenshot = async () => captureImages[0]
+    await actual.assertEmptyDraft()
+    expect(actual.steps.at(-1)?.name).equals('Actual native empty composer UI')
+    for (const extra of [
+      { value: 'Old account draft' },
+      { label: 'Message' },
+      { label: 'Message Message Message' },
+      { label: 'Message Messages' },
+      { label: 'Message Message', value: 'Message Message' }
+    ]) {
+      actual.device = {
+        hierarchyRaw: async () =>
+          raw([{ ...nodes[0], ...extra }, ...nodes.slice(1)])
+      } as unknown as Chat2UI['device']
+      try {
+        await actual.assertEmptyDraft()
+        throw Error('Unexpected success')
+      } catch (error) {
+        expect(String(error)).not.contains('Unexpected success')
+      }
+    }
+  })
   it('rejects enabled Send, retained reply and capped empty-state snapshots', async () => {
     const base = [
       node(0, 'TextView', {

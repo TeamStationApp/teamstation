@@ -1612,6 +1612,33 @@ export function saveCapture(bytes: Uint8Array, destination: string): Args {
   }
 }
 
+/**
+ * The placeholder an empty iOS editor actually shows. XCUI reports it as
+ * placeholderValue; the devicelab driver omits that attribute, but iOS still
+ * names an empty React Native editor "<label> <placeholder>" with no value.
+ * The composer's label and placeholder are the same text, so only that exact
+ * doubled name counts.
+ */
+export function emptyEditorPlaceholder(node: {
+  label?: string
+  value?: string
+  placeholderValue?: string
+}): string | undefined {
+  if (typeof node.placeholderValue === 'string' && node.placeholderValue !== '')
+    return node.placeholderValue
+  const label = node.label ?? ''
+  const half = (label.length - 1) / 2
+  if (
+    node.value != null ||
+    !Number.isInteger(half) ||
+    half < 1 ||
+    label[half] !== ' ' ||
+    label.slice(0, half) !== label.slice(half + 1)
+  )
+    return undefined
+  return label.slice(half + 1)
+}
+
 export class Chat2UI {
   readonly native: boolean
   readonly steps: Args[] = []
@@ -2582,14 +2609,13 @@ export class Chat2UI {
         input.element,
         'Fresh raw iOS editable composer required for empty UI'
       )
+      const placeholder = emptyEditorPlaceholder(node)
       assert(
-        node.enabled === true &&
-          typeof node.placeholderValue === 'string' &&
-          node.placeholderValue !== '',
+        node.enabled === true && placeholder != null,
         'Actual enabled composer and observed placeholder required'
       )
       assert(
-        node.value == null || node.value === node.placeholderValue,
+        node.value == null || node.value === placeholder,
         'Composer still exposes a nonempty value'
       )
       const send = need(
@@ -2622,7 +2648,11 @@ export class Chat2UI {
         composer: box,
         band,
         send: send.bounds,
-        placeholder: node.placeholderValue,
+        placeholder,
+        placeholderSource:
+          node.placeholderValue === placeholder
+            ? 'placeholderValue'
+            : 'label plus placeholder',
         rawPath,
         rawSha256: createHash('sha256').update(raw).digest('hex')
       }
