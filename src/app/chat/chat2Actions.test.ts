@@ -4960,6 +4960,37 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
+  it('enables the Page domain before removing WebAssembly from new documents, and restores it', async () => {
+    const actual = ui([], 'web-wide')
+    const calls: unknown[] = []
+    Object.assign(actual, {
+      cdp: {
+        send: async (method: string, params?: unknown) => {
+          calls.push(params == null ? method : [method, params])
+          return method === 'Page.addScriptToEvaluateOnNewDocument'
+            ? { identifier: 'script-1' }
+            : {}
+        }
+      },
+      coldOpen: async (path: string) => {
+        calls.push('open ' + path)
+      }
+    })
+    await actual.withoutWasm(async () => {
+      calls.push('check')
+    })
+    expect(calls).deep.equals([
+      'Page.enable',
+      [
+        'Page.addScriptToEvaluateOnNewDocument',
+        { source: 'delete globalThis.WebAssembly;' }
+      ],
+      'open /chat',
+      'check',
+      ['Page.removeScriptToEvaluateOnNewDocument', { identifier: 'script-1' }],
+      'open /chat'
+    ])
+  })
   it('anchors an iOS absence id, which the driver would match as a substring', async () => {
     for (const [surface, expected] of [
       ['ios', { id: '^chat-composer$', timeout: 15000 }],
