@@ -2119,6 +2119,42 @@ export class Scenarios {
     }
   }
 
+  /**
+   * Scrolls an iOS tall bubble until its top is above the reader and its body
+   * still crosses it. A quick drag flings the history about twice its length
+   * (E5 passed the bubble by thousands of points), so each drag is slow, aims
+   * the bubble's top a third of its height (at most 120 pt) above the reader,
+   * and comes back when it went past.
+   */
+  async iosTallSourceAboveReader(
+    id: string,
+    top: number,
+    bottom: number
+  ): Promise<void> {
+    const span = bottom - top - 24
+    for (let step = 0; step < 8; step++) {
+      const b = await this.targetBounds('chat-bubble-' + id)
+      if (b.y < top - 12 && b.y + b.height > top + 40) return
+      const goal = top - Math.min(b.height / 3, 120)
+      const travel = Math.max(-span, Math.min(span, b.y - goal))
+      const from = travel > 0 ? bottom - 12 : top + 12
+      const x = Math.round(b.x + b.width / 2)
+      await this.withoutDragActions(
+        async () => {
+          await this.ui.measuredSwipe({
+            startX: x,
+            startY: Math.round(from),
+            endX: x,
+            endY: Math.round(from - travel),
+            duration: 1000
+          })
+        },
+        'iosTallSourceDragOpenedActions',
+        id
+      )
+    }
+  }
+
   async anchor(target = this.f.messages.target): Promise<void> {
     const ui = this.ui
     if (await ui.visible({ id: 'chat-pinned-summary' }, 1000)) {
@@ -5452,7 +5488,9 @@ export class Scenarios {
             await ui.dom(
               `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});const h=document.querySelector('[data-testid="chat-message-history"]');if(!n||!h)throw Error('Public long bubble/history required');const b=n.getBoundingClientRect();h.scrollTop+=${this.touchActions ? `b.top-${top}+Math.min(b.height/3,120)` : `b.bottom-(${bottom}-20)`};h.dispatchEvent(new Event('scroll'));return {publicReaderScroll:true}`
             )
-          } else {
+          } else if (ui.surface === 'ios')
+            await this.iosTallSourceAboveReader(target.id, top, bottom)
+          else {
             for (let step = 0; step < 8; step++) {
               const b = await this.targetBounds('chat-bubble-' + target.id)
               if (b.y < top - 12 && b.y + b.height > top + 40) break

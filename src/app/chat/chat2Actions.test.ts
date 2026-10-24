@@ -11987,6 +11987,53 @@ describe('native below-reader attention count', function () {
   })
 })
 
+describe('iOS tall source above the reader', function () {
+  const run = async (
+    startY: number,
+    follow: number
+  ): Promise<{ y: number; drags: Array<Record<string, number>> }> => {
+    let y = startY
+    const drags: Array<Record<string, number>> = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      visible: async () => false,
+      measuredSwipe: async (input: Record<string, number>) => {
+        drags.push(input)
+        y += (input.endY - input.startY) * follow
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: [],
+      targetBounds: async (id: string) => {
+        expect(id).equals('chat-bubble-msg-long')
+        return { x: 48, y, width: 281, height: 811 }
+      }
+    }) as Scenarios
+    await scenario.iosTallSourceAboveReader('msg-long', 170, 700)
+    return { y, drags }
+  }
+  it('drags slowly up to a top just above the reader', async () => {
+    const { y, drags } = await run(178, 1)
+    expect(drags).deep.equals([
+      { startX: 189, startY: 688, endX: 189, endY: 560, duration: 1000 }
+    ])
+    expect(y).equals(50)
+  })
+  it('comes back down when the bubble went past, one reader height per drag', async () => {
+    const { y, drags } = await run(-1000, 1)
+    expect(drags.map(d => d.endY - d.startY)).deep.equals([506])
+    expect(drags[0].startY).equals(182)
+    expect(y).equals(-494)
+  })
+  it('keeps adjusting while drags fall short, then stops once framed', async () => {
+    const { y, drags } = await run(178, 0.1)
+    expect(drags.length).greaterThan(1)
+    expect(y < 158 && y + 811 > 210).equals(true)
+  })
+})
+
 describe('iOS drags that opened message actions', function () {
   const scenarioFor = (
     surface: string,
