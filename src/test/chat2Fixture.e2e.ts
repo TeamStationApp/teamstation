@@ -385,6 +385,12 @@ export function requireAfterArchive(
     'android-keyboard-pins-after.png',
     'web-320-composer-after.png'
   )
+  // Surfaces the owner took out of scope keep their last archived frames:
+  // CHAT2_OUT_OF_SCOPE_SURFACES=android while QA runs on the iPhone simulator
+  // only. Every frame must still be archived.
+  const outOfScope = (process.env.CHAT2_OUT_OF_SCOPE_SURFACES ?? '')
+    .split(',')
+    .filter(surface => (CHAT2_SURFACES as readonly string[]).includes(surface))
   for (const file of expected) {
     const row = need(
       archive.entries.find(e => e.file === file),
@@ -392,7 +398,8 @@ export function requireAfterArchive(
     )
     assert(
       row.source === process.env.CHAT2_SOURCE ||
-        (recapturing != null && file.startsWith(recapturing + '-')),
+        (recapturing != null && file.startsWith(recapturing + '-')) ||
+        outOfScope.some(surface => file.startsWith(surface + '-')),
       'Archived AFTER source differs'
     )
     const image =
