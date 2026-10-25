@@ -4137,8 +4137,9 @@ export class Chat2UI {
   ): Promise<void> {
     if (this.surface === 'ios') {
       // Every iOS step re-reads the accessibility tree, which grows with the
-      // conversation; seven to nine steps took over 90 s on a long history.
-      const signal = AbortSignal.timeout(180000)
+      // conversation; seven to nine steps took over 90 s on a long history,
+      // and a clear plus sentinel proof passed 180 s on a grown QA history.
+      const signal = AbortSignal.timeout(360000)
       const options = { signal }
       const api = this.device as unknown as {
         tapOn: (
