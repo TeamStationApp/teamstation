@@ -1679,7 +1679,8 @@ export class Chat2UI {
     // An iOS case reads a hierarchy of thousands of nodes at every step, and
     // the long ones (E5 frames four messages across a long QA history) need
     // most of an hour on a shared, loaded host.
-    this.deadline = AbortSignal.timeout(surface === 'ios' ? 3600000 : 900000)
+    // iOS E5 on the grown QA history runs past an hour on a loaded host.
+    this.deadline = AbortSignal.timeout(surface === 'ios' ? 5400000 : 900000)
     this.artifactRoot = resolve(
       need(process.env.CHAT2_ARTIFACTS, 'CHAT2_ARTIFACTS required')
     )
