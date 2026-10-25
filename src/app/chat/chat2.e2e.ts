@@ -2713,9 +2713,12 @@ export class Scenarios {
         { x: box.x + box.width / 2, y: box.y + box.height / 2 },
         { signal }
       )
+      // One iOS read of a long history takes seconds; the page load itself
+      // follows the tap.
+      const progressWait = ui.surface === 'ios' ? 60000 : 10000
       const progressSignal = AbortSignal.any([
         signal,
-        AbortSignal.timeout(10000)
+        AbortSignal.timeout(progressWait)
       ])
       nodes = await until(
         async () => {
@@ -2732,7 +2735,7 @@ export class Scenarios {
           return undefined
         },
         'actual native earlier-page message progress',
-        10000
+        progressWait
       )
       sample.after = nodes.flatMap(node =>
         node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
