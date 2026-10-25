@@ -12131,12 +12131,22 @@ describe('native below-reader attention count', function () {
         visibleBodies: [{ id: 'chat-message-body-msg-above' }]
       }
     })
+    const at = (y: number, height = 40): Record<string, number> => ({
+      x: 20,
+      y,
+      width: 200,
+      height
+    })
     s.observations.push({
       visibleReaderAnchor: {
+        band: { top: 100, bottom: 600 },
         visibleBodies: [
-          { id: 'chat-message-body-msg-unmounted' },
-          { id: 'chat-message-body-msg-viewed' },
-          { id: 'chat-message-body-msg-neutral' }
+          // Tall and only overlapping the area from above: visible, but by
+          // the app's rule not viewed, so it stays counted.
+          { id: 'chat-message-body-msg-above', bounds: at(40, 300) },
+          { id: 'chat-message-body-msg-unmounted', bounds: at(200) },
+          { id: 'chat-message-body-msg-viewed', bounds: at(300) },
+          { id: 'chat-message-body-msg-neutral', bounds: at(400) }
         ]
       }
     })
