@@ -9,8 +9,10 @@ import { gameFixture } from './isUnscoredGame.test'
 import {
   editRosterLabel,
   editRosterRows,
+  lineupQrOffer,
   rosterHand,
-  rosterStaffSide
+  rosterStaffSide,
+  scorekeeperSide
 } from './scoringRosterEdit'
 
 const entry = (
@@ -60,6 +62,42 @@ describe('roster editing presentation', function () {
       rosterStaffSide({ teams: { other: ['admin'] } }, 'away', 'home')
     ).equals(undefined)
     expect(rosterStaffSide(undefined, 'away', 'home')).equals(undefined)
+  })
+  it('names the one team a person keeps score for', function () {
+    expect(
+      scorekeeperSide({ teams: { away: ['scorekeeper'] } }, 'away', 'home')
+    ).equals('away')
+    expect(
+      scorekeeperSide({ teams: { home: ['admin'] } }, 'away', 'home')
+    ).equals('home')
+    // A coach of the other team is not its scorekeeper.
+    expect(
+      scorekeeperSide(
+        { teams: { away: ['scorekeeper'], home: ['coach'] } },
+        'away',
+        'home'
+      )
+    ).equals('away')
+    expect(
+      scorekeeperSide(
+        { teams: { away: ['scorekeeper'], home: ['admin'] } },
+        'away',
+        'home'
+      )
+    ).equals(undefined)
+    expect(
+      scorekeeperSide({ teams: { away: ['coach'] } }, 'away', 'home')
+    ).equals(undefined)
+    expect(scorekeeperSide({ teams: {} }, 'away', 'home')).equals(undefined)
+    expect(scorekeeperSide(undefined, 'away', 'home')).equals(undefined)
+  })
+  it('shares his lineup and scans the opponent, and chooses when he keeps both', function () {
+    expect(lineupQrOffer('away', 'away')).equals('share')
+    expect(lineupQrOffer('away', 'home')).equals('scan')
+    expect(lineupQrOffer('home', 'home')).equals('share')
+    expect(lineupQrOffer('home', 'away')).equals('scan')
+    expect(lineupQrOffer(undefined, 'away')).equals('both')
+    expect(lineupQrOffer(undefined, 'home')).equals('both')
   })
   it('orders either partially split legacy name by its authorized full label', function () {
     const state = scoringSession(gameFixture)

@@ -7,6 +7,7 @@ import {
   coachesTeam,
   IMPLIED_ROLES,
   impliedRoles,
+  keepsScore,
   keepsSongs,
   managesRoster,
   ROLE_FLAGS,
@@ -97,6 +98,30 @@ describe('managing a team’s roster, from GET /me/roles', function () {
     expect(managesRoster(roles, 'tem_other')).equals(false)
     expect(managesRoster(roles, undefined)).equals(false)
     expect(managesRoster(undefined, 'tem_coach')).equals(false)
+  })
+})
+
+describe('keeping a team’s score, from GET /me/roles', function () {
+  const roles = {
+    teams: {
+      tem_scorer: ['scorekeeper' as const],
+      tem_admin: ['admin' as const],
+      tem_coach: ['coach' as const, 'assistant' as const],
+      tem_songs: ['songkeeper' as const]
+    }
+  }
+
+  it('is a scorekeeper of it or its admin', function () {
+    expect(keepsScore(roles, 'tem_scorer')).equals(true)
+    expect(keepsScore(roles, 'tem_admin')).equals(true)
+  })
+
+  it('is nobody else, and nothing before the roles are known', function () {
+    expect(keepsScore(roles, 'tem_coach')).equals(false)
+    expect(keepsScore(roles, 'tem_songs')).equals(false)
+    expect(keepsScore(roles, 'tem_other')).equals(false)
+    expect(keepsScore(roles, undefined)).equals(false)
+    expect(keepsScore(undefined, 'tem_scorer')).equals(false)
   })
 })
 

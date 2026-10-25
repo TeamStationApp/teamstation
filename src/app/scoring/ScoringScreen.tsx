@@ -142,7 +142,7 @@ import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
 import { withoutPrivateNames } from './scoringRosterCache'
-import { rosterStaffSide } from './scoringRosterEdit'
+import { rosterStaffSide, scorekeeperSide } from './scoringRosterEdit'
 import {
   baseIds,
   battingSide,
@@ -255,6 +255,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   })
   const [rosterRights, setRosterRights] = useState<Record<string, boolean>>({})
   const [rosterDefaultSide, setRosterDefaultSide] = useState<Side>()
+  const [keeperSide, setKeeperSide] = useState<Side>()
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsProblem, setDetailsProblem] = useState<string>()
   const rosterRevision = useRef(0)
@@ -297,6 +298,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     rightsRef.current = {}
     setRosterRights({})
     setRosterDefaultSide(undefined)
+    setKeeperSide(undefined)
     setFailed(false)
     const load = async (): Promise<void> => {
       const game = await props.client.game(props.gameId)
@@ -341,6 +343,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       setRosterDefaultSide(
         rosterStaffSide(roles, game.awayTeamId, game.homeTeamId)
       )
+      setKeeperSide(scorekeeperSide(roles, game.awayTeamId, game.homeTeamId))
       openedContext.current = {
         client: props.client,
         gameId: props.gameId,
@@ -386,6 +389,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       setRosterRights(rights)
       const { away, home } = opened.resumable().state.gameData.teams
       setRosterDefaultSide(rosterStaffSide(roles, away.id, home.id))
+      setKeeperSide(scorekeeperSide(roles, away.id, home.id))
       setRosters(held =>
         Object.fromEntries(
           Object.entries(held).map(([id, rows]) => [
@@ -735,6 +739,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         onNavigationApproved={props.onNavigationApproved}
         rosterRights={returning ? {} : rosterRights}
         rosterDefaultSide={rosterDefaultSide}
+        scorekeeperSide={keeperSide}
         detailsLoading={returning || detailsLoading}
         detailsProblem={detailsProblem}
         onRefreshDetails={() => {
@@ -839,6 +844,8 @@ function ScoringPanel(props: {
   onNavigationApproved?: ScoringScreenProps['onNavigationApproved']
   rosterRights: Record<string, boolean>
   rosterDefaultSide?: Side
+  /** The one side this scorekeeper keeps score for, when that is exactly one. */
+  scorekeeperSide?: Side
   detailsLoading: boolean
   detailsProblem?: string
   onRefreshDetails: () => void
@@ -3175,6 +3182,7 @@ function ScoringPanel(props: {
                 key={rosterRead}
                 initialDraft={rosterInitial}
                 defaultSide={props.rosterDefaultSide}
+                scorekeeperSide={props.scorekeeperSide}
                 state={state}
                 rosters={props.rosters}
                 unaccepted={lineupsUnaccepted(state, props.visibleDefaults)}

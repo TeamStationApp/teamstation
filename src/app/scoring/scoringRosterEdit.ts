@@ -1,5 +1,6 @@
 import type { MyRoles, RosterEntry } from '../../common/api'
 import { rosterFullName } from '../../common/names'
+import { keepsScore } from '../../common/roles'
 import type { GameState, Side } from '../../common/scoring/state'
 import { asGumboId } from '../../common/userId'
 import { byJersey } from './rosterOrder'
@@ -13,6 +14,36 @@ export function rosterStaffSide(
   const away = (roles?.teams[awayTeamId]?.length ?? 0) > 0
   const home = (roles?.teams[homeTeamId]?.length ?? 0) > 0
   return away === home ? undefined : away ? 'away' : 'home'
+}
+
+/**
+ * The one side this person keeps score for, when that is exactly one of the
+ * two teams. A scorekeeper of both, or of neither, has no single side.
+ */
+export function scorekeeperSide(
+  roles: Pick<MyRoles, 'teams'> | undefined,
+  awayTeamId: string,
+  homeTeamId: string
+): Side | undefined {
+  const away = keepsScore(roles, awayTeamId)
+  const home = keepsScore(roles, homeTeamId)
+  return away === home ? undefined : away ? 'away' : 'home'
+}
+
+/** What the roster row may do with a lineup QR code. */
+export type LineupQrOffer = 'share' | 'scan' | 'both'
+
+/**
+ * A scorekeeper of one team shares that team's lineup and scans the
+ * opponent's. Anyone who keeps score for both teams, or for neither, still
+ * chooses share or scan for either side.
+ */
+export function lineupQrOffer(
+  keeperSide: Side | undefined,
+  side: Side
+): LineupQrOffer {
+  if (keeperSide == null) return 'both'
+  return side === keeperSide ? 'share' : 'scan'
 }
 
 export interface EditRosterRow {

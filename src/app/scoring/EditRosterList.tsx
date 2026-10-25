@@ -11,7 +11,7 @@ import {
 import { lstrings } from '../locales/strings'
 import { LineupQrGlyph } from './LineupQrGlyph'
 import { ScoringPlayerCard } from './ScoringPlayerCard'
-import type { EditRosterRow } from './scoringRosterEdit'
+import type { EditRosterRow, LineupQrOffer } from './scoringRosterEdit'
 import {
   editRosterLabel,
   JERSEY_BADGE_SIZE,
@@ -34,6 +34,7 @@ export function EditRosterList({
   visible = true,
   initialScrollOffset,
   onScrollOffset,
+  lineupOffer = 'both',
   onShareLineup
 }: {
   rows: readonly EditRosterRow[]
@@ -48,7 +49,13 @@ export function EditRosterList({
   visible?: boolean
   initialScrollOffset?: number
   onScrollOffset?: (offset: number) => void
-  /** Opens Share Lineup; its row leads the list when given. */
+  /**
+   * Share his own lineup, scan the opponent's, or choose either. The row's
+   * words and icon follow it. The row leads the list when `onShareLineup`
+   * is given.
+   */
+  lineupOffer?: LineupQrOffer
+  /** Opens the lineup QR for this side. */
   onShareLineup?: () => void
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
@@ -70,6 +77,13 @@ export function EditRosterList({
     justifyContent: 'center'
   } as const
   const title = { ...text, fontFamily: theme.semiBoldTextFont }
+  const lineupLabel =
+    lineupOffer === 'share'
+      ? lstrings.lineupQr_shareOwn
+      : lineupOffer === 'scan'
+        ? lstrings.lineupQr_scanOpponent
+        : lstrings.lineupQr_shareRow
+  const lineupGlyph = lineupOffer === 'scan' ? 'scan' : 'qr'
   const initialOffset = useRef({ x: 0, y: initialScrollOffset ?? 0 })
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const restorePending = useRef(true)
@@ -121,15 +135,13 @@ export function EditRosterList({
         keyboardShouldPersistTaps="handled"
       >
         {onShareLineup != null && (
-          <ScoringPlayerCard
-            label={lstrings.lineupQr_shareRow}
-            onPress={onShareLineup}
-          >
+          <ScoringPlayerCard label={lineupLabel} onPress={onShareLineup}>
             <View testID="Share lineup badge" style={badgeStyle}>
-              {/* The glyph's squares fill the middle two thirds of its box, so
-                  one as wide as the badge's inside leaves 9pt around them. */}
+              {/* The QR squares fill the middle two thirds of the box, so one
+                  as wide as the badge's inside leaves 9pt around them. The
+                  scan brackets use that same box. */}
               <LineupQrGlyph
-                kind="qr"
+                kind={lineupGlyph}
                 color={badge.text}
                 size={JERSEY_BADGE_SIZE - 2}
               />
@@ -137,7 +149,7 @@ export function EditRosterList({
             <View style={{ flex: 1, minWidth: 0 }}>
               <ShimmerText
                 testID="Share lineup title"
-                text={lstrings.lineupQr_shareRow}
+                text={lineupLabel}
                 active={visible}
                 color={theme.scoringSurface.text}
                 highlight={badge.text}

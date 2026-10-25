@@ -135,6 +135,20 @@ export function managesRoster(
 }
 
 /**
+ * Whether the signed-in person keeps this team's score, from `GET /me/roles`:
+ * a scorekeeper of it, or its administrator, who holds every flag. Coaching
+ * operations continue to use coachesTeam.
+ */
+export function keepsScore(
+  roles: { teams: Record<string, readonly Role[]> } | undefined,
+  teamId: string | undefined
+): boolean {
+  if (roles == null || teamId == null) return false
+  const held = roles.teams[teamId] ?? []
+  return held.includes('scorekeeper') || held.includes('admin')
+}
+
+/**
  * Whether the signed-in person keeps this team's walk-up songs, from
  * `GET /me/roles`: a songkeeper or scorekeeper of it, or its administrator.
  * The app offers a player's Walk-up tab on this; the server decides again on

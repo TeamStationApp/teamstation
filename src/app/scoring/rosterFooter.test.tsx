@@ -389,6 +389,56 @@ describe('roster screen Share Lineup', function () {
     expect(testId('Roster footer actions')).equals(null)
   })
 
+  it('shares his own lineup and scans only the opponent’s', async function () {
+    await render(
+      <RosterEditor
+        state={fresh()}
+        defaultSide="away"
+        scorekeeperSide="away"
+        lineupScanner={scanner}
+        onSave={() => undefined}
+      />
+    )
+    await click('Roster')
+    expect(node('Share Team Lineup')).not.equals(null)
+    expect(node('Scan to Import Team Lineup')).equals(null)
+    expect(node('Share or import team lineup')).equals(null)
+    expect(node('Game roster information')).equals(null)
+    expect(host.textContent).includes('Tap player to edit.')
+    expect(
+      testId('Share lineup badge')!.querySelector(
+        '[data-testid="lineupQrGlyph-qr"]'
+      )
+    ).not.equals(null)
+    await click('Share Team Lineup')
+    expect(document.body.textContent).includes('Share Lineup')
+    expect(document.body.textContent).not.includes('Share/Import Lineup')
+    expect(
+      document.querySelector('[aria-label="Generate QR to share lineup"]')
+    ).equals(null)
+    expect(
+      document.querySelector('[aria-label="Scan QR code to import lineup"]')
+    ).equals(null)
+    expect(document.querySelector('svg[data-testid="qrCode"]')).not.equals(null)
+    await tap('Cancel')
+    await click('Home Team')
+    expect(node('Scan to Import Team Lineup')).not.equals(null)
+    expect(node('Share Team Lineup')).equals(null)
+    expect(
+      testId('Share lineup badge')!.querySelector(
+        '[data-testid="lineupQrGlyph-scan"]'
+      )
+    ).not.equals(null)
+    await click('Scan to Import Team Lineup')
+    expect(document.body.textContent).includes('Import Lineup')
+    expect(document.body.textContent).not.includes('Share/Import Lineup')
+    expect(
+      document.querySelector('[aria-label="Generate QR to share lineup"]')
+    ).equals(null)
+    expect(document.querySelector('svg[data-testid="qrCode"]')).equals(null)
+    expect(camera.props).not.equals(undefined)
+  })
+
   it('opens the chooser for the team on the slider', async function () {
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     await openShare()
