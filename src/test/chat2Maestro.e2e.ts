@@ -611,7 +611,8 @@ export function iosKeyboardDismissPoint(input: {
 /** Dismiss through one observed gutter, with one observed OS-menu transition. */
 export async function dismissIosChatKeyboard(
   ui: Pick<Chat2UI, 'device' | 'steps' | 'runDir'>,
-  timeout = 90000
+  // Long conversations make every iOS read slow on a loaded simulator.
+  timeout = 300000
 ): Promise<void> {
   const end = Date.now() + timeout
   const remaining = (): number => {
@@ -2644,7 +2645,8 @@ export class Chat2UI {
       assert.equal(await this.draft(), '')
       return
     }
-    const signal = AbortSignal.timeout(90000)
+    // Two tree reads and a raw screenshot of a long conversation.
+    const signal = AbortSignal.timeout(300000)
     const inspect = async (): Promise<Args> => {
       const raw = await this.iosRaw(signal)
       const rawPath = join(
@@ -4511,7 +4513,9 @@ export class Chat2UI {
 
   async assertKeyboard(): Promise<void> {
     if (this.surface === 'ios') {
-      const signal = AbortSignal.timeout(90000)
+      // Two reads of a long conversation's tree and a raw screenshot passed
+      // 90 s on a loaded simulator.
+      const signal = AbortSignal.timeout(300000)
       const evidence: Args = {
         name: 'Positive iOS composer above software keyboard',
         focusSignal: 'unavailable-on-ios',
