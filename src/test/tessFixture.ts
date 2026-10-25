@@ -21,6 +21,7 @@ import {
   tool
 } from './fakeAnthropic'
 import { type GroupFixture, groupFixture } from './groupFixtures'
+import { insertFixtureUsers } from './insertFixtureUsers'
 import { seedUmpireTypes } from './umpireTypes'
 
 /**
@@ -31,6 +32,10 @@ import { seedUmpireTypes } from './umpireTypes'
  * Demo Hawks is two teams here: the account harness's own and the group
  * fixture's `f.teamA`, which user 101 administers. Everything below means
  * `f.teamA`, and the scripted answers name it by id.
+ *
+ * Two players for the links Tess makes of names: Tony Gwynn plays for
+ * `f.teamA`, and Ozzie Smith for Demo Visitors (`f.standaloneTeam`), whose
+ * profile user 101 may not see.
  */
 export interface TessFixtureOptions {
   /** The web build the harness serves, for a browser. */
@@ -62,6 +67,8 @@ export interface TessFixture {
   videos: { firstBase: string; homePlate: string }
   /** The app paths the scripted answers link to. */
   links: { teamSettings: string; firstBaseAngle: string }
+  /** The players' user ids: one user 101 may see, and one they may not. */
+  players: { visible: string; hidden: string }
   close: () => Promise<void>
 }
 
@@ -109,10 +116,27 @@ export function tessScript(fixture: {
   may3: string
   scheduled: string
   links: TessFixture['links']
+  players: TessFixture['players']
   origin: () => string
 }): ScriptEntry[] {
-  const { teamA, seasonA, may3, scheduled, links, origin } = fixture
+  const { teamA, seasonA, may3, scheduled, links, players, origin } = fixture
   return [
+    {
+      // The roster names him; the answer leaves his name unlinked.
+      match: /who plays shortstop/i,
+      rounds: [
+        tool('api_get', { path: `/teams/${teamA}/roster` }),
+        text('Tony G plays shortstop for Demo Hawks.')
+      ]
+    },
+    {
+      match: /ozzie/i,
+      rounds: [
+        text(
+          `Here is [Ozzie S](/players/${players.hidden}), who plays for Demo Visitors.`
+        )
+      ]
+    },
     {
       match: /where are my team settings/i,
       rounds: [
@@ -368,6 +392,36 @@ export async function tessFixture(
         granted_by: userIdOfGumbo(101)
       })
       .execute()
+    // Tony Gwynn on Demo Hawks; Ozzie Smith on a team user 101 cannot see.
+    const players = {
+      visible: userIdOfGumbo(107),
+      hidden: userIdOfGumbo(108)
+    }
+    for (const [id, name, team] of [
+      [107, 'Tony Gwynn', f.teamA],
+      [108, 'Ozzie Smith', f.standaloneTeam]
+    ] as const) {
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: `usr_tess_${id}`,
+        display_name: name,
+        first_name: name.split(' ')[0],
+        last_name: name.split(' ')[1],
+        login_enabled: false
+      })
+      await db
+        .insertInto('memberships')
+        .values({
+          id: `mem_tess_${id}`,
+          user_id: userIdOfGumbo(id),
+          team_id: team,
+          role: 'member',
+          is_player: true,
+          jersey: id === 107 ? '19' : '1',
+          positions: ['SS']
+        })
+        .execute()
+    }
     const season = f.seasonA
     await db
       .insertInto('season_teams')
@@ -493,6 +547,7 @@ export async function tessFixture(
         may3,
         scheduled,
         links,
+        players,
         origin: publicOrigin
       })
     )
@@ -506,6 +561,7 @@ export async function tessFixture(
       games: { finals, may3, scheduled },
       videos,
       links,
+      players,
       close: async () => {
         detach?.()
         await fixture.h.close()

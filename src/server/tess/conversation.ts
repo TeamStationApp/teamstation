@@ -17,6 +17,7 @@ import {
   type MessagesResponse,
   type TextBlock
 } from './messagesApi'
+import { linkPlayers, type PlayerNames, playerNamesOf } from './playerLinks'
 import { type Moment, momentText } from './prompt'
 import { recordUsage } from './usage'
 
@@ -341,11 +342,16 @@ export function requestMessages(
  * split, show as one reply: the text of each, then a card for each change
  * she proposed. Tool results and confirmation notes are not shown, and a
  * reply with neither text nor a change is left out.
+ *
+ * Every player her text names is a link to their profile (`linkPlayers`),
+ * by the names the API answered her with in `names`, by default those in
+ * `messages`.
  */
 export function viewMessages(
   messages: readonly StoredMessage[],
   attachments: ReadonlyMap<string, AttachmentInfo>,
-  changes: ReadonlyMap<string, TessChange>
+  changes: ReadonlyMap<string, TessChange>,
+  names: PlayerNames = playerNamesOf(messages)
 ): TessMessage[] {
   const out: TessMessage[] = []
   let reply: TessMessage | undefined
@@ -394,7 +400,7 @@ export function viewMessages(
       changes: [],
       createdAt: message.createdAt.toISOString()
     }
-    const text = textOf(message.content)
+    const text = linkPlayers(textOf(message.content), names)
     if (text !== '')
       reply.text = reply.text === '' ? text : `${reply.text}\n\n${text}`
     for (const block of message.content) {

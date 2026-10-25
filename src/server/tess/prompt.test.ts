@@ -57,6 +57,13 @@ describe("Tess's system prompt", function () {
     expect(text).includes('<table>')
   })
 
+  it('has her link every player she names to their profile, by the userId she read', function () {
+    const text = instructions()
+    expect(text).includes('Every time you name a player, link the name')
+    expect(text).includes('[Tony Gwynn](/players/usr_123)')
+    expect(text).includes('Never invent a userId')
+  })
+
   it('indexes the API she may use, with bodies for writes, and leaves the refused routes out', function () {
     const index = instructions().split('## API index')[1]
     expect(index).match(

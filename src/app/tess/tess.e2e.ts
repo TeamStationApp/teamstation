@@ -21,8 +21,10 @@ import { recordBrowserCoverage } from '../browserCoverage.e2e'
  * Tess on a wide browser window (Chromium, 1280 × 900), driven through
  * maestro-d with puppeteer beside it for what a test reads back: the split,
  * links into the pane, rich HTML that loads nothing remote, the 3-second
- * hold, attachments, the microphone, the narrow layout and Back, and the
- * screens that hide her. The model is `fakeAnthropic`; nothing is paid for.
+ * hold, attachments, the microphone, the narrow layout and Back, the
+ * screens that hide her, the divider that resizes her column, the title and
+ * the composer's field, and the players she names. The model is
+ * `fakeAnthropic`; nothing is paid for.
  *
  * `TS_UI_BEFORE=1` runs W1 alone against the base build
  * (`TS_TESS_WEB_ROOT`), asserting the header without Tess, and saves its
@@ -231,6 +233,10 @@ async function main(): Promise<void> {
     )
     console.log('W1 header order passed', suffix)
     if (before) return
+    // A width a run before this one dragged the column to is not this one's.
+    await page.evaluate(() => {
+      localStorage.removeItem('tess.columnWidth')
+    })
 
     // W2: the split.
     await identity(t, 101)
@@ -935,6 +941,252 @@ async function main(): Promise<void> {
     await waitFor(page, column)
     await contains(page, 'Demo Hawks')
     console.log('W18 the DJ address on the web shows the game with Tess')
+
+    // L5: the header and the +.
+    await open('/')
+    await tap(tessButton)
+    await waitFor(page, column)
+    const header = await page.evaluate(() => {
+      const title = document.querySelector(
+        '[data-testid="Tess chat"] [role="heading"]'
+      )!
+      const icon = title.previousElementSibling as HTMLElement
+      const box = (node: Element): number[] => {
+        const rect = node.getBoundingClientRect()
+        return [rect.x, rect.y, rect.width, rect.height]
+      }
+      return {
+        title: title.textContent,
+        titleBox: box(title),
+        icon: icon.textContent,
+        iconBox: box(icon)
+      }
+    })
+    expect(header.title).equals('Ask Tess')
+    expect(header.icon).equals('auto_awesome')
+    expect(header.iconBox[0], 'the icon at the left').lessThan(40)
+    expect(header.iconBox[1], 'at the top').lessThan(40)
+    expect(header.iconBox[0] + header.iconBox[2]).lessThan(header.titleBox[0])
+    const plus = await page.$eval(
+      '[role="button"][aria-label="Attach a file"]',
+      node => {
+        const style = getComputedStyle(node)
+        const box = node.getBoundingClientRect()
+        return {
+          width: box.width,
+          height: box.height,
+          border: style.borderTopWidth,
+          background: style.backgroundColor
+        }
+      }
+    )
+    expect(plus).deep.equals({
+      width: 32,
+      height: 32,
+      border: '0px',
+      background: 'rgba(0, 0, 0, 0)'
+    })
+    await shot('wide-header-composer-after.png')
+    console.log(
+      'L5 "Ask Tess" after the icon at the top left; + is 32 × 32 with no border or fill'
+    )
+
+    // L4: Shift+Enter is a new line, Enter sends both.
+    const fieldHeight = async (): Promise<number> =>
+      await page.$eval(field, node => node.getBoundingClientRect().height)
+    const oneLine = await fieldHeight()
+    await page.click(field)
+    await page.type(field, 'a')
+    await page.keyboard.down('Shift')
+    await page.keyboard.press('Enter')
+    await page.keyboard.up('Shift')
+    await page.type(field, 'b')
+    const twoLines = await fieldHeight()
+    expect(
+      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+    ).equals('a\nb')
+    expect(oneLine).equals(48)
+    expect(twoLines, 'two lines').equals(70)
+    const callsBeforeLines = t.model.calls.length
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
+    await page.waitForFunction(
+      selector =>
+        document.querySelector<HTMLTextAreaElement>(selector)!.value === '',
+      { timeout: 20000 },
+      field
+    )
+    const lines = t.model.calls
+      .slice(callsBeforeLines)
+      .find(call => call.request?.said.startsWith('a') === true)
+    expect(lines?.request?.said).equals('a\nb')
+    expect(await fieldHeight(), 'one line again').equals(48)
+    console.log(
+      'L4 the field showed two lines; "a\\nb" was sent',
+      oneLine,
+      twoLines
+    )
+
+    // L2: the divider drags the column wider and narrower, and the pane
+    // beside it follows; a reload keeps the width.
+    await open(`/teams/${f.teamA}`)
+    await tap(tessButton)
+    await waitFor(page, column)
+    await waitFor(page, '[data-breakpoint]')
+    const divider = '[data-testid="Tess divider"]'
+    await waitFor(page, divider)
+    const dividerLine = async (): Promise<Rect> =>
+      (await rectOf(page, `${divider} > div`))!
+    expect((await dividerLine()).width, 'a 3-point line').equals(3)
+    expect(
+      await page.$eval(divider, node => getComputedStyle(node).cursor)
+    ).equals('col-resize')
+    const breakpointIs = async (wanted: string): Promise<void> => {
+      await page.waitForFunction(
+        wanted => {
+          const nodes = Array.from(
+            document.querySelectorAll('[data-breakpoint]')
+          )
+          const last = nodes[nodes.length - 1]
+          return last != null && last.getAttribute('data-breakpoint') === wanted
+        },
+        { timeout: 10000 },
+        wanted
+      )
+    }
+    await breakpointIs('tablet')
+    const dragBy = async (dx: number): Promise<void> => {
+      const grab = (await rectOf(page, divider))!
+      const from = grab.x + grab.width / 2
+      await page.mouse.move(from, 450)
+      await page.mouse.down()
+      for (let step = 1; step <= 12; step++) {
+        await page.mouse.move(from + (dx * step) / 12, 450)
+        await pause(40)
+      }
+      await page.mouse.up()
+      await pause(300)
+    }
+    const drag = await startVideo(s, out, 'divider-drag.mp4')
+    await pause(500)
+    await dragBy(120)
+    expect(await rectOf(page, column)).deep.include({ x: 0, width: 520 })
+    expect(await paneRect(page)).deep.include({ x: 520, width: 760 })
+    await breakpointIs('tablet')
+    await dragBy(600)
+    expect(await rectOf(page, column)).deep.include({ width: 720 })
+    expect(await paneRect(page)).deep.include({ x: 720, width: 560 })
+    await breakpointIs('phone')
+    await dragBy(-1000)
+    expect(await rectOf(page, column)).deep.include({ width: 320 })
+    expect(await paneRect(page)).deep.include({ x: 320, width: 960 })
+    await breakpointIs('tablet')
+    await dragBy(200)
+    await pause(500)
+    await drag.stop()
+    await page.reload()
+    await tap(tessButton)
+    await waitFor(page, column, 30000)
+    await page.waitForFunction(
+      selector => {
+        const node = document.querySelector(selector)
+        return node != null && node.getBoundingClientRect().width === 520
+      },
+      { timeout: 10000 },
+      column
+    )
+    expect(await paneRect(page)).deep.include({ x: 520, width: 760 })
+    console.log(
+      'L2 520/760, 720/560 (phone), 320/960 (tablet); the reload kept 520'
+    )
+
+    // L3: the keyboard moves it 16 points a press.
+    await page.focus(divider)
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('ArrowRight')
+    await page.waitForFunction(
+      selector => {
+        const node = document.querySelector(selector)
+        return node != null && node.getBoundingClientRect().width === 552
+      },
+      { timeout: 10000 },
+      column
+    )
+    expect(
+      await page.$eval(divider, node => node.getAttribute('aria-valuenow'))
+    ).equals('552')
+    console.log('L3 → twice: 520 to 552')
+    // Back to the default, for what follows and the next run.
+    await page.evaluate(() => {
+      localStorage.removeItem('tess.columnWidth')
+    })
+
+    // L6: a player Tess names is a blue link to their profile.
+    await open('/')
+    await tap(tessButton)
+    await waitFor(page, column)
+    await say('Who plays shortstop for Demo Hawks?', 'plays shortstop')
+    const playerLink = async (name: string, mark: string): Promise<string> =>
+      await page.evaluate(
+        (name, mark) => {
+          const links = Array.from(
+            document.querySelectorAll(
+              '[data-testid="Tess reply"] [role="link"]'
+            )
+          ).filter(node => node.textContent === name)
+          const link = links[links.length - 1] as HTMLElement | undefined
+          if (link == null) throw new Error(`No link ${name}`)
+          link.setAttribute('data-tess-player', mark)
+          link.scrollIntoView({ block: 'center' })
+          return getComputedStyle(link).color
+        },
+        name,
+        mark
+      )
+    expect(await playerLink('Tony G', 'gwynn')).equals('rgb(21, 101, 192)')
+    await pause(500)
+    await shot('player-link.png')
+    await tap('[data-tess-player="gwynn"]')
+    await page.waitForFunction(
+      path => location.pathname === path,
+      { timeout: 15000 },
+      `/players/${t.players.visible}`
+    )
+    await waitFor(page, column)
+    await contains(page, 'Tony G')
+    await waitFor(page, '[aria-label="Player sections"]', 20000)
+    console.log('L6 the blue name opened his profile in the pane')
+
+    // L7: a player the viewer may not see. A link from Tess opens a page on
+    // its own, as an address does, so Back, like the header's, goes to the
+    // tab's first page.
+    await say('Show me Ozzie', 'who plays for Demo Visitors')
+    await playerLink('Ozzie S', 'smith')
+    await tap('[data-tess-player="smith"]')
+    await page.waitForFunction(
+      path => location.pathname === path,
+      { timeout: 15000 },
+      `/players/${t.players.hidden}`
+    )
+    await waitFor(page, '[data-testid="Player unavailable"]', 20000)
+    await contains(page, 'Profile not available')
+    await contains(
+      page,
+      'You don\u2019t have access to this player\u2019s profile, or it no longer exists.'
+    )
+    await pause(800)
+    await shot('player-denied.png')
+    await tap('[data-testid="Player unavailable"] [role="button"]')
+    await page.waitForFunction(() => location.pathname === '/', {
+      timeout: 15000
+    })
+    await gone(page, '[data-testid="Player unavailable"]')
+    await contains(page, 'Your Home')
+    await waitFor(page, column)
+    console.log('L7 "Profile not available"; Back went to Your Home')
 
     if (process.env.TS_DIRECT_BROWSER_COVERAGE != null)
       await recordBrowserCoverage(

@@ -128,10 +128,104 @@ describe('Composer', function () {
     await type('First line')
     const shifted = await key({ key: 'Enter', shiftKey: true })
     expect(shifted.defaultPrevented).equals(false)
+    // The iOS field's native name is not the web's element id.
+    expect(field().hasAttribute('id')).equals(false)
     await key({ key: 'Enter', isComposing: true })
     await key({ key: 'a' })
     expect(sent).deep.equals([])
     expect(field().value).equals('First line')
+  })
+
+  it('is one line, and grows with what it holds to six lines, then scrolls', async function () {
+    const { props } = composer()
+    await render(<Composer {...props} />)
+    expect(field().getAttribute('rows')).equals('1')
+    // jsdom lays nothing out: the field's content is as tall as this says,
+    // its padding (24) and its lines (22 each).
+    let lines = 1
+    Object.defineProperty(field(), 'scrollHeight', {
+      configurable: true,
+      get: () => 24 + 22 * lines
+    })
+    const height = (): string => field().style.height
+    await type('a')
+    expect(height()).equals('48px')
+    lines = 3
+    await type('a\nb\nc')
+    expect(height()).equals('92px')
+    lines = 9
+    await type('a\nb\nc\nd\ne\nf\ng\nh\ni')
+    expect(height(), 'six lines, and it scrolls').equals('158px')
+    lines = 1
+    await key({ key: 'Enter' })
+    expect(field().value).equals('')
+    expect(height()).equals('48px')
+  })
+
+  it('measures its height again when its width changes, as the draft wraps anew', async function () {
+    // What the browser would tell of the field's size, by hand.
+    const observed: Array<(entries: unknown[]) => void> = []
+    let disconnected = 0
+    const realObserver = (globalThis as { ResizeObserver?: unknown })
+      .ResizeObserver
+    ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      constructor(report: (entries: unknown[]) => void) {
+        observed.push(report)
+      }
+
+      observe(): void {}
+      disconnect(): void {
+        disconnected += 1
+      }
+    }
+    try {
+      const { props } = composer()
+      await render(<Composer {...props} />)
+      let lines = 2
+      Object.defineProperty(field(), 'scrollHeight', {
+        configurable: true,
+        get: () => 24 + 22 * lines
+      })
+      await type('a long draft that wraps')
+      expect(field().style.height).equals('70px')
+      expect(observed).length(1)
+      const resized = async (width: number): Promise<void> => {
+        await act(async () => {
+          observed[0]([{ contentRect: { width } }])
+        })
+      }
+      // Narrower, it wraps to four lines; the same width again measures
+      // nothing new; and a report without an entry is no width.
+      lines = 4
+      await resized(240)
+      expect(field().style.height).equals('114px')
+      await resized(240)
+      await act(async () => {
+        observed[0]([])
+      })
+      lines = 1
+      await resized(520)
+      expect(field().style.height).equals('48px')
+      await unmount()
+      expect(disconnected).equals(1)
+    } finally {
+      ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver =
+        realObserver
+    }
+  })
+
+  it('has a small + with no border or fill, in the secondary text colour', async function () {
+    const { props } = composer()
+    await render(<Composer {...props} />)
+    const plus = byLabel('Attach a file')
+    const style = getComputedStyle(plus)
+    expect([style.width, style.height]).deep.equals(['32px', '32px'])
+    // jsdom leaves a property no style set empty.
+    expect(['', '0px']).includes(style.borderTopWidth)
+    expect(['', 'rgba(0, 0, 0, 0)']).includes(style.backgroundColor)
+    expect(getComputedStyle(plus.firstElementChild!).color).equals(
+      'rgb(92, 107, 85)'
+    )
   })
 
   it('sends with the button only when there is something to send and Tess is free', async function () {

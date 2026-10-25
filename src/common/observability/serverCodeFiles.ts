@@ -305,6 +305,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/tess/loopback.js',
   'server/tess/messagesApi.js',
   'server/tess/openApi.js',
+  'server/tess/playerLinks.js',
   'server/tess/prompt.js',
   'server/tess/sitemapCli.js',
   'server/tess/sitemapGenerator.js',

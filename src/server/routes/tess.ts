@@ -30,6 +30,7 @@ import {
   viewMessages
 } from '../tess/conversation'
 import { credentialsOf } from '../tess/loopback'
+import { playerNamesOf } from '../tess/playerLinks'
 import { turnRunning } from '../tess/turns'
 import { usageWeeks } from '../tess/usage'
 
@@ -163,14 +164,18 @@ export function tessRoutes(
   return router
 }
 
-/** The conversation from message `fromId` on, as the app shows it at `now`. */
+/**
+ * The conversation from message `fromId` on, as the app shows it at `now`,
+ * its players linked by every name the conversation's API answers carry.
+ */
 async function view(
   db: Kysely<Database>,
   userId: string,
   fromId: number,
   now = new Date()
 ): Promise<TessMessage[]> {
-  const { messages } = await loadConversation(db, userId, fromId)
+  const conversation = (await loadConversation(db, userId)).messages
+  const messages = conversation.filter(message => message.id >= fromId)
   const changeIds = messages.flatMap(message =>
     message.content.flatMap(block =>
       block.type === 'change' ? [block.id] : []
@@ -179,6 +184,7 @@ async function view(
   return viewMessages(
     messages,
     await attachmentInfoById(db, userId, attachmentIdsOf(messages)),
-    await changesById(db, userId, changeIds, now)
+    await changesById(db, userId, changeIds, now),
+    playerNamesOf(conversation)
   )
 }

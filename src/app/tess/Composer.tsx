@@ -1,7 +1,9 @@
 import React, {
   type ReactNode,
   type Ref,
+  useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState
 } from 'react'
@@ -49,12 +51,39 @@ export interface ComposerProps {
   handle?: Ref<ComposerHandle>
 }
 
+/** What the field is on the web: react-native-web's textarea. */
+interface TextArea {
+  style: { height: string }
+  scrollHeight: number
+}
+
+/** The browser's `ResizeObserver`, as much of it as the field needs. */
+type SizeWatcher = new (
+  report: (entries: Array<{ contentRect: { width: number } }>) => void
+) => { observe: (node: unknown) => void; disconnect: () => void }
+
+/** The most lines the field grows to before it scrolls. */
+export const FIELD_MAX_LINES = 6
+
 /**
- * Where the user writes to Tess: + on the left, the field, send on the
- * right, the attached files above, any error below, and the microphone
- * centered under it all. On the web Enter sends and Shift+Enter starts a new
- * line. A message takes at most five files: a sixth is refused with the
- * reason, as soon as it is taken, and + says so rather than open.
+ * The field's `nativeID` on a phone or a tablet: iOS's Shift+Return newline
+ * (`ios/TeamStation/TSShiftReturn.m`) acts on the field that carries it and
+ * no other.
+ */
+export const FIELD_NATIVE_ID = 'tessComposerField'
+
+/**
+ * Where the user writes to Tess: a small + on the left, the field, send on
+ * the right, the attached files above, any error below, and the microphone
+ * centered under it all. A message takes at most five files: a sixth is
+ * refused with the reason, as soon as it is taken, and + says so rather than
+ * open.
+ *
+ * The field is one line, and grows with what is in it up to six lines, then
+ * scrolls. On the web Enter sends and Shift+Enter starts a new line; on a
+ * phone or a tablet the return key sends, and on an iPad's hardware
+ * keyboard Shift+Return starts a new line (`TSShiftReturn.m`, which puts it
+ * in as a paste). Pasted lines keep their breaks.
  */
 export function Composer({
   onSend,
@@ -71,6 +100,44 @@ export function Composer({
   const [attachments, setAttachments] = useState<TessAttachmentRef[]>([])
   const [uploading, setUploading] = useState(0)
   const [attaching, setAttaching] = useState(false)
+  // The web's field is a textarea, which does not grow by itself: its
+  // height follows what it holds, measured as that changes and as its width
+  // does (the column is dragged, the window resized), which changes how the
+  // text wraps. A phone's grows within its limits on its own.
+  const field = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const [grown, setGrown] = useState<number>()
+  const [width, setWidth] = useState<number>()
+  useEffect(() => {
+    if (Platform.OS !== 'web') return
+    const node = field.current
+    const Watcher = (globalThis as { ResizeObserver?: SizeWatcher })
+      .ResizeObserver
+    if (node == null || Watcher == null) return
+    const observer = new Watcher(entries => {
+      const [entry] = entries
+      if (entry != null) setWidth(Math.round(entry.contentRect.width))
+    })
+    observer.observe(node)
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web') return
+    const node = field.current as unknown as TextArea | null
+    if (node == null) return
+    const held = node.style.height
+    node.style.height = '0px'
+    // Its padding, its lines and its two borders.
+    const content = node.scrollHeight + 2
+    node.style.height = held
+    setGrown(
+      Math.min(
+        styles.field.maxHeight,
+        Math.max(styles.field.minHeight, content)
+      )
+    )
+  }, [text, width, styles.field])
   // The draft as it is now, for the microphone, which answers between
   // renders; a send empties it at once.
   const draft = useRef({ text, attachments, busy, uploading })
@@ -93,6 +160,9 @@ export function Composer({
     attachments: TessAttachmentRef[]
   }): void => {
     draft.current = { ...draft.current, text: '', attachments: [] }
+    // iOS keeps a grown field's height when only its value empties; the
+    // native clear measures it again, back to one line.
+    if (Platform.OS !== 'web') field.current?.clear()
     setText('')
     setAttachments([])
     onSend(sent.text.trim(), sent.attachments).then(
@@ -242,20 +312,31 @@ export function Composer({
             }
             setAttaching(open => !open)
           }}
-          style={({ pressed }) => [styles.round, pressed && styles.pressed]}
+          hitSlop={PLUS_SLOP}
+          style={({ pressed }) => [styles.plus, pressed && styles.pressed]}
         >
-          <Icon name="add" size={1.5} />
+          <Icon name="add" size={1.5} color={theme.secondaryTextColor} />
         </Pressable>
         <TextInput
+          ref={field}
           testID="Tess field"
+          nativeID={Platform.OS === 'web' ? undefined : FIELD_NATIVE_ID}
           accessibilityLabel={lstrings.tess_placeholder}
           placeholder={lstrings.tess_placeholder}
           placeholderTextColor={theme.placeholderTextColor}
           multiline
+          // The web's textarea starts at one row. A phone's field takes rows
+          // as its most lines (numberOfLines), so there it is left out and
+          // the field grows to its maxHeight.
+          rows={Platform.OS === 'web' ? 1 : undefined}
+          // A phone's return key sends; the web's Enter is `keyPress`.
+          returnKeyType="send"
+          submitBehavior={Platform.OS === 'web' ? undefined : 'submit'}
+          onSubmitEditing={Platform.OS === 'web' ? undefined : send}
           value={text}
           onChangeText={setText}
           onKeyPress={keyPress}
-          style={styles.field}
+          style={[styles.field, grown != null && { height: grown }]}
         />
         <Pressable
           accessibilityRole="button"
@@ -284,6 +365,19 @@ export function Composer({
       )}
       {mic != null && <View style={styles.mic}>{mic}</View>}
     </View>
+  )
+}
+
+// The + is 32 points; its touch target is 44.
+const PLUS_SLOP = 6
+
+const FIELD_LINE_REM = 1.375
+const FIELD_PADDING_REM = 0.75
+
+/** The field's height for this many lines: padding, lines and borders. */
+function fieldHeight(theme: Theme, lines: number): number {
+  return (
+    theme.rem(FIELD_PADDING_REM) * 2 + theme.rem(FIELD_LINE_REM) * lines + 2
   )
 }
 
@@ -317,6 +411,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'flex-end',
     gap: theme.rem(theme.spaceSmRem)
   },
+  // Borderless and unfilled, centred on a one-line field and on the last
+  // line of a taller one.
+  plus: {
+    width: theme.rem(2),
+    height: theme.rem(2),
+    marginBottom: theme.rem(0.5),
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   round: {
     width: theme.rem(3),
     height: theme.rem(3),
@@ -328,13 +431,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
   send: { backgroundColor: theme.primaryButtonColor },
   disabled: { opacity: 0.4 },
   pressed: { opacity: 0.6 },
+  // One line between its padding and borders, and at most six.
   field: {
     flex: 1,
-    minHeight: theme.rem(3),
-    maxHeight: theme.rem(9),
+    minHeight: fieldHeight(theme, 1),
+    maxHeight: fieldHeight(theme, FIELD_MAX_LINES),
     paddingHorizontal: pillPadding(theme.rem(3)),
-    paddingTop: theme.rem(0.8),
-    paddingBottom: theme.rem(0.8),
+    paddingTop: theme.rem(FIELD_PADDING_REM),
+    paddingBottom: theme.rem(FIELD_PADDING_REM),
+    lineHeight: theme.rem(FIELD_LINE_REM),
     borderRadius: theme.rem(1.5),
     borderWidth: 1,
     borderColor: theme.inputBorderColor,

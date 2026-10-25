@@ -30,8 +30,9 @@ export interface TessChatProps {
 }
 
 /**
- * The chat with Tess: a title bar with the close X, the conversation, which
- * follows its newest message, and the composer.
+ * The chat with Tess: a title bar, her icon and "Ask Tess" on the left and
+ * the close X on the right, the conversation, which follows its newest
+ * message, and the composer.
  */
 export function TessChat({
   tess,
@@ -74,9 +75,12 @@ export function TessChat({
       ]}
     >
       <View style={styles.titleBar}>
-        <Text accessibilityRole="header" style={styles.title}>
-          {lstrings.tess_title}
-        </Text>
+        <View style={styles.heading}>
+          <Icon name="auto_awesome" size={1.5} />
+          <Text accessibilityRole="header" style={styles.title}>
+            {lstrings.tess_heading}
+          </Text>
+        </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={lstrings.tess_close}
@@ -143,6 +147,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     paddingRight: theme.rem(theme.spaceSmRem),
     borderBottomWidth: 1,
     borderBottomColor: theme.defaultBorderColor
+  },
+  heading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceSmRem)
   },
   title: {
     fontFamily: theme.boldTextFont,

@@ -379,6 +379,62 @@ describe('a player’s tabs', function () {
   })
 })
 
+describe('a player’s profile the viewer may not see', function () {
+  /** A client whose profile read fails with `error`. */
+  const refusing = (error: Error): TeamStationClient => {
+    const client = playerClient()
+    client.player = async () => {
+      throw error
+    }
+    return client
+  }
+  for (const [code, status] of [
+    ['notFound', 404],
+    ['forbidden', 403]
+  ] as const)
+    it(`says so on a page of its own, with Back, when the server answers ${status}`, async function () {
+      let back = 0
+      await render(
+        <PlayerScreen
+          client={refusing(new HttpError(code, 'Not found'))}
+          userId={userIdOfGumbo(8)}
+          onBack={() => {
+            back++
+          }}
+        />
+      )
+      const page = document.querySelector('[data-testid="Player unavailable"]')
+      expect(page).not.equals(null)
+      expect(page!.querySelector('[role="heading"]')!.textContent).equals(
+        'Profile not available'
+      )
+      expect(text()).includes(
+        'You don\u2019t have access to this player\u2019s profile, or it no longer exists.'
+      )
+      expect(tabNames(), 'no tabs').deep.equals([])
+      expect(text()).not.includes('Not found')
+      await press('Back')
+      expect(back).equals(1)
+    })
+
+  it('keeps the error line for any other failure', async function () {
+    await render(
+      <PlayerScreen
+        client={refusing(
+          new HttpError('internal', 'The server is having a moment')
+        )}
+        userId={userIdOfGumbo(8)}
+        onBack={() => undefined}
+      />
+    )
+    expect(document.querySelector('[data-testid="Player unavailable"]')).equals(
+      null
+    )
+    expect(text()).includes('The server is having a moment')
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+  })
+})
+
 describe('a player’s filters', function () {
   it('start both tabs on the team the page was opened for', async function () {
     const asked: Asked = { highlights: [], stats: [] }

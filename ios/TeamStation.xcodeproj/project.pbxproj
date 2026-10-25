@@ -25,6 +25,7 @@
 		8A278F034BF330E2ABD6B231 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 0CA8A8955AF78ED8BFDEF03F /* Inter-SemiBold.ttf */; };
 		9DA9170E62F1CF3FCC8D2E1B /* Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 884199177B140320E9E4B873 /* Inter-Bold.ttf */; };
 		A1D1C7A70000000000000002 /* TSPointerEvents.m in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000001 /* TSPointerEvents.m */; };
+		D7E5A1F00000000000000002 /* TSShiftReturn.m in Sources */ = {isa = PBXBuildFile; fileRef = D7E5A1F00000000000000001 /* TSShiftReturn.m */; };
 		A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000003 /* DictationMicrophone.swift */; };
 		A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */; };
 		A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */; };
@@ -72,6 +73,7 @@
 		832F49892805D3478CFEBD30 /* Quicksand-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Quicksand-SemiBold.ttf"; path = "../src/app/assets/fonts/Quicksand-SemiBold.ttf"; sourceTree = SOURCE_ROOT; };
 		884199177B140320E9E4B873 /* Inter-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-Bold.ttf"; path = "../src/app/assets/fonts/Inter-Bold.ttf"; sourceTree = SOURCE_ROOT; };
 		A1D1C7A70000000000000001 /* TSPointerEvents.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TSPointerEvents.m; path = TeamStation/TSPointerEvents.m; sourceTree = SOURCE_ROOT; };
+		D7E5A1F00000000000000001 /* TSShiftReturn.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TSShiftReturn.m; path = TeamStation/TSShiftReturn.m; sourceTree = SOURCE_ROOT; };
 		A1D1C7A70000000000000003 /* DictationMicrophone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DictationMicrophone.swift; sourceTree = "<group>"; };
 		A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTDictationMicrophone.mm; sourceTree = "<group>"; };
 		A9244C9899EB18E867E716E9 /* SpaceGrotesk-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Regular.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Regular.ttf"; sourceTree = SOURCE_ROOT; };
@@ -112,6 +114,7 @@
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
 				BBC657A1B801E2924A1F71F6 /* WalkUpMusic */,
 				A1D1C7A70000000000000001 /* TSPointerEvents.m */,
+				D7E5A1F00000000000000001 /* TSShiftReturn.m */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
 				B5E0A1C10000000000000007 /* PhoneStream */,
 				C9B2E4F10000000000000003 /* QrScanner */,
@@ -445,6 +448,7 @@
 				3780FF159797B70C60AA4C1F /* RCTWalkUpMusic.mm in Sources */,
 				A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */,
 				A1D1C7A70000000000000002 /* TSPointerEvents.m in Sources */,
+				D7E5A1F00000000000000002 /* TSShiftReturn.m in Sources */,
 				A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */,
 				A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */,
 				2C4859213D85F5C819CDFF61 /* SystemVolume.swift in Sources */,

@@ -101,6 +101,16 @@ describe('TessMarkdown', function () {
     expect(navigated).deep.equals(['/teams/t1'])
   })
 
+  it('draws links to the app and out of it in the link blue', async function () {
+    const host = await show(
+      '[Tony G](/players/usr_1) and [the rules](https://example.test)'
+    )
+    for (const words of ['Tony G', 'the rules'])
+      expect(getComputedStyle(linkNamed(host, words)).color, words).equals(
+        'rgb(21, 101, 192)'
+      )
+  })
+
   it('renders a javascript: link, or any other scheme, as plain text', async function () {
     const host = await show(
       '[Run me](javascript:alert(1)) [plain](http://example.com) [mail](mailto:a@example.com) [far](//example.com/x)'

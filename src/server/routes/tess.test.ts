@@ -12,6 +12,7 @@ import {
   TeamStationClient,
   TESS_MAX_IMAGE_BYTES as MAX_IMAGE_BYTES
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   callTools,
   say,
@@ -23,6 +24,7 @@ import { hashToken, makeToken } from '../auth/tokens'
 import { TESS_HEADER, withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { ownedAttachments } from '../tess/attachments'
+import { appendMessages } from '../tess/conversation'
 import { weekStartUtc } from '../tess/usage'
 import { tessRoutes } from './tess'
 
@@ -233,6 +235,57 @@ describe("Tess's routes", function () {
     ])
     const confirmed = await client().confirmTessChange(sent[1].changes[0].id)
     expect(confirmed.change.status).equals('done')
+  })
+
+  it('links the players Tess names by what the API told her, in every answer, and stores her words as they were', async () => {
+    const gwynn = userIdOfGumbo(107)
+    await appendMessages(w.h.db, w.userId(101), [
+      { role: 'user', content: [{ type: 'text', text: 'Who plays short?' }] },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_roster',
+            name: 'api_get',
+            input: { path: '/teams/tem_account/roster' }
+          }
+        ]
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_roster',
+            content: `HTTP 200\n${JSON.stringify([{ userId: gwynn, shortName: 'Tony G', isPlayer: true, section: 'player' }])}`
+          }
+        ]
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Tony G plays short.' }]
+      }
+    ])
+    const link = `[Tony G](/players/${gwynn})`
+    expect((await client().tess()).messages.map(each => each.text)).deep.equals(
+      ['Who plays short?', `${link} plays short.`]
+    )
+    // A later answer, which the route reads from its own message on, still
+    // knows him from the roster read before it.
+    w.model.reply(say('Tony G bats left.'))
+    const sent = await client().sendTessMessage('How does he bat?')
+    expect(sent.map(each => each.text)).deep.equals([
+      'How does he bat?',
+      `${link} bats left.`
+    ])
+    const stored = await w.h.db
+      .selectFrom('tess_messages')
+      .select('content')
+      .where('role', '=', 'assistant')
+      .orderBy('id')
+      .execute()
+    expect(JSON.stringify(stored)).not.includes('/players/')
   })
 
   it('takes a picture at its limit, 5 MB of base64, and names it in a message', async () => {

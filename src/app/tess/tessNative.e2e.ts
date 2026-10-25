@@ -431,6 +431,22 @@ async function main(): Promise<void> {
       const plus = (await find('Attach a file'))!.bounds!
       const field = (await find('Tess field'))!.bounds!
       expect(plus.x).lessThan(field.x)
+      // The title bar reads exactly "Ask Tess" at the top left, after her
+      // icon; the empty chat's hint only begins with those words.
+      const title = (await exactly('Ask Tess'))?.bounds
+      if (title == null) throw new Error('No title reads exactly Ask Tess')
+      const close = (await find('Close Tess'))!.bounds!
+      expect(title.x, 'the title after the icon').greaterThan(16)
+      expect(title.x).lessThan(size.width / 3)
+      expect(
+        Math.abs(title.y + title.height / 2 - (close.y + close.height / 2))
+      ).lessThan(12)
+      // The small +: 32 points square.
+      expect(plus.width).within(28, 36)
+      expect(plus.height).within(28, 36)
+      // One line until it grows: no taller than the send button beside it.
+      const send = (await find('Send'))!.bounds!
+      expect(field.height).lessThanOrEqual(send.height + 8)
       await capture('narrow-chat.png')
       await webcam('narrow-webcam-chat.jpg')
       console.log('N2 full-screen chat passed')

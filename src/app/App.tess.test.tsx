@@ -181,6 +181,7 @@ describe("Tess in the app's shell", () => {
   })
   afterEach(async () => {
     await unmount()
+    window.localStorage.removeItem('tess.columnWidth')
     await restoreWindow?.()
     restoreWindow = undefined
     webMusic.djSupported = dj
@@ -248,6 +249,7 @@ describe("Tess in the app's shell", () => {
       expect(byTestId('Tess layer')).not.equals(null)
       expect(byTestId('Tess column')).equals(null)
       expect(byTestId('Tess chat')).not.equals(null)
+      expect(byTestId('Tess divider'), 'no divider over the app').equals(null)
       await tap(link('Your account'))
       expect(byTestId('Tess chat'), 'closed by the link').equals(null)
       expect(currentRoute().name).equals('account')
@@ -354,6 +356,54 @@ describe("Tess in the app's shell", () => {
       await tap(button('Tess')!)
       expect(byTestId('Tess column')).equals(null)
       expect(breakpoint()).equals('desktop')
+    })
+
+    it('resizes the column and the pane beside it from the divider, and keeps the width', async () => {
+      await open(1280)
+      await openTess()
+      const column = (): HTMLElement => byTestId('Tess column')!
+      const divider = (): HTMLElement => byTestId('Tess divider')!
+      const drag = async (from: number, to: number): Promise<void> => {
+        await act(async () => {
+          divider().dispatchEvent(
+            new window.MouseEvent('pointerdown', {
+              bubbles: true,
+              cancelable: true,
+              clientX: from
+            })
+          )
+          window.dispatchEvent(
+            new window.MouseEvent('pointerup', { bubbles: true, clientX: to })
+          )
+        })
+        await settle(60)
+      }
+      expect(column().style.width).equals('400px')
+      expect(divider().getAttribute('aria-valuenow')).equals('400')
+      expect(breakpoint(), 'an 880-point pane').equals('tablet')
+      // As far as it goes: the pane keeps 560, a phone's width.
+      await drag(400, 1100)
+      expect(column().style.width).equals('720px')
+      expect(breakpoint(), 'a 560-point pane').equals('phone')
+      await act(async () => {
+        divider().dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key: 'ArrowLeft',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      await settle(60)
+      expect(column().style.width).equals('704px')
+      await drag(704, 100)
+      expect(column().style.width).equals('320px')
+      expect(breakpoint(), 'a 960-point pane').equals('tablet')
+      expect(window.localStorage.getItem('tess.columnWidth')).equals('320')
+      // Closed and opened again, the column is as wide as it was left.
+      await tap(button('Tess')!)
+      await openTess()
+      expect(column().style.width).equals('320px')
     })
 
     it('navigates the pane from a link and keeps the chat open', async () => {

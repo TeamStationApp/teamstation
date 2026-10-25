@@ -239,6 +239,9 @@ export const enUs = {
   player_stats: 'Stats',
   player_sections: 'Player sections',
   player_cannot_load: 'Cannot load this player.',
+  player_unavailable: 'Profile not available',
+  player_unavailable_body:
+    'You don\u2019t have access to this player\u2019s profile, or it no longer exists.',
   player_videos_empty: 'No highlights of this player yet.',
   player_videos_none_recorded:
     'None of this player\u2019s games were recorded, so there is nothing to watch yet.',
@@ -808,6 +811,7 @@ export const enUs = {
   lineupQr_imported_other: 'Imported %s players',
   lineupQr_benched: '%s benched',
   tess_title: 'Tess',
+  tess_heading: 'Ask Tess',
   tess_close: 'Close Tess',
   tess_empty:
     'Ask Tess where to find something in TeamStation, or what to change.',
@@ -842,7 +846,8 @@ export const enUs = {
   tess_rich_title: 'A table or chart from Tess',
   tess_rich_open: 'Open full screen',
   tess_rich_close: 'Close',
-  tess_way: 'Go to %s'
+  tess_way: 'Go to %s',
+  tess_resize: 'Resize Tess'
 }
 
 export type StringKey = keyof typeof enUs

@@ -155,7 +155,8 @@ import {
   useOutboxSummary,
   usePhoneOffline
 } from './sync/useOffline'
-import { TESS_COLUMN_WIDTH, useTessWide } from './tess/tessLayout'
+import { TessDivider } from './tess/TessDivider'
+import { useTessWide, useTessWidth } from './tess/tessLayout'
 import { TessOverlayHost, TessOverlayProvider } from './tess/TessOverlay'
 import { TessPanel } from './tess/TessPanel'
 import type { TessScreen } from './tess/tessTypes'
@@ -2408,6 +2409,7 @@ function Shell(props: AppProps): React.ReactElement {
           year: top.videoYear
         }}
         onTab={setTopTab}
+        onBack={pop}
         forTeam={top.onTeam}
         onSettingsSaved={() => {
           if (
@@ -2894,20 +2896,14 @@ function Shell(props: AppProps): React.ReactElement {
   // drawn, and on the web nothing under it takes focus or a click.
   const tessLayer = tessShown && !tessWide
   const tessPanel = tessShown && (
-    <View
-      key="tess"
-      testID={tessWide ? 'Tess column' : 'Tess layer'}
-      style={tessWide ? styles.tessColumn : styles.tessLayer}
-      aria-modal={tessLayer}
-      accessibilityViewIsModal={tessLayer}
-    >
+    <TessFrame key="tess" wide={tessWide}>
       <TessPanel
         client={client}
         onClose={closeTess}
         onNavigate={openTessLink}
         screen={tessScreen}
       />
-    </View>
+    </TessFrame>
   )
   const bannerShown =
     bannerText != null || createRefused || heldTeams.length > 0
@@ -3340,12 +3336,41 @@ function coveredBy(covered: boolean): ViewProps {
 }
 
 /**
+ * Tess's chat: a column on the left of a wide window, as wide as it was
+ * dragged, with the divider on its right edge; on a narrow one, a layer over
+ * the whole app. The same element either way, so a resize across the two
+ * never remounts the chat. Only this and the pane's frame read the column's
+ * width, so a drag redraws them and what reads the frame, and not the Shell.
+ */
+function TessFrame({
+  wide,
+  children
+}: {
+  wide: boolean
+  children: React.ReactNode
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  const { width, max, setWidth } = useTessWidth()
+  return (
+    <View
+      testID={wide ? 'Tess column' : 'Tess layer'}
+      style={wide ? [styles.tessColumn, { width }] : styles.tessLayer}
+      aria-modal={!wide}
+      accessibilityViewIsModal={!wide}
+    >
+      {children}
+      {wide && <TessDivider width={width} max={max} onResize={setWidth} />}
+    </View>
+  )
+}
+
+/**
  * The pane's place beside Tess's open column, for the screens that size
- * themselves to it: the column's fixed width in from the left, the window's
+ * themselves to it: the column's width in from the left, the window's
  * height; none while the column is closed, and the pane is the window again.
- * Only this reads the window's exact size, so a window being resized redraws
- * it and what reads the frame, and not the Shell: its children are the
- * Shell's, unchanged by its own redraws.
+ * Only this reads the window's exact size, so a window being resized or the
+ * divider dragged redraws it and what reads the frame, and not the Shell:
+ * its children are the Shell's, unchanged by its own redraws.
  */
 function PaneBesideTess({
   open,
@@ -3355,17 +3380,18 @@ function PaneBesideTess({
   children: React.ReactNode
 }): React.ReactElement {
   const { width, height } = useWindowDimensions()
+  const column = useTessWidth().width
   const frame = useMemo<PaneFrame | null>(
     () =>
       open
         ? {
-            x: TESS_COLUMN_WIDTH,
+            x: column,
             y: 0,
-            width: Math.max(0, width - TESS_COLUMN_WIDTH),
+            width: Math.max(0, width - column),
             height
           }
         : null,
-    [open, width, height]
+    [open, column, width, height]
   )
   return <PaneFrameProvider frame={frame}>{children}</PaneFrameProvider>
 }
@@ -3464,10 +3490,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   split: {
     flexDirection: 'row'
   },
+  // Above the pane, which its divider's grab area reaches over.
   tessColumn: {
-    width: TESS_COLUMN_WIDTH,
-    borderRightWidth: 1,
-    borderRightColor: theme.defaultBorderColor
+    zIndex: 1
   },
   // Her chat over the whole of a narrow window, above the header and the
   // floating destinations.
