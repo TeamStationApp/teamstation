@@ -2373,7 +2373,8 @@ export class Scenarios {
     this.observations.push(proof)
     const startedAt = Date.now()
     // A long QA history can put an iOS target twenty swipes away.
-    let end = startedAt + (ui.surface === 'ios' ? 600000 : 120000)
+    // Paging a long QA history up to an old target takes minutes on iOS.
+    let end = startedAt + (ui.surface === 'ios' ? 1200000 : 120000)
     const signal = (): AbortSignal => {
       assert(Date.now() < end, 'Native anchor observation deadline expired')
       return AbortSignal.any([
@@ -2506,7 +2507,8 @@ export class Scenarios {
         duration
       }
       assert(
-        Math.abs(delta) >= 48 &&
+        Math.abs(delta) >=
+          (ui.surface === 'ios' && duration >= 1000 ? 20 : 48) &&
           Math.min(input.startY, input.endY) > band.top &&
           Math.max(input.startY, input.endY) < band.bottom,
         'Meaningful gesture must stay inside actual reading band'
@@ -2617,9 +2619,16 @@ export class Scenarios {
         ui.surface === 'ios'
           ? band.bottom - band.top - 24
           : Math.max(48, (band.bottom - band.top) / 8)
+      // A slow iOS drag moves about 10 pt less than its length (touch slop),
+      // so it can land in a 17 pt window; a 48 pt minimum overshot it both
+      // ways for E10's reader-tall target.
+      const size =
+        ui.surface === 'ios'
+          ? Math.min(limit, Math.max(20, Math.abs(desired) + 10))
+          : Math.min(limit, Math.max(48, Math.abs(desired)))
       if (
         await swipe(
-          Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired))),
+          Math.sign(desired) * size,
           ui.surface === 'ios' ? 1000 : 200
         )
       )
@@ -7560,7 +7569,10 @@ export class Scenarios {
             true
           )
           await ui.coldOpen('/chat/' + conversation)
-          await ui.present('chat-bubble-' + fixture.neutralTail.id)
+          // Fully read, the chat opens at its newest posts. Every E11 run adds
+          // posts after the neutral tail, which is now pages back; any stable
+          // reader serves, and the anchor below is read from what is visible.
+          await ui.present('chat-message-history')
           await ui.replaceDraft('Keep terminal empty draft')
           if (ui.native) await ui.hideKeyboard()
           const body = await this.visibleReaderAnchor()
