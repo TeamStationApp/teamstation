@@ -5023,6 +5023,29 @@ describe('chat native adapter compatibility', function () {
       'open /chat'
     ])
   })
+  it('sends the iOS driver whole points for a measured drag', async () => {
+    const actual = ui([])
+    Object.assign(actual, { deadline: AbortSignal.timeout(10000) })
+    const drags: unknown[] = []
+    actual.device.dragAndDrop = async args => {
+      drags.push(args)
+    }
+    await actual.measuredSwipe({
+      startX: 140.4,
+      startY: 188.66666666666788,
+      endX: 140.6,
+      endY: 248.5,
+      duration: 200
+    })
+    expect(drags).deep.equals([
+      {
+        from: { point: '140,189' },
+        to: { point: '141,249' },
+        holdDuration: 16,
+        duration: 200
+      }
+    ])
+  })
   it('anchors an iOS absence id, which the driver would match as a substring', async () => {
     for (const [surface, expected] of [
       ['ios', { id: '^chat-composer$', timeout: 15000 }],
