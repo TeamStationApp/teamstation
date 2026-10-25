@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
 import { lineupOf } from '../../common/scoring/lineupHistory'
+import { nextDecision } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { shownWithDefault } from '../../common/scoring/startingSetup'
 import {
@@ -122,7 +123,9 @@ describe('local scoring sessions', function () {
       pitchCount: 0,
       balls: 0,
       strikes: 0,
-      outs: 0
+      outs: 0,
+      batterHits: 0,
+      batterAtBats: 0
     })
     expect(session.liveData.plays.currentPlay?.matchup.batSide.code).equals('R')
     const ignored = asRosterEntry({
@@ -182,6 +185,55 @@ describe('local scoring sessions', function () {
     expect(scoreboardFor(session).pitcherJersey).equals('34')
     line.defense.P = null
     expect(scoreboardFor(session).pitcherJersey).equals(undefined)
+  })
+  it("shows the batter's hits and at-bats in this game on the field board", function () {
+    let session = initial().session
+    const leadoff = session.liveData.linescore.offense.batter?.id
+    if (leadoff == null) throw new Error('Missing batter')
+    const step = (
+      state: typeof session,
+      action: Parameters<typeof applyAction>[1]
+    ): typeof session => {
+      const applied = applyAction(state, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      return applied.state
+    }
+    const finish = (state: typeof session): typeof session =>
+      nextDecision(state) === 'close'
+        ? step(state, { type: 'gameFlow', kind: 'closePlay' })
+        : state
+    const punchOut = (state: typeof session): typeof session => {
+      let next = state
+      for (let n = 0; n < 3; n++)
+        next = step(next, { type: 'pitch', call: 'C' })
+      return finish(next)
+    }
+    session = finish(
+      step(
+        step(session, {
+          type: 'ballInPlay',
+          contact: 'swing',
+          launchAngle: 10,
+          location: { x: 5, z: -80 },
+          fielder: 17
+        }),
+        { type: 'result', eventType: 'single' }
+      )
+    )
+    for (
+      let i = 0;
+      i < 40 && session.liveData.linescore.offense.batter?.id !== leadoff;
+      i++
+    )
+      session = punchOut(session)
+    expect(session.liveData.linescore.offense.batter?.id).equals(leadoff)
+    expect(scoreboardFor(session)).includes({ batterHits: 1, batterAtBats: 1 })
+    session = step(session, { type: 'pitch', call: 'B' })
+    expect(scoreboardFor(session)).includes({
+      batterHits: 1,
+      batterAtBats: 1,
+      balls: 1
+    })
   })
   it('rejects invalid scoring ids and duplicate roster players', function () {
     for (const invalid of [-1, 1.5, Infinity, '2', Number.MAX_SAFE_INTEGER + 1])

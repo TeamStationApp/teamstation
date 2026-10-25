@@ -1034,6 +1034,33 @@ describe('the board timeline', function () {
         ])
       })
 
+      it("shows a batter's hits and at-bats from the plate appearances already finished", function () {
+        const boards = importedBoards(
+          [
+            row(0, { inning: 1, half: 'top' }, 4, [1, 8], {
+              playEvents: [pitch(1, [0, 0, 0]), pitch(3, [0, 1, 0])]
+            }),
+            row(1, { inning: 1, half: 'top' }, 10, [1, 8], {
+              playEvents: [pitch(6, [1, 0, 0]), pitch(9, [1, 1, 0])]
+            })
+          ],
+          names,
+          undefined
+        )
+        expect(
+          boards.map(board => [
+            board.state.batterName,
+            board.state.batterNumHits,
+            board.state.batterAtBats
+          ])
+        ).deep.equals([
+          ['Aaron A', 0, 0],
+          ['Aaron A', 1, 1],
+          ['Aaron A', 1, 1],
+          ['Aaron A', 2, 2]
+        ])
+      })
+
       it('reads only the plays before the first TeamStation scored, and turns to its half', function () {
         const record = { version: 2, setupBefore: setup, actions: [] }
         const boards = importedBoards(

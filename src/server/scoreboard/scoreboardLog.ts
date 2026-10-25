@@ -131,7 +131,11 @@ function plain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-/** The uncontested fields, which no other source sets. */
+/**
+ * The uncontested fields. The game's scoring sets the batter's hits and
+ * at-bats; a publisher that has not sent one of these shows the board's
+ * default for it when two publisher snapshots are compared.
+ */
 const UNCONTESTED = (
   Object.keys(SCOREBOARD_DEFAULTS) as Array<keyof ScoreboardUpdate>
 ).filter(field => !(CONTESTED_FIELDS as readonly string[]).includes(field))
