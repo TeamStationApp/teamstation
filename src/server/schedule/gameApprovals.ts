@@ -23,7 +23,11 @@ import {
 } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
-import { type PlaysLost, playsLost } from '../../common/scoring/playsLost'
+import {
+  type PlaysLost,
+  playsLost,
+  type SwapEffect
+} from '../../common/scoring/playsLost'
 import { canScore, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
@@ -36,6 +40,7 @@ import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, readPlays } from '../events/postPlays'
+import { gameSwapEffect } from '../games/swapEffect'
 import { maySwapSides, SWAP_REFUSED, swapGameSides } from '../games/swapSides'
 import {
   approvesSide,
@@ -1751,6 +1756,7 @@ export async function schedulingGame(
     playsDigest: string
     generation: number
     resets: boolean
+    swap: SwapEffect
   }
   field: GameFieldSummary | null
 }> {
@@ -1780,13 +1786,18 @@ export async function schedulingGame(
   if (teamIds.length === 0 && !scorer) throw forbidden()
   const withdrawn = systemCancelled(row.cancellation_reason)
   const current = atBatOf(row, stored.length > 0)
+  // What a swap would do, as the swap route decides it.
+  const effect = gameSwapEffect(
+    row,
+    stored.map(play => play.gumbo)
+  )
   return {
     game: materialGame(row),
     version: gameVersion(materialGame(row)),
     canPropose: teamIds.length > 0 && !withdrawn,
     withdrawTeamIds: teamIds,
     administeredTeamIds: teamIds,
-    canSwap: scorer && !withdrawn,
+    canSwap: scorer && (effect === 'swap' || effect === 'reset'),
     plays: {
       ...playsLost({
         plays: stored.map(play => play.gumbo),
@@ -1794,13 +1805,8 @@ export async function schedulingGame(
       }),
       playsDigest: playsDigest(stored, current),
       generation: row.play_generation,
-      // As the swap route decides it (`gameBegun`): a swap resets a game
-      // with a play or an at-bat stored, or one under way or final.
-      resets:
-        stored.length > 0 ||
-        row.currentPlay != null ||
-        row.status === 'inProgress' ||
-        row.status === 'final'
+      resets: effect === 'reset',
+      swap: effect
     },
     field: await fieldSummary(db, row.field_id, row.field_size)
   }

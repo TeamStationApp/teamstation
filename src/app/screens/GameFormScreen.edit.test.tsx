@@ -6,6 +6,7 @@ import { TeamStationClient } from '../../common/api'
 import { asGameScheduling, type GameProposal } from '../../common/gameApprovals'
 import type { CreateGroup } from '../../common/groupCreation'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import type { SwapEffect } from '../../common/scoring/playsLost'
 import { pressSchedule, typeSchedule } from '../../test/eventScheduleDom'
 import {
   fill,
@@ -225,7 +226,12 @@ describe('game settings in the shared game scene', () => {
   })
   /** A scorekeeper's scheduling answer: the swap, and the plays it resets. */
   const scorer = (
-    plays: { atBats: number; innings: number; resets?: boolean } = {
+    plays: {
+      atBats: number
+      innings: number
+      resets?: boolean
+      swap?: SwapEffect
+    } = {
       atBats: 0,
       innings: 0
     },
@@ -237,7 +243,7 @@ describe('game settings in the shared game scene', () => {
       canPropose,
       withdrawTeamIds: canPropose ? [home.id] : [],
       administeredTeamIds: canPropose ? [home.id] : [],
-      canSwap: true,
+      canSwap: plays.swap !== 'scoredElsewhere' && plays.swap !== 'withdrawn',
       plays: { ...plays, playsDigest: 'digest', generation: 3 }
     })
   const swapsOf = (f: ReturnType<typeof fixture>): unknown[] => {
@@ -325,6 +331,29 @@ describe('game settings in the shared game scene', () => {
     expect(text()).includes('Resets all game plays. Demo Hawks will bat first')
     await press('Reset and Swap')
     expect(asked).length(1)
+  })
+
+  it('offers no swap of a game scored outside TeamStation, and says why', async () => {
+    for (const canPropose of [false, true]) {
+      const f = fixture([])
+      f.client.gameScheduling = async () =>
+        scorer(
+          { atBats: 0, innings: 0, resets: false, swap: 'scoredElsewhere' },
+          canPropose
+        )
+      await mount(f)
+      expect(disabled('Swap home and away'), String(canPropose)).equals(true)
+      expect(text()).includes(
+        'This game was scored outside TeamStation, so home and away cannot be swapped here.'
+      )
+      expect(text()).not.includes("As this game's scorekeeper")
+      // Beside the hint of what else this person may not change.
+      if (!canPropose)
+        expect(text()).includes(
+          'You need administrator access to change this game.'
+        )
+      await unmount()
+    }
   })
 
   it('drops the reset it asked about once the draft changes more than the sides', async () => {

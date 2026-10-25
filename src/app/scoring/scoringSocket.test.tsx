@@ -119,6 +119,8 @@ async function scoring(
     readsChanged?: boolean
     lineups?: { value: string }
     digests?: boolean
+    /** What every read says a swap does. */
+    swap?: { value: StoredGame['swap'] }
   } = {}
 ): Promise<{
   changes: FakeChanges
@@ -155,6 +157,11 @@ async function scoring(
         ...kept()
       }
     }
+  }
+  const swap = options.swap
+  if (swap != null) {
+    const { load } = store
+    store.load = async gameId => ({ ...(await load(gameId)), swap: swap.value })
   }
   const reloads: boolean[] = []
   let opened: GameSession | undefined
@@ -443,6 +450,59 @@ describe('the scoring screen on the game socket', function () {
     expect(changes.listeners.size).greaterThan(0)
     await unmount()
     expect(changes.listeners.size).equals(0)
+  })
+})
+
+describe('the scoring menu’s swap on the game socket', function () {
+  const MENU = 'Open scoring menu'
+  const SWAP = 'Swap Home and Away'
+  const row = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>(`[aria-label="${SWAP}"]`)
+  const game = async (
+    changes: FakeChanges,
+    data: Partial<GameChangeData['game']>
+  ): Promise<void> => {
+    await changes.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'game',
+      at: '2026-10-12T12:00:00Z',
+      data: {
+        status: 'scheduled',
+        awayScore: null,
+        homeScore: null,
+        ...data
+      }
+    })
+  }
+
+  it('offers no swap once a team withdraws, though the menu is open and nothing else moved', async function () {
+    const swap = { value: 'swap' as StoredGame['swap'] }
+    const { changes, reloads } = await scoring({ swap })
+    await click(MENU)
+    expect(row()?.getAttribute('aria-disabled')).not.equals('true')
+    swap.value = 'withdrawn'
+    await game(changes, { status: 'cancelled', withdrawn: true })
+    expect(reloads).length(1)
+    expect(row()?.getAttribute('aria-disabled')).equals('true')
+    expect(row()?.textContent).includes('game was withdrawn')
+    // The same status again reads nothing more.
+    await game(changes, { status: 'cancelled', withdrawn: true })
+    expect(reloads).length(1)
+  })
+
+  it('offers the swap again once a game called scored elsewhere for its status is unmarked', async function () {
+    const swap = { value: 'scoredElsewhere' as StoredGame['swap'] }
+    const { changes, reloads } = await scoring({ swap })
+    await click(MENU)
+    expect(row()?.getAttribute('aria-disabled')).equals('true')
+    swap.value = 'swap'
+    await game(changes, { status: 'scheduled', withdrawn: false })
+    expect(reloads).length(1)
+    expect(row()?.getAttribute('aria-disabled')).not.equals('true')
+    // Read once for that status, not on every notice after.
+    await game(changes, { status: 'scheduled', withdrawn: false })
+    expect(reloads).length(1)
   })
 })
 

@@ -21,7 +21,8 @@ export const SWAP_REFUSED =
  * Whether a game may still swap home and away: neither under way nor final,
  * no play stored, and its open at-bat, if any, holds only lineup changes. A
  * game scored elsewhere has no plays here, but its status still says it
- * started.
+ * started. It allows exactly the games `swapEffect` answers `swap` for, but
+ * a withdrawn one, which callers refuse first.
  */
 export async function maySwapSides(
   trx: Kysely<Database>,

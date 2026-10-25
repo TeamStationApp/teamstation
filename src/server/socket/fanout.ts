@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 import { Client } from 'pg'
 
+import { systemCancelled } from '../../common/gameApprovals'
 import type { GameChange } from '../../common/gameSocket'
 import type { CurrentPlay } from '../../common/gumboPlay'
 import { teamsOfRow } from '../../common/teamLists'
@@ -233,7 +234,8 @@ export class GameFanout {
                     homeScore: game.home_score,
                     homeTeamId: game.home_team_id,
                     awayTeamId: game.away_team_id,
-                    generation: game.play_generation
+                    generation: game.play_generation,
+                    withdrawn: systemCancelled(game.cancellation_reason)
                   }
                 }
               : change.kind === 'lineups'

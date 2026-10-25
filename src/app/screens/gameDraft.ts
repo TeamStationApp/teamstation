@@ -10,6 +10,7 @@ import type {
   GameProposal
 } from '../../common/gameApprovals'
 import type { PublicGroup } from '../../common/publicGroups'
+import type { SwapEffect } from '../../common/scoring/playsLost'
 import type { TeamChoice } from './PlaceholderTeamForm'
 import type { TeamSelectorAnchor } from './TeamSelectorScene'
 
@@ -55,6 +56,7 @@ export interface LoadedGame {
     playsDigest: string
     generation: number
     resets?: boolean
+    swap?: SwapEffect
   }
   field?: GameFieldSummary | null
 }

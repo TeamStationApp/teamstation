@@ -1584,7 +1584,9 @@ describe('posting and reading plays', function () {
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       currentPlay: current(0),
-      generation: 0
+      generation: 0,
+      // An at-bat with no TeamStation record.
+      swap: 'scoredElsewhere'
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)

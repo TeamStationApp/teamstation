@@ -6,10 +6,12 @@ import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { FINAL_INDEX } from './gumbo'
 import {
+  asSwapEffect,
   playsLost,
   playsLostText,
   resetsPlays,
-  resetWarning
+  resetWarning,
+  swapEffect
 } from './playsLost'
 import {
   type EventStore,
@@ -192,12 +194,74 @@ describe('the plays a reset loses', function () {
       false
     )
     expect(resetsPlays({ plays: [], currentPlay: 'none' })).equals(false)
+    // A record of lineups whose document holds pitches has begun.
+    const lineupsOnly = (await (await scored([])).load()).currentPlay!
+    expect(resetsPlays({ plays: [], currentPlay: lineupsOnly })).equals(false)
+    expect(
+      resetsPlays({
+        plays: [],
+        currentPlay: { ...lineupsOnly, playEvents: [{}] }
+      })
+    ).equals(true)
     expect(resetWarning({ atBats: 0, innings: 0 })).equals(
       'Resets all game plays.'
     )
     expect(resetWarning({ atBats: 2, innings: 1 })).equals(
       'Resets all game plays: 2 at-bats in 1 inning will be lost.'
     )
+  })
+
+  it('says a swap only swaps before the first pitch, resets after it, and refuses a game scored elsewhere', async function () {
+    const on = (status: string): { status: string; withdrawn: boolean } => ({
+      status,
+      withdrawn: false
+    })
+    const lineups = await (await scored([])).load()
+    expect(swapEffect(lineups, on('scheduled'))).equals('swap')
+    expect(
+      swapEffect({ plays: [], currentPlay: null }, on('scheduled'))
+    ).equals('swap')
+    const pitched = await (await scored([strike])).load()
+    expect(swapEffect(pitched, on('scheduled'))).equals('reset')
+    expect(swapEffect(pitched, on('inProgress'))).equals('reset')
+    const ended = await (await scored(strikeout)).load()
+    expect(swapEffect(ended, on('final'))).equals('reset')
+    // Marked under way or final with only lineups: scored somewhere else.
+    expect(swapEffect(lineups, on('final'))).equals('scoredElsewhere')
+    expect(
+      swapEffect({ plays: [], currentPlay: null }, on('inProgress'))
+    ).equals('scoredElsewhere')
+    // A play or an at-bat with no TeamStation record.
+    expect(
+      swapEffect(
+        { plays: [{ about: { atBatIndex: 0, inning: 1 } }], currentPlay: null },
+        on('scheduled')
+      )
+    ).equals('scoredElsewhere')
+    expect(
+      swapEffect(
+        {
+          plays: ended.plays,
+          currentPlay: { about: { atBatIndex: 1, inning: 1 }, playEvents: [{}] }
+        },
+        on('inProgress')
+      )
+    ).equals('scoredElsewhere')
+    // Withdrawn, a game is not swapped whatever it holds.
+    expect(
+      swapEffect(lineups, { status: 'cancelled', withdrawn: true })
+    ).equals('withdrawn')
+    expect(swapEffect(ended, { status: 'final', withdrawn: true })).equals(
+      'withdrawn'
+    )
+  })
+
+  it('reads a swap effect a server sent, and none it does not know', function () {
+    for (const effect of ['swap', 'reset', 'scoredElsewhere', 'withdrawn'])
+      expect(asSwapEffect(effect)).equals(effect)
+    expect(asSwapEffect('sideways')).equals(undefined)
+    expect(asSwapEffect(undefined)).equals(undefined)
+    expect(asSwapEffect(null)).equals(undefined)
   })
 
   it('says it in the singular for one', function () {

@@ -22,10 +22,11 @@ import { postGamePlays, readPlays } from '../events/postPlays'
 import { lineupsAnswer } from '../events/teamLineups'
 import {
   PLAYS_CHANGED,
-  resetAndSwap,
   SCORED_ELSEWHERE,
+  swapOrReset,
   WITHDRAWN_GAME
 } from '../games/resetSwap'
+import { SWAP_REFUSED } from '../games/swapSides'
 import { realClock } from '../groups/requests'
 import { setScopeRoles } from '../invites/people'
 import { SCORER_SWAP_BEGUN } from '../schedule/gameApprovals'
@@ -392,6 +393,11 @@ describe('swapping home and away from the scoring screen', function () {
       generation: Number(read.generation)
     }
   }
+  /** The game's events as a screen reads them. */
+  const events = async (gameId: string): Promise<Record<string, unknown>> =>
+    await json(
+      await f.h.request('GET', `/hooked/games/${gameId}/events`, undefined, 104)
+    )
   /** 104 keeps team A's score; 103 coaches team A without scoring it. */
   const giveRoles = async (): Promise<void> => {
     await setScopeRoles(
@@ -416,6 +422,7 @@ describe('swapping home and away from the scoring screen', function () {
     const gameId = await published('menu-swap')
     await saveLineups(gameId)
     await giveRoles()
+    expect((await events(gameId)).swap).equals('swap')
     const answer = await swap(gameId, 104)
     expect(answer.status).equals(200)
     expect(await json(answer)).deep.equals({
@@ -754,6 +761,7 @@ describe('swapping home and away from the scoring screen', function () {
       .set({ status: 'final' })
       .where('id', '=', final)
       .execute()
+    expect((await events(final)).swap).equals('reset')
     expect((await swap(final, 104, await confirmed(final))).status).equals(200)
     expect(await gameRow(final)).deep.include({
       status: 'scheduled',
@@ -794,6 +802,30 @@ describe('swapping home and away from the scoring screen', function () {
     expect((await json(refused)).message).equals(WITHDRAWN_GAME)
     expect(await gameRow(withdrawn)).deep.equals(withdrawnBefore)
 
+    // Nor, before its first pitch, a withdrawn game swapped as an older app
+    // swaps it, or with what the screen confirmed.
+    const unbegun = await published('menu-swap-withdrawn-unbegun')
+    await saveLineups(unbegun)
+    await f.h.db
+      .updateTable('games')
+      .set({
+        status: 'cancelled',
+        cancellation_reason: 'withdrawal',
+        withdrawn_by_team_id: f.teamA,
+        withdrawn_at: new Date()
+      })
+      .where('id', '=', unbegun)
+      .execute()
+    expect((await events(unbegun)).swap).equals('withdrawn')
+    const unbegunRead = await confirmed(unbegun)
+    const unbegunBefore = await gameRow(unbegun)
+    for (const body of [undefined, unbegunRead]) {
+      const refusedUnbegun = await swap(unbegun, 104, body)
+      expect(refusedUnbegun.status).equals(409)
+      expect((await json(refusedUnbegun)).message).equals(WITHDRAWN_GAME)
+    }
+    expect(await gameRow(unbegun)).deep.equals(unbegunBefore)
+
     // A play TeamStation did not score: no record.
     const elsewhere = await published('menu-reset-elsewhere')
     await saveLineups(elsewhere, twoHalves)
@@ -833,6 +865,29 @@ describe('swapping home and away from the scoring screen', function () {
     expect(kept.status).equals(409)
     expect((await json(kept)).message).equals(SCORED_ELSEWHERE)
     expect(await gameRow(lineupsOnly)).deep.equals(lineupsBefore)
+    // Nor one made final elsewhere with its lineups still before the first
+    // pitch: the screens are told so, and both bodies are refused.
+    const pregameFinal = await published('menu-swap-pregame-final')
+    await saveLineups(pregameFinal)
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'final', home_score: 3, away_score: 1 })
+      .where('id', '=', pregameFinal)
+      .execute()
+    expect((await events(pregameFinal)).swap).equals('scoredElsewhere')
+    const pregameRead = await confirmed(pregameFinal)
+    const pregameBefore = await gameRow(pregameFinal)
+    // An app not yet updated, which offers no reset, is told what it
+    // always was.
+    for (const [body, message] of [
+      [undefined, SWAP_REFUSED],
+      [pregameRead, SCORED_ELSEWHERE]
+    ] as const) {
+      const refusedFinal = await swap(pregameFinal, 104, body)
+      expect(refusedFinal.status).equals(409)
+      expect((await json(refusedFinal)).message).equals(message)
+    }
+    expect(await gameRow(pregameFinal)).deep.equals(pregameBefore)
     // Nor an at-bat in progress TeamStation did not score, alone.
     const outside = await published('menu-reset-outside')
     await f.h.db
@@ -892,7 +947,7 @@ describe('swapping home and away from the scoring screen', function () {
     let failed: unknown
     try {
       await atomic(f.h.db, async trx => {
-        await resetAndSwap(trx, gameId, userIdOfGumbo(104), read)
+        await swapOrReset(trx, gameId, userIdOfGumbo(104), read)
         throw new Error('a later step failed')
       })
     } catch (error) {

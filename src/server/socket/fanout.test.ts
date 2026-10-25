@@ -225,7 +225,8 @@ describe('the game socket fan-out (U15)', function () {
         homeScore: 2,
         homeTeamId: team,
         awayTeamId: rival,
-        generation: 0
+        generation: 0,
+        withdrawn: false
       })
       expect(new Date(heard.sent[0].at).getTime()).above(0)
     }

@@ -768,13 +768,15 @@ describe('approved games and shared schedule ownership', function () {
         atBats: 0,
         innings: 0,
         generation: 0,
-        resets: false
+        resets: false,
+        swap: 'swap'
       })
       await saveLineups(gameId, [{ type: 'pitch', call: 'B' }])
       expect((await scheduling(gameId, 104)).body.plays).deep.include({
         atBats: 1,
         innings: 1,
-        resets: true
+        resets: true,
+        swap: 'reset'
       })
       // A team member with no role is refused, as before.
       await f.h.db
@@ -900,6 +902,26 @@ describe('approved games and shared schedule ownership', function () {
       expect((await sides(fresh.gameId!)).home_team_id).equals(f.teamB)
     })
 
+    it('answers no swap for a game made final elsewhere with only its lineups (F11)', async () => {
+      await scorekeeper()
+      const published = await accept(await send())
+      const gameId = published.gameId!
+      await saveLineups(gameId)
+      await f.h.db
+        .updateTable('games')
+        .set({ status: 'final' })
+        .where('id', '=', gameId)
+        .execute()
+      const read = await scheduling(gameId, 104)
+      expect(read.status).equals(200)
+      expect(read.body).deep.include({ canSwap: false, canPropose: false })
+      expect(read.body.plays).deep.include({
+        atBats: 0,
+        resets: false,
+        swap: 'scoredElsewhere'
+      })
+    })
+
     it('answers no swap for a withdrawn game (F10)', async () => {
       await scorekeeper()
       const published = await accept(await send())
@@ -918,6 +940,7 @@ describe('approved games and shared schedule ownership', function () {
         const read = await scheduling(gameId, user)
         expect(read.status, String(user)).equals(200)
         expect(read.body).deep.include({ canSwap: false, canPropose: false })
+        expect(read.body.plays).deep.include({ swap: 'withdrawn' })
       }
     })
 

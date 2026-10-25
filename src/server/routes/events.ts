@@ -15,6 +15,7 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
+import type { SwapEffect } from '../../common/scoring/playsLost'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -41,8 +42,8 @@ import {
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
-import { gameBegun, resetAndSwap } from '../games/resetSwap'
-import { SWAP_REFUSED, swapGameSides } from '../games/swapSides'
+import { swapOrReset } from '../games/resetSwap'
+import { gameSwapEffect } from '../games/swapEffect'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
@@ -266,7 +267,8 @@ export function eventRoutes(
         // still shows as stale to the queue's next post.
         rebuild: async held => {
           const kept = JSON.parse(held.resultId!) as LivePostDigests
-          const current = await db
+          // What a swap does is the read's, not a post's answer.
+          const { swap: _swap, ...current } = await db
             .transaction()
             .setIsolationLevel('repeatable read')
             .execute(async trx => await storedGameAnswer(trx, gameId))
@@ -320,7 +322,7 @@ export function eventRoutes(
   /**
    * Swaps home and away from the scoring screen, for whoever may score the
    * game: a scorekeeper of either team. Before the first pitch only the
-   * teams move. A begun game is reset first (`resetAndSwap`): the body must
+   * teams move. A begun game is reset first (`swapOrReset`): the body must
    * name the `playsDigest` and `generation` its scorer confirmed, or it is
    * refused with 409, as is a withdrawn game or one scored outside
    * TeamStation. The body names the sides the scorer read: a call sent
@@ -342,15 +344,7 @@ export function eventRoutes(
         await lockPlayerEdits(trx)
         const game = await trx
           .selectFrom('games')
-          .select([
-            'id',
-            'home_team_id',
-            'away_team_id',
-            'currentPlay',
-            'pregame',
-            'status',
-            'play_generation'
-          ])
+          .select(['id', 'home_team_id', 'away_team_id', 'play_generation'])
           .where('id', '=', gameId)
           .forUpdate()
           .executeTakeFirst()
@@ -377,24 +371,11 @@ export function eventRoutes(
           game.away_team_id !== read.awayTeamId
         )
           throw conflict("This game's teams changed. Open it again.")
-        if (!(await gameBegun(trx, game))) {
-          await swapGameSides(trx, gameId)
-          return {
-            ...read.swapped,
-            generation: game.play_generation,
-            reset: unchanged,
-            swapped: true
-          }
-        }
-        // An app not yet updated confirms no plays: it swaps only before the
-        // first pitch, as it always has.
-        if (read.playsDigest == null && read.generation == null)
-          throw conflict(SWAP_REFUSED)
-        const reset = await resetAndSwap(trx, gameId, actor.userId, read)
+        const done = await swapOrReset(trx, gameId, actor.userId, read)
         return {
           ...read.swapped,
-          generation: game.play_generation + 1,
-          reset,
+          generation: game.play_generation + (done.reset ? 1 : 0),
+          reset: done.lost,
           swapped: true
         }
       })
@@ -457,6 +438,7 @@ async function storedGameAnswer(
   playsDigest: string
   lineupsDigest: string | null
   generation: number
+  swap: SwapEffect
 }> {
   const stored = await readPlays(db, gameId)
   const game = await db
@@ -467,7 +449,9 @@ async function storedGameAnswer(
       'currentPlay',
       'pregame',
       'lineups_digest',
-      'play_generation'
+      'play_generation',
+      'status',
+      'cancellation_reason'
     ])
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
@@ -491,7 +475,12 @@ async function storedGameAnswer(
       id: gameId,
       ...game
     }),
-    generation: game.play_generation
+    generation: game.play_generation,
+    // What swapping home and away would do, as the swap route decides it.
+    swap: gameSwapEffect(
+      game,
+      stored.map(row => row.gumbo)
+    )
   }
 }
 

@@ -106,6 +106,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/games/retargetTeams.js',
   'server/games/rosterAvailability.js',
   'server/games/scoringActivity.js',
+  'server/games/swapEffect.js',
   'server/games/swapSides.js',
   'server/games/unroster.js',
   'server/groups/adminGuard.js',

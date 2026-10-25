@@ -1,24 +1,24 @@
 import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import { conflict } from '../../common/errors'
-import { systemCancelled } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
 import { storedRecordOf } from '../../common/scoring/gumbo'
 import {
   type PlaysLost,
   playsLost,
-  resetsPlays
+  WITHDRAWN_GAME
 } from '../../common/scoring/playsLost'
 import type { Database, GamesTable } from '../db/database'
 import { gamePlaysDigest, lineupsBefore } from '../events/postPlays'
 import { notifyGameChange } from '../socket/gameChanges'
 import { requestGameStats } from '../statsBuilder/request'
-import { swapGameSides } from './swapSides'
+import { gameSwapEffect } from './swapEffect'
+import { SWAP_REFUSED, swapGameSides } from './swapSides'
 
 export const PLAYS_CHANGED = "This game's plays changed. Open it again."
 export const SCORED_ELSEWHERE =
   'This game was scored outside TeamStation and cannot be reset.'
-export const WITHDRAWN_GAME = 'This canceled game cannot be changed.'
+export { WITHDRAWN_GAME }
 
 /** The players a scorer added to a play by hand, which a reset keeps too. */
 const HAND_ADDED = ['fielder', 'catcher', 'scorer'] as const
@@ -39,27 +39,10 @@ async function lockedGame(
 }
 
 /**
- * Whether a game has begun: any stored play, an at-bat in progress, or a
- * status that says it started, as a game scored elsewhere does.
- */
-export async function gameBegun(
-  trx: Kysely<Database>,
-  game: { id: string; currentPlay: unknown; status: string }
-): Promise<boolean> {
-  if (game.currentPlay != null) return true
-  if (game.status === 'inProgress' || game.status === 'final') return true
-  const play = await trx
-    .selectFrom('events')
-    .select('id')
-    .where('gameId', '=', game.id)
-    .limit(1)
-    .executeTakeFirst()
-  return play != null
-}
-
-/**
- * Deletes every play of a begun game and swaps its home and away, in the
- * caller's transaction (which holds the swap route's locks):
+ * Swaps a game's home and away, in the caller's transaction (which holds
+ * the swap route's locks), as `swapEffect` decides for the game's plays,
+ * read once. Before the first pitch only the sides change
+ * (`swapGameSides`). A begun game is reset first, which
  *
  * - archives the game as it stood, its plays, the players added to them by
  *   hand and its tags in `game_play_archives`;
@@ -71,19 +54,20 @@ export async function gameBegun(
  * - swaps the sides (`swapGameSides`), queues the game's stats, tells every
  *   screen, and writes the audit row.
  *
- * Refused for a withdrawn game, for one scored outside TeamStation, whose
- * plays TeamStation could not score again, and unless `confirmed` names the
- * game's plays digest and generation as they stand. Answers what was
+ * Refused for a withdrawn game. A reset is refused to an app not yet
+ * updated, which confirms no plays (`SWAP_REFUSED`, as it always was), for
+ * a game scored outside TeamStation, whose plays TeamStation could not
+ * score again, and unless `confirmed` names the game's plays digest and
+ * generation as they stand. Answers whether it reset, and what that
  * deleted.
  */
-export async function resetAndSwap(
+export async function swapOrReset(
   trx: Transaction<Database>,
   gameId: string,
   actorUserId: string,
   confirmed: { playsDigest?: string; generation?: number }
-): Promise<PlaysLost> {
+): Promise<{ reset: boolean; lost: PlaysLost }> {
   const game = await lockedGame(trx, gameId)
-  if (systemCancelled(game.cancellation_reason)) throw conflict(WITHDRAWN_GAME)
   const plays = await trx
     .selectFrom('events')
     .select([
@@ -101,16 +85,19 @@ export async function resetAndSwap(
     .where('gameId', '=', gameId)
     .orderBy('atBatIndex')
     .execute()
-  // Begun with nothing TeamStation scored here (no play, and no at-bat or
-  // one of lineups only, as a game marked final elsewhere can hold), or
-  // with plays or an at-bat it did not.
-  if (
-    (plays.length === 0 &&
-      !resetsPlays({ plays: [], currentPlay: game.currentPlay })) ||
-    plays.some(play => storedRecordOf(play.gumbo) == null) ||
-    (game.currentPlay != null && storedRecordOf(game.currentPlay) == null)
+  // As every screen decides it: only plays TeamStation scored are reset.
+  const effect = gameSwapEffect(
+    game,
+    plays.map(play => play.gumbo)
   )
-    throw conflict(SCORED_ELSEWHERE)
+  if (effect === 'withdrawn') throw conflict(WITHDRAWN_GAME)
+  if (effect === 'swap') {
+    await swapGameSides(trx, gameId)
+    return { reset: false, lost: { atBats: 0, innings: 0 } }
+  }
+  if (confirmed.playsDigest == null && confirmed.generation == null)
+    throw conflict(SWAP_REFUSED)
+  if (effect === 'scoredElsewhere') throw conflict(SCORED_ELSEWHERE)
   // The scorer confirmed these very plays, on this generation.
   if (
     confirmed.playsDigest !== (await gamePlaysDigest(trx, game)) ||
@@ -205,7 +192,7 @@ export async function resetAndSwap(
       after: figures(after, 0)
     })
     .execute()
-  return lost
+  return { reset: true, lost }
 }
 
 /** What the audit row says of the game, before and after. */

@@ -1093,7 +1093,8 @@ describe('api client', function () {
       currentPlay: null,
       playsDigest: 'plays',
       priorPlaysDigest: 'found',
-      lineupsDigest: 'after'
+      lineupsDigest: 'after',
+      swap: 'reset'
     })
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const saved = await client.saveGameEvents('gam_1', {
@@ -1107,13 +1108,21 @@ describe('api client', function () {
       priorPlaysDigest: 'found',
       lineupsDigest: 'after'
     })
-    expect((await client.gameEvents('gam_1')).lineupsDigest).equals('after')
+    expect(await client.gameEvents('gam_1')).deep.include({
+      lineupsDigest: 'after',
+      swap: 'reset'
+    })
     // A store that keeps none, and an older server, send none.
     await client.saveGameEvents('gam_1', { plays: [], remove: [] })
     expect(JSON.parse(calls[2].body!)).not.to.have.property('lineupsBase')
     const old = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
-      fetch: stubFetch(200, { plays: [], lineupsDigest: null }).fetch
+      // And a swap effect this app does not know is none.
+      fetch: stubFetch(200, {
+        plays: [],
+        lineupsDigest: null,
+        swap: 'sideways'
+      }).fetch
     })
     expect(await old.gameEvents('g')).deep.equals({
       plays: [],
