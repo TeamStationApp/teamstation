@@ -30,7 +30,7 @@ import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
-import { atBatOf } from './atBatInProgress'
+import { atBatOf, postedAtBat } from './atBatInProgress'
 import { gameCurrentPlay } from './currentPlay'
 import { reconcileEventTags } from './eventTags'
 import {
@@ -225,12 +225,14 @@ export async function postGamePlays(
     )
     for (const index of body.remove ?? []) nextPlays.delete(index)
     for (const play of body.plays) nextPlays.set(play.about.atBatIndex, play)
+    const nextList = [...nextPlays.values()]
     const next = {
-      plays: [...nextPlays.values()],
-      currentPlay:
-        live && body.currentPlay !== undefined
-          ? body.currentPlay
-          : previous.currentPlay
+      plays: nextList,
+      currentPlay: postedAtBat(
+        game,
+        nextList,
+        live ? body.currentPlay : undefined
+      ) as CurrentPlay | null
     }
     if (
       [...next.plays, next.currentPlay].some(
@@ -257,12 +259,8 @@ export async function postGamePlays(
       awayTeamId: game.away_team_id
     }
     const priorCurrent = game.currentPlay as Partial<GumboPlay> | null
-    // A live post that sends no at-bat keeps the one readers see: before
-    // the first pitch, the pregame lineups.
-    let currentPlay =
-      live && body.currentPlay !== undefined
-        ? body.currentPlay
-        : atBatOf(game, priorRows.length > 0)
+    // The at-bat the checks above were made on.
+    let currentPlay: unknown = next.currentPlay
     if (currentPlay != null && typeof currentPlay === 'object') {
       const incoming = currentPlay as Partial<GumboPlay>
       if (typeof incoming.about?.atBatIndex === 'number') {
