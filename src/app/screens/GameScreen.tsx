@@ -531,9 +531,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const permission =
       game?.eventKind === 'event'
         ? client.eventInfo(gameId).then(info => info.canManage)
-        : client
-            .gameScheduling(gameId)
-            .then(state => state.withdrawTeamIds.length > 0)
+        : // A scorekeeper may swap home and away there, if nothing else.
+          game?.canScore === true
+          ? Promise.resolve(true)
+          : client
+              .gameScheduling(gameId)
+              .then(state => state.withdrawTeamIds.length > 0)
     permission.then(
       allowed => {
         if (active) setCanManageSchedule(allowed)

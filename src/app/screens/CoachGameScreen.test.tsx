@@ -17,9 +17,8 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameSocketEvent } from '../../common/gameSocket'
-import { recordOf } from '../../common/scoring/gumbo'
+import {} from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
-import { swapRecordSides } from '../../common/scoring/sideSwap'
 import {
   copyState,
   type GameState,
@@ -1201,7 +1200,8 @@ describe('a game swapped under the coach screen', function () {
           ...stored,
           currentPlay: {
             ...stored.currentPlay!,
-            teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+            teamStation: (stored.currentPlay as { teamStation?: unknown })
+              .teamStation
           }
         })
       }
@@ -1257,6 +1257,54 @@ describe('a game swapped under the coach screen', function () {
     await click('Read the game again')
     await waitFor(() => opens === 2, 'the game read again')
     expect(document.body.textContent).not.includes('Home and away were swapped')
+  })
+
+  it('follows a reset: a clean screen reads the game again, and a staged change is asked about first (A9)', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    let opens = 0
+    const games = new DevelopmentScoringSource()
+    await coach(held, {
+      socket: changes,
+      source: {
+        open: async (game, away, home) => {
+          opens++
+          return await games.open(game, away, home)
+        }
+      }
+    })
+    const reset = async (generation: number): Promise<void> => {
+      held.game = { ...held.game, generation }
+      await changes.emit({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'game',
+        at: '2026-10-24T12:00:00Z',
+        data: {
+          status: 'scheduled',
+          awayScore: null,
+          homeScore: null,
+          homeTeamId: held.game.homeTeamId,
+          awayTeamId: held.game.awayTeamId,
+          generation
+        }
+      })
+    }
+    await reset(1)
+    await waitFor(() => opens === 2, 'the game read again')
+    await stageChange()
+    await reset(2)
+    await waitFor(
+      () => document.body.textContent!.includes('This game was reset.'),
+      'the reset notice'
+    )
+    expect(document.body.textContent).includes(
+      'Your unsaved changes are for the plays it deleted'
+    )
+    expect(opens).equals(2)
+    await click('Read the game again')
+    await waitFor(() => opens === 3, 'the game read again')
+    expect(document.body.textContent).not.includes('This game was reset.')
   })
 
   /**
@@ -1322,7 +1370,8 @@ describe('a game swapped under the coach screen', function () {
           ...stored,
           currentPlay: {
             ...stored.currentPlay!,
-            teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+            teamStation: (stored.currentPlay as { teamStation?: unknown })
+              .teamStation
           }
         })
       }
@@ -1341,6 +1390,24 @@ describe('a game swapped under the coach screen', function () {
     // Once, though the resync's read and its lineup reload both found it.
     await settle()
     expect(game.opens()).equals(2)
+  })
+
+  it('reads the game again when a lineup reload finds another generation, the sides as they were (A9)', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    const game = await recorded(held)
+    await coach(held, { socket: changes, source: game.source })
+    await waitFor(() => held.reads.lineups >= 2, 'the digest read')
+    expect(game.opens()).equals(1)
+    // A reset's lineups notice, before its game notice: the lineups read
+    // names the next generation.
+    const read = held.client.gameLineups.bind(held.client)
+    held.client.gameLineups = async gameId => ({
+      ...(await read(gameId)),
+      generation: (held.game.generation ?? 0) + 1
+    })
+    await changes.change('lineups', 'reset')
+    await waitFor(() => game.opens() === 2, 'the game read again')
   })
 
   it('hands a lineup change read after a swap to the swap, never his old side', async function () {

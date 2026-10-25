@@ -4,6 +4,7 @@ import { Pressable, Switch, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
+import { resetWarning } from '../../common/scoring/playsLost'
 import { type FieldSize, fieldSizeLabel } from '../../common/venues'
 import { Button, Card, Screen, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
@@ -22,6 +23,7 @@ import {
   choosesExhibition,
   chooseTeam,
   draftProblem,
+  editedGame,
   type GameDraft,
   type GameFormMode,
   gameProposalFields,
@@ -110,6 +112,10 @@ export function GameFormScreen({
   const [keepersAsked, setKeepersAsked] = useState(0)
   const [dismissedRange, setDismissedRange] = useState('')
   const [confirmation, setConfirmation] = useState<string>()
+  /** The draft as it loaded: a Save that only swaps its sides is a swap. */
+  const loadedDraft = useRef<GameDraft | undefined>(undefined)
+  /** Reset and Swap is asked for: the game has plays a swap deletes. */
+  const [resetAsked, setResetAsked] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
@@ -186,19 +192,20 @@ export function GameFormScreen({
         [home.group.id]: home.group.name,
         [away.group.id]: away.group.name
       })
-      setDraft(
-        loadedGameDraft(
-          state,
-          {
-            group: home.group,
-            canManage: home.canManage || home.canManagePeople === true
-          },
-          {
-            group: away.group,
-            canManage: away.canManage || away.canManagePeople === true
-          }
-        )
+      const opened = loadedGameDraft(
+        state,
+        {
+          group: home.group,
+          canManage: home.canManage || home.canManagePeople === true
+        },
+        {
+          group: away.group,
+          canManage: away.canManage || away.canManagePeople === true
+        }
       )
+      loadedDraft.current = opened
+      setDraft(opened)
+      setResetAsked(false)
       setConfirmation(undefined)
       submitted.current = undefined
     }
@@ -282,6 +289,48 @@ export function GameFormScreen({
     createdPlaceholders.current.set(key, resolved)
     return resolved
   }
+  /**
+   * Whether the draft differs from the game as it loaded only by its sides
+   * exchanged: what the caller may save as a swap, with no proposal.
+   */
+  const onlySwapped = (): boolean => {
+    const opened = loadedDraft.current
+    if (draft == null || opened == null || loaded?.canSwap !== true)
+      return false
+    if (draft.home == null || draft.away == null) return false
+    const fields = (value: GameDraft): string =>
+      JSON.stringify(editedGame(value, value.home!, value.away!, loaded))
+    return (
+      fields(swapSides(draft)) === fields(opened) &&
+      fields(draft) !== fields(opened)
+    )
+  }
+  /** Swaps the game's sides, resetting its plays once the scorer confirmed. */
+  const swapGame = async (): Promise<void> => {
+    if (draft == null || loaded == null || gameId == null) return
+    const plays = loaded.plays
+    // The server's word on whether this swap resets the game; an older
+    // server's, whether it loses any at-bat.
+    const resets = plays != null && (plays.resets ?? plays.atBats > 0)
+    if (resets && !resetAsked) {
+      setResetAsked(true)
+      return
+    }
+    await client.swapGameSides(gameId, {
+      homeTeamId: loaded.game.homeTeamId,
+      awayTeamId: loaded.game.awayTeamId,
+      ...(plays == null
+        ? {}
+        : { generation: plays.generation, playsDigest: plays.playsDigest })
+    })
+    if (mounted.current)
+      onSaved({
+        id: gameId,
+        status: 'accepted',
+        gameId,
+        notice: `Home and away swapped: ${draft.home!.group.name} vs ${draft.away!.group.name}`
+      })
+  }
   const submitGame = async (): Promise<void> => {
     if (draft == null || sending.current) return
     sending.current = true
@@ -298,6 +347,10 @@ export function GameFormScreen({
         throw new Error(
           'You need administrator access to host this game in that season.'
         )
+      if (onlySwapped()) {
+        await swapGame()
+        return
+      }
       // Check the date before making even a placeholder somebody asked for.
       gameProposalFields(draft, formMode, draft.home!, draft.away!, loaded)
       const home = await createPlaceholder(draft.home!)
@@ -393,6 +446,12 @@ export function GameFormScreen({
     )
 
   const inert = busy || !permitted
+  // A scorekeeper who schedules neither team: the swap and Save only.
+  const swapOnly =
+    loaded != null && !loaded.canPropose && loaded.canSwap === true
+  const swapInert = busy || (!permitted && !swapOnly)
+  // Asked for, and the draft still only swaps the sides: Save resets.
+  const resetShown = resetAsked && onlySwapped()
   const replaceable = replaceableSides(draft, formMode, loaded)
   const anchor =
     choosing == null
@@ -506,15 +565,16 @@ export function GameFormScreen({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Swap home and away"
-                accessibilityState={{ disabled: inert }}
-                disabled={inert}
+                accessibilityState={{ disabled: swapInert }}
+                disabled={swapInert}
                 onPress={() => {
+                  setResetAsked(false)
                   change(swapSides(draft))
                 }}
                 style={({ pressed }) => [
                   styles.swap,
                   pressed && styles.pressed,
-                  inert && styles.inert
+                  swapInert && styles.inert
                 ]}
               >
                 <Text style={styles.swapLabel}>Swap home and away</Text>
@@ -656,9 +716,19 @@ export function GameFormScreen({
             )}
             {loaded != null && !loaded.canPropose && (
               <Text style={styles.hint}>
-                {loaded.game.status === 'cancelled'
-                  ? 'This canceled game cannot be changed. Create a new game.'
-                  : 'You need administrator access to change this game.'}
+                {swapOnly
+                  ? "As this game's scorekeeper you can swap home and away."
+                  : loaded.game.status === 'cancelled'
+                    ? 'This canceled game cannot be changed. Create a new game.'
+                    : 'You need administrator access to change this game.'}
+              </Text>
+            )}
+            {resetShown && loaded?.plays != null && draft.home != null && (
+              <Text accessibilityRole="alert" style={styles.hint}>
+                {resetWarning(loaded.plays)} {draft.away?.group.name} will bat
+                first, and {draft.home.group.name} will be at home. Lineups,
+                guests and unavailable players move with their teams. Lineups go
+                back to how they were at the first pitch.
               </Text>
             )}
             {problem == null && missing.length > 0 && (
@@ -689,11 +759,13 @@ export function GameFormScreen({
               <Text style={styles.note}>{TEAM_GAME_NOTE}</Text>
             )}
             <Button
-              label="Save"
+              label={resetShown ? 'Reset and Swap' : 'Save'}
               block
               busy={busy}
-              color={theme.successColor}
-              disabled={!permitted || problem != null}
+              color={resetShown ? theme.dangerColor : theme.successColor}
+              disabled={
+                (!permitted && !(swapOnly && onlySwapped())) || problem != null
+              }
               onPress={() => {
                 submitGame().catch(() => undefined)
               }}

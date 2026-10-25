@@ -8,7 +8,7 @@ import type { PitchCall, ScoringAction } from './actions'
 import { keyOf, matchTimes, REPLACED_KEEPS_TIME_MS } from './actionTimes'
 import { applyAction } from './apply'
 import { comparablePlay } from './comparable'
-import { recordOf } from './gumbo'
+import { storedRecordOf } from './gumbo'
 import { forPlayback } from './playbackTimes'
 import {
   type EventStore,
@@ -124,20 +124,20 @@ describe('separate scoring and radar clocks', () => {
     const corrected = clock.pass(600)
     expect(session.sync([strike, strike, single, ball])).deep.equals([])
     const completed = [...session.picture().plays.values()][0]
-    expect(recordOf(completed)!.actionTimes).deep.equals([
+    expect(storedRecordOf(completed)!.actionTimes).deep.equals([
       ...times.slice(0, 2),
       corrected
     ])
-    expect(recordOf(forPlayback(completed))!.actionTimes).deep.equals(
+    expect(storedRecordOf(forPlayback(completed))!.actionTimes).deep.equals(
       times.slice(0, 3)
     )
     await session.flush()
-    expect(recordOf(forPlayback(store.plays.get(0)))!.actionTimes).deep.equals(
-      times.slice(0, 3)
-    )
+    expect(
+      storedRecordOf(forPlayback(store.plays.get(0)))!.actionTimes
+    ).deep.equals(times.slice(0, 3))
     const reopened = (await open(store, clock)).session
     expect(
-      recordOf(forPlayback([...reopened.picture().plays.values()][0]))!
+      storedRecordOf(forPlayback([...reopened.picture().plays.values()][0]))!
         .actionTimes
     ).deep.equals(times.slice(0, 3))
   })
@@ -153,10 +153,12 @@ describe('separate scoring and radar clocks', () => {
         const entered = clock.pass(delay)
         session.apply(pitch(call))
         await session.flush()
-        expect(recordOf(store.current)!.actionTimes).deep.equals([entered])
-        expect(recordOf(forPlayback(store.current))!.actionTimes).deep.equals([
+        expect(storedRecordOf(store.current)!.actionTimes).deep.equals([
           entered
         ])
+        expect(
+          storedRecordOf(forPlayback(store.current))!.actionTimes
+        ).deep.equals([entered])
       })
 
   for (const saveFirst of [false, true])
@@ -172,28 +174,27 @@ describe('separate scoring and radar clocks', () => {
       const corrected = clock.pass(600)
       expect(session.sync([foul, strike, foul])).deep.equals([])
       await session.flush()
-      expect(recordOf(store.current)!.actionTimes).deep.equals([
+      expect(storedRecordOf(store.current)!.actionTimes).deep.equals([
         corrected,
         ...times.slice(1)
       ])
-      expect(recordOf(forPlayback(store.current))!.actionTimes).deep.equals(
-        times
-      )
+      expect(
+        storedRecordOf(forPlayback(store.current))!.actionTimes
+      ).deep.equals(times)
       const reopened = (await open(store, clock)).session
       expect(
-        recordOf(forPlayback(reopened.picture().current))!.actionTimes
+        storedRecordOf(forPlayback(reopened.picture().current))!.actionTimes
       ).deep.equals(times)
       clock.pass(120)
       reopened.apply(ball)
       store.fail = new HttpError('conflict', 'Scoring changed elsewhere')
       await reopened.flush()
       expect(
-        recordOf(forPlayback(reopened.picture().current))!.actionTimes
+        storedRecordOf(forPlayback(reopened.picture().current))!.actionTimes
       ).deep.equals(times)
-      expect(recordOf(reopened.picture().current)!.actionTimes).deep.equals([
-        corrected,
-        ...times.slice(1)
-      ])
+      expect(
+        storedRecordOf(reopened.picture().current)!.actionTimes
+      ).deep.equals([corrected, ...times.slice(1)])
     })
 })
 
@@ -211,7 +212,7 @@ function documents(session: ScoringSession): GumboPlay[] {
 /** Every action's time, read back from the documents the session stores. */
 function timesOf(session: ScoringSession): string[] {
   return documents(session).flatMap(document => {
-    const record = recordOf(document)!
+    const record = storedRecordOf(document)!
     if (record.actions.length === 0) return []
     expect(record.actionTimes, `play ${document.about.atBatIndex}`).length(
       record.actions.length
@@ -279,11 +280,11 @@ describe('the time each scoring action was taken', function () {
     const times = score(session, clock, [ball, single, ball])
     const [first, second] = documents(session)
     expect(first.about.atBatIndex).equals(0)
-    expect(recordOf(first)).deep.include({
+    expect(storedRecordOf(first)).deep.include({
       actions: [ball, single],
       actionTimes: times.slice(0, 2)
     })
-    expect(recordOf(second)).deep.include({
+    expect(storedRecordOf(second)).deep.include({
       actions: [ball],
       actionTimes: times.slice(2)
     })
@@ -331,10 +332,14 @@ describe('the time each scoring action was taken', function () {
     const { session, clock } = await open(old.store)
     score(session, clock, [strike, single])
     const [reopened] = documents(session)
-    expect(recordOf(reopened)?.actions).deep.equals([ball, strike, single])
-    expect(recordOf(reopened)).not.have.property('actionTimes')
+    expect(storedRecordOf(reopened)?.actions).deep.equals([
+      ball,
+      strike,
+      single
+    ])
+    expect(storedRecordOf(reopened)).not.have.property('actionTimes')
     const next = score(session, clock, [ball])
-    expect(recordOf(documents(session)[1])?.actionTimes).deep.equals(next)
+    expect(storedRecordOf(documents(session)[1])?.actionTimes).deep.equals(next)
   })
 
   it('reads a record whose times do not match its actions as one without times (U3)', function () {
@@ -344,8 +349,8 @@ describe('the time each scoring action was taken', function () {
       actions: [ball, strike]
     }
     const read = (actionTimes?: unknown): unknown =>
-      recordOf({ teamStation: { ...record, actionTimes } })
-    const plain = recordOf({ teamStation: record })
+      storedRecordOf({ teamStation: { ...record, actionTimes } })
+    const plain = storedRecordOf({ teamStation: record })
     expect(plain).not.have.property('actionTimes')
     expect(plain?.actions).deep.equals([ball, strike])
     for (const wrong of [
@@ -364,7 +369,7 @@ describe('the time each scoring action was taken', function () {
     const [timed] = documents(session)
     const untimed = JSON.parse(JSON.stringify(timed)) as GumboPlay
     delete (untimed.teamStation as { actionTimes?: unknown }).actionTimes
-    expect(recordOf(timed)?.actionTimes).length(2)
+    expect(storedRecordOf(timed)?.actionTimes).length(2)
     expect(comparablePlay(timed)).deep.equals(comparablePlay(untimed))
   })
 

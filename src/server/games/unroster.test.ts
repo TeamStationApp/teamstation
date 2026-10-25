@@ -15,7 +15,9 @@ import { freshGame } from '../../common/scoring/lineup'
 import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { teamsOfRow } from '../../common/teamLists'
 import type { Unrostered } from '../../common/unroster'
+import { storedUnrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -25,6 +27,7 @@ import { after as score, game as fixture } from '../../test/scoringGames'
 import { closeInto } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { type Database, makeDatabase } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { createGuestPlayer } from './guestPlayers'
@@ -147,6 +150,12 @@ describe('atomic game availability', function () {
     await admin.query(`drop database if exists ${name}`)
     await admin.end()
   })
+  const unrosteredOf = async (
+    id: string
+  ): Promise<{ away: number[]; home: number[] }> => {
+    const game = await row(id)
+    return storedUnrostered(game.unrostered, teamsOfRow(game))
+  }
   const row = async (id: string): Promise<Selectable<Database['games']>> =>
     await db
       .selectFrom('games')
@@ -179,10 +188,16 @@ describe('atomic game availability', function () {
   const open = async (id: string): Promise<ScoringSession> =>
     await ScoringSession.open(
       {
-        load: async () => ({
-          plays: (await readPlays(db, id)).map(row => row.gumbo as GumboPlay),
-          currentPlay: (await row(id)).currentPlay as CurrentPlay | null
-        }),
+        load: async () => {
+          const plays = await readPlays(db, id)
+          return {
+            plays: plays.map(row => row.gumbo as GumboPlay),
+            currentPlay: atBatOf(
+              await row(id),
+              plays.length > 0
+            ) as CurrentPlay | null
+          }
+        },
         save: async () => {
           throw new Error('Read only')
         }
@@ -266,7 +281,7 @@ describe('atomic game availability', function () {
       })
     )
     expect(saved.currentPlay).nested.property('matchup.batter.id', 2)
-    expect((await row(id)).unrostered).deep.equals({ away: [1], home: [] })
+    expect(await unrosteredOf(id)).deep.equals({ away: [1], home: [] })
   })
 
   it('changes only this game and side, is idempotent, and does not start a new game', async () => {
@@ -282,7 +297,7 @@ describe('atomic game availability', function () {
       home: []
     })
     expect(await row('gam_empty')).deep.equals(before)
-    expect((await row('gam_saved')).unrostered).deep.equals({
+    expect(await unrosteredOf('gam_saved')).deep.equals({
       away: [],
       home: []
     })
@@ -290,6 +305,26 @@ describe('atomic game availability', function () {
       away: [],
       home: []
     })
+  })
+  it('writes on a game a reset left on a later play generation (S15)', async () => {
+    await db
+      .updateTable('games')
+      .set({ play_generation: 3 })
+      .where('id', '=', 'gam_empty')
+      .execute()
+    expect(await toggle('gam_empty', 1, false)).deep.equals({
+      away: [1],
+      home: []
+    })
+    expect(await toggle('gam_empty', 1, true)).deep.equals({
+      away: [],
+      home: []
+    })
+    await db
+      .updateTable('games')
+      .set({ play_generation: 0 })
+      .where('id', '=', 'gam_empty')
+      .execute()
   })
   it('refuses every non-head-coach role, the other team, missing users, nonplayers and guests', async () => {
     for (const userId of [124, 125, 126, 127, 128, 129])
@@ -433,7 +468,7 @@ describe('atomic game availability', function () {
   })
   it('rolls back the switch when persistence fails and refuses unreadable history', async () => {
     const before = await row('gam_saved')
-    await sql`create function reject_test_lineup() returns trigger language plpgsql as $$ begin if new."currentPlay" is distinct from old."currentPlay" then raise exception 'Test lineup write refused'; end if; return new; end $$`.execute(
+    await sql`create function reject_test_lineup() returns trigger language plpgsql as $$ begin if new."currentPlay" is distinct from old."currentPlay" or new.pregame is distinct from old.pregame then raise exception 'Test lineup write refused'; end if; return new; end $$`.execute(
       db
     )
     await sql`create trigger reject_test_lineup before update on games for each row execute function reject_test_lineup()`.execute(
@@ -488,7 +523,7 @@ describe('atomic game availability', function () {
       })
       .execute()
     expect((await toggle(id, 129, false)).away).deep.equals([3129])
-    expect((await row(id)).unrostered).deep.equals({ away: [3129], home: [] })
+    expect(await unrosteredOf(id)).deep.equals({ away: [3129], home: [] })
     const available = await gameAvailability(db, await row(id))
     expect(
       available.roster.away.find(player => player.userId === userIdOfGumbo(129))

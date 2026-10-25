@@ -23,6 +23,7 @@ export async function scoredInTeamStation(
     .where(eb =>
       eb.or([
         eb('currentPlay', 'is not', null),
+        eb('pregame', 'is not', null),
         eb('scoringOwner', '=', 'teamstation'),
         eb.exists(
           eb

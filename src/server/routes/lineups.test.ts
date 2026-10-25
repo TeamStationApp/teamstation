@@ -11,6 +11,7 @@ import {
   asGameLineupsResponse,
   type SaveLineupsBody
 } from '../../common/api'
+import { storedGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -37,6 +38,7 @@ import {
   setupOf,
   type Side
 } from '../../common/scoring/state'
+import { teamsOfRow } from '../../common/teamLists'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -45,7 +47,8 @@ import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
-import { postGamePlays, readPlays } from '../events/postPlays'
+import { atBatInProgress } from '../events/atBatInProgress'
+import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
@@ -427,10 +430,13 @@ describe('the lineup routes (U11)', function () {
     const body = (await created.json()) as { userId: string; gumboId: number }
     const game = await db!
       .selectFrom('games')
-      .select('guests')
+      .select(['guests', 'home_team_id', 'away_team_id'])
       .where('id', '=', fresh)
       .executeTakeFirstOrThrow()
-    expect(game.guests).deep.equals({ away: [body.gumboId], home: [] })
+    expect(storedGuests(game.guests, teamsOfRow(game))).deep.equals({
+      away: [body.gumboId],
+      home: []
+    })
   })
 
   it("reads a team's default lineup, or nulls for none", async function () {
@@ -566,6 +572,51 @@ describe('the lineup routes (U11)', function () {
       expect(dj.atBat?.side).equals('away')
     })
 
+    it('names no batter for a begun game with no at-bat stored, its pregame lineups kept', async function () {
+      const row = await db!
+        .selectFrom('games')
+        .select(['currentPlay', 'pregame'])
+        .where('id', '=', scored)
+        .executeTakeFirstOrThrow()
+      const play = row.currentPlay as {
+        about: Record<string, unknown>
+        teamStation: unknown
+      }
+      // As a replace post leaves a game TeamStation set up: plays, no at-bat.
+      const id = makeId('event')
+      await db!
+        .insertInto('events')
+        .values({
+          id,
+          gameId: scored,
+          gumbo: { ...play, about: { ...play.about, isComplete: true } },
+          startTime: null,
+          endTime: null,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        })
+        .execute()
+      await db!
+        .updateTable('games')
+        .set({ currentPlay: null, pregame: play.teamStation as never })
+        .where('id', '=', scored)
+        .execute()
+      try {
+        const dj = asDjGame((await get(`/games/${scored}/dj`, ADMIN)).body)
+        expect(dj.atBat).equals(null)
+      } finally {
+        await db!.deleteFrom('events').where('id', '=', id).execute()
+        await db!
+          .updateTable('games')
+          .set({
+            currentPlay: row.currentPlay as never,
+            pregame: row.pregame as never
+          })
+          .where('id', '=', scored)
+          .execute()
+      }
+    })
+
     it("lists each team's default before the game has a record", async function () {
       const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
       expect(dj.home.source).equals('default')
@@ -681,7 +732,8 @@ describe("saving a side's lineup (U8)", function () {
     accept: makeId('game'),
     keeper: makeId('game'),
     shown: makeId('game'),
-    availability: makeId('game')
+    availability: makeId('game'),
+    generation: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -953,7 +1005,7 @@ describe("saving a side's lineup (U8)", function () {
           currentPlay: (
             await database
               .selectFrom('games')
-              .select('currentPlay')
+              .select(atBatInProgress().as('currentPlay'))
               .where('id', '=', gameId)
               .executeTakeFirstOrThrow()
           ).currentPlay as CurrentPlay | null
@@ -1054,12 +1106,19 @@ describe("saving a side's lineup (U8)", function () {
   async function gameRow(gameId: string): Promise<{
     status: string
     currentPlay: unknown
+    pregame: unknown
     lineups_digest: string | null
     updated_at: Date
   }> {
     return await db!
       .selectFrom('games')
-      .select(['status', 'currentPlay', 'lineups_digest', 'updated_at'])
+      .select([
+        'status',
+        'currentPlay',
+        'pregame',
+        'lineups_digest',
+        'updated_at'
+      ])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
   }
@@ -1111,7 +1170,9 @@ describe("saving a side's lineup (U8)", function () {
     expect(read.home.current?.defense.P?.gumboId).equals(homePlayers[9].userId)
     const row = await gameRow(games.fresh)
     expect(row.status).equals('scheduled')
-    expect(row.currentPlay).not.equals(null)
+    // Before the first pitch the save is the pregame record, with no Gumbo.
+    expect(row.currentPlay).equals(null)
+    expect(row.pregame).not.equals(null)
     expect(read.digest).equals(row.lineups_digest)
     // The answer is what reading the lineups now says, digest and all.
     const again = await ask('GET', `/games/${games.fresh}/lineups`, FAN)
@@ -1155,7 +1216,9 @@ describe("saving a side's lineup (U8)", function () {
     )
     const row = await gameRow(games.unheld)
     expect(row.status).equals('scheduled')
-    expect(row.currentPlay).not.equals(null)
+    // Before the first pitch the save is the pregame record, with no Gumbo.
+    expect(row.currentPlay).equals(null)
+    expect(row.pregame).not.equals(null)
     expect(written).includes(games.unheld)
     // Held now: the same save again changes nothing.
     const writes = written.length
@@ -2206,6 +2269,37 @@ describe("saving a side's lineup (U8)", function () {
     expect(home.defense.LF).equals(
       session.state.liveData.boxscore.teams.home.defense.CF
     )
+  })
+
+  it('refuses a save made on another play generation, and saves on the current one or none (S3)', async function () {
+    await db!
+      .updateTable('games')
+      .set({ play_generation: 1 })
+      .where('id', '=', games.generation)
+      .execute()
+    const read = await ask('GET', `/games/${games.generation}/lineups`, FAN)
+    expect(read.body.generation).equals(1)
+    const session = await scoring(games.generation)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    const before = await gameRow(games.generation)
+    const old = await save(games.generation, COACH, { ...body, generation: 0 })
+    expect(old.status).equals(409)
+    expect(old.body).deep.include({
+      message: RESET_SINCE_READ,
+      details: { stale: true, generation: 1 }
+    })
+    expect(await gameRow(games.generation)).deep.equals(before)
+    const saved = await save(games.generation, COACH, {
+      ...body,
+      generation: 1
+    })
+    expect(saved.status, JSON.stringify(saved.body)).equals(200)
+    expect(saved.body.generation).equals(1)
+    // Naming none, as an app not yet updated sends it.
+    body.battingOrder.reverse()
+    const unnamed = await save(games.generation, COACH, body)
+    expect(unnamed.status, JSON.stringify(unnamed.body)).equals(200)
   })
 
   it('refuses a scorer’s post built on the lineups a coach has saved over since', async function () {

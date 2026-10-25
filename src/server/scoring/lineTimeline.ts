@@ -8,9 +8,10 @@ import {
   boardLineOf,
   boardLineOfPlays
 } from '../../common/scoring/boardLine'
-import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { contextOf } from './replayContext'
 
 /**
@@ -79,7 +80,7 @@ export async function computeLineTimeline(
         .select([
           'games.home_team_id',
           'games.away_team_id',
-          'games.currentPlay',
+          atBatInProgress('games').as('currentPlay'),
           'games.start_at',
           'home.name as homeTeam',
           'away.name as awayTeam'
@@ -108,7 +109,7 @@ export async function computeLineTimeline(
 
   const lines: Array<{ at: number | undefined; line: BoardLine }> = []
   // The plays imported before TeamStation scored any.
-  const firstScored = plays.findIndex(row => recordOf(row.gumbo) != null)
+  const firstScored = plays.findIndex(row => storedRecordOf(row.gumbo) != null)
   const imported = firstScored < 0 ? plays.length : firstScored
   for (let i = 0; i < imported; i++) {
     if (plays[i].atBatIndex === stored.currentPlay?.about.atBatIndex) continue

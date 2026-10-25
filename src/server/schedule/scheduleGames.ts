@@ -25,6 +25,7 @@ import {
 } from '../db/externalIds'
 import { gameHasPlays } from '../games/fenceDistance'
 import { scoredInTeamStation } from '../games/opponentFixed'
+import { retargetGameTeams } from '../games/retargetTeams'
 import { maySwapSides, swapGameSides } from '../games/swapSides'
 import { currentActor, requireGroupAdmin } from '../groups/rights'
 import { notifyGameChange } from '../socket/gameChanges'
@@ -1084,6 +1085,7 @@ async function repointOpponent(
     )
     .where('id', '=', game.id)
     .execute()
+  await retargetGameTeams(trx, [game.id], oldTeamId, newTeamId)
   await trx
     .updateTable('events')
     .set({ battingTeamId: newTeamId })

@@ -1,4 +1,4 @@
-import { asObject, asString } from 'cleaners'
+import { asNumber, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
@@ -15,6 +15,7 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
+import { teamsOfRow } from '../../common/teamLists'
 import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
@@ -22,6 +23,8 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
+import { atBatOf } from '../events/atBatInProgress'
+import { gameCurrentPlay } from '../events/currentPlay'
 import {
   reconcileEventTags,
   tagChoices,
@@ -37,7 +40,9 @@ import {
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
-import { swapGameSides } from '../games/swapSides'
+import { playForWire } from '../events/wireRecords'
+import { gameBegun, resetAndSwap } from '../games/resetSwap'
+import { SWAP_REFUSED, swapGameSides } from '../games/swapSides'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
@@ -91,9 +96,11 @@ export interface EventRouteOptions {
  * lineups have changed since, someone else saved over them, and the post is
  * refused with 409 and `details: { stale: true }`: the sender reads the game
  * again and posts its own changes on top. A post naming none is written as
- * before.
+ * before. A live post naming a `generation` other than the game's, the set
+ * of plays a reset left, is refused the same way with `details:
+ * { stale: true, generation }`: its sender opens the game again.
  *
- * `GET` and each live post's answer carry `playsDigest`, a digest of the
+ * `GET` answers the game's `generation`, and `GET` and each live post's answer carry `playsDigest`, a digest of the
  * stored plays and the at-bat in progress, as the game socket's `plays`
  * notices do; a live post's answer also carries `priorPlaysDigest`, the same
  * of the game as the post found it. A sender whose last digest that is holds
@@ -247,7 +254,8 @@ export function eventRoutes(
                     status: 200,
                     resultId: JSON.stringify(kept)
                   })
-                }
+                },
+            { expectedGeneration: body.generation }
           )
           wrote = true
           return { status: 200, body: response }
@@ -310,11 +318,15 @@ export function eventRoutes(
   )
 
   /**
-   * Swaps home and away before the first pitch, from the scoring screen:
-   * for whoever may score the game, a scorekeeper of either team. Refused
-   * with 409 once the game has begun. The body names the sides the scorer
-   * read: a call sent again after its answer was lost finds them already
-   * exchanged and changes nothing, rather than swapping them back.
+   * Swaps home and away from the scoring screen, for whoever may score the
+   * game: a scorekeeper of either team. Before the first pitch only the
+   * teams move. A begun game is reset first (`resetAndSwap`): the body must
+   * name the `playsDigest` and `generation` its scorer confirmed, or it is
+   * refused with 409, as is a withdrawn game or one scored outside
+   * TeamStation. The body names the sides the scorer read: a call sent
+   * again after its answer was lost finds them already exchanged and
+   * changes nothing, rather than swapping them back. The answer is the new
+   * sides, the game's generation, and what the reset deleted.
    */
   router.post(
     '/games/:gameId/swap-sides',
@@ -325,12 +337,20 @@ export function eventRoutes(
       const gameId = pathParam(req.params.gameId)
       const read = cleanBody(asSwapSidesBody, req.body)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-      const teams = await atomic(db, async trx => {
+      const done = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph', `game:${gameId}`])
         await lockPlayerEdits(trx)
         const game = await trx
           .selectFrom('games')
-          .select(['home_team_id', 'away_team_id'])
+          .select([
+            'id',
+            'home_team_id',
+            'away_team_id',
+            'currentPlay',
+            'pregame',
+            'status',
+            'play_generation'
+          ])
           .where('id', '=', gameId)
           .forUpdate()
           .executeTakeFirst()
@@ -341,40 +361,79 @@ export function eventRoutes(
           !canScore(scorers, game.away_team_id)
         )
           throw forbidden('Only someone who can score this game may swap it')
+        const unchanged = { atBats: 0, innings: 0 }
         if (
           game.home_team_id === read.awayTeamId &&
           game.away_team_id === read.homeTeamId
         )
-          return { ...read.swapped, swapped: false }
+          return {
+            ...read.swapped,
+            generation: game.play_generation,
+            reset: unchanged,
+            swapped: false
+          }
         if (
           game.home_team_id !== read.homeTeamId ||
           game.away_team_id !== read.awayTeamId
         )
           throw conflict("This game's teams changed. Open it again.")
-        await swapGameSides(trx, gameId)
-        return { ...read.swapped, swapped: true }
+        if (!(await gameBegun(trx, game))) {
+          await swapGameSides(trx, gameId)
+          return {
+            ...read.swapped,
+            generation: game.play_generation,
+            reset: unchanged,
+            swapped: true
+          }
+        }
+        // An app not yet updated confirms no plays: it swaps only before the
+        // first pitch, as it always has.
+        if (read.playsDigest == null && read.generation == null)
+          throw conflict(SWAP_REFUSED)
+        const reset = await resetAndSwap(trx, gameId, actor.userId, read)
+        return {
+          ...read.swapped,
+          generation: game.play_generation + 1,
+          reset,
+          swapped: true
+        }
       })
-      if (teams.swapped) tellGameWritten(options.onGameWritten, gameId)
-      res.json({ homeTeamId: teams.homeTeamId, awayTeamId: teams.awayTeamId })
+      if (done.swapped) tellGameWritten(options.onGameWritten, gameId)
+      res.json({
+        homeTeamId: done.homeTeamId,
+        awayTeamId: done.awayTeamId,
+        generation: done.generation,
+        reset: done.reset
+      })
     })
   )
 
   return router
 }
 
-/** The sides a swap was asked from, and the sides it makes. */
+/**
+ * The sides a swap was asked from, and the sides it makes. A reset names
+ * the plays and generation its scorer confirmed; an older app, which only
+ * swaps before the first pitch, names neither.
+ */
 function asSwapSidesBody(raw: unknown): {
   homeTeamId: string
   awayTeamId: string
+  generation?: number
+  playsDigest?: string
   swapped: { homeTeamId: string; awayTeamId: string }
 } {
-  const { homeTeamId, awayTeamId } = asObject({
+  const { homeTeamId, awayTeamId, generation, playsDigest } = asObject({
     homeTeamId: asString,
-    awayTeamId: asString
+    awayTeamId: asString,
+    generation: asOptional(asNumber),
+    playsDigest: asOptional(asString)
   })(raw)
   return {
     homeTeamId,
     awayTeamId,
+    generation,
+    playsDigest,
     swapped: { homeTeamId: awayTeamId, awayTeamId: homeTeamId }
   }
 }
@@ -397,28 +456,42 @@ async function storedGameAnswer(
   currentPlay: unknown
   playsDigest: string
   lineupsDigest: string | null
+  generation: number
 }> {
   const stored = await readPlays(db, gameId)
   const game = await db
     .selectFrom('games')
-    .select(['home_team_id', 'away_team_id', 'currentPlay', 'lineups_digest'])
+    .select([
+      'home_team_id',
+      'away_team_id',
+      'currentPlay',
+      'pregame',
+      'lineups_digest',
+      'play_generation'
+    ])
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
+  const current = atBatOf(game, stored.length > 0)
   const resolved = await resolveScoringGame(db, {
     plays: stored.map(row => row.gumbo as GumboPlay),
-    currentPlay: game.currentPlay as CurrentPlay | null
+    currentPlay: current as CurrentPlay | null
   })
+  const teams = teamsOfRow(game)
   return {
     plays: stored.map((row, index) => ({
       ...playJson(row),
-      gumbo: resolved.plays[index]
+      gumbo: playForWire(resolved.plays[index], teams)
     })),
-    currentPlay: resolved.currentPlay,
-    playsDigest: playsDigest(stored, game.currentPlay),
+    currentPlay: playForWire(
+      await gameCurrentPlay(db, gameId, game, resolved),
+      teams
+    ),
+    playsDigest: playsDigest(stored, current),
     lineupsDigest: await storedLineupsDigest(db, {
       id: gameId,
       ...game
-    })
+    }),
+    generation: game.play_generation
   }
 }
 

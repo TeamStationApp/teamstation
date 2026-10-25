@@ -605,6 +605,8 @@ export function teamRoutes(
         pendingRequestId: pending.pendingRequestId,
         homeTeamId: game.home_team_id,
         awayTeamId: game.away_team_id,
+        // Which set of plays the game holds: one more after each reset.
+        generation: game.play_generation,
         homeTeamName: names.get(game.home_team_id) ?? '',
         awayTeamName: names.get(game.away_team_id) ?? '',
         seasonId: game.season_id,

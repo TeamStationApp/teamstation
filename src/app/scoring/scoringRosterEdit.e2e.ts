@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
-import { recordOf } from '../../common/scoring/gumbo'
+import { recordOf, storedRecordOf } from '../../common/scoring/gumbo'
+import type { GameSetup } from '../../common/scoring/state'
 import { rosterEditFixture } from './scoringRosterEdit.e2e.fixture'
 
 const required = (name: string): string => {
@@ -52,7 +53,9 @@ async function main(): Promise<void> {
         : [fixture.stored().currentPlay!])
     ].some(
       play =>
-        recordOf(play)?.actions.some(action => action.type === 'pitch') === true
+        storedRecordOf(play)?.actions.some(
+          action => action.type === 'pitch'
+        ) === true
     )
   const daemon = await MaestroD.connect({
     name: required('MAESTRO_D'),
@@ -455,7 +458,7 @@ async function main(): Promise<void> {
           ? []
           : [fixture.stored().currentPlay!])
       ].flatMap(play =>
-        (recordOf(play)?.actions ?? []).filter(
+        (storedRecordOf(play)?.actions ?? []).filter(
           action => action.type === 'pitch'
         )
       )
@@ -533,15 +536,17 @@ async function main(): Promise<void> {
       await reach('Jose Ramirez')
       await capture('local-card')
       await tap('Save Rosters')
-      const latestSetup = (): NonNullable<
-        ReturnType<typeof recordOf>
-      >['setupBefore'] => {
+      const latestSetup = (): GameSetup => {
         const actions = [
           ...fixture.stored().plays,
           ...(fixture.stored().currentPlay == null
             ? []
             : [fixture.stored().currentPlay!])
-        ].flatMap(play => recordOf(play)?.actions ?? [])
+        ].flatMap(
+          play =>
+            recordOf(play, { away: { id: 'away' }, home: { id: 'home' } })
+              ?.actions ?? []
+        )
         const action = actions
           .filter(
             action => action.type === 'lineup' && action.kind === 'roster'

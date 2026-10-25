@@ -3,10 +3,12 @@ import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { storedGuests } from '../../common/guests'
 import { makeId } from '../../common/ids'
 import { asNewRosterPlayer } from '../../common/playerSettings'
 import { currentDocumentOf } from '../../common/scoring/document'
 import { setupOf } from '../../common/scoring/state'
+import { teamsOfRow } from '../../common/teamLists'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -115,13 +117,13 @@ describe('persistent game guests', function () {
       })
     const game = await db
       .selectFrom('games')
-      .select('guests')
+      .select(['guests', 'home_team_id', 'away_team_id'])
       .where('id', '=', 'gam_guests')
       .executeTakeFirstOrThrow()
     expect(
-      (game.guests as { away: number[] }).away.sort((a, b) => a - b)
+      storedGuests(game.guests, teamsOfRow(game)).away.sort((a, b) => a - b)
     ).deep.equals(entries.map(entry => entry.gumboId!).sort((a, b) => a - b))
-    expect((game.guests as { home: number[] }).home).deep.equals([])
+    expect(storedGuests(game.guests, teamsOfRow(game)).home).deep.equals([])
     const users = await db
       .selectFrom('users')
       .select(['login_enabled', 'bats_source', 'first_name', 'last_name'])
@@ -212,10 +214,10 @@ describe('persistent game guests', function () {
         ).deep.equals([])
         const game = await db
           .selectFrom('games')
-          .select('guests')
+          .select(['guests', 'home_team_id', 'away_team_id'])
           .where('id', '=', 'gam_guests')
           .executeTakeFirstOrThrow()
-        expect((game.guests as { home: number[] }).home).deep.equals([
+        expect(storedGuests(game.guests, teamsOfRow(game)).home).deep.equals([
           guest.gumboId
         ])
       }
@@ -245,7 +247,7 @@ describe('persistent game guests', function () {
   it('rolls back the guest account, details and game list after five failed scoring allocations', async () => {
     const before = await db
       .selectFrom('games')
-      .select('guests')
+      .select(['guests', 'home_team_id', 'away_team_id'])
       .where('id', '=', 'gam_guests')
       .executeTakeFirstOrThrow()
     const details = await db
@@ -286,7 +288,7 @@ describe('persistent game guests', function () {
       expect(
         await db
           .selectFrom('games')
-          .select('guests')
+          .select(['guests', 'home_team_id', 'away_team_id'])
           .where('id', '=', 'gam_guests')
           .executeTakeFirstOrThrow()
       ).deep.equals(before)

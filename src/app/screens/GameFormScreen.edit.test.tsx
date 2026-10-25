@@ -223,6 +223,149 @@ describe('game settings in the shared game scene', () => {
     expect(f.sent).length(0)
     expect(f.created).length(0)
   })
+  /** A scorekeeper's scheduling answer: the swap, and the plays it resets. */
+  const scorer = (
+    plays: { atBats: number; innings: number; resets?: boolean } = {
+      atBats: 0,
+      innings: 0
+    },
+    canPropose = false
+  ): ReturnType<typeof asGameScheduling> =>
+    asGameScheduling({
+      game,
+      version: 'a'.repeat(64),
+      canPropose,
+      withdrawTeamIds: canPropose ? [home.id] : [],
+      administeredTeamIds: canPropose ? [home.id] : [],
+      canSwap: true,
+      plays: { ...plays, playsDigest: 'digest', generation: 3 }
+    })
+  const swapsOf = (f: ReturnType<typeof fixture>): unknown[] => {
+    const asked: unknown[] = []
+    f.client.swapGameSides = async (_gameId, read) => {
+      asked.push(read)
+      return {
+        homeTeamId: away.id,
+        awayTeamId: home.id,
+        generation: 3,
+        reset: { atBats: 0, innings: 0 }
+      }
+    }
+    return asked
+  }
+
+  it('leaves a scorekeeper only the swap and Save, and says so (F6)', async () => {
+    const f = fixture([])
+    f.client.gameScheduling = async () => scorer()
+    await mount(f)
+    expect(disabled('Swap home and away')).equals(false)
+    // Nothing to save until the sides are swapped, and again once swapped back.
+    expect(disabled('Save')).equals(true)
+    await press('Swap home and away')
+    expect(disabled('Save')).equals(false)
+    await press('Swap home and away')
+    expect(disabled('Save')).equals(true)
+    expect(find('Demo Eagles, Away')).equals(undefined)
+    const field = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Venue name (optional)"]'
+    )!
+    expect(field.disabled || field.readOnly).equals(true)
+    expect(text()).includes(
+      "As this game's scorekeeper you can swap home and away."
+    )
+    expect(text()).not.includes('You need administrator access')
+  })
+
+  it('saves a swap-only draft as a swap, asking first when it resets plays (F7)', async () => {
+    const f = fixture([])
+    f.client.gameScheduling = async () => scorer()
+    const asked = swapsOf(f)
+    await mount(f)
+    await press('Swap home and away')
+    await press('Save')
+    expect(f.sent).length(0)
+    expect(asked).deep.equals([
+      {
+        homeTeamId: home.id,
+        awayTeamId: away.id,
+        generation: 3,
+        playsDigest: 'digest'
+      }
+    ])
+    expect(f.saved[0]).deep.include({
+      status: 'accepted',
+      notice: 'Home and away swapped: Demo Eagles vs Demo Hawks'
+    })
+    await unmount()
+
+    const begun = fixture([])
+    begun.client.gameScheduling = async () => scorer({ atBats: 5, innings: 2 })
+    const reset = swapsOf(begun)
+    await mount(begun)
+    await press('Swap home and away')
+    await press('Save')
+    expect(reset).length(0)
+    expect(text()).includes(
+      'Resets all game plays: 5 at-bats in 2 innings will be lost.'
+    )
+    await press('Reset and Swap')
+    expect(reset).length(1)
+    expect(begun.sent).length(0)
+  })
+
+  it('asks before a swap that resets the game though it loses no at-bat', async () => {
+    const f = fixture([])
+    f.client.gameScheduling = async () =>
+      scorer({ atBats: 0, innings: 0, resets: true })
+    const asked = swapsOf(f)
+    await mount(f)
+    await press('Swap home and away')
+    await press('Save')
+    expect(asked).length(0)
+    expect(text()).includes('Resets all game plays. Demo Hawks will bat first')
+    await press('Reset and Swap')
+    expect(asked).length(1)
+  })
+
+  it('drops the reset it asked about once the draft changes more than the sides', async () => {
+    const f = fixture()
+    f.client.gameScheduling = async () =>
+      scorer({ atBats: 5, innings: 2 }, true)
+    const asked = swapsOf(f)
+    await mount(f)
+    await press('Swap home and away')
+    await press('Save')
+    expect(find('Reset and Swap')).not.equals(undefined)
+    await fill('Venue name (optional)', 'Demo New Field')
+    expect(find('Reset and Swap')).equals(undefined)
+    expect(text()).not.includes('Resets all game plays')
+    await press('Save')
+    expect(asked).length(0)
+    expect(f.sent).length(1)
+  })
+
+  it('sends staff a proposal for a swap with another change, and saves a swap alone as a swap (F8)', async () => {
+    const f = fixture()
+    f.client.gameScheduling = async () => scorer(undefined, true)
+    const asked = swapsOf(f)
+    await mount(f)
+    await press('Swap home and away')
+    await fill('Venue name (optional)', 'Demo New Field')
+    await press('Save')
+    expect(f.sent).length(1)
+    expect(asked).length(0)
+    await unmount()
+
+    const alone = fixture()
+    alone.client.gameScheduling = async () => scorer(undefined, true)
+    const swapped = swapsOf(alone)
+    await mount(alone)
+    await press('Swap home and away')
+    await press('Save')
+    expect(swapped).length(1)
+    expect(alone.sent).length(0)
+  })
+
   it('ignores an older search result after the query has changed', async () => {
     const f = fixture()
     let resolveOld!: (groups: Array<typeof home>) => void

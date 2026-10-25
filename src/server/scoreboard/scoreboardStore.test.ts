@@ -210,6 +210,30 @@ describe('the scoreboard store', function () {
     })
   })
 
+  it("clears the game's own scoring and keeps the rest, unless it holds none or a newer one (S10)", async function () {
+    await store.writeGame('g1', { inning: 4, awayScore: 3 }, S, 5)
+    await store.mergeWatcher('g1', { pitchSpeed: 81 }, S)
+    expect(
+      (await store.clearGame('g1', S, 4)).kind,
+      'an older game write'
+    ).equals('stale')
+    expect((await store.readScoreboard('g1'))?.game?.state).deep.equals({
+      inning: 4,
+      awayScore: 3
+    })
+    heard = []
+    const cleared = written(await store.clearGame('g1', S, 6))
+    expect(cleared.game).equals(undefined)
+    expect(cleared.watcher?.state).deep.equals({ pitchSpeed: 81 })
+    const hash = await store.readScoreboard('g1')
+    expect(hash?.game).equals(undefined)
+    expect(hash?.watcher?.state).deep.equals({ pitchSpeed: 81 })
+    expect(heard).has.length(1)
+    expect((await store.clearGame('g1', S, 7)).kind).equals('closed')
+    expect((await store.clearGame('g2', S, 1)).kind).equals('closed')
+    expect(await store.exists('g2')).equals(false)
+  })
+
   it('refuses to open a closed scoreboard, and writes nothing', async function () {
     clock = S + 2 * HOUR
     expect(await store.mergeWatcher('late', { outs: 1 }, S)).deep.equals({

@@ -12,7 +12,7 @@ import { asLiteral } from '../asLiteral'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import { asGumboId } from '../userId'
 import type { ScoringAction } from './actions'
-import { recordOf, replayPlays } from './gumbo'
+import { recordOf, replayPlays, storedRecordOf } from './gumbo'
 import { addPlayer, begun } from './lineup'
 import {
   copyState,
@@ -522,7 +522,7 @@ export function readLineups(
   context: LineupContext
 ): GameLineups {
   const played = playsInOrder(stored)
-  const records = played.map(recordOf)
+  const records = played.map(play => recordOf(play, context.teams))
   const firstRecord = records.find(record => record != null)
   if (firstRecord == null) {
     const hasBegun =
@@ -599,7 +599,7 @@ function dueOf(state: GameState, stored: StoredLineupGame): DueBatter | null {
   const dueId = team.battingOrder[team.battingIndex]
   if (dueId == null) return null
   if (state.liveData.linescore.offense.batter?.id !== dueId) return null
-  const chosen = (recordOf(stored.currentPlay)?.actions ?? []).find(
+  const chosen = (storedRecordOf(stored.currentPlay)?.actions ?? []).find(
     action =>
       action.type === 'lineup' &&
       action.kind === 'roster' &&

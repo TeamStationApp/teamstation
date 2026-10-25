@@ -32,6 +32,12 @@ import {
   type SideLineup,
   withoutUndefined
 } from './state'
+import {
+  actionByTeam,
+  setupByTeam,
+  type SideTeams,
+  type TeamSetup
+} from './teamRecord'
 
 /** The fence a game is played to; `state.ts` keeps it beside the field. */
 export { fenceOf }
@@ -55,22 +61,52 @@ export interface PlayStamp {
   endTime?: string | null
 }
 
+/** Each setup by team, made once per setup and pair of teams. */
+const teamSetups = new WeakMap<GameSetup, { key: string; setup: TeamSetup }>()
+
+/**
+ * The record a play stores: version 3, its setup and its lineup changes by
+ * team under the teams the engine played it with (`teams`).
+ */
+function teamStationOf(
+  teams: SideTeams,
+  stamp: PlayStamp,
+  detail?: unknown
+): Record<string, unknown> {
+  const key = `${teams.away.id}\u0000${teams.home.id}`
+  let made = teamSetups.get(stamp.setupBefore)
+  if (made?.key !== key) {
+    made = { key, setup: setupByTeam(stamp.setupBefore, teams) }
+    teamSetups.set(stamp.setupBefore, made)
+  }
+  return {
+    version: 3,
+    setupBefore: made.setup,
+    ...recordActions(stamp, teams),
+    ...(detail === undefined ? {} : { detail })
+  }
+}
+
 /**
  * The record's actions and their times. The times are written only when
  * every action has one, so a reader can trust the two lists line up.
  */
-function recordActions(stamp: PlayStamp): {
-  actions: ScoringAction[]
+function recordActions(
+  stamp: PlayStamp,
+  teams: SideTeams
+): {
+  actions: Array<Record<string, unknown>>
   actionTimes?: string[]
   playbackTimes?: string[]
 } {
   const times = stamp.actionTimes
+  const actions = stamp.actions.map(action => actionByTeam(action, teams))
   return times != null &&
     stamp.actions.length > 0 &&
     times.length === stamp.actions.length &&
     times.every(time => time != null)
     ? {
-        actions: stamp.actions,
+        actions,
         actionTimes: [...times] as string[],
         ...(stamp.playbackTimes?.length === times.length &&
         stamp.playbackTimes.every(time => time != null) &&
@@ -78,7 +114,7 @@ function recordActions(stamp: PlayStamp): {
           ? { playbackTimes: [...stamp.playbackTimes] as string[] }
           : {})
       }
-    : { actions: stamp.actions }
+    : { actions }
 }
 
 // ---- Event types ----
@@ -1659,12 +1695,11 @@ function documentBody(
       .filter(event => event.isPitch !== true)
       .map(event => event.index),
     runnerIndex: runners.map((runner, i) => i),
-    teamStation: {
-      version: 2,
-      setupBefore: stamp.setupBefore,
-      ...recordActions(stamp),
-      detail: play.source.teamstation
-    }
+    teamStation: teamStationOf(
+      state.gameData.teams,
+      stamp,
+      play.source.teamstation
+    )
   }
 }
 
@@ -1685,7 +1720,7 @@ function resultIsOut(play: GamePlay): boolean {
 }
 
 /** Each segment's setup without its undefined keys, cleaned once per setup. */
-const cleanSetups = new WeakMap<GameSetup, GameSetup>()
+const cleanSetups = new WeakMap<TeamSetup, TeamSetup>()
 
 /**
  * A play's document without its undefined keys, as `withoutUndefined` makes
@@ -1696,7 +1731,7 @@ const cleanSetups = new WeakMap<GameSetup, GameSetup>()
  */
 function folded(document: Record<string, unknown>): Record<string, unknown> {
   const stamp = document.teamStation as
-    { setupBefore?: GameSetup; [key: string]: unknown } | undefined
+    { setupBefore?: TeamSetup; [key: string]: unknown } | undefined
   const setup = stamp?.setupBefore
   if (stamp == null || setup == null) return withoutUndefined(document)
   const out = withoutUndefined({
@@ -1791,11 +1826,7 @@ export class PlayFolder {
           hasOut: false,
           hasReview: false
         },
-        teamStation: {
-          version: 2,
-          setupBefore: stamp.setupBefore,
-          ...recordActions(stamp)
-        }
+        teamStation: teamStationOf(state.gameData.teams, stamp)
       })
     }
     const body = this.body(play, stamp)
@@ -1917,10 +1948,6 @@ export function finalDocumentOf(state: GameState, stamp: PlayStamp): GumboPlay {
     actionIndex: [],
     runnerIndex: [],
     credits: [],
-    teamStation: {
-      version: 2,
-      setupBefore: stamp.setupBefore,
-      ...recordActions(stamp)
-    }
+    teamStation: teamStationOf(state.gameData.teams, stamp)
   })
 }

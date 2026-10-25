@@ -1352,14 +1352,18 @@ const gumboSchemas = {
       "engine's own vocabulary, and `detail` the scorer's own picks and " +
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
-      ' New records use `version` 2 with persistent numeric player ids and ' +
-      'an append-only `tagOrder`. Historical version 1 records are read ' +
+      ' New records use `version` 3 with persistent numeric player ids and ' +
+      'an append-only `tagOrder`, and name every lineup by its team id, ' +
+      "never by home or away: `setupBefore.teams` holds each team's " +
+      'lineup, and a lineup change names `teamId`, its `setup.teams`, and ' +
+      'the team ids it `confirmed` or left `unseen`. Version 2 records name ' +
+      'sides and are still read; historical version 1 records are read ' +
       'through their saved identity maps. Invalid or unsupported records are ' +
       'refused with 400. Scoring sessions preserve historical playback times ' +
       'and the server adds radar measurement provenance when necessary.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
-      version: { type: 'integer', enum: [1, 2] },
+      version: { type: 'integer', enum: [1, 2, 3] },
       setupBefore: { type: 'object' },
       actions: { type: 'array', items: { type: 'object' } },
       actionTimes: {
@@ -1808,6 +1812,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'changes exactly when what they show does. The game socket ' +
                 'sends the same with each `lineups` change, so a screen ' +
                 'tells its own save from somebody else’s.'
+            },
+            generation: {
+              type: 'integer',
+              description:
+                'The game’s play generation, one more after each reset: a ' +
+                'save naming another is refused with 409.'
             }
           }
         },
@@ -4302,7 +4312,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'digest, because somebody else saved the lineups since the sender ' +
             'read them, is refused with 409 and `details: { stale: true }`, ' +
             'and writes nothing: the sender reads the game again and posts ' +
-            'its changes on top of it.',
+            'its changes on top of it. A live post naming a `generation` ' +
+            'other than the game’s, made before a reset deleted its plays, ' +
+            'is refused the same way with `details: { stale: true, ' +
+            'generation }`: the sender opens the game again.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, idempotencyKeyParam],
           requestBody: {
@@ -4365,6 +4378,15 @@ export function openApiDocument(version: string): OpenApiDocument {
                         'On a live post: the `lineupsDigest` the sender last ' +
                         'read or was answered with. Left out, the post is ' +
                         'not checked against the lineups.'
+                    },
+                    generation: {
+                      type: 'integer',
+                      description:
+                        'On a live post: the play generation the sender ' +
+                        'opened the game on. Once the game has been reset ' +
+                        'since, the post is refused with 409 and `details: ' +
+                        '{ stale: true, generation }`. Left out, the post is ' +
+                        'not checked against it.'
                     }
                   }
                 }
@@ -4454,7 +4476,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'digest of both, as a live post answers it and the game ' +
                 "socket's `plays` notices carry it, and `lineupsDigest` the " +
                 "digest the game keeps of both sides' lineups, which a live " +
-                'post names as its `lineupsBase`',
+                'post names as its `lineupsBase`, and `generation` the ' +
+                'game’s play generation, one more after each reset',
               content: {
                 'application/json': {
                   schema: {
@@ -4485,7 +4508,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                         ]
                       },
                       playsDigest: { type: 'string' },
-                      lineupsDigest: { type: 'string' }
+                      lineupsDigest: { type: 'string' },
+                      generation: { type: 'integer' }
                     }
                   }
                 }
@@ -4788,6 +4812,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                           player: { type: 'integer', minimum: 0 }
                         }
                       }
+                    },
+                    generation: {
+                      type: 'integer',
+                      minimum: 0,
+                      description:
+                        'The play generation the saver opened the game on. ' +
+                        'A game reset since refuses the save with 409 and ' +
+                        '`details: { stale: true, generation }`.'
                     }
                   }
                 }
@@ -5066,17 +5098,25 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/games/{gameId}/swap-sides': {
         post: {
-          summary: 'Swap home and away before the first pitch',
+          summary: 'Swap home and away, resetting a begun game',
           description:
-            'For a scorekeeper of either team, from the scoring screen. The ' +
-            'teams and scores exchange, and everything that names a side ' +
-            'follows its team: the guest and unrostered lists and the open ' +
-            'at-bat’s lineups. The lineups digest changes, so a post built ' +
-            'on the old sides is refused as stale. Refused with 409 once a ' +
-            'pitch, a play, a placed runner or an at-bat TeamStation did not ' +
-            'score is stored. The body names the sides the caller read: sent ' +
-            'again once they are exchanged, the call answers them and ' +
-            'changes nothing; on other sides it is refused with 409.',
+            'For a scorekeeper of either team, from the scoring screen. ' +
+            'Before the first pitch only the teams and scores exchange: ' +
+            'lineups, guests and unavailable players are kept by team and ' +
+            'follow it. The lineups digest changes, so a post built on the ' +
+            'old sides is refused as stale. A begun game (a stored play or ' +
+            'an at-bat in progress) is reset first: the body must name the ' +
+            '`playsDigest` and `generation` its caller read (`GET ' +
+            '/games/{gameId}/events`), or the call is refused with 409 ' +
+            '"This game\'s plays changed. Open it again.". Every play and tag ' +
+            'is archived and deleted, the game goes back to its lineups at ' +
+            'the first pitch, scheduled (a cancelled game stays cancelled) ' +
+            'with no scores, and its play generation goes up one, so a post ' +
+            'made on the old plays is refused. A withdrawn game and one scored ' +
+            'outside TeamStation are refused with 409. The body names the ' +
+            'sides the caller read: sent again once they are exchanged, the ' +
+            'call answers them and changes nothing; on other sides it is ' +
+            'refused with 409.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -5088,7 +5128,19 @@ export function openApiDocument(version: string): OpenApiDocument {
                   required: ['homeTeamId', 'awayTeamId'],
                   properties: {
                     homeTeamId: { type: 'string' },
-                    awayTeamId: { type: 'string' }
+                    awayTeamId: { type: 'string' },
+                    playsDigest: {
+                      type: 'string',
+                      description:
+                        'The plays the caller confirmed losing; required to ' +
+                        'reset a begun game.'
+                    },
+                    generation: {
+                      type: 'integer',
+                      description:
+                        'The play generation the caller read; required to ' +
+                        'reset a begun game.'
+                    }
                   }
                 }
               }
@@ -5096,15 +5148,32 @@ export function openApiDocument(version: string): OpenApiDocument {
           },
           responses: {
             200: {
-              description: 'The game’s teams after the swap',
+              description:
+                'The game’s teams after the swap, its play generation, and ' +
+                'the at-bats and innings a reset deleted (none for a swap ' +
+                'before the first pitch, or one already made)',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['homeTeamId', 'awayTeamId'],
+                    required: [
+                      'homeTeamId',
+                      'awayTeamId',
+                      'generation',
+                      'reset'
+                    ],
                     properties: {
                       homeTeamId: { type: 'string' },
-                      awayTeamId: { type: 'string' }
+                      awayTeamId: { type: 'string' },
+                      generation: { type: 'integer' },
+                      reset: {
+                        type: 'object',
+                        required: ['atBats', 'innings'],
+                        properties: {
+                          atBats: { type: 'integer' },
+                          innings: { type: 'integer' }
+                        }
+                      }
                     }
                   }
                 }

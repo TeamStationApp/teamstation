@@ -10,9 +10,8 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { recordOf } from '../../common/scoring/gumbo'
+import {} from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
-import { swapRecordSides } from '../../common/scoring/sideSwap'
 import { type Position, POSITIONS, setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { deviceStorage } from '../platform/deviceStorage'
@@ -377,7 +376,8 @@ describe('the server scoring source after a swap of home and away', function () 
       ...stored,
       currentPlay: {
         ...stored.currentPlay!,
-        teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+        teamStation: (stored.currentPlay as { teamStation?: unknown })
+          .teamStation
       }
     })
     // A read the session throws away first, as a tag read does: the next
@@ -426,7 +426,8 @@ describe('the server scoring source after a swap of home and away', function () 
         ...stored,
         currentPlay: {
           ...stored.currentPlay!,
-          teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+          teamStation: (stored.currentPlay as { teamStation?: unknown })
+            .teamStation
         }
       })
       return game

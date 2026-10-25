@@ -20,10 +20,13 @@ import {
   type StoredLineupGame
 } from '../../common/scoring/lineupHistory'
 import type { Side } from '../../common/scoring/state'
+import type { SideTeams } from '../../common/scoring/teamRecord'
+import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
+import { atBatOf } from './atBatInProgress'
 import { readPlays } from './postPlays'
 
 type Trx = Kysely<Database>
@@ -64,14 +67,12 @@ export async function gameLineups(
     home_team_id: string
     away_team_id: string
     currentPlay: unknown
+    pregame?: unknown
   }
 ): Promise<Record<Side, TeamSideLineups>> {
   const context = await lineupContext(db, game)
   const sides = lineupHistory(
-    await resolveScoringGame(
-      db,
-      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
-    ),
+    await resolveScoringGame(db, await storedOrPregame(db, game)),
     context
   )
   return {
@@ -102,15 +103,16 @@ export async function lineupsAnswer(
     home_team_id: string
     away_team_id: string
     currentPlay: unknown
+    pregame?: unknown
     lineups_digest: string | null
+    play_generation: number
   }
-): Promise<Record<Side, TeamSideLineups> & { digest: string }> {
+): Promise<
+  Record<Side, TeamSideLineups> & { digest: string; generation: number }
+> {
   const context = await lineupContext(db, game)
   const read = readLineups(
-    await resolveScoringGame(
-      db,
-      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
-    ),
+    await resolveScoringGame(db, await storedOrPregame(db, game)),
     context
   )
   const sides = {
@@ -129,7 +131,8 @@ export async function lineupsAnswer(
     ...sides,
     digest:
       game.lineups_digest ??
-      lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+      lineupsDigest(read.sides, read.bench, read.courtesy, read.due),
+    generation: game.play_generation
   }
 }
 
@@ -144,15 +147,13 @@ export async function storedLineupsDigest(
     home_team_id: string
     away_team_id: string
     currentPlay: unknown
+    pregame?: unknown
     lineups_digest: string | null
   }
 ): Promise<string> {
   if (game.lineups_digest != null) return game.lineups_digest
   const read = readLineups(
-    await resolveScoringGame(
-      db,
-      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
-    ),
+    await resolveScoringGame(db, await storedOrPregame(db, game)),
     await lineupContext(db, game)
   )
   return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
@@ -171,6 +172,24 @@ export async function changedLineupsDigest(
   return createHash('sha256')
     .update(JSON.stringify([await storedLineupsDigest(db, game), ...changed]))
     .digest('hex')
+}
+
+/**
+ * A game's plays and at-bat in progress as the lineups read them: before the
+ * first pitch, its pregame lineups (`atBatOf`).
+ */
+async function storedOrPregame(
+  db: Trx,
+  game: { id: string; currentPlay: unknown; pregame?: unknown }
+): Promise<StoredLineupGame> {
+  const plays = await readPlays(db, game.id)
+  return storedLineupGame(
+    plays,
+    atBatOf(
+      { currentPlay: game.currentPlay, pregame: game.pregame ?? null },
+      plays.length > 0
+    )
+  )
 }
 
 /** A game's stored plays and current play, as the lineups are read from. */
@@ -311,7 +330,7 @@ export async function keepLineups(
   const home = read.sides.home.start
   if (game.lineup_started_at != null || away == null || home == null)
     return { lineups_digest: digest }
-  const placeholder = placeholderSides(stored)
+  const placeholder = placeholderSides(stored, teamsOfRow(game))
   for (const [teamId, lineup, side] of [
     [game.away_team_id, away, 'away'],
     [game.home_team_id, home, 'home']
@@ -343,7 +362,10 @@ export async function keepLineups(
  * Sides whose starting lineup is still the roster order a save wrote because
  * the saver could not see that team. See `placeholderSidesOf`.
  */
-function placeholderSides(stored: StoredLineupGame): ReadonlySet<Side> {
+function placeholderSides(
+  stored: StoredLineupGame,
+  teams: SideTeams
+): ReadonlySet<Side> {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays: Array<GumboPlay | CurrentPlay> = stored.plays.filter(
     play => play.about.atBatIndex !== reopened
@@ -351,6 +373,6 @@ function placeholderSides(stored: StoredLineupGame): ReadonlySet<Side> {
   if (stored.currentPlay != null) plays.push(stored.currentPlay)
   plays.sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
   return placeholderSidesOf(
-    plays.flatMap(play => recordOf(play)?.actions ?? [])
+    plays.flatMap(play => recordOf(play, teams)?.actions ?? [])
   )
 }

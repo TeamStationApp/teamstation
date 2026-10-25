@@ -1,11 +1,12 @@
 import type { Kysely } from 'kysely'
 
 import { asRosterEntry, type RosterEntry } from '../../common/api'
-import { asGuests, type Guests } from '../../common/guests'
+import { type Guests, storedGuests } from '../../common/guests'
 import { shortNames } from '../../common/names'
 import { recordOf } from '../../common/scoring/gumbo'
 import type { Side } from '../../common/scoring/state'
-import { asUnrostered, type Unrostered } from '../../common/unroster'
+import { teamsOfRow } from '../../common/teamLists'
+import { storedUnrostered, type Unrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { resolveGumboIds } from '../scoring/gumboIds'
@@ -28,10 +29,11 @@ export async function gameAvailability(
     guests: unknown
     unrostered: unknown
     currentPlay: unknown
+    pregame?: unknown
   }
 ): Promise<GameAvailability> {
-  const guests = asGuests(game.guests)
-  const unrostered = asUnrostered(game.unrostered)
+  const guests = storedGuests(game.guests, teamsOfRow(game))
+  const unrostered = storedUnrostered(game.unrostered, teamsOfRow(game))
   const all = [
     ...guests.away,
     ...guests.home,
@@ -71,9 +73,11 @@ export async function gameAvailability(
       ? []
       : [
           game.currentPlay,
-          ...(await readPlays(db, game.id)).reverse().map(row => row.gumbo)
+          ...(await readPlays(db, game.id)).reverse().map(row => row.gumbo),
+          // The lineups the game began with: older than any play.
+          ...(game.pregame == null ? [] : [{ teamStation: game.pregame }])
         ]
-          .map(recordOf)
+          .map(play => recordOf(play, teamsOfRow(game)))
           .filter(record => record != null)
   const guestPlayers: GameAvailability['guestPlayers'] = { away: [], home: [] }
   const names = shortNames(

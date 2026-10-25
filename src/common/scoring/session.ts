@@ -84,6 +84,11 @@ export interface StoredGame {
   /** On a save's answer, the same digest of the game as the save found it. */
   priorPlaysDigest?: string
   /**
+   * The game's play generation, one more after each reset: a save naming
+   * another is refused. Absent from a store that keeps none.
+   */
+  generation?: number
+  /**
    * The context to replay with when the game's teams are no longer the ones
    * the session was opened with, as after a swap of home and away; absent
    * while they are, and from every store that cannot tell.
@@ -105,6 +110,11 @@ export interface SaveChange {
    * moved on since refuses the change as stale (409, `details.stale`).
    */
   lineupsBase?: string
+  /**
+   * The play generation the session opened the game on: a store whose game
+   * was reset since refuses the change (409, `details.generation`).
+   */
+  generation?: number
 }
 /** Where a session reads and writes its game. It does no I/O of its own. */
 export interface EventStore {
@@ -152,6 +162,14 @@ function stale(error: unknown): boolean {
     error.code === 'conflict' &&
     (error.details as { stale?: unknown } | undefined)?.stale === true
   )
+}
+
+/** The generation a stale refusal names, when it names one. */
+function refusedGeneration(error: unknown): number | undefined {
+  if (!stale(error)) return undefined
+  const generation = ((error as HttpError).details as { generation?: unknown })
+    .generation
+  return typeof generation === 'number' ? generation : undefined
 }
 
 interface Completed {
@@ -304,6 +322,10 @@ export class ScoringSession {
    */
   private heldPlays: string[] = []
   private heldLineups: string[] = []
+  /** The play generation this session opened the game on, if it has one. */
+  private openedGeneration: number | undefined
+  /** The game's plays were reset under this session: it saves nothing more. */
+  private isReplaced = false
   /** Counts each time a save took the server's copy up under its own changes. */
   private rebaseCount = 0
   /** What a rebase could not keep of this session's own changes, and why. */
@@ -353,6 +375,7 @@ export class ScoringSession {
     const session = new ScoringSession(store, gameId, replayed.base, options)
     session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
+    session.openedGeneration = loaded.generation
     session.heldPlays = loaded.playsDigest == null ? [] : [loaded.playsDigest]
     session.heldLineups =
       loaded.lineupsDigest == null ? [] : [loaded.lineupsDigest]
@@ -641,6 +664,20 @@ export class ScoringSession {
   /** Changes of this session's a rebase dropped because home and away were swapped. */
   get lostToSwap(): number {
     return this.swapLost
+  }
+
+  /** The play generation the session opened the game on, if it has one. */
+  get generation(): number | undefined {
+    return this.openedGeneration
+  }
+
+  /**
+   * True once a save was refused because the game's plays were reset since
+   * this session opened it: nothing more is saved, nor taken up under the
+   * reset game, and the screen opens the game again.
+   */
+  get replaced(): boolean {
+    return this.isReplaced
   }
 
   /**
@@ -1368,7 +1405,8 @@ export class ScoringSession {
   }
 
   private schedule(ms: number): void {
-    if (this.refusal != null || this.blocked || this.closed) return
+    if (this.refusal != null || this.blocked || this.closed || this.isReplaced)
+      return
     if (this.timer != null) this.clearTimer(this.timer)
     this.timer = this.setTimer(() => {
       this.timer = null
@@ -1379,7 +1417,13 @@ export class ScoringSession {
   private async save(): Promise<void> {
     let rebased = 0
     for (;;) {
-      if (this.refusal != null || this.blocked || this.closed) return
+      if (
+        this.refusal != null ||
+        this.blocked ||
+        this.closed ||
+        this.isReplaced
+      )
+        return
       const covering = [...this.log]
       const coveringTimes = [...this.actionTimes]
       const coveringPlaybackTimes = [...this.playbackTimes]
@@ -1392,13 +1436,24 @@ export class ScoringSession {
         return
       let answer: StoredGame | undefined
       try {
-        answer = await this.store.save(
-          this.gameId,
-          this.lineupsBase === undefined
-            ? change
-            : { ...change, lineupsBase: this.lineupsBase }
-        )
+        answer = await this.store.save(this.gameId, {
+          ...change,
+          ...(this.lineupsBase === undefined
+            ? {}
+            : { lineupsBase: this.lineupsBase }),
+          ...(this.openedGeneration === undefined
+            ? {}
+            : { generation: this.openedGeneration })
+        })
       } catch (error) {
+        // The plays this session holds were reset: its changes belong to
+        // none of the game's, so they are neither rebased nor sent again.
+        const generation = refusedGeneration(error)
+        if (generation !== undefined && generation !== this.openedGeneration) {
+          this.isReplaced = true
+          this.notify()
+          return
+        }
         // Somebody else saved the lineups since this session read them: it
         // takes theirs up and saves its own changes on top, never over them.
         if (stale(error) && this.context != null && rebased < STALE_REBASES) {

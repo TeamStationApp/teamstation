@@ -269,7 +269,7 @@ describe('the game as a scoreboard source', function () {
         currentPlay: JSON.stringify({
           ...(stored.currentPlay ?? { about: { atBatIndex: 2 } }),
           teamStation: {
-            version: 2,
+            version: 3,
             setupBefore: record.setupBefore,
             actions: [{ type: 'result', eventType: 'strikeout' }]
           }
@@ -312,6 +312,56 @@ describe('the game as a scoreboard source', function () {
     expect(logged).deep.equals([
       `scoreboard: game ${gameId} not written: The scoreboard is unavailable`
     ])
+  })
+
+  it('shows a game before its first pitch, and clears the board of a game reset to nothing (S10)', async function () {
+    // Lineups saved, no pitch: the board of the 1st, from the pregame.
+    const pregame = await addGame(db, {
+      homeTeamId: home,
+      awayTeamId: away,
+      startAt: new Date()
+    })
+    await score(pregame, [
+      { type: 'lineup', kind: 'roster', setup, confirmed: ['away', 'home'] }
+    ])
+    const lineups = await db
+      .selectFrom('games')
+      .select(['currentPlay', 'pregame'])
+      .where('id', '=', pregame)
+      .executeTakeFirstOrThrow()
+    expect(lineups.currentPlay).equals(null)
+    expect(lineups.pregame).not.equals(null)
+    expect(
+      (await writeGameScoreboard({ db, store, log }, pregame))?.kind
+    ).equals('written')
+    expect((await store.readScoreboard(pregame))?.game?.state).includes({
+      awayScore: 0,
+      homeScore: 0
+    })
+
+    // Scored, then reset with no lineups to go back to.
+    const gameId = await addGame(db, {
+      homeTeamId: home,
+      awayTeamId: away,
+      startAt: new Date()
+    })
+    await score(gameId, situationActions(setup).slice(0, 3))
+    await writeGameScoreboard({ db, store, log }, gameId)
+    expect((await store.readScoreboard(gameId))?.game).not.equals(undefined)
+    await db.deleteFrom('events').where('gameId', '=', gameId).execute()
+    await db
+      .updateTable('games')
+      .set({ currentPlay: null, pregame: null, updated_at: new Date() })
+      .where('id', '=', gameId)
+      .execute()
+    const cleared = await writeGameScoreboard({ db, store, log }, gameId)
+    expect(cleared?.kind).equals('written')
+    const hash = await store.readScoreboard(gameId)
+    expect(hash?.game).equals(undefined)
+    // Nothing left to clear.
+    expect(await writeGameScoreboard({ db, store, log }, gameId)).equals(
+      undefined
+    )
   })
 
   describe('after a play post', function () {

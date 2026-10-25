@@ -19,6 +19,7 @@ import {
 } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
+import { recordOf } from '../../common/scoring/gumbo'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { newSetup } from '../../common/scoring/lineup'
 import {
@@ -26,6 +27,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { retargetRecord } from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -36,7 +38,7 @@ import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
-import { postGamePlays } from '../events/postPlays'
+import { postGamePlays, RESET_SINCE_READ } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -166,6 +168,7 @@ describe('posting and reading plays', function () {
   const ownerlessFinalId = makeId('game')
   const flagsId = makeId('game')
   const staleId = makeId('game')
+  const generationId = makeId('game')
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -360,7 +363,8 @@ describe('posting and reading plays', function () {
           liveFinalId,
           liveRefusedId,
           flagsId,
-          staleId
+          staleId,
+          generationId
         ].map(id => ({
           id,
           home_team_id: home,
@@ -1280,7 +1284,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 2: teamStation must be a valid version 1 or 2 record'
+        'Play 2: teamStation must be a valid version 1, 2 or 3 record'
       ],
       [
         {
@@ -1295,7 +1299,7 @@ describe('posting and reading plays', function () {
             teamStation: record('2')
           }
         },
-        'Play 5: teamStation must be a valid version 1 or 2 record'
+        'Play 5: teamStation must be a valid version 1, 2 or 3 record'
       ],
       [
         {
@@ -1306,7 +1310,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 0: teamStation must be a valid version 1 or 2 record'
+        'Play 0: teamStation must be a valid version 1, 2 or 3 record'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {
@@ -1578,7 +1582,8 @@ describe('posting and reading plays', function () {
     const { lineupsDigest, playsDigest, ...events } = read.body
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
-      currentPlay: current(0)
+      currentPlay: current(0),
+      generation: 0
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
@@ -1676,6 +1681,51 @@ describe('posting and reading plays', function () {
       lineupsBase: 'not-the-lineups'
     })
     expect(replaced.status).equals(200)
+  })
+
+  it('refuses a live post made on another play generation, and checks one naming none by its lineups (S2)', async function () {
+    await db!
+      .updateTable('games')
+      .set({ play_generation: 2 })
+      .where('id', '=', generationId)
+      .execute()
+    const read = await ask(`/games/${generationId}/events`)
+    expect(read.body.generation).equals(2)
+    const old = await live(generationId, {
+      currentPlay: current(0),
+      generation: 1
+    })
+    expect(old.status).equals(409)
+    expect(old.body).deep.equals({
+      code: 'conflict',
+      message: RESET_SINCE_READ,
+      details: { stale: true, generation: 2 }
+    })
+    expect((await gameRow(generationId)).currentPlay).equals(null)
+    // The generation is checked before the lineups: both stale, it says so.
+    const both = await live(generationId, {
+      currentPlay: current(0),
+      generation: 0,
+      lineupsBase: 'not-the-lineups'
+    })
+    expect(both.body.message).equals(RESET_SINCE_READ)
+    const current2 = await live(generationId, {
+      currentPlay: current(0),
+      generation: 2
+    })
+    expect(current2.status).equals(200)
+    // Naming none, as an app not yet updated: only its lineups are checked.
+    const unnamed = await live(generationId, {
+      currentPlay: current(0, 2),
+      lineupsBase: 'not-the-lineups'
+    })
+    expect(unnamed.status).equals(409)
+    expect(unnamed.body.message).equals(
+      'Somebody else changed the lineups since this game was read'
+    )
+    expect(
+      (await live(generationId, { currentPlay: current(0, 2) })).status
+    ).equals(200)
   })
 
   it('leaves a cancelled game cancelled and refuses a teammate who cannot score', async function () {
@@ -3393,7 +3443,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     home: rosterOf(homeIds)
   })
   setup.sides.away.battingOrder = setup.sides.away.battingOrder.slice(0, 9)
-  const games = Array.from({ length: 8 }, () => makeId('game'))
+  const games = Array.from({ length: 12 }, () => makeId('game'))
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -3725,5 +3775,212 @@ describe('the team default lineup a live post keeps (U10)', function () {
     expect(await store(g7).load(g7)).deep.equals(stored)
     expect(await defaultOf(awayTeam)).equals(null)
     expect((await gameRow(g7)).lineup_started_at).equals(null)
+  })
+
+  it('stores records by team and answers them by side, and stores by team what an older app posts by side (R10)', async function () {
+    const gameId = games[6]
+    await apply(
+      await scoring(gameId),
+      reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]),
+      ball
+    )
+    const stored = await db!
+      .selectFrom('games')
+      .select('currentPlay')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    const storedRecord = (stored.currentPlay as { teamStation: object })
+      .teamStation as { version: number; setupBefore: object }
+    expect(storedRecord.version).equals(3)
+    expect(storedRecord.setupBefore).not.have.property('sides')
+
+    const read = await store(gameId).load(gameId)
+    const answered = (read.currentPlay as unknown as { teamStation: object })
+      .teamStation as { version: number; setupBefore: { sides: object } }
+    expect(answered.version).equals(2)
+    expect(answered.setupBefore.sides).have.keys('away', 'home')
+    expect(recordOf(read.currentPlay, TEAMS)).deep.equals(
+      recordOf(stored.currentPlay, TEAMS)
+    )
+
+    // What an app not yet updated sends back: the record by side.
+    const again = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [],
+      currentPlay: read.currentPlay
+    })
+    expect(again.status, JSON.stringify(again.body)).equals(200)
+    const rewritten = await db!
+      .selectFrom('games')
+      .select('currentPlay')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(
+      (rewritten.currentPlay as { teamStation: { version: number } })
+        .teamStation.version
+    ).equals(3)
+    expect(recordOf(rewritten.currentPlay, TEAMS)).deep.equals(
+      recordOf(stored.currentPlay, TEAMS)
+    )
+    expect(
+      (
+        again.body.currentPlay as unknown as {
+          teamStation: { version: number }
+        }
+      ).teamStation.version
+    ).equals(2)
+
+    // A record made for teams this game no longer has, as a phone queued
+    // before a team was replaced: refused, and nothing written.
+    const elsewhere = {
+      ...(stored.currentPlay as object),
+      teamStation: retargetRecord(storedRecord, awayTeam, 'tem_elsewhere')
+    }
+    const refused = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [],
+      currentPlay: elsewhere
+    })
+    expect(refused.status).equals(409)
+    expect(refused.body).deep.include({
+      message: "This game's teams changed since this was scored",
+      details: { stale: true }
+    })
+  })
+
+  /** A game's at-bat and pregame columns, as stored. */
+  async function atBatColumns(
+    gameId: string
+  ): Promise<{ currentPlay: unknown; pregame: unknown }> {
+    return await db!
+      .selectFrom('games')
+      .select(['currentPlay', 'pregame'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+  }
+  const actionsOf = (raw: unknown): unknown[] =>
+    (raw as { actions: unknown[] }).actions
+
+  it('keeps lineups saved before the first pitch as the pregame record, and stores the first pitch’s at-bat (P2, P3)', async function () {
+    const gameId = games[7]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    let stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).equals(null)
+    expect(stored.pregame).deep.include({ version: 3 })
+    expect(actionsOf(stored.pregame)).length(1)
+    // The lineups it holds: the setup and the lineup changes.
+    const lineupsOf = (record: unknown): unknown => {
+      const { setupBefore, actions } = record as {
+        setupBefore: unknown
+        actions: unknown
+      }
+      return { setupBefore, actions }
+    }
+    const pregame = lineupsOf(stored.pregame)
+
+    await apply(session, ball)
+    stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(lineupsOf(stored.pregame)).deep.equals(pregame)
+    const began = stored.pregame
+    // The plate appearance completes: a play is stored, and the next
+    // at-bat's empty record is the at-bat in progress, not a pregame.
+    await apply(session, { type: 'result', eventType: 'intent_walk' }, close)
+    stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(stored.pregame).deep.equals(began)
+    // Read back, the game opens as it was scored.
+    const again = await scoring(gameId)
+    expect(again.state.liveData.plays.allPlays).length(1)
+  })
+
+  it('takes a first pitch back to the pregame record, and keeps lineup changes made after it (P13)', async function () {
+    const gameId = games[8]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]), ball)
+    expect((await atBatColumns(gameId)).currentPlay).not.equals(null)
+    session.undo()
+    await session.flush()
+    let stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).equals(null)
+    expect(actionsOf(stored.pregame)).length(1)
+    await apply(session, reorder([3, 1, 2, 4, 5, 6, 7, 8, 9]))
+    stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).equals(null)
+    expect(actionsOf(stored.pregame)).length(2)
+    // A live post that sends no at-bat leaves the pregame lineups, and the
+    // digest of them, as they were.
+    const lineups = async (): Promise<unknown> =>
+      await db!
+        .selectFrom('games')
+        .select(['pregame', 'lineups_digest', 'currentPlay'])
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+    const before = await lineups()
+    const quiet = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: []
+    })
+    expect(quiet.status, JSON.stringify(quiet.body)).equals(200)
+    expect(await lineups()).deep.equals(before)
+  })
+
+  it('answers lineups saved before the first pitch folded into an at-bat it never stores (P4, P5)', async function () {
+    const gameId = games[11]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    expect((await atBatColumns(gameId)).currentPlay).equals(null)
+    const read = await store(gameId).load(gameId)
+    const current = read.currentPlay as unknown as {
+      matchup: { batter: { id: number } }
+      about: { atBatIndex: number }
+      teamStation: { version: number }
+    }
+    // The away leadoff, as the order now has it, against the home pitcher:
+    // what the scorer's own screen folds.
+    expect(current.matchup.batter.id).equals(awayIds[1])
+    expect(current.matchup).deep.equals(session.picture().current?.matchup)
+    expect(current.about.atBatIndex).equals(0)
+    // Its record is the pregame lineups, by side on the wire.
+    expect(current.teamStation.version).equals(2)
+    expect((await atBatColumns(gameId)).currentPlay).equals(null)
+  })
+
+  it('keeps a lineup change sent with the first pitch in the pregame lineups', async function () {
+    const gameId = games[10]
+    const session = await scoring(gameId)
+    await apply(session, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    expect(actionsOf((await atBatColumns(gameId)).pregame)).length(1)
+    // A change made just before the pitch, saved with it in one post.
+    for (const action of [reorder([3, 1, 2, 4, 5, 6, 7, 8, 9]), ball])
+      expect(session.apply(action).problems).deep.equals([])
+    await session.flush()
+    const stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(actionsOf(stored.pregame)).length(2)
+    expect(actionsOf(stored.pregame)).deep.equals(
+      actionsOf(
+        (stored.currentPlay as { teamStation: unknown }).teamStation
+      ).slice(0, 2)
+    )
+  })
+
+  it('keeps the lineups a first post began from when none were saved before it (P14)', async function () {
+    const gameId = games[9]
+    const session = await scoring(gameId)
+    for (const action of [reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]), ball])
+      expect(session.apply(action).problems).deep.equals([])
+    await session.flush()
+    const stored = await atBatColumns(gameId)
+    expect(stored.currentPlay).not.equals(null)
+    expect(actionsOf(stored.pregame)).deep.equals(
+      actionsOf(
+        (stored.currentPlay as { teamStation: unknown }).teamStation
+      ).slice(0, 1)
+    )
   })
 })

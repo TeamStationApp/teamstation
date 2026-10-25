@@ -22,6 +22,7 @@
     "src/test/fakeScoreboardSocket.ts",
     "src/test/scoringHelpers.ts",
     "src/test/scoreboardServer.e2e.ts",
+    "src/test/scoringBrowser.e2e.ts",
     "src/test/nativeLocationFailure.ts",
     "src/test/responderDrag.ts"
   ]

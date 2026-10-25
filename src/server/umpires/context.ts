@@ -1,8 +1,9 @@
 import type { Kysely, Selectable } from 'kysely'
 
-import { asGuests } from '../../common/guests'
+import { storedGuests } from '../../common/guests'
 import { shortName } from '../../common/names'
-import { asUnrostered } from '../../common/unroster'
+import { teamsOfRow } from '../../common/teamLists'
+import { storedUnrostered } from '../../common/unroster'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Database, GamesTable } from '../db/database'
 
@@ -51,8 +52,8 @@ export function umpireIsPlaying(
   person: UmpireIdentity,
   game: UmpireGame
 ): boolean {
-  const guests = asGuests(game.guests)
-  const excluded = asUnrostered(game.unrostered)
+  const guests = storedGuests(game.guests, teamsOfRow(game))
+  const excluded = storedUnrostered(game.unrostered, teamsOfRow(game))
   return (['home', 'away'] as const).some(
     side =>
       person.gumboIds.some(id => guests[side].includes(id)) ||

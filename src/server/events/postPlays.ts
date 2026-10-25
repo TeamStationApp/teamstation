@@ -9,13 +9,15 @@ import type {
   GumboPlay,
   PostEventsBody
 } from '../../common/gumboPlay'
-import { recordOf } from '../../common/scoring/gumbo'
+import { recordOf, storedRecordOf } from '../../common/scoring/gumbo'
 import {
   halfOutcomes,
   lineScore,
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import { pregameRecord } from '../../common/scoring/sideSwap'
+import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
@@ -28,6 +30,8 @@ import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
+import { atBatOf } from './atBatInProgress'
+import { gameCurrentPlay } from './currentPlay'
 import { reconcileEventTags } from './eventTags'
 import {
   type PlaySource,
@@ -42,8 +46,12 @@ import {
   storedLineupGame,
   storedLineupsDigest
 } from './teamLineups'
+import { bodyFromWire, playForWire } from './wireRecords'
 
 type Trx = Kysely<Database>
+
+/** The refusal of a record made for teams this game no longer has. */
+export const OTHER_TEAMS = "This game's teams changed since this was scored"
 
 /** The game row a post is checked against, locked until it commits. */
 export interface PostedGame {
@@ -71,7 +79,21 @@ export interface PostedPlays {
    * sender's own, and a notice carrying `playsDigest` is its own echo.
    */
   priorPlaysDigest: string | null
+  /** The game's play generation, which a post never changes. */
+  generation: number
 }
+
+/** What a client's post says about the game it was made against. */
+export interface PostOptions {
+  /**
+   * The play generation the sender opened the game on. A client route
+   * passes it; the server's own writes pass none and are not checked.
+   */
+  expectedGeneration?: number
+}
+
+/** The refusal of a post made against the game before its last reset. */
+export const RESET_SINCE_READ = 'This game was reset since it was read'
 
 /**
  * Writes a checked post to a game: the plays, the half's outs on each half's
@@ -86,27 +108,27 @@ export interface PostedPlays {
 export async function postGamePlays(
   db: Kysely<Database>,
   gameId: string,
-  body: PostEventsBody,
+  sentBody: PostEventsBody,
   authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
-  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>
+  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>,
+  options: PostOptions = {}
 ): Promise<PostedPlays> {
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
-  const sent = body.source?.system
+  const sent = sentBody.source?.system
   const system: PlaySource =
     sent === 'teamstation' || sent === 'manual' ? sent : 'external'
-  const indexes = body.plays.map(play => play.about.atBatIndex)
+  const indexes = sentBody.plays.map(play => play.about.atBatIndex)
   if (new Set(indexes).size !== indexes.length) {
     throw badRequest('Two plays share an about.atBatIndex')
   }
-  const unread = [...body.plays, body.currentPlay].find(
+  const unread = [...sentBody.plays, sentBody.currentPlay].find(
     play => play != null && !readableVersion(play)
   )
   if (unread != null)
     throw badRequest(
-      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1 or 2 record`
+      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1, 2 or 3 record`
     )
-  const prepared = withHalfOuts(body.plays)
   let refreshDelay: number | undefined
 
   return await atomic(db, async (trx): Promise<PostedPlays> => {
@@ -127,13 +149,29 @@ export async function postGamePlays(
         'ingest_status',
         'ingest_message',
         'currentPlay',
+        'pregame',
         'lineup_started_at',
-        'lineups_digest'
+        'lineups_digest',
+        'play_generation'
       ])
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
     if (game == null) throw notFound()
+    // Stored by team: a record posted by side, as an app not yet updated
+    // sends it, is turned to the game's teams.
+    const body = bodyFromWire(sentBody, teamsOfRow(game))
+    // A record naming other teams was made before this game's teams were
+    // replaced: read under them, it would hold nothing.
+    if (
+      [...body.plays, body.currentPlay].some(
+        play =>
+          storedRecordOf(play) != null &&
+          recordOf(play, teamsOfRow(game)) == null
+      )
+    )
+      throw conflict(OTHER_TEAMS, { stale: true })
+    const prepared = withHalfOuts(body.plays)
     // Read on its own, after the lock and before this post's writes: a
     // post that held the lock first has fixed the fence already.
     const hadPlays = await gameHasPlays(trx, gameId)
@@ -148,13 +186,24 @@ export async function postGamePlays(
     if (system === 'external' && game.scoringOwner === 'teamstation') {
       throw conflict('This game is scored in TeamStation')
     }
+    // A post made against the plays a reset deleted belongs to none of
+    // these: its sender reads the game again and opens it afresh.
+    if (
+      options.expectedGeneration !== undefined &&
+      options.expectedGeneration !== game.play_generation
+    )
+      throw conflict(RESET_SINCE_READ, {
+        stale: true,
+        generation: game.play_generation
+      })
     // A live post built on lineups somebody has saved over since would
     // write the old ones back: the sender reads the game again and posts
     // its own changes on top.
     // The game as this post finds it, which tells its sender whether
     // anybody else wrote to it since.
+    const priorRows = await readPlays(trx, gameId)
     const prior = live
-      ? playsDigest(await readPlays(trx, gameId), game.currentPlay)
+      ? playsDigest(priorRows, atBatOf(game, priorRows.length > 0))
       : null
     if (
       live &&
@@ -168,8 +217,8 @@ export async function postGamePlays(
       )
 
     const previous = {
-      plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
+      plays: priorRows.map(row => row.gumbo as GumboPlay),
+      currentPlay: atBatOf(game, priorRows.length > 0) as CurrentPlay | null
     }
     const nextPlays = new Map(
       (live ? previous.plays : []).map(play => [play.about.atBatIndex, play])
@@ -184,7 +233,9 @@ export async function postGamePlays(
           : previous.currentPlay
     }
     if (
-      [...next.plays, next.currentPlay].some(play => recordOf(play) != null)
+      [...next.plays, next.currentPlay].some(
+        play => storedRecordOf(play) != null
+      )
     ) {
       const projected = await resolveScoringGame(trx, next)
       await assertStoredScoringRoles(
@@ -206,10 +257,12 @@ export async function postGamePlays(
       awayTeamId: game.away_team_id
     }
     const priorCurrent = game.currentPlay as Partial<GumboPlay> | null
+    // A live post that sends no at-bat keeps the one readers see: before
+    // the first pitch, the pregame lineups.
     let currentPlay =
       live && body.currentPlay !== undefined
         ? body.currentPlay
-        : game.currentPlay
+        : atBatOf(game, priorRows.length > 0)
     if (currentPlay != null && typeof currentPlay === 'object') {
       const incoming = currentPlay as Partial<GumboPlay>
       if (typeof incoming.about?.atBatIndex === 'number') {
@@ -375,7 +428,15 @@ export async function postGamePlays(
           : {}),
         ingest_status: decision.ingestStatus,
         ingest_message: decision.ingestMessage,
-        ...(live && body.currentPlay !== undefined ? { currentPlay } : {}),
+        ...(live && body.currentPlay !== undefined
+          ? atBatWrite(
+              stored,
+              currentPlay,
+              game.pregame,
+              // This post finds no play and no at-bat stored: it may begin it.
+              priorRows.length === 0 && game.currentPlay == null
+            )
+          : {}),
         ...lineups,
         updated_at: new Date()
       })
@@ -385,9 +446,10 @@ export async function postGamePlays(
     const taggedStored = await readPlays(trx, gameId)
     const taggedGame = await trx
       .selectFrom('games')
-      .select('currentPlay')
+      .select(['currentPlay', 'pregame'])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
+    const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
     // Told to the game socket when this commits. The lineups only when a
     // reader of them would see something new: the digest is of what they
     // show, so a pitch leaves it alone and an undone change moves it.
@@ -415,17 +477,27 @@ export async function postGamePlays(
     else noteScopeChange(trx, { gameId })
     const resolved = await resolveScoringGame(trx, {
       plays: taggedStored.map(row => row.gumbo as GumboPlay),
-      currentPlay: taggedGame.currentPlay as CurrentPlay | null
+      currentPlay: taggedCurrent as CurrentPlay | null
     })
+    const sides = teamsOfRow(game)
     const answer: PostedPlays = {
       plays: taggedStored.map((row, index) => ({
         ...playJson(row),
-        gumbo: resolved.plays[index]
+        gumbo: playForWire(resolved.plays[index], sides)
       })),
-      currentPlay: resolved.currentPlay,
+      currentPlay: playForWire(
+        await gameCurrentPlay(
+          trx,
+          gameId,
+          { ...game, currentPlay: taggedGame.currentPlay },
+          resolved
+        ),
+        sides
+      ),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
-      playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
-      priorPlaysDigest: prior
+      playsDigest: playsDigest(taggedStored, taggedCurrent),
+      priorPlaysDigest: prior,
+      generation: game.play_generation
     }
     await written?.(trx, answer)
     return answer
@@ -436,13 +508,14 @@ export async function postGamePlays(
       return result
     })
     .catch((error: unknown) => {
-      throw unknownUser(error, prepared) ?? error
+      // Which user a failed post named reads the same in either record.
+      throw unknownUser(error, withHalfOuts(sentBody.plays)) ?? error
     })
 }
 
 /**
- * A play TeamStation scored is replayed from its record, which is version 1:
- * a record in any other version would be dropped when the game is read
+ * A play TeamStation scored is replayed from its record, of version 1, 2 or
+ * 3: a record in any other version would be dropped when the game is read
  * back. A play with no record is read from its document.
  */
 function readableVersion(play: object): boolean {
@@ -452,7 +525,10 @@ function readableVersion(play: object): boolean {
     typeof record === 'object'
       ? (record as { version?: unknown }).version
       : undefined
-  return (version === 1 || version === 2) && recordOf(play) != null
+  return (
+    (version === 1 || version === 2 || version === 3) &&
+    storedRecordOf(play) != null
+  )
 }
 
 /**
@@ -546,6 +622,73 @@ export async function readPlays(
     .execute()
 }
 
+/**
+ * What a live post that sends the at-bat in progress stores of it. Before
+ * the first pitch no Gumbo is: a post that leaves no stored play, and whose
+ * at-bat holds lineup changes only, keeps its record as the game's pregame
+ * lineups, as does the post that takes the first pitch back. The first post
+ * past them (`begins`) stores the at-bat, and keeps the lineups it began
+ * from as the pregame: what was saved before, and any lineup change it
+ * carries ahead of the first pitch. A later post keeps the pregame as it is,
+ * or fills it when none was kept. A post that clears a game of plays and
+ * at-bat alike clears its pregame too.
+ */
+function atBatWrite(
+  stored: Array<{ gumbo: unknown }>,
+  currentPlay: unknown,
+  pregame: unknown,
+  begins: boolean
+): { currentPlay: unknown; pregame?: unknown } {
+  if (stored.length === 0 && currentPlay == null)
+    return { currentPlay: null, pregame: null }
+  if (
+    stored.length === 0 &&
+    currentPlay != null &&
+    storedRecordOf(currentPlay) != null &&
+    pregameRecord(currentPlay)
+  )
+    return {
+      currentPlay: null,
+      pregame: (currentPlay as { teamStation: unknown }).teamStation
+    }
+  const began =
+    pregame == null || begins
+      ? lineupsBefore(
+          [...stored.map(row => row.gumbo), currentPlay].find(
+            play => storedRecordOf(play) != null
+          )
+        )
+      : null
+  return {
+    currentPlay,
+    ...(began == null ? {} : { pregame: began })
+  }
+}
+
+/**
+ * The lineups a record began from: its setup and the lineup changes before
+ * its first other action, with their times. Null without a record.
+ */
+export function lineupsBefore(play: unknown): unknown {
+  const raw = (play as { teamStation?: Record<string, unknown> } | undefined)
+    ?.teamStation
+  const actions = Array.isArray(raw?.actions) ? raw.actions : null
+  if (raw == null || actions == null) return null
+  const first = actions.findIndex(
+    action => (action as { type?: unknown }).type !== 'lineup'
+  )
+  const count = first < 0 ? actions.length : first
+  const { playbackTimes: _playback, detail: _detail, ...kept } = raw
+  const lineups: Record<string, unknown> = {
+    ...kept,
+    actions: actions.slice(0, count),
+    ...(Array.isArray(raw.actionTimes)
+      ? { actionTimes: raw.actionTimes.slice(0, count) }
+      : {})
+  }
+  return lineups
+}
+
 export function playJson(row: StoredPlay): {
   id: string
   gameId: string
@@ -565,6 +708,18 @@ export function playsDigest(
   return createHash('sha256')
     .update(JSON.stringify([rows.map(row => row.gumbo), currentPlay ?? null]))
     .digest('hex')
+}
+
+/**
+ * The digest of a game's plays as `GET /games/:gameId/events` gives it, read
+ * through `db`: what a reset is confirmed against.
+ */
+export async function gamePlaysDigest(
+  db: Trx,
+  game: { id: string; currentPlay: unknown; pregame: unknown }
+): Promise<string> {
+  const rows = await readPlays(db, game.id)
+  return playsDigest(rows, atBatOf(game, rows.length > 0))
 }
 
 /**

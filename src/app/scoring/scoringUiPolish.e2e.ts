@@ -3,7 +3,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
-import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import {
+  recordOf,
+  replayPlays,
+  storedRecordOf
+} from '../../common/scoring/gumbo'
 import { baseIds } from '../../common/scoring/rules'
 import type { GameSetup, GameState } from '../../common/scoring/state'
 import { modalFixture } from './scoringModals.e2e.fixture'
@@ -377,7 +381,10 @@ async function main(): Promise<void> {
   let setup: GameSetup | undefined
   const snapshot = (): GameState | undefined => {
     const stored = fixture.stored()
-    setup ??= recordOf(stored.currentPlay ?? stored.plays[0])?.setupBefore
+    setup ??= recordOf(stored.currentPlay ?? stored.plays[0], {
+      away: { id: 'away' },
+      home: { id: 'home' }
+    })?.setupBefore
     if (setup == null) return undefined
     const result = replayPlays(stored, {
       gamePk: fixture.loaded(),
@@ -615,7 +622,8 @@ async function main(): Promise<void> {
     await tap('Set Outs 1')
     await saved(state => state.liveData.linescore.outs === 1)
     await inspectSetupHistory('Undo Set Outs')
-    const beforeActions = recordOf(fixture.stored().currentPlay)!.actions.length
+    const beforeActions = storedRecordOf(fixture.stored().currentPlay)!.actions
+      .length
     const nodes = flat(await m.hierarchy())
     const from = nodes.filter(node => node.text === 'Set Outs 1').at(-1)?.bounds
     const to = nodes.filter(node => node.text === 'Set Outs 2').at(-1)?.bounds
@@ -633,7 +641,7 @@ async function main(): Promise<void> {
     await saved(state => state.liveData.linescore.outs === 2)
     await inspectSetupHistory('Undo Set Outs', 'history-outs')
     assert.equal(
-      recordOf(fixture.stored().currentPlay)!.actions.length,
+      storedRecordOf(fixture.stored().currentPlay)!.actions.length,
       beforeActions + 1,
       'Outs drag commits once'
     )

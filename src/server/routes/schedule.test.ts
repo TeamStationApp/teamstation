@@ -6,6 +6,7 @@ import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
+import { storedGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -15,6 +16,7 @@ import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
 import { ScoringSession } from '../../common/scoring/session'
+import { teamsOfRow } from '../../common/teamLists'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -26,7 +28,7 @@ import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays, readPlays } from '../events/postPlays'
-import { storedLineupsDigest } from '../events/teamLineups'
+import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { jsonBody } from '../jsonBody'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
@@ -977,12 +979,27 @@ describe('scheduling a team’s games over HTTP', function () {
     })
     const game = await db!
       .selectFrom('games')
-      .select(['guests', 'currentPlay'])
+      .select([
+        'id',
+        'guests',
+        'home_team_id',
+        'away_team_id',
+        'currentPlay',
+        'pregame',
+        'lineups_digest',
+        'play_generation'
+      ])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    expect(game.guests).deep.equals({ home: [], away: [7999] })
+    expect(storedGuests(game.guests, teamsOfRow(game))).deep.equals({
+      home: [],
+      away: [7999]
+    })
     // The Hawks, away now, bat first.
-    expect(game.currentPlay).nested.property('matchup.batter.id', homeLeadoff)
+    expect(game.currentPlay).equals(null)
+    expect(
+      (await lineupsAnswer(db!, game)).away.current?.batters[0]?.gumboId
+    ).equals(homeLeadoff)
     expect(written).deep.equals([gameId])
 
     // The same side again is no write, and the scoreboard hears nothing.

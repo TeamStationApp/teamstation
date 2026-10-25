@@ -7,9 +7,11 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { asPlayerDetail, asRosterEntry } from '../../common/api'
+import { storedGuests } from '../../common/guests'
 import { makeId } from '../../common/ids'
 import { asNewRosterPlayer } from '../../common/playerSettings'
 import type { Role } from '../../common/roles'
+import { teamsOfRow } from '../../common/teamLists'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -1037,15 +1039,15 @@ describe('a player, and who may change their name', function () {
         .where('id', '=', membership.id)
         .executeTakeFirstOrThrow()
     ).deep.equals(membership)
-    expect(
-      (
-        await db
-          .selectFrom('games')
-          .select('guests')
-          .where('id', '=', gameId)
-          .executeTakeFirstOrThrow()
-      ).guests
-    ).deep.equals({ home: [], away: [guest.gumboId] })
+    const guestsRow = await db
+      .selectFrom('games')
+      .select(['guests', 'home_team_id', 'away_team_id'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(storedGuests(guestsRow.guests, teamsOfRow(guestsRow))).deep.equals({
+      home: [],
+      away: [guest.gumboId]
+    })
   })
 
   it('keeps the jersey and positions to this team, and the hands to the player', async function () {

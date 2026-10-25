@@ -288,7 +288,7 @@ describe('refolding the stored plays (U11)', function () {
         currentPlay: JSON.stringify({
           ...((await store.load(broken)).currentPlay as object),
           teamStation: {
-            version: 2,
+            version: 3,
             setupBefore: (
               (await store.load(broken)).plays[0] as unknown as {
                 teamStation: { setupBefore: unknown }
@@ -382,6 +382,13 @@ describe('refolding the stored plays (U11)', function () {
   })
 
   it('refolds every game it can, skips the one that does not replay, and changes nothing the second time', async function () {
+    // A reset left this game on a later play generation; the refold, a
+    // server write, is not checked against it (S15).
+    await db
+      .updateTable('games')
+      .set({ play_generation: 2 })
+      .where('id', '=', finished)
+      .execute()
     const importedBefore = await snapshot(imported)
     const brokenBefore = await snapshot(broken)
     const finishedBefore = (await snapshot(finished)) as {
@@ -622,14 +629,21 @@ describe('refolding the stored plays (U11)', function () {
     ])
     // ...and the log it kept: the save that took Away 3 out.
     for (const row of await readPlays(db, old)) {
+      // Stored by team: the visitors' lineup is under their team's id.
       const gumbo = row.gumbo as {
-        teamStation?: { actions: ScoringAction[] }
+        teamStation?: {
+          actions: Array<{
+            type: string
+            kind?: string
+            setup?: { teams: Record<string, { battingOrder: number[] }> }
+          }>
+        }
       }
       const save = gumbo.teamStation?.actions.find(
         action => action.type === 'lineup' && action.kind === 'roster'
       )
-      if (save?.type !== 'lineup' || save.setup == null) continue
-      save.setup.sides.away.battingOrder.splice(2, 1)
+      if (save?.setup == null) continue
+      save.setup.teams[TEAMS.away.id].battingOrder.splice(2, 1)
       await db
         .updateTable('events')
         .set({ gumbo: JSON.stringify(gumbo) })

@@ -44,6 +44,11 @@ export interface GameChangeData {
      */
     homeTeamId?: string
     awayTeamId?: string
+    /**
+     * The game's play generation: a screen opened on another reopens, for
+     * the plays it holds were reset. An older server sends none.
+     */
+    generation?: number
   }
 }
 

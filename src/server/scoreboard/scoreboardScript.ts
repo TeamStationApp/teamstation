@@ -4,7 +4,8 @@
  *   KEYS[1]  the game's hash, `<prefix>:scoreboard:<gameId>`
  *   ARGV[1]  the field: `game`, `watcher` or `overrides`
  *   ARGV[2]  its JSON: a state, or the whole overrides object
- *   ARGV[3]  the mode: `replace`, `merge`, `mergeUncontested`, or `reset`
+ *   ARGV[3]  the mode: `replace`, `merge`, `mergeUncontested`, `reset`, or
+ *            `clearGame`
  *   ARGV[4]  now, in milliseconds
  *   ARGV[5]  the game's start, in milliseconds
  *   ARGV[6]  the game write's `sourceVersion`, or empty
@@ -17,7 +18,9 @@
  * publishes and returns the whole hash after the write as one JSON message.
  * `reset` is the dashboard's Reset Game State: it writes the overrides it is
  * given (none) and deletes the `watcher` field in the same step, so the board
- * falls back to the game's own scoring over its record.
+ * falls back to the game's own scoring over its record. `clearGame` deletes
+ * the `game` field instead of writing it, for a game reset to no plays and
+ * no lineups; it answers `closed` and writes nothing when there is none.
  *
  * `version` is `max(stored + 1, now × 1000)`, with a missing key counted as
  * 0, so it never goes backwards: not after the key expires or is evicted, and
@@ -50,13 +53,19 @@ local stored = redis.call('HGET', key, field)
 local previous = nil
 if stored then previous = cjson.decode(stored) end
 
+if mode == 'clearGame' and previous == nil then
+  return 'closed'
+end
+
 if field == 'game' and previous ~= nil and previous.sourceVersion ~= nil
   and sourceVersion ~= '' and tonumber(previous.sourceVersion) > tonumber(sourceVersion) then
   return 'stale'
 end
 
 local value = json
-if field ~= 'overrides' then
+if mode == 'clearGame' then
+  value = nil
+elseif field ~= 'overrides' then
   local state = cjson.decode(json)
   if mode ~= 'replace' then
     local merged = {}
@@ -83,8 +92,14 @@ end
 local storedVersion = tonumber(redis.call('HGET', key, 'version') or '0') or 0
 local version = math.max(storedVersion + 1, now * 1000)
 local versionText = string.format('%d', version)
-redis.call('HSET', key, field, value, 'lastUpdate', string.format('%d', now),
-  'version', versionText)
+if value == nil then
+  redis.call('HDEL', key, field)
+  redis.call('HSET', key, 'lastUpdate', string.format('%d', now),
+    'version', versionText)
+else
+  redis.call('HSET', key, field, value, 'lastUpdate', string.format('%d', now),
+    'version', versionText)
+end
 if mode == 'reset' then redis.call('HDEL', key, 'watcher') end
 local expiry = math.min(math.max(now, startAt) + 2 * HOUR, startAt + 72 * HOUR)
 redis.call('PEXPIREAT', key, string.format('%d', expiry))

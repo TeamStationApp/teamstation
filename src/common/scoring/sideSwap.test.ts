@@ -4,15 +4,21 @@ import { describe, it } from 'mocha'
 import { game, TEAMS } from '../../test/scoringGames'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { LineupAction, ScoringAction } from './actions'
-import { recordOf, replayPlays, type TeamStationRecord } from './gumbo'
+import {
+  recordOf,
+  replayPlays,
+  storedRecordOf,
+  type TeamStationRecord
+} from './gumbo'
 import {
   type EventStore,
   type SaveChange,
   ScoringSession,
   type StoredGame
 } from './session'
-import { pregameRecord, swapRecordSides, swapSideLists } from './sideSwap'
+import { pregameRecord } from './sideSwap'
 import { type GameSetup, setupOf } from './state'
+import { recordByTeam, retargetRecord, setupByTeam } from './teamRecord'
 
 /** A server in memory, holding only what the session saves. */
 class Store implements EventStore {
@@ -95,13 +101,13 @@ function withActions(
   play: CurrentPlay,
   ...actions: ScoringAction[]
 ): CurrentPlay {
-  const record = recordOf(play)!
+  const record = (play as { teamStation?: { actions: unknown[] } }).teamStation!
   const changed = {
     ...play,
     teamStation: { ...record, actions: [...record.actions, ...actions] }
   }
   // The record still reads, so a refusal is the action's and no misreading.
-  expect(recordOf(changed), JSON.stringify(actions)).not.equals(null)
+  expect(storedRecordOf(changed), JSON.stringify(actions)).not.equals(null)
   return changed
 }
 
@@ -153,29 +159,27 @@ describe('swapping home and away', function () {
   })
 
   describe('the record', function () {
-    it('moves every side to the other team and keeps the players', async function () {
-      const record = recordOf(await scored([...threeSaves, battingOrder]))!
-      const input = structuredClone(record)
-      const swapped = swapRecordSides(record)
-      expect(record).deep.equals(input)
+    it('names teams, so it reads by the sides the game gives them', async function () {
+      const current = await scored([...threeSaves, battingOrder])
+      const stored = (current as { teamStation?: Record<string, unknown> })
+        .teamStation!
+      expect(stored.version).equals(3)
+      expect(Object.keys(stored.setupBefore as object)).not.includes('sides')
 
-      expect(swapped.setupBefore.sides).deep.equals({
-        home: record.setupBefore.sides.away,
-        away: record.setupBefore.sides.home
+      const asOpened = recordOf(current, TEAMS)!
+      const asSwapped = recordOf(current, swappedContext.teams)!
+      expect(asSwapped.setupBefore.sides).deep.equals({
+        home: asOpened.setupBefore.sides.away,
+        away: asOpened.setupBefore.sides.home
       })
-      expect(swapped.setupBefore.players).equals(record.setupBefore.players)
-      expect(swapped.setupBefore.tagOrder).equals(record.setupBefore.tagOrder)
-      for (const key of ['version', 'detail', 'actionTimes'] as const)
-        expect(swapped[key], key).deep.equals(record[key])
-
+      expect(asSwapped.setupBefore.players).deep.equals(
+        asOpened.setupBefore.players
+      )
       const lineup = (action: ScoringAction): LineupAction =>
         action.type === 'lineup' ? action : expect.fail(action.type)
-      const [first, second, , added, sub, order] = swapped.actions.map(lineup)
+      const [first, second, , added, sub, order] = asSwapped.actions.map(lineup)
       expect(first.setup!.sides).deep.equals(
-        exchanged(lineup(record.actions[0]).setup!).sides
-      )
-      expect(first.setup!.players).equals(
-        lineup(record.actions[0]).setup!.players
+        exchanged(lineup(asOpened.actions[0]).setup!).sides
       )
       expect(first.confirmed).deep.equals(['home', 'away'])
       expect(second.setup!.sides.home.battingOrder.slice(0, 2)).deep.equals([
@@ -190,7 +194,7 @@ describe('swapping home and away', function () {
       expect(sub.replaces).equals(16)
     })
 
-    it('maps confirmed and unseen sides to the other team', function () {
+    it('maps confirmed and unseen teams to the sides they hold', function () {
       const setup = setupOf(game())
       const record: TeamStationRecord = {
         version: 2,
@@ -203,34 +207,65 @@ describe('swapping home and away', function () {
             confirmed: ['away'],
             unseen: ['home']
           },
-          {
-            type: 'lineup',
-            kind: 'roster',
-            setup,
-            confirmed: ['away', 'home']
-          },
           { type: 'pitch', call: 'B' }
         ]
       }
-      const [one, two, pitch] = swapRecordSides(record).actions
+      const stored = recordByTeam(record, TEAMS)
+      expect(stored.actions).deep.include({
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupByTeam(setup, TEAMS),
+        confirmed: [TEAMS.away.id],
+        unseen: [TEAMS.home.id]
+      })
+      const [one, pitch] = recordOf(
+        { teamStation: stored },
+        swappedContext.teams
+      )!.actions
       expect(one).deep.include({ confirmed: ['home'], unseen: ['away'] })
-      expect(two).deep.include({ confirmed: ['home', 'away'] })
-      expect(pitch).equals(record.actions[2])
+      expect(pitch).deep.equals(record.actions[1])
     })
 
-    it('comes back from two swaps unchanged', async function () {
-      const record = recordOf(await scored(threeSaves))!
-      expect(swapRecordSides(swapRecordSides(record))).deep.equals(record)
-    })
-
-    it('replays against the swapped teams, where the unswapped one cannot', async function () {
+    it('writes back to what it read from', async function () {
       const current = await scored(threeSaves)
-      const swapped = {
-        ...current,
-        teamStation: swapRecordSides(recordOf(current)!)
-      }
+      const stored = (current as { teamStation?: unknown }).teamStation
+      expect(
+        JSON.parse(
+          JSON.stringify(recordByTeam(recordOf(current, TEAMS)!, TEAMS))
+        )
+      ).deep.equals(JSON.parse(JSON.stringify(stored)))
+    })
+
+    it('refuses a record naming a team that is on neither side', async function () {
+      const current = await scored(threeSaves)
+      expect(
+        recordOf(current, { away: TEAMS.away, home: { id: 'elsewhere' } })
+      ).equals(null)
+      expect(storedRecordOf(current)).not.equals(null)
+    })
+
+    it('follows a team id that changed', async function () {
+      const current = await scored(threeSaves)
+      const stored = (current as { teamStation?: unknown }).teamStation
+      const moved = retargetRecord(stored, TEAMS.home.id, 'tem_replacement')
+      const teams = { away: TEAMS.away, home: { id: 'tem_replacement' } }
+      const read = recordOf({ teamStation: moved }, teams)!.setupBefore
+      expect(read.sides).deep.equals(
+        recordOf(current, TEAMS)!.setupBefore.sides
+      )
+      expect(
+        Object.values(read.players)
+          .filter(player => player.id >= 10 && player.id < 20)
+          .every(player => player.teamId === 'tem_replacement')
+      ).equals(true)
+      expect(JSON.stringify(moved)).not.includes(`"${TEAMS.home.id}"`)
+      expect(retargetRecord('not a record', 'a', 'b')).equals('not a record')
+    })
+
+    it('replays the same after the swap, with no record rewritten', async function () {
+      const current = await scored(threeSaves)
       const replayed = replayPlays(
-        { plays: [], currentPlay: swapped },
+        { plays: [], currentPlay: current },
         swappedContext
       )
       expect(replayed.problems).deep.equals([])
@@ -239,26 +274,6 @@ describe('swapping home and away', function () {
       expect(teams.home.battingOrder.slice(0, 2)).deep.equals([1, 2])
       expect(teams.away.players).includes(30)
       expect(replayed.state.liveData.linescore.offense.batter?.id).equals(10)
-
-      const unswapped = replayPlays(
-        { plays: [], currentPlay: current },
-        swappedContext
-      )
-      expect(unswapped.problems.map(problem => problem.message).join()).match(
-        /invalid or duplicate lineup player/
-      )
-    })
-  })
-
-  describe('a side-keyed column', function () {
-    it('exchanges its lists and keeps anything else it holds', function () {
-      const guests = { home: [7], away: [], note: 'kept' }
-      expect(swapSideLists(guests)).deep.equals({
-        home: [],
-        away: [7],
-        note: 'kept'
-      })
-      expect(guests).deep.equals({ home: [7], away: [], note: 'kept' })
     })
   })
 })

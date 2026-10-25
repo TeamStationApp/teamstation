@@ -3,9 +3,10 @@ import type { Kysely } from 'kysely'
 import { conflict } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { mapPlayers } from '../../common/scoring/actions'
-import { recordOf } from '../../common/scoring/gumbo'
+import { recordOf, type TeamStationRecord } from '../../common/scoring/gumbo'
 import type { StoredGame } from '../../common/scoring/session'
 import { type GameSetup, POSITIONS } from '../../common/scoring/state'
+import { ownTeams, recordByTeam } from '../../common/scoring/teamRecord'
 import { asGumboId } from '../../common/userId'
 import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
@@ -109,11 +110,18 @@ function mapDocument<T>(
     const result: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(raw)) {
       if (key === 'teamStation') {
-        const record = recordOf({ teamStation: value })
+        // Read and written back under its own teams: a version 3 record
+        // keeps every team id it named.
+        const own = ownTeams(value)
+        const record = recordOf({ teamStation: value }, own)
+        const stored = (mapped: object): unknown =>
+          (value as { version?: unknown }).version === 3
+            ? recordByTeam(mapped as TeamStationRecord, own)
+            : mapped
         result[key] =
           record == null
             ? value
-            : {
+            : stored({
                 ...(value as Record<string, unknown>),
                 ...record,
                 ...(record.detail == null
@@ -126,7 +134,7 @@ function mapDocument<T>(
                     ? { setup: setup(action.setup) }
                     : {})
                 }))
-              }
+              })
       } else if (
         (key === 'creditUserId' ||
           (key === 'id' &&

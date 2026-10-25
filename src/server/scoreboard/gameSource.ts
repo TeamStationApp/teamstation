@@ -5,6 +5,7 @@ import type { GameScoreboard } from '../../common/scoreboard'
 import { replayPlays } from '../../common/scoring/gumbo'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { readPlays } from '../events/postPlays'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
@@ -50,7 +51,7 @@ export async function scoreboardFromGame(
         .select([
           'home_team_id',
           'away_team_id',
-          'currentPlay',
+          atBatInProgress().as('currentPlay'),
           'start_at',
           sql<string>`(extract(epoch from updated_at) * 1000000)::bigint`.as(
             'version'
@@ -87,6 +88,37 @@ export async function scoreboardFromGame(
 }
 
 /**
+ * A game with no play, no at-bat in progress and no lineups, as a reset can
+ * leave one: when and at which version to clear its board. Undefined for any
+ * other game.
+ */
+async function blankGame(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<{ startAt: number; sourceVersion: number } | undefined> {
+  const game = await db
+    .selectFrom('games')
+    .select([
+      'start_at',
+      sql<string>`(extract(epoch from updated_at) * 1000000)::bigint`.as(
+        'version'
+      )
+    ])
+    .where('id', '=', gameId)
+    .where(atBatInProgress(), 'is', null)
+    .where(
+      sql<boolean>`not exists (select 1 from events e where e."gameId" = games.id)`
+    )
+    .executeTakeFirst()
+  return game == null
+    ? undefined
+    : {
+        startAt: new Date(game.start_at).getTime(),
+        sourceVersion: Number(game.version)
+      }
+}
+
+/**
  * Writes a game's scored state to its scoreboard, after a post has
  * committed. Undefined when there is nothing to write or Redis is away,
  * which is logged: a scoreboard is never a reason for a post to fail.
@@ -103,7 +135,17 @@ export async function writeGameScoreboard(
   try {
     if (!store.isReady()) throw new ScoreboardUnavailable()
     const source = await scoreboardFromGame(db, gameId, log)
-    if (source == null) return undefined
+    if (source == null) {
+      // A game reset to nothing loses the board its plays left.
+      const blank = await blankGame(db, gameId)
+      if (blank == null) return undefined
+      const cleared = await store.clearGame(
+        gameId,
+        blank.startAt,
+        blank.sourceVersion
+      )
+      return cleared.kind === 'closed' ? undefined : cleared
+    }
     return await store.writeGame(
       gameId,
       source.state,

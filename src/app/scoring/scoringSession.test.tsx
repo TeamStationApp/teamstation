@@ -9,12 +9,13 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { recordOf } from '../../common/scoring/gumbo'
+import {} from '../../common/scoring/gumbo'
+import { playsLost } from '../../common/scoring/playsLost'
 import {
   applyAction,
-  ScoringSession as GameSession
+  ScoringSession as GameSession,
+  type StoredGame
 } from '../../common/scoring/session'
-import { swapRecordSides } from '../../common/scoring/sideSwap'
 import { setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
@@ -750,12 +751,20 @@ describe('swapping from the scoring menu', function () {
       pendingAfterFlush?: boolean
       /** The session's own notice, as a rebase that dropped a change leaves. */
       dropped?: string
+      /** What `GET /events` answers, from what the store holds. */
+      events?: (stored: StoredGame) => StoredGame
+      /** The game was ended once its lineups were saved. */
+      final?: boolean
+      /** An override was saved before the first pitch, and nothing more. */
+      override?: boolean
     } = {}
   ): Promise<{
     opens: () => number
     swaps: () => number
     drains: () => number
     session: () => GameSession
+    /** What the last swap was asked with. */
+    read: () => unknown
   }> {
     const store = memoryStore()
     let game = gameFixture
@@ -778,9 +787,29 @@ describe('swapping from the scoring menu', function () {
       confirmed: ['away', 'home']
     })
     await seed.flush()
+    // The lineups at the first pitch, which a reset goes back to.
+    const pregame = store.games.get('g1')!
+    if (options.override === true) {
+      expect(
+        seed.apply({ type: 'gameFlow', kind: 'override', balls: 1 }).problems
+      ).deep.equals([])
+      await seed.flush()
+    }
+    if (options.final === true) {
+      // A strikeout, then the end of the game between at-bats.
+      for (const action of [
+        { type: 'pitch', call: 'C' },
+        { type: 'pitch', call: 'C' },
+        { type: 'pitch', call: 'C' },
+        { type: 'gameFlow', kind: 'endGame' }
+      ] as const)
+        expect(seed.apply(action).problems).deep.equals([])
+      await seed.flush()
+    }
     let opens = 0
     let swaps = 0
     let drains = 0
+    let asked: unknown
     let opened: GameSession | undefined
     const source: ScoringSource = {
       persistent: options.persistent ?? true,
@@ -826,13 +855,20 @@ describe('swapping from the scoring menu', function () {
           )
     client.game = async () => game
     client.roster = async teamId => scoringRoster(teamId === 'away' ? 1 : 10)
+    client.gameEvents = async () => {
+      const stored = await store.load('g1')
+      return options.events?.(stored) ?? stored
+    }
     client.swapGameSides = async (_gameId, read) => {
       swaps++
-      expect(read).deep.equals({
+      asked = read
+      expect(read).deep.include({
         homeTeamId: game.homeTeamId,
         awayTeamId: game.awayTeamId
       })
       if (options.refuse != null) throw options.refuse
+      const lost = playsLost(await store.load('g1'))
+      if (lost.atBats > 0) store.games.set('g1', pregame)
       game = {
         ...gameFixture,
         homeTeamId: gameFixture.awayTeamId,
@@ -845,10 +881,16 @@ describe('swapping from the scoring menu', function () {
         ...stored,
         currentPlay: {
           ...stored.currentPlay!,
-          teamStation: swapRecordSides(recordOf(stored.currentPlay)!)
+          teamStation: (stored.currentPlay as { teamStation?: unknown })
+            .teamStation
         }
       })
-      return { homeTeamId: game.homeTeamId, awayTeamId: game.awayTeamId }
+      return {
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        generation: lost.atBats > 0 ? 1 : 0,
+        reset: lost
+      }
     }
     await mount(client, source)
     await settle()
@@ -857,9 +899,13 @@ describe('swapping from the scoring menu', function () {
       opens: () => opens,
       swaps: () => swaps,
       drains: () => drains,
-      session: () => opened!
+      session: () => opened!,
+      read: () => asked
     }
   }
+  /** The menu row's text, its subtext included. */
+  const rowText = (label: string): string =>
+    document.querySelector(`[aria-label="${label}"]`)?.textContent ?? ''
 
   it('sits right above End Game, swaps before the first pitch, and opens the game again', async function () {
     const screen = await swappable()
@@ -881,17 +927,175 @@ describe('swapping from the scoring menu', function () {
     expect(document.body.textContent).includes('Home and away were swapped.')
   })
 
-  it('is off after a pitch, while nothing is kept on the server, and while read-only', async function () {
+  it('has no subtext before the first pitch, and says it resets all game plays after one (A1)', async function () {
+    await swappable()
+    await click(MENU)
+    expect(rowText(SWAP)).equals(SWAP)
+    await unmount()
+    await swappable()
+    await click('Ball')
+    await settle()
+    await click(MENU)
+    expect(menuLabels().slice(-2)).deep.equals([SWAP, 'End Game'])
+    expect(rowText(SWAP)).equals(`${SWAP}\nresets all game plays`)
+  })
+
+  it('is offered after a pitch and on a final game, and off while nothing is kept on the server (A2)', async function () {
     const pitched = await swappable()
     await click('Ball')
     await settle()
     await click(MENU)
-    expect(disabled(SWAP)).equals(true)
+    expect(disabled(SWAP)).equals(false)
+    await unmount()
+    const final = await swappable({ final: true })
+    await click(MENU)
+    expect(final.session().state.final).equals(true)
+    expect(disabled(SWAP)).equals(false)
     await unmount()
     await swappable({ persistent: false })
     await click(MENU)
     expect(disabled(SWAP)).equals(true)
     expect(pitched.swaps()).equals(0)
+  })
+
+  it('names the at-bats and innings lost, resets and swaps on Reset and Swap, and says so (A4)', async function () {
+    const screen = await swappable({
+      events: stored => ({ ...stored, playsDigest: 'server', generation: 0 })
+    })
+    await click('Ball')
+    await settle()
+    await click(MENU)
+    await click(SWAP)
+    await settle()
+    expect(document.body.textContent).includes(
+      'Resets all game plays: 1 at-bat in 1 inning will be lost. Hawks will bat first, and Owls will be at home.'
+    )
+    expect(document.body.textContent).includes(
+      'Lineups go back to how they were at the first pitch.'
+    )
+    expect(document.querySelector('[aria-label="Confirm Swap"]')).equals(null)
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.swaps()).equals(1)
+    expect(screen.read()).deep.equals({
+      homeTeamId: 'home',
+      awayTeamId: 'away',
+      generation: 0,
+      playsDigest: 'server'
+    })
+    expect(screen.opens()).equals(2)
+    const state = screen.session().state
+    expect(state.gameData.teams.home.id).equals('away')
+    expect(state.liveData.linescore.offense.batter?.id).equals(10)
+    expect(state.liveData.plays.allPlays).deep.equals([])
+    expect(document.body.textContent).includes(
+      'Home and away were swapped and the game was reset.'
+    )
+  })
+
+  it('resets on the first confirmation after an undo reopened an at-bat', async function () {
+    const screen = await swappable()
+    for (const label of ['Called Strike', 'Called Strike', 'Called Strike'])
+      await click(label)
+    await click('Ball')
+    await settle()
+    // Undone back into the strikeout: its row stays stored beside it.
+    for (let i = 0; i < 2; i++) {
+      const undo = document.querySelector('[aria-label^="Undo "]')
+      expect(undo, 'the undo button').not.equals(null)
+      await click(undo!.getAttribute('aria-label')!)
+      await settle()
+    }
+    expect(screen.session().state.liveData.plays.allPlays).deep.equals([])
+    await click(MENU)
+    await click(SWAP)
+    await settle()
+    expect(document.body.textContent).includes(
+      'Resets all game plays: 1 at-bat in 1 inning will be lost.'
+    )
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.swaps()).equals(1)
+    expect(document.body.textContent).not.includes(
+      'The game changed since this opened.'
+    )
+  })
+
+  it('warns of the reset when nothing but an override was saved, no at-bat lost', async function () {
+    const screen = await swappable({ override: true })
+    await click(MENU)
+    expect(rowText(SWAP)).equals(`${SWAP}\nresets all game plays`)
+    await click(SWAP)
+    await settle()
+    expect(document.body.textContent).includes(
+      'Resets all game plays. Hawks will bat first, and Owls will be at home.'
+    )
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.swaps()).equals(1)
+  })
+
+  it('shows a stale confirmation refused, and opens nothing again (A5)', async function () {
+    const screen = await swappable({
+      refuse: new HttpError(
+        'conflict',
+        "This game's plays changed. Open it again."
+      )
+    })
+    await click('Ball')
+    await settle()
+    await click(MENU)
+    await click(SWAP)
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.swaps()).equals(1)
+    expect(screen.opens()).equals(1)
+    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+      "This game's plays changed. Open it again."
+    )
+    await click('Cancel')
+    await settle()
+  })
+
+  it("on a phone, drains its queue and confirms the server's plays, asking again when they changed (A11)", async function () {
+    let extra = true
+    // Another device's at-bat, in the 2nd: only its place is counted.
+    const another: unknown = { about: { atBatIndex: 40, inning: 2 } }
+    const screen = await swappable({
+      phone: { chains: {}, games: {} },
+      events: stored => ({
+        ...stored,
+        // It landed, once.
+        plays: extra
+          ? [...stored.plays, another as (typeof stored.plays)[number]]
+          : stored.plays,
+        playsDigest: 'server',
+        generation: 0
+      })
+    })
+    await click('Ball')
+    await settle()
+    await click(MENU)
+    await click(SWAP)
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.drains()).equals(1)
+    expect(screen.swaps()).equals(0)
+    expect(document.body.textContent).includes(
+      'Resets all game plays: 2 at-bats in 2 innings will be lost.'
+    )
+    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+      'The game changed since this opened. Check what will be lost, then confirm again.'
+    )
+    extra = false
+    await click('Reset and Swap')
+    await settle()
+    // The counts changed back: asked once more, then it goes.
+    expect(screen.swaps()).equals(0)
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.swaps()).equals(1)
+    expect(screen.read()).deep.include({ playsDigest: 'server', generation: 0 })
   })
 
   it('shows the server’s refusal and opens nothing again', async function () {
@@ -979,14 +1183,26 @@ describe('swapping from the scoring menu', function () {
       configurable: true
     })
     window.dispatchEvent(new window.Event('resize'))
-    try {
-      await swappable()
-      await click(MENU)
+    const room = (): number => {
       const row = document.querySelector<HTMLElement>(`[aria-label="${SWAP}"]`)
       let menu: HTMLElement | null = row
       while (menu?.style.maxHeight === '') menu = menu.parentElement
       expect(menu, 'the menu').not.equals(null)
-      expect(Number.parseFloat(menu!.style.maxHeight)).at.least(7 * 44)
+      return Number.parseFloat(menu!.style.maxHeight)
+    }
+    try {
+      await swappable()
+      await click(MENU)
+      expect(room()).at.least(7 * 44)
+      await unmount()
+      // After a pitch the swap's row has a second line: 9 + 18 + 18 + 9,
+      // and its divider.
+      await swappable()
+      await click('Ball')
+      await settle()
+      await click(MENU)
+      expect(rowText(SWAP)).includes('resets all game plays')
+      expect(room()).at.least(6 * 44 + 55)
     } finally {
       delete (root as { clientHeight?: number }).clientHeight
       window.dispatchEvent(new window.Event('resize'))

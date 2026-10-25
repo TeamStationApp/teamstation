@@ -15,6 +15,8 @@ import ts from 'typescript'
  * changes a draft of the lineups, never the game, `playerTags` names a
  * player to a dictation model, `depth` names how far a ball went, and
  * `baseOutWords` reads the words that say a fielder took a base for an out.
+ * `playsLost` counts what a reset of the game would delete, as the server
+ * counts it; it changes nothing.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -28,7 +30,8 @@ export const APP_MAY_IMPORT = [
   'playerTags',
   'depth',
   'pitchType',
-  'baseOutWords'
+  'baseOutWords',
+  'playsLost'
 ]
 const LIBRARY = 'src/common/scoring'
 

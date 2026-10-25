@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { deflateSync } from 'fflate'
 import { base64 } from 'rfc4648'
 
-import { recordOf } from '../../common/scoring/gumbo'
+import { storedRecordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
 import { utf8 } from '../walkup/localFileId'
 import { lineupQrFixture2, lineupQrFixture4 } from './lineupQr.fixtures'
@@ -228,7 +228,7 @@ async function main(): Promise<void> {
         ? []
         : [fixture.stored().currentPlay!])
     ]
-      .flatMap(play => recordOf(play)?.actions ?? [])
+      .flatMap(play => storedRecordOf(play)?.actions ?? [])
       .flatMap(action =>
         action.type === 'lineup' &&
         action.kind === 'roster' &&

@@ -70,6 +70,7 @@ import {
   type ClaimKey,
   idempotentCallOf
 } from '../db/syncIdempotency'
+import { atBatOf } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import {
@@ -79,7 +80,7 @@ import {
   storedLineupsDigest,
   type TeamSideLineups
 } from '../events/teamLineups'
-import { fenceDistanceFor } from '../games/fenceDistance'
+import { fenceDistanceFor, gameHasPlays } from '../games/fenceDistance'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { gameAvailability } from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
@@ -231,7 +232,9 @@ export function lineupRoutes(
           'away_team_id',
           'season_id',
           'currentPlay',
+          'pregame',
           'lineups_digest',
+          'play_generation',
           'guests',
           'unrostered'
         ])
@@ -297,7 +300,9 @@ export function lineupRoutes(
             'home_team_id',
             'away_team_id',
             'currentPlay',
+            'pregame',
             'lineups_digest',
+            'play_generation',
             'guests',
             'unrostered'
           ])
@@ -355,7 +360,13 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const game = await db
         .selectFrom('games')
-        .select(['home_team_id', 'away_team_id', 'season_id', 'currentPlay'])
+        .select([
+          'home_team_id',
+          'away_team_id',
+          'season_id',
+          'currentPlay',
+          'pregame'
+        ])
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) throw notFound()
@@ -373,7 +384,8 @@ export function lineupRoutes(
         id: gameId,
         home_team_id: game.home_team_id,
         away_team_id: game.away_team_id,
-        currentPlay: game.currentPlay
+        currentPlay: game.currentPlay,
+        pregame: game.pregame
       })
       const side = async (which: Side): Promise<DjSide> => {
         const read = lineups[which]
@@ -384,7 +396,19 @@ export function lineupRoutes(
           ...(await djBatters(db, read, canSeeTeam(scopes, read.teamId)))
         }
       }
-      const scoringAtBat = atBatFromCurrentPlay(game.currentPlay)
+      // Before the first pitch no at-bat is stored: the away leadoff is up.
+      // Once a play is stored the pregame lineups are no at-bat.
+      const pregameOnly =
+        game.currentPlay == null &&
+        atBatOf(game, await gameHasPlays(db, gameId)) != null
+      const scoringAtBat =
+        atBatFromCurrentPlay(game.currentPlay) ??
+        (pregameOnly
+          ? {
+              side: 'away' as const,
+              gumboId: lineups.away.current?.batters[0]?.gumboId ?? null
+            }
+          : null)
       const atBatUser =
         scoringAtBat?.gumboId == null
           ? null
@@ -417,6 +441,7 @@ class GameMoved extends Error {
 function snapshotOf(
   game: {
     currentPlay: unknown
+    pregame?: unknown
     lineups_digest: string | null
     guests?: unknown
     unrostered?: unknown
@@ -426,6 +451,7 @@ function snapshotOf(
   return JSON.stringify([
     game.lineups_digest,
     game.currentPlay,
+    game.pregame ?? null,
     game.guests,
     game.unrostered,
     plays.map(play => play.id)
@@ -469,7 +495,9 @@ async function saveSide(
           'home_team_id',
           'away_team_id',
           'currentPlay',
+          'pregame',
           'lineups_digest',
+          'play_generation',
           'guests',
           'unrostered'
         ])
@@ -479,7 +507,7 @@ async function saveSide(
       const rows = await readPlays(trx, gameId)
       const stored: StoredGame = await resolveScoringGame(trx, {
         plays: rows.map(row => row.gumbo as GumboPlay),
-        currentPlay: game.currentPlay as CurrentPlay | null
+        currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
       })
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
@@ -528,7 +556,13 @@ async function saveSide(
             await mayPost(trx, game)
             const now = await trx
               .selectFrom('games')
-              .select(['currentPlay', 'lineups_digest', 'guests', 'unrostered'])
+              .select([
+                'currentPlay',
+                'pregame',
+                'lineups_digest',
+                'guests',
+                'unrostered'
+              ])
               .where('id', '=', gameId)
               .executeTakeFirstOrThrow()
             if (snapshotOf(now, await readPlays(trx, gameId)) !== read.snapshot)
@@ -540,7 +574,8 @@ async function saveSide(
                 await claim(trx, {
                   resultId: posted.lineupsDigest ?? read.digest
                 })
-              }
+              },
+          { expectedGeneration: body.generation }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest

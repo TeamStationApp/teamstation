@@ -58,7 +58,7 @@ import {
   ServerScoringSource
 } from '../scoring/scoringSource'
 import type { ScoringState } from '../scoring/scoringTypes'
-import { useSidesSwapped } from '../scoring/sidesSwapped'
+import { type GameReplaced, useGameReplaced } from '../scoring/sidesSwapped'
 import { dictationUrl } from '../scoring/useDictation'
 import { useScoringExit } from '../scoring/useScoringExit'
 import {
@@ -227,9 +227,20 @@ export function CoachGameScreen(
   )
 }
 
-/** Shown over a staged change when home and away were swapped under it. */
-const SIDES_SWAPPED =
-  'Home and away were swapped. Your unsaved changes are for your old side and are dropped when the game is read again.'
+/** Whether the generation read is another than the one the screen opened. */
+function replacedGeneration(
+  read: number | undefined,
+  opened: number | undefined
+): boolean {
+  return read != null && opened != null && read !== opened
+}
+
+/** Shown over a staged change when the game was swapped or reset under it. */
+function replacedBanner(change: GameReplaced): string {
+  if (!change.reset)
+    return 'Home and away were swapped. Your unsaved changes are for your old side and are dropped when the game is read again.'
+  return `${change.swapped ? 'Home and away were swapped and the game was reset.' : 'This game was reset.'} Your unsaved changes are for the plays it deleted and are dropped when the game is read again.`
+}
 
 function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const { client, gameId, teamId, socket, onExit } = props
@@ -304,10 +315,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const sideRef = useRef<Side | undefined>(undefined)
   sideRef.current = side
 
-  // Home and away swapped under the open game: it is read again, so his
-  // side, and the side his saves and guests go to, is his team's new one.
-  // Over a staged change he is asked first, since it names his old side.
-  const [sidesSwapped, setSidesSwapped] = useState(false)
+  // Home and away swapped, or the plays reset, under the open game: it is
+  // read again, so his side, and the side his saves and guests go to, is his
+  // team's new one. Over a staged change he is asked first, since it names
+  // his old side or the deleted plays.
+  const [replaced, setReplaced] = useState<GameReplaced>()
   const dirtyNow = useRef(dirty)
   dirtyNow.current = dirty
   const readSides = useCallback(
@@ -319,9 +331,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const openedNow = useRef(opened)
   openedNow.current = opened
   const reopenedFrom = useRef<Opened | undefined>(undefined)
-  const reopenSwapped = useCallback((): void => {
+  const reopenSwapped = useCallback((change: GameReplaced): void => {
     if (dirtyNow.current) {
-      setSidesSwapped(true)
+      setReplaced(change)
       return
     }
     if (reopenedFrom.current === openedNow.current) return
@@ -348,7 +360,15 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         teams.home.id !== opened!.game.homeTeamId ||
         teams.away.id !== opened!.game.awayTeamId
       ) {
-        reopenSwapped()
+        reopenSwapped({
+          swapped: true,
+          reset: replacedGeneration(lineups.generation, opened!.game.generation)
+        })
+        return
+      }
+      // A reset that left the sides as they were.
+      if (replacedGeneration(lineups.generation, opened!.game.generation)) {
+        reopenSwapped({ swapped: false, reset: true })
         return
       }
       heard(lineups, opened!.side)
@@ -501,7 +521,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         refreshBox()
     })
   }, [socket, gameId, refreshBox])
-  useSidesSwapped(socket, gameId, opened?.game, readSides, reopenSwapped)
+  useGameReplaced(socket, gameId, opened?.game, readSides, reopenSwapped)
 
   // The dictation model the coach chose in the scoring screen's Settings.
   const [model, setModel] = useState<RosterDictationOptions['model']>()
@@ -569,10 +589,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     if (opened == null) return
     const saving = opened
     setProblem(undefined)
-    const posted = client.saveLineups(
-      gameId,
-      lineupsBody(draft, saving.side, digest.current, nextBatter, runners)
-    )
+    // Made on the plays the screen opened: a reset since refuses it.
+    const posted = client.saveLineups(gameId, {
+      ...lineupsBody(draft, saving.side, digest.current, nextBatter, runners),
+      generation: saving.game.generation
+    })
     live.saving(posted.then(lineups => lineups.digest))
     // The chat closes when this resolves and stays when it is refused, so
     // what was staged and said is still there to read.
@@ -642,16 +663,16 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         </Text>
       </View>
       {problem != null && <ScoringError message={problem} />}
-      {sidesSwapped && (
+      {replaced != null && (
         <View style={{ padding: 12, gap: 8 }}>
           <Text accessibilityRole="alert" style={text}>
-            {SIDES_SWAPPED}
+            {replacedBanner(replaced)}
           </Text>
           <Button
             label="Read the game again"
             accessibilityLabel="Read the game again"
             onPress={() => {
-              setSidesSwapped(false)
+              setReplaced(undefined)
               setReopened(value => value + 1)
             }}
           />

@@ -1,15 +1,17 @@
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { conflict, HttpError } from '../../common/errors'
-import { asGuests } from '../../common/guests'
+import { storedGuests } from '../../common/guests'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { applyAction } from '../../common/scoring/apply'
-import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { nextDecision } from '../../common/scoring/rules'
 import type { SessionContext, StoredGame } from '../../common/scoring/session'
 import type { GameState } from '../../common/scoring/state'
-import { asUnrostered } from '../../common/unroster'
+import { teamsOfRow } from '../../common/teamLists'
+import { storedUnrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
+import { atBatInProgress } from '../events/atBatInProgress'
 import { resolveGumboIds } from './gumboIds'
 import {
   projectScoringGame,
@@ -26,7 +28,7 @@ function assertAffectedHistoryRecorded(
   affected: ReadonlySet<number>
 ): void {
   for (const document of [...stored.plays, stored.currentPlay]) {
-    if (document == null || recordOf(document) != null) continue
+    if (document == null || storedRecordOf(document) != null) continue
     const ids = scoringIdsIn({
       plays: [],
       currentPlay: document as CurrentPlay
@@ -170,8 +172,8 @@ async function assertMergeAvailabilitySafe(
     .orderBy('id')
     .execute()
   for (const game of games) {
-    const guests = asGuests(game.guests)
-    const excluded = asUnrostered(game.unrostered)
+    const guests = storedGuests(game.guests, teamsOfRow(game))
+    const excluded = storedUnrostered(game.unrostered, teamsOfRow(game))
     const participants = (['away', 'home'] as const).flatMap(side => {
       const teamId = game[`${side}_team_id`]
       const members = memberships.filter(row => row.team_id === teamId)
@@ -226,10 +228,16 @@ export async function assertMergeScoringSafe(
   // Read full games only when both account families appear in their history.
   const games = await db
     .selectFrom('games')
-    .select(['id', 'home_team_id', 'away_team_id', 'currentPlay'])
+    .select([
+      'id',
+      'home_team_id',
+      'away_team_id',
+      atBatInProgress('games').as('currentPlay')
+    ])
     .where(eb =>
       eb.or([
         matches('games.currentPlay', closing),
+        matches('games.pregame', closing),
         eb.exists(
           eb
             .selectFrom('events')
@@ -242,6 +250,7 @@ export async function assertMergeScoringSafe(
     .where(eb =>
       eb.or([
         matches('games.currentPlay', keeping),
+        matches('games.pregame', keeping),
         eb.exists(
           eb
             .selectFrom('events')

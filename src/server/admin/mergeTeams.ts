@@ -3,6 +3,7 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { retargetGameTeams } from '../games/retargetTeams'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
@@ -255,6 +256,12 @@ export async function mergeTeams(
       withdrawn_by_team_id = case when withdrawn_by_team_id = ${fromTeamId} then ${intoTeamId} else withdrawn_by_team_id end
       where home_team_id = ${fromTeamId} or away_team_id = ${fromTeamId}`.execute(
       trx
+    )
+    await retargetGameTeams(
+      trx,
+      movedGames.map(game => game.id),
+      fromTeamId,
+      intoTeamId
     )
     if (
       (

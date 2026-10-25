@@ -54,12 +54,15 @@ export function ScoringMenuLabel({
   label,
   active = false,
   chevron,
-  danger = false
+  danger = false,
+  subtext
 }: {
   label: string
   active?: boolean
   chevron?: 'left' | 'right'
   danger?: boolean
+  /** A second, smaller line under the label, as the tiebreaker's has. */
+  subtext?: string
 }): React.ReactElement {
   const theme = useTheme()
   const decoration = decorations[label]
@@ -127,6 +130,20 @@ export function ScoringMenuLabel({
               }}
             >
               {lstrings.scoring_tiebreaker}
+            </Text>
+          </>
+        ) : subtext != null ? (
+          <>
+            {label}
+            {'\n'}
+            <Text
+              style={{
+                color: theme.scoringSurface.secondaryText,
+                fontSize: 11,
+                fontWeight: '500'
+              }}
+            >
+              {subtext}
             </Text>
           </>
         ) : (
@@ -263,9 +280,12 @@ export function ScoringMenuButton({
   submenuLeft = false,
   danger = false,
   highlighted = false,
+  subtext,
   onPress
 }: {
   label: string
+  /** A second line under the label; the accessibility label stays `label`. */
+  subtext?: string
   disabled?: boolean
   submenuRight?: boolean
   /** The submenu opens to the left, as Batter Out's does. */
@@ -314,6 +334,7 @@ export function ScoringMenuButton({
     >
       <ScoringMenuLabel
         label={label}
+        subtext={subtext}
         danger={danger}
         active={active && !disabled}
         chevron={submenuRight ? 'right' : submenuLeft ? 'left' : undefined}

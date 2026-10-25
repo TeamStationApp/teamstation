@@ -46,6 +46,16 @@ export interface LoadedGame {
   version: string
   withdrawTeamIds: string[]
   canPropose: boolean
+  /** A scorekeeper may swap home and away at once. */
+  canSwap?: boolean
+  /** What a swap's reset would delete, and the plays it confirms. */
+  plays?: {
+    atBats: number
+    innings: number
+    playsDigest: string
+    generation: number
+    resets?: boolean
+  }
   field?: GameFieldSummary | null
 }
 
@@ -204,6 +214,34 @@ export function selectorAnchor(
   }
 }
 
+/** A loaded game as the draft edits it, whoever may send the change. */
+export function editedGame(
+  draft: GameDraft,
+  home: TeamChoice,
+  away: TeamChoice,
+  loaded: LoadedGame
+): GameIntent {
+  const { startAt, endAt, timezone } = eventScheduleValue(draft.schedule)
+  const address = draft.address.trim() === '' ? null : draft.address.trim()
+  return {
+    ...loaded.game,
+    homeTeamId: home.group.id,
+    awayTeamId: away.group.id,
+    startAt,
+    endAt,
+    address,
+    notes: draft.notes.trim() === '' ? null : draft.notes.trim(),
+    arrivalTimeDelta: arrivalMinutesInput(draft.arrival),
+    ...(address !== (loaded.game.address ?? null)
+      ? { latitude: null, longitude: null }
+      : {}),
+    timezone,
+    exhibition: draft.exhibition,
+    venue: draft.venue.trim() === '' ? null : draft.venue.trim(),
+    ...fieldOf(draft, loaded.game.fieldId ?? null)
+  }
+}
+
 /**
  * The proposal Save sends, exactly as each mode always has: a team page
  * proposes as its team, a season page as its season, a change as the first
@@ -231,23 +269,7 @@ export function gameProposalFields(
       initiatingTeamId: senderId,
       gameId: mode.gameId,
       expected: loaded.version,
-      game: {
-        ...loaded.game,
-        homeTeamId: home.group.id,
-        awayTeamId: away.group.id,
-        startAt,
-        endAt,
-        address,
-        notes,
-        arrivalTimeDelta,
-        ...(address !== (loaded.game.address ?? null)
-          ? { latitude: null, longitude: null }
-          : {}),
-        timezone,
-        exhibition: draft.exhibition,
-        venue,
-        ...fieldOf(draft, loaded.game.fieldId ?? null)
-      }
+      game: editedGame(draft, home, away, loaded)
     }
   }
   const { source } = mode

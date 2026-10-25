@@ -19,12 +19,19 @@ import {
 import type {
   DictationModel,
   RosterEntry,
+  SwapSidesAnswer,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { TagTarget } from '../../common/eventTags'
 import { managesRoster } from '../../common/roles'
 import type { ScoringAction } from '../../common/scoring/actions'
+import {
+  type PlaysLost,
+  playsLost,
+  resetsPlays,
+  resetWarning
+} from '../../common/scoring/playsLost'
 import {
   awaitingResult,
   completesHitOffer,
@@ -159,7 +166,12 @@ import {
   type ScoringEvent,
   type Side
 } from './scoringTypes'
-import { type GameSides, useSidesSwapped } from './sidesSwapped'
+import {
+  type GameReplaced,
+  type OpenedGame,
+  replacedNotice,
+  useGameReplaced
+} from './sidesSwapped'
 import {
   RunnerRosterSheet,
   TiebreakerBases,
@@ -210,6 +222,9 @@ export interface ScoringScreenProps {
 const SWAP_NOTICE_MS = 8000
 /** The menu's swap, refused while a change has not reached the server. */
 const SWAP_UNSAVED = "Save the game's changes before swapping. Try again."
+const SWAP_CHANGED =
+  'The game changed since this opened. Check what will be lost, then confirm again.'
+const NOTHING_LOST: PlaysLost = { atBats: 0, innings: 0 }
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
@@ -256,10 +271,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
   /**
-   * The teams the game was read with as it opened: the rosters, rights and
-   * staff side this screen holds are theirs.
+   * The teams the game was read with as it opened, and its play
+   * generation: the rosters, rights and staff side this screen holds are
+   * theirs, and its session's plays that generation's.
    */
-  const [openedSides, setOpenedSides] = useState<GameSides>()
+  const [openedSides, setOpenedSides] = useState<OpenedGame>()
   /** Says, once the game opened again, that its sides were swapped. */
   const [swapNotice, setSwapNotice] = useState<string>()
   /** The phone gave up its edits, and the server's copy has not come. */
@@ -314,7 +330,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       if (!live) return
       setOpenedSides({
         homeTeamId: game.homeTeamId,
-        awayTeamId: game.awayTeamId
+        awayTeamId: game.awayTeamId,
+        generation: value.generation ?? game.generation
       })
       rightsRef.current = rights
       setRosterRights(rights)
@@ -492,65 +509,89 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     },
     [opened]
   )
-  const reopenSwapped = useCallback((): void => {
-    const session = opened
-    // Once for each opened game, however many callers find the swap.
-    if (session == null || reopenedFrom.current === session) return
-    reopenedFrom.current = session
-    const reopen = async (): Promise<void> => {
-      // Its changes name the old sides: it saves nothing more. What it had
-      // not saved now, and what a stale save's rebase dropped, is lost; a
-      // save that landed before the swap was carried to the new sides.
-      session.close()
-      let lost = session.pending > 0 || session.lostToSwap > 0
-      // On a phone, writes the outbox still holds for the game from before
-      // the swap would be sent stale behind it: they are given up.
-      if (props.client instanceof CachingClient) {
-        const queue = await props.client.outboxSummary()
-        if (
-          (queue.chains[`game:${props.gameId}`] ?? 0) > 0 ||
-          queue.games[props.gameId] != null
-        ) {
-          await props.client.discardGame(props.gameId)
-          lost = true
+  const reopenReplaced = useCallback(
+    (change: GameReplaced): void => {
+      const session = opened
+      // Once for each opened game, however many callers find the change.
+      if (session == null || reopenedFrom.current === session) return
+      reopenedFrom.current = session
+      const reopen = async (): Promise<void> => {
+        // Its changes name the old sides, or plays a reset deleted: it saves
+        // nothing more. What it had not saved now, and what a stale save's
+        // rebase dropped, is lost; a save that landed before a swap was
+        // carried to the new sides.
+        session.close()
+        let lost = session.pending + session.lostToSwap
+        // On a phone, writes the outbox still holds for the game from before
+        // would be sent stale behind it: they are given up.
+        if (props.client instanceof CachingClient) {
+          const queue = await props.client.outboxSummary()
+          if (
+            (queue.chains[`game:${props.gameId}`] ?? 0) > 0 ||
+            queue.games[props.gameId] != null
+          ) {
+            await props.client.discardGame(props.gameId)
+            lost = Math.max(lost, 1)
+          }
         }
-      }
-      setSwapNotice(
-        lost
-          ? 'Home and away were swapped, so changes not yet saved before the swap were not kept.'
-          : 'Home and away were swapped.'
-      )
-      setRetry(value => value + 1)
-    }
-    const start = (): void => {
-      reopen().catch(() => {
-        setSwapNotice('Home and away were swapped.')
+        setSwapNotice(replacedNotice(change, lost))
         setRetry(value => value + 1)
+      }
+      const start = (): void => {
+        reopen().catch(() => {
+          setSwapNotice(replacedNotice(change, 0))
+          setRetry(value => value + 1)
+        })
+      }
+      if (!session.saving) {
+        start()
+        return
+      }
+      const stop = session.subscribe(() => {
+        if (session.saving) return
+        stop()
+        waitingForSave.current = undefined
+        start()
       })
-    }
-    if (!session.saving) {
-      start()
-      return
-    }
-    const stop = session.subscribe(() => {
-      if (session.saving) return
-      stop()
-      waitingForSave.current = undefined
-      start()
-    })
-    waitingForSave.current = stop
-  }, [opened, props.client, props.gameId])
+      waitingForSave.current = stop
+    },
+    [opened, props.client, props.gameId]
+  )
   const readSides = useCallback(
-    async (): Promise<GameSides> => await props.client.game(props.gameId),
+    async (): Promise<OpenedGame> => await props.client.game(props.gameId),
     [props.client, props.gameId]
   )
-  useSidesSwapped(
+  useGameReplaced(
     props.socket,
     props.gameId,
     opened == null ? undefined : openedSides,
     readSides,
-    reopenSwapped
+    reopenReplaced
   )
+  // A save refused because the plays were reset since the game opened. A
+  // reset comes with a swap, so the game is read to say whether it did.
+  useEffect(() => {
+    if (opened == null) return
+    let asked = false
+    const check = (): void => {
+      if (!opened.replaced || asked) return
+      asked = true
+      readSides()
+        .then(game => ({
+          swapped:
+            openedSides != null &&
+            (game.homeTeamId !== openedSides.homeTeamId ||
+              game.awayTeamId !== openedSides.awayTeamId)
+        }))
+        .catch(() => ({ swapped: false }))
+        .then(({ swapped }) => {
+          reopenReplaced({ swapped, reset: true })
+        })
+        .catch(() => undefined)
+    }
+    check()
+    return opened.subscribe(check)
+  }, [opened, openedSides, readSides, reopenReplaced])
   // Counted from when the reopened game is drawn: the notice shows over it,
   // not over the loading view.
   const noticeMs = props.swapNoticeMs ?? SWAP_NOTICE_MS
@@ -656,7 +697,15 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           setCopyPending(!arrived)
           setRetry(value => value + 1)
         }}
-        onSwapped={reopenSwapped}
+        onSwapped={answer => {
+          reopenReplaced({
+            swapped: true,
+            reset:
+              answer.reset.atBats > 0 ||
+              (openedSides?.generation != null &&
+                answer.generation !== openedSides.generation)
+          })
+        }}
         openedSides={openedSides}
         game={opened}
         visibleDefaults={visibleDefaults}
@@ -818,12 +867,12 @@ function ScoringPanel(props: {
    */
   onReopen: (arrived: boolean) => void
   /** Home and away were swapped from the menu: open the game again. */
-  onSwapped: () => void
+  onSwapped: (answer: SwapSidesAnswer) => void
   /**
    * The teams the screen opened on. A guest names its side's team from
    * these, never from a later read, so the server refuses one a swap moved.
    */
-  openedSides?: GameSides
+  openedSides?: OpenedGame
 }): React.ReactElement {
   const theme = useTheme()
   // A ball in play saved without its result cannot be shown, because the
@@ -1084,6 +1133,10 @@ function ScoringPanel(props: {
   const { height: windowHeight } = useWindowDimensions()
   const [swapping, setSwapping] = useState(false)
   const [swapProblem, setSwapProblem] = useState<string>()
+  /** What the open swap sheet says will be lost. */
+  const [swapLoses, setSwapLoses] = useState<PlaysLost>(NOTHING_LOST)
+  /** Whether the open swap sheet says the swap resets the game. */
+  const [swapResets, setSwapResets] = useState(false)
   const swapMounted = useRef(true)
   useEffect(
     () => () => {
@@ -1173,16 +1226,24 @@ function ScoringPanel(props: {
       : side === 'home'
         ? props.openedSides.homeTeamId
         : props.openedSides.awayTeamId
-  // Home and away swap on the server, before the first pitch: nothing but
-  // lineups held, the screen at rest.
+  // Home and away swap on the server at any point in the game, the screen
+  // at rest. Once the game has plays, the swap resets them.
   const swappable =
     props.persistent &&
     !status.readOnly &&
     (state.phase === 'ready' || state.phase === 'awaitingBatter') &&
     state.presentation == null &&
-    state.moreDraft == null &&
-    session.liveData.plays.allPlays.length === 0 &&
-    props.game.actions.every(action => action.type === 'lineup')
+    state.moreDraft == null
+  const picture = props.game.picture()
+  /** What a reset would delete, as the game stands on this screen. */
+  const pictured = {
+    plays: [...picture.plays.values()],
+    currentPlay: picture.current
+  }
+  const willLose = playsLost(pictured)
+  /** Whether a swap resets the game, as the server will decide it. */
+  const willReset = resetsPlays(pictured)
+
   /**
    * Saves what is still on its way, then swaps: a lineup change must reach
    * the server first, or it would arrive stale behind the swap. On a phone
@@ -1211,13 +1272,31 @@ function ScoringPanel(props: {
         )
           throw unsaved
       }
-      await props.client.swapGameSides(props.gameId, {
+      // The plays as the server holds them now: a phone's own answers
+      // carried digests of its own until its queue drained.
+      const read = await props.client.gameEvents(props.gameId)
+      const losing = playsLost(read)
+      const resets = resetsPlays(read)
+      if (
+        losing.atBats !== swapLoses.atBats ||
+        losing.innings !== swapLoses.innings ||
+        resets !== swapResets
+      ) {
+        if (!swapMounted.current) return
+        setSwapLoses(losing)
+        setSwapResets(resets)
+        setSwapProblem(SWAP_CHANGED)
+        return
+      }
+      const answer = await props.client.swapGameSides(props.gameId, {
         homeTeamId: session.gameData.teams.home.id,
-        awayTeamId: session.gameData.teams.away.id
+        awayTeamId: session.gameData.teams.away.id,
+        ...(read.generation == null ? {} : { generation: read.generation }),
+        ...(read.playsDigest == null ? {} : { playsDigest: read.playsDigest })
       })
       if (!swapMounted.current) return
       setSheet(undefined)
-      props.onSwapped()
+      props.onSwapped(answer)
     } catch (error) {
       if (swapMounted.current)
         setSwapProblem(error instanceof Error ? error.message : String(error))
@@ -2904,6 +2983,9 @@ function ScoringPanel(props: {
                 key={label}
                 danger={index === 6}
                 label={label}
+                subtext={
+                  index === 5 && willReset ? 'resets all game plays' : undefined
+                }
                 disabled={
                   // Read-only leaves only leaving and settings.
                   (status.readOnly && [2, 3, 4, 5, 6].includes(index)) ||
@@ -2934,6 +3016,8 @@ function ScoringPanel(props: {
                   else if (index === 6) setSheet('game')
                   else if (index === 5) {
                     setSwapProblem(undefined)
+                    setSwapLoses(willLose)
+                    setSwapResets(willReset)
                     setSheet('swap')
                   } else if (index === 4) openRosters()
                   else
@@ -3100,9 +3184,13 @@ function ScoringPanel(props: {
                   fontFamily: theme.regularTextFont
                 }}
               >
+                {swapResets ? `${resetWarning(swapLoses)} ` : ''}
                 {session.gameData.teams.home.name} will bat first, and{' '}
                 {session.gameData.teams.away.name} will be at home. Lineups,
                 guests and unavailable players move with their teams.
+                {swapResets
+                  ? ' Lineups go back to how they were at the first pitch.'
+                  : ''}
               </Text>
               {swapProblem != null && (
                 <Text
@@ -3116,7 +3204,8 @@ function ScoringPanel(props: {
                 </Text>
               )}
               <ScoringButton
-                label="Confirm Swap"
+                label={swapResets ? 'Reset and Swap' : 'Confirm Swap'}
+                color={swapResets ? theme.scoringSurface.dangerFill : undefined}
                 disabled={swapping}
                 onPress={() => {
                   confirmSwap().catch(() => undefined)

@@ -114,7 +114,7 @@ What each level can do. Staff and admins also see everything a member sees. "Chi
 | Add and remove people, give and take away roles (Coach or Assistant: every role but Admin)      |     ✓      |   ✓   |         ✓          |             |            |              |          |        |           |        |
 | Leave a group, or step down from one of your roles                                              |     ✓      |   ✓   |         ✓          |      ✓      |     ✓      |      ✓       |    ✓     |   ✓    |           |        |
 | Create seasons, teams, placeholder teams                                                        |     ✓      |   ✓   |                    |             |            |              |          |        |           |        |
-| Schedule and approve games                                                                      |     ✓      |   ✓   |                    |             |            |              |          |        |           |        |
+| Schedule and approve games (Scorekeeper: only swap home and away)                               |     ✓      |   ✓   |                    |    swap     |            |              |          |        |           |        |
 | Add or break parent links                                                                       |     ✓      |   ✓   |                    |             |            |              |          |        |           |        |
 | Manage site admins, suspend accounts                                                            |     ✓      |       |                    |             |            |              |          |        |           |        |
 
@@ -663,6 +663,7 @@ Until the game is approved, it shows **Pending approval** where the score would 
 
 Other game rules:
 
+- **Swapping home and away.** A scorekeeper of either team, which every admin of it is, may swap home and away with no approval, from the scoring menu or from Game Settings, where it is the only setting a scorekeeper who administers neither team can change. Before the first pitch only the sides change. Once the game has plays, the swap resets them: the scorer is told how many at-bats and innings will be lost and confirms with **Reset and Swap**, and the game goes back to its lineups at the first pitch. A withdrawn game cannot be swapped.
 - **Withdrawing.** Any admin of either team can withdraw their team without approval. The game stays on the schedule as cancelled, with the reason.
 - **Changing an opponent you don't administer.** The original game is cancelled, still visible to that opponent, and a new game is proposed.
 
