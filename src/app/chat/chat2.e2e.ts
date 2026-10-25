@@ -1463,17 +1463,29 @@ export async function submitPasswordSignIn(
     await ui.text('Use a password instead')
   }
   await ui.device.assertVisible({ text: exactText('Password'), timeout: 15000 })
-  for (const [label, value] of [
-    ['E-mail address', actor.email],
-    ['Password', actor.password]
-  ]) {
-    await ui.text(label)
-    if (await ui.visible({ text: exactText('Clear ' + label) }, 200))
-      await ui.text('Clear ' + label)
-    await ui.text(label)
-    await ui.append(value)
+  // On a loaded simulator the typed password sometimes never reaches the
+  // secure field and the form answers with the wrong-credentials notice;
+  // the fields are filled and submitted once more, and that is recorded.
+  for (let attempt = 0; ; attempt++) {
+    for (const [label, value] of [
+      ['E-mail address', actor.email],
+      ['Password', actor.password]
+    ]) {
+      await ui.text(label)
+      if (await ui.visible({ text: exactText('Clear ' + label) }, 200))
+        await ui.text('Clear ' + label)
+      await ui.text(label)
+      await ui.append(value)
+    }
+    await ui.device.pressKey({ key: 'ENTER' })
+    if (
+      ui.surface !== 'ios' ||
+      attempt > 0 ||
+      !(await ui.visible({ text: '^Wrong e-mail or password' }, 8000))
+    )
+      break
+    observation.wrongCredentialsRetried = true
   }
-  await ui.device.pressKey({ key: 'ENTER' })
   // A fresh iOS install offers to save the typed password, over whatever the
   // app shows next; the synthetic password is never saved.
   if (
