@@ -6262,7 +6262,12 @@ export class Scenarios {
             deferred,
             e => e.type === 'fault-matched'
           )
-          await ui.device.swipe({ direction: 'DOWN', duration: 250 })
+          // A desktop mouse drag scrolls nothing, so whether it reads as a
+          // user scroll depends on what lies under the viewport centre; a
+          // desktop reader cancels with the wheel, toward newer posts.
+          if (!ui.native && !this.touchActions)
+            await ui.device.scroll({ direction: 'DOWN' })
+          else await ui.device.swipe({ direction: 'DOWN', duration: 250 })
           fixtureControl(this.f, 'clear-fault')
           await ui.absent(this.controlId('jumpRetry'))
           await ui.device.assertNotVisible({
