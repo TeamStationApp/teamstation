@@ -50,6 +50,18 @@ const originals = replaced.map(([target, key]) => ({
   key,
   descriptor: Object.getOwnPropertyDescriptor(target, key)
 }))
+/** The React Native props of the View that rendered a DOM node. */
+const hostViewProps = (node: HTMLElement): Record<string, unknown> => {
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber'))!
+  let fiber = (node as unknown as Record<string, FiberNode>)[key]
+  while (!('importantForAccessibility' in (fiber.memoizedProps ?? {})))
+    fiber = fiber.return!
+  return fiber.memoizedProps
+}
+interface FiberNode {
+  memoizedProps: Record<string, unknown>
+  return?: FiberNode
+}
 /** A spotlight part's animated layer: its fade and motion live there. */
 const layerOf = (part: HTMLElement): HTMLElement =>
   part.firstElementChild as HTMLElement
@@ -1126,7 +1138,7 @@ describe('chat message presentation', function () {
 
   describe('chat message action ownership', function () {
     for (const platform of ['web', 'ios', 'android'] as const)
-      it(`refuses touches beneath the ${platform} host modal, keeping native interaction on for a focused composer`, async function () {
+      it(`refuses touches beneath the ${platform} host modal without re-parenting or disabling a focused composer`, async function () {
         Object.defineProperty(Platform, 'OS', {
           configurable: true,
           value: platform
@@ -1149,6 +1161,10 @@ describe('chat message presentation', function () {
             node.querySelector('[aria-label="Native composer"]')!
           ).pointerEvents
         ).equals('none')
+        expect(
+          hostViewProps(content).collapsable,
+          'A flattened chat view would be re-parented when it turns modal'
+        ).equals(false)
       })
 
     it('releases the native host modal before replying once after exit', async function () {
