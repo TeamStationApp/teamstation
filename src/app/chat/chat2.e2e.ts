@@ -1810,11 +1810,23 @@ export class Scenarios {
     const latest = [...this.observations]
       .reverse()
       .find(row => row.visibleReaderAnchor != null)
+    const record = latest?.visibleReaderAnchor as Json | undefined
+    const area = record?.band as { top: number; bottom: number } | undefined
+    // The app's own rule (attentionBodyViewed): the body's top inside the
+    // reading area with its first 24 pt above the bottom. A tall body that
+    // only overlapped the area from above was visible but not viewed.
     const seenEarlier = new Set(
-      (
-        ((latest?.visibleReaderAnchor as Json | undefined)?.visibleBodies ??
-          []) as Json[]
-      ).map(body => String(body.id).replace('chat-message-body-', ''))
+      ((record?.visibleBodies ?? []) as Json[])
+        .filter(body => {
+          const b = body.bounds as NonNullable<PublicNode['bounds']> | undefined
+          return (
+            area != null &&
+            b != null &&
+            b.y >= area.top &&
+            b.y + Math.min(24, b.height) <= area.bottom
+          )
+        })
+        .map(body => String(body.id).replace('chat-message-body-', ''))
     )
     const viewedEarlier = fixture.targetIds.filter(
       id => seenEarlier.has(id) && !viewed.includes(id)
