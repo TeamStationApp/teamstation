@@ -1125,6 +1125,32 @@ describe('chat message presentation', function () {
   })
 
   describe('chat message action ownership', function () {
+    for (const platform of ['web', 'ios', 'android'] as const)
+      it(`refuses touches beneath the ${platform} host modal, keeping native interaction on for a focused composer`, async function () {
+        Object.defineProperty(Platform, 'OS', {
+          configurable: true,
+          value: platform
+        })
+        const node = await render(
+          <ChatOverlayHost>
+            <input aria-label="Native composer" />
+            <MessageMenu {...menu({})} />
+          </ChatOverlayHost>
+        )
+        const content = node
+          .querySelector('[aria-label="Native composer"]')!
+          .closest<HTMLElement>('[aria-hidden="true"]')!
+        expect(content).not.equals(null)
+        expect(getComputedStyle(content).pointerEvents).equals(
+          platform === 'web' ? 'none' : 'auto'
+        )
+        expect(
+          getComputedStyle(
+            node.querySelector('[aria-label="Native composer"]')!
+          ).pointerEvents
+        ).equals('none')
+      })
+
     it('releases the native host modal before replying once after exit', async function () {
       Object.defineProperty(Platform, 'OS', {
         configurable: true,
