@@ -12157,6 +12157,41 @@ describe('native below-reader attention count', function () {
       viewedTargetsEarlier: ['msg-unmounted']
     })
   })
+  it("accepts on native any settled count the app can show between the latest and every visit's discount", async () => {
+    for (const shown of [7, 6]) {
+      const s = scenario(true)
+      const at = (y: number): Record<string, number> => ({
+        x: 20,
+        y,
+        width: 200,
+        height: 40
+      })
+      // An earlier visit in this case viewed msg-above; the latest viewed
+      // msg-unmounted. The app may still discount either or both.
+      s.observations.push({
+        visibleReaderAnchor: {
+          band: { top: 100, bottom: 600 },
+          visibleBodies: [
+            { id: 'chat-message-body-msg-above', bounds: at(150) }
+          ]
+        }
+      })
+      s.observations.push({
+        visibleReaderAnchor: {
+          band: { top: 100, bottom: 600 },
+          visibleBodies: [
+            { id: 'chat-message-body-msg-unmounted', bounds: at(200) }
+          ]
+        }
+      })
+      Object.assign(s, { count: async () => shown })
+      expect(await s.expectBelowReaderCount(fixture)).equals(shown)
+      expect(s.observations.at(-1)).deep.equals({
+        belowReaderCountRange: [6, 7],
+        observedBelowReaderCount: shown
+      })
+    }
+  })
   it('keeps the fixture count on web', async () => {
     const s = scenario(false)
     expect(await s.belowReaderCount(fixture)).equals(9)
