@@ -8,13 +8,23 @@ import { Pool } from 'pg'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  AWAY_PLAYERS,
+  HOME_PLAYERS,
+  REPLAY_TEAMS
+} from '../../test/replayGameFixture'
 import { canScore, canSeeGame, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { pitchingLines } from '../stats'
 import { pitchingOrder } from '../stats/boxScoreOrder'
 import { statRows } from '../stats/rows'
-import { REPLAY_SEED, type ReplaySeed, seedReplay } from './replaySeed'
+import {
+  REPLAY_SEED,
+  type ReplaySeed,
+  seedJersey,
+  seedReplay
+} from './replaySeed'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_replayseed_${Date.now()}`
@@ -193,6 +203,60 @@ describe('replay seed', function () {
     ])
   })
 
+  it('dresses every player in a jersey, on the roster and in the scored games', async function () {
+    const rostered = await db!
+      .selectFrom('memberships')
+      .innerJoin('users', 'users.id', 'memberships.user_id')
+      .select([
+        'memberships.team_id as teamId',
+        'users.first_name as first',
+        'users.last_name as last',
+        'memberships.jersey'
+      ])
+      .where('memberships.is_player', '=', true)
+      .where('memberships.team_id', 'in', [
+        REPLAY_TEAMS.away.id,
+        REPLAY_TEAMS.home.id
+      ])
+      .execute()
+    const expected = [
+      ...AWAY_PLAYERS.map((player, index) => ({
+        teamId: REPLAY_TEAMS.away.id,
+        first: player.first,
+        last: player.last,
+        jersey: seedJersey('away', index)
+      })),
+      ...HOME_PLAYERS.map((player, index) => ({
+        teamId: REPLAY_TEAMS.home.id,
+        first: player.first,
+        last: player.last,
+        jersey: seedJersey('home', index)
+      }))
+    ]
+    expect(rostered).to.have.deep.members(expected)
+
+    const opening = await db!
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', REPLAY_SEED.games.final)
+      .where('atBatIndex', '=', 0)
+      .executeTakeFirstOrThrow()
+    const players = (
+      opening.gumbo as {
+        teamStation: {
+          setupBefore: {
+            players: Record<string, { fullName: string; jersey: string }>
+          }
+        }
+      }
+    ).teamStation.setupBefore.players
+    expect(
+      Object.values(players).map(player => [player.fullName, player.jersey])
+    ).to.have.deep.members(
+      expected.map(player => [`${player.first} ${player.last}`, player.jersey])
+    )
+  })
+
   it('leaves the same rows when it runs again', async function () {
     const count = async (
       table: 'users' | 'memberships' | 'events'
@@ -208,6 +272,12 @@ describe('replay seed', function () {
     const before = await Promise.all(
       (['users', 'memberships', 'events'] as const).map(count)
     )
+    // A database seeded before players wore numbers gets them on the rerun.
+    await db!
+      .updateTable('memberships')
+      .set({ jersey: null })
+      .where('team_id', 'in', [REPLAY_TEAMS.away.id, REPLAY_TEAMS.home.id])
+      .execute()
     const again = await seedReplay(db!, { password: 'replay-test-password' })
     expect(again.accounts).deep.equals(seeded.accounts)
     expect(
@@ -215,6 +285,19 @@ describe('replay seed', function () {
         (['users', 'memberships', 'events'] as const).map(count)
       )
     ).deep.equals(before)
+    const jerseys = await db!
+      .selectFrom('memberships')
+      .innerJoin('users', 'users.id', 'memberships.user_id')
+      .select(['users.first_name as first', 'memberships.jersey'])
+      .where('memberships.is_player', '=', true)
+      .where('memberships.team_id', '=', REPLAY_TEAMS.away.id)
+      .execute()
+    expect(jerseys).to.have.deep.members(
+      AWAY_PLAYERS.map((player, index) => ({
+        first: player.first,
+        jersey: seedJersey('away', index)
+      }))
+    )
   })
 
   it('refuses to run in production', function () {

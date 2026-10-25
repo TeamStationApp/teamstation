@@ -11,6 +11,10 @@ export interface ScoreboardState {
   pitcher: { firstName: string; lastName: string }
   batterHits?: number
   batterAtBats?: number
+  /** The batter's jersey number; empty or absent when they have none. */
+  batterJersey?: string
+  /** The pitcher's jersey number; empty or absent when they have none. */
+  pitcherJersey?: string
   pitchCount: number
   balls: number
   strikes: number
@@ -41,6 +45,22 @@ export function shortName(person: ScoreboardState['batter']): string {
   return `${person.firstName.trim()} ${person.lastName.trim().slice(0, 1)}.`
     .trim()
     .toUpperCase()
+}
+/**
+ * A batter's or pitcher's line on the board: `#12 ALEX R.`, or the name alone
+ * without a number. The board cuts a label too long for its line from the
+ * end, so the number always shows and a long name loses its tail, last
+ * initial included: beside `P:64` on the pitcher's line,
+ * `#123 CHRISTOPHER MAXIMILIAN R.` draws as `#123 CHRISTOPHER MAXIMIL`.
+ */
+export function numberedName(
+  person: ScoreboardState['batter'],
+  jersey: string | undefined
+): string {
+  jersey = jersey?.trim().toUpperCase() ?? ''
+  const name = shortName(person)
+  if (jersey === '') return name
+  return name === '' ? `#${jersey}` : `#${jersey} ${name}`
 }
 export function countLights(value: number, maximum: number): boolean[] {
   const count = Number.isFinite(value)

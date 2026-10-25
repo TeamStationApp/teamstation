@@ -91,3 +91,61 @@ describe('the scoreboard pixels', function () {
     expect(digest(DEMO_SCOREBOARD)).equals('1e883a497ad5f3bb')
   })
 })
+
+describe('jersey numbers on the scoreboard', function () {
+  const longName: ScoreboardState = {
+    ...DEMO_SCOREBOARD,
+    homeTeam: 'A VERY LONG TEAM NAME THAT GOES ON',
+    batter: { firstName: 'Maximilian Alexander Longname', lastName: '' }
+  }
+  const boards: Array<[string, ScoreboardState, string]> = [
+    [
+      'before the name',
+      { ...DEMO_SCOREBOARD, batterJersey: '12' },
+      '6b64de97c36164c8'
+    ],
+    [
+      'before a name too long for its line',
+      { ...longName, batterJersey: '12' },
+      '4296f44dd8b8fd37'
+    ],
+    [
+      "before the pitcher's name",
+      { ...DEMO_SCOREBOARD, pitcherJersey: '34' },
+      '3718676125deb277'
+    ],
+    [
+      'before both names',
+      { ...DEMO_SCOREBOARD, batterJersey: '12', pitcherJersey: '34' },
+      'f2dfb55af6a809a3'
+    ],
+    [
+      'before a long first name, cutting the last initial',
+      {
+        ...DEMO_SCOREBOARD,
+        batter: { firstName: 'Christopher Maximilian', lastName: 'Rivera' },
+        batterJersey: '123'
+      },
+      '098230717eb8fc93'
+    ]
+  ]
+  for (const [name, state, expected] of boards)
+    it(`draws the number ${name}`, function () {
+      expect(digest(state)).equals(expected)
+    })
+
+  it('draws a number only when there is one', function () {
+    expect(digest({ ...DEMO_SCOREBOARD, batterJersey: '12' })).not.equals(
+      digest(DEMO_SCOREBOARD)
+    )
+    expect(digest({ ...DEMO_SCOREBOARD, batterJersey: ' ' })).equals(
+      digest(DEMO_SCOREBOARD)
+    )
+    expect(digest({ ...DEMO_SCOREBOARD, pitcherJersey: '' })).equals(
+      digest(DEMO_SCOREBOARD)
+    )
+    expect(digest({ ...longName, batterJersey: '12' })).not.equals(
+      digest(longName)
+    )
+  })
+})

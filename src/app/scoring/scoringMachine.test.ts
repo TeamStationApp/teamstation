@@ -165,6 +165,24 @@ describe('local scoring sessions', function () {
       lastName: 'K'
     })
   })
+  it("puts the batter's and the pitcher's jersey numbers on the scoreboard", function () {
+    const session = initial().session
+    const line = session.liveData.linescore
+    const batter = line.offense.batter
+    if (batter == null) throw new Error('Missing batter')
+    session.gameData.players[batter.id].jersey = '12'
+    expect(scoreboardFor(session).batterJersey).equals('12')
+    session.gameData.players[batter.id].jersey = ''
+    expect(scoreboardFor(session).batterJersey).equals('')
+    line.offense.batter = null
+    expect(scoreboardFor(session).batterJersey).equals(undefined)
+    const pitcher = line.defense.P
+    if (pitcher == null) throw new Error('Missing pitcher')
+    session.gameData.players[pitcher.id].jersey = '34'
+    expect(scoreboardFor(session).pitcherJersey).equals('34')
+    line.defense.P = null
+    expect(scoreboardFor(session).pitcherJersey).equals(undefined)
+  })
   it('rejects invalid scoring ids and duplicate roster players', function () {
     for (const invalid of [-1, 1.5, Infinity, '2', Number.MAX_SAFE_INTEGER + 1])
       expect(() => asSessionId(invalid)).throws()

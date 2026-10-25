@@ -9,10 +9,10 @@ import { bulbGlyph } from './bulbFont'
 import {
   battingLine,
   countLights,
+  numberedName,
   pitchLabel,
   type ScoreboardState,
-  scoreDigits,
-  shortName
+  scoreDigits
 } from './scoreboardModel'
 import { BALL_LAMP, STRIKE_LAMP } from './scoreboardPalette'
 
@@ -312,9 +312,14 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
   const bandTop = SCOREBOARD_RULE_Y + 2
   const bandHeight = 244 - bandTop
   const nameY = bandTop + (bandHeight - nameBlock) / 2
-  lineText(shortName(state.batter), battingLine(state), nameY, NAME_PITCH)
   lineText(
-    shortName(state.pitcher),
+    numberedName(state.batter, state.batterJersey),
+    battingLine(state),
+    nameY,
+    NAME_PITCH
+  )
+  lineText(
+    numberedName(state.pitcher, state.pitcherJersey),
     pitchLabel(state.pitchCount),
     nameY + nameH + nameGap,
     NAME_PITCH

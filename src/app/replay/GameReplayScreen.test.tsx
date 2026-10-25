@@ -16,6 +16,7 @@ import {
   REPLAY_TEAMS,
   replayActions,
   replayContext,
+  replaySetup,
   scored
 } from '../../test/replayGameFixture'
 import type { ScreenRect } from '../field/catcherBounds'
@@ -405,7 +406,10 @@ describe('the replay screen', function () {
 
   it('names players by first name and last initial on the field and the scoreboard', async function () {
     resize(402, 874)
-    await show(gameOf(), finalGame())
+    const setup = replaySetup()
+    for (const [index, player] of Object.values(setup.players).entries())
+      player.jersey = String(index + 1)
+    await show(gameOf(), finalGame(setup))
     await showCatcher()
     await firstPitch()
     const { players, scoreboard } = field()
@@ -415,6 +419,17 @@ describe('the replay screen', function () {
     expect(scoreboard?.batter.firstName).equals('Juan S')
     expect(scoreboard?.batter.lastName).equals('')
     expect(scoreboard?.pitcher.firstName).match(/^\S+ \S{1,2}$/)
+    const juan = Object.values(setup.players).find(
+      player => player.fullName === 'Juan Soto'
+    )
+    expect(juan?.jersey).match(/^\d+$/)
+    expect(scoreboard?.batterJersey).equals(juan?.jersey)
+    expect(scoreboard?.pitcher.firstName).equals('Tyler G')
+    const pitcher = Object.values(setup.players).find(
+      player => player.fullName === 'Tyler Glasnow'
+    )
+    expect(pitcher?.jersey).match(/^\d+$/)
+    expect(scoreboard?.pitcherJersey).equals(pitcher?.jersey)
   })
 
   it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {

@@ -113,23 +113,39 @@ async function ensureAccount(
 }
 
 /**
- * A player of the team, found by name or made, with a rostered membership.
- * Their scoring id is what the game names them by.
+ * The jersey a seeded player wears: the visitors from 1 and the home side
+ * from 21, in roster order, so the two teams never share a number.
+ */
+export function seedJersey(side: 'away' | 'home', index: number): string {
+  return String(index + (side === 'away' ? 1 : 21))
+}
+
+/**
+ * A player of the team, found by name or made, with a rostered membership
+ * wearing `jersey`. Their scoring id is what the game names them by.
  */
 async function ensurePlayer(
   db: Db,
   teamId: string,
-  player: Player
+  player: Player,
+  jersey: string
 ): Promise<number> {
   const found = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
-    .select('users.id')
+    .select(['users.id', 'memberships.id as membershipId'])
     .where('memberships.team_id', '=', teamId)
     .where('users.first_name', '=', player.first)
     .where('users.last_name', '=', player.last)
     .executeTakeFirst()
-  if (found != null) return await ensureGumboId(db, found.id)
+  if (found != null) {
+    await db
+      .updateTable('memberships')
+      .set({ jersey })
+      .where('id', '=', found.membershipId)
+      .execute()
+    return await ensureGumboId(db, found.id)
+  }
   const userId = await insertUser(db, {
     display_name: `${player.first} ${player.last}`,
     first_name: player.first,
@@ -145,6 +161,7 @@ async function ensurePlayer(
       team_id: teamId,
       role: 'member',
       is_player: true,
+      jersey,
       positions: player.position == null ? [] : [player.position]
     })
     .execute()
@@ -230,12 +247,16 @@ export async function seedReplay(
   }
 
   const gumboIds = new Map<Player, number>()
-  for (const [teamId, players] of [
-    [REPLAY_TEAMS.away.id, AWAY_PLAYERS],
-    [REPLAY_TEAMS.home.id, HOME_PLAYERS]
+  const jerseys = new Map<Player, string>()
+  for (const [side, teamId, players] of [
+    ['away', REPLAY_TEAMS.away.id, AWAY_PLAYERS],
+    ['home', REPLAY_TEAMS.home.id, HOME_PLAYERS]
   ] as const)
-    for (const player of players)
-      gumboIds.set(player, await ensurePlayer(db, teamId, player))
+    for (const [index, player] of players.entries()) {
+      const jersey = seedJersey(side, index)
+      jerseys.set(player, jersey)
+      gumboIds.set(player, await ensurePlayer(db, teamId, player, jersey))
+    }
 
   const passwordHash = await hashPassword(options.password)
   const account = async (email: string): Promise<UserId> =>
@@ -309,6 +330,8 @@ export async function seedReplay(
       .execute()
 
   const setup = replaySetup(player => gumboIds.get(player)!)
+  for (const [player, jersey] of jerseys)
+    setup.players[gumboIds.get(player)!].jersey = jersey
   const final = await finalGame(setup)
   await post(
     db,

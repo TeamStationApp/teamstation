@@ -19,6 +19,8 @@ export const playerRef = refOf
 
 export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
   const board = scoreboardOfGame(session)
+  const batter = session.liveData.linescore.offense.batter
+  const pitcher = session.liveData.linescore.defense.P
   // The board's own formatter takes a first name and a last name. A stored
   // label may already be a short name, or it may be the whole name.
   const person = (
@@ -38,7 +40,13 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
     awayScore: board.awayScore,
     homeScore: board.homeScore,
     batter: person(board.batterName),
+    batterJersey:
+      batter == null ? undefined : session.gameData.players[batter.id]?.jersey,
     pitcher: person(board.pitcherName),
+    pitcherJersey:
+      pitcher == null
+        ? undefined
+        : session.gameData.players[pitcher.id]?.jersey,
     pitchCount: board.numPitches,
     balls: board.balls,
     strikes: board.strikes,
