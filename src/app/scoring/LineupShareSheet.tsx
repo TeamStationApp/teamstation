@@ -30,6 +30,7 @@ import {
   qrScannerSupported as platformScannerSupported
 } from './qrScanner'
 import type { QrScannerProps, QrScannerStatus } from './qrScannerProps'
+import type { LineupQrOffer } from './scoringRosterEdit'
 import { baseIds, battingSide } from './scoringSelectors'
 import { ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
@@ -56,6 +57,16 @@ export function shareQrSize(width: number, height: number): number {
   return Math.max(120, Math.min(QR_MAX_SIZE, width - 80, height - 240))
 }
 
+/** Where a lineup QR sheet opens: a chooser, the code, or the camera. */
+export function lineupQrOpeningStep(
+  offer: LineupQrOffer,
+  scannerSupported: boolean
+): Step {
+  if (offer === 'share') return 'share'
+  if (offer === 'scan') return scannerSupported ? 'scan' : 'unsupported'
+  return 'choose'
+}
+
 const warningText = (warning: Warning): string =>
   warning.reason === 'refused'
     ? sprintf(lstrings.lineupQr_refused, warning.problem)
@@ -73,14 +84,17 @@ declare const __DEV__: boolean | undefined
 const developmentBuild = typeof __DEV__ === 'boolean' && __DEV__
 
 /**
- * Share Lineup on the scorekeeper's roster screen: a chooser for the team on
- * the Away/Home slider, then its lineup as a GameChanger QR code, or a
- * camera that reads one into the roster draft. Each step is a centered sheet
+ * Share Lineup on the scorekeeper's roster screen. A scorekeeper of both
+ * teams chooses, for the team on the Away/Home slider, between its lineup as
+ * a GameChanger QR code and a camera that reads one into the roster draft. A
+ * scorekeeper of one team opens straight on the code for his own team, or
+ * straight on the camera for the opponent. Each step is a centered sheet
  * with the team's name over it and a red Cancel under it, which closes them
  * all; there is no going back a step.
  */
 export function LineupShareSheet({
   side,
+  offer = 'both',
   draft,
   game,
   nextBatter,
@@ -95,6 +109,8 @@ export function LineupShareSheet({
   onClose
 }: {
   side: Side
+  /** Share only, scan only, or the chooser. A one-team scorekeeper has no chooser. */
+  offer?: LineupQrOffer
   draft: ScoringSessionState
   /**
    * The game the roster editor opened over. A scanned lineup the roster rules
@@ -119,7 +135,9 @@ export function LineupShareSheet({
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
   const { width, height } = useWindowDimensions()
-  const [step, setStep] = useState<Step>('choose')
+  const [step, setStep] = useState<Step>(() =>
+    lineupQrOpeningStep(offer, scannerSupported)
+  )
   const [status, setStatus] = useState<QrScannerStatus | 'starting'>('starting')
   const [warning, setWarning] = useState<Warning>()
   const [payload, setPayload] = useState('')
@@ -246,6 +264,7 @@ export function LineupShareSheet({
     </Pressable>
   )
   const showPayload = devBuild || status === 'unavailable'
+  const scanHeld = rosterLoading || rosterError != null
 
   return (
     <ScoringSheet
@@ -306,7 +325,20 @@ export function LineupShareSheet({
             />
           </View>
         )}
-        {step === 'scan' && (
+        {step === 'scan' && scanHeld && (
+          <Text
+            accessibilityRole="text"
+            style={{
+              ...text,
+              fontSize: 14,
+              color: theme.secondaryTextColor,
+              textAlign: 'center'
+            }}
+          >
+            {rosterLoading ? lstrings.lineupQr_rosterLoading : rosterError}
+          </Text>
+        )}
+        {step === 'scan' && !scanHeld && (
           <View style={{ alignItems: 'center', gap: 12 }}>
             <View
               testID="lineupQrScanner"

@@ -242,7 +242,16 @@ export async function rosterEditFixture(
           )
           .execute()
     }
-    await roles(['scorekeeper'])
+    // SCORING_KEEPER_TEAMS=home makes the actor a scorekeeper of that side
+    // alone. The default is both teams, which is what the lineup QR suite drives.
+    const keeperTeams = (process.env.SCORING_KEEPER_TEAMS ?? 'away,home')
+      .split(',')
+      .filter(team => team === 'away' || team === 'home')
+    await roles(
+      ['scorekeeper'],
+      'team',
+      keeperTeams.length === 0 ? ['away', 'home'] : keeperTeams
+    )
     const media: MediaContext = {
       mediaRoot: '',
       ffmpegPath: '',

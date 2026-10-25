@@ -5,7 +5,12 @@ import { lstrings } from '../locales/strings'
 import { ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 
-export function GameRosterHeader(): React.ReactElement {
+export function GameRosterHeader({
+  information = false
+}: {
+  /** The help for the roster toggle, which only a coach's roster offers. */
+  information?: boolean
+}): React.ReactElement {
   const theme = useScoringSheetTheme()
   const [helpOpen, setHelpOpen] = useState(false)
   const text = {
@@ -26,38 +31,40 @@ export function GameRosterHeader(): React.ReactElement {
         <Text style={{ ...text, flex: 1 }}>
           {lstrings.scoring_edit_roster_instruction}
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Game roster information"
-          onPress={() => {
-            setHelpOpen(true)
-          }}
-          style={({ pressed }) => ({
-            minHeight: 48,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'flex-end',
-            gap: 6,
-            opacity: pressed ? 0.6 : 1
-          })}
-        >
-          <Text style={{ ...text, textAlign: 'right' }}>Game roster</Text>
-          <View
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={{
-              width: 16,
-              height: 16,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: text.color,
-              alignItems: 'center',
-              justifyContent: 'center'
+        {information && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Game roster information"
+            onPress={() => {
+              setHelpOpen(true)
             }}
+            style={({ pressed }) => ({
+              minHeight: 48,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 6,
+              opacity: pressed ? 0.6 : 1
+            })}
           >
-            <Text style={{ ...text, fontSize: 12, lineHeight: 14 }}>i</Text>
-          </View>
-        </Pressable>
+            <Text style={{ ...text, textAlign: 'right' }}>Game roster</Text>
+            <View
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: text.color,
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <Text style={{ ...text, fontSize: 12, lineHeight: 14 }}>i</Text>
+            </View>
+          </Pressable>
+        )}
       </View>
       {helpOpen && (
         <ScoringSheet

@@ -20,7 +20,11 @@ import { encodeLineupQr } from './lineupQrCodec'
 import { lineupQrOf } from './lineupQrExport'
 import type { CreateGuest, LineupQrResult } from './lineupQrImport'
 import { qrMatrix } from './lineupQrMatrix'
-import { LineupShareSheet, shareQrSize } from './LineupShareSheet'
+import {
+  lineupQrOpeningStep,
+  LineupShareSheet,
+  shareQrSize
+} from './LineupShareSheet'
 import { QrScanner, qrScannerSupported } from './qrScanner'
 import { type QrScannerProps, qrScannerStatusOf } from './qrScannerProps'
 import type { ScoringSessionState } from './scoringTypes'
@@ -130,6 +134,49 @@ describe('lineup QR share sheet', function () {
     camera.props = undefined
     camera.mounted = 0
     document.body.innerHTML = ''
+  })
+
+  it('opens on the code or the camera when the side allows only one', async function () {
+    expect(lineupQrOpeningStep('both', true)).equals('choose')
+    expect(lineupQrOpeningStep('share', false)).equals('share')
+    expect(lineupQrOpeningStep('scan', true)).equals('scan')
+    expect(lineupQrOpeningStep('scan', false)).equals('unsupported')
+    await mount({ offer: 'share' })
+    expect(text()).includes('Share Lineup')
+    expect(document.querySelector('svg[data-testid="qrCode"]')).not.equals(null)
+    expect(node('Generate QR to share lineup')).equals(null)
+    expect(node('Scan QR code to import lineup')).equals(null)
+    await act(async () => {
+      root?.unmount()
+    })
+    document.body.innerHTML = ''
+    await mount({ offer: 'scan' })
+    expect(text()).includes('Import Lineup')
+    expect(node('Camera starting')).not.equals(null)
+    expect(node('Generate QR to share lineup')).equals(null)
+    expect(document.querySelector('svg[data-testid="qrCode"]')).equals(null)
+  })
+
+  it('holds a scan-only camera until the roster has loaded', async function () {
+    await mount({ offer: 'scan', rosterLoading: true })
+    expect(text()).includes('Loading the team roster…')
+    expect(camera.props).equals(undefined)
+    await act(async () => {
+      root?.unmount()
+    })
+    document.body.innerHTML = ''
+    await mount({ offer: 'scan', rosterError: 'Unable to load the roster.' })
+    expect(text()).includes('Unable to load the roster.')
+    expect(camera.props).equals(undefined)
+    await act(async () => {
+      root?.unmount()
+    })
+    document.body.innerHTML = ''
+    await mount({ offer: 'scan', scannerSupported: false })
+    expect(text()).includes(
+      'Unsupported on the web version of TeamStation. Please download the app.'
+    )
+    expect(camera.props).equals(undefined)
   })
 
   it('offers both rows under the team name', async function () {

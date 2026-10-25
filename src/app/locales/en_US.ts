@@ -780,6 +780,8 @@ export const enUs = {
   // Lineup QR codes, shared with and scanned from GameChanger on the
   // scorekeeper's Set Team Rosters screen.
   lineupQr_shareRow: 'Share or import team lineup',
+  lineupQr_shareOwn: 'Share Team Lineup',
+  lineupQr_scanOpponent: 'Scan to Import Team Lineup',
   lineupQr_chooserSubtitle: 'Share/Import Lineup',
   lineupQr_generate: 'Generate QR to share lineup',
   lineupQr_scan: 'Scan QR code to import lineup',
