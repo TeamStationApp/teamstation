@@ -134,6 +134,29 @@ describe('the roster screen for a coach', function () {
     ).includes(name(home.battingOrder[0]))
   })
 
+  it('explains the roster toggle and offers no lineup QR', async function () {
+    await mount()
+    await click('Roster')
+    expect(host.textContent).includes('Tap player to edit.')
+    for (const label of [
+      'Share or import team lineup',
+      'Share Team Lineup',
+      'Scan to Import Team Lineup'
+    ])
+      expect(node(label), label).equals(null)
+    await click('Game roster information')
+    expect(document.body.textContent)
+      .includes(
+        "Toggle a player off to remove them from this current game's roster."
+      )
+      .and.includes('batting lineup and defensive positions.')
+      .and.includes('where all players are rostered by default.')
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Done"]')!.click()
+    })
+    expect(document.body.textContent).not.includes('Toggle a player off')
+  })
+
   it('keeps the game-only player sheet, as his state is not read-only', async function () {
     expect(state.readOnly).not.equals(true)
     await mount()

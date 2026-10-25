@@ -64,7 +64,7 @@ import { RosterSelector } from './RosterSelector'
 import { CONTROL_COLORS } from './scoringControlStyle'
 import { copyState } from './scoringMachine'
 import { ScoringPlayerCard, scoringPlayerCardStyle } from './ScoringPlayerCard'
-import { editRosterRows } from './scoringRosterEdit'
+import { editRosterRows, lineupQrOffer } from './scoringRosterEdit'
 import { baseIds, battingSide } from './scoringSelectors'
 import { ScoringError, ScoringSheetHeight } from './ScoringSheet'
 import type {
@@ -169,6 +169,7 @@ export function RosterEditor({
   lineupScanner,
   initialDraft,
   defaultSide,
+  scorekeeperSide,
   rosters,
   unaccepted = false,
   conflict = false,
@@ -227,6 +228,12 @@ export function RosterEditor({
   onReload?: () => void
   initialDraft?: RosterEditorDraft
   defaultSide?: Side
+  /**
+   * The one side this scorekeeper keeps score for. His roster row shares that
+   * lineup and scans the other. Absent when he keeps score for both teams,
+   * or for neither, and the row still offers the choice.
+   */
+  scorekeeperSide?: Side
   /** Current labels only; roster edits retain the game's saved player details. */
   rosters?: Readonly<Record<string, readonly RosterEntry[]>>
   /**
@@ -647,7 +654,7 @@ export function RosterEditor({
           </View>
         </View>
         {mode === 'editRoster' ? (
-          <GameRosterHeader />
+          <GameRosterHeader information={coach} />
         ) : (
           !boxScore && (
             <Text numberOfLines={defense ? 1 : undefined} style={text}>
@@ -714,6 +721,7 @@ export function RosterEditor({
           {...(coach
             ? {}
             : {
+                lineupOffer: lineupQrOffer(scorekeeperSide, side),
                 onShareLineup: () => {
                   setSharing(true)
                 }
@@ -979,6 +987,7 @@ export function RosterEditor({
       {sharing && (
         <LineupShareSheet
           side={side}
+          offer={lineupQrOffer(scorekeeperSide, side)}
           draft={draft}
           game={state.session}
           nextBatter={nextBatter}

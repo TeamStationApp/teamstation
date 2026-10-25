@@ -404,17 +404,10 @@ describe('Roster tab cards and selector', function () {
       await click('Home Team')
       await click('Roster')
       expect(host.textContent).includes('Tap player to edit.')
-      await click('Game roster information')
-      expect(document.body.textContent)
-        .includes(
-          "Toggle a player off to remove them from this current game's roster."
-        )
-        .and.includes('batting lineup and defensive positions.')
-        .and.includes('where all players are rostered by default.')
-      await act(async () => {
-        document.querySelector<HTMLElement>('[aria-label="Done"]')!.click()
-      })
-      expect(document.body.textContent).not.includes('Toggle a player off')
+      // The roster-toggle help is a coach's. A scorekeeper has no toggle.
+      expect(
+        host.querySelector('[aria-label="Game roster information"]')
+      ).equals(null)
       // Nothing changed on the way, so Save Rosters stays dim and saves nothing.
       expect(
         host
