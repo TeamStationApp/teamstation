@@ -2372,14 +2372,16 @@ export class Chat2UI {
     await this.replaceDraft(text)
     await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
     await this.iosMenuAction('Select All')
-    await this.iosMenuAction('Copy')
-    await this.replaceDraft('')
-    // Paste once to prove that the ordinary OS Copy actually installed the sentinel.
+    // Cut, not Copy: Copy left the whole draft selected, and a long press on a
+    // selection offers no Select All, so the next clear deleted one letter.
+    await this.iosMenuAction('Cut')
+    assert.equal(await this.draft(), '', 'Observed OS Cut must empty the draft')
+    // Paste once to prove that the ordinary OS Cut actually installed the sentinel.
     await this.pasteClipboard()
     assert.equal(
       await this.draft(),
       text,
-      'Observed OS sentinel Copy/Paste required'
+      'Observed OS sentinel Cut/Paste required'
     )
     await this.replaceDraft('')
   }
