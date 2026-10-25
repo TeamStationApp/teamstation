@@ -9,6 +9,9 @@ import { TessChat } from './TessChat'
 import type { TessApi, TessScreen } from './tessTypes'
 import { useTess } from './useTess'
 
+/** How long Space is held before Tess listens. */
+export const SPACE_HOLD_MS = 500
+
 export interface TessPanelProps {
   client: TessApi & Pick<TeamStationClient, 'baseUrl' | 'token' | 'health'>
   onClose: () => void
@@ -31,8 +34,9 @@ export interface TessPanelProps {
  * The microphone is scoring's push-to-talk with no game: the `tess` scope
  * ends at the transcript, which goes into the composer and is sent from
  * there with the draft's files, or waits in the field while Tess is still
- * answering. Space stays the page's, since on a wide screen the app beside
- * the chat needs it.
+ * answering. Space held half a second talks, wherever the focus is, while
+ * the microphone is on; a shorter press is the page's, since on a wide
+ * screen the app beside the chat needs it.
  */
 export function TessPanel({
   client,
@@ -53,7 +57,8 @@ export function TessPanel({
       composer.current?.dictate(text)
     },
     startEnabled: true,
-    spaceTalks: false,
+    spaceTalks: true,
+    spaceHoldMs: SPACE_HOLD_MS,
     shape: 'round',
     health,
     url,

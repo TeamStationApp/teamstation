@@ -11,6 +11,7 @@ import {
   type FakeDictationSocket
 } from '../../test/dictationFakes'
 import { scoringSession } from '../../test/scoringSession'
+import { manualClock } from '../../test/tessTestKit'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { useDictationControls } from './DictationButton'
 import type { DictationControls } from './dictationControls'
@@ -90,7 +91,7 @@ function Tess(props: {
   return <>{controls.control}</>
 }
 
-/** The call Tess makes: no game, the `tess` scope, and Space left alone. */
+/** The call Tess makes: no game, the `tess` scope, and Space held to talk. */
 function tessOptions(
   fake: FakeDictation,
   heard: string[]
@@ -103,7 +104,8 @@ function tessOptions(
       heard.push(text)
     },
     startEnabled: true,
-    spaceTalks: false,
+    spaceTalks: true,
+    spaceHoldMs: 500,
     shape: 'round',
     size: 56,
     health: dictatingHealth,
@@ -180,26 +182,88 @@ describe('dictation for Tess', function () {
     expect(socket.frames.some(frame => frame.kind === 'keyterms')).equals(false)
   })
 
-  it('leaves Space to the page beside the chat', async function () {
+  it('gives a quick Space back to the page beside the chat, and talks once it is held', async function () {
     const { socket } = await mountTess()
     const button = document.createElement('button')
     document.body.appendChild(button)
-    const pressed: boolean[] = []
-    for (const type of ['keydown', 'keyup'] as const) {
-      const event = new window.KeyboardEvent(type, {
-        key: ' ',
-        code: 'Space',
-        bubbles: true,
-        cancelable: true
-      })
+    let clicks = 0
+    button.addEventListener('click', () => clicks++)
+    const space = async (type: 'keydown' | 'keyup'): Promise<void> => {
       await act(async () => {
-        button.dispatchEvent(event)
+        button.dispatchEvent(
+          new window.KeyboardEvent(type, {
+            key: ' ',
+            code: 'Space',
+            bubbles: true,
+            cancelable: true
+          })
+        )
       })
-      pressed.push(event.defaultPrevented)
     }
-    button.remove()
-    expect(pressed).deep.equals([false, false])
-    expect(starts(socket)).deep.equals([])
+    const clock = manualClock(500)
+    try {
+      // A tap is the focused button's.
+      await space('keydown')
+      await clock.advance(499)
+      await space('keyup')
+      expect(clicks).equals(1)
+      expect(starts(socket)).deep.equals([])
+      // Held half a second, it talks, and the button is not clicked.
+      await space('keydown')
+      await clock.advance(500)
+      expect(starts(socket)).has.length(1)
+      await space('keyup')
+      expect(socket.frames.at(-1)).deep.include({ kind: 'release' })
+      expect(clicks).equals(1)
+    } finally {
+      clock.restore()
+      button.remove()
+    }
+  })
+
+  it('plays a held Space as a tap while the microphone cannot take it', async function () {
+    const { seen, socket } = await mountTess()
+    const button = document.createElement('button')
+    document.body.appendChild(button)
+    let clicks = 0
+    button.addEventListener('click', () => clicks++)
+    const space = async (type: 'keydown' | 'keyup'): Promise<void> => {
+      await act(async () => {
+        button.dispatchEvent(
+          new window.KeyboardEvent(type, {
+            key: ' ',
+            code: 'Space',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+    }
+    // Busy: the last sentence is still on its way.
+    await talk()
+    expect(seen.controls?.dictation.busy).equals(true)
+    const clock = manualClock(500)
+    const held = async (): Promise<void> => {
+      await space('keydown')
+      await clock.advance(800)
+      await space('keyup')
+    }
+    try {
+      await held()
+      expect(starts(socket)).has.length(1)
+      expect(clicks).equals(1)
+      // Reconnecting: the socket went away.
+      await act(async () => {
+        socket.close()
+      })
+      expect(seen.controls?.dictation.connected).equals(false)
+      await held()
+      expect(starts(socket)).has.length(1)
+      expect(clicks).equals(2)
+    } finally {
+      clock.restore()
+      button.remove()
+    }
   })
 
   it('waits for the reason when a hold heard nothing', async function () {

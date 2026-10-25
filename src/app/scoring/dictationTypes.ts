@@ -35,6 +35,22 @@ export interface DictationSocket {
   onerror: (() => void) | null
 }
 
+/** What Space drives: `since` is when the press began. */
+export interface TalkKeys {
+  /** Whether the hold began: not while reconnecting, or still busy. */
+  hold: (since?: number) => boolean
+  release: () => void
+}
+
+export interface SpaceToTalkOptions {
+  /**
+   * How long Space must be held before it talks. Absent, it talks at once
+   * and is never the page's; with it, a shorter press does what Space would
+   * have done.
+   */
+  holdMs?: number
+}
+
 export interface DictationAsk {
   question: string
   options: Array<{ label: string }>
@@ -107,9 +123,10 @@ export interface Dictation {
   setEnabled: (on: boolean) => void
   /**
    * Starts an utterance. `since` is when the press began: the audio heard
-   * from then, kept while nobody was talking, leads it.
+   * from then, kept while nobody was talking, leads it. Whether it began:
+   * not without an open socket, a context, or while one is under way.
    */
-  hold: (since?: number) => void
+  hold: (since?: number) => boolean
   release: () => void
   answer: (option: number) => void
   dismiss: () => void
@@ -117,8 +134,8 @@ export interface Dictation {
 
 /**
  * What `useDictationControls` takes. Tess passes no game: a `tess` scope,
- * `contextOf`, `onTranscript`, and `spaceTalks: false`, so Space stays the
- * page's beside her chat.
+ * `contextOf`, `onTranscript`, and `spaceHoldMs`, so Space talks only when
+ * held and a press stays the page's beside her chat.
  */
 export interface DictationControlsProps
   extends DictationTopic, DictationListener {
@@ -166,6 +183,12 @@ export interface DictationControlsProps
    * off while the field has a use for Space.
    */
   spaceTalks?: boolean
+  /**
+   * How long Space is held before it talks, anywhere on the page, text
+   * fields included; a shorter press does what Space does there. Absent,
+   * Space talks the moment it goes down.
+   */
+  spaceHoldMs?: number
   /** The LLM the scorer picked in settings; absent, the server's own. */
   model?: DictationModel
   /**

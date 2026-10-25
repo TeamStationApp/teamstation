@@ -321,7 +321,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
     },
     hold: since => {
       if (utterance.current != null || socket.current?.readyState !== OPEN)
-        return
+        return false
       const {
         gameId,
         session,
@@ -332,7 +332,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
       } = latest.current
       const context =
         contextOf?.() ?? (session == null ? null : dictationContext(session))
-      if (context == null) return
+      if (context == null) return false
       const id = `u${Date.now().toString(36)}${(counter.current++).toString(36)}`
       utterance.current = id
       holdingNow.current = true
@@ -354,6 +354,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
         for (const frame of recent.current)
           if (frame.at >= since - FRAME_MS) send(frame.pcm)
       recent.current = []
+      return true
     },
     release: () => {
       if (!holdingNow.current || releasing.current) return

@@ -6,7 +6,11 @@ import { Checkbox } from '../components/Checkbox'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { dictationOn } from './dictationPlatform'
-import type { Dictation, DictationControlsProps } from './dictationTypes'
+import type {
+  Dictation,
+  DictationControlsProps,
+  TalkKeys
+} from './dictationTypes'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
 import { PushToTalkButton, TAP_MS } from './PushToTalkButton'
 import {
@@ -81,6 +85,7 @@ export function useDictationControls(
     onAnswer,
     onDismissQuestion,
     spaceTalks = true,
+    spaceHoldMs,
     suspended,
     onActions,
     onTranscript,
@@ -133,21 +138,20 @@ export function useDictationControls(
       clearTimeout(timer)
     }
   }, [health])
-  const keys = useRef<{
-    hold: (since?: number) => void
-    release: () => void
-  }>({ hold: () => {}, release: () => {} })
+  const keys = useRef<TalkKeys>({ hold: () => false, release: () => {} })
   keys.current = {
-    hold: since => {
-      if (dictation.enabled && dictation.connected && !dictation.busy)
-        dictation.hold(since)
-    },
+    hold: since =>
+      dictation.enabled &&
+      dictation.connected &&
+      !dictation.busy &&
+      dictation.hold(since),
     release: dictation.release
   }
   useSpaceToTalk(
     available && dictation.enabled && suspended !== true,
     spaceTalks,
-    keys
+    keys,
+    { holdMs: spaceHoldMs }
   )
   const { setEnabled } = dictation
   useEffect(() => {

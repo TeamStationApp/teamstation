@@ -43,6 +43,7 @@ function fake(more: Partial<Dictation> = {}): Fake {
     hold: since => {
       self.calls.push('hold')
       if (since != null) self.since.push(since)
+      return true
     },
     release: () => {
       self.calls.push('release')

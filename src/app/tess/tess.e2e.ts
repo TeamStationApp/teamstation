@@ -794,21 +794,35 @@ async function main(): Promise<void> {
     await contains(page, 'Demo Hawks')
     console.log('W15b Back closed the chat; the address stayed', address)
 
-    // W15c: Space in the pane is the page's, not the microphone's. On the
-    // team's Schedule tab, long enough to scroll, Tab reaches the Team pill;
-    // Space scrolls the pane (react-native-web activates a tab with Enter,
-    // and Space only on buttons), and Enter switches the tab. Tess takes
-    // neither: no utterance starts, and Space's default is not prevented.
+    // W15c: Space is Tess's only when held. On the team's Schedule tab, long
+    // enough to scroll, Tab reaches the pane's Team pill: a quick Space
+    // activates it and scrolls nothing; a quick Space in her field types a
+    // space; and Space held 800 ms with the focus on the page listens from
+    // 500 ms, and what was heard becomes her next message.
     await page.setViewport({ width: 1280, height: 900 })
     await tap('[role="tab"][aria-label="Schedule"]')
     await tap(tessButton)
     await waitFor(page, column)
+    await page.waitForFunction(
+      () => {
+        const status = document.querySelector('[aria-label="Dictation status"]')
+        return status != null && status.textContent === 'Push to talk'
+      },
+      { timeout: 20000 }
+    )
     await page.evaluate(() => {
       const seen = { prevented: [] as boolean[] }
       ;(window as any).__space = seen
-      window.addEventListener('keydown', event => {
-        if (event.code === 'Space') seen.prevented.push(event.defaultPrevented)
-      })
+      // Whether Space's default survived, read once the key has gone
+      // through: the talk key stops it before it bubbles back up.
+      window.addEventListener(
+        'keydown',
+        event => {
+          if (event.code === 'Space')
+            setTimeout(() => seen.prevented.push(event.defaultPrevented), 0)
+        },
+        true
+      )
     })
     const begun = t.dictation.begun
     let focused = false
@@ -825,30 +839,31 @@ async function main(): Promise<void> {
       })
     }
     expect(focused, "Tab reached the pane's Team pill").equals(true)
-    const scrollTop = async (reset = false): Promise<number> =>
-      await page.evaluate(reset => {
-        let node = document.activeElement as HTMLElement | null
-        while (node != null) {
-          const style = getComputedStyle(node)
-          if (
-            ['auto', 'scroll'].includes(style.overflowY) &&
-            node.scrollHeight > node.clientHeight
-          ) {
-            // From the top, so there is room for Space to move it.
-            if (reset) node.scrollTop = 0
-            return node.scrollTop
-          }
-          node = node.parentElement
+    const scroller = await page.evaluate(() => {
+      let node = document.activeElement as HTMLElement | null
+      while (node != null) {
+        const style = getComputedStyle(node)
+        if (
+          ['auto', 'scroll'].includes(style.overflowY) &&
+          node.scrollHeight > node.clientHeight
+        ) {
+          node.setAttribute('data-w15c-scroller', '')
+          node.scrollTop = 0
+          return true
         }
-        return -1
-      }, reset)
-    const topBefore = await scrollTop(true)
-    await page.keyboard.press('Space')
-    await pause(800)
-    const topAfter = await scrollTop()
-    expect(topBefore, 'the pane can scroll').greaterThan(-1)
-    expect(topAfter, 'Space scrolled the pane').greaterThan(topBefore)
-    await page.keyboard.press('Enter')
+        node = node.parentElement
+      }
+      return false
+    })
+    expect(scroller, 'the pane can scroll').equals(true)
+    const scrollTop = async (): Promise<number> =>
+      await page.evaluate(() => {
+        const node = document.querySelector('[data-w15c-scroller]')
+        return node == null || !node.isConnected ? 0 : node.scrollTop
+      })
+    await page.keyboard.down('Space')
+    await pause(120)
+    await page.keyboard.up('Space')
     await page.waitForFunction(
       () => {
         const tab = Array.from(document.querySelectorAll('[role="tab"]')).find(
@@ -858,22 +873,85 @@ async function main(): Promise<void> {
       },
       { timeout: 10000 }
     )
+    await pause(800)
+    expect(await scrollTop(), 'Space scrolled nothing').equals(0)
     expect(
       await page.evaluate(() => (window as any).__space.prevented)
-    ).deep.equals([false])
+    ).deep.equals([true])
     expect(t.dictation.begun, 'no utterance started').equals(begun)
+    console.log('W15c a quick Space switched to Team and scrolled nothing')
+    // A quick Space in the field types a space.
+    await page.click(field)
+    await page.type(field, 'a')
+    await page.keyboard.down('Space')
+    await pause(120)
+    await page.keyboard.up('Space')
+    await page.type(field, 'b')
+    await page.waitForFunction(
+      field =>
+        document.querySelector<HTMLTextAreaElement>(field)!.value === 'a b',
+      { timeout: 5000 },
+      field
+    )
+    expect(t.dictation.begun, 'no utterance started').equals(begun)
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
+    await page.waitForFunction(
+      field => document.querySelector<HTMLTextAreaElement>(field)!.value === '',
+      { timeout: 5000 },
+      field
+    )
+    console.log('W15c a quick Space in the field typed a space')
+    // Held 800 ms with nothing focused, while the microphone hears a sentence.
+    await page.evaluate(() => {
+      const active = document.activeElement
+      if (active instanceof HTMLElement) active.blur()
+    })
+    const heardBefore = await userBubbles(HEARD)
+    const down = Date.now()
+    await page.keyboard.down('Space')
+    const saying = page.evaluate(async () => {
+      await (window as any).__playClip()
+    })
+    await pause(300)
     expect(
       await page.$eval(
         '[aria-label="Dictation status"]',
         node => node.textContent
-      )
+      ),
+      'not listening at 300 ms'
     ).equals('Push to talk')
+    await page.waitForFunction(
+      () => {
+        const status = document.querySelector('[aria-label="Dictation status"]')
+        return status != null && status.textContent === 'Listening…'
+      },
+      { timeout: 2000 }
+    )
+    const listening = Date.now() - down
+    expect(listening, 'listening from 500 ms').greaterThanOrEqual(500)
+    await pause(Math.max(0, 800 - (Date.now() - down)))
+    await page.keyboard.up('Space')
+    await saying
+    await page.waitForFunction(
+      (words, count) =>
+        Array.from(
+          document.querySelectorAll('[data-testid="Tess user message"]')
+        ).filter(node => (node.textContent || '').includes(words)).length >
+        count,
+      { timeout: 30000 },
+      HEARD,
+      heardBefore
+    )
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
+    expect(t.dictation.begun).equals(begun + 1)
     console.log(
-      'W15c Space scrolled the pane',
-      topBefore,
-      '->',
-      topAfter,
-      'and Enter switched to Team; no utterance started'
+      `W15c Space held 800 ms: listening after ${listening} ms; the transcript became a message`
     )
 
     // W16: the week's usage.
