@@ -20,6 +20,7 @@ import {
   segmentAfter
 } from './gumbo'
 import { reconcileShownLineup } from './lineupHistory'
+import type { SwapEffect } from './playsLost'
 import { awaitingResult, nextDecision } from './rules'
 import {
   copyGame,
@@ -88,6 +89,11 @@ export interface StoredGame {
    * another is refused. Absent from a store that keeps none.
    */
   generation?: number
+  /**
+   * What swapping home and away would do to the game, as the server decides
+   * it (`swapEffect`). Absent from a store that cannot tell.
+   */
+  swap?: SwapEffect
   /**
    * The context to replay with when the game's teams are no longer the ones
    * the session was opened with, as after a swap of home and away; absent
@@ -324,6 +330,8 @@ export class ScoringSession {
   private heldLineups: string[] = []
   /** The play generation this session opened the game on, if it has one. */
   private openedGeneration: number | undefined
+  /** What a swap does to the game, by the last read this session took up. */
+  private readSwap: SwapEffect | undefined
   /** The game's plays were reset under this session: it saves nothing more. */
   private isReplaced = false
   /** Counts each time a save took the server's copy up under its own changes. */
@@ -376,6 +384,7 @@ export class ScoringSession {
     session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
     session.openedGeneration = loaded.generation
+    session.readSwap = loaded.swap
     session.heldPlays = loaded.playsDigest == null ? [] : [loaded.playsDigest]
     session.heldLineups =
       loaded.lineupsDigest == null ? [] : [loaded.lineupsDigest]
@@ -672,6 +681,24 @@ export class ScoringSession {
   }
 
   /**
+   * What swapping home and away does to the game, by the server's word
+   * (`swapEffect`) on the last read this session took up: when it opened,
+   * reloaded or rebased. Absent from a store that cannot tell.
+   */
+  get serverSwap(): SwapEffect | undefined {
+    return this.readSwap
+  }
+
+  /**
+   * Whether the game holds plays TeamStation did not score, which this
+   * session never writes or removes, so a swap stays refused whatever it
+   * scores on top of them.
+   */
+  get holdsImported(): boolean {
+    return this.derivedIndexes.size > 0
+  }
+
+  /**
    * True once a save was refused because the game's plays were reset since
    * this session opened it: nothing more is saved, nor taken up under the
    * reset game, and the screen opens the game again.
@@ -868,13 +895,19 @@ export class ScoringSession {
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
     this.heldLineups = fresh.heldLineups
+    // Taken up even when the plays are as they were: a withdrawal, or a game
+    // marked under way elsewhere, changes only this.
+    const swapMoved = fresh.readSwap !== this.readSwap
+    this.readSwap = fresh.readSwap
     if (
       fresh.refusal === this.refusal &&
       JSON.stringify(fresh.log) === JSON.stringify(this.log) &&
       JSON.stringify(fresh.game) === JSON.stringify(this.game) &&
       JSON.stringify(fresh.eventTargets) === JSON.stringify(this.eventTargets)
-    )
+    ) {
+      if (swapMoved) this.notify()
       return false
+    }
     this.adopt(fresh)
     this.notify()
     return true
@@ -883,6 +916,7 @@ export class ScoringSession {
   /** Takes up everything `fresh`, a new read of the same game, holds. */
   private adopt(fresh: ScoringSession): void {
     this.context = fresh.context
+    this.readSwap = fresh.readSwap
     this.readActions = fresh.readActions
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays

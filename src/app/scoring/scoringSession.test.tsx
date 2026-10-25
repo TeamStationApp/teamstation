@@ -757,6 +757,10 @@ describe('swapping from the scoring menu', function () {
       final?: boolean
       /** An override was saved before the first pitch, and nothing more. */
       override?: boolean
+      /** What the read the screen opens on says a swap does. */
+      openedSwap?: StoredGame['swap']
+      /** The game's first plate appearance was imported from outside. */
+      imported?: boolean
     } = {}
   ): Promise<{
     opens: () => number
@@ -806,6 +810,25 @@ describe('swapping from the scoring menu', function () {
         expect(seed.apply(action).problems).deep.equals([])
       await seed.flush()
     }
+    if (options.imported === true) {
+      // A strikeout, then the next batter's first pitch: the strikeout is
+      // stored, the next at-bat the one in progress.
+      for (const call of ['C', 'C', 'C', 'B'] as const)
+        expect(seed.apply({ type: 'pitch', call }).problems).deep.equals([])
+      await seed.flush()
+      // Scored somewhere else: the play holds no TeamStation record.
+      const stored = store.games.get('g1')!
+      store.games.set('g1', {
+        ...stored,
+        plays: stored.plays.map(play => {
+          if (play.about.atBatIndex !== 0) return play
+          const { teamStation: _record, ...document } = play as typeof play & {
+            teamStation?: unknown
+          }
+          return document
+        })
+      })
+    }
     let opens = 0
     let swaps = 0
     let drains = 0
@@ -815,7 +838,17 @@ describe('swapping from the scoring menu', function () {
       persistent: options.persistent ?? true,
       open: async detail => {
         opens++
-        const session = await GameSession.open(store, 'g1', context(detail))
+        const read =
+          options.openedSwap == null
+            ? store
+            : {
+                load: async (id: string) => ({
+                  ...(await store.load(id)),
+                  swap: options.openedSwap
+                }),
+                save: store.save.bind(store)
+              }
+        const session = await GameSession.open(read, 'g1', context(detail))
         if (options.pendingAfterFlush === true) {
           session.flush = async () => undefined
           Object.defineProperty(session, 'pending', { get: () => 1 })
@@ -1096,6 +1129,87 @@ describe('swapping from the scoring menu', function () {
     await settle()
     expect(screen.swaps()).equals(1)
     expect(screen.read()).deep.include({ playsDigest: 'server', generation: 0 })
+  })
+
+  it("follows the server's word on what the swap does, and refuses a game scored outside TeamStation", async function () {
+    let effect: 'reset' | 'scoredElsewhere' = 'reset'
+    // Before the first pitch here; the server holds more.
+    const screen = await swappable({
+      events: stored => ({ ...stored, swap: effect })
+    })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    expect(screen.swaps()).equals(0)
+    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+      'The game changed since this opened. Check what will be lost, then confirm again.'
+    )
+    expect(document.body.textContent).includes(
+      'Resets all game plays. Hawks will bat first'
+    )
+    effect = 'scoredElsewhere'
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.swaps()).equals(0)
+    expect(screen.opens()).equals(1)
+    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+      'This game was scored outside TeamStation, so home and away cannot be swapped here.'
+    )
+    await click('Cancel')
+    await settle()
+  })
+
+  it('offers no swap of a game scored outside TeamStation or withdrawn, and says why', async function () {
+    for (const [openedSwap, subtext] of [
+      ['scoredElsewhere', 'scored outside TeamStation'],
+      ['withdrawn', 'game was withdrawn']
+    ] as const) {
+      const screen = await swappable({ openedSwap })
+      expect(screen.session().serverSwap).equals(openedSwap)
+      await click(MENU)
+      expect(disabled(SWAP), openedSwap).equals(true)
+      expect(rowText(SWAP)).equals(`${SWAP}\n${subtext}`)
+      await unmount()
+    }
+  })
+
+  it('keeps refusing a game with imported plays, though this screen scores on top of them', async function () {
+    const screen = await swappable({
+      openedSwap: 'scoredElsewhere',
+      imported: true
+    })
+    expect(screen.session().holdsImported).equals(true)
+    await click('Ball')
+    await settle()
+    await click(MENU)
+    expect(disabled(SWAP)).equals(true)
+    expect(rowText(SWAP)).equals(`${SWAP}\nscored outside TeamStation`)
+  })
+
+  it('offers the reset once this screen scores a game called scored elsewhere for its status alone', async function () {
+    await swappable({ openedSwap: 'scoredElsewhere' })
+    await click('Ball')
+    await settle()
+    await click(MENU)
+    expect(disabled(SWAP)).equals(false)
+    expect(rowText(SWAP)).equals(`${SWAP}\nresets all game plays`)
+  })
+
+  it('refuses a withdrawn game the server names at the swap', async function () {
+    const screen = await swappable({
+      events: stored => ({ ...stored, swap: 'withdrawn' })
+    })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    expect(screen.swaps()).equals(0)
+    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+      'This canceled game cannot be changed.'
+    )
+    await click('Cancel')
+    await settle()
   })
 
   it('shows the server’s refusal and opens nothing again', async function () {

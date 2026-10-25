@@ -36,3 +36,17 @@ export function atBatOf(
   if (game.pregame == null || hasPlays) return null
   return { about: { ...PREGAME_ABOUT }, teamStation: game.pregame }
 }
+
+/**
+ * The at-bat a post leaves the game: the one it sends, or, sending none,
+ * the one readers will see once its plays are written, so the pregame
+ * lineups only while it leaves no play stored. What the post checks is what
+ * it writes.
+ */
+export function postedAtBat(
+  game: { currentPlay: unknown; pregame: unknown },
+  plays: readonly unknown[],
+  sent: unknown
+): unknown {
+  return sent !== undefined ? sent : atBatOf(game, plays.length > 0)
+}

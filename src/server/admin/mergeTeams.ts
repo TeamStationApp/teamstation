@@ -126,6 +126,71 @@ async function mergeSeasonFlags(
     .execute()
 }
 
+/**
+ * Refuses a merge of two teams that play each other: in a game, or in a
+ * game the Auto-Scheduler proposed that is still waiting for approval, which
+ * becomes one once it is accepted. Each would be left with one team on both
+ * sides, and a game keeps its lineups, guests and players left off under its
+ * two teams' ids. A proposal declined, withdrawn or expired becomes no game,
+ * so it does not stand in the way.
+ */
+async function refuseGamesBetween(
+  db: Kysely<Database>,
+  from: { id: string; name: string },
+  into: { id: string; name: string }
+): Promise<void> {
+  const pairs = [
+    [from.id, into.id],
+    [into.id, from.id]
+  ] as const
+  const games = await db
+    .selectFrom('games')
+    .select('id')
+    .where(expression =>
+      expression.or(
+        pairs.map(([home, away]) =>
+          expression.and([
+            expression('home_team_id', '=', home),
+            expression('away_team_id', '=', away)
+          ])
+        )
+      )
+    )
+    .orderBy('id')
+    .execute()
+  const proposed = await db
+    .selectFrom('schedule_preview_games')
+    .innerJoin(
+      'group_requests',
+      'group_requests.id',
+      'schedule_preview_games.request_id'
+    )
+    .select('group_requests.id as id')
+    .where('schedule_preview_games.game_id', 'is', null)
+    .where('group_requests.status', '=', 'pending')
+    .where('group_requests.expires_at', '>', new Date())
+    .where(expression =>
+      expression.or(
+        pairs.map(([home, away]) =>
+          expression.and([
+            expression('schedule_preview_games.home_team_id', '=', home),
+            expression('schedule_preview_games.away_team_id', '=', away)
+          ])
+        )
+      )
+    )
+    .orderBy('group_requests.id')
+    .execute()
+  const named = [
+    ...games.map(game => game.id),
+    ...proposed.map(request => `proposal ${request.id}`)
+  ]
+  if (named.length > 0)
+    throw new Error(
+      `${from.name} and ${into.name} play each other in ${named.join(', ')}; merged, each game would have one team on both sides`
+    )
+}
+
 export async function mergeTeams(
   db: Kysely<Database>,
   input: MergeTeamsInput
@@ -149,6 +214,8 @@ export async function mergeTeams(
       `${into.name} has itself been merged into ${into.merged_into}; merge into that instead`
     )
   }
+
+  await refuseGamesBetween(db, from, into)
 
   const report: MergeTeamsReport = {
     fromTeamName: from.name,
@@ -207,6 +274,9 @@ export async function mergeTeams(
       // does the reverse here. Finish those writers before moving their rows.
       'users.closeInto'
     ])
+    // Again under the teams' locks: a game between them may have been
+    // scheduled since the report.
+    await refuseGamesBetween(trx, from, into)
     // The exhibition flags first, while both teams' seasons still read as
     // they were: `mergeParents` is about to move the source's parent rows.
     await mergeSeasonFlags(trx, fromTeamId, intoTeamId)

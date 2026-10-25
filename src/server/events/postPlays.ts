@@ -21,7 +21,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
-import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
+import { resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
@@ -30,8 +30,8 @@ import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
-import { atBatOf } from './atBatInProgress'
-import { gameCurrentPlay } from './currentPlay'
+import { atBatOf, postedAtBat } from './atBatInProgress'
+import { pregameFold } from './currentPlay'
 import { reconcileEventTags } from './eventTags'
 import {
   type PlaySource,
@@ -103,7 +103,8 @@ export const RESET_SINCE_READ = 'This game was reset since it was read'
  * asks there whether its sender may score the game. The refold script, which
  * rewrites TeamStation's own plays, passes none. `written` is told the
  * answer last, in the post's transaction, before the clock: where a queued
- * post's `Idempotency-Key` keeps it.
+ * post's `Idempotency-Key` keeps it. It sees a pregame at-bat as stored,
+ * since the answer folds it only after the commit.
  */
 export async function postGamePlays(
   db: Kysely<Database>,
@@ -130,6 +131,13 @@ export async function postGamePlays(
       `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1, 2 or 3 record`
     )
   let refreshDelay: number | undefined
+  /** The answer's at-bat, folded once the row is let go (`pregameFold`). */
+  let folding:
+    | {
+        fold: () => Promise<CurrentPlay | null>
+        sides: ReturnType<typeof teamsOfRow>
+      }
+    | undefined
 
   return await atomic(db, async (trx): Promise<PostedPlays> => {
     await lockPlayerEdits(trx)
@@ -172,9 +180,12 @@ export async function postGamePlays(
     )
       throw conflict(OTHER_TEAMS, { stale: true })
     const prepared = withHalfOuts(body.plays)
-    // Read on its own, after the lock and before this post's writes: a
-    // post that held the lock first has fixed the fence already.
-    const hadPlays = await gameHasPlays(trx, gameId)
+    // The game's plays as this post finds them, read once, after the lock
+    // and before its writes: a post that held the lock first has fixed the
+    // fence already, and they tell its sender whether anybody else wrote to
+    // the game since.
+    const priorRows = await readPlays(trx, gameId)
+    const hadPlays = priorRows.length > 0
     const live = body.mode === 'live'
     if (
       game.status === 'final' &&
@@ -199,9 +210,6 @@ export async function postGamePlays(
     // A live post built on lineups somebody has saved over since would
     // write the old ones back: the sender reads the game again and posts
     // its own changes on top.
-    // The game as this post finds it, which tells its sender whether
-    // anybody else wrote to it since.
-    const priorRows = await readPlays(trx, gameId)
     const prior = live
       ? playsDigest(priorRows, atBatOf(game, priorRows.length > 0))
       : null
@@ -225,12 +233,14 @@ export async function postGamePlays(
     )
     for (const index of body.remove ?? []) nextPlays.delete(index)
     for (const play of body.plays) nextPlays.set(play.about.atBatIndex, play)
+    const nextList = [...nextPlays.values()]
     const next = {
-      plays: [...nextPlays.values()],
-      currentPlay:
-        live && body.currentPlay !== undefined
-          ? body.currentPlay
-          : previous.currentPlay
+      plays: nextList,
+      currentPlay: postedAtBat(
+        game,
+        nextList,
+        live ? body.currentPlay : undefined
+      ) as CurrentPlay | null
     }
     if (
       [...next.plays, next.currentPlay].some(
@@ -257,12 +267,8 @@ export async function postGamePlays(
       awayTeamId: game.away_team_id
     }
     const priorCurrent = game.currentPlay as Partial<GumboPlay> | null
-    // A live post that sends no at-bat keeps the one readers see: before
-    // the first pitch, the pregame lineups.
-    let currentPlay =
-      live && body.currentPlay !== undefined
-        ? body.currentPlay
-        : atBatOf(game, priorRows.length > 0)
+    // The at-bat the checks above were made on.
+    let currentPlay: unknown = next.currentPlay
     if (currentPlay != null && typeof currentPlay === 'object') {
       const incoming = currentPlay as Partial<GumboPlay>
       if (typeof incoming.about?.atBatIndex === 'number') {
@@ -300,7 +306,6 @@ export async function postGamePlays(
 
     if (system === 'teamstation') {
       const settings = await radarSettings(trx)
-      const priorRows = await readPlays(trx, gameId)
       const priorByIndex = new Map(
         priorRows.map(row => [row.atBatIndex, row.gumbo])
       )
@@ -485,26 +490,32 @@ export async function postGamePlays(
         ...playJson(row),
         gumbo: playForWire(resolved.plays[index], sides)
       })),
-      currentPlay: playForWire(
-        await gameCurrentPlay(
-          trx,
-          gameId,
-          { ...game, currentPlay: taggedGame.currentPlay },
-          resolved
-        ),
-        sides
-      ),
+      currentPlay: playForWire(resolved.currentPlay, sides),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior,
       generation: game.play_generation
     }
     await written?.(trx, answer)
+    folding = {
+      fold: await pregameFold(
+        trx,
+        gameId,
+        { ...game, currentPlay: taggedGame.currentPlay },
+        resolved
+      ),
+      sides
+    }
     return answer
   })
-    .then(result => {
+    .then(async result => {
       if (refreshDelay != null && !db.isTransaction)
         scheduleRadarRefresh(db, gameId, refreshDelay)
+      // Before the first pitch the at-bat is folded as `GET /events` folds
+      // it, from what the post read: the replay runs after the commit, or,
+      // in a caller's transaction, once this post's part of it is done.
+      if (folding != null)
+        result.currentPlay = playForWire(await folding.fold(), folding.sides)
       return result
     })
     .catch((error: unknown) => {

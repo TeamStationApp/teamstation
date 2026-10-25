@@ -18,30 +18,43 @@ import { contextOf } from '../scoring/replayContext'
  * other time, and for a pregame that does not replay, it is the at-bat as
  * `resolved` holds it: the game's stored plays and at-bat, their accounts
  * resolved (`resolveScoringGame`).
+ *
+ * It comes in two steps. Everything the fold reads (the replay context:
+ * teams, rosters, players) is read now, with `db`, as a caller holding a
+ * game row reads it under that lock; the replay it answers reads nothing,
+ * so the caller runs it once the lock is let go.
  */
-export async function gameCurrentPlay(
+export async function pregameFold(
   db: Kysely<Database>,
   gameId: string,
   game: { home_team_id: string; away_team_id: string; currentPlay: unknown },
   resolved: StoredGame
-): Promise<CurrentPlay | null> {
+): Promise<() => Promise<CurrentPlay | null>> {
+  const asStored = async (): Promise<CurrentPlay | null> => resolved.currentPlay
   if (
     game.currentPlay != null ||
     resolved.plays.length > 0 ||
     resolved.currentPlay == null
   )
-    return resolved.currentPlay
+    return asStored
+  let context: Awaited<ReturnType<typeof contextOf>>
   try {
-    const context = await contextOf(db, gameId, game, resolved)
-    if (context == null) return resolved.currentPlay
-    const session = await ScoringSession.open(
-      readOnlyStore(resolved),
-      gameId,
-      context
-    )
-    return session.picture().current ?? resolved.currentPlay
+    context = await contextOf(db, gameId, game, resolved)
   } catch {
-    return resolved.currentPlay
+    return asStored
+  }
+  if (context == null) return asStored
+  return async () => {
+    try {
+      const session = await ScoringSession.open(
+        readOnlyStore(resolved),
+        gameId,
+        context
+      )
+      return session.picture().current ?? resolved.currentPlay
+    } catch {
+      return resolved.currentPlay
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 import { Client } from 'pg'
 
+import { systemCancelled } from '../../common/gameApprovals'
 import type { GameChange } from '../../common/gameSocket'
 import type { CurrentPlay } from '../../common/gumboPlay'
 import { teamsOfRow } from '../../common/teamLists'
@@ -9,7 +10,7 @@ import type { GameScope } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
-import { gameCurrentPlay } from '../events/currentPlay'
+import { pregameFold } from '../events/currentPlay'
 import { playJson, playsDigest, readPlays } from '../events/postPlays'
 import { lineupsAnswer } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
@@ -83,6 +84,8 @@ export class GameFanout {
   private readonly onLost: (() => void) | undefined
   private readonly watched = new Map<string, Watched>()
   private readonly waiting = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Each game's last delivery under way (`inTurn`). */
+  private readonly turns = new Map<string, Promise<void>>()
   private client: Client | undefined
   /** Lost connections still hanging up, which close() waits for too. */
   private readonly hangingUp = new Set<Promise<void>>()
@@ -189,93 +192,136 @@ export class GameFanout {
             song: await this.readSong(this.db, change.team, change.userId)
           }
         : undefined
-    for (const gameId of games) {
-      await atomic(this.db, async trx => {
-        // Hold the current matchup while reading and authorizing its private
-        // data. A revision cannot swap opponents between these two reads.
-        const game = await trx
-          .selectFrom('games')
-          .selectAll()
-          .where('id', '=', gameId)
-          .forShare()
-          .executeTakeFirst()
-        const watched = this.watched.get(gameId)
-        if (game == null || watched == null) return
-        const scope: GameScope = {
-          homeTeamId: game.home_team_id,
-          awayTeamId: game.away_team_id,
-          seasonId: game.season_id
-        }
-        watched.scope = scope
-        if (
-          'team' in change &&
-          scope.homeTeamId !== change.team &&
-          scope.awayTeamId !== change.team
-        )
-          return
-        const plays =
-          change.kind === 'plays' ? await readPlays(trx, gameId) : []
-        const head = {
-          type: 'change' as const,
-          gameId,
-          at: this.now().toISOString()
-        }
-        const message: GameChange =
-          change.kind === 'walkUpSong'
-            ? { ...head, kind: 'walkUpSong', data: song! }
-            : change.kind === 'game'
+    for (const gameId of games)
+      await this.inTurn(gameId, async () => {
+        await this.deliverGame(gameId, change, song)
+      })
+  }
+
+  /**
+   * Runs `step` once every delivery for `gameId` already under way is done.
+   * The game row is let go before a fold's replay and the send, so without
+   * this a later notice could overtake an earlier one; in turn, each game's
+   * notices go out in the order their data was read.
+   */
+  private async inTurn(
+    gameId: string,
+    step: () => Promise<void>
+  ): Promise<void> {
+    const turn = (this.turns.get(gameId) ?? Promise.resolve()).then(step)
+    const settled = turn.catch(() => undefined)
+    this.turns.set(gameId, settled)
+    try {
+      await turn
+    } finally {
+      if (this.turns.get(gameId) === settled) this.turns.delete(gameId)
+    }
+  }
+
+  /** Reads one game's change and sends it to whoever may see it. */
+  private async deliverGame(
+    gameId: string,
+    change: GameChangePayload,
+    song:
+      { teamId: string; userId: string; song: WalkUpSong | null } | undefined
+  ): Promise<void> {
+    const held = await atomic(this.db, async trx => {
+      // Hold the current matchup while reading and authorizing its private
+      // data. A revision cannot swap opponents between these two reads.
+      const game = await trx
+        .selectFrom('games')
+        .selectAll()
+        .where('id', '=', gameId)
+        .forShare()
+        .executeTakeFirst()
+      const watched = this.watched.get(gameId)
+      if (game == null || watched == null) return undefined
+      const scope: GameScope = {
+        homeTeamId: game.home_team_id,
+        awayTeamId: game.away_team_id,
+        seasonId: game.season_id
+      }
+      watched.scope = scope
+      if (
+        'team' in change &&
+        scope.homeTeamId !== change.team &&
+        scope.awayTeamId !== change.team
+      )
+        return undefined
+      const plays = change.kind === 'plays' ? await readPlays(trx, gameId) : []
+      const head = {
+        type: 'change' as const,
+        gameId,
+        at: this.now().toISOString()
+      }
+      const message: GameChange =
+        change.kind === 'walkUpSong'
+          ? { ...head, kind: 'walkUpSong', data: song! }
+          : change.kind === 'game'
+            ? {
+                ...head,
+                kind: 'game',
+                data: {
+                  status: game.status,
+                  awayScore: game.away_score,
+                  homeScore: game.home_score,
+                  homeTeamId: game.home_team_id,
+                  awayTeamId: game.away_team_id,
+                  generation: game.play_generation,
+                  withdrawn: systemCancelled(game.cancellation_reason)
+                }
+              }
+            : change.kind === 'lineups'
               ? {
                   ...head,
-                  kind: 'game',
+                  kind: 'lineups',
+                  data: await lineupsAnswer(trx, {
+                    id: gameId,
+                    home_team_id: game.home_team_id,
+                    away_team_id: game.away_team_id,
+                    currentPlay: game.currentPlay,
+                    pregame: game.pregame,
+                    lineups_digest: game.lineups_digest,
+                    play_generation: game.play_generation
+                  })
+                }
+              : {
+                  ...head,
+                  kind: 'plays',
                   data: {
-                    status: game.status,
-                    awayScore: game.away_score,
-                    homeScore: game.home_score,
-                    homeTeamId: game.home_team_id,
-                    awayTeamId: game.away_team_id,
-                    generation: game.play_generation
+                    plays: plays.map(row => ({
+                      ...playJson(row),
+                      gumbo: playForWire(row.gumbo, teamsOfRow(game))
+                    })),
+                    // Folded once the lock is let go, below.
+                    currentPlay: null,
+                    digest: playsDigest(plays, atBatOf(game, plays.length > 0))
                   }
                 }
-              : change.kind === 'lineups'
-                ? {
-                    ...head,
-                    kind: 'lineups',
-                    data: await lineupsAnswer(trx, {
-                      id: gameId,
-                      home_team_id: game.home_team_id,
-                      away_team_id: game.away_team_id,
-                      currentPlay: game.currentPlay,
-                      pregame: game.pregame,
-                      lineups_digest: game.lineups_digest,
-                      play_generation: game.play_generation
-                    })
-                  }
-                : {
-                    ...head,
-                    kind: 'plays',
-                    data: {
-                      plays: plays.map(row => ({
-                        ...playJson(row),
-                        gumbo: playForWire(row.gumbo, teamsOfRow(game))
-                      })),
-                      currentPlay:
-                        playForWire(
-                          await noticedAtBat(trx, game, plays.length > 0),
-                          teamsOfRow(game)
-                        ) ?? null,
-                      digest: playsDigest(
-                        plays,
-                        atBatOf(game, plays.length > 0)
-                      )
-                    }
-                  }
-        await Promise.all(
-          [...watched.subscribers].map(async subscriber => {
-            if (await subscriber.maySee(scope, trx)) subscriber.send(message)
-          })
-        )
-      })
-    }
+      // Taken once: a subscriber refused here closes, leaving the set.
+      const subscribers = [...watched.subscribers]
+      const seeing = await Promise.all(
+        subscribers.map(async subscriber => await subscriber.maySee(scope, trx))
+      )
+      return {
+        game,
+        // Read here, with the plays and whoever may see them; replayed
+        // once the row is let go.
+        fold:
+          message.kind === 'plays'
+            ? await noticedAtBat(trx, game, plays.length > 0)
+            : undefined,
+        message,
+        recipients: subscribers.filter((_, i) => seeing[i])
+      }
+    })
+    if (held == null) return
+    const { game, message } = held
+    // The pregame fold replays a session: not while the row is held.
+    if (message.kind === 'plays' && held.fold != null)
+      message.data.currentPlay =
+        playForWire(await held.fold(), teamsOfRow(game)) ?? null
+    for (const subscriber of held.recipients) subscriber.send(message)
   }
 
   private async listen(): Promise<void> {
@@ -318,7 +364,8 @@ export class GameFanout {
 /**
  * The at-bat a `plays` notice carries, as `GET /games/:gameId/events`
  * answers it: before the first pitch, the pregame lineups folded into a
- * current play (`gameCurrentPlay`).
+ * current play (`pregameFold`). What it reads is read with `db`; the replay
+ * it answers reads nothing.
  */
 async function noticedAtBat(
   db: Kysely<Database>,
@@ -330,12 +377,13 @@ async function noticedAtBat(
     pregame: unknown
   },
   hasPlays: boolean
-): Promise<unknown> {
+): Promise<() => Promise<unknown>> {
   const atBat = atBatOf(game, hasPlays)
-  if (game.currentPlay != null || hasPlays || atBat == null) return atBat
+  if (game.currentPlay != null || hasPlays || atBat == null)
+    return async () => atBat
   const resolved = await resolveScoringGame(db, {
     plays: [],
     currentPlay: atBat as CurrentPlay
   })
-  return await gameCurrentPlay(db, game.id, game, resolved)
+  return await pregameFold(db, game.id, game, resolved)
 }

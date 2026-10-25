@@ -49,6 +49,11 @@ export interface GameChangeData {
      * the plays it holds were reset. An older server sends none.
      */
     generation?: number
+    /**
+     * Whether a team withdrew from the game, which is then never changed.
+     * An older server sends none.
+     */
+    withdrawn?: boolean
   }
 }
 

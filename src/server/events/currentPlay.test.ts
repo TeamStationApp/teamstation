@@ -4,10 +4,10 @@ import { describe, it } from 'mocha'
 
 import type { CurrentPlay } from '../../common/gumboPlay'
 import type { Database } from '../db/database'
-import { gameCurrentPlay, readOnlyStore } from './currentPlay'
+import { pregameFold, readOnlyStore } from './currentPlay'
 
 /**
- * `gameCurrentPlay`'s edges. Its fold of a real pregame is in
+ * `pregameFold`'s edges. Its fold of a real pregame is in
  * `routes/events.test.ts` (P4, P5).
  */
 describe('the at-bat in progress a reader is answered', function () {
@@ -29,32 +29,52 @@ describe('the at-bat in progress a reader is answered', function () {
   it('answers a stored at-bat, or one after stored plays, as it is', async function () {
     const stored = { ...shell, playEvents: [] } as unknown as CurrentPlay
     expect(
-      await gameCurrentPlay(
-        broken,
-        'g1',
-        { ...game, currentPlay: stored },
-        { plays: [], currentPlay: stored }
-      )
+      await (
+        await pregameFold(
+          broken,
+          'g1',
+          { ...game, currentPlay: stored },
+          { plays: [], currentPlay: stored }
+        )
+      )()
     ).equals(stored)
     expect(
-      await gameCurrentPlay(
-        broken,
-        'g1',
-        { ...game, currentPlay: null },
-        { plays: [], currentPlay: null }
-      )
+      await (
+        await pregameFold(
+          broken,
+          'g1',
+          { ...game, currentPlay: null },
+          { plays: [], currentPlay: null }
+        )
+      )()
     ).equals(null)
   })
 
   it('answers the pregame as stored when it cannot be folded', async function () {
     expect(
-      await gameCurrentPlay(
-        broken,
-        'g1',
-        { ...game, currentPlay: null },
-        { plays: [], currentPlay: shell }
-      )
+      await (
+        await pregameFold(
+          broken,
+          'g1',
+          { ...game, currentPlay: null },
+          { plays: [], currentPlay: shell }
+        )
+      )()
     ).equals(shell)
+  })
+
+  it('answers the pregame as stored when its record does not read, reading nothing', async function () {
+    const unread = {
+      ...shell,
+      teamStation: { version: 99, actions: [] }
+    } as unknown as CurrentPlay
+    const fold = await pregameFold(
+      broken,
+      'g1',
+      { ...game, currentPlay: null },
+      { plays: [], currentPlay: unread }
+    )
+    expect(await fold()).equals(unread)
   })
 
   it('reads with a store that saves nothing', async function () {

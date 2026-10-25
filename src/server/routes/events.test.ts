@@ -37,11 +37,15 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { atBatOf } from '../events/atBatInProgress'
+import { pregameFold } from '../events/currentPlay'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays, RESET_SINCE_READ } from '../events/postPlays'
+import { storedLineupsDigest } from '../events/teamLineups'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { resolveScoringGame } from '../scoring/openRow'
 import {
   eventRoutes,
   statusAfterLivePost,
@@ -1583,7 +1587,9 @@ describe('posting and reading plays', function () {
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       currentPlay: current(0),
-      generation: 0
+      generation: 0,
+      // An at-bat with no TeamStation record.
+      swap: 'scoredElsewhere'
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
@@ -3443,7 +3449,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     home: rosterOf(homeIds)
   })
   setup.sides.away.battingOrder = setup.sides.away.battingOrder.slice(0, 9)
-  const games = Array.from({ length: 12 }, () => makeId('game'))
+  const games = Array.from({ length: 14 }, () => makeId('game'))
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -3948,6 +3954,84 @@ describe('the team default lineup a live post keeps (U10)', function () {
     // Its record is the pregame lineups, by side on the wire.
     expect(current.teamStation.version).equals(2)
     expect((await atBatColumns(gameId)).currentPlay).equals(null)
+    // A post's answer folds it the same, once it has committed.
+    const posted = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: []
+    })
+    expect(posted.status, JSON.stringify(posted.body)).equals(200)
+    expect(
+      (posted.body as unknown as { currentPlay: typeof current }).currentPlay
+        .matchup
+    ).deep.equals(current.matchup)
+    // Everything the fold reads is read first, as a caller holding the
+    // game row reads it; the replay after reads nothing.
+    let reading = true
+    const watched = new Proxy(db!, {
+      get(target, property) {
+        if (!reading) throw new Error('read once the lock was let go')
+        const value = Reflect.get(target, property, target) as unknown
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const row = await db!
+      .selectFrom('games')
+      .select(['home_team_id', 'away_team_id', 'currentPlay', 'pregame'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    const resolved = await resolveScoringGame(db!, {
+      plays: [],
+      currentPlay: atBatOf(row, false) as never
+    })
+    const fold = await pregameFold(watched, gameId, row, resolved)
+    reading = false
+    expect(((await fold()) as unknown as typeof current).matchup).deep.equals(
+      current.matchup
+    )
+  })
+
+  it('keeps the digest of the lineups a post leaves when it stores the first plays and sends no at-bat', async function () {
+    // A completed first plate appearance, as another game scored it.
+    const source = games[12]
+    await apply(
+      await scoring(source),
+      reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]),
+      ball,
+      { type: 'result', eventType: 'intent_walk' },
+      close
+    )
+    const [first] = await db!
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', source)
+      .where('atBatIndex', '=', 0)
+      .execute()
+    const gameId = games[13]
+    await apply(await scoring(gameId), reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    const posted = await post(gameId, {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [first.gumbo]
+    })
+    expect(posted.status, JSON.stringify(posted.body)).equals(200)
+    const row = await db!
+      .selectFrom('games')
+      .select([
+        'id',
+        'home_team_id',
+        'away_team_id',
+        'currentPlay',
+        'pregame',
+        'lineups_digest'
+      ])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    // What a reader works out from the plays stored: the pregame lineups
+    // are no at-bat once a play is.
+    expect(row.lineups_digest).equals(
+      await storedLineupsDigest(db!, { ...row, lineups_digest: null })
+    )
   })
 
   it('keeps a lineup change sent with the first pitch in the pregame lineups', async function () {

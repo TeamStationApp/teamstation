@@ -43,7 +43,8 @@ export function playsLost(stored: {
 /**
  * Whether swapping home and away resets the game, as the server decides it:
  * any play stored, the game's final entry included, or an at-bat in progress
- * holding anything but lineup changes (a pitch, a play, an override). A reset
+ * holding anything but lineup changes (a pitch, a play, an override, or
+ * pitch events on its document). A reset
  * can delete no at-bat at all, so this, not `playsLost`, says whether to warn.
  */
 export function resetsPlays(stored: {
@@ -53,11 +54,64 @@ export function resetsPlays(stored: {
   if (stored.plays.length > 0) return true
   const play = stored.currentPlay
   if (play == null || typeof play !== 'object') return false
-  const record = storedRecordOf(play)
-  if (record != null)
-    return record.actions.some(action => action.type !== 'lineup')
   const events = (play as PlayLike).playEvents
-  return Array.isArray(events) && events.length > 0
+  if (Array.isArray(events) && events.length > 0) return true
+  // As `pregameRecord` reads it, so a plain swap is one `maySwapSides` takes.
+  return (
+    storedRecordOf(play)?.actions.some(action => action.type !== 'lineup') ===
+    true
+  )
+}
+
+/**
+ * What swapping home and away does to a game, decided once for the server
+ * and every screen:
+ *
+ * - `withdrawn`: a game a team withdrew from is not changed at all.
+ * - `scoredElsewhere`: a play or at-bat TeamStation did not score, or a game
+ *   marked under way or final with nothing TeamStation scored. It cannot be
+ *   swapped here, since a reset could not score it again.
+ * - `reset`: plays or an at-bat TeamStation scored (`resetsPlays`): the swap
+ *   deletes them first.
+ * - `swap`: only lineups, before the first pitch: the sides change.
+ */
+export type SwapEffect = 'swap' | 'reset' | 'scoredElsewhere' | 'withdrawn'
+
+/** What the screens say of a swap a game scored elsewhere refuses. */
+export const SWAP_SCORED_ELSEWHERE =
+  'This game was scored outside TeamStation, so home and away cannot be swapped here.'
+/** What the server and the screens say of a withdrawn game. */
+export const WITHDRAWN_GAME = 'This canceled game cannot be changed.'
+
+const SWAP_EFFECTS: readonly SwapEffect[] = [
+  'swap',
+  'reset',
+  'scoredElsewhere',
+  'withdrawn'
+]
+
+export function swapEffect(
+  stored: { plays: readonly unknown[]; currentPlay: unknown },
+  game: { status: string; withdrawn: boolean }
+): SwapEffect {
+  if (game.withdrawn) return 'withdrawn'
+  if (
+    stored.plays.some(play => storedRecordOf(play) == null) ||
+    (stored.currentPlay != null && storedRecordOf(stored.currentPlay) == null)
+  )
+    return 'scoredElsewhere'
+  if (resetsPlays(stored)) return 'reset'
+  return game.status === 'inProgress' || game.status === 'final'
+    ? 'scoredElsewhere'
+    : 'swap'
+}
+
+/**
+ * A swap effect as a server sent it: one this app does not know is none,
+ * as from a server that sends none.
+ */
+export function asSwapEffect(raw: unknown): SwapEffect | undefined {
+  return SWAP_EFFECTS.find(effect => effect === raw)
 }
 
 /**

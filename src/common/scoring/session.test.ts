@@ -238,6 +238,41 @@ describe('a scoring session', function () {
     expect(completedPlayTag(play)).equals('tough batter')
   })
 
+  it("takes up the server's word on what a swap does from every read, the plays unchanged or not", async () => {
+    class SwapStore extends FakeStore {
+      swap: StoredGame['swap'] = 'swap'
+      async load(): Promise<StoredGame> {
+        return { ...(await super.load()), swap: this.swap }
+      }
+    }
+    const store = new SwapStore()
+    const { session } = await open(store)
+    expect(session.serverSwap).equals('swap')
+    let told = 0
+    session.subscribe(() => {
+      told++
+    })
+    // Withdrawn meanwhile: nothing else about the game moved.
+    store.swap = 'withdrawn'
+    expect(await session.reload()).equals(false)
+    expect(session.serverSwap).equals('withdrawn')
+    expect(told).equals(1)
+    expect(await session.reload()).equals(false)
+    expect(told).equals(1)
+    // And with plays somebody else saved.
+    store.swap = 'reset'
+    store.current = (
+      await (async () => {
+        const other = await open(new FakeStore())
+        other.session.apply(ball)
+        await other.session.flush()
+        return other.store
+      })()
+    ).current
+    expect(await session.reload()).equals(true)
+    expect(session.serverSwap).equals('reset')
+  })
+
   it('reads authoritative tags without replacing pending scoring or local annotations', async () => {
     const { session, store } = await open()
     session.apply(ball)

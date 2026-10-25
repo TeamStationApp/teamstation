@@ -126,6 +126,7 @@ import {
   type LineupPerson,
   type SideLineups
 } from './scoring/lineupHistory'
+import { asSwapEffect } from './scoring/playsLost'
 import {
   asSaidRosterCommand,
   type SaidRosterCommand
@@ -764,7 +765,8 @@ const asStoredGame = asObject({
   playsDigest: asOptional(asNullable(asString), null),
   priorPlaysDigest: asOptional(asNullable(asString), null),
   lineupsDigest: asOptional(asNullable(asString), null),
-  generation: asOptional(asNullable(asNumber), null)
+  generation: asOptional(asNullable(asNumber), null),
+  swap: asSwapEffect
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -779,7 +781,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.lineupsDigest == null
       ? {}
       : { lineupsDigest: stored.lineupsDigest }),
-    ...(stored.generation == null ? {} : { generation: stored.generation })
+    ...(stored.generation == null ? {} : { generation: stored.generation }),
+    ...(stored.swap === undefined ? {} : { swap: stored.swap })
   }
 }
 

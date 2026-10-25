@@ -4476,8 +4476,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'digest of both, as a live post answers it and the game ' +
                 "socket's `plays` notices carry it, and `lineupsDigest` the " +
                 "digest the game keeps of both sides' lineups, which a live " +
-                'post names as its `lineupsBase`, and `generation` the ' +
-                'game’s play generation, one more after each reset',
+                'post names as its `lineupsBase`, `generation` the ' +
+                'game’s play generation, one more after each reset, and ' +
+                '`swap` what swapping home and away does: `swap` before the ' +
+                'first pitch, `reset` once TeamStation scored a play, and ' +
+                '`scoredElsewhere` for a game it cannot swap, and `withdrawn` ' +
+                'for a game a team withdrew from, which is never swapped',
               content: {
                 'application/json': {
                   schema: {
@@ -4509,7 +4513,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                       },
                       playsDigest: { type: 'string' },
                       lineupsDigest: { type: 'string' },
-                      generation: { type: 'integer' }
+                      generation: { type: 'integer' },
+                      swap: {
+                        type: 'string',
+                        enum: ['swap', 'reset', 'scoredElsewhere', 'withdrawn']
+                      }
                     }
                   }
                 }
@@ -5104,16 +5112,22 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Before the first pitch only the teams and scores exchange: ' +
             'lineups, guests and unavailable players are kept by team and ' +
             'follow it. The lineups digest changes, so a post built on the ' +
-            'old sides is refused as stale. A begun game (a stored play or ' +
-            'an at-bat in progress) is reset first: the body must name the ' +
-            '`playsDigest` and `generation` its caller read (`GET ' +
-            '/games/{gameId}/events`), or the call is refused with 409 ' +
-            '"This game\'s plays changed. Open it again.". Every play and tag ' +
-            'is archived and deleted, the game goes back to its lineups at ' +
-            'the first pitch, scheduled (a cancelled game stays cancelled) ' +
-            'with no scores, and its play generation goes up one, so a post ' +
-            'made on the old plays is refused. A withdrawn game and one scored ' +
-            'outside TeamStation are refused with 409. The body names the ' +
+            'old sides is refused as stale. What the call does is the `swap` ' +
+            '`GET /games/{gameId}/events` answers. `swap`: an at-bat of ' +
+            'lineups only, or none, and no play: the teams exchange. ' +
+            '`reset`: a play or an at-bat TeamStation scored. The game is ' +
+            'reset first, and the body must name the `playsDigest` and ' +
+            '`generation` its caller read, or the call is refused with 409 ' +
+            '"This game\'s plays changed. Open it again."; a body naming ' +
+            'neither, as an app not yet updated sends, is refused with 409 ' +
+            '"Home and away can be swapped only before the first pitch". ' +
+            'Every play and tag is archived and deleted, the game goes back ' +
+            'to its lineups at the first pitch, scheduled (a cancelled game ' +
+            'stays cancelled) with no scores, and its play generation goes ' +
+            'up one, so a post made on the old plays is refused. ' +
+            '`scoredElsewhere` (a play or at-bat TeamStation did not score, ' +
+            'or a game under way or final with nothing it scored) and ' +
+            '`withdrawn` are refused with 409. The body names the ' +
             'sides the caller read: sent again once they are exchanged, the ' +
             'call answers them and changes nothing; on other sides it is ' +
             'refused with 409.',

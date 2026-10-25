@@ -373,6 +373,129 @@ describe('merging two rows that are one team', function () {
     expect(refused).equals(true)
   })
 
+  it('refuses to merge two teams that play each other, and changes nothing', async function () {
+    if (db == null) this.skip()
+    const from = makeId('team')
+    const into = makeId('team')
+    const between = makeId('game')
+    await db
+      .insertInto('teams')
+      .values([
+        { id: from, name: 'Copy Owls', kind: 'external' },
+        { id: into, name: 'Owls', kind: 'full' }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values({
+        id: between,
+        home_team_id: into,
+        away_team_id: from,
+        start_at: startAt,
+        status: 'scheduled',
+        guests: { [into]: [], [from]: [] }
+      })
+      .execute()
+    // And a scheduler's proposal still waiting, which would publish another,
+    // and one declined, which never will.
+    const { created_by: planner } = await db
+      .selectFrom('schedule_previews')
+      .select('created_by')
+      .where('id', '=', 'spv_merge')
+      .executeTakeFirstOrThrow()
+    const proposal = {
+      kind: 'game' as const,
+      sender_id: planner,
+      sender_scope_type: 'season' as const,
+      sender_scope_id: 'sea_merge',
+      terms: '{}',
+      sent_at: new Date(),
+      expires_at: new Date(Date.now() + 86400000)
+    }
+    await db
+      .insertInto('group_requests')
+      .values([
+        { ...proposal, id: 'grq_owls_waiting', status: 'pending' },
+        { ...proposal, id: 'grq_owls_declined', status: 'declined' }
+      ])
+      .execute()
+    await db
+      .insertInto('schedule_preview_games')
+      .values([
+        {
+          preview_id: 'spv_merge',
+          game_key: 'owls-1',
+          season_id: 'sea_merge',
+          home_team_id: from,
+          away_team_id: into,
+          request_id: 'grq_owls_waiting'
+        },
+        {
+          preview_id: 'spv_merge',
+          game_key: 'owls-2',
+          season_id: 'sea_merge',
+          home_team_id: into,
+          away_team_id: from,
+          request_id: 'grq_owls_declined'
+        }
+      ])
+      .execute()
+    for (const apply of [false, true]) {
+      let refused: unknown
+      try {
+        await mergeTeams(db, { fromTeamId: from, intoTeamId: into, apply })
+      } catch (error) {
+        refused = error
+      }
+      expect(String(refused), String(apply)).includes(
+        `Copy Owls and Owls play each other in ${between}, proposal grq_owls_waiting;`
+      )
+    }
+    await db
+      .deleteFrom('schedule_preview_games')
+      .where('game_key', 'in', ['owls-1', 'owls-2'])
+      .execute()
+    expect(
+      await db
+        .selectFrom('games')
+        .select(['home_team_id', 'away_team_id'])
+        .where('id', '=', between)
+        .executeTakeFirstOrThrow()
+    ).deep.equals({ home_team_id: into, away_team_id: from })
+    expect(
+      (
+        await db
+          .selectFrom('teams')
+          .select('merged_into')
+          .where('id', '=', from)
+          .executeTakeFirstOrThrow()
+      ).merged_into
+    ).equals(null)
+    // With the game gone and only the declined proposal left, it merges.
+    await db.deleteFrom('games').where('id', '=', between).execute()
+    await db
+      .deleteFrom('group_requests')
+      .where('id', '=', 'grq_owls_waiting')
+      .execute()
+    await db
+      .insertInto('schedule_preview_games')
+      .values({
+        preview_id: 'spv_merge',
+        game_key: 'owls-2',
+        season_id: 'sea_merge',
+        home_team_id: into,
+        away_team_id: from,
+        request_id: 'grq_owls_declined'
+      })
+      .execute()
+    const report = await mergeTeams(db, { fromTeamId: from, intoTeamId: into })
+    expect(report.applied).equals(false)
+    await db
+      .deleteFrom('schedule_preview_games')
+      .where('game_key', '=', 'owls-2')
+      .execute()
+  })
+
   it('a drain after merge writes rows with the surviving team id', async function () {
     if (db == null) this.skip()
     // Fresh pair: fromTeam is home, intoTeam is the survivor name for team_id.

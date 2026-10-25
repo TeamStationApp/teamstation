@@ -4,7 +4,10 @@ import { Pressable, Switch, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
-import { resetWarning } from '../../common/scoring/playsLost'
+import {
+  resetWarning,
+  SWAP_SCORED_ELSEWHERE
+} from '../../common/scoring/playsLost'
 import { type FieldSize, fieldSizeLabel } from '../../common/venues'
 import { Button, Card, Screen, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
@@ -449,7 +452,9 @@ export function GameFormScreen({
   // A scorekeeper who schedules neither team: the swap and Save only.
   const swapOnly =
     loaded != null && !loaded.canPropose && loaded.canSwap === true
-  const swapInert = busy || (!permitted && !swapOnly)
+  // A game scored outside TeamStation keeps its sides.
+  const scoredElsewhere = loaded?.plays?.swap === 'scoredElsewhere'
+  const swapInert = busy || scoredElsewhere || (!permitted && !swapOnly)
   // Asked for, and the draft still only swaps the sides: Save resets.
   const resetShown = resetAsked && onlySwapped()
   const replaceable = replaceableSides(draft, formMode, loaded)
@@ -713,6 +718,9 @@ export function GameFormScreen({
               <Text style={styles.hint}>
                 You need administrator access to create a game here.
               </Text>
+            )}
+            {scoredElsewhere && (
+              <Text style={styles.hint}>{SWAP_SCORED_ELSEWHERE}</Text>
             )}
             {loaded != null && !loaded.canPropose && (
               <Text style={styles.hint}>

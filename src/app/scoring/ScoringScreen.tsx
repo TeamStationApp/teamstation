@@ -30,7 +30,10 @@ import {
   type PlaysLost,
   playsLost,
   resetsPlays,
-  resetWarning
+  resetWarning,
+  SWAP_SCORED_ELSEWHERE,
+  swapEffect,
+  WITHDRAWN_GAME
 } from '../../common/scoring/playsLost'
 import {
   awaitingResult,
@@ -894,6 +897,8 @@ function ScoringPanel(props: {
       )
     }
   )
+  /** What the server says a swap does (`ScoringSession.serverSwap`). */
+  const [serverSwap, setServerSwap] = useState(props.game.serverSwap)
   const [tagSnapshot, setTagSnapshot] = useState(
     () => props.game.tagSnapshotVersion
   )
@@ -989,9 +994,12 @@ function ScoringPanel(props: {
     // fold straight after.
     let reading: ReturnType<typeof setTimeout> | null = null
     setTagSnapshot(props.game.tagSnapshotVersion)
+    setServerSwap(props.game.serverSwap)
     let rebases = props.game.rebases
     const unsubscribe = props.game.subscribe(() => {
       setTagSnapshot(props.game.tagSnapshotVersion)
+      // A reload that finds only this changed draws the menu again too.
+      setServerSwap(props.game.serverSwap)
       reading ??= setTimeout(() => {
         reading = null
         // The session tells of every change; the screen draws again only
@@ -1234,15 +1242,32 @@ function ScoringPanel(props: {
     (state.phase === 'ready' || state.phase === 'awaitingBatter') &&
     state.presentation == null &&
     state.moreDraft == null
-  const picture = props.game.picture()
-  /** What a reset would delete, as the game stands on this screen. */
-  const pictured = {
-    plays: [...picture.plays.values()],
-    currentPlay: picture.current
+  /**
+   * The game as it stands on this screen, for what a reset would delete:
+   * read only while the menu or the swap sheet asks.
+   */
+  const pictured = (): Parameters<typeof playsLost>[0] => {
+    const picture = props.game.picture()
+    return { plays: [...picture.plays.values()], currentPlay: picture.current }
   }
-  const willLose = playsLost(pictured)
-  /** Whether a swap resets the game, as the server will decide it. */
-  const willReset = resetsPlays(pictured)
+  /**
+   * Why the menu offers no swap, if it offers none: a game withdrawn, or
+   * scored outside TeamStation, by the server's word on the last read. A
+   * game it called scored elsewhere only for its status, marked under way
+   * with nothing TeamStation scored, is reset as any other once this screen
+   * has scored it: plays here, every one TeamStation's, are what the server
+   * finds once they are saved. Plays imported from outside, which the
+   * session holds apart from its picture, keep the refusal.
+   */
+  const swapRefusal = (): string | undefined => {
+    if (serverSwap === 'withdrawn') return 'game was withdrawn'
+    if (serverSwap !== 'scoredElsewhere') return undefined
+    if (props.game.holdsImported) return 'scored outside TeamStation'
+    return swapEffect(pictured(), { status: 'scheduled', withdrawn: false }) ===
+      'reset'
+      ? undefined
+      : 'scored outside TeamStation'
+  }
 
   /**
    * Saves what is still on its way, then swaps: a lineup change must reach
@@ -1276,7 +1301,12 @@ function ScoringPanel(props: {
       // carried digests of its own until its queue drained.
       const read = await props.client.gameEvents(props.gameId)
       const losing = playsLost(read)
-      const resets = resetsPlays(read)
+      // The server's word on what the swap does; an older server's, whether
+      // it loses any at-bat.
+      const effect = read.swap ?? (resetsPlays(read) ? 'reset' : 'swap')
+      if (effect === 'scoredElsewhere') throw new Error(SWAP_SCORED_ELSEWHERE)
+      if (effect === 'withdrawn') throw new Error(WITHDRAWN_GAME)
+      const resets = effect === 'reset'
       if (
         losing.atBats !== swapLoses.atBats ||
         losing.innings !== swapLoses.innings ||
@@ -1813,6 +1843,11 @@ function ScoringPanel(props: {
   // with no sheet open but the rosters. A save of this screen's own still
   // out comes first, and the change is read in once it has stopped.
   const { socket, persistent, gameId } = props
+  // The session as it stands when a notice arrives.
+  const noticed = useRef(props.game)
+  noticed.current = props.game
+  /** The status a game called scored elsewhere was last read again for. */
+  const unmarked = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (socket == null || !persistent) return
     return listen(socket, gameId, event => {
@@ -1826,7 +1861,30 @@ function ScoringPanel(props: {
           echoes.current?.push({ kind: event.kind, digest })
         else echoes.current = null
       } else if (event.type === 'resync') echoes.current = null
-      else return
+      else if (event.type === 'change' && event.kind === 'game') {
+        // A withdrawal, or a game marked under way or final elsewhere, is
+        // told only here: the game is read again when the notice says other
+        // than the last read did of what a swap does.
+        const { status, withdrawn } = event.data
+        const known = noticed.current.serverSwap
+        const begun = status === 'inProgress' || status === 'final'
+        if (
+          known == null ||
+          !(
+            (withdrawn != null && withdrawn !== (known === 'withdrawn')) ||
+            (known === 'swap' && begun) ||
+            // Called scored elsewhere for its status alone, now unmarked:
+            // read once for that status, not on every save's notice.
+            (known === 'scoredElsewhere' &&
+              !begun &&
+              !noticed.current.holdsImported &&
+              unmarked.current !== status)
+          )
+        )
+          return
+        if (known === 'scoredElsewhere') unmarked.current = status
+        echoes.current = null
+      } else return
       stale.current = true
       setStaleCheck(value => value + 1)
     })
@@ -2984,13 +3042,19 @@ function ScoringPanel(props: {
                 danger={index === 6}
                 label={label}
                 subtext={
-                  index === 5 && willReset ? 'resets all game plays' : undefined
+                  // Whether a swap resets the game, as the server will decide it.
+                  index !== 5
+                    ? undefined
+                    : (swapRefusal() ??
+                      (resetsPlays(pictured())
+                        ? 'resets all game plays'
+                        : undefined))
                 }
                 disabled={
                   // Read-only leaves only leaving and settings.
                   (status.readOnly && [2, 3, 4, 5, 6].includes(index)) ||
                   (index === 5
-                    ? !swappable
+                    ? !swappable || swapRefusal() != null
                     : index === 6
                       ? !(
                           state.phase === 'ready' ||
@@ -3015,9 +3079,10 @@ function ScoringPanel(props: {
                   if (index === 0) exit()
                   else if (index === 6) setSheet('game')
                   else if (index === 5) {
+                    const now = pictured()
                     setSwapProblem(undefined)
-                    setSwapLoses(willLose)
-                    setSwapResets(willReset)
+                    setSwapLoses(playsLost(now))
+                    setSwapResets(resetsPlays(now))
                     setSheet('swap')
                   } else if (index === 4) openRosters()
                   else

@@ -19,6 +19,7 @@ import {
   type GroupRef,
   isRecord
 } from './groupCreation'
+import { asSwapEffect } from './scoring/playsLost'
 import { asFieldSizeChoice } from './venues'
 const nullableText = (raw: unknown): string | null =>
   raw == null ? null : asString(raw)
@@ -71,7 +72,9 @@ const asGameSchedulingBase = asObject({
       playsDigest: asString,
       generation: asNumber,
       /** Whether a swap resets the game. Older servers: when it loses at-bats. */
-      resets: asOptional(asBoolean)
+      resets: asOptional(asBoolean),
+      /** What a swap would do (`swapEffect`). Older servers send none. */
+      swap: asSwapEffect
     })
   )
 })
