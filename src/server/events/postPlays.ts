@@ -21,7 +21,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
-import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
+import { resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
@@ -172,9 +172,12 @@ export async function postGamePlays(
     )
       throw conflict(OTHER_TEAMS, { stale: true })
     const prepared = withHalfOuts(body.plays)
-    // Read on its own, after the lock and before this post's writes: a
-    // post that held the lock first has fixed the fence already.
-    const hadPlays = await gameHasPlays(trx, gameId)
+    // The game's plays as this post finds them, read once, after the lock
+    // and before its writes: a post that held the lock first has fixed the
+    // fence already, and they tell its sender whether anybody else wrote to
+    // the game since.
+    const priorRows = await readPlays(trx, gameId)
+    const hadPlays = priorRows.length > 0
     const live = body.mode === 'live'
     if (
       game.status === 'final' &&
@@ -199,9 +202,6 @@ export async function postGamePlays(
     // A live post built on lineups somebody has saved over since would
     // write the old ones back: the sender reads the game again and posts
     // its own changes on top.
-    // The game as this post finds it, which tells its sender whether
-    // anybody else wrote to it since.
-    const priorRows = await readPlays(trx, gameId)
     const prior = live
       ? playsDigest(priorRows, atBatOf(game, priorRows.length > 0))
       : null
@@ -300,7 +300,6 @@ export async function postGamePlays(
 
     if (system === 'teamstation') {
       const settings = await radarSettings(trx)
-      const priorRows = await readPlays(trx, gameId)
       const priorByIndex = new Map(
         priorRows.map(row => [row.atBatIndex, row.gumbo])
       )
