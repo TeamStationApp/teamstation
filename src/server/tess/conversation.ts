@@ -15,10 +15,14 @@ import {
   type MessageParam,
   type MessagesRequest,
   type MessagesResponse,
-  type TextBlock
+  type MessagesStreamEvent,
+  streamMessage,
+  type TextBlock,
+  type ThinkingBlock
 } from './messagesApi'
 import { linkPlayers, type PlayerNames, playerNamesOf } from './playerLinks'
 import { type Moment, momentText } from './prompt'
+import { stepLabel } from './stepLabels'
 import { recordUsage } from './usage'
 
 /**
@@ -81,18 +85,20 @@ export interface ModelDeps {
 
 /**
  * One Messages call for one person, its tokens added to their week. Every
- * call goes through here: the conversation's, compaction's summaries and
- * attachment descriptions.
+ * call goes through here: the conversation's, streamed to `onStream`, and
+ * compaction's summaries and attachment descriptions, which are not.
  */
 export async function callModel(
   deps: ModelDeps,
   userId: string,
-  request: MessagesRequest
+  request: MessagesRequest,
+  onStream?: (event: MessagesStreamEvent) => void
 ): Promise<MessagesResponse> {
-  const response = await createMessage(deps.settings, request, {
-    fetch: deps.fetch,
-    actor: userId
-  })
+  const options = { fetch: deps.fetch, actor: userId }
+  const response =
+    onStream == null
+      ? await createMessage(deps.settings, request, options)
+      : await streamMessage(deps.settings, request, onStream, options)
   await recordUsage(deps.db, userId, response.usage, deps.now?.() ?? new Date())
   return response
 }
@@ -125,6 +131,26 @@ export async function loadConversation(
       createdAt: row.created_at
     }))
   }
+}
+
+/**
+ * The names the person's conversation's API answers carry
+ * (`playerNamesOf`), read from the messages that hold tool results alone.
+ */
+export async function storedPlayerNames(
+  db: Kysely<Database>,
+  userId: string
+): Promise<PlayerNames> {
+  const rows = await db
+    .selectFrom('tess_messages')
+    .select('content')
+    .where('user_id', '=', userId)
+    .where(sql<boolean>`content @> '[{"type":"tool_result"}]'::jsonb`)
+    .orderBy('id')
+    .execute()
+  return playerNamesOf(
+    rows.map(row => ({ content: row.content as StoredBlock[] }))
+  )
 }
 
 /**
@@ -340,8 +366,10 @@ export function requestMessages(
  * The conversation as the app shows it. The person's messages show their
  * text and attachments. Tess's messages of one turn, which her tool calls
  * split, show as one reply: the text of each, then a card for each change
- * she proposed. Tool results and confirmation notes are not shown, and a
- * reply with neither text nor a change is left out.
+ * she proposed, with the summaries of her thinking (`thinking`) and the
+ * steps she took (`steps`: each tool call, labelled, and whether it
+ * worked). Tool results and confirmation notes are not shown, and a reply
+ * with neither text nor a change is left out.
  *
  * Every player her text names is a link to their profile (`linkPlayers`),
  * by the names the API answered her with in `names`, by default those in
@@ -354,6 +382,12 @@ export function viewMessages(
   names: PlayerNames = playerNamesOf(messages)
 ): TessMessage[] {
   const out: TessMessage[] = []
+  // Whether each tool call's result was an error, by call.
+  const failed = new Map<string, boolean>()
+  for (const message of messages)
+    for (const block of message.content)
+      if (block.type === 'tool_result')
+        failed.set(block.tool_use_id, block.is_error === true)
   let reply: TessMessage | undefined
   const close = (): void => {
     if (reply != null && (reply.text !== '' || reply.changes.length > 0))
@@ -403,7 +437,19 @@ export function viewMessages(
     const text = linkPlayers(textOf(message.content), names)
     if (text !== '')
       reply.text = reply.text === '' ? text : `${reply.text}\n\n${text}`
+    const thinking = thinkingOf(message.content)
+    if (thinking !== '')
+      reply.thinking =
+        reply.thinking == null ? thinking : `${reply.thinking}\n\n${thinking}`
     for (const block of message.content) {
+      if (block.type === 'tool_use') {
+        const result = failed.get(block.id)
+        if (result != null)
+          (reply.steps ??= []).push({
+            label: stepLabel(block),
+            status: result ? 'failed' : 'done'
+          })
+      }
       if (block.type !== 'change') continue
       const change = changes.get(block.id)
       if (change != null) reply.changes.push(change)
@@ -411,6 +457,15 @@ export function viewMessages(
   }
   close()
   return out
+}
+
+/** The summaries of a message's thinking blocks, joined. */
+export function thinkingOf(content: readonly StoredBlock[]): string {
+  return content
+    .filter((block): block is ThinkingBlock => block.type === 'thinking')
+    .map(block => block.thinking.trim())
+    .filter(text => text !== '')
+    .join('\n\n')
 }
 
 /** The text blocks of a message, or of a response, joined. */

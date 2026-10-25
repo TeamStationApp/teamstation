@@ -61,6 +61,24 @@ const message = {
     clientId: {
       type: 'string',
       description: "On a message of the person's, the clientId it was sent with"
+    },
+    thinking: {
+      type: 'string',
+      description:
+        "On Tess's reply, the summaries of her thinking, joined; absent when she showed none"
+    },
+    steps: {
+      type: 'array',
+      description:
+        "On Tess's reply, each tool call she made, in order, labelled by the server (never its path or query); absent when she made none",
+      items: {
+        type: 'object',
+        required: ['label', 'status'],
+        properties: {
+          label: { type: 'string' },
+          status: { type: 'string', enum: ['done', 'failed'] }
+        }
+      }
     }
   }
 }
@@ -73,6 +91,30 @@ const messages = {
 
 const json = (schema: unknown): unknown => ({
   'application/json': { schema }
+})
+
+/** A turn streamed, as `Accept: text/event-stream` asks. */
+const eventStream = (done: string): unknown => ({
+  'text/event-stream': {
+    schema: {
+      type: 'string',
+      description:
+        'Server-sent events, each `event: <type>` with its JSON as `data`: ' +
+        '`stored` ({messages, change?}) once the message, or the ' +
+        'confirmation, is stored; `thinking` and `text` ({delta}), pieces of ' +
+        "the summary of her thinking and of her text, a later block's " +
+        'starting on a new paragraph; `step` ({id, label, status: ' +
+        'running|done|failed}) as each tool call starts and ends; then ' +
+        `\`done\` (${done}) or \`error\` ({status, code, message, details?, ` +
+        'kept}: the status and body the request would have failed with, ' +
+        'and whether the message, or the confirmation, is still stored; ' +
+        'one Tess failed to answer before storing anything of her answer is ' +
+        'taken back, with its changes pending again). A ' +
+        '`: keep-alive` comment comes every 15 seconds. A refusal before ' +
+        'the turn begins (400, 401, 403, 404, 409, 413, 415) is answered ' +
+        'as JSON with its status, whatever the request accepts.'
+    }
+  }
 })
 
 export function tessPaths(errorResponse: unknown): Record<string, unknown> {
@@ -132,7 +174,8 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
           'are, to be sent again without the one too large. A model ' +
           'failure is 503, and a message Tess had not begun to answer is ' +
           'then not kept either. While she is still answering an earlier ' +
-          'message or a confirmed change, it is 409.',
+          'message or a confirmed change, it is 409. With `Accept: ' +
+          'text/event-stream` her turn is streamed as it happens.',
         security: [{ bearer: [] }],
         requestBody: {
           required: true,
@@ -175,7 +218,13 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
           })
         },
         responses: {
-          200: { description: 'The new messages', content: json(messages) },
+          200: {
+            description: 'The new messages',
+            content: {
+              ...(json(messages) as object),
+              ...(eventStream('the same body as the JSON answer') as object)
+            }
+          },
           400: errorResponse,
           409: errorResponse,
           413: errorResponse,
@@ -242,7 +291,8 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
           'is a second confirm of the same change, and any confirm while ' +
           'Tess is still answering, which does not run it. A change still ' +
           'running a minute after it was confirmed was lost mid-run: it ' +
-          'shows as unknown, and is not run again.',
+          'shows as unknown, and is not run again. With `Accept: ' +
+          "text/event-stream` Tess's report is streamed as it happens.",
         security: [{ bearer: [] }],
         parameters: [
           {
@@ -255,14 +305,17 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
         responses: {
           200: {
             description: "The change as it ended, and Tess's report",
-            content: json({
-              type: 'object',
-              required: ['change', 'messages'],
-              properties: {
-                change,
-                messages: { type: 'array', items: message }
-              }
-            })
+            content: {
+              ...(json({
+                type: 'object',
+                required: ['change', 'messages'],
+                properties: {
+                  change,
+                  messages: { type: 'array', items: message }
+                }
+              }) as object),
+              ...(eventStream('the same body as the JSON answer') as object)
+            }
           },
           404: errorResponse,
           409: errorResponse,

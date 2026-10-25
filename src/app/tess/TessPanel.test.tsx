@@ -29,7 +29,7 @@ describe("Tess's panel", () => {
       token: 'tok_tess_panel',
       health: dictatingHealth,
       tess: async () => ({ available: true, messages: [], contextTokens: 0 }),
-      sendTessMessage: async text => {
+      streamTessMessage: async text => {
         sent.push(text)
         return [
           {
@@ -45,7 +45,7 @@ describe("Tess's panel", () => {
       uploadTessAttachment: async () => {
         throw new Error('no uploads here')
       },
-      confirmTessChange: async () => {
+      streamTessConfirm: async () => {
         throw new Error('no changes here')
       },
       tessUsage: async () => []
@@ -96,7 +96,7 @@ describe("Tess's panel", () => {
       token: 'tok_tess_panel',
       health: dictatingHealth,
       tess: async () => ({ available: true, messages: [], contextTokens: 0 }),
-      sendTessMessage: async text => {
+      streamTessMessage: async text => {
         sent.push(text)
         await new Promise<void>(resolve => {
           answer = resolve
@@ -115,7 +115,7 @@ describe("Tess's panel", () => {
       uploadTessAttachment: async () => {
         throw new Error('no uploads here')
       },
-      confirmTessChange: async () => {
+      streamTessConfirm: async () => {
         throw new Error('no changes here')
       },
       tessUsage: async () => []

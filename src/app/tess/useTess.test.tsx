@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 
+import { TessTurnError } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import {
   byLabel,
@@ -19,7 +20,8 @@ import type {
   TessChange,
   TessConversation,
   TessMessage,
-  TessScreen
+  TessScreen,
+  TessStreamEvent
 } from './tessTypes'
 import { ANSWERING_POLL_MS, type TessChatState, useTess } from './useTess'
 
@@ -80,13 +82,15 @@ const HISTORY: TessMessage[] = [
 class FakeTess implements TessApi {
   loads: Array<Deferred<TessConversation>> = []
   sends: Array<{
-    request: { text: string } & Parameters<TessApi['sendTessMessage']>[1]
+    request: { text: string } & Parameters<TessApi['streamTessMessage']>[1]
     answer: Deferred<TessMessage[]>
+    tell: (event: TessStreamEvent) => void
   }> = []
 
   confirms: Array<{
     id: string
     answer: Deferred<{ change: TessChange; messages: TessMessage[] }>
+    tell: (event: TessStreamEvent) => void
   }> = []
 
   uploads: Array<Deferred<{ id: string; name: string; kind: 'csv' }>> = []
@@ -97,12 +101,13 @@ class FakeTess implements TessApi {
     return await answer.promise
   }
 
-  async sendTessMessage(
+  async streamTessMessage(
     text: string,
-    options: Parameters<TessApi['sendTessMessage']>[1] = {}
+    options: Parameters<TessApi['streamTessMessage']>[1],
+    tell: (event: TessStreamEvent) => void
   ): Promise<TessMessage[]> {
     const answer = deferred<TessMessage[]>()
-    this.sends.push({ request: { text, ...options }, answer })
+    this.sends.push({ request: { text, ...options }, answer, tell })
     return await answer.promise
   }
 
@@ -116,11 +121,12 @@ class FakeTess implements TessApi {
     return await answer.promise
   }
 
-  async confirmTessChange(
-    id: string
+  async streamTessConfirm(
+    id: string,
+    tell: (event: TessStreamEvent) => void
   ): Promise<{ change: TessChange; messages: TessMessage[] }> {
     const answer = deferred<{ change: TessChange; messages: TessMessage[] }>()
-    this.confirms.push({ id, answer })
+    this.confirms.push({ id, answer, tell })
     return await answer.promise
   }
 
@@ -891,5 +897,400 @@ describe('useTess and the chat', function () {
       else rereading.loads[1].reject(new Error('gone'))
       await settle()
     }
+  })
+
+  /** Lets a frame pass, so what was told is drawn. */
+  async function frame(): Promise<void> {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 40))
+    })
+  }
+  function thought(): HTMLElement | null {
+    const rows = [
+      ...document.body.querySelectorAll<HTMLElement>(
+        '[data-testid="Tess thought"] [role="button"]'
+      )
+    ]
+    return rows.at(-1) ?? null
+  }
+
+  it('shows her thinking, steps and text as they come, then her stored reply under a closed "Thought for Ns"', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await type('What are our games?')
+    const { tell, request } = api.sends[0]
+    expect(byTestId('Tess thinking')!.textContent).equals('Tess is thinking…')
+    // Stored: the message the server keeps takes the place of the one shown.
+    await act(async () => {
+      tell({
+        type: 'stored',
+        messages: [
+          message('3', 'user', 'What are our games?', {
+            clientId: request.clientId
+          })
+        ]
+      })
+    })
+    expect(texts('Tess user message')).length(2)
+    expect(latest!.messages.at(-1)!.id).equals('3')
+    await act(async () => {
+      tell({ type: 'thinking', delta: 'They want ' })
+      tell({ type: 'thinking', delta: 'their games.' })
+    })
+    await frame()
+    expect(byTestId('Tess live reply')).not.equals(null)
+    expect(thought()!.getAttribute('aria-label')).equals('Thinking')
+    expect(thought()!.getAttribute('aria-expanded')).equals('true')
+    expect(byTestId('Tess thought body')!.textContent).equals(
+      'They want their games.'
+    )
+    await act(async () => {
+      tell({
+        type: 'step',
+        id: 't1',
+        label: 'Reading: A team’s games',
+        status: 'running'
+      })
+    })
+    await frame()
+    const step = (): HTMLElement =>
+      document.body.querySelector<HTMLElement>('[data-testid="Tess step"]')!
+    expect(step().getAttribute('aria-label')).equals(
+      'Reading: A team’s games, in progress'
+    )
+    await act(async () => {
+      tell({
+        type: 'step',
+        id: 't1',
+        label: 'Reading: A team’s games',
+        status: 'done'
+      })
+      tell({ type: 'text', delta: 'You play **Demo' })
+    })
+    await frame()
+    expect(step().getAttribute('aria-label')).equals(
+      'Reading: A team’s games, done'
+    )
+    // Drawn as Markdown each time it grows: a half-written bold shows as written.
+    expect(byTestId('Tess live reply')!.textContent).contains('You play **Demo')
+    await act(async () => {
+      tell({ type: 'text', delta: ' Eagles** next.' })
+    })
+    await frame()
+    expect(byTestId('Tess live reply')!.textContent).contains(
+      'You play Demo Eagles next.'
+    )
+    await act(async () => {
+      api.sends[0].answer.resolve([
+        message('3', 'user', 'What are our games?'),
+        message('4', 'assistant', 'You play **Demo Eagles** next.', {
+          thinking: 'They want their games.',
+          steps: [{ label: 'Reading: A team’s games', status: 'done' }]
+        })
+      ])
+    })
+    await settle()
+    expect(byTestId('Tess live reply')).equals(null)
+    expect(byTestId('Tess thinking')).equals(null)
+    expect(latest!.live).equals(null)
+    expect(thought()!.getAttribute('aria-label')).equals('Thought for 1s')
+    expect(thought()!.getAttribute('aria-expanded')).equals('false')
+    expect(latest!.thoughtSeconds).deep.equals({ '4': 1 })
+    // Told late, after she is done: nothing changes.
+    await act(async () => {
+      tell({ type: 'text', delta: 'late' })
+    })
+    await frame()
+    expect(latest!.live).equals(null)
+  })
+
+  it('reads the conversation once she is done when the stream is cut, as when an answer is lost', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await type('What are our games?')
+    const { tell, request } = api.sends[0]
+    await act(async () => {
+      tell({ type: 'thinking', delta: 'Reading.' })
+    })
+    await frame()
+    expect(byTestId('Tess live reply')).not.equals(null)
+    await act(async () => {
+      api.sends[0].answer.reject(
+        new HttpError(
+          'offline',
+          'Cannot reach TeamStation. Check your connection and try again.'
+        )
+      )
+    })
+    await settle()
+    // The live reply is gone; the chat waits for her, as it does for a lost answer.
+    expect(byTestId('Tess live reply')).equals(null)
+    expect(byTestId('Tess thinking')!.textContent).equals('Tess is thinking…')
+    await act(async () => {
+      api.loads[1].resolve({
+        available: true,
+        messages: [
+          ...HISTORY,
+          message('3', 'user', 'What are our games?', {
+            clientId: request.clientId
+          }),
+          message('4', 'assistant', 'You play Demo Eagles next.', {
+            thinking: 'Reading.'
+          })
+        ],
+        contextTokens: 10,
+        answering: false
+      })
+    })
+    await settle()
+    expect(texts('Tess reply').at(-1)).contains('You play Demo Eagles next.')
+    expect(byTestId('Tess error')).equals(null)
+    expect(byTestId('Tess thinking')).equals(null)
+    // Read from history: how long she thought is not known.
+    expect(thought()!.getAttribute('aria-label')).equals('Thinking')
+    expect(latest!.thoughtSeconds).deep.equals({})
+  })
+
+  it('keeps a message the server said it stored when the stream and the reread both fail', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await type('Add a game')
+    const { tell, request } = api.sends[0]
+    await act(async () => {
+      tell({
+        type: 'stored',
+        messages: [
+          message('3', 'user', 'Add a game', { clientId: request.clientId })
+        ]
+      })
+    })
+    await act(async () => {
+      api.sends[0].answer.reject(
+        new HttpError(
+          'offline',
+          'Cannot reach TeamStation. Check your connection and try again.'
+        )
+      )
+    })
+    await act(async () => {
+      api.loads[1].reject(new Error('offline'))
+    })
+    await settle()
+    // The stored copy stays, once, and the draft is not given back to send
+    // a second time.
+    expect(texts('Tess user message')).has.length(2)
+    expect(texts('Tess user message').at(-1)).equals('Add a game')
+    expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals('')
+    expect(byTestId('Tess error')!.textContent).equals(
+      'Cannot reach TeamStation. Check your connection and try again.'
+    )
+    // Told stored, a refusal code that means "never stored" no longer does.
+    await type('And a practice')
+    const second = api.sends[1]
+    await act(async () => {
+      second.tell({
+        type: 'stored',
+        messages: [
+          message('5', 'user', 'And a practice', {
+            clientId: second.request.clientId
+          })
+        ]
+      })
+    })
+    await act(async () => {
+      second.answer.reject(new HttpError('tooLarge', 'Too long.'))
+    })
+    await act(async () => {
+      api.loads[2].reject(new Error('offline'))
+    })
+    await settle()
+    expect(texts('Tess user message').at(-1)).equals('And a practice')
+    expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals('')
+  })
+
+  it('gives the draft back, and the changes pending again, when the stream says the server took a stored message back', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    expect(texts('Tess change status')).deep.equals([])
+    await type('Add a game')
+    const { tell, request } = api.sends[0]
+    await act(async () => {
+      tell({
+        type: 'stored',
+        messages: [
+          message('3', 'user', 'Add a game', { clientId: request.clientId })
+        ]
+      })
+    })
+    expect(texts('Tess change status')).deep.equals(['Expired'])
+    // Tess's model failed before she stored anything: the server took the
+    // message back and made the change pending again, and says so.
+    await act(async () => {
+      api.sends[0].answer.reject(
+        new TessTurnError(
+          new HttpError('unavailable', "Tess's model answered 529"),
+          false
+        )
+      )
+    })
+    await settle()
+    // Told, so nothing is read again.
+    expect(api.loads).has.length(1)
+    expect(texts('Tess user message')).has.length(1)
+    expect(texts('Tess change status')).deep.equals([])
+    expect(byLabel('Hold to confirm')).not.equals(null)
+    expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals(
+      'Add a game'
+    )
+    expect(byTestId('Tess error')!.textContent).equals(
+      "Tess's model answered 529"
+    )
+    // Refused once the conversation was compacted, before it was stored.
+    await type('And a practice')
+    await act(async () => {
+      api.sends[1].answer.reject(
+        new TessTurnError(
+          new HttpError('unavailable', 'Compaction failed'),
+          false
+        )
+      )
+    })
+    await settle()
+    expect(api.loads).has.length(1)
+    expect(texts('Tess user message')).has.length(1)
+    expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals(
+      'And a practice'
+    )
+  })
+
+  it('keeps a message the stream says the server kept, when the reread fails, even unseen as stored', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await type('Add a game')
+    const { tell, request } = api.sends[0]
+    await act(async () => {
+      tell({
+        type: 'stored',
+        messages: [
+          message('3', 'user', 'Add a game', { clientId: request.clientId })
+        ]
+      })
+    })
+    // A tool round was stored before the failure: the message stays.
+    await act(async () => {
+      api.sends[0].answer.reject(
+        new TessTurnError(
+          new HttpError('unavailable', "Tess's model answered 529"),
+          true
+        )
+      )
+    })
+    await act(async () => {
+      api.loads[1].reject(new Error('offline'))
+    })
+    await settle()
+    expect(texts('Tess user message').at(-1)).equals('Add a game')
+    expect(texts('Tess change status')).deep.equals(['Expired'])
+    expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals('')
+    // Its `stored` event left out, the server still says it kept it.
+    await type('And a practice')
+    await act(async () => {
+      api.sends[1].answer.reject(
+        new TessTurnError(
+          new HttpError('internal', 'Something went wrong'),
+          true
+        )
+      )
+    })
+    await act(async () => {
+      api.loads[2].reject(new Error('offline'))
+    })
+    await settle()
+    expect(texts('Tess user message').at(-1)).equals('And a practice')
+    expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals('')
+  })
+
+  it('keeps how a confirmed change ended, as told, when the stream and the reread both fail', async function () {
+    const api = new FakeTess()
+    clock = manualClock()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await hold()
+    await act(async () => {
+      api.confirms[0].tell({
+        type: 'stored',
+        messages: [],
+        change: { ...CHANGE, status: 'done' }
+      })
+    })
+    await act(async () => {
+      api.confirms[0].answer.reject(new Error('Network down'))
+    })
+    await act(async () => {
+      api.loads[1].reject(new Error('Network down'))
+    })
+    await settle()
+    // Not offered again: it ran.
+    expect(texts('Tess change status')).deep.equals(['Done'])
+    expect(
+      document.body.querySelector('[aria-label="Hold to confirm"]')
+    ).equals(null)
+  })
+
+  it('shows a confirmed change as it ended before Tess reports it, and her report as it comes', async function () {
+    const api = new FakeTess()
+    clock = manualClock()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await hold()
+    const { tell } = api.confirms[0]
+    await act(async () => {
+      tell({
+        type: 'stored',
+        messages: [],
+        change: { ...CHANGE, status: 'done' }
+      })
+      tell({ type: 'stored', messages: [] })
+    })
+    expect(texts('Tess change status')).deep.equals(['Done'])
+    await act(async () => {
+      tell({ type: 'text', delta: 'The game is on' })
+    })
+    await frame()
+    expect(byTestId('Tess live reply')!.textContent).contains('The game is on')
+    await act(async () => {
+      api.confirms[0].answer.resolve({
+        change: { ...CHANGE, status: 'done' },
+        messages: [message('5', 'assistant', 'The game is on the schedule.')]
+      })
+    })
+    await settle()
+    expect(byTestId('Tess live reply')).equals(null)
+    expect(texts('Tess reply').at(-1)).includes('The game is on the schedule.')
+    // She told no thinking or step: no row, and no time kept.
+    expect(latest!.thoughtSeconds).deep.equals({})
+  })
+
+  it('draws nothing told after the chat has closed', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await type('What are our games?')
+    await act(async () => {
+      api.sends[0].tell({ type: 'thinking', delta: 'Reading.' })
+    })
+    await unmount()
+    api.sends[0].tell({ type: 'text', delta: 'late' })
+    api.sends[0].answer.resolve([
+      message('3', 'user', 'What are our games?'),
+      message('4', 'assistant', 'Late.', { thinking: 'Reading.' })
+    ])
+    await settle()
+    await new Promise(resolve => setTimeout(resolve, 40))
   })
 })

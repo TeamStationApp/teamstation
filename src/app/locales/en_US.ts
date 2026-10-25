@@ -847,7 +847,12 @@ export const enUs = {
   tess_rich_open: 'Open full screen',
   tess_rich_close: 'Close',
   tess_way: 'Go to %s',
-  tess_resize: 'Resize Tess'
+  tess_resize: 'Resize Tess',
+  tess_thinking_live: 'Thinking',
+  tess_thought_for: 'Thought for %ss',
+  tess_step_running: '%s, in progress',
+  tess_step_done: '%s, done',
+  tess_step_failed: '%s, failed'
 }
 
 export type StringKey = keyof typeof enUs

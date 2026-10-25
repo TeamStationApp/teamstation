@@ -1,5 +1,6 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
+import { TessTurnError } from '../../common/api'
 import { type ErrorCode, HttpError } from '../../common/errors'
 import { lstrings } from '../locales/strings'
 import type {
@@ -10,6 +11,8 @@ import type {
   TessConversation,
   TessMessage,
   TessScreen,
+  TessStep,
+  TessStreamEvent,
   TessUpload
 } from './tessTypes'
 
@@ -29,6 +32,16 @@ const REFUSED_UNSTORED: readonly ErrorCode[] = [
   'unsupportedMedia'
 ]
 
+/** A reply on its way: what Tess has told of it so far. */
+export interface TessLive {
+  /** The summary of her thinking, as it grows. */
+  thinking: string
+  /** Her steps, by the tool call each is, in the order they started. */
+  steps: Array<TessStep & { id: string }>
+  /** Her text, as it grows. */
+  text: string
+}
+
 export interface TessChatState {
   /** The conversation is still being read. */
   loading: boolean
@@ -38,6 +51,14 @@ export interface TessChatState {
    * and until it is answered nothing else is sent or confirmed.
    */
   thinking: boolean
+  /** The reply Tess is working on, while she answers in this chat. */
+  live: TessLive | null
+  /**
+   * How long Tess thought, in whole seconds, for each reply she gave while
+   * the chat was open, by its id: from the message to her last thought or
+   * step. A reply read from history has none.
+   */
+  thoughtSeconds: Readonly<Record<string, number>>
   /** What went wrong last, shown under the composer. */
   error: string | null
   /** Answers whether the message reached Tess; false while she is answering. */
@@ -117,6 +138,27 @@ function pendingExpired(messages: TessMessage[]): TessMessage[] {
   )
 }
 
+/** The changes `ids` pending again, where they show as expired. */
+function pendingAgain(
+  messages: TessMessage[],
+  ids: ReadonlySet<string>
+): TessMessage[] {
+  return messages.map(message =>
+    message.changes.some(
+      change => change.status === 'expired' && ids.has(change.id)
+    )
+      ? {
+          ...message,
+          changes: message.changes.map(change =>
+            change.status === 'expired' && ids.has(change.id)
+              ? { ...change, status: 'pending' as const }
+              : change
+          )
+        }
+      : message
+  )
+}
+
 function withChange(
   messages: TessMessage[],
   changeId: string,
@@ -139,13 +181,22 @@ function withChange(
  * chat opens, and read until she is done when she is still answering. A sent
  * message shows at once, with a thinking row under it until Tess answers.
  * One the server refused before storing it (malformed, too large, or another
- * turn running) is taken back and the composer gets its draft again. Any
+ * turn running) is taken back and the composer gets its draft again, as is
+ * one the stream's failure says the server took back (Tess failed before
+ * storing anything of her answer): the changes it showed as expired are
+ * pending again, as the server has made them. Any
  * other failure, the answer lost on the way included, has the conversation
  * read again once Tess is done: the message is found by the id it was sent
  * with, and shown with whatever she did; one the server did not keep is
  * taken back and its draft given back. Once it is answered, the changes
  * shown before it are expired, as the server has just made them, so none
  * offers a hold that can only be refused.
+ *
+ * A message and a confirm are streamed: while Tess works, `live` holds her
+ * thinking, her steps and her text as they arrive, redrawn at most once a
+ * frame, and her stored reply takes its place when she is done. Once the
+ * server has stored the message it replaces the one shown, and a confirmed
+ * change shows how it ended before her report on it.
  */
 export function useTess(
   api: TessApi,
@@ -171,6 +222,8 @@ export function useTess(
     working.current -= 1
     if (mounted.current) setInFlight(count => count - 1)
   }
+
+  const { live, thoughtSeconds, tell, stopTelling } = useLiveReply(mounted)
 
   useEffect(() => {
     mounted.current = true
@@ -212,36 +265,76 @@ export function useTess(
         createdAt: new Date().toISOString(),
         clientId
       }
+      // The changes shown as expired once the server stored the message.
+      let expired = new Set<string>()
+      // Gone: shown as sent, or as stored, and its expired changes pending.
       const takeBack = (): void => {
         setMessages(current =>
-          current.filter(message => message.id !== optimistic.id)
+          pendingAgain(
+            current.filter(
+              message =>
+                message.id !== optimistic.id && message.clientId !== clientId
+            ),
+            expired
+          )
         )
       }
       setMessages(current => [...current, optimistic])
       setError(null)
+      let answer: TessMessage[] | undefined
+      // The server told it stored the message: it is never given back.
+      let stored = false
       try {
-        const answer = await api.sendTessMessage(text, {
-          ...(attachments.length > 0
-            ? { attachmentIds: attachments.map(attachment => attachment.id) }
-            : {}),
-          ...(screen.current?.() != null ? { screen: screen.current() } : {}),
-          clientId
-        })
+        answer = await api.streamTessMessage(
+          text,
+          {
+            ...(attachments.length > 0
+              ? { attachmentIds: attachments.map(attachment => attachment.id) }
+              : {}),
+            ...(screen.current?.() != null ? { screen: screen.current() } : {}),
+            clientId
+          },
+          tell(event => {
+            stored = true
+            // Shown as the server has it, and the changes before it expired.
+            setMessages(current => {
+              expired = new Set(
+                current.flatMap(message =>
+                  message.changes.flatMap(change =>
+                    change.status === 'pending' ? [change.id] : []
+                  )
+                )
+              )
+              return merged(
+                pendingExpired(
+                  current.filter(message => message.id !== optimistic.id)
+                ),
+                event.messages
+              )
+            })
+          })
+        )
+        const replied = answer
         if (mounted.current)
           setMessages(current =>
             merged(
               pendingExpired(
                 current.filter(message => message.id !== optimistic.id)
               ),
-              answer
+              replied
             )
           )
         return true
       } catch (failure) {
+        stopTelling()
         if (!mounted.current) return false
+        // The server says whether it has the message; a lost stream cannot.
+        const told = failure instanceof TessTurnError ? failure.kept : null
         if (
-          failure instanceof HttpError &&
-          REFUSED_UNSTORED.includes(failure.code)
+          told === false ||
+          (!stored &&
+            failure instanceof HttpError &&
+            REFUSED_UNSTORED.includes(failure.code))
         ) {
           setError(messageOf(failure))
           takeBack()
@@ -251,6 +344,8 @@ export function useTess(
         if (!mounted.current) return false
         if (conversation == null) {
           setError(messageOf(failure))
+          // Kept, it stays as the server showed it, and is not sent twice.
+          if (stored || told === true) return true
           takeBack()
           return false
         }
@@ -269,10 +364,11 @@ export function useTess(
         // Kept: it reached Tess, and is not given back to send twice.
         return at >= 0
       } finally {
+        if (answer != null) stopTelling(answer)
         end()
       }
     },
-    [api]
+    [api, tell, stopTelling]
   )
 
   const upload = useCallback(
@@ -301,8 +397,20 @@ export function useTess(
       begin()
       setStatus(changeId, 'running')
       setError(null)
+      let answered: TessMessage[] | undefined
+      // How the change ended, as the server told it before she reports it.
+      let told = false
       try {
-        const answer = await api.confirmTessChange(changeId)
+        const answer = await api.streamTessConfirm(
+          changeId,
+          tell(stored => {
+            const { change } = stored
+            if (change == null) return
+            told = true
+            setMessages(current => withChange(current, changeId, () => change))
+          })
+        )
+        answered = answer.messages
         if (mounted.current)
           setMessages(current =>
             merged(
@@ -311,19 +419,22 @@ export function useTess(
             )
           )
       } catch (failure) {
+        stopTelling()
         if (!mounted.current) return
         setError(messageOf(failure))
         // The server knows whether it ran: show what it says once Tess is
-        // done, or let the user hold again when it cannot be asked either.
+        // done, or what it already told, or let the user hold again when it
+        // can be asked neither.
         const conversation = await settledConversation(api, mounted)
         if (!mounted.current) return
         if (conversation != null) setMessages(conversation.messages)
-        else setStatus(changeId, 'pending')
+        else if (!told) setStatus(changeId, 'pending')
       } finally {
+        if (answered != null) stopTelling(answered)
         end()
       }
     },
-    [api]
+    [api, tell, stopTelling]
   )
 
   const showError = useCallback((message: string) => {
@@ -334,10 +445,113 @@ export function useTess(
     loading,
     messages,
     thinking: inFlight > 0,
+    live,
+    thoughtSeconds,
     error,
     send,
     upload,
     confirm,
     showError
   }
+}
+
+/** What a reply on its way has told so far, and when. */
+interface Telling {
+  live: TessLive
+  startedAt: number
+  /** When she last thought or took a step. */
+  workedAt?: number
+}
+
+/**
+ * The reply on its way: `tell` starts one and answers what takes its
+ * events, drawn into `live` at most once a frame; `stopTelling` ends it,
+ * keeping how long she thought on the reply she answered with.
+ */
+function useLiveReply(mounted: RefObject<boolean>): {
+  live: TessLive | null
+  thoughtSeconds: Record<string, number>
+  tell: (
+    onStored: (event: Extract<TessStreamEvent, { type: 'stored' }>) => void
+  ) => (event: TessStreamEvent) => void
+  stopTelling: (answered?: TessMessage[]) => void
+} {
+  const [live, setLive] = useState<TessLive | null>(null)
+  const [thoughtSeconds, setThoughtSeconds] = useState<Record<string, number>>(
+    {}
+  )
+  const telling = useRef<Telling | null>(null)
+  const frame = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (frame.current != null) cancelAnimationFrame(frame.current)
+      frame.current = null
+    },
+    []
+  )
+
+  const draw = useCallback((): void => {
+    frame.current = null
+    const current = telling.current
+    if (current != null && mounted.current)
+      setLive({ ...current.live, steps: [...current.live.steps] })
+  }, [mounted])
+
+  const tell = useCallback(
+    (
+      onStored: (event: Extract<TessStreamEvent, { type: 'stored' }>) => void
+    ): ((event: TessStreamEvent) => void) => {
+      const current: Telling = {
+        live: { thinking: '', steps: [], text: '' },
+        startedAt: Date.now()
+      }
+      telling.current = current
+      return event => {
+        if (telling.current !== current || !mounted.current) return
+        if (event.type === 'stored') {
+          onStored(event)
+          return
+        }
+        if (event.type === 'text') current.live.text += event.delta
+        else {
+          current.workedAt = Date.now()
+          if (event.type === 'thinking') current.live.thinking += event.delta
+          else {
+            const step = {
+              id: event.id,
+              label: event.label,
+              status: event.status
+            }
+            const at = current.live.steps.findIndex(one => one.id === event.id)
+            if (at < 0) current.live.steps.push(step)
+            else current.live.steps[at] = step
+          }
+        }
+        frame.current ??= requestAnimationFrame(draw)
+      }
+    },
+    [mounted, draw]
+  )
+
+  const stopTelling = useCallback(
+    (answered?: TessMessage[]): void => {
+      const current = telling.current
+      telling.current = null
+      if (frame.current != null) cancelAnimationFrame(frame.current)
+      frame.current = null
+      if (!mounted.current) return
+      setLive(null)
+      const reply = answered?.find(message => message.role === 'assistant')
+      if (reply == null || current?.workedAt == null) return
+      const seconds = Math.max(
+        1,
+        Math.round((current.workedAt - current.startedAt) / 1000)
+      )
+      setThoughtSeconds(known => ({ ...known, [reply.id]: seconds }))
+    },
+    [mounted]
+  )
+
+  return { live, thoughtSeconds, tell, stopTelling }
 }

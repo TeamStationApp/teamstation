@@ -118,12 +118,13 @@ export async function compact(
  * `MAX_PICTURES`. Counting from the newest, the first picture that does not
  * fit is described and its bytes dropped, and so is every picture before
  * it. A message's own pictures always fit, so the person's newest pictures
- * are sent as they are.
+ * are sent as they are. `beforeDescribing` is awaited first when any is.
  */
 export async function fitPictures(
   deps: ModelDeps,
   userId: string,
-  extra: StoredBlock[] = []
+  extra: StoredBlock[] = [],
+  beforeDescribing?: () => Promise<void>
 ): Promise<void> {
   const { messages } = await loadConversation(deps.db, userId)
   const newestFirst = attachmentIdsOf(
@@ -153,7 +154,9 @@ export async function fitPictures(
     if (over.length > 0 || bytes > PICTURE_BYTES || pictures > MAX_PICTURES)
       over.push(id)
   }
-  if (over.length > 0) await describeAttachments(deps, userId, over)
+  if (over.length === 0) return
+  await beforeDescribing?.()
+  await describeAttachments(deps, userId, over)
 }
 
 /**

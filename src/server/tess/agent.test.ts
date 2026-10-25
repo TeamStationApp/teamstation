@@ -18,7 +18,8 @@ import {
   MAX_TOOL_ROUNDS,
   runTurn,
   TOO_LARGE_NOW,
-  TOOL_LIMIT
+  TOOL_LIMIT,
+  type TurnEvent
 } from './agent'
 import { storeAttachment } from './attachments'
 import {
@@ -28,6 +29,7 @@ import {
   SUMMARY_SYSTEM
 } from './compaction'
 import { loadConversation } from './conversation'
+import { READING_API, stepLabel } from './stepLabels'
 import { PROPOSED } from './tools'
 import { TURN_RUNNING } from './turns'
 import { usageWeeks } from './usage'
@@ -531,7 +533,12 @@ describe("Tess's agent loop", function () {
     model.reply(say('They asked about one.'), say('You hold no roles.'))
     // The conversation with the message, the message alone, then compacted.
     model.count(160000, 1000, 160000, 30000)
-    await runTurn(w.deps(), w.user(101), { text: 'Try again' })
+    const compacting: TurnEvent[] = []
+    await runTurn(w.deps(), w.user(101), { text: 'Try again' }, event => {
+      compacting.push(event)
+    })
+    // Told before compacting, a model call that takes a while.
+    expect(kinds(compacting).slice(0, 2)).deep.equals(['preparing', 'stored'])
     expect(model.calls.map(call => call.path)).deep.equals([
       '/messages/count_tokens',
       '/messages/count_tokens',
@@ -603,20 +610,37 @@ describe("Tess's agent loop", function () {
       say('Photo two: the outfield fence.'),
       say('Two more.')
     )
-    await runTurn(w.deps(), w.user(101), {
-      text: 'And these',
-      attachmentIds: later
-    })
+    // Told before the descriptions, model calls that take a while, once.
+    const describing: TurnEvent[] = []
+    await runTurn(
+      w.deps(),
+      w.user(101),
+      { text: 'And these', attachmentIds: later },
+      event => {
+        describing.push(event)
+      }
+    )
+    expect(kinds(describing).slice(0, 2)).deep.equals(['preparing', 'stored'])
+    expect(kinds(describing).filter(kind => kind === 'preparing')).length(1)
     model.reply(say('The mound looks dry.'))
-    await runTurn(w.deps(), w.user(101), { text: 'How is the mound?' })
+    const plain: TurnEvent[] = []
+    await runTurn(
+      w.deps(),
+      w.user(101),
+      { text: 'How is the mound?' },
+      event => {
+        plain.push(event)
+      }
+    )
+    expect(kinds(plain)[0]).equals('stored')
 
     // Seven pictures at the limit are 35 MiB of base64; the two oldest gave
     // way to their descriptions before the second message was measured.
     expect(await describedIds()).deep.equals(first.slice(0, 2))
-    const describing = model
+    const descriptions = model
       .messageCalls()
       .filter(body => body.system[0].text === DESCRIBE_SYSTEM)
-    expect(describing).length(2)
+    expect(descriptions).length(2)
     for (const call of model.calls) {
       // The whole body, well under the provider's 32 MB.
       expect(JSON.stringify(call.body).length).below(28 * 1000 * 1000)
@@ -970,12 +994,32 @@ describe("Tess's agent loop", function () {
     expect(await status()).deep.equals(['pending'])
 
     model.reply({ status: 529, error: 'overloaded_error' })
+    const told: TurnEvent[] = []
+    // What is stored when `takenBack` is told: told once it is so.
+    let atTakenBack: { messages: number; status: string[] } | undefined
     try {
-      await runTurn(w.deps(), w.user(101), { text: 'And the Eagles?' })
+      await runTurn(
+        w.deps(),
+        w.user(101),
+        { text: 'And the Eagles?' },
+        async event => {
+          told.push(event)
+          if (event.type === 'takenBack')
+            atTakenBack = {
+              messages: (await stored()).length,
+              status: await status()
+            }
+        }
+      )
       expect.fail('the failure was swallowed')
     } catch (error) {
       expect((error as HttpError).status).equals(503)
     }
+    expect(told.map(event => event.type)).deep.equals(['stored', 'takenBack'])
+    expect(atTakenBack).deep.equals({
+      messages: before.length,
+      status: ['pending']
+    })
     // Nothing of the failed turn is kept, and the card can still be held.
     expect(await stored()).deep.equals(before)
     expect(await status()).deep.equals(['pending'])
@@ -1003,16 +1047,210 @@ describe("Tess's agent loop", function () {
       callTools([{ name: 'api_get', input: { path: '/me/roles' } }]),
       { status: 529, error: 'overloaded_error' }
     )
+    const told: string[] = []
     try {
-      await runTurn(w.deps(), w.user(101), { text: 'What may I do?' })
+      await runTurn(
+        w.deps(),
+        w.user(101),
+        { text: 'What may I do?' },
+        event => {
+          told.push(event.type)
+        }
+      )
       expect.fail('the failure was swallowed')
     } catch (error) {
       expect((error as HttpError).status).equals(503)
     }
+    expect(told).includes('stored')
+    expect(told).not.includes('takenBack')
     expect((await stored()).map(message => message.role)).deep.equals([
       'user',
       'assistant',
       'user'
     ])
+  })
+
+  /** The kinds of `events` in order, a run of one kind told once. */
+  const kinds = (events: TurnEvent[]): string[] =>
+    events
+      .map(event =>
+        event.type === 'step' ? `step ${event.id} ${event.status}` : event.type
+      )
+      .filter((kind, at, all) => at === 0 || all[at - 1] !== kind)
+  const joined = (events: TurnEvent[], type: 'thinking' | 'text'): string =>
+    events.flatMap(event => (event.type === type ? [event.delta] : [])).join('')
+
+  it('streams every call and tells the turn as it goes: stored, thinking, steps and text', async () => {
+    const thinking = (text: string, signature: string): Block => ({
+      type: 'thinking',
+      thinking: text,
+      signature
+    })
+    const first = [
+      thinking('They want their account. I will read it.', 'sig-one'),
+      { type: 'text', text: 'Let me check.' },
+      {
+        type: 'tool_use',
+        id: 'toolu_read',
+        name: 'api_get',
+        input: { path: '/me/roles', query: { team: 'tem_secret_1' } }
+      },
+      {
+        type: 'tool_use',
+        id: 'toolu_refused',
+        name: 'api_get',
+        input: { path: '/me/account' }
+      }
+    ]
+    const last = [
+      thinking('One read worked and one was refused.', 'sig-two'),
+      { type: 'text', text: 'Here is what I found.' }
+    ]
+    model.reply(
+      { content: first, stop_reason: 'tool_use' },
+      { content: last, stop_reason: 'end_turn' }
+    )
+    const events: TurnEvent[] = []
+    const id = await runTurn(
+      w.deps(),
+      w.user(101),
+      { text: 'Who am I?' },
+      event => {
+        events.push(event)
+      }
+    )
+    expect(kinds(events)).deep.equals([
+      'stored',
+      'thinking',
+      'text',
+      'step toolu_read running',
+      'step toolu_read done',
+      'step toolu_refused running',
+      'step toolu_refused failed',
+      'thinking',
+      'text'
+    ])
+    expect(events[0]).deep.equals({ type: 'stored', fromId: id })
+    // A second block of a kind starts a new paragraph, as the view joins them.
+    expect(joined(events, 'thinking')).equals(
+      'They want their account. I will read it.\n\nOne read worked and one was refused.'
+    )
+    expect(joined(events, 'text')).equals(
+      'Let me check.\n\nHere is what I found.'
+    )
+    const steps = events.filter(event => event.type === 'step')
+    const reading = stepLabel({ name: 'api_get', input: { path: '/me/roles' } })
+    expect(reading).not.equals(READING_API)
+    expect(steps.map(step => step.type === 'step' && step.label)).deep.equals([
+      reading,
+      reading,
+      'Not allowed: Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes.',
+      'Not allowed: Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes.'
+    ])
+    expect(JSON.stringify(events)).not.contains('secret')
+    // Every call of the turn is streamed, with summarized thinking.
+    for (const call of model.messageCalls()) {
+      expect(call.stream).equals(true)
+      expect(call.thinking.display).equals('summarized')
+    }
+    // Stored as the model sent it, signatures and all, and sent back so.
+    const conversation = await stored()
+    expect(conversation[1]).deep.equals({ role: 'assistant', content: first })
+    expect(conversation[3]).deep.equals({ role: 'assistant', content: last })
+    const replayed = model.messageCalls()[1].messages[1]
+    expect(replayed).deep.equals({ role: 'assistant', content: first })
+  })
+
+  it('tells a step whose result is too large for the conversation as failed, and streams a turn no one listens to', async () => {
+    model.reply(
+      callTools(
+        [{ name: 'api_get', input: { path: '/me/roles' }, id: 'toolu_big' }],
+        { input_tokens: 900000 }
+      ),
+      say('Too much.')
+    )
+    const events: TurnEvent[] = []
+    await runTurn(w.deps(), w.user(101), { text: 'Everything' }, event => {
+      events.push(event)
+    })
+    expect(kinds(events).filter(kind => kind.startsWith('step'))).deep.equals([
+      'step toolu_big running',
+      'step toolu_big done',
+      'step toolu_big failed'
+    ])
+    expect((await stored())[2].content[0].content).equals(TOO_LARGE_NOW)
+    model.reply(say('Hello.'))
+    await runTurn(w.deps(), w.user(102), { text: 'Hi' })
+    expect(model.messageCalls().at(-1)!.stream).equals(true)
+  })
+
+  it('tells each call at the round cap as a failed step', async () => {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1)
+      model.reply(
+        callTools([
+          { name: 'api_get', input: { path: '/me' }, id: `t${round}` }
+        ])
+      )
+    model.reply(say('That is all I could find.'))
+    const events: TurnEvent[] = []
+    await runTurn(w.deps(), w.user(101), { text: 'Look everywhere' }, event => {
+      events.push(event)
+    })
+    const last = `t${MAX_TOOL_ROUNDS - 1}`
+    expect(
+      kinds(events).filter(kind => kind.includes(` ${last} `))
+    ).deep.equals([`step ${last} failed`])
+    expect(joined(events, 'text').endsWith('That is all I could find.')).equals(
+      true
+    )
+  })
+
+  it('tells a confirmed change as it ended, then Tess’s report on it', async () => {
+    model.reply(
+      callTools([
+        {
+          name: 'confirmChange',
+          input: {
+            method: 'PUT',
+            path: '/me/follows/team/tem_account',
+            summary: 'Follow Demo Hawks'
+          }
+        }
+      ]),
+      say('Hold Confirm to follow Demo Hawks.')
+    )
+    const proposing: TurnEvent[] = []
+    await runTurn(
+      w.deps(),
+      w.user(101),
+      { text: 'Follow the Hawks' },
+      event => {
+        proposing.push(event)
+      }
+    )
+    expect(
+      proposing.flatMap(event => (event.type === 'step' ? [event.label] : []))
+    ).deep.equals([
+      'Preparing a change for you to confirm',
+      'Preparing a change for you to confirm'
+    ])
+    const { id: changeId } = await w.h.db
+      .selectFrom('tess_changes')
+      .select('id')
+      .executeTakeFirstOrThrow()
+    model.reply(say('You now follow Demo Hawks.'))
+    const events: TurnEvent[] = []
+    const { change, fromId } = await confirmTurn(
+      w.deps(),
+      w.user(101),
+      changeId,
+      event => {
+        events.push(event)
+      }
+    )
+    expect(kinds(events)).deep.equals(['stored', 'text'])
+    expect(events[0]).deep.equals({ type: 'stored', fromId, change })
+    expect(change.status).equals('done')
+    expect(joined(events, 'text')).equals('You now follow Demo Hawks.')
   })
 })

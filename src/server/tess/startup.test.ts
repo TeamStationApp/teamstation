@@ -12,6 +12,7 @@ import { it } from 'mocha'
 
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { accountHarness } from '../../test/accountHarness'
+import { sseText } from '../../test/anthropicStream'
 
 type Block = Record<string, any>
 
@@ -36,7 +37,7 @@ it('answers Tess’s tool calls through the production server’s own port', asy
   const h = await accountHarness()
   const folder = await mkdtemp(join(tmpdir(), 'tess-startup-'))
   // The Messages API: the first answer reads the person's roles, the next
-  // one, sent with that read's result, replies.
+  // one, sent with that read's result, replies; streamed, as a turn asks.
   const requests: Block[] = []
   const model = createHttpServer((req, res) => {
     const chunks: Buffer[] = []
@@ -55,17 +56,21 @@ it('answers Tess’s tool calls through the production server’s own port', asy
               }
             ]
           : [{ type: 'text', text: 'You hold no team roles yet.' }]
+      const answer = {
+        id: `msg_startup_${requests.length}`,
+        type: 'message',
+        role: 'assistant',
+        content,
+        stop_reason: requests.length === 1 ? 'tool_use' : 'end_turn',
+        usage: { input_tokens: 1000, output_tokens: 20 }
+      }
+      if (body.stream === true) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.end(sseText(answer))
+        return
+      }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(
-        JSON.stringify({
-          id: `msg_startup_${requests.length}`,
-          type: 'message',
-          role: 'assistant',
-          content,
-          stop_reason: requests.length === 1 ? 'tool_use' : 'end_turn',
-          usage: { input_tokens: 1000, output_tokens: 20 }
-        })
-      )
+      res.end(JSON.stringify(answer))
     })
   })
   model.listen(0, '127.0.0.1')
@@ -168,6 +173,7 @@ it('answers Tess’s tool calls through the production server’s own port', asy
 
     // The read went to this same server, as user 101.
     expect(requests).length(2)
+    expect(requests.map(request => request.stream)).deep.equals([true, true])
     const result = (requests[1].messages as Block[])
       .flatMap(message =>
         Array.isArray(message.content) ? (message.content as Block[]) : []

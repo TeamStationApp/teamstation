@@ -36,11 +36,13 @@ import {
   type MessageParam,
   type MessagesRequest,
   type MessagesResponse,
+  type MessagesStreamEvent,
   type SystemBlock,
   type ToolResultBlock,
   type ToolUseBlock
 } from './messagesApi'
 import { systemBlocks } from './prompt'
+import { stepLabel } from './stepLabels'
 import { runTool, TOOLS } from './tools'
 import { withTurn } from './turns'
 import { userContext } from './userContext'
@@ -72,6 +74,38 @@ export interface TessUser {
   credentials: Credentials
 }
 
+/**
+ * What a turn tells as it happens, for the app to show: each piece of the
+ * summary of Tess's thinking and of her text, a separate block's starting
+ * on a new paragraph; each tool call as a step, labelled (`stepLabels.ts`),
+ * when it starts and when it ends; once the person's message (or the note
+ * of the change they confirmed) is stored, the id it was stored with, and
+ * the change as it ended; before the message is stored, `preparing`
+ * when the conversation is to be made fit for it first (pictures described,
+ * or the conversation compacted), model calls that may take a while; and,
+ * when the turn fails before anything of her answer is stored, `takenBack`
+ * once the stored message is deleted again, just before the turn throws.
+ */
+export type TurnEvent =
+  | { type: 'thinking'; delta: string }
+  | { type: 'text'; delta: string }
+  | {
+      type: 'step'
+      /** The tool call's id. */
+      id: string
+      label: string
+      status: 'running' | 'done' | 'failed'
+    }
+  | { type: 'stored'; fromId: number; change?: TessChange }
+  | { type: 'preparing' }
+  | { type: 'takenBack' }
+
+/**
+ * Told each `TurnEvent`; the turn waits for what it answers to `stored`,
+ * `preparing`, `step` and `takenBack`.
+ */
+export type TurnEvents = (event: TurnEvent) => void | Promise<void>
+
 export interface TurnInput {
   text: string
   attachmentIds?: readonly string[]
@@ -98,7 +132,8 @@ export interface TurnInput {
 export async function runTurn(
   deps: TessDeps,
   user: TessUser,
-  input: TurnInput
+  input: TurnInput,
+  onEvent?: TurnEvents
 ): Promise<number> {
   const text = input.text.trim()
   const attachments = await ownedAttachments(
@@ -111,7 +146,7 @@ export async function runTurn(
   return await withTurn(
     deps.db,
     user.userId,
-    async () => await turn(deps, user, input, text, attachments)
+    async () => await turn(deps, user, input, text, attachments, onEvent)
   )
 }
 
@@ -120,7 +155,8 @@ async function turn(
   user: TessUser,
   input: TurnInput,
   text: string,
-  attachments: ReadonlyArray<{ id: string }>
+  attachments: ReadonlyArray<{ id: string }>,
+  onEvent?: TurnEvents
 ): Promise<number> {
   await pruneAttachments(
     deps.db,
@@ -138,16 +174,19 @@ async function turn(
     }
   ]
   const system = await systemFor(deps, user)
-  await guard(deps, user.userId, system, content)
+  await guard(deps, user.userId, system, content, onEvent)
   const expired = await expirePendingChanges(deps.db, user.userId)
   const [id] = await appendMessages(deps.db, user.userId, [
     { role: 'user', content }
   ])
   try {
-    await respond(deps, user, system)
+    await onEvent?.({ type: 'stored', fromId: id })
+    await respond(deps, user, system, onEvent)
   } catch (error) {
-    if (await takeBack(deps, user.userId, id))
+    if (await takeBack(deps, user.userId, id)) {
       await restoreExpiredChanges(deps.db, user.userId, expired)
+      await onEvent?.({ type: 'takenBack' })
+    }
     throw error
   }
   return id
@@ -189,7 +228,8 @@ async function takeBack(
 export async function confirmTurn(
   deps: TessDeps,
   user: TessUser,
-  changeId: string
+  changeId: string,
+  onEvent?: TurnEvents
 ): Promise<{ change: TessChange; fromId: number }> {
   return await withTurn(deps.db, user.userId, async () => {
     const { change, note } = await runChange(
@@ -205,7 +245,8 @@ export async function confirmTurn(
       }
     ])
     try {
-      await respond(deps, user, await systemFor(deps, user))
+      await onEvent?.({ type: 'stored', fromId, change })
+      await respond(deps, user, await systemFor(deps, user), onEvent)
     } catch (error) {
       if (!(error instanceof HttpError)) throw error
     }
@@ -266,15 +307,24 @@ async function buildRequest(
  * with the message, it is refused. Compaction cannot make the message
  * itself smaller, so it is measured alone first: one that would not fit
  * beside the summary compaction leaves, an answer long at most, is refused
- * at once, and the conversation is left as it was.
+ * at once, and the conversation is left as it was. `onEvent` is told
+ * `preparing`, once, before pictures are described or the conversation
+ * compacted.
  */
 async function guard(
   deps: TessDeps,
   userId: string,
   system: SystemBlock[],
-  content: StoredBlock[]
+  content: StoredBlock[],
+  onEvent?: TurnEvents
 ): Promise<void> {
-  await fitPictures(deps, userId, content)
+  let told = false
+  const preparing = async (): Promise<void> => {
+    if (told) return
+    told = true
+    await onEvent?.({ type: 'preparing' })
+  }
+  await fitPictures(deps, userId, content, preparing)
   const measure = async (): Promise<number> =>
     await countTokens(
       deps.settings,
@@ -302,6 +352,7 @@ async function guard(
     )
     if (alone + (tokens > alone ? MAX_TOKENS : 0) > INPUT_CEILING)
       throw refused()
+    await preparing()
     tokens = await compact(deps, userId, measure, { keepNone: true })
   }
   if (tokens <= INPUT_CEILING) return
@@ -319,15 +370,25 @@ async function guard(
  * the conversation is compacted; a compaction that fails then leaves the
  * answer as it is, to be tried again before the next message. When she
  * fails after storing a round, the size it had is saved, so the next
- * message is measured against it.
+ * message is measured against it. Each call is streamed, and what it tells
+ * goes to `onEvent` with each step.
  */
 async function respond(
   deps: TessDeps,
   user: TessUser,
-  system: SystemBlock[]
+  system: SystemBlock[],
+  onEvent?: TurnEvents
 ): Promise<void> {
   const { db, settings } = deps
   const { userId } = user
+  const relay = relayOf(onEvent)
+  const step = async (
+    id: string,
+    label: string,
+    status: 'running' | 'done' | 'failed'
+  ): Promise<void> => {
+    await onEvent?.({ type: 'step', id, label, status })
+  }
   const measure = async (): Promise<number> =>
     await countTokens(settings, await buildRequest(deps, userId, system), {
       fetch: deps.fetch
@@ -340,14 +401,14 @@ async function respond(
     toolChoice?: MessagesRequest['toolChoice']
   ): Promise<MessagesResponse> => {
     try {
-      return await callModel(deps, userId, { ...request, toolChoice })
+      return await callModel(deps, userId, { ...request, toolChoice }, relay())
     } catch (error) {
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
       if (isTooLong(error)) known = await compact(deps, userId, measure)
       else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
-      return await callModel(deps, userId, { ...request, toolChoice })
+      return await callModel(deps, userId, { ...request, toolChoice }, relay())
     }
   }
   let last: MessagesResponse
@@ -369,6 +430,7 @@ async function respond(
           content: TOOL_LIMIT,
           is_error: true
         }))
+        for (const call of calls) await step(call.id, stepLabel(call), 'failed')
         await appendMessages(db, userId, [
           { role: 'assistant', content: response.content },
           { role: 'user', content: results }
@@ -388,13 +450,27 @@ async function respond(
         now: deps.now?.() ?? new Date()
       }
       const outcomes = []
-      for (const call of calls) outcomes.push(await runTool(context, call))
+      for (const call of calls) {
+        const label = stepLabel(call)
+        await step(call.id, label, 'running')
+        const outcome = await runTool(context, call)
+        outcomes.push(outcome)
+        await step(
+          call.id,
+          label,
+          outcome.result.is_error === true ? 'failed' : 'done'
+        )
+      }
       const results = await fitted(
         deps,
         request,
         response,
         outcomes.map(outcome => outcome.result)
       )
+      // A result too large to keep failed after all.
+      for (const [at, result] of results.entries())
+        if (result.content === TOO_LARGE_NOW)
+          await step(calls[at].id, stepLabel(calls[at]), 'failed')
       const changes: StoredBlock[] = outcomes.flatMap(outcome =>
         outcome.changeId == null
           ? []
@@ -422,6 +498,32 @@ async function respond(
     // The answer is stored, and the saved size has the next message
     // compact first.
     if (!(error instanceof HttpError)) throw error
+  }
+}
+
+/**
+ * A relay of each call's stream to `onEvent`, made anew for each call: a
+ * thinking or text block after the first of its kind in the turn starts on
+ * a new paragraph, as the app joins them once they are stored. A stream's
+ * events are told as they come, without waiting.
+ */
+function relayOf(
+  onEvent: TurnEvents | undefined
+): () => (event: MessagesStreamEvent) => void {
+  const told = { thinking: false, text: false }
+  return () => {
+    const block = { thinking: -1, text: -1 }
+    return event => {
+      if (onEvent == null) return
+      let delta = event.delta
+      if (block[event.type] !== event.index) {
+        block[event.type] = event.index
+        if (told[event.type]) delta = `\n\n${delta}`
+      }
+      told[event.type] = true
+      const answered = onEvent({ type: event.type, delta })
+      if (answered != null) answered.catch(() => undefined)
+    }
   }
 }
 

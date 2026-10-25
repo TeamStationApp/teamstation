@@ -165,7 +165,7 @@ describe("Tess in the app's shell", () => {
       ],
       contextTokens: 0
     })
-    api.sendTessMessage = async (text, options = {}) => {
+    api.streamTessMessage = async (text, options) => {
       sent.push({ text, screen: options.screen })
       return [
         {
@@ -542,7 +542,7 @@ describe("Tess in the app's shell", () => {
         return await load()
       }
       let reply: (messages: TessMessage[]) => void = () => undefined
-      api.sendTessMessage = async text => {
+      api.streamTessMessage = async text => {
         sent.push({ text })
         return await new Promise<TessMessage[]>(resolve => {
           reply = resolve

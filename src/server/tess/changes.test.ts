@@ -9,7 +9,13 @@ import {
   asTessConversation,
   type TessChange
 } from '../../common/api'
-import { callTools, say, type TessWorld, tessWorld } from '../../test/tessFakes'
+import {
+  callTools,
+  readTurnStream,
+  say,
+  type TessWorld,
+  tessWorld
+} from '../../test/tessFakes'
 import {
   CHANGE_TTL_MS,
   LOST_AFTER_MS,
@@ -312,6 +318,28 @@ describe("Tess's changes", function () {
     const confirmed = asTessConfirmation(await answer.json())
     expect(confirmed.change.status).equals('done')
     expect(confirmed.messages).deep.equals([])
+  })
+
+  it('streams a confirm whose report fails: the change shows done before, and the answer is still the change', async () => {
+    const change = await propose(follow)
+    w.model.reply({ status: 529, error: 'overloaded_error' })
+    const response = await fetch(
+      `${w.h.origin}/api/v1/me/tess/changes/${change.id}/confirm`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${w.h.tokens.get(101) ?? ''}`,
+          accept: 'text/event-stream'
+        }
+      }
+    )
+    const events = await readTurnStream(response)
+    expect(events.map(event => event.event)).deep.equals(['stored', 'done'])
+    expect(events[0].data.change.status).equals('done')
+    const confirmed = asTessConfirmation(events[1].data)
+    expect(confirmed.change.status).equals('done')
+    expect(confirmed.messages).deep.equals([])
+    expect(await followWrites()).equals(1)
   })
 
   it('stores a change the server gave no answer to as unknown, and says to check it', async () => {

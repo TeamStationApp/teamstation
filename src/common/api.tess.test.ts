@@ -5,11 +5,15 @@ import {
   asHealth,
   asTessMessageBody,
   type Health,
+  type StreamingRequest,
   TeamStationClient,
   TESS_ACCEPT,
   TESS_MAX_IMAGE_BYTES,
+  type TessStreamEvent,
+  TessTurnError,
   tessUploadType
 } from './api'
+import { HttpError } from './errors'
 
 interface Call {
   url: string
@@ -225,5 +229,321 @@ describe('api client for Tess', () => {
       'text/plain',
       'text/markdown'
     ])
+  })
+
+  describe('streamed', () => {
+    /** A request the test answers by hand, a piece at a time. */
+    class FakeRequest implements StreamingRequest {
+      method = ''
+      url = ''
+      headers: Record<string, string> = {}
+      body: string | undefined
+      withCredentials = false
+      status = 0
+      responseText = ''
+      contentType: string | null = null
+      onprogress: (() => void) | null = null
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      ontimeout: (() => void) | null = null
+      onabort: (() => void) | null = null
+      open(method: string, url: string): void {
+        this.method = method
+        this.url = url
+      }
+
+      setRequestHeader(name: string, value: string): void {
+        this.headers[name] = value
+      }
+
+      getResponseHeader(name: string): string | null {
+        return name.toLowerCase() === 'content-type' ? this.contentType : null
+      }
+
+      send(body?: string): void {
+        this.body = body
+      }
+
+      /** The status and type arrive, then the body in these pieces. */
+      answer(status: number, type: string, ...pieces: string[]): void {
+        this.status = status
+        this.contentType = type
+        for (const piece of pieces) {
+          this.responseText += piece
+          this.onprogress?.()
+        }
+      }
+    }
+
+    const sse = (event: string, data: unknown): string =>
+      `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    const STREAM = 'text/event-stream; charset=utf-8'
+
+    function streaming(token?: string): {
+      api: TeamStationClient
+      requests: FakeRequest[]
+    } {
+      const requests: FakeRequest[] = []
+      const api = new TeamStationClient({
+        baseUrl: '/api/v1',
+        token,
+        streamingRequest: () => {
+          const request = new FakeRequest()
+          requests.push(request)
+          return request
+        }
+      })
+      return { api, requests }
+    }
+
+    async function failure(promise: Promise<unknown>): Promise<HttpError> {
+      try {
+        await promise
+      } catch (error) {
+        expect(error).instanceOf(HttpError)
+        return error as HttpError
+      }
+      return expect.fail('it did not fail')
+    }
+
+    it('sends a message as `request` does, and tells each event as its whole text arrives', async () => {
+      const { api, requests } = streaming('tok_tess_stream')
+      api.analyticsApp = 'TS'
+      const told: TessStreamEvent[] = []
+      const answer = api.streamTessMessage(
+        'Follow the Hawks',
+        { attachmentIds: ['a1'], clientId: 'm-3' },
+        event => told.push(event)
+      )
+      const [request] = requests
+      expect([request.method, request.url]).deep.equals([
+        'POST',
+        '/api/v1/me/tess/messages'
+      ])
+      expect(request.withCredentials).equals(true)
+      expect(request.headers).deep.equals({
+        accept: 'text/event-stream',
+        'content-type': 'application/json',
+        'x-teamstation-app': 'TS',
+        authorization: 'Bearer tok_tess_stream'
+      })
+      expect(JSON.parse(request.body!)).deep.equals({
+        text: 'Follow the Hawks',
+        attachmentIds: ['a1'],
+        clientId: 'm-3'
+      })
+      const text = [
+        sse('stored', { messages: [{ ...asked, clientId: 'm-3' }] }),
+        ': keep-alive\n\n',
+        sse('thinking', { delta: 'They want ' }),
+        sse('thinking', { delta: 'the Hawks.' }),
+        'event: step\r\ndata: {"id":"t1","label":"Reading: A team","status":"running"}\r\n\r\n',
+        sse('a_new_event', { delta: 'x' }),
+        sse('text', { delta: 42 }),
+        'event: text\ndata: {not json\n\n',
+        sse('text', { delta: 'Hold Confirm.' }),
+        sse('done', { messages: [asked, reply] }),
+        sse('text', { delta: 'after the end' })
+      ].join('')
+      // Cut anywhere, a line and an event at a time.
+      const pieces: string[] = []
+      for (let at = 0; at < text.length; at += 13)
+        pieces.push(text.slice(at, at + 13))
+      request.answer(200, STREAM, ...pieces)
+      expect(await answer).deep.equals([asked, reply])
+      expect(told).deep.equals([
+        { type: 'stored', messages: [{ ...asked, clientId: 'm-3' }] },
+        { type: 'thinking', delta: 'They want ' },
+        { type: 'thinking', delta: 'the Hawks.' },
+        {
+          type: 'step',
+          id: 't1',
+          label: 'Reading: A team',
+          status: 'running'
+        },
+        { type: 'text', delta: 'Hold Confirm.' }
+      ])
+      request.onload?.()
+      expect(api.offline).equals(false)
+    })
+
+    it('confirms a change streamed, its change told as it ended, with nothing sent', async () => {
+      const { api, requests } = streaming()
+      const told: TessStreamEvent[] = []
+      const answer = api.streamTessConfirm('a b', event => told.push(event))
+      const [request] = requests
+      expect(request.url).equals('/api/v1/me/tess/changes/a%20b/confirm')
+      expect(request.body).equals(undefined)
+      expect(request.headers).deep.equals({ accept: 'text/event-stream' })
+      const done = { ...change, status: 'done' }
+      request.answer(
+        200,
+        STREAM,
+        sse('stored', { messages: [], change: done }),
+        // The last event with no blank line after it, read at the end.
+        `event: done\ndata: ${JSON.stringify({ change: done, messages: [reply] })}`
+      )
+      request.onload?.()
+      expect(await answer).deep.equals({ change: done, messages: [reply] })
+      expect(told).deep.equals([{ type: 'stored', messages: [], change: done }])
+    })
+
+    it('fails as the server failed: an error event, or a refusal before the stream', async () => {
+      const { api, requests } = streaming()
+      let refused = 0
+      api.onSessionRefused = () => {
+        refused += 1
+      }
+      const failed = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[0].answer(
+        200,
+        STREAM,
+        sse('stored', { messages: [asked] }),
+        sse('error', {
+          status: 503,
+          code: 'unavailable',
+          message: "Tess's model answered 529 overloaded_error",
+          details: { status: 529 }
+        })
+      )
+      const error = await failure(failed)
+      expect([error.code, error.message, error.details]).deep.equals([
+        'unavailable',
+        "Tess's model answered 529 overloaded_error",
+        { status: 529 }
+      ])
+      const odd = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[1].answer(200, STREAM, sse('error', { status: 404 }))
+      expect((await failure(odd)).code).equals('notFound')
+      const oddest = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[2].answer(200, STREAM, sse('error', 'broken'))
+      expect((await failure(oddest)).code).equals('internal')
+
+      const busy = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[3].answer(
+        409,
+        'application/json',
+        JSON.stringify({
+          code: 'conflict',
+          message:
+            'Tess is still answering. Wait for her reply, then try again.'
+        })
+      )
+      requests[3].onload?.()
+      const conflict = await failure(busy)
+      expect([conflict.code, conflict.message]).deep.equals([
+        'conflict',
+        'Tess is still answering. Wait for her reply, then try again.'
+      ])
+      const signedOut = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[4].answer(401, 'application/json', '')
+      requests[4].onload?.()
+      expect((await failure(signedOut)).code).equals('unauthorized')
+      expect(refused).equals(1)
+      // None of them says whether the message was kept.
+      expect(error).not.instanceOf(TessTurnError)
+    })
+
+    it('says whether the server kept the message when its error event does', async () => {
+      const { api, requests } = streaming()
+      const takenBack = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[0].answer(
+        200,
+        STREAM,
+        sse('stored', { messages: [asked] }),
+        sse('error', {
+          status: 503,
+          code: 'unavailable',
+          message: "Tess's model answered 529 overloaded_error",
+          kept: false
+        })
+      )
+      const gone = await failure(takenBack)
+      expect(gone).instanceOf(TessTurnError)
+      expect([
+        gone.code,
+        gone.message,
+        (gone as TessTurnError).kept
+      ]).deep.equals([
+        'unavailable',
+        "Tess's model answered 529 overloaded_error",
+        false
+      ])
+      const kept = api.streamTessConfirm('c1', () => undefined)
+      requests[1].answer(200, STREAM, sse('error', { status: 500, kept: true }))
+      const stays = await failure(kept)
+      expect(stays).instanceOf(TessTurnError)
+      expect([stays.code, (stays as TessTurnError).kept]).deep.equals([
+        'internal',
+        true
+      ])
+    })
+
+    it('takes a JSON answer from a server that does not stream', async () => {
+      const { api, requests } = streaming()
+      const answer = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[0].answer(
+        200,
+        'application/json',
+        JSON.stringify({ messages: [asked, reply] })
+      )
+      requests[0].onload?.()
+      expect(await answer).deep.equals([asked, reply])
+      const unreadable = api.streamTessMessage('Hi', {}, () => undefined)
+      requests[1].answer(200, 'application/json', '<html>')
+      requests[1].onload?.()
+      expect((await failure(unreadable)).code).equals('internal')
+    })
+
+    it('is offline when the stream stops before Tess is done, or never connects', async () => {
+      const { api, requests } = streaming()
+      const told: TessStreamEvent[] = []
+      const cut = api.streamTessMessage('Hi', {}, event => told.push(event))
+      requests[0].answer(
+        200,
+        STREAM,
+        sse('stored', { messages: [asked] }),
+        sse('text', { delta: 'Half' })
+      )
+      requests[0].onload?.()
+      expect((await failure(cut)).code).equals('offline')
+      expect(api.offline).equals(true)
+      expect(told.map(event => event.type)).deep.equals(['stored', 'text'])
+      for (const end of ['onerror', 'ontimeout', 'onabort'] as const) {
+        const lost = api.streamTessMessage('Hi', {}, () => undefined)
+        const request = requests.at(-1)!
+        request[end]?.()
+        // Told once, however it ends.
+        request.onerror?.()
+        expect((await failure(lost)).code, end).equals('offline')
+      }
+    })
+
+    it('uses the platform’s XMLHttpRequest by default, and fails without one', async () => {
+      const made: FakeRequest[] = []
+      const global = globalThis as { XMLHttpRequest?: unknown }
+      const saved = global.XMLHttpRequest
+      try {
+        global.XMLHttpRequest = class extends FakeRequest {
+          constructor() {
+            super()
+            made.push(this)
+          }
+        }
+        const api = new TeamStationClient({ baseUrl: '/api/v1' })
+        const answer = api.streamTessMessage('Hi', {}, () => undefined)
+        made[0].answer(200, STREAM, sse('done', { messages: [] }))
+        expect(await answer).deep.equals([])
+        global.XMLHttpRequest = undefined
+        try {
+          await api.streamTessMessage('Hi', {}, () => undefined)
+          expect.fail('it streamed without a request')
+        } catch (error) {
+          expect(String(error)).contains('No XMLHttpRequest')
+        }
+      } finally {
+        global.XMLHttpRequest = saved
+      }
+    })
   })
 })

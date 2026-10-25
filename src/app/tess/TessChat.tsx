@@ -14,7 +14,7 @@ import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Composer, type ComposerHandle } from './Composer'
-import { TessMessage } from './TessMessage'
+import { TessLiveReply, TessMessage } from './TessMessage'
 import { useTessOverlay } from './TessOverlay'
 import type { TessChatState } from './useTess'
 
@@ -32,7 +32,9 @@ export interface TessChatProps {
 /**
  * The chat with Tess: a title bar, her icon and "Ask Tess" on the left and
  * the close X on the right, the conversation, which follows its newest
- * message, and the composer.
+ * message, and the composer. While she answers, the reply she is working on
+ * shows under the last message as it comes, or "Tess is thinking…" until
+ * she has told anything of it.
  */
 export function TessChat({
   tess,
@@ -114,14 +116,23 @@ export function TessChat({
             onNavigate={navigate}
             onConfirm={confirm}
             holdDisabled={tess.thinking}
+            thoughtSeconds={tess.thoughtSeconds[message.id]}
           />
         ))}
-        {tess.thinking && (
-          <View testID="Tess thinking" style={styles.thinking}>
-            <ActivityIndicator size="small" />
-            <Text style={styles.thinkingText}>{lstrings.tess_thinking}</Text>
-          </View>
-        )}
+        {tess.thinking &&
+          (tess.live != null &&
+          (tess.live.thinking !== '' ||
+            tess.live.steps.length > 0 ||
+            tess.live.text !== '') ? (
+            <View testID="Tess thinking">
+              <TessLiveReply live={tess.live} onNavigate={navigate} />
+            </View>
+          ) : (
+            <View testID="Tess thinking" style={styles.thinking}>
+              <ActivityIndicator size="small" />
+              <Text style={styles.thinkingText}>{lstrings.tess_thinking}</Text>
+            </View>
+          ))}
       </ScrollView>
       <Composer
         handle={composer}

@@ -23,8 +23,9 @@ import { recordBrowserCoverage } from '../browserCoverage.e2e'
  * links into the pane, rich HTML that loads nothing remote, the 3-second
  * hold, attachments, the microphone, the narrow layout and Back, the
  * screens that hide her, the divider that resizes her column, the title and
- * the composer's field, and the players she names. The model is
- * `fakeAnthropic`; nothing is paid for.
+ * the composer's field, the players she names, and a reply streaming in with
+ * her thinking and her steps. The model is `fakeAnthropic`, streaming a
+ * piece at a time; nothing is paid for.
  *
  * `TS_UI_BEFORE=1` runs W1 alone against the base build
  * (`TS_TESS_WEB_ROOT`), asserting the header without Tess, and saves its
@@ -941,6 +942,156 @@ async function main(): Promise<void> {
     await waitFor(page, column)
     await contains(page, 'Demo Hawks')
     console.log('W18 the DJ address on the web shows the game with Tess')
+
+    // L1: a reply that needs two reads, as it streams in: the "Thinking"
+    // row and her summary before any of her text, each step with a spinner
+    // and then a check, and her text growing in place; then a closed
+    // "Thought for Ns" that opens to the summary and the two steps.
+    await open('/')
+    await tap(tessButton)
+    await waitFor(page, column)
+    await page.evaluate(() => {
+      // What the live reply showed, each time it changed.
+      const seen: Array<{ thinking: string; text: string; steps: string }> = []
+      ;(window as unknown as { tessSeen: unknown }).tessSeen = seen
+      const record = (): void => {
+        const live = document.querySelector('[data-testid="Tess live reply"]')
+        if (live == null) return
+        const summary = live.querySelector(
+          '[data-testid="Tess thought summary"]'
+        )
+        const text = live.querySelector('[data-testid="Tess live text"]')
+        const steps = Array.from(
+          live.querySelectorAll('[data-testid="Tess step"]')
+        ).map(step =>
+          step.querySelector('[data-testid="Tess step done"]') != null
+            ? 'done'
+            : step.querySelector('[data-testid="Tess step failed"]') != null
+              ? 'failed'
+              : 'running'
+        )
+        const now = {
+          thinking: summary == null ? '' : summary.textContent || '',
+          text: text == null ? '' : text.textContent || '',
+          steps: steps.join(',')
+        }
+        const last = seen[seen.length - 1]
+        if (last == null || JSON.stringify(last) !== JSON.stringify(now))
+          seen.push(now)
+      }
+      new MutationObserver(record).observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true
+      })
+    })
+    const liveVideo = await startVideo(s, out, 'live-thinking.mp4')
+    await pause(600)
+    await page.click(field)
+    await page.type(field, 'How did our last two games go?')
+    await page.keyboard.press('Enter')
+    await waitFor(page, '[data-testid="Tess live reply"]')
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 40000 }
+    )
+    await pause(1000)
+    await liveVideo.stop()
+    const seen = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            tessSeen: Array<{ thinking: string; text: string; steps: string }>
+          }
+        ).tessSeen
+    )
+    const firstThought = seen.findIndex(state => state.thinking !== '')
+    const firstText = seen.findIndex(state => state.text !== '')
+    expect(firstThought, 'her thinking shows').greaterThanOrEqual(0)
+    expect(firstThought, 'before any of her text').lessThan(firstText)
+    // Each step's spinner, then its check, the second after the first.
+    const stepStates = seen
+      .map(state => state.steps)
+      .filter((steps, at, all) => at === 0 || all[at - 1] !== steps)
+    const wanted = ['running', 'done', 'done,running', 'done,done']
+    let found = 0
+    for (const steps of stepStates) if (steps === wanted[found]) found += 1
+    expect(found, JSON.stringify(stepStates)).equals(wanted.length)
+    // The text grows in place, a few words at a time.
+    const grown = seen
+      .map(state => state.text)
+      .filter((text, at, all) => text !== '' && all[at - 1] !== text)
+    expect(grown.length, 'pieces of text').greaterThan(6)
+    grown.forEach((text, at) => {
+      if (at > 0)
+        expect(text.length, `${grown[at - 1]} -> ${text}`).greaterThanOrEqual(
+          grown[at - 1].length
+        )
+    })
+    // Its last piece may come with the stored reply, which takes its place.
+    expect(grown[grown.length - 1]).contains('Demo Hawks lost the latest')
+    await contains(page, 'won the one before it 9 to 1.')
+    const thoughtRow = async (): Promise<{
+      label: string | null
+      expanded: string | null
+      body: string | null
+      steps: Array<string | null>
+    }> =>
+      await page.evaluate(() => {
+        const replies = document.querySelectorAll('[data-testid="Tess reply"]')
+        const reply = replies[replies.length - 1]
+        const row = reply.querySelector<HTMLElement>(
+          '[data-testid="Tess thought"] [role="button"]'
+        )!
+        row.setAttribute('data-tess-thought', 'last')
+        const body = reply.querySelector('[data-testid="Tess thought body"]')
+        return {
+          label: row.getAttribute('aria-label'),
+          expanded: row.getAttribute('aria-expanded'),
+          body:
+            body == null
+              ? null
+              : (
+                  body.querySelector('[data-testid="Tess thought summary"]') ||
+                  body
+                ).textContent,
+          steps: Array.from(
+            reply.querySelectorAll('[data-testid="Tess step"]')
+          ).map(step => step.getAttribute('aria-label'))
+        }
+      })
+    const collapsed = await thoughtRow()
+    expect(collapsed.label).match(/^Thought for \d+s$/)
+    expect(collapsed.expanded).equals('false')
+    expect(collapsed.body).equals(null)
+    await pause(500)
+    await shot('thought-collapsed.png')
+    await tap('[data-tess-thought="last"]')
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-tess-thought="last"]')!
+          .getAttribute('aria-expanded') === 'true',
+      { timeout: 10000 }
+    )
+    const expanded = await thoughtRow()
+    expect(expanded.body).contains('They want their last two games.')
+    expect(expanded.body).contains('I will give the scores, newest first.')
+    expect(expanded.steps).deep.equals([
+      'Reading: Public minimal group profile with optional current management capability, done',
+      "Reading: A team's games, newest first, done"
+    ])
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-tess-thought="last"]')!
+        .scrollIntoView({ block: 'start' })
+    })
+    await pause(500)
+    await shot('thought-expanded.png')
+    console.log(
+      `L1 thinking before text; steps ${stepStates.join(' | ')}; ${grown.length} pieces of text; ${collapsed.label}, opened to the summary and two steps`
+    )
 
     // L5: the header and the +.
     await open('/')

@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { serverSentEvents } from '../common/serverSentEvents'
 import { userIdOfGumbo } from '../common/userId'
 import { groupRoutes } from '../server/routes/groups'
 import { tessRoutes } from '../server/routes/tess'
@@ -10,17 +11,56 @@ import {
   accountHarness,
   type MountExtra
 } from './accountHarness'
+import { sseText } from './anthropicStream'
 
 /**
  * Tess's tests without the model: a scripted Messages API answering through
  * an injected `fetch`, and a harness with the real API, the group routes for
- * a write to confirm, and Tess's routes calling it back over loopback.
+ * a write to confirm, and Tess's routes calling it back over loopback. A
+ * request with `stream: true` is answered as the provider streams, from the
+ * same script.
  */
 
 export const TEST_SETTINGS: TessSettings = {
   apiKey: 'test-key-placeholder',
   baseUrl: 'http://model.example.test/v1',
   model: 'claude-sonnet-5-5'
+}
+
+/** One event of a streamed turn, as the route sent it. */
+export interface TurnStreamEvent {
+  event: string
+  data: any
+}
+
+/**
+ * Sends a streamed turn's request and reads its events, comments as
+ * `comment`, until the server ends the stream. `onEvent` hears each as it
+ * comes.
+ */
+export async function readTurnStream(
+  response: Response,
+  onEvent: (event: TurnStreamEvent) => void = () => undefined
+): Promise<TurnStreamEvent[]> {
+  const events: TurnStreamEvent[] = []
+  const decoder = new TextDecoder()
+  const reader = response.body!.getReader()
+  const sse = serverSentEvents()
+  for (;;) {
+    const chunk = await reader.read()
+    if (chunk.done) break
+    for (const read of sse.push(
+      decoder.decode(chunk.value, { stream: true })
+    )) {
+      const event =
+        read.data == null
+          ? { event: 'comment', data: read.comment }
+          : { event: read.event, data: JSON.parse(read.data) }
+      events.push(event)
+      onEvent(event)
+    }
+  }
+  return events
 }
 
 /** One request the fake model received: its endpoint and JSON body. */
@@ -43,6 +83,8 @@ export interface Usage {
 export type Reply =
   | { content: unknown[]; stop_reason?: string; usage?: Usage }
   | { status: number; error: string; message?: string }
+  /** A streamed answer's body exactly as given, events and all. */
+  | { sse: string }
   | ((body: Record<string, any>) => Reply | Promise<Reply>)
 
 export interface FakeModel {
@@ -111,17 +153,25 @@ export function fakeModel(): FakeModel {
         }),
         { status: reply.status }
       )
-    return new Response(
-      JSON.stringify({
-        id: 'msg_test',
-        type: 'message',
-        role: 'assistant',
-        content: reply.content,
-        stop_reason: reply.stop_reason ?? 'end_turn',
-        usage: { input_tokens: 1000, output_tokens: 20, ...reply.usage }
-      }),
-      { status: 200 }
-    )
+    if ('sse' in reply)
+      return new Response(reply.sse, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    const message = {
+      id: 'msg_test',
+      type: 'message',
+      role: 'assistant',
+      content: reply.content as Array<Record<string, unknown>>,
+      stop_reason: reply.stop_reason ?? 'end_turn',
+      usage: { input_tokens: 1000, output_tokens: 20, ...reply.usage }
+    }
+    if (body.stream === true)
+      return new Response(sseText(message), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    return new Response(JSON.stringify(message), { status: 200 })
   }
   const fake = (async (url: unknown, init?: { body?: string }) => {
     const path = new URL(String(url)).pathname.replace(/^\/v1/, '')
@@ -171,6 +221,8 @@ export async function tessWorld(
   options: {
     settings?: TessSettings | null
     mountExtra?: MountExtra
+    /** How often a streamed turn sends its keep-alive comment. */
+    keepAliveMs?: number
   } = {}
 ): Promise<TessWorld> {
   const model = fakeModel()
@@ -191,7 +243,8 @@ export async function tessWorld(
           settings,
           origin: () => origin,
           fetch: model.fetch,
-          now: () => now ?? new Date()
+          now: () => now ?? new Date(),
+          keepAliveMs: options.keepAliveMs
         })
       )
       options.mountExtra?.(app, fixture)
@@ -251,7 +304,9 @@ export function expectValidRequest(messages: Message[]): void {
             .map(block => block.id as string)
     if (message.role === 'user') expect(results).deep.equals(asked)
     for (const block of message.content) {
-      expect(['text', 'image', 'tool_use', 'tool_result']).includes(block.type)
+      expect(['text', 'image', 'tool_use', 'tool_result', 'thinking']).includes(
+        block.type
+      )
       // The Messages API refuses a text block of nothing but white space.
       if (block.type === 'text')
         expect(String(block.text).trim(), 'an empty text block').not.equals('')

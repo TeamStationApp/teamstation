@@ -12,6 +12,8 @@ const tess: TessChatState = {
   loading: false,
   messages: [],
   thinking: false,
+  live: null,
+  thoughtSeconds: {},
   error: null,
   send: async () => true,
   upload: async () => null,

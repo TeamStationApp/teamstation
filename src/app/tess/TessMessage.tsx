@@ -7,24 +7,29 @@ import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ChangeCard } from './ChangeCard'
 import { TessMarkdown } from './TessMarkdown'
+import { TessThinking } from './TessThinking'
 import type { TessAttachmentRef, TessMessage as Message } from './tessTypes'
+import type { TessLive } from './useTess'
 
 /**
  * One message: the user's words in a bubble on the right with the files they
- * attached, or Tess's reply on the left with a card for each change it
- * proposes.
+ * attached, or Tess's reply on the left, under a row for her thinking and
+ * her steps when she took any, with a card for each change it proposes.
  */
 export function TessMessage({
   message,
   onNavigate,
   onConfirm,
-  holdDisabled = false
+  holdDisabled = false,
+  thoughtSeconds
 }: {
   message: Message
   onNavigate: (path: string) => void
   onConfirm: (changeId: string) => void
   /** Tess is answering: her cards take no hold until she has. */
   holdDisabled?: boolean
+  /** How long she thought on this reply, when the chat saw her do it. */
+  thoughtSeconds?: number
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   if (message.role === 'user')
@@ -48,6 +53,13 @@ export function TessMessage({
     )
   return (
     <View testID="Tess reply" style={styles.reply}>
+      {(message.thinking != null || (message.steps ?? []).length > 0) && (
+        <TessThinking
+          thinking={message.thinking}
+          steps={message.steps}
+          seconds={thoughtSeconds}
+        />
+      )}
       <TessMarkdown text={message.text} onNavigate={onNavigate} />
       {message.changes.map(change => (
         <ChangeCard
@@ -57,6 +69,30 @@ export function TessMessage({
           holdDisabled={holdDisabled}
         />
       ))}
+    </View>
+  )
+}
+
+/**
+ * The reply Tess is working on: her thinking and her steps, open, and her
+ * text as it arrives, drawn as Markdown each time it grows.
+ */
+export function TessLiveReply({
+  live,
+  onNavigate
+}: {
+  live: TessLive
+  onNavigate: (path: string) => void
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return (
+    <View testID="Tess live reply" style={styles.reply}>
+      <TessThinking live thinking={live.thinking} steps={live.steps} />
+      {live.text.trim() !== '' && (
+        <View testID="Tess live text">
+          <TessMarkdown text={live.text} onNavigate={onNavigate} />
+        </View>
+      )}
     </View>
   )
 }

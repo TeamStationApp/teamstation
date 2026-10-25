@@ -12,7 +12,7 @@ import type { TessNativeManifest } from '../../test/tessNativeFixture.e2e'
  * `tessNativeFixture.e2e.ts` runs (its manifest is
  * `TS_TESS_NATIVE_MANIFEST`). One script, three layouts:
  *
- * - `TS_TESS_LAYOUT=iphone` (the default): N1–N9 on the iPhone 13 Pro,
+ * - `TS_TESS_LAYOUT=iphone` (the default): N1–N10 on the iPhone 13 Pro,
  *   narrow, `TS_TESS_IOS_DEVICE`. `TS_UI_BEFORE=1` runs N1 alone against
  *   the base app, asserting the umpire and Notifications buttons only.
  * - `TS_TESS_LAYOUT=ipad`: I1–I5 on the task's iPad simulator, wide in
@@ -275,7 +275,8 @@ async function main(): Promise<void> {
     }
     return value.includes(words)
   }
-  const say = async (words: string, answered: string): Promise<void> => {
+  /** Types `words` into Tess's field and waits until it holds them. */
+  const typeIn = async (words: string): Promise<void> => {
     // By its test id: "Ask Tess" also begins the empty chat's hint.
     await m.tapOn({ id: 'Tess field', timeout: 20000 })
     if (android)
@@ -296,6 +297,9 @@ async function main(): Promise<void> {
       waited += 1000
     )
       await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  const say = async (words: string, answered: string): Promise<void> => {
+    await typeIn(words)
     await tap('Send')
     await show(`.*${answered}.*`, 60000)
     // On iOS the driver hides a keyboard by typing a return, which in Tess's
@@ -538,6 +542,57 @@ async function main(): Promise<void> {
         heard.slice(heardBefore).filter(text => text !== '').length
       ).greaterThanOrEqual(2)
       console.log('N8 two holds became messages')
+
+      // N10: a reply streams in over the phone's XMLHttpRequest: the open
+      // "Thinking" row and her summary show before her answer does, and a
+      // "Thought for Ns" row is left above it.
+      const liveVideo = join(out, 'narrow-live-thinking.mp4')
+      await startRecording(liveVideo)
+      // Her summary shows only while the row is open, as it is while she
+      // works; a finished reply's row is closed. Her two reads take a few
+      // seconds, about as long as the driver waits for the spinners to
+      // stop, so Send is tapped without that wait and the screen is read
+      // until one reading shows the open row: that same reading must not
+      // hold her answer yet.
+      // The conversation may hold this question's earlier answers, so the
+      // script counts the lines that carry her summary and her answer.
+      const count = (texts: string[], part: string): number =>
+        texts.filter(text => text.includes(part)).length
+      const summary = 'They want their last two'
+      const answer = 'won the one before it 9 to 1'
+      await typeIn('How did our last two games go?')
+      const sent = (await nodes()).map(node => node.text ?? '')
+      await m.tapOn({ text: 'Send', timeout: 20000 })
+      let early: string[] = []
+      for (let waited = Date.now(); ;) {
+        early = (await nodes()).map(node => node.text ?? '')
+        if (
+          early.includes('Thinking') &&
+          count(early, summary) > count(sent, summary)
+        )
+          break
+        if (Date.now() - waited > 20000)
+          throw new Error('The open Thinking row and her summary never showed')
+      }
+      expect(count(early, answer), 'the answer before her thinking').equals(
+        count(sent, answer)
+      )
+      await writeFile(
+        join(out, 'narrow-live-thinking.png'),
+        await m.screenshot()
+      )
+      console.log('Saved narrow-live-thinking.png')
+      for (let waited = Date.now(); ;) {
+        const texts = (await nodes()).map(node => node.text ?? '')
+        if (count(texts, answer) > count(sent, answer)) break
+        if (Date.now() - waited > 60000) throw new Error('No answer came')
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      await m.assertNotVisible({ id: 'Tess thinking', timeout: 60000 })
+      await show('Thought for .*s')
+      await stopRecording(liveVideo)
+      await webcam('narrow-webcam-live-thinking.jpg')
+      console.log('N10 the live Thinking row came before the answer')
 
       // N9: sideways it is still the full-screen chat. An iPhone keeps the
       // app's own screens upright (`PortraitRootViewController`; only the

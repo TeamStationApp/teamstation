@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { createServer, request, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,6 +20,7 @@ import {
   fakeAnthropic,
   type ScriptEntry,
   text,
+  thought,
   tool
 } from './fakeAnthropic'
 import { type GroupFixture, groupFixture } from './groupFixtures'
@@ -36,6 +39,10 @@ import { seedUmpireTypes } from './umpireTypes'
  * Two players for the links Tess makes of names: Tony Gwynn plays for
  * `f.teamA`, and Ozzie Smith for Demo Visitors (`f.standaloneTeam`), whose
  * profile user 101 may not see.
+ *
+ * The model streams its turns a piece at a time, and Tess's own reads of a
+ * team take a moment (`slowReads`), so a browser or a phone sees her
+ * thinking, her steps and her text arrive.
  */
 export interface TessFixtureOptions {
   /** The web build the harness serves, for a browser. */
@@ -51,6 +58,8 @@ export interface TessFixtureOptions {
   tess?: boolean
   /** False skips the two camera angles and their HLS. */
   videos?: boolean
+  /** How often a streamed turn keeps its connection open; the route's own by default. */
+  keepAliveMs?: number
 }
 
 export interface TessFixture {
@@ -70,6 +79,41 @@ export interface TessFixture {
   /** The players' user ids: one user 101 may see, and one they may not. */
   players: { visible: string; hidden: string }
   close: () => Promise<void>
+}
+
+/** How long Tess's own reads under `/teams` take here. */
+export const READ_DELAY_MS = 700
+
+/**
+ * Where Tess's tools reach the API: a proxy in front of `origin` that holds
+ * each read under `/api/v1/teams` for `READ_DELAY_MS` first.
+ */
+async function slowReads(
+  origin: () => string
+): Promise<{ origin: string; server: Server }> {
+  const server = createServer((req, res) => {
+    const forward = (): void => {
+      const upstream = request(
+        `${origin()}${req.url ?? '/'}`,
+        { method: req.method, headers: req.headers },
+        answer => {
+          res.writeHead(answer.statusCode ?? 502, answer.headers)
+          answer.pipe(res)
+        }
+      )
+      upstream.on('error', () => {
+        res.destroy()
+      })
+      req.pipe(upstream)
+    }
+    if ((req.url ?? '').startsWith('/api/v1/teams'))
+      setTimeout(forward, READ_DELAY_MS)
+    else forward()
+  })
+  server.listen(0, '127.0.0.1')
+  await new Promise<void>(resolve => server.once('listening', resolve))
+  const { port } = server.address() as AddressInfo
+  return { origin: `http://127.0.0.1:${port}`, server }
 }
 
 /** What the microphone hears, whatever is said into it. */
@@ -121,6 +165,31 @@ export function tessScript(fixture: {
 }): ScriptEntry[] {
   const { teamA, seasonA, may3, scheduled, links, players, origin } = fixture
   return [
+    {
+      // Two reads, each after a thought, then the answer: streamed, so the
+      // app shows her thinking, both steps and her text as they come.
+      match: /last two games/i,
+      rounds: [
+        thought(
+          'They want their last two games. First I will read Demo Hawks to be sure which team this is.',
+          tool(
+            'api_get',
+            { path: `/teams/${teamA}` },
+            'Let me look at your team.'
+          )
+        ),
+        thought(
+          'Demo Hawks is their team. Next I will read its games, newest first, to find the two latest finals.',
+          tool('api_get', { path: `/teams/${teamA}/games` }, 'Now its games.')
+        ),
+        thought(
+          'The two latest finals are a 3 to 5 loss and a 9 to 1 win, both against Demo Eagles. I will give the scores, newest first.',
+          text(
+            'Your last two games, both against Demo Eagles: Demo Hawks lost the latest 3 to 5, and won the one before it 9 to 1.'
+          )
+        )
+      ]
+    },
     {
       // The roster names him; the answer leaves his name unlinked.
       match: /who plays shortstop/i,
@@ -302,10 +371,11 @@ export async function tessFixture(
   const withTess = options.tess !== false
   const withVideos = options.videos !== false
   const model = await fakeAnthropic()
+  let origin = ''
+  const reads = await slowReads(() => origin)
   // No dot directory on the way, which `sendFile` would refuse.
   const mediaRoot = await mkdtemp(join(tmpdir(), 'tess-media-'))
   const videos = { firstBase: 'vid_tess_first', homePlate: 'vid_tess_home' }
-  let origin = ''
   let beacon = 0
   const publicOrigin = (): string => options.publicOrigin ?? origin
   const dictation: TessFixture['dictation'] = { begun: 0, heard: [] }
@@ -344,7 +414,10 @@ export async function tessFixture(
                   model: 'claude-sonnet-5-5'
                 }
               : null,
-            origin: () => origin
+            origin: () => reads.origin,
+            ...(options.keepAliveMs == null
+              ? {}
+              : { keepAliveMs: options.keepAliveMs })
           })
         )
         app.get('/__tess/beacon', (_req, res) => {
@@ -566,6 +639,8 @@ export async function tessFixture(
         detach?.()
         await fixture.h.close()
         await model.close()
+        reads.server.close()
+        reads.server.closeAllConnections()
         await rm(mediaRoot, { recursive: true, force: true })
       }
     }
@@ -573,6 +648,7 @@ export async function tessFixture(
     detach?.()
     await f?.h.close().catch(() => undefined)
     await model.close().catch(() => undefined)
+    reads.server.close()
     await rm(mediaRoot, { recursive: true, force: true })
     throw error
   }

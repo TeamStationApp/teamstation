@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+import { sseOf, streamEvents } from './anthropicStream'
+
 /**
  * A stand-in for the Messages API, for Tess end to end: a real HTTP server
  * that the server's own client calls, answering from a script instead of a
@@ -12,6 +14,11 @@ import type { AddressInfo } from 'node:net'
  * entry may call a tool, and the next one, sent with the tool's result,
  * replies. A request with no tools, a compaction summary or an attachment's
  * description, gets a plain sentence.
+ *
+ * A request with `stream: true`, as Tess's turns send, is answered as the
+ * provider streams, with a short wait before each piece of thinking and
+ * text, so an app shows them arriving; summaries and descriptions are not
+ * streamed and are answered at once.
  *
  * Every request is kept, without the system prompt and the tool
  * definitions, which are the same each time, and served at
@@ -55,6 +62,8 @@ export interface FakeCall {
   request?: FakeRequest
   /** How the answer ended: `tool_use` when it called a tool. */
   stopReason?: string
+  /** It was asked for as a stream. */
+  stream?: boolean
   usage?: { input_tokens: number; output_tokens: number }
 }
 
@@ -90,6 +99,19 @@ export const tool = (
     { type: 'tool_use', id: `toolu_fake_${(ids += 1)}`, name, input }
   ],
   stopReason: 'tool_use'
+})
+
+/** `answer` with a summary of her thinking before it, signed as the provider signs. */
+export const thought = (summary: string, answer: FakeAnswer): FakeAnswer => ({
+  ...answer,
+  content: [
+    {
+      type: 'thinking',
+      thinking: summary,
+      signature: `fake-signature-${(ids += 1)}`
+    },
+    ...answer.content
+  ]
 })
 
 /** The answer when no entry matches: what Tess is for. */
@@ -144,10 +166,19 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, any>> {
   return raw === '' ? {} : (JSON.parse(raw) as Record<string, any>)
 }
 
+/** The wait before each streamed piece of thinking or text, by default. */
+export const STREAM_DELAY_MS = 60
+
 export async function fakeAnthropic(
-  options: { host?: string; script?: ScriptEntry[] } = {}
+  options: {
+    host?: string
+    script?: ScriptEntry[]
+    /** The wait before each streamed piece of thinking or text. */
+    streamDelayMs?: number
+  } = {}
 ): Promise<FakeAnthropic> {
   let script = options.script ?? []
+  const delayMs = options.streamDelayMs ?? STREAM_DELAY_MS
   const calls: FakeCall[] = []
   const server: Server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://fake.example.test').pathname
@@ -164,7 +195,7 @@ export async function fakeAnthropic(
       return
     }
     bodyOf(req)
-      .then(body => {
+      .then(async body => {
         if (path === '/v1/messages/count_tokens') {
           calls.push({ path, model: body.model })
           send(200, { input_tokens: 2000 })
@@ -189,9 +220,10 @@ export async function fakeAnthropic(
           model: body.model,
           request,
           stopReason: answer.stopReason ?? 'end_turn',
-          usage
+          usage,
+          ...(body.stream === true ? { stream: true } : {})
         })
-        send(200, {
+        const message = {
           id: `msg_fake_${calls.length}`,
           type: 'message',
           role: 'assistant',
@@ -203,7 +235,22 @@ export async function fakeAnthropic(
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0
           }
+        }
+        if (body.stream !== true) {
+          send(200, message)
+          return
+        }
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache'
         })
+        for (const event of streamEvents(message)) {
+          if (event.type === 'content_block_delta' && delayMs > 0)
+            await new Promise(resolve => setTimeout(resolve, delayMs))
+          if (res.destroyed) return
+          res.write(sseOf(event))
+        }
+        res.end()
       })
       .catch((error: unknown) => {
         send(400, {
