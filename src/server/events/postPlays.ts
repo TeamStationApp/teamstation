@@ -31,7 +31,7 @@ import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import { atBatOf, postedAtBat } from './atBatInProgress'
-import { gameCurrentPlay } from './currentPlay'
+import { pregameFold } from './currentPlay'
 import { reconcileEventTags } from './eventTags'
 import {
   type PlaySource,
@@ -103,7 +103,8 @@ export const RESET_SINCE_READ = 'This game was reset since it was read'
  * asks there whether its sender may score the game. The refold script, which
  * rewrites TeamStation's own plays, passes none. `written` is told the
  * answer last, in the post's transaction, before the clock: where a queued
- * post's `Idempotency-Key` keeps it.
+ * post's `Idempotency-Key` keeps it. It sees a pregame at-bat as stored,
+ * since the answer folds it only after the commit.
  */
 export async function postGamePlays(
   db: Kysely<Database>,
@@ -130,6 +131,13 @@ export async function postGamePlays(
       `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1, 2 or 3 record`
     )
   let refreshDelay: number | undefined
+  /** The answer's at-bat, folded once the row is let go (`pregameFold`). */
+  let folding:
+    | {
+        fold: () => Promise<CurrentPlay | null>
+        sides: ReturnType<typeof teamsOfRow>
+      }
+    | undefined
 
   return await atomic(db, async (trx): Promise<PostedPlays> => {
     await lockPlayerEdits(trx)
@@ -482,26 +490,32 @@ export async function postGamePlays(
         ...playJson(row),
         gumbo: playForWire(resolved.plays[index], sides)
       })),
-      currentPlay: playForWire(
-        await gameCurrentPlay(
-          trx,
-          gameId,
-          { ...game, currentPlay: taggedGame.currentPlay },
-          resolved
-        ),
-        sides
-      ),
+      currentPlay: playForWire(resolved.currentPlay, sides),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior,
       generation: game.play_generation
     }
     await written?.(trx, answer)
+    folding = {
+      fold: await pregameFold(
+        trx,
+        gameId,
+        { ...game, currentPlay: taggedGame.currentPlay },
+        resolved
+      ),
+      sides
+    }
     return answer
   })
-    .then(result => {
+    .then(async result => {
       if (refreshDelay != null && !db.isTransaction)
         scheduleRadarRefresh(db, gameId, refreshDelay)
+      // Before the first pitch the at-bat is folded as `GET /events` folds
+      // it, from what the post read: the replay runs after the commit, or,
+      // in a caller's transaction, once this post's part of it is done.
+      if (folding != null)
+        result.currentPlay = playForWire(await folding.fold(), folding.sides)
       return result
     })
     .catch((error: unknown) => {

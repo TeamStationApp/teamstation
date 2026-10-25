@@ -297,6 +297,42 @@ describe('the game socket fan-out (U15)', function () {
     }
   })
 
+  it("sends a game's notices in the order their data was read, one delivery at a time", async function () {
+    const one = fanout()
+    try {
+      // The first delivery is held inside its transaction, as a long fold
+      // would hold it, while a second notice for the game is delivered.
+      let release: () => void = () => undefined
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const asked: string[] = []
+      const sent: string[] = []
+      one.watch(today, scopeOf(team, rival), {
+        send: message => {
+          sent.push(message.kind)
+        },
+        maySee: async () => {
+          asked.push(String(asked.length))
+          if (asked.length === 1) await held
+          return true
+        }
+      })
+      const first = one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
+      await until(() => asked.length === 1, 'the first delivery')
+      const second = one.deliver(JSON.stringify({ game: today, kind: 'game' }))
+      await wait(50)
+      // The second waits its turn: not read, not sent.
+      expect(asked).deep.equals(['0'])
+      expect(sent).deep.equals([])
+      release()
+      await Promise.all([first, second])
+      expect(sent).deep.equals(['plays', 'game'])
+    } finally {
+      await one.close()
+    }
+  })
+
   it('sends two players’ songs, to every game of the team, whenever it is', async function () {
     const one = fanout()
     await one.listening

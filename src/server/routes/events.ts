@@ -25,7 +25,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
 import { atBatOf } from '../events/atBatInProgress'
-import { gameCurrentPlay } from '../events/currentPlay'
+import { pregameFold } from '../events/currentPlay'
 import {
   reconcileEventTags,
   tagChoices,
@@ -268,10 +268,12 @@ export function eventRoutes(
         rebuild: async held => {
           const kept = JSON.parse(held.resultId!) as LivePostDigests
           // What a swap does is the read's, not a post's answer.
-          const { swap: _swap, ...current } = await db
-            .transaction()
-            .setIsolationLevel('repeatable read')
-            .execute(async trx => await storedGameAnswer(trx, gameId))
+          const { swap: _swap, ...current } = await folded(
+            await db
+              .transaction()
+              .setIsolationLevel('repeatable read')
+              .execute(async trx => await storedGameRead(trx, gameId))
+          )
           return { status: 200, body: { ...current, ...kept } }
         }
       })
@@ -300,9 +302,10 @@ export function eventRoutes(
         // this holds the game waits, and takes a revision newer than this.
         res.setHeader(REVISION_HEADER, await readSyncClock(trx))
         await reconcileEventTags(trx, gameId)
-        return await storedGameAnswer(trx, gameId)
+        return await storedGameRead(trx, gameId)
       })
-      res.json(result)
+      // The pregame fold replays once the game row is let go.
+      res.json(await folded(result))
     })
   )
 
@@ -425,20 +428,29 @@ interface LivePostDigests {
   lineupsDigest: string | null
 }
 
-/**
- * A game's plays as `GET /games/:gameId/events` answers them, read through
- * `db`: each stored play, the at-bat in progress, and both digests.
- */
-async function storedGameAnswer(
-  db: Kysely<Database>,
-  gameId: string
-): Promise<{
+/** A game's plays as `GET /games/:gameId/events` answers them. */
+interface StoredGameAnswer {
   plays: unknown[]
   currentPlay: unknown
   playsDigest: string
   lineupsDigest: string | null
   generation: number
   swap: SwapEffect
+}
+
+/**
+ * The answer read through `db`: each stored play, the at-bat in progress,
+ * both digests, and what a swap does. Before the first pitch its at-bat is
+ * the pregame shell, and `fold` replays it (`pregameFold`), reading nothing,
+ * once the caller has let the game row go.
+ */
+async function storedGameRead(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<{
+  answer: StoredGameAnswer
+  fold: () => Promise<unknown>
+  teams: ReturnType<typeof teamsOfRow>
 }> {
   const stored = await readPlays(db, gameId)
   const game = await db
@@ -461,15 +473,12 @@ async function storedGameAnswer(
     currentPlay: current as CurrentPlay | null
   })
   const teams = teamsOfRow(game)
-  return {
+  const answer: StoredGameAnswer = {
     plays: stored.map((row, index) => ({
       ...playJson(row),
       gumbo: playForWire(resolved.plays[index], teams)
     })),
-    currentPlay: playForWire(
-      await gameCurrentPlay(db, gameId, game, resolved),
-      teams
-    ),
+    currentPlay: playForWire(resolved.currentPlay, teams),
     playsDigest: playsDigest(stored, current),
     lineupsDigest: await storedLineupsDigest(db, {
       id: gameId,
@@ -481,6 +490,21 @@ async function storedGameAnswer(
       game,
       stored.map(row => row.gumbo)
     )
+  }
+  return {
+    answer,
+    fold: await pregameFold(db, gameId, game, resolved),
+    teams
+  }
+}
+
+/** A read's answer, its at-bat folded. */
+async function folded(
+  read: Awaited<ReturnType<typeof storedGameRead>>
+): Promise<StoredGameAnswer> {
+  return {
+    ...read.answer,
+    currentPlay: playForWire(await read.fold(), read.teams)
   }
 }
 
