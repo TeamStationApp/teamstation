@@ -5619,9 +5619,12 @@ export class Scenarios {
             duration: 200
           })
         else
+          // The iOS driver takes whole points only.
           await ui.device.dragAndDrop({
-            from: { point: `${b.x + 10},${b.y + 10}` },
-            to: { point: `${b.x + 10},${b.y + 70}` },
+            from: {
+              point: `${Math.round(b.x + 10)},${Math.round(b.y + 10)}`
+            },
+            to: { point: `${Math.round(b.x + 10)},${Math.round(b.y + 70)}` },
             holdDuration: 50,
             duration: 200
           })

@@ -2544,11 +2544,14 @@ export class Chat2UI {
         [input.startY, input.endY].every(value => value > 0 && value < height),
       'Measured gesture endpoints must stay strictly inside the actual viewport'
     )
+    // The iOS driver takes whole points only.
     if (this.surface === 'ios')
       await this.device.dragAndDrop(
         {
-          from: { point: `${input.startX},${input.startY}` },
-          to: { point: `${input.endX},${input.endY}` },
+          from: {
+            point: `${Math.round(input.startX)},${Math.round(input.startY)}`
+          },
+          to: { point: `${Math.round(input.endX)},${Math.round(input.endY)}` },
           holdDuration: 16,
           duration: input.duration
         },
