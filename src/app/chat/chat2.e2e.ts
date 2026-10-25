@@ -2608,9 +2608,15 @@ export class Scenarios {
         (band.top + band.bottom) / 2 -
         box.y -
         Math.min(box.height, band.bottom - band.top - 32) / 2
-      const limit = Math.max(48, (band.bottom - band.top) / 8)
       // A quick short drag still flings an iOS history about 200 pt (E10's
-      // tall target never landed in its 17 pt window); a slow one does not.
+      // tall target never landed in its 17 pt window); a slow one does not,
+      // and moves it about its own length, so on iOS one slow drag may span
+      // the reader: a growing QA history left E9/E10 hundreds of points away
+      // after the flicks, past eight eighth-of-a-reader steps.
+      const limit =
+        ui.surface === 'ios'
+          ? band.bottom - band.top - 24
+          : Math.max(48, (band.bottom - band.top) / 8)
       if (
         await swipe(
           Math.sign(desired) * Math.min(limit, Math.max(48, Math.abs(desired))),
@@ -5654,7 +5660,8 @@ export class Scenarios {
             }
           })
           await this.action(this.f.messages.target)
-          await ui.text('👍')
+          // iOS exposes the quick reaction only by its accessible name.
+          await ui.text(ui.native ? 'React with 👍' : '👍')
         } else {
           await this.anchor()
           await ui.dom(
