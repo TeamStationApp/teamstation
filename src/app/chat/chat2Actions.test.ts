@@ -49,7 +49,8 @@ import {
   observeInfoCaptureReady,
   observeMentionHeader,
   observeSpotlightCaptureReady,
-  Scenarios
+  Scenarios,
+  submitPasswordSignIn
 } from './chat2.e2e'
 import { endsIncomingRun } from './chatMessageRuns'
 import { captureMessageBounds } from './chatMessageSource'
@@ -12197,6 +12198,58 @@ describe('native below-reader attention count', function () {
     expect(await s.belowReaderCount(fixture)).equals(9)
     expect(s.observations).deep.equals([])
   })
+})
+
+describe('password sign-in submission', function () {
+  for (const surface of ['ios', 'web-wide'])
+    it(`fills and submits once more after a wrong-credentials notice only on iOS (${surface})`, async () => {
+      const calls: string[] = []
+      let wrongShown = 0
+      const ui = Object.assign(Object.create(Chat2UI.prototype), {
+        surface,
+        native: surface === 'ios',
+        steps: [],
+        visible: async (selector: { text?: string }) => {
+          if (selector.text === '^Password$') return true
+          if (selector.text === '^Wrong e-mail or password') {
+            wrongShown++
+            // The first submission lost its password; the second signs in.
+            return wrongShown === 1
+          }
+          return false
+        },
+        text: async (label: string) => {
+          calls.push('tap ' + label)
+        },
+        append: async (value: string) => {
+          calls.push('type ' + (value === 'secret' ? 'password' : 'email'))
+        },
+        device: {
+          assertVisible: async () => {},
+          pressKey: async () => {
+            calls.push('enter')
+          }
+        }
+      }) as Chat2UI
+      const result = await submitPasswordSignIn(ui, {
+        email: 'qa@example.test',
+        password: 'secret'
+      })
+      const fill = [
+        'tap E-mail address',
+        'tap E-mail address',
+        'type email',
+        'tap Password',
+        'tap Password',
+        'type password',
+        'enter'
+      ]
+      expect(calls).deep.equals(surface === 'ios' ? [...fill, ...fill] : fill)
+      expect(result).deep.includes({ passwordFormSubmitted: true })
+      expect(
+        (ui.steps.at(-1) as Record<string, unknown>).wrongCredentialsRetried
+      ).equals(surface === 'ios' ? true : undefined)
+    })
 })
 
 describe('private fixture control output', function () {
