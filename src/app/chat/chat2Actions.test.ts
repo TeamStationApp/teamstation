@@ -5433,7 +5433,7 @@ describe('chat native adapter compatibility', function () {
     await observeInfoCaptureReady(actual, 1000)
     expect(calls).greaterThan(2)
   })
-  it('uses observed OS Copy/Paste to establish and verify the disposable sentinel', async () => {
+  it('uses observed OS Cut/Paste to establish and verify the disposable sentinel', async () => {
     const actual = ui([])
     const commands: string[] = []
     let value = ''
@@ -5459,9 +5459,10 @@ describe('chat native adapter compatibility', function () {
     })
     actual.device.tapOnPoint = async () => {
       commands.push(menu)
-      if (menu === 'Select All') menu = 'Copy'
-      else if (menu === 'Copy') {
+      if (menu === 'Select All') menu = 'Cut'
+      else if (menu === 'Cut') {
         clipboard = value
+        value = ''
         menu = ''
       } else if (menu === 'Paste') {
         value = clipboard
@@ -5469,13 +5470,7 @@ describe('chat native adapter compatibility', function () {
       }
     }
     await actual.clipboardSentinel('Disposable sentinel')
-    expect(commands).deep.equals([
-      'hold',
-      'Select All',
-      'Copy',
-      'hold',
-      'Paste'
-    ])
+    expect(commands).deep.equals(['hold', 'Select All', 'Cut', 'hold', 'Paste'])
     expect(value).equals('')
     expect(clipboard).equals('Disposable sentinel')
   })
