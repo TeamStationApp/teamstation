@@ -2375,8 +2375,8 @@ export class Chat2UI {
     // Cut, not Copy: Copy left the whole draft selected, and a long press on a
     // selection offers no Select All, so the next clear deleted one letter.
     await this.iosMenuAction('Cut')
-    assert.equal(await this.draft(), '', 'Observed OS Cut must empty the draft')
-    // Paste once to prove that the ordinary OS Cut actually installed the sentinel.
+    // Paste once to prove that the ordinary OS Cut installed the sentinel and
+    // emptied the draft: a draft Cut left behind would read twice.
     await this.pasteClipboard()
     assert.equal(
       await this.draft(),

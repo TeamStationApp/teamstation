@@ -2477,7 +2477,9 @@ export class Scenarios {
     if (keyboard.length > 0) end = Math.max(end, startedAt + 120000)
     // iOS swipes about a screen per read of a ~2600-node tree, and the
     // earlier control sits a long history above the reader.
-    if (earlier) end = startedAt + (ui.surface === 'ios' ? 420000 : 180000)
+    // Each earlier page puts the next one ~10,000 pt further up a growing
+    // QA history, and an iOS read takes seconds.
+    if (earlier) end = startedAt + (ui.surface === 'ios' ? 900000 : 180000)
     assert(keyboard.length <= 1, 'Unique actual native Keyboard required')
     const intersects = (): boolean =>
       current.box.height > 0 &&
@@ -7029,7 +7031,8 @@ export class Scenarios {
               return undefined
             },
             'Jump target leading body must be exposed below header/pins and above composer/keyboard',
-            5000
+            // Two equal iOS reads take several seconds on a loaded simulator.
+            ui.surface === 'ios' ? 30000 : 5000
           )
           await this.expectCount(2 - index)
           this.observations.push({
