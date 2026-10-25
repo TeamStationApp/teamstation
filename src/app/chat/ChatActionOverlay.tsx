@@ -33,6 +33,8 @@ export interface ChatActionOverlayProps {
   closing?: boolean
   focusHandoff?: boolean
   onClosed?: () => void
+  /** The scene has arrived and is at rest. */
+  onEntered?: () => void
 }
 
 /** The selected content and controls stay above the blurred backdrop. */
@@ -58,6 +60,8 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
   const entrance = useRef(new Animated.Value(0)).current
   const closed = useRef(props.onClosed)
   closed.current = props.onClosed
+  const entered = useRef(props.onEntered)
+  entered.current = props.onEntered
   useEffect(() => {
     if (props.scene !== true) return
     let live = true
@@ -67,7 +71,9 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
       useNativeDriver: true
     })
     animation.start(result => {
-      if (live && result.finished && props.closing === true) closed.current?.()
+      if (!live || !result.finished) return
+      if (props.closing === true) closed.current?.()
+      else entered.current?.()
     })
     return () => {
       live = false

@@ -226,6 +226,7 @@ async function choose(id: string): Promise<void> {
 }
 
 function nativePicker(platform: 'ios' | 'android' = 'ios'): {
+  arrive: () => Promise<void>
   finish: () => Promise<void>
   back: () => void
   late: () => void
@@ -236,12 +237,16 @@ function nativePicker(platform: 'ios' | 'android' = 'ios'): {
   const timing = Object.getOwnPropertyDescriptor(Animated, 'timing')!
   const animations: Array<{
     value: Animated.Value
+    toValue?: unknown
     end?: (result: { finished: boolean }) => void
   }> = []
   Object.defineProperty(Animated, 'timing', {
     configurable: true,
-    value: (value: Animated.Value) => {
-      const run: (typeof animations)[number] = { value }
+    value: (value: Animated.Value, options?: { toValue?: unknown }) => {
+      const run: (typeof animations)[number] = {
+        value,
+        toValue: options?.toValue
+      }
       animations.push(run)
       return {
         start: (end: (result: { finished: boolean }) => void) => {
@@ -270,6 +275,14 @@ function nativePicker(platform: 'ios' | 'android' = 'ios'): {
     Object.defineProperty(BackHandler, 'addEventListener', back)
   let completed: (typeof animations)[number] | undefined
   return {
+    arrive: async () => {
+      const entrance = animations.findLast(run => run.toValue === 1)!
+      await act(async () => {
+        entrance.value.setValue(1)
+        entrance.end?.({ finished: true })
+        await wait()
+      })
+    },
     finish: async () => {
       completed = animations.at(-1)!
       await act(async () => {
@@ -285,6 +298,18 @@ function nativePicker(platform: 'ios' | 'android' = 'ios'): {
       completed?.end?.({ finished: true })
     }
   }
+}
+
+/** The React Native props of the TextInput that rendered a DOM field. */
+function textInputProps(node: HTMLElement): Record<string, unknown> {
+  const key = Object.keys(node).find(name => name.startsWith('__reactFiber'))!
+  let fiber = (node as unknown as Record<string, FiberNode>)[key]
+  while (!('onChangeText' in (fiber.memoizedProps ?? {}))) fiber = fiber.return!
+  return fiber.memoizedProps
+}
+interface FiberNode {
+  memoizedProps: Record<string, unknown>
+  return?: FiberNode
 }
 
 const token = {
@@ -529,6 +554,7 @@ describe('current-member mention picker', function () {
     await choose(userIdOfGumbo(2))
     expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
     await native.finish()
+    await native.arrive()
     const search = labelled('Search members') as HTMLInputElement
     expect(search.value).equals('Aaron')
     expect(document.activeElement).equals(search)
@@ -544,6 +570,26 @@ describe('current-member mention picker', function () {
     expect(document.activeElement).equals(input)
     expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
   })
+
+  for (const platform of ['web', 'ios', 'android'] as const)
+    it(`focuses ${platform} Search ${platform === 'web' ? 'in its trusted activation' : 'once the scene has arrived'}`, async () => {
+      const native = platform === 'web' ? undefined : nativePicker(platform)
+      await render(
+        <MentionPicker
+          members={[member(userIdOfGumbo(2), 'Aaron Judge')]}
+          onSelect={() => {}}
+          onClose={() => {}}
+        />
+      )
+      const search = labelled('Search members') as HTMLInputElement
+      expect(
+        textInputProps(search).autoFocus,
+        'A native field focused mid-slide makes iOS scroll the chooser'
+      ).equals(platform === 'web')
+      search.blur()
+      await native?.arrive()
+      if (native != null) expect(document.activeElement).equals(search)
+    })
 
   it('keeps web selection and Cancel synchronous in their trusted activation', async () => {
     let inPress = false

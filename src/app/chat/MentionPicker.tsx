@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, Pressable, Text, View } from 'react-native'
+import { Platform, Pressable, Text, type TextInput, View } from 'react-native'
 
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { TextField } from '../components'
@@ -23,6 +23,7 @@ export function MentionPicker(props: {
   const [closing, setClosing] = useState(false)
   const [searchHeight, setSearchHeight] = useState<number>()
   const [completion, setCompletion] = useState(0)
+  const search = useRef<React.ComponentRef<typeof TextInput>>(null)
   const latest = useRef({ onSelect, onClose })
   latest.current = { onSelect, onClose }
   const live = useRef(true)
@@ -94,6 +95,11 @@ export function MentionPicker(props: {
       onClosed={finish}
       initialField
       scene
+      onEntered={() => {
+        // A field focused while the scene slides in from below makes iOS
+        // scroll the chooser by the slide when the keyboard is already up.
+        if (Platform.OS !== 'web') search.current?.focus()
+      }}
       keyboardRows='[data-testid^="chat-mention-member-"]'
     >
       <View
@@ -107,7 +113,8 @@ export function MentionPicker(props: {
             label={lstrings.chat_mention_search}
             value={query}
             onChangeText={setQuery}
-            autoFocus
+            inputRef={search}
+            autoFocus={Platform.OS === 'web'}
             onSubmitEditing={() => {
               const first = candidates[0]
               if (first != null) request({ userId: first.userId })
