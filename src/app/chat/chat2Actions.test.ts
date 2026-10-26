@@ -32,6 +32,7 @@ import {
   Chat2UI,
   iosPublicRead,
   iosRawTree,
+  nativeClass,
   pollNotVisible,
   type PublicNode,
   readAndroidComposerKeyboard,
@@ -13332,5 +13333,13 @@ describe('iOS composer above the keyboard', function () {
       (failure: unknown) => failure
     )
     expect(String(error)).includes('Enabled iOS composer required')
+  })
+})
+
+describe('native element type names', function () {
+  it('reads a phone WDA type as the simulator names it', function () {
+    expect(nativeClass('XCUIElementTypeButton')).equals('Button')
+    expect(nativeClass('Button')).equals('Button')
+    expect(nativeClass(undefined)).equals(undefined)
   })
 })

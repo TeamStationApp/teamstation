@@ -211,6 +211,13 @@ interface IosReadNode extends PublicNode {
 }
 
 /**
+ * An element's type as the simulator driver names it: WDA on a phone reports
+ * the full XCUIElementType name for the same element.
+ */
+export const nativeClass = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value.replace(/^XCUIElementType/, '') : undefined
+
+/**
  * The raw iOS tree as flat nodes. The simulator runner serves them as JSON;
  * a physical device's WebDriverAgent serves its XML tree, whose `name` is the
  * accessibility identifier when one is set and otherwise repeats the label.
@@ -3180,7 +3187,7 @@ export class Chat2UI {
       )
     if (expectedType != null)
       assert(
-        element.class === expectedType,
+        nativeClass(element.class) === expectedType,
         'Expected actual native element type required'
       )
     const b = need(
@@ -3196,7 +3203,7 @@ export class Chat2UI {
     return {
       index: -1,
       id: element.id as string,
-      type: typeof element.class === 'string' ? element.class : undefined,
+      type: nativeClass(element.class),
       text: typeof element.text === 'string' ? element.text : undefined,
       label:
         typeof element.accessibilityLabel === 'string'
