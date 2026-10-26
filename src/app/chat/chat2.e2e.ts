@@ -505,6 +505,44 @@ export function innermostLabelled(
   return own[0]
 }
 
+/** The shared shell's floating tab bar, by its tabs' own labels. */
+export const SHELL_TABS = ['Home', 'Videos', 'Schedule', 'Search', 'Chat']
+
+/**
+ * Where a labelled control lies against the floating tab bar: the driver taps
+ * a control's centre, and over the bar that tap lands on a tab.
+ */
+export function clearOfTabBar(
+  nodes: PublicNode[],
+  label: string
+): {
+  target: NonNullable<PublicNode['bounds']>
+  barTop: number
+  clear: boolean
+} {
+  const target = innermostLabelled(nodes, label)
+  const height = Math.max(
+    ...nodes.map(n => (n.bounds == null ? 0 : n.bounds.y + n.bounds.height))
+  )
+  // A page can name a tab's word too (a Chat setting); the bar's tabs are the
+  // ones in the screen's lowest quarter.
+  const tabs = SHELL_TABS.map(tab =>
+    nodes.filter(
+      n =>
+        n.text === tab &&
+        n.bounds != null &&
+        n.bounds.height > 0 &&
+        n.bounds.y >= height * 0.75
+    )
+  )
+  assert(
+    tabs.every(found => found.length > 0),
+    'Observed floating tab bar required'
+  )
+  const barTop = Math.min(...tabs.flat().map(n => n.bounds!.y))
+  return { target, barTop, clear: target.y + target.height <= barTop }
+}
+
 function captureRaster(bytes: Buffer): { width: number; height: number } {
   if (
     bytes.length >= 24 &&
@@ -710,6 +748,9 @@ export function iosSpotlightCaptureGeometry(
   }
 }
 
+/** A phone's settled-spotlight budget: about fifteen of its samples. */
+export const PHYSICAL_SPOTLIGHT_MS = 30000
+
 /** Static capture readiness never changes the functional hold or animation timing. */
 export async function observeSpotlightCaptureReady(
   ui: Chat2UI,
@@ -718,6 +759,11 @@ export async function observeSpotlightCaptureReady(
 ): Promise<Json> {
   type Box = NonNullable<PublicNode['bounds']>
   const samples: Json[] = []
+  // One phone sample (a raw tree and a full screenshot) takes about 2 s, so
+  // the simulator budget leaves a phone four samples to see two equal ones.
+  const budget = ui.physical
+    ? Math.max(timeout, PHYSICAL_SPOTLIGHT_MS)
+    : timeout
   const observation: Json = {
     name: 'Settled spotlight capture readiness',
     outcome: 'failed',
@@ -725,7 +771,7 @@ export async function observeSpotlightCaptureReady(
       ? 'Public bounds and unchanged raw Maestro screenshot hashes'
       : 'Atomic public DOM geometry, computed opacity and transform',
     stableForMs: 200,
-    timeoutMs: timeout,
+    timeoutMs: budget,
     samples
   }
   ui.steps.push(observation)
@@ -733,7 +779,7 @@ export async function observeSpotlightCaptureReady(
   let lastImage: Buffer | undefined
   try {
     await ui.present('chat-message-spotlight')
-    const deadline = Date.now() + timeout
+    const deadline = Date.now() + budget
     let reference: string | undefined
     let stableSince = Date.now()
     for (;;) {
@@ -1905,9 +1951,21 @@ export class Scenarios {
           if (fixture.targetIds.includes(id) && !below.has(id)) seen.add(id)
     const lowest = fixture.expectedCount - below.size - seen.size
     let previous: number | undefined
+    // Each change of the public count, kept so a count outside the range is
+    // reported with what the app actually showed.
+    const proof: Json = {
+      belowReaderCountRange: [lowest, highest],
+      observedCounts: []
+    }
+    this.observations.push(proof)
     const actual = await until(
       async () => {
         const count = await this.count()
+        if (count !== previous)
+          (proof.observedCounts as Json[]).push({
+            count,
+            at: new Date().toISOString()
+          })
         const settled =
           count >= lowest && count <= highest && count === previous
         previous = count
@@ -1916,10 +1974,7 @@ export class Scenarios {
       `complete verified attention count between ${lowest} and ${highest}`,
       180000
     )
-    this.observations.push({
-      belowReaderCountRange: [lowest, highest],
-      observedBelowReaderCount: actual
-    })
+    proof.observedBelowReaderCount = actual
     return actual
   }
 
@@ -1991,6 +2046,42 @@ export class Scenarios {
     await this.ui.step(name, action)
   }
 
+  /**
+   * On a phone the driver's direction swipe (a hold, then a drag) leaves the
+   * Account page where it is, so Sign out can stay under the floating tab
+   * bar, where the driver's tap opens a tab. On a phone, the page is dragged
+   * by measured points until Sign out's observed frame clears the bar (at
+   * most four drags), and Sign out is tapped at that frame.
+   */
+  async tapSignOut(): Promise<void> {
+    const ui = this.ui
+    if (!(ui.surface === 'ios' && ui.physical)) {
+      await ui.text('Sign out')
+      return
+    }
+    const proof: Json = { physicalSignOut: [] }
+    this.observations.push(proof)
+    for (let drags = 0; ; drags++) {
+      const place = clearOfTabBar(await ui.nodes(), 'Sign out')
+      ;(proof.physicalSignOut as Json[]).push({ ...place, drags })
+      if (place.clear) {
+        await ui.tapObserved({ text: 'Sign out', bounds: place.target })
+        return
+      }
+      assert(drags < 4, 'Sign out must clear the floating tab bar')
+      const x = Math.round(place.target.x + place.target.width / 2)
+      const startY = Math.round(place.barTop - 40)
+      const travel = place.target.y + place.target.height - place.barTop + 120
+      await ui.measuredSwipe({
+        startX: x,
+        endX: x,
+        startY,
+        endY: Math.round(Math.max(startY - travel, 150)),
+        duration: 300
+      })
+    }
+  }
+
   async signIn(key = this.viewerKey): Promise<void> {
     const ui = this.ui
     const m = ui.device
@@ -2059,14 +2150,14 @@ export class Scenarios {
         // control, and the page's end padding clears the bar: scroll there.
         for (let i = 0; i < 2; i++)
           await m.swipe({ direction: 'UP', duration: 400 })
-        await ui.text('Sign out')
+        await this.tapSignOut()
         // A tap while the swipes still fling only stops the page.
         if (
           !(await ui.visible({ text: exactText('Sign in') }, 5000)) &&
           (await ui.visible({ text: exactText('Sign out') }, 500))
         ) {
           this.observations.push({ signOutRetapped: true })
-          await ui.text('Sign out')
+          await this.tapSignOut()
         }
         await m.assertVisible({ text: exactText('Sign in'), timeout: 15000 })
         this.observations.push({
@@ -2275,6 +2366,35 @@ export class Scenarios {
     }
   }
 
+  /**
+   * The pinned list slides in, and a phone's driver finds a row and taps its
+   * centre while the row still moves, so the tap misses and the list stays
+   * open. On iOS a row is tapped once two reads of its frame agree.
+   */
+  async tapPinnedRow(messageId: string): Promise<void> {
+    const ui = this.ui
+    const id = 'chat-pin-' + messageId
+    if (ui.surface === 'ios') {
+      await ui.present(id)
+      let previous: string | undefined
+      const frame = await until(
+        async () => {
+          const current = JSON.stringify(await ui.publicBounds(id))
+          const settled = current === previous
+          previous = current
+          return settled ? current : undefined
+        },
+        'settled pinned row',
+        30000
+      )
+      this.observations.push({
+        settledPinnedRow: messageId,
+        frame: JSON.parse(frame) as Json
+      })
+    }
+    await ui.id(id)
+  }
+
   async anchor(target = this.f.messages.target): Promise<void> {
     const ui = this.ui
     if (await ui.visible({ id: 'chat-pinned-summary' }, 1000)) {
@@ -2288,7 +2408,7 @@ export class Scenarios {
         )
       )
         if (await ui.visible({ id: 'chat-pin-' + target.id }, 500)) {
-          await ui.id('chat-pin-' + target.id)
+          await this.tapPinnedRow(target.id)
           if (ui.native) await this.nativePinJumpReady(target)
         } else if (ui.native) await this.closeNativePinList()
         else await this.dismiss()
@@ -2639,6 +2759,31 @@ export class Scenarios {
           k.width > 0 && k.height > 0 && current.band.bottom <= k.y + 1,
           'Native reading band must clear actual Keyboard'
         )
+      // A phone's driver paces every drag itself, so its flicks carry no
+      // fling: about 450 pt each, and a target sixty screens up both outlasts
+      // the bounded drags and leaves the rendered window on the way. There the
+      // system's own scroll to top, a touch on the status bar, brings the
+      // loaded history's start (where the paged-in target lies) to the reader
+      // first; the measured drags take over from there.
+      if (
+        ui.surface === 'ios' &&
+        ui.physical &&
+        current.box.y < current.band.top &&
+        distance() > (current.band.bottom - current.band.top) * 8
+      ) {
+        const before = distance()
+        const point = { x: 60, y: 20 }
+        await ui.device.tapOnPoint(point, { signal: signal() })
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        const next = await read()
+        if (next == null) return handoff()
+        current = next
+        proof.statusBarScrollToTop = { point, before, after: distance() }
+        assert(
+          intersects() || distance() < before / 2,
+          'System scroll to top must bring the far target nearer'
+        )
+      }
       for (let step = 0; !intersects(); step++) {
         assert(
           step < 40 && Date.now() < end,
@@ -3480,9 +3625,39 @@ export class Scenarios {
     )
   }
 
+  /**
+   * Whether the last attachPhoto was skipped. A phone has no driver API that
+   * adds media, and no photo is placed on it by hand: there the attachment
+   * is reported as not run, and only the checks of that attachment (its chip
+   * and the delivered attachment count) follow it.
+   */
+  photoAttachSkipped = false
+
+  /** The attachment chip, when a photo was attached. */
+  async presentAttachment(): Promise<void> {
+    if (!this.photoAttachSkipped) await this.ui.present('chat-attachment-chip')
+  }
+
+  /** The delivered attachment count of the composed post. */
+  get expectedAttachments(): number {
+    return this.photoAttachSkipped ? 0 : 1
+  }
+
   async attachPhoto(): Promise<void> {
     const ui = this.ui
     const files = need(this.f.files, 'Synthetic attachment fixture required')
+    this.photoAttachSkipped = ui.surface === 'ios' && ui.physical
+    if (this.photoAttachSkipped) {
+      this.observations.push({
+        photoAttach: 'skipped-physical-ios-no-media-api'
+      })
+      ui.steps.push({
+        name: 'Photo attachment',
+        outcome: 'not-run',
+        reason: 'skipped-physical-ios-no-media-api'
+      })
+      return
+    }
     if (!ui.native) {
       await ui.uploadPhoto(files.photo)
       return
@@ -5164,7 +5339,7 @@ export class Scenarios {
         assert.deepEqual(sent.mentions, [peerId])
         assert.equal(sent.quote?.id, target.id)
         assert.equal(sent.quote?.authorId, target.authorId)
-        assert.equal(sent.attachments.length, 1)
+        assert.equal(sent.attachments.length, this.expectedAttachments)
         const own = await this.protocolPeer(this.viewerKey)
         const activeDevices = (await client.chatDevices()).filter(
           d => d.revokedAt == null && d.linked
@@ -5488,7 +5663,7 @@ export class Scenarios {
         await this.attachPhoto()
         await this.cancelReply()
         assert.equal(await ui.draft(), body)
-        await ui.present('chat-attachment-chip')
+        await this.presentAttachment()
         await this.reply()
       }
     )
@@ -5507,11 +5682,11 @@ export class Scenarios {
           body,
           'Failed reply must retain the exact send body'
         )
-        await ui.present('chat-attachment-chip')
+        await this.presentAttachment()
         await this.sendAgain()
         const received = await this.delivered(body)
         assert.equal(received.quote?.id, this.f.messages.target.id)
-        assert.equal(received.attachments.length, 1)
+        assert.equal(received.attachments.length, this.expectedAttachments)
         await ui.absent('chat-attachment-chip')
       }
     )
@@ -6415,7 +6590,7 @@ export class Scenarios {
         await ui.present('chat-pinned-band')
         await ui.id('chat-pinned-summary')
         await ui.device.assertVisible({ text: exactText('Pinned messages') })
-        await ui.id('chat-pin-' + this.f.messages.target.id)
+        await this.tapPinnedRow(this.f.messages.target.id)
         await ui.present('chat-bubble-' + this.f.messages.target.id)
         assert.deepEqual(
           (await client.chatPins(this.group)).map(p => p.messageId),
@@ -6475,7 +6650,7 @@ export class Scenarios {
             beforeAtMost: summary.lastSeq
           })
           await ui.id('chat-pinned-summary')
-          await ui.id('chat-pin-' + oldest.id)
+          await this.tapPinnedRow(oldest.id)
           await this.waitEvent(
             this.group,
             sequence,
@@ -6508,7 +6683,7 @@ export class Scenarios {
             beforeAtMost: summary.lastSeq
           })
           await ui.id('chat-pinned-summary')
-          await ui.id('chat-pin-' + oldest.id)
+          await this.tapPinnedRow(oldest.id)
           await this.waitEvent(
             this.group,
             deferred,
@@ -6736,7 +6911,7 @@ export class Scenarios {
         await ui.text('Send')
         const received = await this.delivered(body)
         assert.deepEqual(received.mentions, [first.userId])
-        assert.equal(received.attachments.length, 1)
+        assert.equal(received.attachments.length, this.expectedAttachments)
         assert.equal(received.quote?.id, this.f.messages.target.id)
         const wire = await (
           await this.client()
@@ -6960,7 +7135,10 @@ export class Scenarios {
           await this.attachPhoto()
           const expected = await ui.draft()
           await ui.text('Send')
-          assert.equal((await this.delivered(expected)).attachments.length, 1)
+          assert.equal(
+            (await this.delivered(expected)).attachments.length,
+            this.expectedAttachments
+          )
         }
       }
     )
@@ -7085,7 +7263,7 @@ export class Scenarios {
         await this.openInfo()
         await ui.back()
         assert.equal(await ui.draft(), draft)
-        await ui.present('chat-attachment-chip')
+        await this.presentAttachment()
         await ui.device.assertVisible({ text: exactText('Cancel reply') })
         const restored = await this.targetBounds(
           'chat-bubble-' + this.f.messages.target.id
@@ -7221,7 +7399,7 @@ export class Scenarios {
           })
         }
         assert.equal(await ui.draft(), draft)
-        await ui.present('chat-attachment-chip')
+        await this.presentAttachment()
         await ui.id('chat-jump-latest')
         await ui.present('chat-jump-latest')
         await this.cancelReply()
@@ -7965,7 +8143,7 @@ export class Scenarios {
             conversationId: conversation
           })
           await ui.id('chat-pinned-summary')
-          await ui.id('chat-pin-' + fixture.ownOriginal.id)
+          await this.tapPinnedRow(fixture.ownOriginal.id)
           const empty = await this.waitEvent(
             conversation,
             start,
