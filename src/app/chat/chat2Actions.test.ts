@@ -5330,9 +5330,10 @@ describe('chat native adapter compatibility', function () {
       }
     ])
   })
-  it('anchors an iOS absence id, which the driver would match as a substring', async () => {
+  it('anchors a native absence id, which the drivers would match as a pattern', async () => {
     for (const [surface, expected] of [
       ['ios', { id: '^chat-composer$', timeout: 15000 }],
+      ['android', { id: '^chat-composer$', timeout: 3000 }],
       ['web-wide', { id: 'chat-composer', timeout: 3000 }]
     ] as const) {
       const actual = ui([], surface)
