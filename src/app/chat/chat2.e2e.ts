@@ -2755,6 +2755,15 @@ export class Scenarios {
         proof.outcome = 'passed'
         return
       }
+      // The last page loaded above a reader that stayed on its row: the
+      // target is a loaded row outside the mounted window, most likely above.
+      if (page > 0 && !nodes.some(earlierButton)) {
+        if (await this.nativeLoadedTarget(target, signal, 'older')) {
+          proof.outcome = 'passed'
+          return
+        }
+        nodes = await read()
+      }
       assert(page < 10, 'Bounded native earlier-page count required')
       const controls = nodes.filter(
         node =>
@@ -2829,12 +2838,14 @@ export class Scenarios {
 
   /**
    * The virtualized history mounts only the rows near its reading band.
-   * Swipe through the loaded rows, latest first and then oldest, until the
-   * target is mounted or the history stops moving at both ends.
+   * Swipe through the loaded rows in both directions (latest end first, or
+   * older rows first after a page loaded above the reader) until the target
+   * is mounted or the history stops moving at both ends.
    */
   async nativeLoadedTarget(
     target: Chat2Message,
-    signal: AbortSignal
+    signal: AbortSignal,
+    first: 'latest' | 'older' = 'latest'
   ): Promise<boolean> {
     const ui = this.ui
     const id = 'chat-bubble-' + target.id
@@ -2847,9 +2858,10 @@ export class Scenarios {
         )
         .join('\n')
     let nodes = await ui.nodes(undefined, signal)
-    for (const direction of [-1, 1]) {
+    for (const direction of first === 'latest' ? [-1, 1] : [1, -1]) {
       let still = 0
-      for (let step = 0; step < 40 && still < 2; step++) {
+      // A few loaded pages are many screens; each end stops the history.
+      for (let step = 0; step < 200 && still < 2; step++) {
         if (nodes.some(node => node.id === id)) break
         const one = (key: string): NonNullable<PublicNode['bounds']> =>
           need(
@@ -2917,11 +2929,11 @@ export class Scenarios {
         const targets=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(targets.length>1||targets.some(n=>!h.contains(n)))throw Error('Ambiguous or unscoped history target');
         const controls=Array.from(h.querySelectorAll('button,[role="button"]')).filter(n=>n.textContent.trim()==='Load earlier messages');if(controls.length>1)throw Error('Unique public Load earlier control required');const control=controls[0];
         if(position==='earlier'){if(!control)throw Error('No earlier control for missing target');control.scrollIntoView({block:'center',behavior:'instant'})}
-        let moved=false;if(position==='latest'||position==='sweep'){const was=h.scrollTop;h.scrollTop=position==='latest'?h.scrollHeight:Math.max(0,was-h.clientHeight*0.8);moved=h.scrollTop!==was;h.dispatchEvent(new Event('scroll'))}
+        let moved=false;if(position==='latest'||position==='sweep'||position==='down'){const was=h.scrollTop;h.scrollTop=position==='latest'?h.scrollHeight:position==='down'?was+h.clientHeight*0.8:Math.max(0,was-h.clientHeight*0.8);moved=h.scrollTop!==was;h.dispatchEvent(new Event('scroll'))}
         if(position==='target'){if(targets.length!==1)throw Error('Actual target required');targets[0].scrollIntoView({block:'center',behavior:'instant'})}
         let css;if(control){let n=control,parts=[];while(n!==h){const p=n.parentElement;if(!p)throw Error('Actual history ancestry required');parts.unshift('*:nth-child('+(Array.from(p.children).indexOf(n)+1)+')');n=p}css='[data-testid="chat-message-history"] > '+parts.join(' > ');if(document.querySelectorAll(css).length!==1||document.querySelector(css)!==control)throw Error('Unique scoped earlier control required')}
         const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
-        return {position,moved,targetCount:targets.length,target:targets[0]?box(targets[0]):null,history:box(h),earlier:control?{css,disabled:control.disabled===true,ariaDisabled:control.getAttribute('aria-disabled'),box:box(control)}:null,ids:Array.from(h.querySelectorAll('[data-testid^="chat-bubble-"]')).map(n=>n.getAttribute('data-testid'))};
+        return {position,moved,offset:h.scrollTop,content:h.scrollHeight,targetCount:targets.length,target:targets[0]?box(targets[0]):null,history:box(h),earlier:control?{css,disabled:control.disabled===true,ariaDisabled:control.getAttribute('aria-disabled'),box:box(control)}:null,ids:Array.from(h.querySelectorAll('[data-testid^="chat-bubble-"]')).map(n=>n.getAttribute('data-testid'))};
       `,
         signal
       )
@@ -2931,23 +2943,49 @@ export class Scenarios {
       })
       return value
     }
+    // A virtualized history keeps correcting its reader while rows measure.
+    // Settled means the same offset and extent across three reads.
+    const settled = async (): Promise<Json> => {
+      const samples: Json[] = []
+      return await until(
+        async () => {
+          const next = await read()
+          samples.push(next)
+          const recent = samples.slice(-3)
+          return recent.length === 3 &&
+            recent.every(
+              sample =>
+                sample.offset === recent[0].offset &&
+                sample.content === recent[0].content
+            )
+            ? next
+            : undefined
+        },
+        'settled public history geometry',
+        Math.max(1, end - Date.now())
+      )
+    }
     // The virtualized history mounts only the rows near its reading band, so
-    // a loaded target can be absent from the DOM. Search the loaded rows,
-    // latest to oldest, before paging older ones.
-    const search = async (from: 'latest' | 'sweep'): Promise<Json> => {
+    // a loaded target can be absent from the DOM. Search the loaded rows
+    // (from the latest end, or from the reader up, or down to the latest
+    // end) before paging older ones.
+    const search = async (from: 'latest' | 'sweep' | 'down'): Promise<Json> => {
+      const step = from === 'down' ? 'down' : 'sweep'
       let swept = await read(from)
       while (swept.targetCount !== 1 && swept.moved === true) {
         await new Promise(resolve => setTimeout(resolve, 200))
         swept = await read()
-        if (swept.targetCount !== 1) swept = await read('sweep')
+        if (swept.targetCount !== 1) swept = await read(step)
       }
-      await new Promise(resolve => setTimeout(resolve, 200))
-      return await read()
+      return await settled()
     }
     for (let pages = 0; pages <= 10; pages++) {
       let current = await read()
       if (current.targetCount !== 1)
         current = await search(pages === 0 ? 'latest' : 'sweep')
+      // Every page is loaded: the target can only be below the reader.
+      if (current.targetCount !== 1 && current.earlier == null)
+        current = await search('down')
       if (current.targetCount === 1) {
         const actual = await read('target')
         const box = actual.target as PublicNode['bounds']
@@ -3012,6 +3050,9 @@ export class Scenarios {
         'actual public history page progress',
         Math.max(1, end - Date.now())
       )
+      // The reader stays on its row while the new page measures; never
+      // scroll to or measure a target before that settles.
+      await settled()
     }
     throw Error('Public history target not reached')
   }

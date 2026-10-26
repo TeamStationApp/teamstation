@@ -9497,6 +9497,212 @@ describe('iOS spotlight backdrop dismissal', () => {
   })
 })
 
+describe('web virtualized history target search', function () {
+  this.timeout(20000)
+  const target: Chat2Message = {
+    id: 'msg-web-original',
+    seq: 5,
+    body: 'Practice update: bring water.',
+    authorId: userIdOfGumbo(5)
+  }
+  const ROW = 100
+  const VIEWPORT = 844
+
+  /**
+   * A browser history in a separate document that mounts only the rows near
+   * its scroll position, as Legend List does. A page loads 60ms after the
+   * Load earlier click; `late` makes the reader's correction land 250ms later.
+   */
+  function model(options: {
+    rows: string[]
+    pages: string[][]
+    offset: 'top' | 'end'
+    late?: boolean
+    arrival?: string
+  }): {
+    scenario: Scenarios
+    clicks: number[]
+    corrections: number[]
+  } {
+    const dom = new JSDOM('<!doctype html><body></body>')
+    const doc = dom.window.document
+    const rows = [...options.rows]
+    const pages = options.pages.map(page => [...page])
+    const clicks: number[] = []
+    const corrections: number[] = []
+    const h = doc.createElement('div')
+    h.setAttribute('data-testid', 'chat-message-history')
+    const content = doc.createElement('div')
+    h.append(content)
+    doc.body.append(h)
+    let top = 0
+    const header = (): number => (pages.length > 0 ? 48 : 0)
+    const extent = (): number => header() + rows.length * ROW
+    const max = (): number => Math.max(0, extent() - VIEWPORT)
+    Object.defineProperties(h, {
+      clientHeight: { value: VIEWPORT },
+      scrollHeight: { get: extent },
+      scrollTop: {
+        get: () => top,
+        set: (value: number) => {
+          top = Math.min(max(), Math.max(0, value))
+          render()
+        }
+      },
+      getBoundingClientRect: {
+        value: () => new dom.window.DOMRect(0, 0, 390, VIEWPORT)
+      }
+    })
+    // The header is always mounted; only rows come and go.
+    const wrap = doc.createElement('div')
+    const button = doc.createElement('div')
+    button.setAttribute('role', 'button')
+    button.textContent = 'Load earlier messages'
+    button.getBoundingClientRect = () =>
+      new dom.window.DOMRect(16, -top, 358, 48)
+    button.scrollIntoView = () => {
+      h.scrollTop = 0
+    }
+    const list = doc.createElement('div')
+    content.append(wrap, list)
+    const render = (): void => {
+      if (pages.length > 0) {
+        if (!wrap.contains(button)) wrap.append(button)
+      } else button.remove()
+      list.replaceChildren()
+      rows.forEach((id, index) => {
+        const y = header() + index * ROW
+        // The mounted window: the viewport and 300px either side.
+        if (y + ROW < top - 300 || y > top + VIEWPORT + 300) return
+        const row = doc.createElement('div')
+        row.setAttribute('data-testid', 'chat-message-' + id)
+        const bubble = doc.createElement('div')
+        bubble.setAttribute('data-testid', 'chat-bubble-' + id)
+        bubble.getBoundingClientRect = () =>
+          new dom.window.DOMRect(48, y - top, 280, ROW - 8)
+        bubble.scrollIntoView = () => {
+          h.scrollTop = y - VIEWPORT / 2
+        }
+        row.append(bubble)
+        list.append(row)
+      })
+    }
+    function load(): void {
+      clicks.push(Date.now())
+      setTimeout(() => {
+        const page = pages.shift()!
+        const before = top
+        rows.unshift(...page)
+        if (options.arrival != null) rows.push(options.arrival)
+        const held =
+          before + page.length * ROW - 48 * (pages.length > 0 ? 0 : 1)
+        if (options.late === true) {
+          // The new page shows at the reader's old offset until corrected.
+          render()
+          setTimeout(() => {
+            corrections.push(Date.now())
+            h.scrollTop = held
+          }, 250)
+        } else h.scrollTop = held
+      }, 60)
+    }
+    button.addEventListener('click', load)
+    top = options.offset === 'top' ? 0 : max()
+    render()
+    const AsyncFunction = Object.getPrototypeOf(async () => {})
+      .constructor as new (
+      ...args: string[]
+    ) => (...values: unknown[]) => Promise<unknown>
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: false,
+      surface: 'web',
+      deadline: AbortSignal.timeout(20000),
+      steps: [],
+      device: {
+        evalBrowserScript: async (args: { script: string }) => ({
+          data: await new AsyncFunction('document', 'Event', args.script)(
+            doc,
+            dom.window.Event
+          )
+        }),
+        tapOn: async (selector: { css: string }) => {
+          const node = doc.querySelector<HTMLElement>(selector.css)
+          expect(node, 'Scoped Load earlier control').not.equals(null)
+          node!.click()
+          return { ok: true }
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      f: { messages: { target } },
+      observations: []
+    }) as Scenarios
+    return { scenario, clicks, corrections }
+  }
+  const ids = (prefix: string, count: number): string[] =>
+    Array.from({ length: count }, (_, index) => `${prefix}-${index}`)
+
+  it('waits for the reader to settle after a page before finding a target in it', async () => {
+    const page = [...ids('older', 10), target.id, ...ids('old', 29)]
+    const m = model({
+      rows: ids('recent', 60),
+      pages: [page],
+      offset: 'end',
+      late: true
+    })
+    await m.scenario.webHistoryTarget(target)
+    expect(m.clicks).has.length(1)
+    expect(m.corrections).has.length(1)
+    const proof = m.scenario.observations.find(
+      row => row.publicHistoryTarget === target.id
+    )!
+    const samples = proof.samples as Array<{
+      at: string
+      value: { position: string; offset: number; targetCount: number }
+    }>
+    const framed = samples.find(sample => sample.value.position === 'target')!
+    expect(
+      Date.parse(framed.at),
+      'The target is framed only after the late correction'
+    ).greaterThan(m.corrections[0])
+    // Three identical reads after the correction preceded any measurement.
+    const after = samples.filter(
+      sample => Date.parse(sample.at) > m.corrections[0]
+    )
+    expect(after.length).at.least(3)
+    expect(after[0].value.offset).equals(after[2].value.offset)
+  })
+
+  it('sweeps down to the latest end once no earlier page remains', async () => {
+    const m = model({
+      rows: ids('recent', 30),
+      pages: [ids('older', 30)],
+      offset: 'top',
+      arrival: target.id
+    })
+    await m.scenario.webHistoryTarget(target)
+    expect(m.clicks).has.length(1)
+    const proof = m.scenario.observations.find(
+      row => row.publicHistoryTarget === target.id
+    )!
+    const positions = (
+      proof.samples as Array<{ value: { position: string } }>
+    ).map(sample => sample.value.position)
+    expect(positions).includes('sweep')
+    expect(positions).includes('down')
+    expect(positions.indexOf('down')).greaterThan(positions.indexOf('sweep'))
+    expect(positions.at(-1)).equals('target')
+  })
+
+  it('still refuses a target that is nowhere in a fully loaded history', async () => {
+    const m = model({ rows: ids('recent', 30), pages: [], offset: 'end' })
+    expect(
+      String(await captureFailure(m.scenario.webHistoryTarget(target)))
+    ).includes('Missing target has no public earlier page')
+  })
+})
+
 describe('native absent history paging', function () {
   this.timeout(15000)
   const target: Chat2Message = {
@@ -9524,10 +9730,16 @@ describe('native absent history paging', function () {
     let targetY = fault === 'loaded' ? -500 : 300
     // A fully loaded virtualized history mounts its target after swipes.
     let swipes = 0
+    // After the last page, the target is a loaded row above the held reader.
+    let olderSwipes = 0
     const loaded = (): boolean =>
       fault === 'loaded' ||
       (fault === 'unmounted' && swipes >= 3) ||
-      (fault !== 'limit' && fault !== 'unmounted' && pages === 2)
+      (fault === 'last-page' && pages === 2 && olderSwipes >= 2) ||
+      (fault !== 'limit' &&
+        fault !== 'unmounted' &&
+        fault !== 'last-page' &&
+        pages === 2)
     const nodes = (): PublicNode[] => [
       {
         id: 'chat-message-history',
@@ -9550,7 +9762,9 @@ describe('native absent history paging', function () {
       },
       { type: 'ScrollView', text: 'Load earlier messages' },
       { type: 'Other', text: 'Load earlier messages' },
-      ...(fault === 'exhausted' || fault === 'unmounted'
+      ...(fault === 'exhausted' ||
+      fault === 'unmounted' ||
+      (fault === 'last-page' && pages === 2)
         ? []
         : Array.from({ length: fault === 'duplicate' ? 2 : 1 }, () => ({
             id: 'settings-pill-button',
@@ -9625,11 +9839,29 @@ describe('native absent history paging', function () {
           expect(Math.max(start[1], end[1])).lessThan(700.6666870117188)
           gestures.push(args)
           swipes += 1
+          if (pages === 2 && end[1] > start[1]) olderSwipes += 1
           if (fault !== 'stuck') {
             const delta = (end[1] - start[1]) * 1.7
             if (loaded()) targetY += delta
             else earlierY += delta
           }
+        },
+        // Android measured swipes, with the same bookkeeping.
+        swipe: async (input: {
+          startX: number
+          startY: number
+          endX: number
+          endY: number
+          duration: number
+        }) => {
+          expect(surface).equals('android')
+          expect(Math.min(input.startY, input.endY)).greaterThan(
+            170.6666717529297
+          )
+          expect(Math.max(input.startY, input.endY)).lessThan(700.6666870117188)
+          gestures.push(input)
+          swipes += 1
+          if (pages === 2 && input.endY > input.startY) olderSwipes += 1
         },
         tapOnPoint: async (
           point: { x: number; y: number },
@@ -9700,6 +9932,24 @@ describe('native absent history paging', function () {
     expect(
       m.scenario.observations.some(row => row.nativeHistoryTarget != null)
     ).equals(false)
+  })
+
+  it('searches older loaded rows when the last earlier page removes its Button before the target mounts', async () => {
+    const m = model('last-page', 'android')
+    await m.scenario.nativeHistoryTarget(target)
+    expect(m.taps).has.length(2)
+    const paging = m.scenario.observations.find(
+      row => row.nativeHistoryTarget === target.id
+    )!
+    expect(paging.outcome).equals('passed')
+    const search = m.scenario.observations.find(
+      row => row.nativeLoadedTarget === target.id
+    )!
+    expect(search.outcome).equals('found')
+    // Older rows first: the finger moves down.
+    const swipes = search.swipes as Array<{ startY: number; endY: number }>
+    expect(swipes).has.length(2)
+    expect(swipes.every(swipe => swipe.startY < swipe.endY)).equals(true)
   })
 
   it('rejects explicit disabled metadata on the normalized Android earlier Button', async () => {
