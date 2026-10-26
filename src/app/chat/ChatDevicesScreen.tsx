@@ -57,10 +57,16 @@ const platformName = (device: ChatDevice): string =>
  * Opening it enrols this device (`ensureEnrolled`): a user new to chat gets
  * an identity here; a device of a user who already has one shows
  * `LinkDeviceScreen` in its place until it is linked or reset.
+ *
+ * Kept through a change of user, it starts again for the one signed in now.
  */
 export function ChatDevicesScreen(
   props: ChatDevicesScreenProps
 ): React.ReactElement {
+  return <ChatDevices key={props.userId} {...props} />
+}
+
+function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
   const { client, userId } = props
   const store = props.store ?? keyStore
   const pollMs = props.pollMs ?? DEVICES_POLL_MS
