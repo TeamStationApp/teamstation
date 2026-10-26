@@ -5117,14 +5117,20 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
-  it('keeps non-iOS clipboard, backspace and recording calls unchanged', async () => {
+  it('pastes on Android through the field menu, and keeps backspace and recording calls unchanged', async () => {
     const actual = ui([], 'android')
     const calls: unknown[] = []
     actual.device.setClipboard = async args => {
       calls.push(['set', args])
     }
     actual.device.pasteText = async () => {
-      calls.push('paste')
+      calls.push('driver-paste')
+    }
+    actual.device.longPressOn = async args => {
+      calls.push(['long', args])
+    }
+    actual.device.tapOn = async args => {
+      calls.push(['tap', args])
     }
     actual.device.pressKey = async args => {
       calls.push(['key', args])
@@ -5143,7 +5149,8 @@ describe('chat native adapter compatibility', function () {
     })
     expect(calls).deep.equals([
       ['set', { text: 'sentinel' }],
-      'paste',
+      ['long', { id: 'chat-composer', duration: 600 }],
+      ['tap', { text: '^Paste$' }],
       ['key', { key: 'BACKSPACE' }],
       ['start', { path: 'movie.mp4' }],
       'work',

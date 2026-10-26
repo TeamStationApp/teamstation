@@ -2546,8 +2546,11 @@ export class Chat2UI {
       await this.device.inputText({ id: 'chat-composer', text: actual })
       return
     }
-    if (this.surface !== 'ios') {
-      await this.device.pasteText()
+    if (this.surface === 'android') {
+      // The driver cannot read Android's clipboard from the background, so
+      // paste through the field's own menu, as a person does.
+      await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
+      await this.device.tapOn({ text: exactText('Paste') })
       return
     }
     await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
