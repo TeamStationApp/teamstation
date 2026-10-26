@@ -521,9 +521,12 @@ export function clearOfTabBar(
   clear: boolean
 } {
   const target = innermostLabelled(nodes, label)
-  const height = Math.max(
-    ...nodes.map(n => (n.bounds == null ? 0 : n.bounds.y + n.bounds.height))
-  )
+  // The first node is the application's own frame, the screen; a scrolled
+  // page's rows extend past it.
+  const height = need(
+    nodes[0]?.bounds,
+    'Observed application frame required'
+  ).height
   // A page can name a tab's word too (a Chat setting); the bar's tabs are the
   // ones in the screen's lowest quarter.
   const tabs = SHELL_TABS.map(tab =>
