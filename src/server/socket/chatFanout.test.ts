@@ -719,3 +719,32 @@ describe('chat on the socket (U9)', function () {
     })
   })
 })
+
+describe('the chat socket tests’ second worker', function () {
+  this.timeout(60000)
+
+  it('says why and exits with a failure when it cannot start', async function () {
+    const worker = fork(
+      join(__dirname, 'chatSocketTestWorker.ts'),
+      [testDatabaseUrl],
+      {
+        execArgv: [
+          '-r',
+          'sucrase/register',
+          '-r',
+          join(__dirname, '../../test/refuseListen.cjs')
+        ],
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc']
+      }
+    )
+    let said = ''
+    worker.stderr?.on('data', (data: Buffer) => {
+      said += data.toString('utf8')
+    })
+    const code = await new Promise<number | null>(resolve => {
+      worker.once('exit', resolve)
+    })
+    expect(code).equals(1)
+    expect(said).contains('listen refused by the test')
+  })
+})
