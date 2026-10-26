@@ -46,6 +46,7 @@ import {
   exactText,
   flattenPublicHierarchy,
   iosPublicRead,
+  iosRawTree,
   type PublicNode,
   readAndroidComposerKeyboard,
   readIosComposerKeyboard,
@@ -543,8 +544,7 @@ export function iosSpotlightCaptureGeometry(
   rawNodeCount: number
 } {
   type Box = NonNullable<PublicNode['bounds']>
-  const tree = JSON.parse(Buffer.from(raw).toString('utf8')) as Json
-  assert(Array.isArray(tree.nodes), 'Actual public native node array required')
+  const tree = iosRawTree(raw)
   const nodes = tree.nodes as Json[]
   assert(
     nodes.every(node => node != null && typeof node === 'object'),
@@ -7957,8 +7957,19 @@ export class Scenarios {
               variant +
               ' header, composer, pins and chevron reachability/composition'
           )
+          // A phone's screen has no host-side recorder on iOS.
+          const recordable = ui.native && !(ui.surface === 'ios' && ui.physical)
+          if (
+            ui.native &&
+            !recordable &&
+            (variant === 'light' || variant === 'reduced-motion')
+          )
+            this.observations.push({
+              variant,
+              transitionCapture: 'unavailable on a physical iPhone'
+            })
           const recording =
-            ui.native && (variant === 'light' || variant === 'reduced-motion')
+            recordable && (variant === 'light' || variant === 'reduced-motion')
               ? join(ui.runDir, variant + '-spotlight.mp4')
               : undefined
           const transition = async (): Promise<void> => {

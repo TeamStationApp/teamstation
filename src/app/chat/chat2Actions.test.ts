@@ -31,6 +31,7 @@ import {
   androidScopedBounds,
   Chat2UI,
   iosPublicRead,
+  iosRawTree,
   pollNotVisible,
   type PublicNode,
   readAndroidComposerKeyboard
@@ -4633,6 +4634,63 @@ describe('chat native adapter compatibility', function () {
     model.advance()
     await captureFailure(model.scenario.visibleReaderAnchor(before))
     expect(model.actual.steps[1].outcome).equals('failed')
+  })
+
+  it('reads a physical iPhone WebDriverAgent tree as the same flat public nodes', () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="TeamStation" label="TeamStation" enabled="true" x="0" y="0" width="390" height="844">' +
+      '<XCUIElementTypeOther type="XCUIElementTypeOther" name="chat-composer-band" enabled="true" x="16" y="700" width="358" height="54">' +
+      '<XCUIElementTypeTextView type="XCUIElementTypeTextView" name="chat-composer" label="Message" placeholderValue="Message" enabled="true" x="114" y="706" width="222" height="42"/>' +
+      '</XCUIElementTypeOther>' +
+      '<XCUIElementTypeButton type="XCUIElementTypeButton" name="Copy" label="Copy" enabled="false" x="10" y="20" width="60" height="44"/>' +
+      '</XCUIElementTypeApplication>'
+    const raw = Buffer.from(xml)
+    expect(iosRawTree(raw).nodes).deep.equals([
+      {
+        index: 0,
+        type: 'Application',
+        label: 'TeamStation',
+        rect: { x: 0, y: 0, width: 390, height: 844 },
+        enabled: true
+      },
+      {
+        index: 1,
+        parentIndex: 0,
+        type: 'Other',
+        identifier: 'chat-composer-band',
+        rect: { x: 16, y: 700, width: 358, height: 54 },
+        enabled: true
+      },
+      {
+        index: 2,
+        parentIndex: 1,
+        type: 'TextView',
+        identifier: 'chat-composer',
+        label: 'Message',
+        placeholderValue: 'Message',
+        rect: { x: 114, y: 706, width: 222, height: 42 },
+        enabled: true
+      },
+      {
+        index: 3,
+        parentIndex: 0,
+        type: 'Button',
+        label: 'Copy',
+        rect: { x: 10, y: 20, width: 60, height: 44 },
+        enabled: false
+      }
+    ])
+    const read = iosPublicRead(raw, { id: 'chat-composer' }, 'TextView')
+    expect(read.element?.bounds).deep.equals({
+      x: 114,
+      y: 706,
+      width: 222,
+      height: 42
+    })
+    expect(
+      iosRawTree(Buffer.from(JSON.stringify({ nodes: [{ index: 0 }] }))).nodes
+    ).deep.equals([{ index: 0 }])
   })
   it('reads the actual unique Button instead of a large identically labelled wrapper', () => {
     const result = iosPublicRead(

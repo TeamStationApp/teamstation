@@ -109,7 +109,11 @@ const asDevice = asObject({
   id: asString,
   name: asString,
   owned: asValue(true),
-  driver: asOptional(asString, 'devicelab')
+  driver: asOptional(asString, 'devicelab'),
+  /** A connected phone: never booted, shut down or reset; only the QA app is driven. */
+  physical: asOptional(asBoolean, false),
+  /** Signing team for the physical iOS WebDriverAgent. */
+  teamId: asOptional(asString)
 })
 const asBinding = asObject({
   source: asString,
