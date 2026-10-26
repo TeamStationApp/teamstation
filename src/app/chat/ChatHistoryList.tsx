@@ -37,7 +37,12 @@ function HistoryScrollView(
   const attach = useCallback(
     (node: ScrollNode | null) => {
       // Legend List's scroll compensation looks for the content node.
-      if (node != null) node.getContentNode = () => node.getInnerViewNode?.()
+      if (node != null) {
+        node.getContentNode = () => node.getInnerViewNode?.()
+        // Legend List compensates rows resizing above the reader; the
+        // browser's own scroll anchoring would compensate them twice.
+        node.style.overflowAnchor = 'none'
+      }
       // Legend List combines its own refs into one callback.
       ;(ref as (node: ScrollNode | null) => void)(node)
     },
