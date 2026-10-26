@@ -292,9 +292,11 @@ if (serve) {
   // The script tag carries the bundle's hash too (Subresource Integrity).
   await writeFile(
     `${out}/index.html`,
-    withFonts(withIntegrity(template.replace('src="/app.js"', `src="/${file}"`), {
-      [`/${file}`]: await readFile(`${out}/${file}`)
-    }))
+    withFonts(
+      withIntegrity(template.replace('src="/app.js"', `src="/${file}"`), {
+        [`/${file}`]: await readFile(`${out}/${file}`)
+      })
+    )
   )
   console.log(`built ${out}/${file}`)
 }

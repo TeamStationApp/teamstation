@@ -4784,7 +4784,9 @@ export class Chat2UI {
       } catch (error) {
         if (
           Date.now() >= end ||
-          !/IME visibility/.test(error instanceof Error ? error.message : '')
+          !(error instanceof Error ? error.message : '').includes(
+            'IME visibility'
+          )
         )
           throw error
         await new Promise(resolve => setTimeout(resolve, 500))
