@@ -6,7 +6,8 @@ export type { PinMapProps } from './pinMapDocument'
 
 /**
  * A map with one pin, which an owner can drag to mark exactly where a field
- * is. On the web the map is a framed document that posts the pin back.
+ * is. On the web the map is Google's, in a framed document that posts the pin
+ * back, or the document's "couldn’t load" panel when Google's map cannot draw.
  */
 export function PinMap({ settings, onMove }: PinMapProps): React.ReactElement {
   const frame = useRef<HTMLIFrameElement>(null)
@@ -14,12 +15,11 @@ export function PinMap({ settings, onMove }: PinMapProps): React.ReactElement {
   move.current = onMove
   const html = useMemo(
     () => pinMapDocument(settings),
-    // A new document only when where it starts, or how it is drawn, changes.
+    // A new document only when where it starts, its key, or editing changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       settings.latitude,
       settings.longitude,
-      settings.tileUrl,
       settings.googleMapsApiKey,
       settings.editable
     ]

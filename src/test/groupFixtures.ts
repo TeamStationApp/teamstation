@@ -43,7 +43,8 @@ export async function groupFixture(
   bindHost?: string,
   mountExtra?: MountExtra,
   cityLookup?: GooglePlaces,
-  eventOptions: Parameters<typeof eventInfoRoutes>[2] = {}
+  eventOptions: Parameters<typeof eventInfoRoutes>[2] = {},
+  venueOptions: Parameters<typeof creationHarness>[6] = {}
 ): Promise<GroupFixture> {
   // Public readers and sign-in use the real clock. Start the controllable
   // fixture clock alongside it so newly created requests are not already expired.
@@ -56,7 +57,8 @@ export async function groupFixture(
     bindHost,
     mountExtra,
     cityLookup,
-    eventOptions
+    eventOptions,
+    venueOptions
   )
   try {
     await h.db

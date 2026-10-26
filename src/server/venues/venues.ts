@@ -53,7 +53,11 @@ import { noticeClaimDecided, noticeClaimFiled } from './venueNotices'
 export interface VenueServices {
   places?: GooglePlaces
   media: MediaContext
-  map: { tileUrl: string; googleMapsApiKey?: string }
+  /**
+   * Google's browser key, for the venue and field maps on the web, and the
+   * tile address installed builds from before Google's maps still require.
+   */
+  map: { googleMapsApiKey?: string; tileUrl: string }
   clock?: Clock
 }
 
@@ -175,11 +179,15 @@ export async function venueDetail(
   }
 }
 
-/** The map the app draws a venue on: the tiles, or Google's with a key. */
+/**
+ * The map the app draws a venue on: its point, and Google's key. The tile
+ * address is for installed builds whose cleaner still requires one; this
+ * build's cleaner ignores it.
+ */
 function mapAt(
   point: { latitude: number; longitude: number },
   services: VenueServices
-): VenueDetail['map'] {
+): VenueDetail['map'] & { tileUrl: string } {
   const key = services.map.googleMapsApiKey
   return {
     latitude: point.latitude,

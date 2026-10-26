@@ -34,10 +34,29 @@ export function venueDetail(overrides: Partial<VenueDetail> = {}): VenueDetail {
     map: {
       latitude: 40.02,
       longitude: -75.22,
-      tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png',
       googleMapsApiKey: undefined
     },
     ...overrides
+  }
+}
+
+/**
+ * The settings the screen's web pin map was drawn with, read back from its
+ * framed document, and whether that document holds any tiles but Google's.
+ */
+export function pinMapDrawn(): {
+  config: Record<string, unknown>
+  foreignTiles: boolean
+} {
+  const html =
+    document
+      .querySelector('iframe[data-testid="pin-map"]')
+      ?.getAttribute('srcdoc') ?? ''
+  const config = /const config=(\{.*?\});/.exec(html)
+  expect(config, 'the pin map document').not.equals(null)
+  return {
+    config: JSON.parse(config![1]) as Record<string, unknown>,
+    foreignTiles: /leaflet|openstreetmap|tileUrl/i.test(html)
   }
 }
 

@@ -8,6 +8,7 @@ import {
   asPin,
   asVenueChanges,
   asVenueDetail,
+  asVenueMap,
   asWeeklyHours,
   blackoutRanges,
   FIELD_SIZES,
@@ -259,13 +260,31 @@ describe('venue cleaners', () => {
         canRemoveOwners: false,
         decidableClaimIds: []
       },
-      map: {
-        latitude: 40,
-        longitude: -75,
-        tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png'
-      }
+      map: { latitude: 40, longitude: -75 }
     })
     expect(detail.rights.claimBlocked).equals(null)
-    expect(detail.map.googleMapsApiKey).equals(undefined)
+    expect(detail.map).deep.equals({
+      latitude: 40,
+      longitude: -75,
+      googleMapsApiKey: undefined
+    })
+  })
+
+  it('reads the venue map as a point and Google’s key, with no tiles', () => {
+    // An older server's tile address is dropped: the maps are Google's on
+    // the web and Apple's on iOS.
+    expect(
+      asVenueMap({
+        latitude: 40.01,
+        longitude: -75.21,
+        googleMapsApiKey: 'placeholder-key',
+        tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png'
+      })
+    ).deep.equals({
+      latitude: 40.01,
+      longitude: -75.21,
+      googleMapsApiKey: 'placeholder-key'
+    })
+    expect(() => asVenueMap({ latitude: 40.01 })).throws()
   })
 })

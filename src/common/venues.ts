@@ -329,7 +329,6 @@ export type VenueSummary = ReturnType<typeof asVenueSummary>
 export const asVenueMap = asObject({
   latitude: asNumber,
   longitude: asNumber,
-  tileUrl: asString,
   googleMapsApiKey: asOptional(asString)
 })
 export type VenueMap = ReturnType<typeof asVenueMap>

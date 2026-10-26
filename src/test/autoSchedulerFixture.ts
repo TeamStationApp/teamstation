@@ -44,13 +44,19 @@ export interface AutoSchedulerFixture {
  */
 export async function autoSchedulerFixture(
   webRoot?: string,
-  options: { cityLookup?: Parameters<typeof groupFixture>[3] } = {}
+  options: {
+    cityLookup?: Parameters<typeof groupFixture>[3]
+    /** The venue map's Google key, for a run that serves Google's stub. */
+    googleMapsApiKey?: string
+  } = {}
 ): Promise<AutoSchedulerFixture> {
   const f = await groupFixture(
     webRoot,
     undefined,
     undefined,
-    options.cityLookup
+    options.cityLookup,
+    {},
+    { googleMapsApiKey: options.googleMapsApiKey }
   )
   for (const [id, name] of [
     [101, 'Demo League Admin'],

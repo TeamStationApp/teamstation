@@ -49,7 +49,9 @@ describe('venue routes', function () {
       undefined,
       undefined,
       undefined,
-      googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl })
+      googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl }),
+      {},
+      { googleMapsApiKey: 'placeholder-browser-key' }
     )
   })
   afterEach(async () => {
@@ -73,9 +75,15 @@ describe('venue routes', function () {
     expect(place.rights.claimLeagues).deep.equals([
       { id: f.leagueA, name: 'Demo League A' }
     ])
-    expect(place.map).include({
+    // The map is the point and Google's browser key, plus the tile address
+    // that installed builds from before Google's maps still require.
+    expect(place.map).deep.equals({
       latitude: EXAMPLE_PARK.location.latitude,
-      longitude: EXAMPLE_PARK.location.longitude
+      longitude: EXAMPLE_PARK.location.longitude,
+      tileUrl:
+        process.env.TS_EVENT_MAP_TILES ??
+        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      googleMapsApiKey: 'placeholder-browser-key'
     })
     // A place Google doesn't know is no item.
     expect(
@@ -87,6 +95,8 @@ describe('venue routes', function () {
     ).deep.equals([])
     const venue = await claim()
     expect(venue.id).matches(/^ven_/)
+    // A registry venue's map carries the tile address as well.
+    expect((venue.map as { tileUrl?: unknown }).tileUrl).a('string')
     expect(venue).include({
       name: EXAMPLE_PARK.name,
       address: EXAMPLE_PARK.address,

@@ -15,6 +15,7 @@ import {
 import {
   chooseDateRange,
   hasLabel,
+  pinMapDrawn,
   tapLabel,
   tapText,
   venueDetail,
@@ -119,7 +120,17 @@ describe('the field screen', () => {
     expect(hasLabel('Field name')).equals(false)
     expect(hasLabel('Add photo')).equals(false)
     expect(hasLabel('Add blackout dates')).equals(false)
-    expect(document.querySelector('[data-testid="pin-map"]')).not.equals(null)
+    // A read-only Google map on the field's own pin.
+    expect(pinMapDrawn()).deep.equals({
+      config: {
+        latitude: 40.021,
+        longitude: -75.221,
+        key: '',
+        editable: false,
+        timeoutMs: 15000
+      },
+      foreignTiles: false
+    })
   })
 
   it('saves its name, sizes, photo and pin for an owner', async () => {
@@ -141,6 +152,12 @@ describe('the field screen', () => {
       />
     )
     expect(text()).includes('Drag the pin onto the field itself')
+    // The owner's map drags, from the venue's point while the field has none.
+    expect(pinMapDrawn().config).include({
+      latitude: 40.02,
+      longitude: -75.22,
+      editable: true
+    })
     await fill('Field name', 'North Diamond')
     await press('Save name')
     await settle()

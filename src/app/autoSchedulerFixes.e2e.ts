@@ -21,6 +21,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import { expect } from 'chai'
+import type { Frame } from 'puppeteer'
 
 import {
   eventLocalFields,
@@ -29,6 +30,7 @@ import {
 } from '../common/eventTime'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import type { ScheduleSetup } from '../common/seasonScheduling'
+import type { VenueDetail } from '../common/venues'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
   api,
@@ -39,6 +41,10 @@ import {
   seedHarborField,
   seedThrough
 } from '../test/autoSchedulerFixture'
+import {
+  GOOGLE_MAPS_SCRIPT,
+  interceptGoogleMaps
+} from '../test/googleMapsIntercept'
 import {
   EXAMPLE_PARK,
   googlePlacesStub,
@@ -73,6 +79,10 @@ interface Run {
   support: string
   /** The Google stub, with every request the server sent it. */
   places: Awaited<ReturnType<typeof googlePlacesStub>>
+  /** Every request the browser has made this run, and whether a map made it. */
+  requests: Array<{ url: string; fromMap: boolean }>
+  /** The command line this run was started with, for a log's first line. */
+  command: string
   visit: (path: string) => Promise<void>
   /** A screenshot into the artifacts directory, or to an absolute path. */
   capture: (name: string) => Promise<void>
@@ -1468,6 +1478,169 @@ async function f7(run: Run): Promise<void> {
   )
 }
 
+/**
+ * The field screen's map frame once it has drawn: Google's map with its pin,
+ * or the "couldn't load" panel.
+ */
+async function mapFrame(
+  b: BrowserSession,
+  drawn: 'map' | 'failed'
+): Promise<Frame> {
+  const deadline = Date.now() + 20000
+  while (Date.now() < deadline) {
+    for (const candidate of b.page.frames())
+      if (
+        candidate.url() === 'about:srcdoc' &&
+        (await candidate
+          .evaluate(
+            (wanted: string) =>
+              wanted === 'map'
+                ? document.querySelector(
+                    '[data-google-maps-stub] [data-lat]'
+                  ) !== null
+                : document.querySelector('#failed:not([hidden])') !== null,
+            drawn
+          )
+          .catch(() => false))
+      )
+        return candidate
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  throw new Error(`The pin map never showed its ${drawn}`)
+}
+
+/** The stub's pin: where it is, and whether it drags. */
+async function stubPin(
+  frame: Frame
+): Promise<{ lat: number; lng: number; draggable: boolean }> {
+  return await frame.evaluate(() => {
+    const pin = document.querySelector<HTMLElement>('[data-lat]')
+    if (pin === null) throw new Error('No pin')
+    return {
+      lat: Number(pin.dataset.lat),
+      lng: Number(pin.dataset.lng),
+      draggable: pin.dataset.draggable === 'true'
+    }
+  })
+}
+
+/** Where Field 1 sits, by the venue API. */
+async function fieldPoint(
+  run: Run
+): Promise<{ latitude: number; longitude: number }> {
+  const venue = await api<VenueDetail>(
+    run.fx,
+    ADMIN,
+    'GET',
+    `/venues/${run.state.venueId!}`
+  )
+  const field = venue.fields.find(item => item.id === run.state.fieldId)!
+  return (
+    field.pin ?? {
+      latitude: venue.map.latitude,
+      longitude: venue.map.longitude
+    }
+  )
+}
+
+const DRAGGED = { latitude: 40.0213, longitude: -75.2214 }
+
+/**
+ * F8: Field 1's map is Google's, through the stub, with no OpenStreetMap or
+ * Leaflet request; a dragged pin persists; an auth failure shows the
+ * "couldn't load" panel, whose Retry brings the map back.
+ */
+async function f8(run: Run): Promise<void> {
+  const { b } = run
+  const first = run.requests.length
+  const path = `/venues/${run.state.venueId!}/fields/${run.state.fieldId!}`
+  const start = await fieldPoint(run)
+  await run.visit(path)
+  await contains(b.page, 'WHERE IT IS')
+  await scrollToText(b, 'WHERE IT IS', 120)
+  let frame = await mapFrame(b, 'map')
+  expect(await stubPin(frame)).deep.equals({
+    lat: start.latitude,
+    lng: start.longitude,
+    draggable: true
+  })
+  await new Promise(resolve => setTimeout(resolve, 600))
+  await run.capture('field-map-web-after.png')
+  // Drag the pin, as letting go of Google's marker does.
+  await frame.evaluate(
+    (lat: number, lng: number) => {
+      ;(window as any).__dragPin(lat, lng)
+    },
+    DRAGGED.latitude,
+    DRAGGED.longitude
+  )
+  await contains(b.page, 'Pin saved.')
+  expect(await fieldPoint(run)).deep.equals(DRAGGED)
+  // Reloaded, the map opens on the dragged pin.
+  await b.page.reload()
+  await contains(b.page, 'WHERE IT IS')
+  frame = await mapFrame(b, 'map')
+  expect(await stubPin(frame)).deep.equals({
+    lat: DRAGGED.latitude,
+    lng: DRAGGED.longitude,
+    draggable: true
+  })
+  // Google refuses the key: the stub, loaded with authFailure=1, calls
+  // gm_authFailure, and the panel takes the map's place.
+  await frame.evaluate((script: string) => {
+    const element = document.createElement('script')
+    element.src = `${script}key=test-key&authFailure=1`
+    document.head.appendChild(element)
+  }, GOOGLE_MAPS_SCRIPT)
+  frame = await mapFrame(b, 'failed')
+  const panel = await frame.evaluate(() => {
+    const failed = document.querySelector('#failed')
+    const retry = document.querySelector('#retry')
+    const map = document.querySelector<HTMLElement>('#map')
+    return {
+      text: failed === null ? '' : String(failed.textContent),
+      retry: retry === null ? '' : String(retry.textContent),
+      mapHidden: map === null ? false : map.hidden
+    }
+  })
+  expect(panel.text).includes('The map couldn’t load')
+  expect(panel.text).includes(
+    `${DRAGGED.latitude.toFixed(5)}, ${DRAGGED.longitude.toFixed(5)}`
+  )
+  expect(panel.retry).equals('Retry')
+  expect(panel.mapHidden).equals(true)
+  await scrollToText(b, 'WHERE IT IS', 120)
+  await run.capture(join(run.support, 'F8-map-auth-failure.png'))
+  // Retry loads the map again, and it draws.
+  await frame.click('#retry')
+  frame = await mapFrame(b, 'map')
+  expect((await stubPin(frame)).lat).equals(DRAGGED.latitude)
+  const requests = run.requests.slice(first)
+  const foreign = requests.filter(request =>
+    /openstreetmap|leaflet|unpkg|tile\./i.test(request.url)
+  )
+  expect(foreign, 'requests for OpenStreetMap or Leaflet').deep.equals([])
+  const mapRequests = requests
+    .filter(
+      request =>
+        request.fromMap ||
+        /maps\.googleapis|maps\.gstatic|openstreetmap|leaflet/i.test(
+          request.url
+        )
+    )
+    .map(request => request.url)
+  expect(mapRequests.length).greaterThanOrEqual(4)
+  for (const url of mapRequests)
+    expect(url).matches(/^https:\/\/maps\.googleapis\.com\//)
+  await writeFile(
+    join(run.artifacts, 'field-map-requests.log'),
+    `${run.command}\n${mapRequests.join('\n')}\n`
+  )
+  await run.pass(
+    `Field 1's map is the Google stub (${mapRequests.length} map requests, all maps.googleapis.com, none to OpenStreetMap or Leaflet); the pin dragged to ${DRAGGED.latitude}, ${DRAGGED.longitude} was saved and reopens there after a reload; on gm_authFailure "The map couldn’t load" shows the coordinates and Retry, which draws the map again`
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -1488,7 +1661,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     run: f6
   },
-  F7: { start: 'E2', run: f7 }
+  F7: { start: 'E2', run: f7 },
+  F8: { start: 'E3', run: f8 }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */
@@ -1528,10 +1702,8 @@ async function main(): Promise<void> {
   await cp(resolve('dist'), web, { recursive: true })
   // The full pass's log is a proving artifact; a single scenario's is support.
   const lines = fullPass ? 'scenarios.log' : join('support', `${only}.log`)
-  await writeFile(
-    join(artifacts, lines),
-    `$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts${only == null ? '' : ` --only ${only}`}\n`
-  )
+  const command = `$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts${only == null ? '' : ` --only ${only}`}`
+  await writeFile(join(artifacts, lines), `${command}\n`)
   const coverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
   const parts: string[] = []
   const places = await googlePlacesStub()
@@ -1540,6 +1712,11 @@ async function main(): Promise<void> {
   try {
     b = await browserSession(daemon, DEVICE, WIDTH, HEIGHT, work)
     const session = b
+    // Google's Maps script is answered by its stub; everything is logged.
+    const requests: Run['requests'] = []
+    await interceptGoogleMaps(session.page, request => {
+      requests.push(request)
+    })
     const cdp = await session.page.createCDPSession()
     for (const [id, scenario] of chosen) {
       console.log(`${id} (start ${scenario.start})`)
@@ -1547,7 +1724,8 @@ async function main(): Promise<void> {
         cityLookup: googlePlaces({
           apiKey: 'placeholder-key',
           baseUrl: places.baseUrl
-        })
+        }),
+        googleMapsApiKey: 'test-key'
       })
       try {
         const state = await seedThrough(fx, scenario.start)
@@ -1578,6 +1756,8 @@ async function main(): Promise<void> {
           artifacts,
           support,
           places,
+          requests,
+          command,
           visit,
           capture: async name => {
             await session.m.waitForAnimationToEnd()
