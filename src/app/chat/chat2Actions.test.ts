@@ -4029,6 +4029,35 @@ describe('chat native adapter compatibility', function () {
       const { scenario } = browserHistory(mode)
       await captureFailure(scenario.anchor())
     })
+  it('waits for a closing message overlay to release the browser composer before replacing its draft', async () => {
+    const { actual, page } = browserModel()
+    const document = page.window.document
+    document.body.innerHTML =
+      '<div id="chat" aria-hidden="true"><textarea data-testid="chat-composer">Copied words</textarea></div><div data-testid="chat-message-spotlight"></div>'
+    const composer = document.querySelector('textarea')!
+    // The overlay's fade outlasts a tap on a loaded host; until it unmounts
+    // the chat behind it is inert.
+    setTimeout(() => {
+      document.querySelector('#chat')!.removeAttribute('aria-hidden')
+      document.querySelector('[data-testid="chat-message-spotlight"]')!.remove()
+    }, 500)
+    const taps: Array<{ inert: boolean }> = []
+    actual.device.tapOn = async selector => {
+      expect(selector).deep.equals({ id: 'chat-composer' })
+      const inert = composer.closest('[aria-hidden="true"]') != null
+      taps.push({ inert })
+      if (!inert) composer.focus()
+      return {}
+    }
+    actual.device.eraseText = async () => {
+      composer.value = ''
+      return {}
+    }
+    await actual.replaceDraft('')
+    expect(taps).deep.equals([{ inert: false }])
+    expect(composer.value).equals('')
+    expect(document.activeElement).equals(composer)
+  })
   function windowedAnchor(mountAfter: number | undefined): Scenarios {
     const { actual, page } = browserModel()
     const document = page.window.document
