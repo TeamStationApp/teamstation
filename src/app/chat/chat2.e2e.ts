@@ -2039,6 +2039,14 @@ export class Scenarios {
         for (let i = 0; i < 2; i++)
           await m.swipe({ direction: 'UP', duration: 400 })
         await ui.text('Sign out')
+        // A tap while the swipes still fling only stops the page.
+        if (
+          !(await ui.visible({ text: exactText('Sign in') }, 5000)) &&
+          (await ui.visible({ text: exactText('Sign out') }, 500))
+        ) {
+          this.observations.push({ signOutRetapped: true })
+          await ui.text('Sign out')
+        }
         await m.assertVisible({ text: exactText('Sign in'), timeout: 15000 })
         this.observations.push({
           normalPublicSignOut: true,
