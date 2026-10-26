@@ -39,7 +39,11 @@ import {
   seedHarborField,
   seedThrough
 } from '../test/autoSchedulerFixture'
-import { googlePlacesStub } from '../test/googlePlacesStub'
+import {
+  EXAMPLE_PARK,
+  googlePlacesStub,
+  MORE_PARKS
+} from '../test/googlePlacesStub'
 import {
   type BrowserSession,
   browserSession,
@@ -67,6 +71,8 @@ interface Run {
   state: { venueId?: string; fieldId?: string; previewId?: string }
   artifacts: string
   support: string
+  /** The Google stub, with every request the server sent it. */
+  places: Awaited<ReturnType<typeof googlePlacesStub>>
   visit: (path: string) => Promise<void>
   /** A screenshot into the artifacts directory, or to an absolute path. */
   capture: (name: string) => Promise<void>
@@ -1376,6 +1382,92 @@ async function f6(run: Run): Promise<void> {
   )
 }
 
+/** The point F7 grants the page, near Example Park. */
+const NEAR = { latitude: 40.0, longitude: -75.2 }
+
+/**
+ * F7: a Field Manager search lists at least ten places, the person's own
+ * venue first, from a Google search for twenty near their position.
+ */
+async function f7(run: Run): Promise<void> {
+  const { fx, b, places } = run
+  await b.browser.defaultBrowserContext().setPermission(fx.f.h.origin, {
+    permission: { name: 'geolocation' },
+    state: 'granted'
+  })
+  await b.page.setGeolocation(NEAR)
+  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler/fields`)
+  await contains(b.page, 'Field Manager')
+  // The position, once read, sorts the list: wait for it before searching.
+  await b.page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Loading venues"]') === null &&
+      !document.body.innerText.includes('Allow location access'),
+    { timeout: 15000 }
+  )
+  const before = places.calls.length
+  await fill(b.m, 'Search venues', 'Example Park')
+  await b.page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Loading venues"]') === null &&
+      document.querySelector('[aria-label="Open Linden Park"]') !== null,
+    { timeout: 15000 }
+  )
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  const rows = await b.page.evaluate(() =>
+    [...document.querySelectorAll('[aria-label^="Open "]')].map(node =>
+      String(node.getAttribute('aria-label')).slice('Open '.length)
+    )
+  )
+  expect(rows).deep.equals([EXAMPLE_PARK.name, ...MORE_PARKS])
+  expect(rows.length).greaterThanOrEqual(10)
+  const headers = await b.page.evaluate(() =>
+    [...document.querySelectorAll('[role="heading"]')].map(node =>
+      String(node.textContent)
+    )
+  )
+  expect(headers).includes('Your leagues’ venues')
+  expect(headers).includes('Unclaimed venues')
+  // The registry's Example Park leads, under the person's own venues.
+  const own = await b.page.evaluate(() => {
+    const row = document.querySelector('[aria-label="Open Example Park"]')
+    return row === null ? '' : String(row.textContent)
+  })
+  expect(own).includes('Demo League A')
+  // What the server asked Google: twenty places, near the granted point.
+  const searches = places.calls
+    .slice(before)
+    .filter(call => call.path === '/v1/places:searchText')
+    .map(call => call.body)
+  expect(searches.length).greaterThan(0)
+  for (const body of searches) expect(body).property('pageSize', 20)
+  const asked = searches[searches.length - 1]
+  expect(asked).deep.equals({
+    textQuery: 'Example Park',
+    languageCode: 'en',
+    pageSize: 20,
+    locationBias: { circle: { center: NEAR, radius: 50000 } }
+  })
+  await b.page.evaluate(() => {
+    const root = document.scrollingElement
+    if (root !== null) root.scrollTop = 0
+  })
+  await run.capture('field-search-after.png')
+  // The end of the list, as support: the last of the twelve, above the tab
+  // bar once the page is scrolled all the way down.
+  await b.page.evaluate(() => {
+    let node = document.querySelector('[aria-label="Open Linden Park"]')
+    while (node !== null && node.scrollHeight <= node.clientHeight + 1)
+      node = node.parentElement
+    if (node !== null) node.scrollTop = node.scrollHeight
+  })
+  await new Promise(resolve => setTimeout(resolve, 600))
+  await run.capture(join(run.support, 'F7-field-search-end.png'))
+  await run.pass(
+    `Searching "Example Park" lists ${rows.length} venues: Example Park under "Your leagues’ venues", then ${MORE_PARKS.length} unclaimed places from Google, ${MORE_PARKS[0]} to ${MORE_PARKS[MORE_PARKS.length - 1]}; the server asked Google for ${JSON.stringify(asked)}`
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -1395,7 +1487,8 @@ const SCENARIOS: Record<string, Scenario> = {
       await seedHarborField(fx)
     },
     run: f6
-  }
+  },
+  F7: { start: 'E2', run: f7 }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */
@@ -1484,6 +1577,7 @@ async function main(): Promise<void> {
           state,
           artifacts,
           support,
+          places,
           visit,
           capture: async name => {
             await session.m.waitForAnimationToEnd()

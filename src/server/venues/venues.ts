@@ -58,6 +58,8 @@ export interface VenueServices {
 }
 
 const SEARCH_LIMIT = 50
+/** Google's places for a venue search: enough to list ten after filtering. */
+const GOOGLE_LIMIT = 20
 const GROUPS = ['yours', 'claimed', 'unclaimed'] as const
 
 type VenueRow = Selectable<VenuesTable>
@@ -370,7 +372,12 @@ export async function searchVenues(
   let google: VenueSummary[] = []
   try {
     await limitGoogleLookup(db, fresh.userId, false)
-    google = (await services.places.eventPlaces(query, 'venue'))
+    google = (
+      await services.places.eventPlaces(query, 'venue', {
+        limit: GOOGLE_LIMIT,
+        near: search.near
+      })
+    )
       .map(place => ({
         id: null,
         placeId: bareId(place.id),
