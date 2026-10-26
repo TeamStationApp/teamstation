@@ -34,7 +34,8 @@ import {
   iosRawTree,
   pollNotVisible,
   type PublicNode,
-  readAndroidComposerKeyboard
+  readAndroidComposerKeyboard,
+  readIosComposerKeyboard
 } from '../../test/chat2Maestro.e2e'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'
@@ -13277,5 +13278,59 @@ describe('native framing that opened message actions', function () {
       { nativeFramingOpenedActions: 'msg-late', attempt: 1 },
       { nativeFramingOpenedActions: 'msg-late', attempt: 2 }
     ])
+  })
+})
+
+describe('iOS composer above the keyboard', function () {
+  const tree = {
+    type: 'Other',
+    children: [
+      {
+        type: 'Other',
+        id: 'chat-message-history',
+        bounds: { x: 0, y: 0, width: 390, height: 844 },
+        children: [
+          {
+            type: 'Other',
+            id: 'chat-composer-band',
+            bounds: { x: 16, y: 420, width: 358, height: 108 },
+            children: [
+              {
+                type: 'TextView',
+                id: 'chat-composer',
+                bounds: { x: 114, y: 479, width: 210, height: 43 }
+              }
+            ]
+          },
+          {
+            type: 'Keyboard',
+            bounds: { x: 0, y: 553, width: 390, height: 233 }
+          }
+        ]
+      }
+    ]
+  }
+  const device = {
+    hierarchy: async () => tree,
+    assertVisible: async () => {
+      throw Error('Unexpected fallback read')
+    }
+  } as unknown as Chat2UI['device']
+  it('takes a phone hierarchy without enabled:true as an enabled composer', async () => {
+    const read = await readIosComposerKeyboard(
+      { device, physical: true },
+      AbortSignal.timeout(2000)
+    )
+    expect(read.geometry.composer.y).equals(479)
+  })
+  it('still requires an explicit enabled composer from a simulator', async () => {
+    const error = await readIosComposerKeyboard(
+      { device },
+      AbortSignal.timeout(2000)
+    ).then(
+      () => undefined,
+      (failure: unknown) => failure
+    )
+    expect(String(error)).includes('Enabled iOS composer required')
   })
 })
