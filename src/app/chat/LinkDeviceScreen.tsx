@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
+import { HttpError } from '../../common/errors'
 import { Button, Card, Screen } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -56,6 +57,11 @@ export function LinkDeviceScreen(
   return <LinkDevice key={props.userId} {...props} />
 }
 
+/** A poll that failed this way may get through next time. */
+const passing = (error: unknown): boolean =>
+  error instanceof HttpError &&
+  ['offline', 'unavailable', 'rateLimited'].includes(error.code)
+
 function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
   const { client, userId, onDone } = props
   const store = props.store ?? keyStore
@@ -64,6 +70,7 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
   const [step, setStep] = useState<Step>({ kind: 'loading' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [round, setRound] = useState(0)
   // The shell makes a new callback every render; the poll keeps its timer.
   const done = useRef(onDone)
   done.current = onDone
@@ -111,7 +118,7 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [ask, setup])
+  }, [ask, round, setup])
 
   // While the code is up, ask now and then whether it was approved.
   useEffect(() => {
@@ -128,7 +135,12 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
             setStep({ kind: 'expired', record: polled.record })
           }
         })
-        .catch(() => undefined)
+        .catch((caught: unknown) => {
+          // Anything but a passing failure (an approved request whose keys
+          // do not open on this device) would fail every time: it stops,
+          // and Try again starts over from what the store holds.
+          if (live && !passing(caught)) setStep({ kind: 'failed' })
+        })
     }, pollMs)
     return () => {
       live = false
@@ -159,6 +171,14 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
     return (
       <Screen>
         <Text style={styles.error}>{lstrings.chat_devices_cannot_load}</Text>
+        <Button
+          label={lstrings.common_retry}
+          kind="secondary"
+          onPress={() => {
+            setStep({ kind: 'loading' })
+            setRound(current => current + 1)
+          }}
+        />
       </Screen>
     )
   }
