@@ -407,7 +407,7 @@ export async function pollNotVisible(
 
 /** iOS exposes no focus flag: require the actual composer above an observed IME. */
 export async function readIosComposerKeyboard(
-  ui: Pick<Chat2UI, 'device'>,
+  ui: Pick<Chat2UI, 'device'> & { physical?: boolean },
   signal: AbortSignal
 ): Promise<{
   nodes: PublicNode[]
@@ -451,8 +451,15 @@ export async function readIosComposerKeyboard(
         'Unique exact public element required: ' + id
       )
       if (observed[0]?.bounds != null) {
+        // A phone's normalized hierarchy omits enabled:true, as Android's
+        // does; an explicit false is still refused.
         if (id === 'chat-composer')
-          assert(observed[0].enabled === true, 'Enabled iOS composer required')
+          assert(
+            ui.physical === true
+              ? observed[0].enabled !== false
+              : observed[0].enabled === true,
+            'Enabled iOS composer required'
+          )
         assert(
           positive(observed[0].bounds),
           'Finite positive public bounds required: ' + id
@@ -465,7 +472,12 @@ export async function readIosComposerKeyboard(
       )
       assert(element.id === id, 'Exact positive public element required: ' + id)
       if (id === 'chat-composer')
-        assert(element.enabled === true, 'Enabled iOS composer required')
+        assert(
+          ui.physical === true
+            ? element.enabled !== false
+            : element.enabled === true,
+          'Enabled iOS composer required'
+        )
       const measured = need(
         bounds(element.bounds),
         'Positive public bounds required: ' + id
