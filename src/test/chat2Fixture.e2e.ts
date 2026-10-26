@@ -151,7 +151,8 @@ const asFixture = asObject({
   disposable: asValue(true),
   localOnly: asValue(true),
   ownershipId: asString,
-  appId: asValue('app.teamstation.app'),
+  // A phone lane drives the separate QA app beside any installed store app.
+  appId: asValue('app.teamstation.app', 'app.teamstation.app.chatqa'),
   scheme: asOptional(asString, 'teamstation'),
   apiUrl: asString,
   webUrl: asString,
