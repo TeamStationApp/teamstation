@@ -1948,7 +1948,7 @@ export class Chat2UI {
         3000
       ))
     ) {
-      await this.device.tapOn({ text: '^Not now$' })
+      await this.device.tapOn({ text: '^(Not now|Never)$' })
       this.steps.push({
         name: 'Phone password manager offer from an earlier run declined',
         outcome: 'passed'
