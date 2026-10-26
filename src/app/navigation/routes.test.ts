@@ -398,7 +398,7 @@ describe('addresses', function () {
   })
 
   it('has no chat bench outside a phone build made for it', function () {
-    // The web and the tests read `chatBench.ts`, which has no bench.
+    // The web and the tests read `chatBenchPath.ts`, which has no bench.
     expect(parseRoute('/dev/chat-bench')).deep.equals({ name: 'home' })
     expect(parseRoute('/dev')).deep.equals({ name: 'home' })
     expect(routePath({ name: 'chatBench' })).equals('/')

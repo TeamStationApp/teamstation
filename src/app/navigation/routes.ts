@@ -1,6 +1,6 @@
 import { safeNext } from '../../common/signInReturn'
 import { asUserId, userIdOfGumbo } from '../../common/userId'
-import { chatBenchPath } from '../dev/chatBench'
+import { chatBenchPath } from '../dev/chatBenchPath'
 
 export { safeNext } from '../../common/signInReturn'
 /**
@@ -665,8 +665,8 @@ export function parseRoute(path: string, search = ''): Route {
 
 /**
  * `/dev/…`: the bench where the build has one, and home otherwise. The path
- * comes from the build's `chatBench` twin, so the web bundle does not even
- * hold it.
+ * comes from the build's `chatBenchPath` twin, so the web bundle does not even
+ * hold it, and the routes never import the bench.
  */
 export function parseDevRoute(
   parts: string[],
