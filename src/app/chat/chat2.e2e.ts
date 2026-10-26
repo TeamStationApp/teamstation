@@ -2763,8 +2763,17 @@ export class Scenarios {
       /(?:^|\.)Button$/.test(node.type ?? '')
     // With every page loaded, the virtualized history may still hold the
     // target outside its mounted window.
+    const oldest = target.seq <= (this.f.messages.oldest?.seq ?? -Infinity)
     if (!nodes.some(earlierButton)) {
-      if (await this.nativeLoadedTarget(target, signal)) return
+      if (
+        await this.nativeLoadedTarget(
+          target,
+          signal,
+          oldest ? 'older' : 'latest',
+          oldest
+        )
+      )
+        return
       nodes = await read()
     }
     const proof: Json = { nativeHistoryTarget: target.id, pages: [] }
@@ -2865,7 +2874,10 @@ export class Scenarios {
   async nativeLoadedTarget(
     target: Chat2Message,
     signal: AbortSignal,
-    first: 'latest' | 'older' = 'latest'
+    first: 'latest' | 'older' = 'latest',
+    // The oldest post is never below the reader: once the earlier control
+    // shows, it is in a page not loaded yet.
+    olderOnly = false
   ): Promise<boolean> {
     const ui = this.ui
     const id = 'chat-bubble-' + target.id
@@ -2878,11 +2890,22 @@ export class Scenarios {
         )
         .join('\n')
     let nodes = await ui.nodes(undefined, signal)
-    for (const direction of first === 'latest' ? [-1, 1] : [1, -1]) {
+    const earlierShown = (): boolean =>
+      nodes.some(
+        node =>
+          node.text === 'Load earlier messages' &&
+          /(?:^|\.)Button$/.test(node.type ?? '')
+      )
+    for (const direction of olderOnly
+      ? [1]
+      : first === 'latest'
+        ? [-1, 1]
+        : [1, -1]) {
       let still = 0
       // A few loaded pages are many screens; each end stops the history.
       for (let step = 0; step < 200 && still < 2; step++) {
         if (nodes.some(node => node.id === id)) break
+        if (olderOnly && earlierShown()) break
         const one = (key: string): NonNullable<PublicNode['bounds']> =>
           need(
             nodes.find(node => node.id === key)?.bounds,
