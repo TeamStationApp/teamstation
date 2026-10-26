@@ -4574,6 +4574,9 @@ export class Chat2UI {
       }
       return
     }
+    // A closing message overlay keeps the chat behind it inert until it is
+    // gone; a tap during its fade (long on a loaded host) focuses nothing.
+    if (!this.native) await this.composerInteractive()
     // A composer already proven focused (a pinch-zoomed page's own tap) is not
     // tapped again by id, whose layout coordinates miss a panned visual viewport.
     if (this.native || options.focused !== true) await this.id('chat-composer')
@@ -4613,6 +4616,23 @@ export class Chat2UI {
     }
     await this.device.eraseText()
     if (text !== '') await this.append(text)
+  }
+
+  /** Wait for the browser composer to leave any modal overlay's inert background. */
+  async composerInteractive(): Promise<void> {
+    assert(!this.native, 'Browser composer required')
+    await until(
+      async () => {
+        const value = await this.dom(
+          `const n=document.querySelector('[data-testid="chat-composer"]');return {present:n!=null,inert:n?.closest('[aria-hidden="true"]')!=null}`
+        )
+        return value.present === true && value.inert === false
+          ? true
+          : undefined
+      },
+      'browser composer outside a closing overlay',
+      15000
+    )
   }
 
   async append(text: string): Promise<void> {
