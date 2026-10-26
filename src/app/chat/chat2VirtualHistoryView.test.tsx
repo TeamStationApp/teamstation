@@ -1111,3 +1111,119 @@ describe('virtualized reader reopened onto a longer history', function () {
     ).equals(200)
   })
 })
+
+/**
+ * A pinned jump from the end of the history to its first row, whose smooth
+ * scroll passes three unread mentions. The reported landing frame is the
+ * browser's; a throttled Android stream may leave it out.
+ */
+async function jumpPastTargets(reportLanding: boolean): Promise<void> {
+  // Three mentions sit just above the band of a reader at the end, inside
+  // the draw distance; the pinned row is the first one.
+  const targets = ['msg_208', 'msg_209', 'msg_210']
+  const state = fixture(
+    view({
+      conversation: { ...view().conversation, lastSeq: 219 },
+      ownReadSeq: 99,
+      messages: history(120).map(item =>
+        targets.includes(item.id)
+          ? { ...item, mentions: [userIdOfGumbo(1)] }
+          : item
+      ),
+      pins: [{ messageId: 'msg_100', pinnedAt: '2027-04-01T17:00:00.000Z' }]
+    })
+  )
+  const order = (): string[] => state.shown.messages.map(item => item.id)
+  const layout = browserLayout(order)
+  const end = TOP + 120 * STEP + 200 - VIEWPORT
+  const workspace = newChatWorkspaceState()
+  workspace.drafts.set('cnv_1', {
+    text: '',
+    picked: [],
+    hasScrollPosition: true,
+    scrollOffset: end,
+    followNewest: false
+  })
+  const owner = new ChatDraftOwner(workspace)
+  await render(state.engine, owner)
+  const moves = scrollExtent(order)
+  const instant = scroller().scroll.bind(scroller())
+  // A smooth scroll reports frames on its way: one with the targets in
+  // the reading band, held long enough for any attention measurement.
+  let flown = false
+  scroller().scroll = (options?: ScrollToOptions | number) => {
+    const smooth = (options as ScrollToOptions).behavior === 'smooth'
+    if (!smooth) {
+      instant(options as ScrollToOptions)
+      return
+    }
+    const passing = layout.rowTop('msg_209') - VIEWPORT / 2
+    const land = (): void => {
+      if (reportLanding) instant(options as ScrollToOptions)
+      else {
+        const node = scroller()
+        node.scrollTop = Math.max(
+          0,
+          Math.min(
+            (options as ScrollToOptions).top ?? 0,
+            node.scrollHeight - node.clientHeight
+          )
+        )
+      }
+    }
+    instant({ top: passing })
+    setTimeout(() => {
+      flown = true
+      land()
+    }, 400)
+  }
+  await act(async () => {
+    ;(
+      scroller() as HTMLElement & {
+        __reactLayoutHandler: (event: unknown) => void
+      }
+    ).__reactLayoutHandler({
+      nativeEvent: { layout: { x: 0, y: 0, width: 360, height: VIEWPORT } }
+    })
+    await wait()
+  })
+  await settle(() => moves.length > 0 && scroller().scrollTop === end)
+  await settle(() => mounted().includes('msg_208'))
+  expect(mounted(), 'The targets are mounted above the band').includes(
+    'msg_208'
+  )
+  expect(layout.rowTop('msg_210') - scroller().scrollTop).lessThan(0)
+  await act(async () => {
+    host!
+      .querySelector<HTMLElement>('[data-testid="chat-pinned-summary"]')!
+      .click()
+    await wait()
+  })
+  await settle(() => flown)
+  expect(flown, 'The jump scrolled smoothly past the targets').equals(true)
+  await settle(
+    () =>
+      host!.querySelector('[data-testid="chat-attention-count"]')
+        ?.textContent === '3'
+  )
+  expect(layout.rowTop('msg_100') - scroller().scrollTop).lessThan(VIEWPORT / 2)
+  for (const id of targets)
+    expect(
+      owner.attention('cnv_1')!.seen.has(id),
+      'A row the jump flew past is not viewed: ' + id
+    ).equals(false)
+  expect(
+    host!.querySelector('[data-testid="chat-attention-count"]')?.textContent,
+    'Every target waits below the landed reader'
+  ).equals('3')
+}
+
+describe('virtualized jump past unread targets', function () {
+  it('never counts a target an animated jump only flew past as viewed', async function () {
+    await jumpPastTargets(true)
+  })
+
+  it('counts the jump landed when the scroll stops reporting before its last frame', async function () {
+    await jumpPastTargets(false)
+  })
+})
