@@ -2736,6 +2736,15 @@ export class Scenarios {
     }
     let nodes = await read()
     if (targetCount(nodes) === 1) return
+    const earlierButton = (node: PublicNode): boolean =>
+      node.text === 'Load earlier messages' &&
+      /(?:^|\.)Button$/.test(node.type ?? '')
+    // With every page loaded, the virtualized history may still hold the
+    // target outside its mounted window.
+    if (!nodes.some(earlierButton)) {
+      if (await this.nativeLoadedTarget(target, signal)) return
+      nodes = await read()
+    }
     const proof: Json = { nativeHistoryTarget: target.id, pages: [] }
     this.observations.push(proof)
     for (let page = 0; ; page++) {
@@ -2815,6 +2824,73 @@ export class Scenarios {
     }
   }
 
+  /**
+   * The virtualized history mounts only the rows near its reading band.
+   * Swipe through the loaded rows, latest first and then oldest, until the
+   * target is mounted or the history stops moving at both ends.
+   */
+  async nativeLoadedTarget(
+    target: Chat2Message,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const ui = this.ui
+    const id = 'chat-bubble-' + target.id
+    const proof: Json = { nativeLoadedTarget: target.id, swipes: [] }
+    this.observations.push(proof)
+    const bubbles = (nodes: PublicNode[]): string =>
+      nodes
+        .flatMap(node =>
+          node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+        )
+        .join('\n')
+    let nodes = await ui.nodes(undefined, signal)
+    for (const direction of [-1, 1]) {
+      let still = 0
+      for (let step = 0; step < 40 && still < 2; step++) {
+        if (nodes.some(node => node.id === id)) break
+        const one = (key: string): NonNullable<PublicNode['bounds']> =>
+          need(
+            nodes.find(node => node.id === key)?.bounds,
+            'Native reading band element required: ' + key
+          )
+        const history = one('chat-message-history')
+        const header = one('chat-conversation-identity')
+        const composer = one('chat-composer-band')
+        const pins = nodes.find(node => node.id === 'chat-pinned-band')?.bounds
+        const top = Math.max(
+          history.y,
+          header.y + header.height,
+          pins == null ? 0 : pins.y + pins.height
+        )
+        const bottom = Math.min(history.y + history.height, composer.y)
+        assert(
+          bottom - top > 64,
+          'Actual unobscured native reading band required'
+        )
+        // A finger moving up reads toward the latest rows, down toward older.
+        const middle = (top + bottom) / 2
+        const delta = direction * (bottom - top) * 0.6
+        const x = Math.round(history.x + history.width / 2)
+        const input = {
+          startX: x,
+          endX: x,
+          startY: Math.round(middle - delta / 2),
+          endY: Math.round(middle + delta / 2),
+          duration: 200
+        }
+        ;(proof.swipes as unknown[]).push(input)
+        const before = bubbles(nodes)
+        await ui.measuredSwipe(input, signal)
+        await new Promise(resolve => setTimeout(resolve, 350))
+        nodes = await ui.nodes(undefined, signal)
+        still = bubbles(nodes) === before ? still + 1 : 0
+      }
+    }
+    const found = nodes.some(node => node.id === id)
+    proof.outcome = found ? 'found' : 'absent'
+    return found
+  }
+
   /** Page through the real public history control; browser scroll does not fetch older rows. */
   async webHistoryTarget(target: Chat2Message): Promise<void> {
     const ui = this.ui
@@ -2836,10 +2912,11 @@ export class Scenarios {
         const targets=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(targets.length>1||targets.some(n=>!h.contains(n)))throw Error('Ambiguous or unscoped history target');
         const controls=Array.from(h.querySelectorAll('button,[role="button"]')).filter(n=>n.textContent.trim()==='Load earlier messages');if(controls.length>1)throw Error('Unique public Load earlier control required');const control=controls[0];
         if(position==='earlier'){if(!control)throw Error('No earlier control for missing target');control.scrollIntoView({block:'center',behavior:'instant'})}
+        let moved=false;if(position==='latest'||position==='sweep'){const was=h.scrollTop;h.scrollTop=position==='latest'?h.scrollHeight:Math.max(0,was-h.clientHeight*0.8);moved=h.scrollTop!==was;h.dispatchEvent(new Event('scroll'))}
         if(position==='target'){if(targets.length!==1)throw Error('Actual target required');targets[0].scrollIntoView({block:'center',behavior:'instant'})}
         let css;if(control){let n=control,parts=[];while(n!==h){const p=n.parentElement;if(!p)throw Error('Actual history ancestry required');parts.unshift('*:nth-child('+(Array.from(p.children).indexOf(n)+1)+')');n=p}css='[data-testid="chat-message-history"] > '+parts.join(' > ');if(document.querySelectorAll(css).length!==1||document.querySelector(css)!==control)throw Error('Unique scoped earlier control required')}
         const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
-        return {position,targetCount:targets.length,target:targets[0]?box(targets[0]):null,history:box(h),earlier:control?{css,disabled:control.disabled===true,ariaDisabled:control.getAttribute('aria-disabled'),box:box(control)}:null,ids:Array.from(h.querySelectorAll('[data-testid^="chat-bubble-"]')).map(n=>n.getAttribute('data-testid'))};
+        return {position,moved,targetCount:targets.length,target:targets[0]?box(targets[0]):null,history:box(h),earlier:control?{css,disabled:control.disabled===true,ariaDisabled:control.getAttribute('aria-disabled'),box:box(control)}:null,ids:Array.from(h.querySelectorAll('[data-testid^="chat-bubble-"]')).map(n=>n.getAttribute('data-testid'))};
       `,
         signal
       )
@@ -2849,8 +2926,23 @@ export class Scenarios {
       })
       return value
     }
+    // The virtualized history mounts only the rows near its reading band, so
+    // a loaded target can be absent from the DOM. Search the loaded rows,
+    // latest to oldest, before paging older ones.
+    const search = async (from: 'latest' | 'sweep'): Promise<Json> => {
+      let swept = await read(from)
+      while (swept.targetCount !== 1 && swept.moved === true) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+        swept = await read()
+        if (swept.targetCount !== 1) swept = await read('sweep')
+      }
+      await new Promise(resolve => setTimeout(resolve, 200))
+      return await read()
+    }
     for (let pages = 0; pages <= 10; pages++) {
-      const current = await read()
+      let current = await read()
+      if (current.targetCount !== 1)
+        current = await search(pages === 0 ? 'latest' : 'sweep')
       if (current.targetCount === 1) {
         const actual = await read('target')
         const box = actual.target as PublicNode['bounds']
