@@ -3,14 +3,13 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import type { InviteInfo, TeamStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import {
   mount as mountInvalid,
   text as textInvalid,
   unmount as unmountInvalid
 } from '../../test/gameFormDom'
-
-import type { InviteInfo, TeamStationClient } from '../../common/api'
-import { HttpError } from '../../common/errors'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { joinError, JoinScreen } from './JoinScreen'
 
