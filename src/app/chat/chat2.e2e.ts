@@ -2898,8 +2898,10 @@ export class Scenarios {
   async webHistoryTarget(target: Chat2Message): Promise<void> {
     const ui = this.ui
     assert(!ui.native, 'Browser history paging required')
-    const end = Date.now() + 30000
-    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
+    // Sweeping a virtualized history a screen at a time through a few hundred
+    // loaded rows takes longer than finding a row that is always in the DOM.
+    const end = Date.now() + 180000
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(180000)])
     const proof: Json = {
       publicHistoryTarget: target.id,
       samples: [],
