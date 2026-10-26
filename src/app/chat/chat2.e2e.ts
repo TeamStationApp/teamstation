@@ -66,6 +66,17 @@ interface ZoomedWebControl {
   requireFocus?: boolean
 }
 
+/**
+ * In-page helpers that move the browser history as a person does. The app
+ * leaves an unowned (script) scroll to its pending reader restoration, which
+ * a virtualized history re-applies whenever measured rows change its extent;
+ * a wheel first hands the reader to the person, as real input always does.
+ * Needs `h`, the history element, in scope.
+ */
+export const WEB_OWNED_SCROLL =
+  "const own=to=>{const was=h.scrollTop,next=Math.min(Math.max(0,h.scrollHeight-h.clientHeight),Math.max(0,to));if(next===was)return false;h.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:next-was}));h.scrollTop=next;h.dispatchEvent(new Event('scroll'));return h.scrollTop!==was};" +
+  'const center=n=>{const b=n.getBoundingClientRect(),p=h.getBoundingClientRect();return own(h.scrollTop+b.top+b.height/2-(p.top+h.clientHeight/2))};'
+
 const zoomedComposer: ZoomedWebControl = {
   name: 'composer',
   css: '[data-testid="chat-composer"]',
@@ -2284,7 +2295,7 @@ export class Scenarios {
     await ui.present('chat-bubble-' + target.id)
     if (!ui.native)
       await ui.dom(
-        `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')}); if(!n)throw Error('Visible target required');n.scrollIntoView({block:'center'});return {publicDomScroll:true}`
+        `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')}); if(!n)throw Error('Visible target required');const h=document.querySelector('[data-testid="chat-message-history"]');if(!h||!h.contains(n))throw Error('Visible target required');${WEB_OWNED_SCROLL}center(n);return {publicDomScroll:true,userOwned:true}`
       )
     if (!ui.native) await this.webAnchorReady(target)
   }
@@ -2929,16 +2940,17 @@ export class Scenarios {
     }
     this.observations.push(proof)
     const read = async (position = ''): Promise<Json> => {
-      assert(Date.now() < end, 'Public history paging exceeded 30 seconds')
+      assert(Date.now() < end, 'Public history paging exceeded its budget')
       const value = await ui.dom(
         `
         const id=${JSON.stringify('chat-bubble-' + target.id)},position=${JSON.stringify(position)};
         const histories=document.querySelectorAll('[data-testid="chat-message-history"]');if(histories.length!==1)throw Error('Unique actual history required');const h=histories[0];
         const targets=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(targets.length>1||targets.some(n=>!h.contains(n)))throw Error('Ambiguous or unscoped history target');
         const controls=Array.from(h.querySelectorAll('button,[role="button"]')).filter(n=>n.textContent.trim()==='Load earlier messages');if(controls.length>1)throw Error('Unique public Load earlier control required');const control=controls[0];
-        if(position==='earlier'){if(!control)throw Error('No earlier control for missing target');control.scrollIntoView({block:'center',behavior:'instant'})}
-        let moved=false;if(position==='latest'||position==='sweep'||position==='down'){const was=h.scrollTop;h.scrollTop=position==='latest'?h.scrollHeight:position==='down'?Math.min(Math.max(0,h.scrollHeight-h.clientHeight),was+h.clientHeight*0.8):Math.max(0,was-h.clientHeight*0.8);moved=h.scrollTop!==was;h.dispatchEvent(new Event('scroll'))}
-        if(position==='target'){if(targets.length!==1)throw Error('Actual target required');targets[0].scrollIntoView({block:'center',behavior:'instant'})}
+        ${WEB_OWNED_SCROLL}
+        if(position==='earlier'){if(!control)throw Error('No earlier control for missing target');center(control)}
+        let moved=false;if(position==='latest'||position==='sweep'||position==='down')moved=own(position==='latest'?h.scrollHeight:position==='down'?h.scrollTop+h.clientHeight*0.8:h.scrollTop-h.clientHeight*0.8);
+        if(position==='target'){if(targets.length!==1)throw Error('Actual target required');center(targets[0])}
         let css;if(control){let n=control,parts=[];while(n!==h){const p=n.parentElement;if(!p)throw Error('Actual history ancestry required');parts.unshift('*:nth-child('+(Array.from(p.children).indexOf(n)+1)+')');n=p}css='[data-testid="chat-message-history"] > '+parts.join(' > ');if(document.querySelectorAll(css).length!==1||document.querySelector(css)!==control)throw Error('Unique scoped earlier control required')}
         const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
         return {position,moved,offset:h.scrollTop,content:h.scrollHeight,targetCount:targets.length,target:targets[0]?box(targets[0]):null,history:box(h),earlier:control?{css,disabled:control.disabled===true,ariaDisabled:control.getAttribute('aria-disabled'),box:box(control)}:null,ids:Array.from(h.querySelectorAll('[data-testid^="chat-bubble-"]')).map(n=>n.getAttribute('data-testid'))};
@@ -3074,17 +3086,22 @@ export class Scenarios {
   async webAnchorReady(target = this.f.messages.target): Promise<void> {
     const ui = this.ui
     assert(!ui.native, 'Browser anchor readiness required')
-    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(2000)])
+    // A resized or freshly paged virtualized history remeasures its rows
+    // before it rests; a first read can take over a second.
+    const budget = 10000
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(budget)])
     const proof: Json = { stableWebAnchor: target.id, samples: [] }
     this.observations.push(proof)
     let previous: string | undefined
     let since = 0
+    let missing: string | undefined
     await until(
       async () => {
         const value = await ui.dom(
           `
         const id=${JSON.stringify(target.id)},one=id=>{const ns=document.querySelectorAll('[data-testid='+JSON.stringify(id)+']');if(ns.length!==1)throw Error('Unique actual anchor element required: '+id);return ns[0]};
-        const h=one('chat-message-history'),r=one('chat-message-'+id),b=one('chat-bubble-'+id);if(!h.contains(r)||!r.contains(b))throw Error('Actual history/row/bubble ancestry required');
+        const h=one('chat-message-history'),absent=['chat-message-'+id,'chat-bubble-'+id].find(n=>document.querySelectorAll('[data-testid='+JSON.stringify(n)+']').length===0);if(absent)return {missing:absent};
+        const r=one('chat-message-'+id),b=one('chat-bubble-'+id);if(!h.contains(r)||!r.contains(b))throw Error('Actual history/row/bubble ancestry required');
         const box=n=>{const b=n.getBoundingClientRect(),v={x:b.x,y:b.y,width:b.width,height:b.height};if(!Object.values(v).every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Positive finite actual anchor geometry required');return v};
         if(![h.scrollTop,h.scrollHeight,h.clientHeight,innerWidth,innerHeight].every(Number.isFinite)||h.clientHeight<=0)throw Error('Finite positive actual history/viewport required');
         return {observedMs:performance.now(),geometry:{row:box(r),bubble:box(b),history:{box:box(h),offset:h.scrollTop,content:h.scrollHeight,height:h.clientHeight},viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}}};
@@ -3095,6 +3112,14 @@ export class Scenarios {
           at: new Date().toISOString(),
           value
         })
+        // A virtualized row can be briefly unmounted while its window moves;
+        // it is read again once mounted, never assumed to stay.
+        if (typeof value.missing === 'string') {
+          missing = value.missing
+          previous = undefined
+          return undefined
+        }
+        missing = undefined
         const viewport = (
           value.geometry as { viewport: { width: number; height: number } }
         ).viewport
@@ -3117,8 +3142,12 @@ export class Scenarios {
         return undefined
       },
       'stable actual row/history geometry for 200ms',
-      2000
-    )
+      budget
+    ).catch((error: unknown) => {
+      if (missing != null)
+        throw Error('Unique actual anchor element required: ' + missing)
+      throw error
+    })
   }
 
   async targetBounds(id: string): Promise<NonNullable<PublicNode['bounds']>> {
@@ -3624,9 +3653,11 @@ export class Scenarios {
       return await until(
         async () => {
           const value = await read()
+          // A virtualized history measures rows the wheel brings in, so its
+          // extent (and the offset that holds the reader) may change; the
+          // viewport and the reader's own size may not.
           assert(
-            value.maximum === before.maximum &&
-              value.height === before.height &&
+            value.height === before.height &&
               JSON.stringify(value.history) ===
                 JSON.stringify(before.history) &&
               JSON.stringify(value.viewport) ===
@@ -3652,7 +3683,10 @@ export class Scenarios {
       direction: 'DOWN',
       response: await ui.device.scroll({ direction: 'DOWN' }, { signal })
     })
-    proof.down = await settled(value => value.offset > before.offset + 1)
+    proof.down = await settled(
+      value =>
+        value.offset > before.offset + 1 && value.bubble.y < before.bubble.y - 1
+    )
     await read()
     ;(proof.actions as unknown[]).push({
       direction: 'UP',
@@ -3660,9 +3694,9 @@ export class Scenarios {
     })
     proof.restored = await settled(
       value =>
-        (zero
-          ? value.offset === 0
-          : Math.abs(value.offset - before.offset) <= 1) &&
+        // Above a nonzero reader, measured rows can change the offset that
+        // shows the same row; the row's own place is the reader.
+        (!zero || value.offset === 0) &&
         Math.abs(value.bubble.y - before.bubble.y) <= 3 &&
         value.bubble.x === before.bubble.x &&
         value.bubble.width === before.bubble.width &&
@@ -7213,6 +7247,9 @@ export class Scenarios {
           'Three distinct verified new targets at actual older reader; mention+reply counts once'
         )
         if (!ui.native) {
+          // The virtualized history mounts the first target only near the
+          // reading band; bring it into the window from above it.
+          await this.webMountBelow('chat-message-body-' + posted.targets[0].id)
           const band = await this.readingBand()
           const hidden = await ui.dom(
             `const n=document.querySelector(${JSON.stringify('[data-testid="chat-message-body-' + posted.targets[0].id + '"]')});const h=document.querySelector('[data-testid="chat-message-history"]');if(!n||!h)throw Error('Public target/history required');h.scrollTop+=n.getBoundingClientRect().top-(${band.bottom}+4);h.dispatchEvent(new Event('scroll'));const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}`
@@ -7294,6 +7331,34 @@ export class Scenarios {
         await ui.present('chat-jump-latest')
       }
     )
+  }
+
+  /**
+   * Mount a history row below the reader without showing it: the
+   * virtualized window mounts rows a screen beyond the visible band, so short
+   * script scrolls (not a person's, so they consume nothing) stop as soon as
+   * the row exists, before it can reach the reading band.
+   */
+  async webMountBelow(testId: string): Promise<void> {
+    const ui = this.ui
+    assert(!ui.native, 'Browser history window required')
+    const proof: Json = { mountBelow: testId, steps: [] }
+    this.observations.push(proof)
+    for (let step = 0; step < 400; step++) {
+      const value = await ui.dom(
+        `const h=document.querySelector('[data-testid="chat-message-history"]');if(!h)throw Error('Public history required');
+        const n=document.querySelector(${JSON.stringify('[data-testid="' + testId + '"]')});if(n){const b=n.getBoundingClientRect();return {mounted:true,offset:h.scrollTop,top:b.top}}
+        const was=h.scrollTop;h.scrollTop=Math.min(Math.max(0,h.scrollHeight-h.clientHeight),was+Math.min(200,h.clientHeight/4));h.dispatchEvent(new Event('scroll'));return {mounted:false,moved:h.scrollTop!==was,offset:h.scrollTop}`
+      )
+      ;(proof.steps as unknown[]).push(value)
+      if (value.mounted === true) {
+        proof.outcome = 'mounted'
+        return
+      }
+      assert(value.moved === true, 'History row never mounted: ' + testId)
+      await new Promise(resolve => setTimeout(resolve, 150))
+    }
+    throw Error('History row never mounted: ' + testId)
   }
 
   /** Establish actual wheel-driven older-reader intent before starting another attention cycle. */
