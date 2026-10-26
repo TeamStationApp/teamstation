@@ -4797,6 +4797,14 @@ export class Chat2UI {
     }
   }
 
+  /** Whether the Android keyboard is actually on screen, and where. */
+  async readAndroidImeState(): Promise<AndroidCaptureIme> {
+    return need(
+      (await this.observeAndroidIme({}, 'state')).state,
+      'Observed Android IME state required'
+    )
+  }
+
   private async observeAndroidIme(
     options: { signal?: AbortSignal; timeoutMs?: number },
     mode: 'open' | 'state'
