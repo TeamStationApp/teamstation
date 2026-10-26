@@ -232,16 +232,14 @@ export function iosRawTree(raw: Uint8Array): { nodes: unknown[] } {
   const dom = new JSDOM(text, { contentType: 'text/xml' })
   try {
     const nodes: Args[] = []
-    const walk = (element: Element, parentIndex?: number): void => {
-      const index = nodes.length
+    const walk = (element: Element, parent?: Args): void => {
       const attr = (key: string): string | undefined =>
         element.getAttribute(key) ?? undefined
       const number = (key: string): number => Number(attr(key))
       const name = attr('name')
       const label = attr('label')
-      nodes.push({
-        index,
-        ...(parentIndex == null ? {} : { parentIndex }),
+      const node: Args = {
+        ...(parent == null ? {} : { parentIndex: parent.index }),
         type: (attr('type') ?? element.tagName).replace(/^XCUIElementType/, ''),
         ...(name != null && name !== label ? { identifier: name } : {}),
         ...(label == null ? {} : { label }),
@@ -256,8 +254,18 @@ export function iosRawTree(raw: Uint8Array): { nodes: unknown[] } {
           height: number('height')
         },
         enabled: attr('enabled') === 'true'
-      })
-      for (const child of Array.from(element.children)) walk(child, index)
+      }
+      // A phone lists a Text nested in a Text of the same words as a second,
+      // identical node inside the first; it is one element.
+      const repeat =
+        parent != null &&
+        ['type', 'identifier', 'label', 'value', 'placeholderValue'].every(
+          key => node[key] === parent[key]
+        ) &&
+        JSON.stringify(node.rect) === JSON.stringify(parent.rect)
+      const own = repeat ? parent : { index: nodes.length, ...node }
+      if (!repeat) nodes.push(own)
+      for (const child of Array.from(element.children)) walk(child, own)
     }
     walk(dom.window.document.documentElement)
     return { nodes }
