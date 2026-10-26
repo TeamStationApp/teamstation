@@ -2895,9 +2895,12 @@ export class Scenarios {
     const ui = this.ui
     assert(ui.native, 'Native history paging required')
     const id = 'chat-bubble-' + target.id
-    // Android normalized hierarchy omits enabled:true; raw iOS must prove it.
+    // Android's and a phone's normalized hierarchy omit enabled:true (an
+    // explicit false is still refused); the simulator's must prove it.
     const enabled = (node: PublicNode): boolean =>
-      ui.surface === 'android' ? node.enabled !== false : node.enabled === true
+      ui.surface === 'android' || ui.physical
+        ? node.enabled !== false
+        : node.enabled === true
     // Each iOS page is a long climb to its earlier control (see nativeAnchorReady).
     const signal = AbortSignal.any([
       ui.deadline,

@@ -10170,6 +10170,7 @@ describe('native absent history paging', function () {
     scenario: Scenarios
     taps: Array<{ x: number; y: number }>
     gestures: unknown[]
+    statusBarTaps: () => number
   } {
     const taps: Array<{ x: number; y: number }> = []
     const gestures: unknown[] = []
@@ -10179,6 +10180,7 @@ describe('native absent history paging', function () {
         ? 300
         : -4395.33332824707
     let targetY = fault === 'loaded' ? -500 : 300
+    let statusBarTaps = 0
     // A fully loaded virtualized history mounts its target after swipes.
     let swipes = 0
     // After the last page, the target is a loaded row above the held reader.
@@ -10319,6 +10321,12 @@ describe('native absent history paging', function () {
           options?: { signal: AbortSignal }
         ) => {
           options?.signal.throwIfAborted()
+          // A phone's status-bar scroll to top brings the earlier control in.
+          if (point.y < 47) {
+            statusBarTaps += 1
+            earlierY = 300
+            return
+          }
           expect(point.x).equals(201)
           expect(point.y).equals(earlierY + 24)
           expect(point.y - 24).at.least(178.1666717529297)
@@ -10339,7 +10347,7 @@ describe('native absent history paging', function () {
       f: { messages: { target } },
       observations: []
     }) as Scenarios
-    return { scenario, taps, gestures }
+    return { scenario, taps, gestures, statusBarTaps: () => statusBarTaps }
   }
 
   it('honors omitted enabled metadata on the normalized Android earlier Button before and after framing', async () => {
@@ -10420,6 +10428,33 @@ describe('native absent history paging', function () {
 
   it('rejects explicit disabled metadata on the normalized Android earlier Button', async () => {
     const m = model('disabled', 'android')
+    expect(
+      String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
+    ).includes('Enabled public native earlier Button required')
+    expect(m.taps).deep.equals([])
+  })
+
+  it('honors omitted enabled metadata on a phone iOS earlier Button', async () => {
+    const m = model('omitted-enabled')
+    Object.assign(m.scenario.ui, {
+      fixture: { devices: { ios: { physical: true } } }
+    })
+    await m.scenario.nativeHistoryTarget(target)
+    expect(m.taps).has.length(2)
+    // The first far earlier control is reached through the status bar.
+    expect(m.statusBarTaps()).equals(1)
+    expect(
+      m.scenario.observations.find(
+        row => row.nativeHistoryTarget === target.id
+      )!.outcome
+    ).equals('passed')
+  })
+
+  it('still refuses an explicitly disabled phone iOS earlier Button', async () => {
+    const m = model('disabled')
+    Object.assign(m.scenario.ui, {
+      fixture: { devices: { ios: { physical: true } } }
+    })
     expect(
       String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
     ).includes('Enabled public native earlier Button required')
