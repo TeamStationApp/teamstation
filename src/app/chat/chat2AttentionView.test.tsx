@@ -1803,7 +1803,14 @@ describe('conversation information navigation reader ownership', function () {
       ).at.most(3)
       expect(captured?.scrollOffset).equals(offset)
       expect(captured?.scrollAnchor).deep.equals(
-        offset === 0 ? undefined : { id: current.id, relativeY: 1000 - offset }
+        offset === 0
+          ? undefined
+          : {
+              id: current.id,
+              relativeY: 1000 - offset,
+              // Saved partly under the header and band it was read under.
+              ...(1000 - offset < 104 ? { readableTop: 104 } : {})
+            }
       )
       expect(captured?.followNewest).equals(following)
       expect(workspace.drafts.get('cnv_1')?.text).equals(
