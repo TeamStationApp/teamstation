@@ -4146,6 +4146,10 @@ describe('chat native adapter compatibility', function () {
     document.elementFromPoint = (_x, y) => {
       if (mode === 'input') return input
       if (mode === 'inner') return inner
+      // After the first wheel, another row's control or inner scroller
+      // reaches the fixed point.
+      if (directions.length > 0 && mode === 'control-after') return quote
+      if (directions.length > 0 && mode === 'inner-after') return inner
       const q = quote.getBoundingClientRect()
       if (y >= q.top && y <= q.bottom) return quote
       const b = body.getBoundingClientRect()
@@ -4198,6 +4202,23 @@ describe('chat native adapter compatibility', function () {
     expect(
       (proof.noninteractiveWheelSetup as Record<string, unknown>).positioned
     ).equals(true)
+  })
+  it('lets a wheel already in motion pass a control that reaches the fixed point', async () => {
+    const result = await blockedWheelReader('control-after')
+    expect(result.error).equals(undefined)
+    expect(result.directions).deep.equals(['DOWN', 'UP'])
+    const samples = result.scenario.observations[0].samples as Array<{
+      value: { controlUnderWheel: boolean }
+    }>
+    expect(samples[0].value.controlUnderWheel).equals(false)
+    expect(samples.some(sample => sample.value.controlUnderWheel)).equals(true)
+  })
+  it('stops a wheel in motion once an inner scroller reaches the fixed point', async () => {
+    const result = await blockedWheelReader('inner-after')
+    expect(String(result.error)).includes(
+      'Interactive or inner-scroll wheel interception'
+    )
+    expect(result.directions).deep.equals(['DOWN'])
   })
   for (const mode of ['stuck', 'input', 'inner'])
     it(
