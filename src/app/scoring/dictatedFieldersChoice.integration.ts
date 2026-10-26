@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
@@ -12,6 +10,7 @@ import {
   rosterPrompt,
   rosterToolSchema
 } from '../../common/scoring/rosterCommands'
+import { requireScoringTestKey } from '../../server/claudeKeys'
 import { Interpretation } from '../../server/dictation/interpreter'
 import {
   choiceOccupancyPhrases,
@@ -32,16 +31,7 @@ describe('real dictated fielder choice animation and defensive credits', functio
     ...choiceTimingPhrases
   ])
     it(`${example.mask}/${example.startingOuts}: ${example.said}`, async function () {
-      const config = JSON.parse(
-        readFileSync(
-          process.env.TS_DICTATION_CONFIG ?? 'serverConfig.json',
-          'utf8'
-        )
-      ).dictation?.anthropic
-      if (typeof config?.apiKey !== 'string' || config.apiKey === '')
-        throw new Error(
-          'Configure dictation.anthropic for the live interpreter tests'
-        )
+      const config = requireScoringTestKey()
       const before = initialScoringState(scoringSession(gameFixture), true)
       for (const [index, key] of (
         ['first', 'second', 'third'] as const

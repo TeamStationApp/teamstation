@@ -20,8 +20,11 @@ node_modules/.bin/mocha -r sucrase/register --extension ts --timeout 180000 \
   'src/server/dictation/**/*.integration.ts'
 ```
 
-The key is `dictation.anthropic` in `serverConfig.json`, which is not in git.
-The file skips without it, so a finished run is the one whose tests passed.
+The tests read the Claude scoring test key from 1Password (the item
+"Claude API key - scoring - test", through `op-scotty`). They skip or fail
+when it cannot be read. They do not use the key in `serverConfig.json`, which
+is the production scoring key on the production server. A base URL in
+`TS_DICTATION_CONFIG` is still honored.
 
 These tests call Haiku and check the actions it returns. `*.test.ts` is the unit
 run (`npm test`). `*.e2e.ts` launches the app. A sentence whose reply cannot

@@ -464,6 +464,7 @@ function startServer(): number {
     ['-r', 'sucrase/register', 'src/server/index.ts'],
     {
       detached: true,
+      env: { ...process.env, TS_CLAUDE_KEYS: 'test' },
       stdio: ['ignore', log, log]
     }
   )

@@ -11,6 +11,7 @@ import express from 'express'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
+import { installProcessClaudeKeys } from './claudeKeys'
 import { makeDatabase } from './db/database'
 import { purgeExpiredKeys } from './db/syncIdempotency'
 import { modelsOf } from './dictation/models'
@@ -131,6 +132,9 @@ import { loopbackOrigin } from './tess/loopback'
  * which is the honest answer there.
  */
 const VERSION = versionOf()
+// Tests spend the test keys. Production, and a master build of the app
+// talking to it, leave TS_CLAUDE_KEYS unset and use the keys in the config.
+installProcessClaudeKeys(serverConfig)
 const stopLogging = startServerLogging({
   dsn: serverConfig.sentry.dsn,
   writeToken: serverConfig.logWriteToken,

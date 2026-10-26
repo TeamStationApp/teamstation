@@ -314,9 +314,10 @@ export const asServerConfig = asObject({
   ),
 
   /**
-   * Tess, the assistant: Anthropic's Messages API. `apiKey` falls back to
-   * dictation's Anthropic key; with neither, Tess is off and `/health` says
-   * so. `baseUrl` exists so a test can point it somewhere else.
+   * Tess, the assistant: Anthropic's Messages API, with her own key.
+   * Scoring's Claude key is `dictation.anthropic` and is not read here.
+   * With no `apiKey`, Tess is off and `/health` says so. `baseUrl` exists
+   * so a test can point it somewhere else.
    */
   tess: asOptional(
     asObject({
@@ -420,7 +421,7 @@ export interface TessSettings {
 export function tessSettings(
   config: Pick<ServerConfig, 'tess' | 'dictation'>
 ): TessSettings | null {
-  const apiKey = config.tess?.apiKey ?? config.dictation?.anthropic?.apiKey
+  const apiKey = config.tess?.apiKey
   if (apiKey == null || apiKey === '') return null
   return {
     apiKey,

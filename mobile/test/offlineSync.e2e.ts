@@ -100,6 +100,7 @@ async function startServer(): Promise<void> {
   if (await answers()) throw new Error(`${API} already answers: stop it first`)
   server = spawn('node', ['-r', 'sucrase/register', 'src/server/index.ts'], {
     cwd: ROOT,
+    env: { ...process.env, TS_CLAUDE_KEYS: 'test' },
     stdio: ['ignore', 'ignore', 'ignore'],
     detached: true
   })

@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
@@ -13,6 +11,7 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { placePhrases } from '../../test/dictationPlacePhrases'
 import { choiceRelayPhrases } from '../../test/fieldersChoicePhrases'
+import { scoringTestAnthropic } from '../claudeKeys'
 import { Interpretation, type Turn } from './interpreter'
 
 /**
@@ -26,10 +25,12 @@ import { Interpretation, type Turn } from './interpreter'
  *   node_modules/.bin/mocha -r sucrase/register --extension ts --timeout 180000 \
  *     src/server/dictation/promptCases.integration.ts
  *
- * The key is `dictation.anthropic` in serverConfig.json, which is not in git.
- * Without it the file skips.
+ * The key is the Claude scoring test key in 1Password
+ * ("Claude API key - scoring - test"). The file skips when it cannot be read.
+ * A base URL in `TS_DICTATION_CONFIG` (or serverConfig.json) is honored; that
+ * file's key is not.
  */
-const keys = anthropic()
+const keys = scoringTestAnthropic()
 const scoringTools = toolSchema().filter(tool => tool.name !== 'lineup')
 const rosterTools = rosterToolSchema()
 
@@ -100,28 +101,6 @@ const owlsField = {
   LF: ren,
   CF: sam,
   RF: will
-}
-
-function anthropic(): { apiKey: string; baseUrl: string } | undefined {
-  try {
-    const raw = JSON.parse(
-      readFileSync(
-        process.env.TS_DICTATION_CONFIG ?? 'serverConfig.json',
-        'utf8'
-      )
-    ) as {
-      dictation?: { anthropic?: { apiKey?: string; baseUrl?: string } }
-    }
-    const apiKey = raw.dictation?.anthropic?.apiKey
-    if (apiKey == null || apiKey === '') return undefined
-    return {
-      apiKey,
-      baseUrl:
-        raw.dictation?.anthropic?.baseUrl ?? 'https://api.anthropic.com/v1'
-    }
-  } catch {
-    return undefined
-  }
 }
 
 function game(input: {

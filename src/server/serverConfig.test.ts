@@ -61,20 +61,16 @@ describe('Tess configuration', function () {
     const config = asServerConfig({})
     expect(config.tess).equals(undefined)
     expect(tessSettings(config)).equals(null)
-    // Dictation without an Anthropic key gives Tess nothing either.
+    // Scoring's Claude key is not hers.
     expect(
       tessSettings(asServerConfig({ dictation: { apiKey: 'xai-placeholder' } }))
     ).equals(null)
     expect(tessSettings(asServerConfig({ tess: { apiKey: '' } }))).equals(null)
   })
 
-  it('falls back to dictation’s Anthropic key, and leaves dictation as it was', function () {
+  it('does not spend the scoring key, and leaves dictation as it was', function () {
     const config = asServerConfig({ dictation })
-    expect(tessSettings(config)).deep.equals({
-      apiKey: 'dictation-anthropic-placeholder',
-      baseUrl: 'https://api.anthropic.com/v1',
-      model: 'claude-sonnet-5-5'
-    })
+    expect(tessSettings(config)).equals(null)
     expect(config.dictation).deep.equals({
       apiKey: 'xai-placeholder',
       baseUrl: 'https://api.x.ai/v1',
@@ -87,7 +83,7 @@ describe('Tess configuration', function () {
         baseUrl: 'https://api.anthropic.com/v1'
       }
     })
-    // A section without a key still takes its address and model.
+    // An address and a model, and no key of her own, leave her off.
     expect(
       tessSettings(
         asServerConfig({
@@ -95,14 +91,10 @@ describe('Tess configuration', function () {
           tess: { baseUrl: 'http://127.0.0.1:1/v1', model: 'claude-test' }
         })
       )
-    ).deep.equals({
-      apiKey: 'dictation-anthropic-placeholder',
-      baseUrl: 'http://127.0.0.1:1/v1',
-      model: 'claude-test'
-    })
+    ).equals(null)
   })
 
-  it('prefers its own key, and refuses a malformed section', function () {
+  it('uses her own key, and refuses a malformed section', function () {
     expect(
       tessSettings(asServerConfig({ dictation, tess: { apiKey: 'tess-key' } }))
     ).deep.equals({

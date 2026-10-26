@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
@@ -14,6 +12,7 @@ import {
   rosterToolSchema
 } from '../../common/scoring/rosterCommands'
 import { applyAction } from '../../common/scoring/session'
+import { requireScoringTestKey } from '../../server/claudeKeys'
 import { Interpretation, type Turn } from '../../server/dictation/interpreter'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -28,7 +27,7 @@ import type { ScoringState } from './scoringTypes'
  * the model called, what the play recorded, how it ended and what the field
  * drew, then checks it.
  *
- *   TS_DICTATION_CONFIG=… node_modules/.bin/mocha --exit -r sucrase/register \
+ *   node_modules/.bin/mocha --exit -r sucrase/register \
  *     -r ./src/test/scoringDomSetup.cjs --extension ts --timeout 180000 \
  *     src/app/scoring/dictatedForcePlays.integration.ts
  *
@@ -240,15 +239,8 @@ function playOut(start: ScoringState, state: ScoringState): Ended {
   }
 }
 
-function config(): { apiKey: string; baseUrl?: string } {
-  const read = JSON.parse(
-    readFileSync(process.env.TS_DICTATION_CONFIG ?? 'serverConfig.json', 'utf8')
-  ).dictation?.anthropic
-  if (typeof read?.apiKey !== 'string' || read.apiKey === '')
-    throw new Error(
-      'Configure dictation.anthropic for the live interpreter tests'
-    )
-  return read
+function config(): { apiKey: string; baseUrl: string } {
+  return requireScoringTestKey()
 }
 
 describe('dictated force plays, live', function () {

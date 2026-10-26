@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
@@ -17,6 +17,7 @@ import {
   rosterToolSchema
 } from '../../common/scoring/rosterCommands'
 import { fieldInfoOf } from '../../common/scoring/state'
+import { requireScoringTestKey } from '../../server/claudeKeys'
 import { Interpretation, type Turn } from '../../server/dictation/interpreter'
 import { placePhrases } from '../../test/dictationPlacePhrases'
 import { scoringSession } from '../../test/scoringSession'
@@ -30,7 +31,7 @@ import { initialScoringState, scoringReducer } from './scoringMachine'
  * through the screen: the stored distance in feet at a 200 ft fence, the
  * foul's spot, and the pitch event Gumbo gets. Run explicitly:
  *
- *   TS_DICTATION_CONFIG=… mocha --exit -r sucrase/register \
+ *   mocha --exit -r sucrase/register \
  *     -r ./src/test/scoringDomSetup.cjs --extension ts --timeout 180000 \
  *     src/app/scoring/dictatedDistance.integration.ts
  *
@@ -64,16 +65,7 @@ describe('where a dictated ball or pitch went, through the real interpreter', fu
 
   for (const example of placePhrases)
     it(example.said, async function () {
-      const config = JSON.parse(
-        readFileSync(
-          process.env.TS_DICTATION_CONFIG ?? 'serverConfig.json',
-          'utf8'
-        )
-      ).dictation?.anthropic
-      if (typeof config?.apiKey !== 'string' || config.apiKey === '')
-        throw new Error(
-          'Configure dictation.anthropic before running interpreter integration tests'
-        )
+      const config = requireScoringTestKey()
       const before = initialScoringState(scoringSession(gameFixture), false)
       before.session.gameData.venue = { fieldInfo: fieldInfoOf(200) }
       const ask = async (): Promise<Turn> =>

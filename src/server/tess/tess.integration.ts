@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { accountHarness } from '../../test/accountHarness'
+import { chatTestAnthropic } from '../claudeKeys'
 import { groupRoutes } from '../routes/groups'
 import { scheduleRoutes } from '../routes/schedule'
 import { statsRoutes } from '../routes/stats'
 import { tessRoutes } from '../routes/tess'
-import { type ServerConfig, tessSettings } from '../serverConfig'
 import type { StoredBlock } from './conversation'
 
 /**
@@ -25,8 +25,9 @@ import type { StoredBlock } from './conversation'
  * and `--max-requests <n>` refuses any Messages request past the nth, so a
  * case that keeps calling tools fails rather than spends.
  *
- * The key is `tess.apiKey`, or dictation's Anthropic key, in that file
- * (serverConfig.json by default, which is not in git). It is never printed.
+ * The key is the Claude chat test key in 1Password
+ * ("Claude API key - chat - test"). It is never printed. A model or base URL
+ * in `TS_TESS_CONFIG` (or serverConfig.json) is honored; that file's key is not.
  */
 
 interface Case {
@@ -142,16 +143,23 @@ async function main(): Promise<number> {
   const only = option(argv, '--case', 1, CASES.length)
   const chosen = only == null ? CASES.map((_, at) => at) : [only - 1]
   const budget = option(argv, '--max-requests', 1, 1000) ?? Infinity
+  let model = 'claude-sonnet-5-5'
   const configPath = process.env.TS_TESS_CONFIG ?? 'serverConfig.json'
-  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Pick<
-    ServerConfig,
-    'tess' | 'dictation'
-  >
-  const settings = tessSettings(raw)
-  if (settings == null) {
-    console.log('No Tess key in the config; nothing to run.')
+  try {
+    const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
+      tess?: { model?: string }
+    }
+    if (typeof raw.tess?.model === 'string' && raw.tess.model !== '')
+      model = raw.tess.model
+  } catch {
+    // The test key does not come from this file.
+  }
+  const keys = chatTestAnthropic()
+  if (keys == null) {
+    console.log('No Claude chat test key; nothing to run.')
     return 1
   }
+  const settings = { apiKey: keys.apiKey, baseUrl: keys.baseUrl, model }
   console.log(`model ${settings.model}`)
 
   let requests = 0

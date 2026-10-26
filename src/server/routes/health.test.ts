@@ -62,9 +62,7 @@ describe('health', function () {
       narration: true,
       tess:
         tessSettings(
-          asServerConfig({
-            dictation: { apiKey: 'xai-placeholder', anthropic: { apiKey: 'a' } }
-          })
+          asServerConfig({ tess: { apiKey: 'chat-placeholder' } })
         ) != null
     })
     const health = await client.health()
