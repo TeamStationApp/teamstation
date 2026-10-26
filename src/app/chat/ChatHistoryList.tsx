@@ -193,7 +193,9 @@ export function ChatHistoryList<T>(
       dataVersion={pinnedVersion(alwaysRender)}
       ListHeaderComponent={header}
       ListFooterComponent={footer}
-      maintainVisibleContentPosition={{ size: true, data: false }}
+      // A browser shows a new page's rows at the old offset until the reader
+      // is corrected; the list holds its first visible row in the same commit.
+      maintainVisibleContentPosition={{ size: true, data: true }}
       recycleItems={false}
       // Supported on the web, though its web typing omits it.
       {...scrollComponent}
