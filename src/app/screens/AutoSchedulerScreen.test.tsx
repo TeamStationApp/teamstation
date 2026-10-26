@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React from 'react'
+import React, { act } from 'react'
+import { Keyboard, Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
@@ -105,6 +106,8 @@ function fakeClient(
   } = {}
 ): {
   client: TeamStationClient
+  /** Each request as it went out: a settings save or a build. */
+  sent: Array<'save' | 'build' | 'fieldManager'>
   choices: Array<{ seasonIds: string[]; fieldIds: string[] }>
   saves: Array<[string, ScheduleSettings]>
   builds: PreviewRequest[]
@@ -112,6 +115,7 @@ function fakeClient(
   let setup = first instanceof Error ? setupOf() : first
   let reads = 0
   const record = {
+    sent: [] as Array<'save' | 'build' | 'fieldManager'>,
     choices: [] as Array<{ seasonIds: string[]; fieldIds: string[] }>,
     saves: [] as Array<[string, ScheduleSettings]>,
     builds: [] as PreviewRequest[],
@@ -123,6 +127,7 @@ function fakeClient(
       _leagueId: string,
       request: PreviewRequest
     ) => {
+      record.sent.push('build')
       record.builds.push(request)
       if (options.failBuild === true) throw new Error('The engine stopped')
       if (options.existing != null && request.existing == null)
@@ -154,6 +159,7 @@ function fakeClient(
       seasonId: string,
       settings: ScheduleSettings
     ) => {
+      record.sent.push('save')
       record.saves.push([seasonId, settings])
       if (options.failSave === true) throw new Error('')
       return { seasonId, saved: true, settings }
@@ -190,6 +196,19 @@ const buildButton = (): HTMLElement =>
     node => node.textContent === 'Build schedule'
   )!
 
+async function key(name: string): Promise<void> {
+  await act(async () => {
+    document.querySelector('input')!.dispatchEvent(
+      new window.KeyboardEvent('keydown', {
+        key: name,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+  })
+  await settle(20)
+}
+
 const disabled = (node: HTMLElement): boolean =>
   node.getAttribute('aria-disabled') === 'true'
 
@@ -210,7 +229,9 @@ describe('the Auto-Scheduler setup', () => {
     await press('Retry')
     await settle(50)
     expect(text()).includes('Demo League A')
-    expect(hasLabel('Demo Regular Teams: 7 + 2 exh.')).equals(true)
+    expect(
+      hasLabel('Demo Regular Teams: 7 teams and 2 exhibition teams')
+    ).equals(true)
     expect(hasLabel('Demo Regular Size: 50/70')).equals(true)
     expect(hasLabel('Demo Regular Total games: 17')).equals(true)
     expect(hasLabel('Demo Regular Doubleheaders: Only if necessary')).equals(
@@ -233,7 +254,7 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Open Demo Regular')
     await tapLabel('Demo Regular Windows: 1 period')
     await tapLabel('Demo Regular Blackouts: None')
-    await tapLabel('Demo Regular Teams: 7 + 2 exh.')
+    await tapLabel('Demo Regular Teams: 7 teams and 2 exhibition teams')
     expect(calls.seasons).deep.equals(['sea_a', 'sea_a', 'sea_a', 'sea_a'])
   })
 
@@ -274,28 +295,38 @@ describe('the Auto-Scheduler setup', () => {
     await press('Never')
     await settle(20)
     expect(fake.saves.at(-1)?.[1].doubleheaders).equals('never')
-    await tapLabel('Demo Regular Game: 90 min')
-    await fill('Game length, in minutes', '92')
-    await tapText('Save')
-    expect(text()).includes('Choose 30 to 600, in 5-minute steps.')
-    await fill('Game length, in minutes', '')
-    await tapText('Save')
-    expect(text()).includes('Choose 30 to 600')
-    await fill('Game length, in minutes', '75')
-    await tapText('Save')
-    await settle(20)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '92')
+    await key('Enter')
+    expect(text()).includes('Game MINS: choose 30 to 600, in 5-minute steps.')
+    await fill('Edit Demo Regular Game length in minutes', '')
+    await key('Enter')
+    expect(text()).includes('Game MINS: choose 30 to 600')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
     expect(fake.saves.at(-1)?.[1].gameMinutes).equals(75)
-    expect(hasLabel('Demo Regular Game: 75 min')).equals(true)
-    await tapLabel('Demo Regular Regular: 3')
-    await fill('Regular-season games per team', '4')
-    await tapText('Save')
-    await settle(20)
+    expect(hasLabel('Demo Regular Game length in minutes: 75')).equals(true)
+    // Each cell's save sends the season's other settings unchanged.
+    await tapLabel('Demo Regular Regular-season games: 3')
+    await fill('Edit Demo Regular Regular-season games', '4')
+    await key('Tab')
+    expect(fake.saves.at(-1)).deep.equals([
+      'sea_a',
+      {
+        ...SETTINGS,
+        fieldSize: '60/90',
+        doubleheaders: 'never',
+        gameMinutes: 75,
+        regularGames: 4
+      }
+    ])
     expect(text()).not.includes('an odd number')
-    await tapLabel('Demo Regular Between: 10 min')
-    await tapText('Cancel')
-    await tapLabel('Demo Regular Exhibition: 1')
-    expect(hasLabel('Exhibition games per team')).equals(true)
-    await tapText('Cancel')
+    // Tab opened # Exhibition; Escape leaves it as it was.
+    expect(hasLabel('Edit Demo Regular Exhibition games')).equals(true)
+    await key('Escape')
+    expect(hasLabel('Demo Regular Exhibition games: 1')).equals(true)
+    // No dialog opens for a number.
+    expect(text()).not.includes('Game length, in minutes')
     await tapLabel('Demo Regular Dates: Mar 1 – Jul 31')
     await tapLabel('2027-03-08')
     await tapLabel('2027-03-20')
@@ -308,6 +339,183 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Demo Regular Dates: Mar 8 – Mar 20')
     await tapText('Cancel')
     expect(fake.saves.length).equals(5)
+  })
+
+  it('saves a cell still open before a native build or a season’s screen, and goes nowhere when it refuses', async () => {
+    // A native tap on a button leaves the cell focused: no blur saves it.
+    const was = Platform.OS
+    try {
+      Platform.OS = 'ios'
+      const fake = fakeClient(setupOf(), {
+        listed: [
+          {
+            previewId: 'spv_old',
+            gameKey: 'g1',
+            gameId: 'gam_1',
+            seasonId: 'sea_a',
+            homeTeamId: 'tem_hawks',
+            awayTeamId: 'tem_owls',
+            homeTeamName: 'Demo Hawks',
+            awayTeamName: 'Demo Owls',
+            startAt: '2027-04-17T14:00:00.000Z',
+            endAt: '2027-04-17T15:30:00.000Z',
+            timezone: 'America/New_York',
+            exhibition: false,
+            fieldId: null,
+            reason: 'declined'
+          }
+        ]
+      })
+      const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+      await show(fake.client, calls)
+      await tapLabel('Demo Regular Game length in minutes: 90')
+      await fill('Edit Demo Regular Game length in minutes', '75')
+      await tapText('Build schedule')
+      await settle(50)
+      expect(fake.sent).deep.equals(['save', 'build'])
+      expect(fake.saves[0][1].gameMinutes).equals(75)
+      expect(calls.builds).equals(1)
+      // A refused number keeps the cell open, and nothing is built or opened.
+      await tapLabel('Demo Regular Game length in minutes: 75')
+      await fill('Edit Demo Regular Game length in minutes', '77')
+      await tapText('Build schedule')
+      await settle(20)
+      await tapText('Recalculate just these teams')
+      await settle(20)
+      await tapLabel('Open Demo Regular')
+      await settle(20)
+      expect(fake.sent).deep.equals(['save', 'build'])
+      expect(text()).includes('Game MINS: choose')
+      expect(calls.seasons).deep.equals([])
+      // Fixed, it saves before the season's screen opens.
+      await fill('Edit Demo Regular Game length in minutes', '80')
+      await tapLabel('Open Demo Regular')
+      await settle(50)
+      expect(fake.sent).deep.equals(['save', 'build', 'save'])
+      expect(fake.saves[1][1].gameMinutes).equals(80)
+      expect(calls.seasons).deep.equals(['sea_a'])
+      // And before a recalculation.
+      await tapLabel('Demo Regular Game length in minutes: 80')
+      await fill('Edit Demo Regular Game length in minutes', '85')
+      await tapText('Recalculate everything')
+      await settle(50)
+      expect(fake.sent).deep.equals(['save', 'build', 'save', 'save', 'build'])
+      expect(fake.saves[2][1].gameMinutes).equals(85)
+      expect(calls.builds).equals(2)
+    } finally {
+      Platform.OS = was
+    }
+  })
+
+  it('saves a cell still open before either native Field Manager action, and goes nowhere when it refuses', async () => {
+    // A native tap on a button leaves the cell focused, and the Field
+    // Manager's screen replaces this one with no blur to save it.
+    const was = Platform.OS
+    try {
+      Platform.OS = 'ios'
+      const fake = fakeClient(setupOf())
+      await mount(
+        <AutoSchedulerScreen
+          client={fake.client}
+          leagueId="lea_a"
+          leagueName="Demo League A"
+          onFieldManager={() => {
+            fake.sent.push('fieldManager')
+          }}
+          onOpenSeason={() => undefined}
+          onOpenPreview={() => undefined}
+        />
+      )
+      await settle(50)
+      const row =
+        'Field Manager, Find, claim and set up the venues and fields your league plays on'
+      // The header's action saves the cell, then opens the Field Manager.
+      await tapLabel('Demo Regular Game length in minutes: 90')
+      await fill('Edit Demo Regular Game length in minutes', '75')
+      await tapLabel('Open the Field Manager')
+      await settle(50)
+      expect(fake.sent).deep.equals(['save', 'fieldManager'])
+      expect(fake.saves[0][1].gameMinutes).equals(75)
+      // A refused number keeps the cell open, and neither action leaves.
+      await tapLabel('Demo Regular Game length in minutes: 75')
+      await fill('Edit Demo Regular Game length in minutes', '77')
+      await tapLabel('Open the Field Manager')
+      await settle(20)
+      await press(row)
+      await settle(20)
+      expect(fake.sent).deep.equals(['save', 'fieldManager'])
+      expect(text()).includes('Game MINS: choose')
+      // Fixed, the row saves it before the Field Manager opens.
+      await fill('Edit Demo Regular Game length in minutes', '80')
+      await press(row)
+      await settle(50)
+      expect(fake.sent).deep.equals([
+        'save',
+        'fieldManager',
+        'save',
+        'fieldManager'
+      ])
+      expect(fake.saves[1][1].gameMinutes).equals(80)
+    } finally {
+      Platform.OS = was
+    }
+  })
+
+  it('scrolls the screen to lift an open cell the phone’s keyboard covers', async () => {
+    const was = Platform.OS
+    // The web's Keyboard, put back after; it has no metrics.
+    const real = Object.getOwnPropertyDescriptors(Keyboard)
+    const elements = window.HTMLElement.prototype
+    const rect = Object.getOwnPropertyDescriptor(
+      elements,
+      'getBoundingClientRect'
+    )
+    try {
+      Platform.OS = 'android'
+      // The keyboard is up, its top 600 points down the window.
+      Object.assign(Keyboard, {
+        metrics: () => ({ screenX: 0, screenY: 600, width: 400, height: 300 }),
+        isVisible: () => true
+      })
+      // The screen's scroll view starts 24 points down; the cell sits at 700.
+      Object.defineProperty(elements, 'getBoundingClientRect', {
+        configurable: true,
+        value: function (this: HTMLElement): Partial<DOMRect> {
+          return {
+            top: this.tagName === 'INPUT' ? 700 : 24,
+            left: 0,
+            width: 80,
+            height: 32
+          }
+        }
+      })
+      const fake = fakeClient(setupOf())
+      await show(fake.client, { fieldManager: 0, seasons: [], builds: 0 })
+      // The outermost scroll view is the screen's own.
+      const page = [...document.querySelectorAll('div')].find(
+        node => 'scrollResponderScrollNativeHandleToKeyboard' in node
+      ) as unknown as Record<string, unknown>
+      const asked: unknown[][] = []
+      page.scrollResponderScrollNativeHandleToKeyboard = (
+        ...args: unknown[]
+      ) => {
+        asked.push(args)
+      }
+      await tapLabel('Demo Regular Game length in minutes: 90')
+      await settle(20)
+      // 16 points clear of the keyboard, counting the scroll view's top.
+      expect(asked).deep.equals([
+        [document.querySelector('input'), 16 + 24, true]
+      ])
+    } finally {
+      Platform.OS = was
+      delete (Keyboard as { metrics?: unknown }).metrics
+      Object.defineProperties(Keyboard, real)
+      if (rect == null)
+        delete (elements as { getBoundingClientRect?: unknown })
+          .getBoundingClientRect
+      else Object.defineProperty(elements, 'getBoundingClientRect', rect)
+    }
   })
 
   it('says when a save fails, and leaves a deleted field out of changes', async () => {
@@ -327,12 +535,26 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Demo Fall')
     await settle(20)
     expect(fake.choices.at(-1)?.fieldIds).deep.equals(['fld_one'])
-    await tapLabel('Demo Regular Game: 90 min')
-    await fill('Game length, in minutes', '60')
-    await tapText('Save')
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '60')
+    await key('Enter')
+    // The cell stays open with the reason under the grid, and the rest of
+    // the screen stays usable.
+    expect(
+      document.querySelector('[data-testid="season-schedule-grid"]')!
+        .textContent
+    ).includes('That could not be saved. Try again.')
+    expect(hasLabel('Edit Demo Regular Game length in minutes')).equals(true)
+    expect(
+      disabled(document.querySelector<HTMLElement>('[aria-label="Demo Fall"]')!)
+    ).equals(false)
+    // A sheet's failure shows at the top of the screen instead.
+    await key('Escape')
+    await tapLabel('Demo Regular Size: 50/70')
+    await press('60/90')
     await settle(20)
     expect(text()).includes('That could not be saved. Try again.')
-    expect(hasLabel('Game length, in minutes')).equals(true)
+    expect(hasLabel('Demo Regular Size: 50/70')).equals(true)
   })
 
   it('names a refused choice, and an empty league', async () => {

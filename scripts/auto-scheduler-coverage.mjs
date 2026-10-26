@@ -107,7 +107,11 @@ const appSuites = [
   'src/app/screens/SeasonScheduleGrid.test.tsx',
   'src/app/screens/ScheduleSeasonScreen.test.tsx',
   // M6: the preview screen.
-  'src/app/screens/SchedulePreviewScreen.test.tsx'
+  'src/app/screens/SchedulePreviewScreen.test.tsx',
+  // Fixes M1: the league page's Auto-Scheduler row and the grid's cells.
+  'src/app/components/GridNumberCell.test.tsx',
+  'src/app/components/WideTable.test.tsx',
+  'src/app/screens/LeaguePage.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE
