@@ -6571,18 +6571,30 @@ export class Scenarios {
           : undefined
         const beforeSearch = await webSearch?.()
         await ui.append(first.search)
-        if (ui.surface === 'ios') {
+        if (ui.native) {
+          // Android's Search is the one unnamed field beside the composer,
+          // and shows what was typed as its text.
+          const androidField = async (): Promise<PublicNode> =>
+            need(
+              (await ui.nodes()).find(
+                node => node.type === 'EditText' && node.id !== 'chat-composer'
+              ),
+              'Actual member Search field required'
+            )
           const typed = async (): Promise<string | undefined> =>
-            (
-              await ui.iosRead(
-                { text: exactText('Search members') },
-                'TextField'
-              )
-            ).value
-          // The loaded simulator drops keys from fast typing ("Boby", "Bby").
-          // Clear the field, put the focus back on the field itself (an
-          // id-less type focuses the last tapped point, which would be the
-          // Clear button), and type the query again; at most three times.
+            ui.surface === 'ios'
+              ? (
+                  await ui.iosRead(
+                    { text: exactText('Search members') },
+                    'TextField'
+                  )
+                ).value
+              : (await androidField()).text
+          // A loaded simulator or a phone's keyboard drops keys from fast
+          // typing ("Boby", "Bby"). Clear the field, put the focus back on the
+          // field itself (an id-less type focuses the last tapped point, which
+          // would be the Clear button), and type the query again; at most
+          // three times.
           const retyped: Array<string | undefined> = []
           for (
             let observed = await typed();
@@ -6591,19 +6603,22 @@ export class Scenarios {
           ) {
             retyped.push(observed)
             await ui.text('Clear Search members')
-            const field = need(
-              (await ui.nodes()).find(
-                node =>
-                  node.text === 'Search members' &&
-                  (node.type ?? '').endsWith('TextField')
-              ),
-              'Actual member Search field required'
-            )
+            const field =
+              ui.surface === 'ios'
+                ? need(
+                    (await ui.nodes()).find(
+                      node =>
+                        node.text === 'Search members' &&
+                        (node.type ?? '').endsWith('TextField')
+                    ),
+                    'Actual member Search field required'
+                  )
+                : await androidField()
             await ui.tapObserved(field)
             await ui.append(first.search)
           }
           if (retyped.length > 0)
-            this.observations.push({ iosSearchRetyped: retyped })
+            this.observations.push({ nativeSearchRetyped: retyped })
           assert.equal(
             await typed(),
             first.search,
