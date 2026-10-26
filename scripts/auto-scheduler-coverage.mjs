@@ -118,7 +118,9 @@ const appSuites = [
   // Fixes M1: the league page's Auto-Scheduler row and the grid's cells.
   'src/app/components/GridNumberCell.test.tsx',
   'src/app/components/WideTable.test.tsx',
-  'src/app/screens/LeaguePage.test.tsx'
+  'src/app/screens/LeaguePage.test.tsx',
+  // Fixes M4: blackout ranges.
+  'src/app/components/BlackoutDatesEditor.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

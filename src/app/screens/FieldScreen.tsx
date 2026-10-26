@@ -19,7 +19,7 @@ import {
 } from '../components'
 import {
   BlackoutDatesEditor,
-  dateLabel
+  BlackoutRangeList
 } from '../components/BlackoutDatesEditor'
 import { CheckRow } from '../components/CheckRow'
 import { DateRangePicker } from '../components/DateRangePicker'
@@ -309,10 +309,15 @@ export function FieldScreen({
           />
           <Text style={styles.subhead}>Blackout days</Text>
           {venue.defaultBlackouts.length > 0 && (
-            <Text style={styles.sentence}>
-              The venue is also closed on{' '}
-              {venue.defaultBlackouts.map(dateLabel).join(', ')}.
-            </Text>
+            <>
+              <Text style={styles.sentence}>
+                The venue is also closed on these days:
+              </Text>
+              <BlackoutRangeList dates={venue.defaultBlackouts} />
+              <Text style={styles.sentence}>
+                This field’s own blackout days:
+              </Text>
+            </>
           )}
           <BlackoutDatesEditor
             value={field.blackouts}

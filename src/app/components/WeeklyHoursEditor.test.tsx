@@ -58,27 +58,15 @@ describe('the hours and blackout editors', () => {
     ])
   })
 
-  it('reads only when disabled, and lists blackout days to add and remove', async () => {
-    const dates: string[][] = []
+  it('reads only when disabled', async () => {
     await mount(
       <View2>
         <WeeklyHoursEditor value={[]} onChange={() => undefined} disabled />
-        <BlackoutDatesEditor
-          value={['2027-07-04']}
-          onChange={next => dates.push(next)}
-          today="2027-07-01"
-        />
         <BlackoutDatesEditor value={[]} onChange={() => undefined} disabled />
       </View2>
     )
     expect(text()).includes('No blackout days.')
-    await press('Add blackout day')
-    await tapText('Cancel')
-    await press('Add blackout day')
-    await tapLabel('Choose 2027-07-03')
-    await tapText('Use date')
-    await press('Remove blackout Sunday, July 4, 2027')
-    expect(dates).deep.equals([['2027-07-03', '2027-07-04'], []])
+    expect(hasLabel('Add blackout dates')).equals(false)
   })
 })
 

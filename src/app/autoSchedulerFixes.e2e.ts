@@ -31,6 +31,7 @@ import type { SchedulePreview } from '../common/schedulePreviews'
 import type { ScheduleSetup } from '../common/seasonScheduling'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
+  api,
   type AutoSchedulerFixture,
   autoSchedulerFixture,
   forceSeasonZone,
@@ -876,6 +877,152 @@ async function f3(run: Run): Promise<void> {
   )
 }
 
+/**
+ * Picks a range in the open two-tap range calendar, moving month by month to
+ * each end, and uses it. The same day twice is one day.
+ */
+async function chooseRange(
+  b: BrowserSession,
+  from: string,
+  to: string
+): Promise<void> {
+  for (const day of [from, to]) {
+    for (let month = 0; month < 36; month++) {
+      const shown = await b.page.evaluate(() =>
+        [...document.querySelectorAll('[aria-label^="20"]')]
+          .map(node => String(node.getAttribute('aria-label')))
+          .filter(label => /^\d{4}-\d{2}-\d{2}$/.test(label))
+      )
+      if (shown.includes(day)) break
+      await tapLabel(
+        b,
+        shown.length > 0 && shown[0] > day ? 'Previous month' : 'Next month'
+      )
+    }
+    await tapLabel(b, day)
+  }
+  await tapText(b, 'Use this range')
+}
+
+/** The ranges' rows on the screen, title and year, in order. */
+async function rangeRows(b: BrowserSession): Promise<string[]> {
+  return await b.page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="relationship-action-row"]')]
+      .map(row =>
+        [...row.querySelectorAll('div')]
+          .filter(node => node.childElementCount === 0)
+          .map(node => String(node.textContent))
+          .filter(text => text !== 'Remove')
+      )
+      // A range's row: its dates, then its year or years.
+      .filter(texts => /^\d{4}( – \d{4})?$/.test(texts[texts.length - 1]))
+      .map(texts => texts.join(' / '))
+  )
+}
+
+/**
+ * F4: blackouts are entered as ranges, as many as needed, for a season, a
+ * venue and a field; each list reads ranges with day counts and a single day
+ * alone, and a range is removed whole.
+ */
+async function f4(run: Run): Promise<void> {
+  const { fx, b, state } = run
+  const setup = `/groups/league/${fx.f.leagueA}/scheduler/seasons/${fx.f.seasonA}`
+  const seasonBlackouts = async (): Promise<string[]> =>
+    (
+      await api<{ settings: { blackouts: string[] } }>(
+        fx,
+        ADMIN,
+        'GET',
+        `/seasons/${fx.f.seasonA}/schedule-settings`
+      )
+    ).settings.blackouts
+  // seasonA: Apr 2 – Apr 5, then May 29 alone.
+  await run.visit(setup)
+  await contains(b.page, 'BLACKOUT DAYS')
+  await scrollToText(b, 'BLACKOUT DAYS', 160)
+  await tapText(b, 'Add blackout dates')
+  await chooseRange(b, '2027-04-02', '2027-04-05')
+  await contains(b.page, 'Apr 2 – Apr 5 · 4 days')
+  await tapText(b, 'Add blackout dates')
+  await chooseRange(b, '2027-05-29', '2027-05-29')
+  await labelled(b, 'Remove blackout Saturday, May 29, 2027')
+  await contains(b.page, 'Blackout days saved.')
+  const season = await rangeRows(b)
+  trace(`season rows ${JSON.stringify(season)}`)
+  expect(season).deep.equals(['Apr 2 – Apr 5 · 4 days / 2027', 'May 29 / 2027'])
+  expect(await seasonBlackouts()).deep.equals([
+    '2027-04-02',
+    '2027-04-03',
+    '2027-04-04',
+    '2027-04-05',
+    '2027-05-29'
+  ])
+  await scrollToText(b, 'BLACKOUT DAYS', 160)
+  await run.capture('blackouts-after.png')
+  // Example Park: Dec 20 – Jan 2, across the year end.
+  await run.visit(`/venues/${state.venueId!}`)
+  await contains(b.page, 'Default blackout days')
+  await scrollToText(b, 'Default blackout days', 160)
+  await tapText(b, 'Add blackout dates')
+  await chooseRange(b, '2026-12-20', '2027-01-02')
+  await contains(b.page, 'Dec 20 – Jan 2 · 14 days')
+  expect(await rangeRows(b)).deep.equals([
+    'Dec 20 – Jan 2 · 14 days / 2026 – 2027'
+  ])
+  const venue = await api<{ defaultBlackouts: string[] }>(
+    fx,
+    ADMIN,
+    'GET',
+    `/venues/${state.venueId!}`
+  )
+  expect(venue.defaultBlackouts).length(14)
+  expect([venue.defaultBlackouts[0], venue.defaultBlackouts[13]]).deep.equals([
+    '2026-12-20',
+    '2027-01-02'
+  ])
+  await scrollToText(b, 'Default blackout days', 160)
+  await run.capture(join(run.support, 'F4-venue-blackouts.png'))
+  // Field 1: Mar 10 – Mar 11 of its own, under the venue's inherited range.
+  await run.visit(`/venues/${state.venueId!}/fields/${state.fieldId!}`)
+  await contains(b.page, 'The venue is also closed on these days:')
+  await scrollToText(b, 'The venue is also closed on these days:', 160)
+  await tapText(b, 'Add blackout dates')
+  await chooseRange(b, '2027-03-10', '2027-03-11')
+  await labelled(
+    b,
+    'Remove blackout Wednesday, March 10, 2027 – Thursday, March 11, 2027'
+  )
+  expect(await rangeRows(b)).deep.equals([
+    'Dec 20 – Jan 2 · 14 days / 2026 – 2027',
+    'Mar 10 – Mar 11 · 2 days / 2027'
+  ])
+  // The venue's range is read only on the field.
+  await labelled(
+    b,
+    'Remove blackout Sunday, December 20, 2026 – Saturday, January 2, 2027',
+    false
+  )
+  await scrollToText(b, 'The venue is also closed on these days:', 160)
+  await run.capture(join(run.support, 'F4-field-blackouts.png'))
+  // Back on seasonA, the April range is removed whole.
+  await run.visit(setup)
+  await contains(b.page, 'Apr 2 – Apr 5 · 4 days')
+  await scrollToText(b, 'BLACKOUT DAYS', 160)
+  await tapLabel(
+    b,
+    'Remove blackout Friday, April 2, 2027 – Monday, April 5, 2027'
+  )
+  // While it saves the Remove actions hide, so wait for the save.
+  await contains(b.page, 'Blackout days saved.')
+  await labelled(b, 'Remove blackout Saturday, May 29, 2027')
+  expect(await rangeRows(b)).deep.equals(['May 29 / 2027'])
+  expect(await seasonBlackouts()).deep.equals(['2027-05-29'])
+  await run.pass(
+    'seasonA lists "Apr 2 – Apr 5 · 4 days" and "May 29" alone, stored as the five dates; Example Park lists "Dec 20 – Jan 2 · 14 days" across the year end, stored as 14 dates; Field 1 lists the venue\'s range, with no Remove, above its own "Mar 10 – Mar 11 · 2 days"; removing the April range on seasonA leaves only May 29'
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -886,7 +1033,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     run: f2b
   },
-  F3: { start: 'E7', run: f3 }
+  F3: { start: 'E7', run: f3 },
+  F4: { start: 'E3', run: f4 }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */

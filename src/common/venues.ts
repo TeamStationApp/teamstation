@@ -11,6 +11,7 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
+import { addDays } from './calendarDates'
 import { asCalendarDate, isRecord } from './groupCreation'
 
 /** The field sizes, fixed: base path / pitching distance, in feet. */
@@ -95,11 +96,39 @@ export function asWeeklyHours(raw: unknown): WeekdayHours[] {
   return hours.sort((a, b) => a.weekday - b.weekday)
 }
 
+/** The most days the blackouts of a season, venue or field can cover. */
+export const MAX_BLACKOUT_DAYS = 366
+
 /** The blackout days: distinct calendar dates, earliest first. */
 export function asBlackouts(raw: unknown): string[] {
   if (!Array.isArray(raw)) throw new TypeError('Choose the blackout days')
-  if (raw.length > 366) throw new TypeError('Choose at most 366 blackout days')
+  if (raw.length > MAX_BLACKOUT_DAYS)
+    throw new TypeError(`Choose at most ${MAX_BLACKOUT_DAYS} blackout days`)
   return [...new Set(raw.map(asCalendarDate))].sort()
+}
+
+/** A run of blackout days, both ends included. */
+export interface DateRange {
+  from: string
+  to: string
+}
+
+/** Blackout days as runs of consecutive days, earliest first. */
+export function blackoutRanges(dates: readonly string[]): DateRange[] {
+  const ranges: DateRange[] = []
+  for (const date of [...new Set(dates)].sort()) {
+    const last = ranges[ranges.length - 1]
+    if (last !== undefined && addDays(last.to, 1) === date) last.to = date
+    else ranges.push({ from: date, to: date })
+  }
+  return ranges
+}
+
+/** Every day from `from` through `to`; none when `to` comes first. */
+export function rangeDates(from: string, to: string): string[] {
+  const dates: string[] = []
+  for (let date = from; date <= to; date = addDays(date, 1)) dates.push(date)
+  return dates
 }
 
 /** A pin's coordinates, both or neither. */

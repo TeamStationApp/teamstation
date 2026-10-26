@@ -11,6 +11,7 @@ import type {
 import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
 import {
   chooseCalendarDate,
+  chooseDateRange,
   hasLabel,
   tapLabel,
   tapText
@@ -451,8 +452,8 @@ describe('a season of the next schedule', () => {
         expect(text(), timezone).not.includes(named)
       await tapText('Add game windows')
       await settle(20)
-      await press('Add blackout day')
-      await chooseCalendarDate('2027-04-17')
+      await press('Add blackout dates')
+      await chooseDateRange('2027-04-17', '2027-04-17')
       await settle(20)
       expect(fake.saves, timezone).length(2)
       for (const saved of fake.saves)
@@ -465,10 +466,17 @@ describe('a season of the next schedule', () => {
   it('sets blackout days and exhibition teams', async () => {
     const fake = fakeClient(SEASON)
     await show(fake.client)
-    await press('Add blackout day')
-    await chooseCalendarDate('2027-04-17')
+    // A range is added as its dates, and listed as one range.
+    await press('Add blackout dates')
+    await chooseDateRange('2027-04-02', '2027-04-05')
     await settle(20)
-    expect(fake.saves.at(-1)?.blackouts).deep.equals(['2027-04-17'])
+    expect(fake.saves.at(-1)?.blackouts).deep.equals([
+      '2027-04-02',
+      '2027-04-03',
+      '2027-04-04',
+      '2027-04-05'
+    ])
+    expect(text()).includes('Apr 2 – Apr 5 · 4 days')
     await tapLabel('Demo Hawks')
     await settle(20)
     expect(fake.flags).deep.equals([['tem_hawks', true]])
