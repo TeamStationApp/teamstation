@@ -4000,6 +4000,96 @@ describe('chat native adapter compatibility', function () {
       const { scenario } = browserHistory(mode)
       await captureFailure(scenario.anchor())
     })
+  function windowedAnchor(mountAfter: number | undefined): Scenarios {
+    const { actual, page } = browserModel()
+    const document = page.window.document
+    document.body.innerHTML = '<div data-testid="chat-message-history"></div>'
+    const history = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    Object.defineProperties(history, {
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 4000 }
+    })
+    page.window.Element.prototype.getBoundingClientRect = function () {
+      return new page.window.DOMRect(0, 100, 300, 60)
+    }
+    if (mountAfter != null)
+      setTimeout(() => {
+        history.innerHTML =
+          '<div data-testid="chat-message-windowed"><div data-testid="chat-bubble-windowed">Windowed</div></div>'
+      }, mountAfter)
+    return Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target: { id: 'windowed' } } },
+      observations: []
+    }) as Scenarios
+  }
+  it('reads a virtualized anchor row again once its window mounts it, past the old two-second budget', async () => {
+    const scenario = windowedAnchor(2300)
+    await scenario.webAnchorReady()
+    const samples = scenario.observations[0].samples as Array<{
+      value: { missing?: string }
+    }>
+    expect(samples[0].value.missing).equals('chat-message-windowed')
+    expect(samples.at(-1)!.value.missing).equals(undefined)
+  })
+  it('still requires the anchor row once its budget ends', async function () {
+    this.timeout(15000)
+    const scenario = windowedAnchor(undefined)
+    expect(String(await captureFailure(scenario.webAnchorReady()))).includes(
+      'Unique actual anchor element required: chat-message-windowed'
+    )
+  })
+  it('mounts an attention target below the reader in short script steps that stop before it can be seen', async () => {
+    const { actual, page } = browserModel()
+    const document = page.window.document
+    document.body.innerHTML = '<div data-testid="chat-message-history"></div>'
+    const history = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    let top = 0
+    const wheels: number[] = []
+    page.window.addEventListener('wheel', () => wheels.push(top))
+    const render = (): void => {
+      // The window mounts rows up to 300px below the 600px viewport.
+      history.innerHTML =
+        top + 600 + 300 > 3000
+          ? '<div data-testid="chat-message-body-target">Target</div>'
+          : ''
+      const body = history.firstElementChild
+      if (body != null)
+        body.getBoundingClientRect = () =>
+          new page.window.DOMRect(0, 3000 - top, 300, 60)
+    }
+    Object.defineProperties(history, {
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 8000 },
+      scrollTop: {
+        get: () => top,
+        set: (value: number) => {
+          top = value
+          render()
+        }
+      }
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target: { id: 'target' } } },
+      observations: []
+    }) as Scenarios
+    await scenario.webMountBelow('chat-message-body-target')
+    const proof = scenario.observations[0]
+    expect(proof.outcome).equals('mounted')
+    const steps = proof.steps as Array<{
+      mounted: boolean
+      offset: number
+      top?: number
+    }>
+    expect(steps.at(-1)!.top, 'Mounted below the viewport').at.least(600)
+    expect(steps.length).greaterThan(10)
+    expect(wheels, 'Script steps are not a person’s scroll').deep.equals([])
+  })
   async function blockedWheelReader(mode = ''): Promise<{
     error: unknown
     directions: unknown[]
@@ -4027,9 +4117,12 @@ describe('chat native adapter compatibility', function () {
     const input = document.querySelector('input')!
     const inner = document.querySelector<HTMLElement>('#inner')!
     let offset = 1000
+    // Rows measured while the wheel moves the virtualized history shrink the
+    // content above the reader by 29px; the list keeps the reader in place.
+    let above = 0
     Object.defineProperties(history, {
       clientHeight: { value: 600 },
-      scrollHeight: { value: 5000 },
+      scrollHeight: { get: () => 5000 - above },
       scrollTop: {
         get: () => offset,
         set: value => {
@@ -4045,7 +4138,7 @@ describe('chat native adapter compatibility', function () {
     history.getBoundingClientRect = () =>
       new page.window.DOMRect(0, 0, 300, 600)
     const shifted = (y: number, height: number): DOMRect =>
-      new page.window.DOMRect(48, y - (offset - 1000), 200, height)
+      new page.window.DOMRect(48, y - above - (offset - 1000), 200, height)
     row.getBoundingClientRect = bubble.getBoundingClientRect = () =>
       shifted(114, 90)
     body.getBoundingClientRect = () => shifted(130, 56)
@@ -4062,6 +4155,10 @@ describe('chat native adapter compatibility', function () {
     actual.device.scroll = async command => {
       directions.push(command.direction)
       history.scrollTop += command.direction === 'DOWN' ? 300 : -300
+      if (mode === 'extent' && command.direction === 'DOWN') {
+        above = 29
+        offset -= 29
+      }
     }
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
@@ -4076,6 +4173,22 @@ describe('chat native adapter compatibility', function () {
     }
     return { error, directions, offset, scenario }
   }
+  it('accepts a virtualized extent change that keeps the reader row in place through the balanced wheels', async () => {
+    const result = await blockedWheelReader('extent')
+    expect(result.error).equals(undefined)
+    expect(result.directions).deep.equals(['DOWN', 'UP'])
+    const proof = result.scenario.observations[0]
+    const restored = proof.restored as { offset: number; maximum: number }
+    const down = proof.down as { maximum: number }
+    expect(down.maximum, 'The extent changed during the wheel').lessThan(
+      (
+        result.scenario.observations[0].samples as Array<{
+          value: { maximum: number }
+        }>
+      )[0].value.maximum
+    )
+    expect(restored.offset).equals(result.offset)
+  })
   it('positions the exact noninteractive body before genuine balanced wheels when the fixed point initially hits a quote Button', async () => {
     const result = await blockedWheelReader()
     expect(result.error).equals(undefined)
@@ -9519,12 +9632,16 @@ describe('web virtualized history target search', function () {
     offset: 'top' | 'end'
     late?: boolean
     arrival?: string
+    /** The app restores its owned reader after an unowned script scroll. */
+    restores?: boolean
   }): {
     scenario: Scenarios
     clicks: number[]
     corrections: number[]
   } {
-    const dom = new JSDOM('<!doctype html><body></body>')
+    const dom = new JSDOM('<!doctype html><body></body>', {
+      runScripts: 'outside-only'
+    })
     const doc = dom.window.document
     const rows = [...options.rows]
     const pages = options.pages.map(page => [...page])
@@ -9536,6 +9653,14 @@ describe('web virtualized history target search', function () {
     h.append(content)
     doc.body.append(h)
     let top = 0
+    // The app's pending reader restoration, until a person's input owns it.
+    let held: number | undefined
+    let wheeled = false
+    let restoring: ReturnType<typeof setTimeout> | undefined
+    dom.window.addEventListener('wheel', () => {
+      wheeled = true
+      held = undefined
+    })
     const header = (): number => (pages.length > 0 ? 48 : 0)
     const extent = (): number => header() + rows.length * ROW
     const max = (): number => Math.max(0, extent() - VIEWPORT)
@@ -9547,6 +9672,17 @@ describe('web virtualized history target search', function () {
         set: (value: number) => {
           top = Math.min(max(), Math.max(0, value))
           render()
+          if (options.restores === true && !wheeled && held != null) {
+            // Rows measured at the new place change the extent; the app then
+            // restores the reader it still owns.
+            clearTimeout(restoring)
+            restoring = setTimeout(() => {
+              if (held == null) return
+              top = Math.min(max(), held)
+              render()
+            }, 100)
+          }
+          wheeled = false
         }
       },
       getBoundingClientRect: {
@@ -9608,11 +9744,8 @@ describe('web virtualized history target search', function () {
     }
     button.addEventListener('click', load)
     top = options.offset === 'top' ? 0 : max()
+    held = options.restores === true ? top : undefined
     render()
-    const AsyncFunction = Object.getPrototypeOf(async () => {})
-      .constructor as new (
-      ...args: string[]
-    ) => (...values: unknown[]) => Promise<unknown>
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native: false,
       surface: 'web',
@@ -9620,10 +9753,9 @@ describe('web virtualized history target search', function () {
       steps: [],
       device: {
         evalBrowserScript: async (args: { script: string }) => ({
-          data: await new AsyncFunction('document', 'Event', args.script)(
-            doc,
-            dom.window.Event
-          )
+          data: await (dom.window.eval(
+            '(async()=>{' + args.script + '})()'
+          ) as Promise<unknown>)
         }),
         tapOn: async (selector: { css: string }) => {
           const node = doc.querySelector<HTMLElement>(selector.css)
@@ -9693,6 +9825,32 @@ describe('web virtualized history target search', function () {
     expect(positions).includes('down')
     expect(positions.indexOf('down')).greaterThan(positions.indexOf('sweep'))
     expect(positions.at(-1)).equals('target')
+  })
+
+  it('moves the history as a person so the app stops restoring its old reader', async () => {
+    const page = [...ids('older', 10), target.id, ...ids('old', 29)]
+    const m = model({
+      rows: ids('recent', 60),
+      pages: [page],
+      offset: 'end',
+      restores: true
+    })
+    await m.scenario.webHistoryTarget(target)
+    const proof = m.scenario.observations.find(
+      row => row.publicHistoryTarget === target.id
+    )!
+    const samples = proof.samples as Array<{
+      value: { position: string; offset: number; targetCount: number }
+    }>
+    const framed = samples.at(-1)!.value
+    expect(framed.position).equals('target')
+    expect(framed.targetCount).equals(1)
+    // Still in place after the app's restoration delay.
+    await new Promise(resolve => setTimeout(resolve, 250))
+    const after = await m.scenario.ui.dom(
+      `return {offset:document.querySelector('[data-testid="chat-message-history"]').scrollTop}`
+    )
+    expect(after.offset).equals(framed.offset)
   })
 
   it('still refuses a target that is nowhere in a fully loaded history', async () => {
