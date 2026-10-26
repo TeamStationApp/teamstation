@@ -10113,6 +10113,21 @@ describe('native absent history paging', function () {
     ).equals(false)
   })
 
+  it('searches only toward older rows for the oldest post', async () => {
+    const m = model('unmounted', 'android')
+    Object.assign(m.scenario.f.messages, { oldest: target })
+    await captureFailure(m.scenario.nativeHistoryTarget(target))
+    const search = m.scenario.observations.find(
+      row => row.nativeLoadedTarget === target.id
+    )!
+    // The history stops moving at its oldest loaded row; no sweep toward the
+    // latest end follows.
+    const swipes = search.swipes as Array<{ startY: number; endY: number }>
+    expect(swipes).has.length(2)
+    expect(swipes.every(swipe => swipe.startY < swipe.endY)).equals(true)
+    expect(search.outcome).equals('absent')
+  })
+
   it('searches older loaded rows when the last earlier page removes its Button before the target mounts', async () => {
     const m = model('last-page', 'android')
     await m.scenario.nativeHistoryTarget(target)
