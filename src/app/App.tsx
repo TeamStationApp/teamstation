@@ -30,7 +30,7 @@ import { ChatCoreGate } from './chat/ChatCoreGate'
 import { chatCoreLog, chatStartLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
 import { ChatGate } from './chat/ChatGate'
-import { ChatKeyboardProvider } from './chat/ChatHistoryList'
+import { withChatKeyboard } from './chat/ChatHistoryList'
 import { ChatInfoScreen } from './chat/ChatInfoScreen'
 import type { ChatLink } from './chat/ChatLinks'
 import { hasUnread } from './chat/chatModel'
@@ -3262,121 +3262,119 @@ function Shell(props: AppProps): React.ReactElement {
   const bannerShown =
     bannerText != null || createRefused || heldTeams.length > 0
 
-  return (
-    <ChatKeyboardProvider>
-      <GestureHandlerRootView style={styles.root}>
-        <ChatOverlayHost>
-          <TessOverlayProvider active={tessColumn}>
-            <View style={[styles.app, tessColumn && styles.split]}>
-              {tessPanel}
-              <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-                <PaneBesideTess open={tessColumn}>
-                  <HeaderSlotProvider
-                    headerHeight={
-                      immersiveField
-                        ? 0
-                        : headerHeight + (bannerShown ? bannerHeight : 0)
-                    }
-                    navigationHeight={
-                      isWide || immersiveField ? 0 : navigationHeight
-                    }
-                    onHandoff={setHandoff}
-                    onHandoffHeight={setHandoffHeight}
-                    onBackOverride={setBack}
-                  >
-                    <View style={styles.body}>
-                      <ScreenScopeProvider
-                        socket={gameSocket}
-                        scope={visibleScope}
+  return withChatKeyboard(
+    <GestureHandlerRootView style={styles.root}>
+      <ChatOverlayHost>
+        <TessOverlayProvider active={tessColumn}>
+          <View style={[styles.app, tessColumn && styles.split]}>
+            {tessPanel}
+            <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
+              <PaneBesideTess open={tessColumn}>
+                <HeaderSlotProvider
+                  headerHeight={
+                    immersiveField
+                      ? 0
+                      : headerHeight + (bannerShown ? bannerHeight : 0)
+                  }
+                  navigationHeight={
+                    isWide || immersiveField ? 0 : navigationHeight
+                  }
+                  onHandoff={setHandoff}
+                  onHandoffHeight={setHandoffHeight}
+                  onBackOverride={setBack}
+                >
+                  <View style={styles.body}>
+                    <ScreenScopeProvider
+                      socket={gameSocket}
+                      scope={visibleScope}
+                    >
+                      <ScoringPlayerSettingsFlow
+                        scoring={scoringBody}
+                        active={scoringActive}
                       >
-                        <ScoringPlayerSettingsFlow
-                          scoring={scoringBody}
-                          active={scoringActive}
-                        >
-                          {body}
-                        </ScoringPlayerSettingsFlow>
-                      </ScreenScopeProvider>
-                    </View>
-                  </HeaderSlotProvider>
-                  {!immersiveField && (
-                    <View style={styles.headerLayer}>
-                      {header}
-                      <OfflineBanner
-                        text={bannerText}
-                        refusal={
-                          createRefused ? OFFLINE_CREATE_MESSAGE : undefined
-                        }
-                        held={heldTeams}
-                        onLayout={setBannerHeight}
-                      />
-                    </View>
-                  )}
-                  <TessOverlayHost />
-                </PaneBesideTess>
-              </View>
-              {!isWide && !immersiveField && !tessLayer && (
-                <AppNav
-                  key="nav"
-                  onHeight={setNavigationHeight}
-                  mode="floating"
-                  selected={tab}
-                  onSelect={selectTab}
-                  dots={{ chat: hasUnread(chatList) }}
-                />
-              )}
-              <SuccessToast notice={successNotice} />
-              {confirmingSignOut && (
-                <ChoiceSheet
-                  title="Sign Out?"
-                  choices={[
-                    {
-                      label: 'Sign Out',
-                      detail: unsentLossText(outbox?.count ?? 0),
-                      destructive: true,
-                      onPress: signOutNow
-                    }
-                  ]}
-                  onClose={() => {
-                    setConfirmingSignOut(false)
-                  }}
-                />
-              )}
-              {askingTeam != null && caching != null && (
-                <ChoiceSheet
-                  title="Player Not Saved"
-                  choices={[
-                    ...(askingTeam.state === 'dead'
-                      ? [
-                          {
-                            label: 'Try Again',
-                            onPress: () => {
-                              caching
-                                .retryTeam(askingTeam.id)
-                                .catch(() => undefined)
-                            }
-                          }
-                        ]
-                      : []),
-                    {
-                      label: "Use Server's Copy",
-                      detail:
-                        "Takes the player off this phone and shows the team's roster as the server has it.",
-                      destructive: true,
-                      onPress: () => {
-                        caching.discardTeam(askingTeam.id).catch(() => false)
+                        {body}
+                      </ScoringPlayerSettingsFlow>
+                    </ScreenScopeProvider>
+                  </View>
+                </HeaderSlotProvider>
+                {!immersiveField && (
+                  <View style={styles.headerLayer}>
+                    {header}
+                    <OfflineBanner
+                      text={bannerText}
+                      refusal={
+                        createRefused ? OFFLINE_CREATE_MESSAGE : undefined
                       }
-                    }
-                  ]}
-                  onClose={() => {
-                    setAskingTeam(undefined)
-                  }}
-                />
-              )}
+                      held={heldTeams}
+                      onLayout={setBannerHeight}
+                    />
+                  </View>
+                )}
+                <TessOverlayHost />
+              </PaneBesideTess>
             </View>
-          </TessOverlayProvider>
-        </ChatOverlayHost>
-      </GestureHandlerRootView>
-    </ChatKeyboardProvider>
+            {!isWide && !immersiveField && !tessLayer && (
+              <AppNav
+                key="nav"
+                onHeight={setNavigationHeight}
+                mode="floating"
+                selected={tab}
+                onSelect={selectTab}
+                dots={{ chat: hasUnread(chatList) }}
+              />
+            )}
+            <SuccessToast notice={successNotice} />
+            {confirmingSignOut && (
+              <ChoiceSheet
+                title="Sign Out?"
+                choices={[
+                  {
+                    label: 'Sign Out',
+                    detail: unsentLossText(outbox?.count ?? 0),
+                    destructive: true,
+                    onPress: signOutNow
+                  }
+                ]}
+                onClose={() => {
+                  setConfirmingSignOut(false)
+                }}
+              />
+            )}
+            {askingTeam != null && caching != null && (
+              <ChoiceSheet
+                title="Player Not Saved"
+                choices={[
+                  ...(askingTeam.state === 'dead'
+                    ? [
+                        {
+                          label: 'Try Again',
+                          onPress: () => {
+                            caching
+                              .retryTeam(askingTeam.id)
+                              .catch(() => undefined)
+                          }
+                        }
+                      ]
+                    : []),
+                  {
+                    label: "Use Server's Copy",
+                    detail:
+                      "Takes the player off this phone and shows the team's roster as the server has it.",
+                    destructive: true,
+                    onPress: () => {
+                      caching.discardTeam(askingTeam.id).catch(() => false)
+                    }
+                  }
+                ]}
+                onClose={() => {
+                  setAskingTeam(undefined)
+                }}
+              />
+            )}
+          </View>
+        </TessOverlayProvider>
+      </ChatOverlayHost>
+    </GestureHandlerRootView>
   )
 }
 

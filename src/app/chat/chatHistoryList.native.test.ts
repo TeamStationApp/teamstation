@@ -38,9 +38,6 @@ describe('native virtualized chat history', function () {
     scrollToEnd: async (options?: { animated?: boolean }) => {
       calls.push(`scrollToEnd ${String(options?.animated)}`)
     },
-    scrollToIndex: async (params: { index: number }) => {
-      calls.push(`scrollToIndex ${params.index}`)
-    },
     getState: () => ({
       positionByKey: () => 12,
       listen: (_name: string, callback: () => void) => {
@@ -217,6 +214,7 @@ describe('native virtualized chat history', function () {
       data: false
     })
     expect(state.keyboard.current!.managesEndInset).equals(true)
+    expect(state.keyboard.current!.endPadding(169)).equals(0)
     const layout: Parameters<ChatHistoryKeyboard['onComposerLayout']>[0] =
       Object.create(null)
     state.keyboard.current!.onComposerLayout(layout)
@@ -263,7 +261,6 @@ describe('native virtualized chat history', function () {
     const handle = state.handle.current!
     handle.scrollTo({ y: 320, animated: false })
     handle.scrollToEnd({ animated: true })
-    await handle.scrollToIndex({ index: 1 })
     handle.reportRowHeight('msg_1', 80)
     expect(handle.getNativeScrollRef()).equals(nativeScroll)
     expect(handle.getInnerViewRef()).equals('inner view')
@@ -272,11 +269,7 @@ describe('native virtualized chat history', function () {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(calls).deep.equals([
-      'scrollTo 320 false',
-      'scrollToEnd true',
-      'scrollToIndex 1'
-    ])
+    expect(calls).deep.equals(['scrollTo 320 false', 'scrollToEnd true'])
     for (const listener of [...listeners]) listener()
     expect(state.positions).length(1)
     calls.length = 0
@@ -314,7 +307,7 @@ describe('native virtualized chat history', function () {
     )
     platform.OS = 'ios'
     await mount(
-      React.createElement(history.ChatKeyboardProvider, null, 'History')
+      history.withChatKeyboard(React.createElement('span', null, 'History'))
     )
     expect(providers.map(provider => provider.enabled)).deep.equals([
       false,

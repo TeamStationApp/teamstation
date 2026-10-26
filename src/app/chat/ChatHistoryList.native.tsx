@@ -64,9 +64,6 @@ export function ChatHistoryList<T>(
       scrollToEnd: options => {
         list.current?.scrollToEnd(options).catch(() => undefined)
       },
-      scrollToIndex: async params => {
-        await list.current?.scrollToIndex(params)
-      },
       // The native list measures each container in the same layout pass.
       reportRowHeight: () => {},
       getNativeScrollRef: () => scroll() as never,
@@ -134,6 +131,9 @@ export function ChatHistoryList<T>(
   )
 }
 
+/** The scroll view's inset already holds the composer and the keyboard. */
+const noEndPadding = (): number => 0
+
 /** Conversations that currently hold the Android keyboard coordination. */
 const owners = new Set<object>()
 
@@ -199,6 +199,7 @@ export function useChatHistoryKeyboard(
       keyboardOffset: options.keyboardOffset
     } satisfies NativeKeyboardProps,
     managesEndInset: true,
+    endPadding: noEndPadding,
     scrollToEnd: (list, animated) => {
       scrollTarget.current = list
       scrollMessageToEnd({ animated, closeKeyboard: false }).catch(
@@ -221,4 +222,9 @@ export function ChatKeyboardProvider(props: {
       {props.children}
     </KeyboardProvider>
   )
+}
+
+/** The whole app, with the keyboard coordination its chat history uses. */
+export function withChatKeyboard(app: React.ReactElement): React.ReactElement {
+  return <ChatKeyboardProvider>{app}</ChatKeyboardProvider>
 }
