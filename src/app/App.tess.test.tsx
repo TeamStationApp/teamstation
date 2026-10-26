@@ -17,6 +17,7 @@ import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { manualClock, windowSize } from '../test/tessTestKit'
 import { App, screenTitle } from './App'
+import { ChatListNavigationCapture } from './chat/chatWorkspaceModel'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
 import { gameFixture } from './scoring/isUnscoredGame.test'
 import { TESS_HEALTH_RETRY_MS } from './tess/useTessAvailable'
@@ -326,6 +327,72 @@ describe("Tess in the app's shell", () => {
       })
       await settleUntil(() => currentRoute().name === 'home')
       expect(currentRoute().name).equals('home')
+    })
+  })
+
+  describe('leaving an open chat by a link', () => {
+    /**
+     * An open chat with a reader that keeps its position when asked: each
+     * navigation waits on `kept` until the test releases it.
+     */
+    const withChatReader = async (
+      run: (held: { asked: () => number; release: () => void }) => Promise<void>
+    ): Promise<void> => {
+      const capture = ChatListNavigationCapture.prototype
+      const saved = Object.getOwnPropertyDescriptors(capture)
+      let asked = 0
+      let release = (): void => {}
+      capture.hasReader = () => true
+      capture.navigate = async (change: () => void): Promise<void> => {
+        asked += 1
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+        change()
+      }
+      try {
+        await run({
+          asked: () => asked,
+          release: () => {
+            release()
+          }
+        })
+      } finally {
+        Object.defineProperties(capture, saved)
+      }
+    }
+
+    it('keeps the chat’s place before a narrow link closes Tess and goes there', async () => {
+      await withChatReader(async held => {
+        await open(1024)
+        await openTess()
+        await tap(link('Your account'))
+        expect(held.asked(), 'the chat was asked to keep its place').equals(1)
+        expect(currentRoute().name, 'not before it has').equals('home')
+        expect(byTestId('Tess chat'), 'still open meanwhile').not.equals(null)
+        await act(async () => {
+          held.release()
+        })
+        await settle(60)
+        expect(currentRoute().name).equals('account')
+        expect(byTestId('Tess chat'), 'closed by the link').equals(null)
+      })
+    })
+
+    it('keeps the chat’s place before a wide link moves the pane', async () => {
+      await withChatReader(async held => {
+        await open(1025)
+        await openTess()
+        await tap(link('Your account'))
+        expect(held.asked()).equals(1)
+        expect(currentRoute().name).equals('home')
+        await act(async () => {
+          held.release()
+        })
+        await settle(60)
+        expect(currentRoute().name).equals('account')
+        expect(byTestId('Tess chat'), 'the column stays').not.equals(null)
+      })
     })
   })
 
