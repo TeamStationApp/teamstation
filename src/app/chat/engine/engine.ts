@@ -25,7 +25,12 @@ import {
 } from './context'
 import { fieldsOf, IdentityCache } from './decrypt'
 import { approveGrant, fillGrants } from './grants'
-import { type ChatSetup, type Enrolment, ensureEnrolled } from './links'
+import {
+  type ChatSetup,
+  type Enrolment,
+  ensureEnrolled,
+  StaleChatSetupError
+} from './links'
 import { headOf, syncLog } from './log'
 import { replyExcerpt } from './reply'
 import {
@@ -255,9 +260,10 @@ export class ChatEngine {
     return this.options.now?.() ?? Date.now()
   }
 
+  /** Stopped at sign-out, the engine enrols nobody. */
   private get setup(): ChatSetup {
     const { client, store, userId, device } = this.options
-    return { client, store, userId, device }
+    return { client, store, userId, device, current: () => !this.stopped }
   }
 
   /** The key work's context; throws until `start()` reached `ready`. */
@@ -297,12 +303,18 @@ export class ChatEngine {
    */
   async start(): Promise<Enrolment['state']> {
     const enrolment = await ensureEnrolled(this.setup)
+    // Stopped while it ran: whoever signs in next gets an engine of their own.
+    if (this.stopped) throw new StaleChatSetupError()
     if (this.context == null) {
       this.context = {
         client: this.options.client,
         userId: this.options.userId,
         memory: this.memory,
-        keys: new KeyHolder(this.options.store, enrolment.record),
+        keys: new KeyHolder(
+          this.options.store,
+          enrolment.record,
+          () => !this.stopped
+        ),
         identities: this.identities,
         pageSize: this.options.pageSize ?? 100,
         refreshKeys: async () => {

@@ -1,7 +1,7 @@
 import type { TeamStationClient } from '../../../common/api'
 import type { ChatKeyRecord, ChatKeyStore } from '../keyRecord'
 import type { IdentityCache } from './decrypt'
-import type { ChatKeysClient } from './links'
+import { type ChatKeysClient, StaleChatSetupError } from './links'
 import type { ChatMemory } from './store'
 
 /**
@@ -71,14 +71,16 @@ export class ChatEngineError extends Error {
 /**
  * The device's key record, written through to its store. Every change goes
  * through `update`, one at a time, so two parts of the engine never write
- * over each other.
+ * over each other. Once `live` says the engine has stopped, a change is
+ * refused rather than saved: the store may hold the next user's record.
  */
 export class KeyHolder {
   private queue: Promise<unknown> = Promise.resolve()
 
   constructor(
     private readonly store: ChatKeyStore,
-    private current: ChatKeyRecord
+    private current: ChatKeyRecord,
+    private readonly live: () => boolean = () => true
   ) {}
 
   get record(): ChatKeyRecord {
@@ -92,6 +94,7 @@ export class KeyHolder {
     const run = this.queue.then(async () => {
       const next = change(this.current)
       if (next === this.current) return next
+      if (!this.live()) throw new StaleChatSetupError()
       await this.store.save(next)
       this.current = next
       return next

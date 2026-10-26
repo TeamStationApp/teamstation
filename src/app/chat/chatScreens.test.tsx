@@ -37,7 +37,15 @@ import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { AccountScreen } from '../screens/AccountScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatDevicesScreen } from './ChatDevicesScreen'
-import { type ChatKeysClient, ensureEnrolled } from './engine/links'
+import { KeyHolder } from './engine/context'
+import { ChatEngine } from './engine/engine'
+import {
+  type ChatKeysClient,
+  type ChatSetup,
+  ensureEnrolled,
+  StaleChatSetupError,
+  startLink
+} from './engine/links'
 import {
   b64,
   type ChatKeyRecord,
@@ -75,6 +83,14 @@ async function render(element: React.ReactElement): Promise<void> {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
+  await act(async () => {
+    root!.render(<ThemeProvider>{element}</ThemeProvider>)
+    await delay(20)
+  })
+}
+
+/** Renders again in the same place, so a screen there is kept. */
+async function rerender(element: React.ReactElement): Promise<void> {
   await act(async () => {
     root!.render(<ThemeProvider>{element}</ThemeProvider>)
     await delay(20)
@@ -153,6 +169,8 @@ class MemoryStore implements ChatKeyStore {
 }
 
 const USER = userIdOfGumbo(7)
+/** Whoever was signed in on this device before `USER`. */
+const BEFORE = userIdOfGumbo(8)
 
 /**
  * The key routes, for one user and one session, as far as these screens
@@ -172,6 +190,8 @@ class FakeKeys {
   pending: ChatPendingLink[] = []
   fail = new Set<string>()
   private serial = 0
+
+  constructor(readonly userId = USER) {}
 
   /** The account already has an identity, held by a linked `name`. */
   withOtherDevice(name: string): string {
@@ -229,7 +249,7 @@ class FakeKeys {
         'puk',
         this.boxKeys.get(deviceId)!,
         pukAad({
-          userId: USER,
+          userId: this.userId,
           identityId: this.identity.id,
           generation,
           deviceId
@@ -377,7 +397,7 @@ class FakeKeys {
                 : b64(
                     signPuk(
                       {
-                        userId: USER,
+                        userId: this.userId,
                         generation: index + 1,
                         publicKey: puk.publicKey
                       },
@@ -796,6 +816,296 @@ describe('Link this device', function () {
       />
     )
     await until('the warning', () => text().includes('None of your devices'))
+  })
+})
+
+/**
+ * The app's one client, kept across sign-out and the next sign-in: like the
+ * session cookie, it speaks for whoever is signed in now (`signed.in`),
+ * whichever user the caller names.
+ */
+function sessionClient(signed: { in: FakeKeys }): ChatKeysClient {
+  const clients = new Map<FakeKeys, ChatKeysClient>()
+  const now = (): Record<string, (...args: unknown[]) => Promise<unknown>> => {
+    let client = clients.get(signed.in)
+    if (client == null) {
+      client = signed.in.client()
+      clients.set(signed.in, client)
+    }
+    return client as never
+  }
+  return Object.fromEntries(
+    Object.keys(new FakeKeys().client()).map(name => [
+      name,
+      async (...args: unknown[]) => await now()[name](...args)
+    ])
+  ) as unknown as ChatKeysClient
+}
+
+/** What `work` was refused with, or undefined if it went through. */
+async function refusal(work: Promise<unknown>): Promise<unknown> {
+  return await work.then(
+    () => undefined,
+    (error: unknown) => error
+  )
+}
+
+describe('chat setup through a change of user', function () {
+  this.timeout(15000)
+
+  it('starts Link this device again for the user signed in now, when the screen is kept', async function () {
+    const before = new FakeKeys(BEFORE)
+    before.withOtherDevice('Old phone')
+    const after = new FakeKeys()
+    after.withOtherDevice('Pixel 10')
+    const signed = { in: before }
+    const client = sessionClient(signed)
+    const store = new MemoryStore()
+    const screen = (userId: string): React.ReactElement => (
+      <LinkDeviceScreen
+        client={client}
+        userId={userId}
+        store={store}
+        device={DEVICE}
+        pollMs={40}
+        onDone={() => undefined}
+      />
+    )
+    await render(screen(BEFORE))
+    await until('the first code', () => text().includes('Waiting for'))
+    // Signed out, which wipes the keys, and the next user signed in.
+    await store.wipe()
+    signed.in = after
+    await rerender(screen(USER))
+    await until('their request', () => after.links.length === 1)
+    const record = store.record()
+    expect(record.userId).equals(USER)
+    expect(record.pendingLinkId).equals(after.links[0].id)
+    const code = linkCode(record.device.box.publicKey, after.links[0].id)
+    await until('their code', () => labelled(`Six-digit code ${code}`) != null)
+    after.approve(after.links[0].id)
+    await until('linked', () => text().includes('This device is linked.'))
+    expect(after.calls.filter(name => name === 'registerChatDevice')).length(1)
+    expect(after.calls.filter(name => name === 'requestChatLink')).length(1)
+    expect(store.record().identity?.id).equals(after.identity?.id)
+  })
+
+  it('opens Chat devices again for the user signed in now, when the screen is kept', async function () {
+    const before = new FakeKeys(BEFORE)
+    const after = new FakeKeys()
+    const signed = { in: before }
+    const client = sessionClient(signed)
+    const store = new MemoryStore()
+    const screen = (userId: string): React.ReactElement => (
+      <ChatDevicesScreen
+        client={client}
+        userId={userId}
+        store={store}
+        device={DEVICE}
+        pollMs={40}
+      />
+    )
+    await render(screen(BEFORE))
+    await until('the first list', () => text().includes('YOUR DEVICES'))
+    await store.wipe()
+    signed.in = after
+    await rerender(screen(USER))
+    await until('their list', () => after.calls.includes('enrolChat'))
+    await until('the list', () => text().includes('YOUR DEVICES'))
+    expect(store.record().userId).equals(USER)
+    expect(after.devices).length(1)
+    expect(store.wiped).equals(1)
+  })
+
+  it('leaves the store and the server alone for a user who has signed out', async function () {
+    const after = new FakeKeys()
+    after.withOtherDevice('Pixel 10')
+    const client = sessionClient({ in: after })
+    const store = new MemoryStore()
+    const now = { client, store, userId: USER, device: DEVICE }
+    const enrolled = await ensureEnrolled(now)
+    expect(enrolled.state).equals('link')
+    const asked = await startLink(now, enrolled.record)
+    const kept = store.text
+    // Work for the user before, still going: it names them, while the
+    // client speaks for the user signed in now.
+    const gone: ChatSetup = {
+      client,
+      store,
+      userId: BEFORE,
+      device: DEVICE,
+      current: () => false
+    }
+    expect(await refusal(ensureEnrolled(gone))).instanceOf(StaleChatSetupError)
+    expect(
+      await refusal(
+        startLink(gone, {
+          ...asked.record,
+          userId: BEFORE,
+          pendingLinkId: undefined
+        })
+      )
+    ).instanceOf(StaleChatSetupError)
+    expect(store.text).equals(kept)
+    expect(store.wiped).equals(0)
+    expect(after.calls.filter(name => name === 'registerChatDevice')).length(1)
+    expect(after.links).length(1)
+  })
+
+  it('enrols the user signed in now on their own, not through a run still going for the user before', async function () {
+    const before = new FakeKeys(BEFORE)
+    const after = new FakeKeys()
+    const signed = { in: before }
+    const client = sessionClient(signed)
+    const store = new MemoryStore()
+    let live = true
+    const earlier: ChatSetup = {
+      client,
+      store,
+      userId: BEFORE,
+      device: DEVICE,
+      current: () => live
+    }
+    await ensureEnrolled(earlier)
+    // Signed out without the keys going, and the next user signed in.
+    signed.in = after
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const going = refusal(
+      ensureEnrolled({
+        ...earlier,
+        client: {
+          ...client,
+          myChatKeys: async () => {
+            await held
+            return await client.myChatKeys()
+          }
+        }
+      })
+    )
+    await delay(10)
+    live = false
+    const next = ensureEnrolled({
+      client,
+      store,
+      userId: USER,
+      device: DEVICE
+    })
+    release()
+    expect(await going).instanceOf(StaleChatSetupError)
+    const enrolled = await next
+    expect(enrolled.state).equals('ready')
+    expect(enrolled.record.userId).equals(USER)
+    expect(store.record().userId).equals(USER)
+    expect(after.calls.filter(name => name === 'registerChatDevice')).length(1)
+  })
+
+  it('enrols the user signed in now even when the run for the user before fails', async function () {
+    // The phone case: the user before's run outlives their session, so the
+    // server refuses it, and the next user's start must not fail with it.
+    const before = new FakeKeys(BEFORE)
+    const after = new FakeKeys()
+    const signed = { in: before }
+    const client = sessionClient(signed)
+    const store = new MemoryStore()
+    await ensureEnrolled({ client, store, userId: BEFORE, device: DEVICE })
+    signed.in = after
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const going = refusal(
+      ensureEnrolled({
+        client: {
+          ...client,
+          myChatKeys: async () => {
+            await held
+            throw new HttpError('unauthorized', 'Sign in to continue')
+          }
+        },
+        store,
+        userId: BEFORE,
+        device: DEVICE
+      })
+    )
+    await delay(10)
+    const next = refusal(
+      ensureEnrolled({ client, store, userId: USER, device: DEVICE })
+    )
+    release()
+    expect(await going).instanceOf(HttpError)
+    expect(await next).equals(undefined)
+    expect(store.record().userId).equals(USER)
+    expect(after.calls.filter(name => name === 'registerChatDevice')).length(1)
+  })
+
+  it('enrols nothing from an engine stopped at sign-out', async function () {
+    const after = new FakeKeys()
+    const client = sessionClient({ in: after })
+    const store = new MemoryStore()
+    await ensureEnrolled({ client, store, userId: USER, device: DEVICE })
+    const kept = store.text
+    const stopped = new ChatEngine({
+      client: client as never,
+      store,
+      userId: BEFORE,
+      device: DEVICE
+    })
+    stopped.stop()
+    expect(await refusal(stopped.start())).instanceOf(StaleChatSetupError)
+
+    // Stopped while it starts: it sets nothing up either.
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const slow: ChatKeysClient = {
+      ...client,
+      myChatKeys: async () => {
+        await held
+        return await client.myChatKeys()
+      }
+    }
+    const starting = new ChatEngine({
+      client: slow as never,
+      store,
+      userId: USER,
+      device: DEVICE
+    })
+    const started = refusal(starting.start())
+    await delay(10)
+    starting.stop()
+    release()
+    expect(await started).instanceOf(StaleChatSetupError)
+    expect(store.text).equals(kept)
+    expect(store.wiped).equals(0)
+    expect(after.calls.filter(name => name === 'registerChatDevice')).length(1)
+  })
+
+  it('keeps the next user’s record from a stopped engine’s key work', async function () {
+    const after = new FakeKeys()
+    const store = new MemoryStore()
+    const enrolled = await ensureEnrolled({
+      client: after.client(),
+      store,
+      userId: USER,
+      device: DEVICE
+    })
+    const kept = store.text
+    let live = true
+    const keys = new KeyHolder(store, enrolled.record, () => live)
+    await keys.update(record => ({ ...record, pendingLinkId: 'clk_kept' }))
+    expect(store.record().pendingLinkId).equals('clk_kept')
+    await store.save(recordFromJson(kept!))
+    live = false
+    expect(
+      await refusal(
+        keys.update(record => ({ ...record, pendingLinkId: 'clk_late' }))
+      )
+    ).instanceOf(StaleChatSetupError)
+    expect(store.text).equals(kept)
   })
 })
 
