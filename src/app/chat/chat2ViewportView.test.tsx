@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act, useEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Keyboard } from 'react-native'
+import { Keyboard, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { AppHeader } from '../components/AppHeader'
@@ -300,6 +300,62 @@ describe('chat measured chrome and explicit focus', function () {
     root = undefined
     expect(focus).equals(undefined)
   })
+
+  for (const platform of ['android', 'ios', 'web'] as const)
+    it(`brings the ${platform} keyboard back for a focus request on a field already focused`, async function () {
+      const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: platform
+      })
+      try {
+        let focus: (() => void) | undefined
+        await render(
+          <Composer
+            text=""
+            onText={() => {}}
+            enabled
+            sending={false}
+            context={undefined}
+            onCancelContext={() => {}}
+            attachments={[]}
+            onRemoveAttachment={() => {}}
+            sources={[]}
+            onAttach={() => {}}
+            onSend={() => {}}
+            registerFocus={next => {
+              focus = next
+              return () => {
+                focus = undefined
+              }
+            }}
+          />
+        )
+        const input = host!.querySelector<HTMLTextAreaElement>(
+          '[data-testid="chat-composer"]'
+        )!
+        // The keyboard was hidden with Back; the field kept its focus.
+        input.focus()
+        const calls: string[] = []
+        const blur = input.blur.bind(input)
+        const refocus = input.focus.bind(input)
+        input.blur = () => {
+          calls.push('blur')
+          blur()
+        }
+        input.focus = () => {
+          calls.push('focus')
+          refocus()
+        }
+        focus!()
+        expect(calls).deep.equals(
+          platform === 'android' ? ['blur', 'focus'] : ['focus']
+        )
+        expect(document.activeElement).equals(input)
+      } finally {
+        Object.defineProperty(Platform, 'OS', saved)
+      }
+    })
 
   it('hands a selected narrow conversation to shell glass, focuses every explicit Reply, and clears stale identity on pane hiding', async function () {
     let shown = view({

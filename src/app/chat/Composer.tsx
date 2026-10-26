@@ -89,7 +89,12 @@ export function Composer(props: ComposerProps): React.ReactElement {
     () =>
       registerFocus?.(caret => {
         if (!latest.current.enabled) return
-        input.current?.focus()
+        const field = input.current
+        // Android keeps a field focused after Back hides its keyboard, and
+        // focusing it again shows nothing; refocusing brings the keyboard back.
+        if (Platform.OS === 'android' && field?.isFocused() === true)
+          field.blur()
+        field?.focus()
         if (caret != null) {
           pendingCaret.current = caret
           setCaretRevision(value => value + 1)
