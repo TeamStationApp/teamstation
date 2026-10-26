@@ -2786,7 +2786,7 @@ export class Scenarios {
       // The last page loaded above a reader that stayed on its row: the
       // target is a loaded row outside the mounted window, most likely above.
       if (page > 0 && !nodes.some(earlierButton)) {
-        if (await this.nativeLoadedTarget(target, signal, 'older')) {
+        if (await this.nativeLoadedTarget(target, signal, 'older', oldest)) {
           proof.outcome = 'passed'
           return
         }
