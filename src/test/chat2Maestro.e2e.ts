@@ -4773,7 +4773,23 @@ export class Chat2UI {
     rawPath: string
     viewport: { width: number; height: number }
   }> {
-    const result = await this.observeAndroidIme(options, 'open')
+    // A phone's keyboard can still be animating in when it is first read;
+    // read again while it is reported hidden, within a bounded wait.
+    const end = Date.now() + (this.physical ? 15000 : 0)
+    let result: Awaited<ReturnType<Chat2UI['observeAndroidIme']>>
+    for (;;) {
+      try {
+        result = await this.observeAndroidIme(options, 'open')
+        break
+      } catch (error) {
+        if (
+          Date.now() >= end ||
+          !/IME visibility/.test(error instanceof Error ? error.message : '')
+        )
+          throw error
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
     return {
       bounds: need(result.bounds, 'Positive observed Android IME required'),
       rawPath: result.rawPath,
