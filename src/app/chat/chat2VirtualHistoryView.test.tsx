@@ -69,11 +69,14 @@ function rect(top: number, height: number): DOMRect {
 function browserLayout(order: () => string[]): {
   scrollTop: () => number
   rowTop: (id: string) => number
+  header: { height: number }
 } {
+  const header = { height: 0 }
   const history = (): HTMLElement | null =>
     document.querySelector('[data-testid="chat-message-history"]')
   const scrollTop = (): number => history()?.scrollTop ?? 0
-  const rowTop = (id: string): number => TOP + order().indexOf(id) * STEP
+  const rowTop = (id: string): number =>
+    TOP + header.height + order().indexOf(id) * STEP
   const place = (node: HTMLElement): DOMRect | undefined => {
     // The list's container around a row carries the gap below it.
     const child = (node.firstElementChild as HTMLElement | null)?.dataset
@@ -90,7 +93,8 @@ function browserLayout(order: () => string[]): {
       return rect(rowTop(row[1]) - scrollTop(), ROW)
     return undefined
   }
-  const content = (): number => TOP + order().length * STEP + 200
+  const content = (): number =>
+    TOP + header.height + order().length * STEP + 200
   const bounds = Object.getOwnPropertyDescriptor(
     HTMLElement.prototype,
     'getBoundingClientRect'
@@ -139,15 +143,17 @@ function browserLayout(order: () => string[]): {
       Reflect.deleteProperty(HTMLElement.prototype, 'measureLayout')
     else Object.defineProperty(HTMLElement.prototype, 'measureLayout', measured)
   })
-  return { scrollTop, rowTop }
+  return { scrollTop, rowTop, header }
 }
 
 function fixture(initial: ConversationView): {
   engine: ChatScreenEngine
   readonly shown: ConversationView
+  readonly reactions: string[]
   setLoad: (work: () => Promise<ConversationView>) => void
 } {
   let shown = initial
+  const reactions: string[] = []
   let load = async (): Promise<ConversationView> => shown
   const listeners = new Set<ChatEngineListener>()
   const engine: ChatScreenEngine = {
@@ -171,7 +177,9 @@ function fixture(initial: ConversationView): {
     },
     sendText: async () => undefined,
     attach: async () => undefined,
-    react: async () => {},
+    react: async (_conversation, messageId, emoji, remove) => {
+      reactions.push(`${messageId} ${emoji} ${String(remove)}`)
+    },
     edit: async () => {},
     deleteMessage: async () => {},
     moderatorDelete: async () => {},
@@ -189,6 +197,7 @@ function fixture(initial: ConversationView): {
     get shown() {
       return shown
     },
+    reactions,
     setLoad: work => {
       load = work
     }
@@ -322,7 +331,29 @@ function topZero(): ChatDraftOwner {
 
 describe('virtualized chat message history', function () {
   it('mounts only the rows near the reading band and mounts again the rows a reader returns to', async function () {
-    const state = fixture(view({ messages: history(80) }))
+    const state = fixture(
+      view({
+        messages: history(80).map(item =>
+          item.id === 'msg_179'
+            ? {
+                ...item,
+                reactions: [
+                  { emoji: '👍', userIds: [userIdOfGumbo(2)], mine: false }
+                ]
+              }
+            : item
+        ),
+        // After the last message: the notice follows the virtualized rows.
+        safetyChanges: [
+          {
+            userId: userIdOfGumbo(2),
+            name: 'Hank C',
+            seq: 180,
+            at: Date.parse('2027-04-02T00:00:00.000Z')
+          }
+        ]
+      })
+    )
     const order = (): string[] => state.shown.messages.map(item => item.id)
     browserLayout(order)
     await render(state.engine, topZero())
@@ -339,6 +370,28 @@ describe('virtualized chat message history', function () {
       host!.querySelector('[data-testid="chat-bubble-msg_179"]'),
       'Mounted rows keep their public bubble'
     ).not.equals(null)
+    expect(host!.textContent).contains('Hank C’s safety number changed')
+    // A mounted row still offers every action, here the emoji picker.
+    await act(async () => {
+      host!
+        .querySelector<HTMLElement>(
+          '[data-testid="chat-message-row-msg_179"] [aria-label="Send an emoji"]'
+        )!
+        .click()
+      await wait()
+    })
+    expect(host!.querySelector('[aria-label="Emoji"]')).not.equals(null)
+    await act(async () => {
+      ;[
+        ...host!.querySelectorAll<HTMLElement>(
+          '[data-testid="chat-message-row-msg_179"] [role="button"]'
+        )
+      ]
+        .find(node => node.textContent === '👍 1')!
+        .click()
+      await wait()
+    })
+    expect(state.reactions).deep.equals(['msg_179 👍 false'])
     await userScroll(0)
     expect(mounted()).includes('msg_100')
     expect(mounted()).not.includes('msg_179')
@@ -346,7 +399,7 @@ describe('virtualized chat message history', function () {
 
   it('counts an unmounted target below the band and never consumes a target the window did not mount', async function () {
     const messages = history(80).map(item =>
-      item.id === 'msg_140' || item.id === 'msg_178'
+      item.id === 'msg_100' || item.id === 'msg_140' || item.id === 'msg_178'
         ? { ...item, mentions: [userIdOfGumbo(1)] }
         : item
     )
@@ -354,10 +407,13 @@ describe('virtualized chat message history', function () {
       view({
         conversation: { ...view().conversation, lastSeq: 179 },
         ownReadSeq: 99,
+        // A cached row before the visible frontier is never laid out.
+        historyBefore: 101,
         messages
       })
     )
-    const order = (): string[] => state.shown.messages.map(item => item.id)
+    const order = (): string[] =>
+      state.shown.messages.filter(item => item.seq >= 101).map(item => item.id)
     browserLayout(order)
     const owner = topZero()
     await render(state.engine, owner)
@@ -470,6 +526,25 @@ describe('virtualized chat message history', function () {
         await wait(60)
       })
     }
+    // The earlier-page control above the rows is part of the list's header.
+    const control = [
+      ...host!.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Load earlier messages')!
+    const headerNode = control.parentElement
+    const headerLayout = async (height: number): Promise<void> => {
+      layout.header.height = height
+      await act(async () => {
+        ;(
+          headerNode as HTMLElement & {
+            __reactLayoutHandler: (event: unknown) => void
+          }
+        ).__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 360, height } }
+        })
+        await wait()
+      })
+    }
+    await headerLayout(48)
     await contentLayout()
     const reading = layout.rowTop('msg_215') - scroller().scrollTop
     expect(reading, 'The saved row-relative anchor is restored').equals(200)
@@ -480,6 +555,7 @@ describe('virtualized chat message history', function () {
       await wait(60)
     })
     expect(state.shown.messages).length(60)
+    await headerLayout(0)
     await contentLayout()
     expect(
       layout.rowTop('msg_215') - scroller().scrollTop,
@@ -550,5 +626,37 @@ describe('virtualized chat message history', function () {
     ).equals(null)
     await userScroll(end - 10)
     expect(mounted(), 'Released once its actions close').not.includes('msg_101')
+  })
+
+  it('restores a saved row-relative anchor whose row starts outside the rendered window', async function () {
+    const state = fixture(view({ messages: history(80) }))
+    const order = (): string[] => state.shown.messages.map(item => item.id)
+    const layout = browserLayout(order)
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: 5000,
+      followNewest: false,
+      scrollAnchor: { id: 'msg_170', relativeY: 120 }
+    })
+    await render(state.engine, new ChatDraftOwner(workspace))
+    const moves = scrollExtent(order)
+    expect(mounted()).not.includes('msg_170')
+    await act(async () => {
+      ;(
+        scroller() as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 360, height: VIEWPORT } }
+      })
+      await wait()
+    })
+    await settle(() => mounted().includes('msg_170'))
+    expect(moves.length).greaterThan(0)
+    expect(mounted()).includes('msg_170')
+    expect(layout.rowTop('msg_170') - scroller().scrollTop).equals(120)
   })
 })
