@@ -37,12 +37,13 @@ import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { AccountScreen } from '../screens/AccountScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatDevicesScreen } from './ChatDevicesScreen'
-import { KeyHolder } from './engine/context'
+import { type EngineContext, KeyHolder } from './engine/context'
 import { ChatEngine } from './engine/engine'
 import {
   type ChatKeysClient,
   type ChatSetup,
   ensureEnrolled,
+  leaveChat,
   StaleChatSetupError,
   startLink
 } from './engine/links'
@@ -1082,6 +1083,43 @@ describe('chat setup through a change of user', function () {
     expect(store.text).equals(kept)
     expect(store.wiped).equals(0)
     expect(after.calls.filter(name => name === 'registerChatDevice')).length(1)
+  })
+
+  it('puts nothing back once sign-out has wiped the keys', async function () {
+    const fake = new FakeKeys()
+    fake.withOtherDevice('Pixel 10')
+    const client = sessionClient({ in: fake })
+    const store = new MemoryStore()
+    const engine = new ChatEngine({
+      client: client as never,
+      store,
+      userId: USER,
+      device: DEVICE
+    })
+    expect(await engine.start()).equals('link')
+    const { context } = engine as unknown as { context: EngineContext }
+    // Sign-out, while the engine is still running: its work saves nothing
+    // more, and enrols nothing.
+    await leaveChat({ client, store, loadCore: async () => ({ ready: true }) })
+    expect(store.text).equals(undefined)
+    expect(
+      await refusal(
+        context.keys.update(record => ({ ...record, pendingLinkId: 'clk_x' }))
+      )
+    ).instanceOf(StaleChatSetupError)
+    expect(await refusal(context.refreshKeys())).instanceOf(StaleChatSetupError)
+    expect(await refusal(engine.start())).instanceOf(StaleChatSetupError)
+    expect(store.text).equals(undefined)
+    expect(fake.calls.filter(name => name === 'registerChatDevice')).length(1)
+    // The next sign-in enrols again, with an engine of its own.
+    const next = new ChatEngine({
+      client: client as never,
+      store,
+      userId: USER,
+      device: DEVICE
+    })
+    expect(await next.start()).equals('link')
+    expect(store.record().userId).equals(USER)
   })
 
   it('keeps the next user’s record from a stopped engine’s key work', async function () {
