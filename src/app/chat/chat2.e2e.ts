@@ -3581,15 +3581,18 @@ export class Scenarios {
       actions: []
     }
     this.observations.push(proof)
-    const read = async (): Promise<Sample> => {
+    // Before the first wheel the point must hit plain history; once the
+    // wheel moves rows, a control under the point still passes the wheel to
+    // the history, and only an inner scroller would take it.
+    const read = async (strict = false): Promise<Sample> => {
       assert(Date.now() < end, 'Actual user-scroll setup exceeded 30 seconds')
       const value = (await ui.dom(
         `
         const one=id=>{const ns=document.querySelectorAll('[data-testid='+JSON.stringify(id)+']');if(ns.length!==1)throw Error('Unique actual reader required');return ns[0]},h=one('chat-message-history'),b=one(${JSON.stringify('chat-bubble-' + target.id)}),x=innerWidth/2,y=innerHeight/2,hit=document.elementFromPoint(x,y);
         if(!h.contains(b)||!hit||!h.contains(hit))throw Error('Actual target and wheel hitpoint must belong to history');
-        for(let n=hit;n!==h;n=n.parentElement){if(!n)throw Error('Actual wheel ancestry required');const s=getComputedStyle(n);if(n.matches('input,textarea,select,button,[contenteditable],[role="slider"],[role="combobox"],[role="listbox"]')||(n.scrollHeight>n.clientHeight&&['auto','scroll'].includes(s.overflowY)))throw Error('Interactive or inner-scroll wheel interception')}
+        let interactive=false;for(let n=hit;n!==h;n=n.parentElement){if(!n)throw Error('Actual wheel ancestry required');const s=getComputedStyle(n),control=n.matches('input,textarea,select,button,[contenteditable],[role="slider"],[role="combobox"],[role="listbox"]');if((${strict}&&control)||(n.scrollHeight>n.clientHeight&&['auto','scroll'].includes(s.overflowY)))throw Error('Interactive or inner-scroll wheel interception');if(control)interactive=true}
         const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
-        return {observedMs:performance.now(),offset:h.scrollTop,maximum:h.scrollHeight-h.clientHeight,height:h.clientHeight,history:box(h),bubble:box(b),viewport:{width:innerWidth,height:innerHeight},wheelPoint:{x,y}};
+        return {observedMs:performance.now(),offset:h.scrollTop,maximum:h.scrollHeight-h.clientHeight,height:h.clientHeight,history:box(h),bubble:box(b),viewport:{width:innerWidth,height:innerHeight},wheelPoint:{x,y},controlUnderWheel:interactive};
       `,
         signal
       )) as unknown as Sample
@@ -3636,7 +3639,7 @@ export class Scenarios {
       proof.noninteractiveWheelSetup = setup
       if (setup.positioned === true) await this.webAnchorReady(target)
     }
-    const before = await read()
+    const before = await read(true)
     assert(
       !zero || before.offset === 0,
       'Real oldest history zero required before user-scroll setup'
