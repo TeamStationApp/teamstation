@@ -46,6 +46,13 @@ export function ChatHistoryList<T>(
   props: ChatHistoryListProps<T>
 ): React.ReactElement {
   const list = useRef<LegendListRef>(null)
+  const pinned = useRef({ keys: '', version: 0 })
+  const pinnedVersion = (keys: string[] | undefined): number => {
+    const joined = (keys ?? []).join('\n')
+    if (joined !== pinned.current.keys)
+      pinned.current = { keys: joined, version: pinned.current.version + 1 }
+    return pinned.current.version
+  }
   const scroll = (): NativeScroll | undefined =>
     list.current?.getNativeScrollRef() ?? undefined
   useImperativeHandle(
@@ -100,6 +107,9 @@ export function ChatHistoryList<T>(
         renderItem(item, index)
       }
       alwaysRender={alwaysRender == null ? undefined : { keys: alwaysRender }}
+      // Legend List lays out a newly pinned row with its next pass; a new
+      // version makes that pass now, before the row is measured.
+      dataVersion={pinnedVersion(alwaysRender)}
       {...(initialScroll === 'end'
         ? { initialScrollAtEnd: true }
         : initialScroll == null
