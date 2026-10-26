@@ -17,8 +17,11 @@ import {
 } from './chatWebInteractions'
 import {
   bindComposerKeys as bindNativeComposerKeys,
+  bindMessageHover as bindNativeMessageHover,
   bindUserScroll as bindNativeUserScroll,
+  cancelUserScroll as cancelNativeUserScroll,
   readDocumentActive as nativeReadDocumentActive,
+  readMessageScrollPosition as readNativeMessageScrollPosition,
   watchReadDocumentActive as nativeWatchReadDocumentActive
 } from './chatWebInteractions.native'
 
@@ -81,6 +84,24 @@ describe('chat document visibility read adapter', function () {
       if (original == null) Reflect.deleteProperty(document, 'visibilityState')
       else Object.defineProperty(document, 'visibilityState', original)
     }
+  })
+
+  it('reads no scroll position, stops no scroll and binds no hover in the native twin', function () {
+    // A phone measures its rows against its own scroll viewport, and has no
+    // pointer to hover with: the twin answers nothing and touches nothing.
+    const host = document.createElement('div')
+    let scrolled = 0
+    host.addEventListener('scroll', () => {
+      scrolled += 1
+    })
+    expect(readNativeMessageScrollPosition(host, new Map())).equals(undefined)
+    cancelNativeUserScroll(host)
+    const hovers: boolean[] = []
+    const stop = bindNativeMessageHover(host, visible => hovers.push(visible))
+    host.dispatchEvent(new window.Event('mouseenter'))
+    stop()
+    expect(hovers).deep.equals([])
+    expect(scrolled).equals(0)
   })
 
   it('leaves native read visibility independent of a browser document and attaches no browser listener', function () {
