@@ -2875,8 +2875,8 @@ export class Scenarios {
     target: Chat2Message,
     signal: AbortSignal,
     first: 'latest' | 'older' = 'latest',
-    // The oldest post is never below the reader: once the earlier control
-    // shows, it is in a page not loaded yet.
+    // The oldest post is never below the reader. Sweeping older lets the
+    // history load its earlier pages as it reaches them.
     olderOnly = false
   ): Promise<boolean> {
     const ui = this.ui
@@ -2890,12 +2890,6 @@ export class Scenarios {
         )
         .join('\n')
     let nodes = await ui.nodes(undefined, signal)
-    const earlierShown = (): boolean =>
-      nodes.some(
-        node =>
-          node.text === 'Load earlier messages' &&
-          /(?:^|\.)Button$/.test(node.type ?? '')
-      )
     for (const direction of olderOnly
       ? [1]
       : first === 'latest'
@@ -2905,7 +2899,6 @@ export class Scenarios {
       // A few loaded pages are many screens; each end stops the history.
       for (let step = 0; step < 200 && still < 2; step++) {
         if (nodes.some(node => node.id === id)) break
-        if (olderOnly && earlierShown()) break
         const one = (key: string): NonNullable<PublicNode['bounds']> =>
           need(
             nodes.find(node => node.id === key)?.bounds,
@@ -2927,7 +2920,7 @@ export class Scenarios {
         )
         // A finger moving up reads toward the latest rows, down toward older.
         const middle = (top + bottom) / 2
-        const delta = direction * (bottom - top) * 0.6
+        const delta = direction * (bottom - top) * (olderOnly ? 0.9 : 0.6)
         const x = Math.round(history.x + history.width / 2)
         const input = {
           startX: x,
