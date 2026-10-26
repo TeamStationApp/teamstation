@@ -228,7 +228,10 @@ export function recordFromJson(text: string): ChatKeyRecord {
 export type UnreadableKeyRecordReason =
   /** The browser's record is there and its wrapping key is not. */
   | 'wrappingKeyMissing'
-  /** The sealed record does not open under the wrapping key. */
+  /**
+   * The sealed record does not open under its key: the browser's wrapping
+   * key, or the phone's Keystore key.
+   */
   | 'undecryptable'
   /** A record version this build does not know (a newer build's). */
   | 'unknownVersion'
