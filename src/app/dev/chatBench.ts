@@ -11,8 +11,7 @@ import type React from 'react'
  * and times it, as the phone twin (`chatBench.native.ts`) does on the native
  * core.
  */
-export const chatBenchPath: string | undefined =
-  typeof __DEV__ !== 'undefined' && __DEV__ ? '/dev/chat-bench' : undefined
+export { chatBenchPath } from './chatBenchPath'
 
 export const ChatBench: React.ComponentType | undefined =
   typeof __DEV__ !== 'undefined' && __DEV__

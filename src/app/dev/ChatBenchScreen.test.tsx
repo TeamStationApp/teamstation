@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatBench, chatBenchPath } from './chatBench'
 import { benchFor } from './chatBench.native'
+import { chatBenchPath as phoneChatBenchPath } from './chatBenchPath.native'
 import type { ChatBenchResult } from './chatBenchRun'
 import { ChatBenchScreen } from './ChatBenchScreen'
 import type { IdentityProbeResult } from './chatIdentityStoreProbeRun'
@@ -181,6 +182,9 @@ describe('ChatBenchScreen', () => {
     for (const flag of [undefined, '', '0', 'true']) {
       expect(benchFor(flag)).deep.equals({ path: undefined, screen: undefined })
     }
+    // The phone's routes take the address from the phone's own bench, which
+    // this run, made without TS_CHAT_BENCH, does not have.
+    expect(phoneChatBenchPath).equals(undefined)
   })
 
   it('says it is running, then shows stream MB/s, wraps/s and done', async () => {
