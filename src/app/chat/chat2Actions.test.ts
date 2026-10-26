@@ -2898,7 +2898,10 @@ describe('chat native adapter compatibility', function () {
       enabled: mode !== 'disabled-editor',
       bounds: {
         ...box,
-        y: mode === 'moved-editor' && value === '' ? 40 : box.y
+        // A moved editor moves between its two empty reads, after the
+        // sentinel; the composer riding the keyboard while text is in it is
+        // not a move.
+        y: mode === 'moved-editor' && value === '' && sentinelTyped ? 40 : box.y
       }
     })
     ;(

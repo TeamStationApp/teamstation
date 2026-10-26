@@ -4508,6 +4508,10 @@ export class Chat2UI {
           )
           let reference = before
           if (before.index >= 0 && !rawEmpty(before)) reference = await read()
+          // Typing the sentinel can let the keyboard fall, and the composer
+          // rides it; deleting raises it again. The empty editor's own
+          // geometry, read with the keyboard up, is the one to keep.
+          const shape = reference
           let sentinel: string | undefined
           if (!rawEmpty(reference)) {
             const digit = need(
@@ -4542,7 +4546,7 @@ export class Chat2UI {
             proof.afterCandidate = node
             const box = need(node.bounds, 'Actual editor geometry required')
             const prior = need(
-              reference.bounds,
+              shape.bounds,
               'Actual reference editor geometry required'
             )
             assert(
