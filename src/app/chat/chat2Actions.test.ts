@@ -4384,12 +4384,15 @@ describe('chat native adapter compatibility', function () {
     await captureFailure(scenario.pickThumbsUp())
     expect(calls).length(1)
   })
-  function incomingModel(mode = 'valid'): {
+  function incomingModel(
+    mode = 'valid',
+    surface: 'web-wide' | 'android' = 'web-wide'
+  ): {
     scenario: Scenarios
     actual: Chat2UI
     calls: string[]
   } {
-    const actual = ui([], 'web-wide')
+    const actual = ui([], surface)
     const calls: string[] = []
     const current = message({
       id: 'run-first',
@@ -4463,7 +4466,12 @@ describe('chat native adapter compatibility', function () {
     actual.observedBounds = async selector => {
       expect(selector).deep.equals({
         id: 'chat-avatar',
-        childOf: { id: 'chat-avatar-lane-run-last' }
+        childOf: {
+          id:
+            surface === 'android'
+              ? 'chat-message-run-last'
+              : 'chat-avatar-lane-run-last'
+        }
       })
       if (mode === 'ambiguous') throw Error('Duplicate actual scoped avatar')
       return {
@@ -4491,6 +4499,12 @@ describe('chat native adapter compatibility', function () {
     await scenario.incomingRunEndAvatar([reservation])
     expect(calls).includes('chat-avatar-lane-run-last')
     expect(calls).includes('shot:incoming-run-avatar')
+  })
+  it('finds the Android avatar beside its lane under the message, held to the lane', async () => {
+    const { scenario, actual, calls } = incomingModel('valid', 'android')
+    await scenario.incomingRunEndAvatar([])
+    expect(actual.steps[0].outcome).equals('passed')
+    expect(calls).includes('chat-avatar-lane-run-last')
   })
   it('uses a fresh verified current run ending and sender identity independent of the peer mine flag', async () => {
     for (const mode of ['valid', 'tail']) {

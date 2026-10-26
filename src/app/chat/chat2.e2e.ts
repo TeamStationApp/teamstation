@@ -6313,7 +6313,14 @@ export class Scenarios {
       const lane = await this.targetBounds('chat-avatar-lane-' + current.id)
       const avatar = await this.ui.observedBounds({
         id: 'chat-avatar',
-        childOf: { id: 'chat-avatar-lane-' + current.id }
+        // Android's accessibility tree puts the avatar beside its empty lane,
+        // under the message; the bounds checks below still hold it to the lane.
+        childOf: {
+          id:
+            (this.ui.surface === 'android'
+              ? 'chat-message-'
+              : 'chat-avatar-lane-') + current.id
+        }
       })
       const band = await this.readingBand()
       proof.geometry = {
