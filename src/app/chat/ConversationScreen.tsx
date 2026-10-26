@@ -133,6 +133,26 @@ export interface ConversationScreenProps {
 export const OPEN_RETRY_MS = 2000
 export const OPEN_TRIES = 8
 
+/**
+ * How long an explicit jump's animated scroll may go without a scroll event
+ * before it counts as landed. A throttled Android stream need not report the
+ * final offset.
+ */
+const JUMP_LANDING_QUIET_MS = 400
+
+/** An explicit jump's animated scroll, from its start until it lands. */
+interface JumpLanding {
+  target: number
+  timer: ReturnType<typeof setTimeout> | undefined
+}
+
+function endJumpLanding(
+  landing: React.RefObject<JumpLanding | undefined>
+): void {
+  clearTimeout(landing.current?.timer)
+  landing.current = undefined
+}
+
 /** A notice in the stream: a safety number change, or where history ends. */
 type Notice =
   | { kind: 'lost'; key: string }
@@ -326,6 +346,9 @@ export function ConversationScreen(
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   )
+  // The rows a jump's animated scroll flies past are not read: attention
+  // waits until the scroll lands.
+  const jumpLanding = useRef<JumpLanding | undefined>(undefined)
   const gestureGeneration = useRef(0)
   const gestureOffset = useRef({ x: 0, y: 0 })
   const nativeUserScroll = useRef<'drag' | 'momentum' | undefined>(undefined)
@@ -716,6 +739,7 @@ export function ConversationScreen(
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
+    endJumpLanding(jumpLanding)
     initialFollow.current = false
     historyGeneration.current += 1
     discoveryPaused.current = true
@@ -828,6 +852,7 @@ export function ConversationScreen(
       restoringAnchor.current = false
       restoreAnchorDirty.current = false
       clearTimeout(highlightTimer.current)
+      endJumpLanding(jumpLanding)
     },
     [conversationId, props.active]
   )
@@ -1299,6 +1324,17 @@ export function ConversationScreen(
           backgroundReading.current = undefined
       }
     })
+  /** Count the jump landed once its scroll stops reporting new offsets. */
+  const awaitJumpLanding = (): void => {
+    const landing = jumpLanding.current
+    if (landing == null) return
+    clearTimeout(landing.timer)
+    landing.timer = setTimeout(() => {
+      if (jumpLanding.current !== landing) return
+      jumpLanding.current = undefined
+      if (mounted.current) refreshAttention.current()
+    }, JUMP_LANDING_QUIET_MS)
+  }
   const jumpTo = (id: string, attention = false): void => {
     initialFollow.current = false
     historyGeneration.current += 1
@@ -1312,6 +1348,7 @@ export function ConversationScreen(
       return
     setJumpRetry(undefined)
     setResolvingJump(true)
+    endJumpLanding(jumpLanding)
     nativeUserScroll.current = undefined
     nativeMomentumFromDrag.current = false
     restoreTarget.current = undefined
@@ -1397,6 +1434,8 @@ export function ConversationScreen(
           relativeY: rowY - requested,
           ...(attention ? { bodyInset: y - rowY } : {})
         })
+        jumpLanding.current = { target, timer: undefined }
+        awaitJumpLanding()
         scroller.current?.scrollTo({
           y: target,
           animated: true
@@ -1780,7 +1819,8 @@ export function ConversationScreen(
       composerOverlay ||
       initialFollow.current ||
       discovering.current ||
-      resolvingJump
+      resolvingJump ||
+      jumpLanding.current != null
     ) {
       pendingManualPass.current = { offset, past: false }
       return
@@ -2327,6 +2367,16 @@ export function ConversationScreen(
     // programmatic restoration acknowledgement.
     if (owned) restoreTarget.current = undefined
     rememberScroll(event, owned)
+    const landing = jumpLanding.current
+    if (
+      landing != null &&
+      !owned &&
+      Math.abs(
+        Math.max(0, event.nativeEvent.contentOffset.y) - landing.target
+      ) > 1
+    )
+      awaitJumpLanding()
+    else endJumpLanding(jumpLanding)
     if (owned) userScrolled()
     else refreshAttention.current()
     if (end != null && end === input) nativeUserScroll.current = undefined
