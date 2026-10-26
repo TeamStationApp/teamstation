@@ -5835,12 +5835,16 @@ export class Scenarios {
             for (let step = 0; step < 8; step++) {
               const b = await this.targetBounds('chat-bubble-' + target.id)
               if (b.y < top - 12 && b.y + b.height > top + 40) break
+              // Move only as far as puts the bubble's top above the reader, and
+              // slowly: a fling carries a virtualized row out of the window.
+              const needed = b.y - (top - Math.min(b.height / 3, 120))
+              const delta = Math.max(48, Math.min(needed, bottom - top - 24))
               await ui.measuredSwipe({
                 startX: Math.round(b.x + b.width / 2),
                 startY: Math.round(bottom - 12),
                 endX: Math.round(b.x + b.width / 2),
-                endY: Math.round(top + 12),
-                duration: 350
+                endY: Math.round(bottom - 12 - delta),
+                duration: 1000
               })
             }
           }
