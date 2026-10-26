@@ -15,16 +15,20 @@ import {
   doubleheadersLabel,
   type ScheduleSettings,
   type ScheduleSetup,
+  type ScheduleSetupChoice,
+  type SetupField,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
 import { Button, ListCard, ListRow, Screen, SectionHeader } from '../components'
 import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
+import { DangerText } from '../components/DangerText'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { PickerDialog } from '../components/PickerDialog'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { FieldPickerScene } from './FieldPickerScene'
 import { gameTimeLabel } from './SchedulePreviewScreen'
 import {
   type GridColumn,
@@ -36,6 +40,21 @@ import { sizesLabel } from './VenueScreen'
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
   return setup.seasons.filter(season => setup.seasonIds.includes(season.id))
+}
+
+/**
+ * A run field's detail: its sizes, and, for a field of a venue the league
+ * doesn't own, the venue and who owns it.
+ */
+export function setupFieldDetail(field: SetupField): string {
+  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
+  const sizes = sizesLabel(field.sizes)
+  if (field.ours) return sizes
+  const owners =
+    field.ownerNames.length === 0
+      ? 'unclaimed'
+      : `claimed by ${field.ownerNames.join(', ')}`
+  return `${sizes} · ${field.venueName} · ${owners}`
 }
 
 /**
@@ -72,6 +91,7 @@ export function AutoSchedulerScreen({
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
   const [asking, setAsking] = useState<{ existing: number }>()
   const [building, setBuilding] = useState(false)
+  const [picking, setPicking] = useState(false)
   // Each season's save in flight, which its next save waits for, and the
   // settings its last save stored, which that next save builds on,
   // so a sheet's save can't send back a number a cell's save just changed.
@@ -156,7 +176,7 @@ export function AutoSchedulerScreen({
     )
   }
   const choose = useCallback(
-    async (choice: { seasonIds: string[]; fieldIds: string[] }) => {
+    async (choice: ScheduleSetupChoice) => {
       setBusy(true)
       setError('')
       try {
@@ -358,7 +378,8 @@ export function AutoSchedulerScreen({
                       .filter(id =>
                         id === season.id ? !on : setup.seasonIds.includes(id)
                       ),
-                    fieldIds: liveFieldIds
+                    fieldIds: liveFieldIds,
+                    addedFieldIds: setup.addedFieldIds
                   }).catch(() => undefined)
                 }}
               />
@@ -402,7 +423,16 @@ export function AutoSchedulerScreen({
         <SectionHeader
           title="Fields for this run"
           note={String(fields.length)}
+          // Beside two actions, a phone wraps the title rather than cut it.
+          titleLines={2}
           actions={[
+            {
+              label: 'Add field',
+              accessibilityLabel: 'Add a field to this run',
+              onPress: () => {
+                setPicking(true)
+              }
+            },
             {
               label: 'Field Manager',
               accessibilityLabel: 'Open the Field Manager',
@@ -412,35 +442,60 @@ export function AutoSchedulerScreen({
         />
         {setup.fields.length === 0 ? (
           <Text style={styles.meta}>
-            Your league has no fields yet. Claim a venue and add its fields in
-            the Field Manager.
+            Add any field in the registry, or claim a venue and add its fields
+            in the Field Manager.
           </Text>
         ) : (
           <ListCard>
-            {setup.fields.map(field => (
-              <CheckRow
-                key={field.id}
-                label={`${field.name}, ${field.venueName}`}
-                detail={
-                  field.deleted
-                    ? 'Deleted. Uncheck it to leave it out.'
-                    : sizesLabel(field.sizes)
-                }
-                checked={setup.fieldIds.includes(field.id)}
-                disabled={busy}
-                onToggle={() => {
-                  const on = setup.fieldIds.includes(field.id)
-                  choose({
-                    seasonIds: setup.seasonIds,
-                    fieldIds: setup.fields
-                      .map(item => item.id)
-                      .filter(id =>
-                        id === field.id ? !on : liveFieldIds.includes(id)
-                      )
-                  }).catch(() => undefined)
-                }}
-              />
-            ))}
+            {setup.fields.map(field => {
+              const label = `${field.name}, ${field.venueName}`
+              const row = (
+                <CheckRow
+                  key={field.id}
+                  label={label}
+                  detail={setupFieldDetail(field)}
+                  checked={setup.fieldIds.includes(field.id)}
+                  disabled={busy}
+                  onToggle={() => {
+                    const on = setup.fieldIds.includes(field.id)
+                    choose({
+                      seasonIds: setup.seasonIds,
+                      fieldIds: setup.fields
+                        .map(item => item.id)
+                        .filter(id =>
+                          id === field.id ? !on : liveFieldIds.includes(id)
+                        ),
+                      addedFieldIds: setup.addedFieldIds
+                    }).catch(() => undefined)
+                  }}
+                />
+              )
+              // A field added from another venue stays listed, checked or
+              // not, until it is removed, which also takes it off the run.
+              if (field.ours || !setup.addedFieldIds.includes(field.id))
+                return row
+              return (
+                <View key={field.id} style={styles.fieldRow}>
+                  <View style={styles.fieldCheck}>{row}</View>
+                  <View style={styles.removeCell}>
+                    <DangerText
+                      label="Remove"
+                      accessibilityLabel={`Remove ${label} from the list`}
+                      disabled={busy}
+                      onPress={() => {
+                        choose({
+                          seasonIds: setup.seasonIds,
+                          fieldIds: liveFieldIds.filter(id => id !== field.id),
+                          addedFieldIds: setup.addedFieldIds.filter(
+                            id => id !== field.id
+                          )
+                        }).catch(() => undefined)
+                      }}
+                    />
+                  </View>
+                </View>
+              )
+            })}
           </ListCard>
         )}
         <SectionHeader title="Early warnings" note={String(checks.length)} />
@@ -513,6 +568,29 @@ export function AutoSchedulerScreen({
           </>
         )}
       </View>
+      {picking && (
+        <FieldPickerScene
+          client={client}
+          onChooseField={chosen => {
+            setPicking(false)
+            choose({
+              seasonIds: setup.seasonIds,
+              fieldIds: [
+                ...liveFieldIds.filter(id => id !== chosen.id),
+                chosen.id
+              ],
+              // It stays listed once unchecked, until it is removed.
+              addedFieldIds: [
+                ...setup.addedFieldIds.filter(id => id !== chosen.id),
+                chosen.id
+              ]
+            }).catch(() => undefined)
+          }}
+          onClose={() => {
+            setPicking(false)
+          }}
+        />
+      )}
       {asking != null && (
         <ChoiceSheet
           title={`These seasons already have ${asking.existing === 1 ? 'an upcoming game' : `${asking.existing} upcoming games`}`}
@@ -625,5 +703,17 @@ export const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
     color: '#211B00'
+  },
+  fieldRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const
+  },
+  fieldCheck: { flex: 1 },
+  removeCell: {
+    alignSelf: 'stretch' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: theme.rem(1),
+    borderLeftWidth: 1,
+    borderLeftColor: theme.defaultBorderColor
   }
 }))

@@ -214,6 +214,48 @@ export async function seedFields(
   return withOne.fields.find(field => field.name === 'Field 1')!.id
 }
 
+/** Harbor Field, a venue in the registry nobody has claimed. */
+export const HARBOR_VENUE = 'ven_autoSchedulerHarbor'
+/** Its one field, Harbor Diamond. */
+export const HARBOR_DIAMOND = 'fld_autoSchedulerHarborDiamond'
+
+/**
+ * Puts the Google stub's Harbor Field in the registry as a venue nobody has
+ * claimed, with one field, Harbor Diamond: 50/70, Saturdays 08:00–18:00,
+ * open 2026-10-01 to 2027-09-30. An unclaimed venue has no owner to add its
+ * fields through the API, so they are written directly, as a venue whose
+ * last owner left would hold them. Returns the field's id.
+ */
+export async function seedHarborField(
+  fx: AutoSchedulerFixture
+): Promise<string> {
+  await fx.f.h.db
+    .insertInto('venues')
+    .values({
+      id: HARBOR_VENUE,
+      google_place_id: 'harbor-field',
+      name: 'Harbor Field',
+      address: '1 Demo Way, Demo City',
+      latitude: 40.05,
+      longitude: -75.18,
+      timezone: SEASON_TIMEZONE
+    })
+    .execute()
+  await fx.f.h.db
+    .insertInto('venue_fields')
+    .values({
+      id: HARBOR_DIAMOND,
+      venue_id: HARBOR_VENUE,
+      name: 'Harbor Diamond',
+      sizes: ['50/70'],
+      starts_on: '2026-10-01',
+      ends_on: '2027-09-30',
+      hours: JSON.stringify([{ weekday: 6, start: '08:00', end: '18:00' }])
+    })
+    .execute()
+  return HARBOR_DIAMOND
+}
+
 /** The state the full pass reaches just before a scenario. */
 export async function seedThrough(
   fx: AutoSchedulerFixture,

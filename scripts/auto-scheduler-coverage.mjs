@@ -123,7 +123,9 @@ const appSuites = [
   'src/app/components/WideTable.test.tsx',
   'src/app/screens/LeaguePage.test.tsx',
   // Fixes M4: blackout ranges.
-  'src/app/components/BlackoutDatesEditor.test.tsx'
+  'src/app/components/BlackoutDatesEditor.test.tsx',
+  // Fixes M6: any registry field for a run, through the picker's field mode.
+  'src/app/screens/FieldPickerScene.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

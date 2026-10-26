@@ -7,6 +7,7 @@ import {
   defaultScheduleSettings,
   type ScheduleSettings,
   type ScheduleSetup,
+  type ScheduleSetupChoice,
   type SeasonScheduleSettings,
   type SetupField
 } from '../../common/seasonScheduling'
@@ -255,31 +256,47 @@ async function ownedVenueIds(
   ]
 }
 
-/** Which of these venues somebody owns. */
-async function claimedVenueIds(
+/**
+ * Who owns each of these venues: the leagues whose claims count, by id
+ * and name.
+ */
+async function venueOwners(
   db: Db,
   venueIds: string[],
   clock: Clock
-): Promise<Set<string>> {
-  if (venueIds.length === 0) return new Set()
+): Promise<Map<string, Array<{ id: string; name: string }>>> {
+  const owners = new Map<string, Array<{ id: string; name: string }>>()
+  if (venueIds.length === 0) return owners
   const claims = await db
     .selectFrom('venue_claims')
-    .selectAll()
-    .where('venue_id', 'in', venueIds)
-    .where('status', 'in', ['pending', 'approved'])
+    .innerJoin('leagues', 'leagues.id', 'venue_claims.league_id')
+    .selectAll('venue_claims')
+    .select('leagues.name as league_name')
+    .where('venue_claims.venue_id', 'in', venueIds)
+    .where('venue_claims.status', 'in', ['pending', 'approved'])
     .execute()
-  return new Set(
-    claims
-      .filter(claim => claimCounts(claim, clock))
-      .map(claim => claim.venue_id)
-  )
+  for (const claim of claims) {
+    if (!claimCounts(claim, clock)) continue
+    const list = owners.get(claim.venue_id) ?? []
+    if (!list.some(owner => owner.id === claim.league_id))
+      list.push({ id: claim.league_id, name: claim.league_name })
+    owners.set(claim.venue_id, list)
+  }
+  return owners
 }
 
 async function setupFields(
   db: Db,
-  where: { venueIds: string[]; fieldIds: string[] }
+  leagueId: string,
+  where: { venueIds: string[]; fieldIds: string[]; addedFieldIds: string[] },
+  clock: Clock
 ): Promise<SetupField[]> {
-  if (where.venueIds.length === 0 && where.fieldIds.length === 0) return []
+  if (
+    where.venueIds.length === 0 &&
+    where.fieldIds.length === 0 &&
+    where.addedFieldIds.length === 0
+  )
+    return []
   const rows = await db
     .selectFrom('venue_fields')
     .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')
@@ -305,29 +322,51 @@ async function setupFields(
             ]),
         ...(where.fieldIds.length === 0
           ? []
-          : [eb('venue_fields.id', 'in', where.fieldIds)])
+          : [eb('venue_fields.id', 'in', where.fieldIds)]),
+        // An added field is listed until it is removed, or deleted.
+        ...(where.addedFieldIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('venue_fields.id', 'in', where.addedFieldIds),
+                eb('venue_fields.deleted_at', 'is', null)
+              ])
+            ])
       ])
     )
     .orderBy('venues.name')
     .orderBy('venue_fields.name')
     .orderBy('venue_fields.id')
     .execute()
-  return rows.map(row => ({
-    id: row.id,
-    name: row.name,
-    venueId: row.venue_id,
-    venueName: row.venue_name,
-    sizes: row.sizes.map(size => asFieldSize(size)),
-    startsOn: calendarDateText(row.starts_on),
-    endsOn: calendarDateText(row.ends_on),
-    deleted: row.deleted_at != null
-  }))
+  const owners = await venueOwners(
+    db,
+    [...new Set(rows.map(row => row.venue_id))],
+    clock
+  )
+  return rows.map(row => {
+    const owning = owners.get(row.venue_id) ?? []
+    return {
+      id: row.id,
+      name: row.name,
+      venueId: row.venue_id,
+      venueName: row.venue_name,
+      sizes: row.sizes.map(size => asFieldSize(size)),
+      startsOn: calendarDateText(row.starts_on),
+      endsOn: calendarDateText(row.ends_on),
+      deleted: row.deleted_at != null,
+      ours: owning.some(owner => owner.id === leagueId),
+      ownerNames: owning
+        .map(owner => owner.name)
+        .sort((a, b) => a.localeCompare(b))
+    }
+  })
 }
 
 /**
  * A league's Auto-Scheduler setup: its seasons with their settings and team
- * counts, the fields of its venues and any other field already chosen, and
- * the seasons and fields chosen for the next run.
+ * counts; the fields of its venues, every field it added from another
+ * venue, chosen or not, and any other field already chosen; and the seasons
+ * and fields chosen for the next run.
  */
 export async function scheduleSetup(
   db: Db,
@@ -336,7 +375,7 @@ export async function scheduleSetup(
 ): Promise<ScheduleSetup> {
   const chosen = await db
     .selectFrom('league_schedule_setups')
-    .select(['season_ids', 'field_ids'])
+    .select(['season_ids', 'field_ids', 'added_field_ids'])
     .where('league_id', '=', leagueId)
     .executeTakeFirst()
   const seasons = await db
@@ -360,15 +399,26 @@ export async function scheduleSetup(
   const seasonIds = (chosen?.season_ids ?? []).filter(id =>
     seasons.some(season => season.id === id)
   )
-  const fields = await setupFields(db, {
-    venueIds: await ownedVenueIds(db, leagueId, clock),
-    fieldIds: chosen?.field_ids ?? []
-  })
+  const fields = await setupFields(
+    db,
+    leagueId,
+    {
+      venueIds: await ownedVenueIds(db, leagueId, clock),
+      fieldIds: chosen?.field_ids ?? [],
+      addedFieldIds: chosen?.added_field_ids ?? []
+    },
+    clock
+  )
   return {
     leagueId,
     seasonIds,
     fieldIds: (chosen?.field_ids ?? []).filter(id =>
       fields.some(field => field.id === id)
+    ),
+    // A deleted field is no longer one to add back, so it is not listed as
+    // added, and a save that resends the list needs no change to it.
+    addedFieldIds: (chosen?.added_field_ids ?? []).filter(id =>
+      fields.some(field => field.id === id && !field.deleted)
     ),
     seasons: await Promise.all(
       seasons.map(async season => {
@@ -393,12 +443,16 @@ export async function scheduleSetup(
 
 /**
  * Chooses the next run's seasons and fields: seasons of this league, and
- * fields, not deleted, of venues somebody owns.
+ * any fields in the registry that are not deleted, wherever they are and
+ * whether or not anybody claims their venue. With `addedFieldIds`, it also
+ * replaces the fields the league added from other venues, less any deleted
+ * or unknown one, which the setup lists whether they are chosen or not;
+ * left out, they are kept.
  */
 export async function saveScheduleSetup(
   db: Db,
   leagueId: string,
-  choice: { seasonIds: string[]; fieldIds: string[] },
+  choice: ScheduleSetupChoice,
   clock: Clock = realClock
 ): Promise<ScheduleSetup> {
   if (choice.seasonIds.length > 0) {
@@ -411,27 +465,36 @@ export async function saveScheduleSetup(
     if (own.length !== choice.seasonIds.length)
       throw badRequest('Choose seasons of this league')
   }
-  if (choice.fieldIds.length > 0) {
-    const fields = await db
-      .selectFrom('venue_fields')
-      .select(['id', 'venue_id'])
-      .where('id', 'in', choice.fieldIds)
-      .where('deleted_at', 'is', null)
-      .execute()
-    const claimed = await claimedVenueIds(
-      db,
-      [...new Set(fields.map(field => field.venue_id))],
-      clock
-    )
-    if (
-      fields.length !== choice.fieldIds.length ||
-      fields.some(field => !claimed.has(field.venue_id))
-    )
-      throw badRequest('Choose fields of claimed venues')
-  }
+  // The chosen fields must exist. The added ones are remembered rows, not a
+  // choice: their owners can delete them while the setup is open, and every
+  // save resends the list, so a deleted or unknown one is dropped instead.
+  const listed = [
+    ...new Set([...choice.fieldIds, ...(choice.addedFieldIds ?? [])])
+  ]
+  const live = new Set(
+    listed.length === 0
+      ? []
+      : (
+          await db
+            .selectFrom('venue_fields')
+            .select('id')
+            .where('id', 'in', listed)
+            .where('deleted_at', 'is', null)
+            .execute()
+        ).map(field => field.id)
+  )
+  if (choice.fieldIds.some(id => !live.has(id)))
+    throw badRequest('Choose fields that exist')
   const values = {
     season_ids: choice.seasonIds,
     field_ids: choice.fieldIds,
+    ...(choice.addedFieldIds == null
+      ? {}
+      : {
+          added_field_ids: [...new Set(choice.addedFieldIds)].filter(id =>
+            live.has(id)
+          )
+        }),
     updated_at: new Date()
   }
   await db

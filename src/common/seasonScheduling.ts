@@ -298,7 +298,7 @@ export const asSetupSeason = asObject({
 })
 export type SetupSeason = ReturnType<typeof asSetupSeason>
 
-/** A field of a claimed venue the run may use. */
+/** A field in the registry the run may use, and whose venue it is. */
 export const asSetupField = asObject({
   id: asString,
   name: asString,
@@ -308,7 +308,11 @@ export const asSetupField = asObject({
   /** The field's own dates; both or neither. */
   startsOn: asNullableString,
   endsOn: asNullableString,
-  deleted: asBoolean
+  deleted: asBoolean,
+  /** True when this league is among the venue's owners. */
+  ours: asBoolean,
+  /** The leagues whose claims on the venue count, by name; empty if none. */
+  ownerNames: asArray(asString)
 })
 export type SetupField = ReturnType<typeof asSetupField>
 
@@ -322,9 +326,17 @@ export const asScheduleSetup = asObject({
   leagueId: asString,
   seasonIds: asArray(asString),
   fieldIds: asArray(asString),
+  /**
+   * The fields added from other venues, which stay listed, chosen or not,
+   * until they are removed; none deleted.
+   */
+  addedFieldIds: asOptional(asArray(asString), []),
   /** Every season of the league, chosen or not. */
   seasons: asArray(asSetupSeason),
-  /** The fields of the league's venues, and any other field chosen. */
+  /**
+   * The fields of the league's venues, every added field and any other
+   * field chosen.
+   */
   fields: asArray(asSetupField)
 })
 export type ScheduleSetup = ReturnType<typeof asScheduleSetup>
@@ -345,13 +357,26 @@ export const MAX_SETUP_SEASONS = 20
 export const MAX_SETUP_FIELDS = 100
 
 /** The seasons and fields a league admin chooses for the next run. */
-export function asScheduleSetupChoice(raw: unknown): {
+/**
+ * The seasons and fields chosen for a run, and, when it is sent, the whole
+ * list of fields added from other venues; left out, that list is kept.
+ */
+export interface ScheduleSetupChoice {
   seasonIds: string[]
   fieldIds: string[]
-} {
+  addedFieldIds?: string[]
+}
+
+export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
   if (!isRecord(raw)) throw new TypeError('Choose seasons and fields')
-  return {
+  const choice: ScheduleSetupChoice = {
     seasonIds: asIdList('seasons', MAX_SETUP_SEASONS)(raw.seasonIds),
     fieldIds: asIdList('fields', MAX_SETUP_FIELDS)(raw.fieldIds)
   }
+  if (raw.addedFieldIds != null)
+    choice.addedFieldIds = asIdList(
+      'added fields',
+      MAX_SETUP_FIELDS
+    )(raw.addedFieldIds)
+  return choice
 }

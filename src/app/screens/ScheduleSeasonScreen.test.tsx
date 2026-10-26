@@ -90,6 +90,7 @@ function fakeClient(
         leagueId: 'lea_a',
         seasonIds: [],
         fieldIds: [],
+        addedFieldIds: [],
         seasons: [
           ...(options.others ?? []),
           ...(season == null ? [] : [season instanceof Error ? SEASON : season])

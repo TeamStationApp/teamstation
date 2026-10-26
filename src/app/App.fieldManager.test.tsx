@@ -67,6 +67,7 @@ function signedIn(canManage = true): void {
     leagueId,
     seasonIds: ['sea_a'],
     fieldIds: [],
+    addedFieldIds: [],
     seasons: [
       {
         id: 'sea_a',

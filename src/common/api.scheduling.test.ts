@@ -26,6 +26,7 @@ const SETUP: ScheduleSetup = {
   leagueId: 'lea/a',
   seasonIds: ['sea_a'],
   fieldIds: ['fld_one'],
+  addedFieldIds: [],
   seasons: [
     {
       id: 'sea_a',
@@ -48,7 +49,9 @@ const SETUP: ScheduleSetup = {
       sizes: ['50/70'],
       startsOn: null,
       endsOn: '2027-09-30',
-      deleted: false
+      deleted: false,
+      ours: true,
+      ownerNames: ['Demo League A']
     }
   ]
 }
