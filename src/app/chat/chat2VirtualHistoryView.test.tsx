@@ -660,3 +660,241 @@ describe('virtualized chat message history', function () {
     expect(layout.rowTop('msg_170') - scroller().scrollTop).equals(120)
   })
 })
+
+/**
+ * A browser lays a virtualized row where the list's container puts it (its
+ * `top` within the item area) at the row's own height. Rows of the earlier
+ * page are taller than the list's estimate, so the list learns their sizes
+ * only as they mount and measure.
+ */
+function listLayout(heights: Map<string, number>): {
+  readerTop: (id: string) => number | undefined
+} {
+  const history = (): HTMLElement | null =>
+    document.querySelector('[data-testid="chat-message-history"]')
+  const scrollTop = (): number => history()?.scrollTop ?? 0
+  const containerOf = (node: Element): HTMLElement | null => {
+    for (let at: Element | null = node; at != null; at = at.parentElement) {
+      const row = /^chat-message-row-(.+)$/.exec(
+        (at.firstElementChild as HTMLElement | null)?.dataset?.testid ?? ''
+      )
+      if (row != null && (at as HTMLElement).style.top !== '')
+        return at as HTMLElement
+    }
+    return null
+  }
+  const idOf = (container: HTMLElement): string =>
+    (container.firstElementChild as HTMLElement).dataset.testid!.slice(
+      'chat-message-row-'.length
+    )
+  const contentTop = (container: HTMLElement): number =>
+    TOP + Number.parseFloat(container.style.top)
+  const bounds = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'getBoundingClientRect'
+  )
+  const original = Reflect.get(HTMLElement.prototype, 'getBoundingClientRect')
+  HTMLElement.prototype.getBoundingClientRect = function (
+    this: HTMLElement
+  ): DOMRect {
+    const id = this.dataset?.testid
+    if (id === 'chat-viewport' || id === 'chat-message-history')
+      return rect(0, VIEWPORT)
+    const container = containerOf(this)
+    if (container == null) return original.call(this)
+    const height = heights.get(idOf(container)) ?? ROW
+    return container === this
+      ? rect(contentTop(container) - scrollTop(), height + 8)
+      : rect(contentTop(container) - scrollTop(), height)
+  }
+  stops.push(() => {
+    if (bounds == null)
+      Reflect.deleteProperty(HTMLElement.prototype, 'getBoundingClientRect')
+    else
+      Object.defineProperty(
+        HTMLElement.prototype,
+        'getBoundingClientRect',
+        bounds
+      )
+  })
+  const measured = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'measureLayout'
+  )
+  Object.defineProperty(HTMLElement.prototype, 'measureLayout', {
+    configurable: true,
+    set(this: HTMLElement & { rnwMeasureLayout?: unknown }, value: unknown) {
+      this.rnwMeasureLayout = value
+    },
+    get(this: HTMLElement & { rnwMeasureLayout?: unknown }) {
+      const container = containerOf(this)
+      if (container == null) return this.rnwMeasureLayout
+      return (
+        _relative: unknown,
+        success: (x: number, y: number, width: number, height: number) => void
+      ) => {
+        success(
+          0,
+          contentTop(container),
+          360,
+          heights.get(idOf(container)) ?? ROW
+        )
+      }
+    }
+  })
+  stops.push(() => {
+    if (measured == null)
+      Reflect.deleteProperty(HTMLElement.prototype, 'measureLayout')
+    else Object.defineProperty(HTMLElement.prototype, 'measureLayout', measured)
+  })
+  return {
+    readerTop: id => {
+      const row = document.querySelector(
+        `[data-testid="chat-message-row-${id}"]`
+      )
+      const container = row == null ? null : containerOf(row)
+      return container == null ? undefined : contentTop(container) - scrollTop()
+    }
+  }
+}
+
+describe('virtualized earlier pages in a browser layout', function () {
+  async function earlierPage(
+    scrollBeforeSize: boolean,
+    reader = { id: 'msg_210', relativeY: 120, offset: 600 }
+  ): Promise<void> {
+    const heights = new Map<string, number>()
+    for (const item of history(20, 180)) heights.set(item.id, 150)
+    const state = fixture(
+      view({ messages: history(40, 200), hasEarlier: true, historyBefore: 200 })
+    )
+    let release: (() => void) | undefined
+    state.setLoad(
+      async () =>
+        await new Promise<ConversationView>(resolve => {
+          release = () => {
+            resolve({
+              ...state.shown,
+              messages: [...history(20, 180), ...state.shown.messages],
+              hasEarlier: true,
+              historyBefore: 180
+            })
+          }
+        })
+    )
+    const layout = listLayout(heights)
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: reader.offset,
+      followNewest: false,
+      scrollAnchor: { id: reader.id, relativeY: reader.relativeY }
+    })
+    await render(state.engine, new ChatDraftOwner(workspace))
+    const node = scroller()
+    // The content grows by the page's actual rows once they are laid out.
+    const extent = (): number =>
+      TOP +
+      state.shown.messages.reduce(
+        (total, item) => total + (heights.get(item.id) ?? ROW) + 8,
+        0
+      ) +
+      400
+    Object.defineProperties(node, {
+      clientHeight: { configurable: true, value: VIEWPORT },
+      clientWidth: { configurable: true, value: 360 },
+      scrollHeight: { configurable: true, get: extent },
+      scrollWidth: { configurable: true, value: 360 }
+    })
+    node.scroll = options => {
+      node.scrollTop = (options as ScrollToOptions).top ?? 0
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    }
+    const content = node.firstElementChild as HTMLElement & {
+      __reactLayoutHandler: (event: unknown) => void
+    }
+    const contentLayout = async (): Promise<void> => {
+      await act(async () => {
+        content.__reactLayoutHandler({
+          nativeEvent: {
+            layout: { x: 0, y: 0, width: 360, height: extent() }
+          }
+        })
+        await wait(60)
+      })
+    }
+    await contentLayout()
+    await settle(() => layout.readerTop(reader.id) === reader.relativeY)
+    const reading = layout.readerTop(reader.id)
+    expect(reading, 'The saved reader is restored').equals(reader.relativeY)
+    // Every position the reader is shown at, at every scroll the list makes.
+    const shown: Array<number | undefined> = []
+    node.addEventListener('scroll', () => {
+      shown.push(layout.readerTop(reader.id))
+    })
+    await act(async () => {
+      ;[...host!.querySelectorAll<HTMLElement>('[role="button"]')]
+        .find(item => item.textContent === 'Load earlier messages')!
+        .click()
+      await wait()
+    })
+    expect(release, 'The page request is outstanding').not.equals(undefined)
+    await act(async () => {
+      release!()
+      await wait(0)
+    })
+    expect(
+      layout.readerTop(reader.id),
+      'The page lands with the reader in place'
+    ).equals(reading)
+    if (scrollBeforeSize) {
+      await act(async () => {
+        node.dispatchEvent(
+          new window.WheelEvent('wheel', { bubbles: true, deltaY: -50 })
+        )
+        node.scrollTop -= 50
+        node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        await wait(150)
+      })
+      const chosen = node.scrollTop
+      // The content size notification arrives after the person's scroll.
+      await contentLayout()
+      await act(async () => {
+        await wait(300)
+      })
+      expect(
+        node.scrollTop,
+        'No late correction replaces the person’s own scroll'
+      ).equals(chosen)
+      return
+    }
+    // The browser's content size notification and the new rows' sizes arrive
+    // after the page; the reader must not move for either.
+    await contentLayout()
+    await act(async () => {
+      await wait(300)
+    })
+    expect(layout.readerTop(reader.id)).equals(reading)
+    expect(
+      shown.filter(top => top !== undefined && top !== reading),
+      'No frame shows the reader elsewhere'
+    ).deep.equals([])
+    expect(mounted()).includes(reader.id)
+  }
+
+  it('keeps the reader row in place while the earlier page measures', async function () {
+    await earlierPage(false)
+  })
+
+  it('drops a late correction once the person scrolls', async function () {
+    await earlierPage(true)
+  })
+
+  it('keeps a reader at the top while the page rows above it measure taller than estimated', async function () {
+    // The earlier control is in view: the new rows mount just above the
+    // held reader and report their real, taller sizes after the page lands.
+    await earlierPage(false, { id: 'msg_200', relativeY: TOP, offset: 0 })
+  })
+})
