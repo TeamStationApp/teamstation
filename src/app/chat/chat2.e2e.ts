@@ -3628,7 +3628,7 @@ export class Scenarios {
         let blocked=false;for(let n=hit;n!==h;n=n.parentElement){if(!n)throw Error('Actual wheel ancestry required');const s=getComputedStyle(n);if(n.matches('input,textarea,select,button,[contenteditable],[role="slider"],[role="combobox"],[role="listbox"]')||(n.scrollHeight>n.clientHeight&&['auto','scroll'].includes(s.overflowY)))blocked=true}
         if(!blocked)return {positioned:false};
         const body=one(${JSON.stringify('chat-message-body-' + target.id)});if(!b.contains(body))throw Error('Exact target body must belong to the wheel source');const rect=body.getBoundingClientRect();if(![rect.x,rect.y,rect.width,rect.height].every(Number.isFinite)||rect.width<=0||rect.height<=0)throw Error('Positive actual wheel source body required');
-        const before=h.scrollTop;h.scrollTop+=rect.y+rect.height/2-y;h.dispatchEvent(new Event('scroll'));return {positioned:true,before,after:h.scrollTop,body:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},wheelPoint:{x,y}};
+        ${WEB_OWNED_SCROLL}const before=h.scrollTop;own(h.scrollTop+rect.y+rect.height/2-y);return {positioned:true,before,after:h.scrollTop,body:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},wheelPoint:{x,y}};
       `,
         signal
       )
