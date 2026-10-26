@@ -1435,6 +1435,48 @@ describe('a swipe to reply', function () {
     expect(text()).equals('bubble')
   })
 
+  it('hands the detector a pan that starts, follows, replies and springs back', async function () {
+    let started = 0
+    let replies = 0
+    await render(
+      <SwipeToReply
+        enabled
+        onStart={() => (started += 1)}
+        onReply={() => (replies += 1)}
+      >
+        <span data-testid="swiped">bubble</span>
+      </SwipeToReply>
+    )
+    // The gesture the detector was given, from the bubble's React fiber: the
+    // web build cannot drag one, so its own callbacks are called.
+    const node = document.querySelector('[data-testid="swiped"]')!
+    const key = Object.keys(node).find(name => name.startsWith('__reactFiber'))!
+    interface Fiber {
+      memoizedProps?: { gesture?: { config: Record<string, unknown> } }
+      return?: Fiber
+    }
+    let fiber = (node as unknown as Record<string, Fiber | undefined>)[key]
+    while (fiber != null && fiber.memoizedProps?.gesture == null)
+      fiber = fiber.return
+    const config = fiber!.memoizedProps!.gesture!.config as {
+      onUpdate: (event: { translationX: number }) => void
+      onDeactivate: (event: { translationX: number; canceled: boolean }) => void
+      onFinalize: () => void
+    }
+    const shift = (): string => node.parentElement!.style.transform
+    await act(async () => {
+      config.onUpdate({ translationX: 40 })
+    })
+    expect(started).equals(1)
+    expect(shift()).contains('translateX(40px)')
+    await act(async () => {
+      config.onDeactivate({ translationX: 500, canceled: false })
+      config.onFinalize()
+    })
+    expect(replies).equals(1)
+    expect(shift()).contains('translateX(0px)')
+  })
+
   it('follows the finger, replies past the threshold, and springs back', function () {
     const moved: number[] = []
     let replies = 0
