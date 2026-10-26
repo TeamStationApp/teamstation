@@ -4,7 +4,8 @@ import {
   type ChatKeyRecord,
   type ChatKeyStore,
   recordToJson,
-  storedRecordFromJson
+  storedRecordFromJson,
+  UnreadableKeyRecordError
 } from './keyRecord'
 
 /**
@@ -15,6 +16,12 @@ import {
  * and keeps it out of every backup and every other phone, so a restored
  * backup is a new device that links or resets. The browser keeps the same
  * record in IndexedDB (`keyStore.ts`).
+ *
+ * The store makes one call to the module at a time. On Android the module
+ * saves and reads one at a time, but removes the Keystore key at once, on
+ * another thread: a wipe during a save leaves the new record sealed under
+ * a key that is gone, and every read after fails its authentication tag
+ * until something saves over it.
  */
 export const KEY_SERVICE = 'app.teamstation.chat'
 
@@ -32,34 +39,74 @@ export type KeychainModule = Pick<
   >
 }
 
+/**
+ * Whether the Android Keystore refused the saved record itself: it does
+ * not open under its key (a failed authentication tag), which no later
+ * read changes.
+ */
+function undecryptable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const { code } = error as { code?: unknown }
+  return (
+    (code === 'E_CRYPTO_FAILED' ||
+      `${error.name} ${error.message}`.includes('CryptoFailedException')) &&
+    /decryption failed|authentication tag verification failed/i.test(
+      error.message
+    )
+  )
+}
+
 export function nativeKeyStore(keychain: KeychainModule): ChatKeyStore {
+  let queue: Promise<unknown> = Promise.resolve()
+  /** Runs `call` after every call before it, whether or not they failed. */
+  const inTurn = async <T>(call: () => Promise<T>): Promise<T> => {
+    const run = queue.then(call)
+    queue = run.catch(() => undefined)
+    return await run
+  }
+
   return {
     async load(): Promise<ChatKeyRecord | undefined> {
-      const found = await keychain.getGenericPassword({ service: KEY_SERVICE })
+      let found: Awaited<ReturnType<KeychainModule['getGenericPassword']>>
+      try {
+        found = await inTurn(
+          async () =>
+            await keychain.getGenericPassword({ service: KEY_SERVICE })
+        )
+      } catch (error) {
+        // A Keychain or Keystore that will not answer (locked, unavailable)
+        // throws as it is: that is not the record, and resetting would not
+        // help. A record its key does not open is the record's fault.
+        if (undecryptable(error))
+          throw new UnreadableKeyRecordError('undecryptable')
+        throw error
+      }
       if (found === false) return undefined
-      // A Keychain or Keystore that will not answer throws as it is: that
-      // is not the record, and resetting would not help.
       return storedRecordFromJson(found.password)
     },
 
     async save(record: ChatKeyRecord): Promise<void> {
-      const saved = await keychain.setGenericPassword(
-        'chat',
-        recordToJson(record),
-        {
-          service: KEY_SERVICE,
-          accessible: keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
-        }
+      const saved = await inTurn(
+        async () =>
+          await keychain.setGenericPassword('chat', recordToJson(record), {
+            service: KEY_SERVICE,
+            accessible: keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
+          })
       )
       if (saved === false) throw new Error('The chat keys could not be saved')
     },
 
     async wipe(): Promise<void> {
-      await keychain.resetGenericPassword({ service: KEY_SERVICE })
+      await inTurn(
+        async () =>
+          await keychain.resetGenericPassword({ service: KEY_SERVICE })
+      )
     },
 
     async exists(): Promise<boolean> {
-      return await keychain.hasGenericPassword({ service: KEY_SERVICE })
+      return await inTurn(
+        async () => await keychain.hasGenericPassword({ service: KEY_SERVICE })
+      )
     }
   }
 }
