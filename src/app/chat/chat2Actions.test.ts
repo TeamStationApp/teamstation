@@ -10216,7 +10216,9 @@ describe('native absent history paging', function () {
             ? /advance/
             : fault === 'no-progress'
               ? /Timeout|abort/i
-              : /earlier Button/
+              : // With no earlier control in the window, the climb to it
+                // refuses instead.
+                /earlier Button|anchor element required: Load earlier messages/
         )
         expect(
           m.scenario.observations.some(
