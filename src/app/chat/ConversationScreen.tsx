@@ -10,7 +10,6 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
-  ScrollView,
   Text,
   useWindowDimensions,
   View
@@ -49,6 +48,11 @@ import { ChatConversationIdentity } from './ChatConversationIdentity'
 import { ChatDropTarget } from './ChatDropTarget'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
+import {
+  type ChatHistoryHandle,
+  ChatHistoryList,
+  useChatHistoryKeyboard
+} from './ChatHistoryList'
 import { anchorAfterChromeChange } from './chatLayoutModel'
 import {
   type ComposerChange,
@@ -166,6 +170,8 @@ export function ConversationScreen(
   })
   const readableTop = useRef(viewport.readableTop)
   readableTop.current = viewport.readableTop
+  const contentTop = useRef(viewport.contentTop)
+  contentTop.current = viewport.contentTop
   const focusComposer = useRef<(selection?: ComposerSelection) => void>(
     () => {}
   )
@@ -347,6 +353,14 @@ export function ConversationScreen(
     | undefined
   >(undefined)
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
+  // Scenes with their own fields (mention search, emoji search) take the
+  // keyboard back, so Android resizes the window for them as it did before.
+  const keyboard = useChatHistoryKeyboard({
+    closedClearance: viewport.closedClearance,
+    keyboardOffset: viewport.keyboardOffset,
+    active:
+      props.active !== false && mentionChoosing == null && reacting == null
+  })
   const readRevision = useRef<number | undefined>(undefined)
   const paneActive = useRef(props.active !== false)
   paneActive.current = props.active !== false
@@ -360,7 +374,11 @@ export function ConversationScreen(
   const [documentActive, setDocumentActive] = useState(readDocumentActive)
   useEffect(() => watchReadDocumentActive(setDocumentActive), [])
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
-  const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const scroller = useRef<ChatHistoryHandle>(null)
+  // Rows above the virtualized history: banners and the earlier-page control.
+  const historyHeader = useRef(0)
+  // Rows kept mounted off screen: a jump's target while it is measured.
+  const [mountedTarget, setMountedTarget] = useState<string>()
   // Where the list is, to keep it on the newest message while the person
   // is there: a list read at its bottom follows what arrives, one scrolled
   // up to older messages stays put.
@@ -460,6 +478,12 @@ export function ConversationScreen(
       : undefined
   )
   const historyRestorations = useRef(0)
+  // Where the virtualized list first renders its window: the latest rows for a
+  // follower, or the saved anchor's row for a reader (measured exactly below).
+  const initialScroll = useRef<
+    'end' | { index: number; viewOffset: number } | undefined
+  >(undefined)
+  const initialScrollChosen = useRef(false)
   const restoringAnchor = useRef(false)
   const restoreAnchorDirty = useRef(false)
   const exhaustedPageRestorer = useRef<() => void>(() => {})
@@ -532,6 +556,17 @@ export function ConversationScreen(
     draftOwner.write(conversationId, next)
     onDraftChange(next)
     onMembers()
+  }
+  /**
+   * A row's top in scroll content, where the virtualized list places it.
+   * Mounted rows sit exactly there; an unmounted row's place is the list's
+   * estimate until its neighbours are measured.
+   */
+  const contentYOf = (id: string): number | undefined => {
+    const position = scroller.current?.state()?.positionByKey(id)
+    return position == null || !Number.isFinite(position)
+      ? undefined
+      : contentTop.current + historyHeader.current + position
   }
   const readingAnchor = useCallback(
     (
@@ -717,6 +752,7 @@ export function ConversationScreen(
       }
     }
     setResolvingJump(false)
+    if (measuringJump.current == null) setMountedTarget(undefined)
     atBottom.current = following
     restoreTarget.current = undefined
     restoreAnchor.current = undefined
@@ -922,11 +958,18 @@ export function ConversationScreen(
     id: string,
     cancelled: () => boolean,
     relativeToViewport = false,
-    body = false
+    body = false,
+    requireMount = false
   ): Promise<number | undefined> => {
     const deadline = Date.now() + 2000
     while (!cancelled() && Date.now() < deadline) {
       const row = (body ? bodyRefs : messageRefs).current.get(id)
+      // A row the window has unmounted is placed where the list lays it out.
+      // Only a mounted row can say where its body or the viewport is.
+      if (row == null && !requireMount && !relativeToViewport && !body) {
+        const placed = contentYOf(id)
+        if (placed != null) return placed
+      }
       const content = relativeToViewport
         ? scroller.current?.getNativeScrollRef()
         : scroller.current?.getInnerViewRef()
@@ -1273,13 +1316,15 @@ export function ConversationScreen(
         }
         // Measure the mounted row relative to scroll content. Paging resolves
         // before native/DOM layout, so wait for actual geometry, not a guessed delay.
+        // The virtualized window keeps the target mounted wherever it is.
         prepend.current = undefined
+        if (mounted.current) setMountedTarget(id)
         const cancelled = (): boolean =>
           generation !== jumpGeneration.current ||
           !mounted.current ||
           !paneActive.current ||
           engine.view(conversationId) == null
-        const y = await measurePosition(id, cancelled, false, attention)
+        const y = await measurePosition(id, cancelled, false, attention, true)
         if (cancelled()) {
           if (measuringJump.current === generation)
             measuringJump.current = undefined
@@ -1291,7 +1336,9 @@ export function ConversationScreen(
         if (y == null || current?.status !== 'ok')
           throw new Error('Message unavailable')
         const requested = Math.max(0, y - readableTop.current - theme.rem(0.5))
-        const rowY = attention ? await measurePosition(id, cancelled) : y
+        const rowY = attention
+          ? await measurePosition(id, cancelled, false, false, true)
+          : y
         if (cancelled()) return
         if (
           rowY == null ||
@@ -1315,11 +1362,13 @@ export function ConversationScreen(
         clearTimeout(highlightTimer.current)
         highlightTimer.current = setTimeout(() => {
           setHighlight(undefined)
+          setMountedTarget(current => (current === id ? undefined : current))
         }, 1500)
       })
       .catch(() => {
         if (generation === jumpGeneration.current) {
           measuringJump.current = undefined
+          setMountedTarget(undefined)
           setResolvingJump(false)
           setJumpRetry({ id, attention })
           setError(lstrings.chat_message_unavailable)
@@ -1415,7 +1464,7 @@ export function ConversationScreen(
     }
     if (
       previous.top === viewport.readableTop &&
-      previous.bottom === viewport.contentBottom
+      (previous.bottom === viewport.contentBottom || keyboard.managesEndInset)
     )
       return
     if (!mounted.current || !paneActive.current) return
@@ -1450,7 +1499,12 @@ export function ConversationScreen(
       }
       restoreForGeometry.current()
     }
-  }, [viewport.readableTop, viewport.contentBottom, theme])
+  }, [
+    viewport.readableTop,
+    viewport.contentBottom,
+    theme,
+    keyboard.managesEndInset
+  ])
 
   // Open the chat, and keep its view current from the engine's events. A
   // chat the list does not hold yet (a newcomer, a moment before the server
@@ -1722,9 +1776,22 @@ export function ConversationScreen(
       )
         return
       const below: string[] = []
+      const readingBottom =
+        scrolled.current.offset + frame.height - viewport.contentBottom
       for (const { target, body } of measured) {
-        // Unmounted cached rows precede the visible history frontier.
-        if (body == null) continue
+        // A row the virtualized window has not mounted is never viewed. One
+        // laid out below the reading band still waits there; cached rows
+        // before the visible history frontier are not laid out at all.
+        if (body == null) {
+          const y = contentYOf(target.id)
+          if (
+            y != null &&
+            y > readingBottom &&
+            !messageRefs.current.has(target.id)
+          )
+            below.push(target.id)
+          continue
+        }
         const current = engine.view(conversationId)
         if (
           current == null ||
@@ -1852,6 +1919,7 @@ export function ConversationScreen(
     []
   )
 
+  if (view == null) initialScrollChosen.current = false
   if (failed && view == null) {
     return (
       <Screen>
@@ -2202,6 +2270,248 @@ export function ConversationScreen(
       nativeMomentumFromDrag.current = false
   }
 
+  // A mounted row's layout, or the list moving it: measure where it is in the
+  // scroll content, as its own layout reported before virtualization.
+  const rowPlaced = (id: string, onlyMoved = false): void => {
+    if (!mounted.current || !paneActive.current) return
+    const row = messageRefs.current.get(id)
+    const content = scroller.current?.getInnerViewRef()
+    if (row == null || content == null) return
+    // Both tops in the window: their difference is the row's content offset
+    // whatever the scroll position, and neither restoration's measureLayout.
+    let rowTop: number | undefined
+    let contentTopInWindow: number | undefined
+    const finish = (): void => {
+      if (rowTop == null || contentTopInWindow == null) return
+      const y = rowTop - contentTopInWindow
+      if (
+        messageRefs.current.get(id) === row &&
+        (!onlyMoved || messagePositions.current.get(id) !== y)
+      )
+        rowPlacedAt(id, y)
+    }
+    row.measureInWindow((_x, top, width, height) => {
+      if (Number.isFinite(top) && width > 0 && height > 0) rowTop = top
+      finish()
+    })
+    content.measureInWindow((_x, top, width, height) => {
+      if (Number.isFinite(top) && width > 0 && height > 0)
+        contentTopInWindow = top
+      finish()
+    })
+  }
+  const rowPlacedAt = (id: string, y: number): void => {
+    if (!mounted.current || !paneActive.current) return
+    messagePositions.current.set(id, y)
+    if (
+      view.messages[0]?.seq === prepend.current?.firstSeq &&
+      view.hasEarlier === prepend.current?.hasEarlier
+    )
+      prepend.current?.positions.set(id, y)
+    if (id === prepend.current?.firstId) restoreExhaustedPage()
+    if (id === restoreAnchor.current?.id) restoreReadingAnchor()
+    else recaptureLiveAnchor()
+  }
+  // Positions move without a row's own layout when a row above changes size
+  // or the data changes. The reading anchor is chosen among mounted rows: the
+  // visible band and the rows around it are always mounted.
+  const syncPositions = (): void => {
+    if (!mounted.current || !paneActive.current) return
+    for (const id of [...messageRefs.current.keys()]) rowPlaced(id, true)
+  }
+  if (!initialScrollChosen.current) {
+    initialScrollChosen.current = true
+    const anchor = restoreAnchor.current
+    const index =
+      anchor == null
+        ? -1
+        : view.messages.findIndex(message => message.id === anchor.id)
+    initialScroll.current =
+      index >= 0 && anchor != null
+        ? { index, viewOffset: anchor.relativeY }
+        : restoreTarget.current == null
+          ? 'end'
+          : undefined
+  }
+  // Rows that must stay mounted wherever the reader is: the selected
+  // message's source while its actions are open, and a jump's target.
+  const alwaysRender = [
+    ...(currentMenu == null ? [] : [currentMenu.id]),
+    ...(mountedTarget == null || mountedTarget === currentMenu?.id
+      ? []
+      : [mountedTarget])
+  ]
+  const historyHeaderVisible =
+    view.historyLocked ||
+    approvals.length > 0 ||
+    view.unverified ||
+    view.hasEarlier ||
+    (view.messages.length === 0 && !view.earlierLost)
+  const historyHeaderRow = (
+    <View
+      style={{
+        gap: theme.rem(theme.spaceSmRem),
+        paddingBottom:
+          historyHeaderVisible && view.messages.length > 0
+            ? theme.rem(theme.spaceSmRem)
+            : 0
+      }}
+      onLayout={event => {
+        historyHeader.current = event.nativeEvent.layout.height
+        syncPositions()
+      }}
+    >
+      {view.historyLocked && (
+        <View style={[shared.banner, shared.bannerWarning]}>
+          <Icon name="lock" color={theme.warningColor} />
+          <Text style={shared.bannerText}>{lstrings.chat_history_locked}</Text>
+        </View>
+      )}
+      {approvals.map(approval => (
+        <View key={approval.requestId} style={shared.banner}>
+          <Text style={shared.bannerText}>
+            {sprintf(
+              lstrings.chat_approval_request,
+              approval.name ?? lstrings.chat_former_member
+            )}
+          </Text>
+          <Button
+            label={lstrings.chat_review}
+            kind="secondary"
+            compact
+            onPress={() => {
+              identityPress.current()
+            }}
+          />
+        </View>
+      ))}
+      {view.unverified && (
+        <View style={[shared.banner, shared.bannerWarning]}>
+          <Text style={shared.bannerText}>{lstrings.chat_unverified}</Text>
+        </View>
+      )}
+      {view.hasEarlier && (
+        <Button
+          label={lstrings.chat_load_earlier}
+          kind="text"
+          onPress={() => {
+            atBottom.current = false
+            run(async () => {
+              historyGeneration.current += 1
+              discoveryPaused.current = true
+              setAttentionLoading(false)
+              await loadOlder()
+            })
+          }}
+        />
+      )}
+      {view.messages.length === 0 && !view.earlierLost && (
+        <Text style={[shared.muted, styles.empty]}>
+          {lstrings.chat_no_messages}
+        </Text>
+      )}
+    </View>
+  )
+  const historyFooterRow =
+    notices.get(view.messages.length) == null ? null : (
+      <View
+        style={{
+          gap: theme.rem(theme.spaceSmRem),
+          paddingTop: theme.rem(theme.spaceSmRem)
+        }}
+      >
+        {notices.get(view.messages.length)?.map(renderNotice)}
+      </View>
+    )
+  const keyOfMessage = (message: MessageView): string => message.id
+  // Everything a row reads besides its message: mounted rows re-render with it.
+  const rowContext = {
+    view,
+    notices,
+    highlight,
+    bubbleWidth,
+    swipe,
+    userId
+  }
+  const renderRow = (
+    message: MessageView,
+    index: number
+  ): React.ReactElement => (
+    <View
+      key={message.id}
+      testID={`chat-message-row-${message.id}`}
+      ref={node => {
+        if (node == null) messageRefs.current.delete(message.id)
+        else messageRefs.current.set(message.id, node)
+      }}
+      collapsable={false}
+      onLayout={event => {
+        scroller.current?.reportRowHeight(
+          message.id,
+          event.nativeEvent.layout.height
+        )
+        rowPlaced(message.id)
+      }}
+    >
+      {notices.get(index)?.map(renderNotice)}
+      <MessageBubble
+        bodyRef={node => {
+          if (node == null) bodyRefs.current.delete(message.id)
+          else bodyRefs.current.set(message.id, node)
+        }}
+        onBodyLayout={() => {
+          refreshAttention.current()
+        }}
+        message={message}
+        conversation={view.conversation}
+        members={view.members}
+        engine={engine}
+        files={files}
+        maxWidth={bubbleWidth}
+        swipe={swipe && view.composer === 'enabled'}
+        actions={actionsFor(message, view)}
+        pinned={view.pins?.some(pin => pin.messageId === message.id)}
+        userId={userId}
+        onJump={jumpTo}
+        highlighted={highlight === message.id}
+        gestureGeneration={gestureGeneration}
+        showSenderAvatar={endsIncomingRun(
+          view.messages,
+          index,
+          notices.has(index + 1)
+        )}
+        onLongPress={(pressed, anchor, source) => {
+          if (actionsFor(pressed, view).length > 0) {
+            initialFollow.current = false
+            const visible = readMessageScrollPosition(
+              scroller.current,
+              messageRefs.current
+            )
+            menuReading.current = {
+              offset: visible?.offset ?? scrolled.current.offset,
+              top: readableTop.current,
+              anchor: visible?.anchor ?? readingAnchor(messagePositions.current)
+            }
+            scrolled.current.offset = menuReading.current.offset
+            scrolled.current.anchor = menuReading.current.anchor
+            scrolled.current.hasPosition = true
+            scrolled.current.followNewest = false
+            atBottom.current = false
+            setMenu(pressed)
+            setMenuAnchor(anchor)
+            setMenuSource(source)
+          }
+        }}
+        onReact={pressed => {
+          setReacting(pressed)
+        }}
+        onReply={reply}
+        onToggleReaction={(pressed, emoji, mine) => {
+          react(pressed, emoji, mine)
+        }}
+      />
+    </View>
+  )
   const content = (
     <>
       <ChatViewport viewport={viewport}>
@@ -2262,15 +2572,31 @@ export function ConversationScreen(
             />
           </View>
         )}
-        <ScrollView
+        <ChatHistoryList
           testID="chat-message-history"
-          ref={scroller}
+          listRef={scroller}
+          data={view.messages}
+          keyOf={keyOfMessage}
+          renderItem={renderRow}
+          extraData={rowContext}
+          header={historyHeaderRow}
+          footer={historyFooterRow}
+          alwaysRender={alwaysRender}
+          initialScroll={initialScroll.current}
+          estimatedItemSize={theme.rem(4)}
+          // The history fills the window behind its overlays.
+          estimatedListSize={window}
+          drawDistance={theme.rem(24)}
+          onPositions={syncPositions}
+          keyboard={keyboard.listProps}
           style={styles.fill}
           contentContainerStyle={[
             styles.messages,
             {
               paddingTop: viewport.contentTop,
-              paddingBottom: viewport.contentBottom,
+              paddingBottom: keyboard.managesEndInset
+                ? 0
+                : viewport.contentBottom,
               paddingLeft: Math.max(margin, insets.left),
               paddingRight: Math.max(margin, insets.right)
             }
@@ -2345,7 +2671,6 @@ export function ConversationScreen(
               })
             restoreReadingAnchor()
           }}
-          scrollEventThrottle={100}
           onContentSizeChange={(width, height) => {
             if (!mounted.current || !paneActive.current) return
             if (scrolled.current.contentWidth !== width) {
@@ -2458,146 +2783,7 @@ export function ConversationScreen(
             if (following) scroller.current?.scrollToEnd({ animated: false })
             else recaptureLiveAnchor()
           }}
-        >
-          {view.historyLocked && (
-            <View style={[shared.banner, shared.bannerWarning]}>
-              <Icon name="lock" color={theme.warningColor} />
-              <Text style={shared.bannerText}>
-                {lstrings.chat_history_locked}
-              </Text>
-            </View>
-          )}
-          {approvals.map(approval => (
-            <View key={approval.requestId} style={shared.banner}>
-              <Text style={shared.bannerText}>
-                {sprintf(
-                  lstrings.chat_approval_request,
-                  approval.name ?? lstrings.chat_former_member
-                )}
-              </Text>
-              <Button
-                label={lstrings.chat_review}
-                kind="secondary"
-                compact
-                onPress={() => {
-                  identityPress.current()
-                }}
-              />
-            </View>
-          ))}
-          {view.unverified && (
-            <View style={[shared.banner, shared.bannerWarning]}>
-              <Text style={shared.bannerText}>{lstrings.chat_unverified}</Text>
-            </View>
-          )}
-          {view.hasEarlier && (
-            <Button
-              label={lstrings.chat_load_earlier}
-              kind="text"
-              onPress={() => {
-                atBottom.current = false
-                run(async () => {
-                  historyGeneration.current += 1
-                  discoveryPaused.current = true
-                  setAttentionLoading(false)
-                  await loadOlder()
-                })
-              }}
-            />
-          )}
-          {view.messages.length === 0 && !view.earlierLost && (
-            <Text style={[shared.muted, styles.empty]}>
-              {lstrings.chat_no_messages}
-            </Text>
-          )}
-          {view.messages.map((message, index) => (
-            <View
-              key={message.id}
-              testID={`chat-message-row-${message.id}`}
-              ref={node => {
-                if (node == null) messageRefs.current.delete(message.id)
-                else messageRefs.current.set(message.id, node)
-              }}
-              collapsable={false}
-              onLayout={event => {
-                if (!mounted.current || !paneActive.current) return
-                const y = event.nativeEvent.layout.y
-                messagePositions.current.set(message.id, y)
-                if (
-                  view.messages[0]?.seq === prepend.current?.firstSeq &&
-                  view.hasEarlier === prepend.current?.hasEarlier
-                )
-                  prepend.current?.positions.set(message.id, y)
-                if (message.id === prepend.current?.firstId)
-                  restoreExhaustedPage()
-                if (message.id === restoreAnchor.current?.id)
-                  restoreReadingAnchor()
-                else recaptureLiveAnchor()
-              }}
-            >
-              {notices.get(index)?.map(renderNotice)}
-              <MessageBubble
-                bodyRef={node => {
-                  if (node == null) bodyRefs.current.delete(message.id)
-                  else bodyRefs.current.set(message.id, node)
-                }}
-                onBodyLayout={() => {
-                  refreshAttention.current()
-                }}
-                message={message}
-                conversation={view.conversation}
-                members={view.members}
-                engine={engine}
-                files={files}
-                maxWidth={bubbleWidth}
-                swipe={swipe && view.composer === 'enabled'}
-                actions={actionsFor(message, view)}
-                pinned={view.pins?.some(pin => pin.messageId === message.id)}
-                userId={userId}
-                onJump={jumpTo}
-                highlighted={highlight === message.id}
-                gestureGeneration={gestureGeneration}
-                showSenderAvatar={endsIncomingRun(
-                  view.messages,
-                  index,
-                  notices.has(index + 1)
-                )}
-                onLongPress={(pressed, anchor, source) => {
-                  if (actionsFor(pressed, view).length > 0) {
-                    initialFollow.current = false
-                    const visible = readMessageScrollPosition(
-                      scroller.current,
-                      messageRefs.current
-                    )
-                    menuReading.current = {
-                      offset: visible?.offset ?? scrolled.current.offset,
-                      top: readableTop.current,
-                      anchor:
-                        visible?.anchor ??
-                        readingAnchor(messagePositions.current)
-                    }
-                    scrolled.current.offset = menuReading.current.offset
-                    scrolled.current.anchor = menuReading.current.anchor
-                    scrolled.current.hasPosition = true
-                    scrolled.current.followNewest = false
-                    atBottom.current = false
-                    setMenu(pressed)
-                    setMenuAnchor(anchor)
-                    setMenuSource(source)
-                  }
-                }}
-                onReact={pressed => {
-                  setReacting(pressed)
-                }}
-                onReply={reply}
-                onToggleReaction={(pressed, emoji, mine) => {
-                  react(pressed, emoji, mine)
-                }}
-              />
-            </View>
-          ))}
-          {notices.get(view.messages.length)?.map(renderNotice)}
-        </ScrollView>
+        />
         <ChatAttentionControl
           count={attentionCount}
           loading={attentionLoading}
@@ -2616,7 +2802,7 @@ export function ConversationScreen(
             restoreAnchor.current = undefined
             atBottom.current = true
             scrolled.current.followNewest = true
-            scroller.current?.scrollToEnd({ animated: true })
+            keyboard.scrollToEnd(scroller.current, true)
           }}
           onNext={() => {
             const next = attentionTargets.current[0]
@@ -2631,9 +2817,11 @@ export function ConversationScreen(
         />
         <View
           testID="chat-composer-band"
+          ref={keyboard.composerRef}
           pointerEvents="box-none"
           onLayout={event => {
             setComposerHeight(event.nativeEvent.layout.height)
+            keyboard.onComposerLayout(event)
           }}
           style={{
             position: 'absolute',
@@ -2680,6 +2868,7 @@ export function ConversationScreen(
                 onPress={() => {
                   jumpGeneration.current += 1
                   measuringJump.current = undefined
+                  setMountedTarget(undefined)
                   setResolvingJump(false)
                   restoreReadingAnchor()
                 }}

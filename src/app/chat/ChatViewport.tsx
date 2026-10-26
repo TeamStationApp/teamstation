@@ -14,6 +14,10 @@ export type ChatViewportState = ReturnType<typeof chatLayout> & {
   frame: React.RefObject<React.ComponentRef<typeof View> | null>
   measure: () => void
   header: number
+  /** The clearance below the composer and above it, with no keyboard. */
+  closedClearance: number
+  /** The part of a keyboard's height that the closed clearance covers. */
+  keyboardOffset: number
 }
 
 export function useChatViewport(
@@ -80,26 +84,33 @@ export function useChatViewport(
     breakpoint === 'phone'
       ? (slot.navigationHeight ?? theme.rem(FLOATING_HEIGHT_REM))
       : 0
+  const input = {
+    header: slot.headerHeight,
+    paneHeader: options.paneHeader ?? 0,
+    pins: options.pins ?? 0,
+    composer: options.composer ?? 0,
+    navigation,
+    navigationBottom: floatingNavBottom(
+      Platform.OS,
+      theme.rem(FLOATING_BOTTOM_REM),
+      insets.bottom
+    ),
+    safeBottom: insets.bottom,
+    keyboardOpen: keyboardTop != null,
+    keyboardOverlap: keyboardOverlap(frameBottom, keyboardTop),
+    gap: theme.rem(1)
+  }
+  const closed = chatLayout({ ...input, keyboardOpen: false })
   return {
-    ...chatLayout({
-      header: slot.headerHeight,
-      paneHeader: options.paneHeader ?? 0,
-      pins: options.pins ?? 0,
-      composer: options.composer ?? 0,
-      navigation,
-      navigationBottom: floatingNavBottom(
-        Platform.OS,
-        theme.rem(FLOATING_BOTTOM_REM),
-        insets.bottom
-      ),
-      safeBottom: insets.bottom,
-      keyboardOpen: keyboardTop != null,
-      keyboardOverlap: keyboardOverlap(frameBottom, keyboardTop),
-      gap: theme.rem(1)
-    }),
+    ...chatLayout(input),
     frame,
     measure,
-    header: slot.headerHeight
+    header: slot.headerHeight,
+    closedClearance: closed.composerBottom + input.gap,
+    keyboardOffset:
+      closed.composerBottom -
+      input.gap / 2 +
+      Math.max(0, window.height - frameBottom)
   }
 }
 
