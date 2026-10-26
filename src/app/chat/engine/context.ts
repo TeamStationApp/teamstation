@@ -71,8 +71,9 @@ export class ChatEngineError extends Error {
 /**
  * The device's key record, written through to its store. Every change goes
  * through `update`, one at a time, so two parts of the engine never write
- * over each other. Once `live` says the engine has stopped, a change is
- * refused rather than saved: the store may hold the next user's record.
+ * over each other. Once `live` says the engine has stopped or its user
+ * has lost the store, a change is refused rather than saved: the store may
+ * be wiped, or hold the next user's record.
  */
 export class KeyHolder {
   private queue: Promise<unknown> = Promise.resolve()

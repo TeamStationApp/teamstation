@@ -135,8 +135,12 @@ export function spacedCode(code: string): string {
   return `${code.slice(0, 3)} ${code.slice(3)}`
 }
 
-/** The user each store's latest enrolment was for. */
+/**
+ * The user each store's latest enrolment was for, or `SIGNED_OUT` once
+ * `leaveChat` took the keys off it.
+ */
 const owners = new Map<ChatKeyStore, string>()
+const SIGNED_OUT = ''
 
 const inFlight = new Map<
   ChatKeyStore,
@@ -144,12 +148,20 @@ const inFlight = new Map<
 >()
 
 /**
- * Throws `StaleChatSetupError` once another user owns the setup's store.
- * Sign-out names no user: it acts for whoever the session is.
+ * Whether `userId` may still change `store`: nobody else has enrolled on it
+ * since, and nobody has signed out of it.
+ */
+export function holdsStore(store: ChatKeyStore, userId: string): boolean {
+  const owner = owners.get(store)
+  return owner == null || owner === userId
+}
+
+/**
+ * Throws `StaleChatSetupError` once `holdsStore` says no. Sign-out names no
+ * user: it acts for whoever the session is.
  */
 function stillOwner(setup: { store: ChatKeyStore; userId?: string }): void {
-  const owner = owners.get(setup.store)
-  if (setup.userId != null && owner != null && owner !== setup.userId)
+  if (setup.userId != null && !holdsStore(setup.store, setup.userId))
     throw new StaleChatSetupError()
 }
 
@@ -750,6 +762,10 @@ async function coreWithin(
  * that is there, or a store that cannot say, is revoked if this session
  * can and wiped either way, since proving the device to a new session would
  * need a signature only the core can make.
+ *
+ * From the start, chat work of the user signing out saves nothing more to
+ * the store (`holdsStore`), so nothing it was still doing puts the keys
+ * back after the wipe.
  */
 export async function leaveChat(
   setup: Pick<ChatSetup, 'client' | 'store'> & {
@@ -760,6 +776,7 @@ export async function leaveChat(
   }
 ): Promise<void> {
   const { client, store } = setup
+  owners.set(store, SIGNED_OUT)
   // Nothing stored, nothing to do, and no core to wait for. A store that
   // cannot say counts as one that may hold a record.
   if (!(await store.exists().catch(() => true))) return
@@ -776,7 +793,7 @@ export async function leaveChat(
       // Not bound to this session (it changed since): prove the device, then
       // remove it.
       if (reasonOf(error) == null || !core.ready) throw error
-      await bindDevice(setup, record)
+      await bindDevice({ client, store }, record)
       await client.revokeChatDevice(record.deviceId)
     }
   } catch {
