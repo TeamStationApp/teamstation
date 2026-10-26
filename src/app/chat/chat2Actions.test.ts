@@ -9515,8 +9515,12 @@ describe('native absent history paging', function () {
         ? 300
         : -4395.33332824707
     let targetY = fault === 'loaded' ? -500 : 300
+    // A fully loaded virtualized history mounts its target after swipes.
+    let swipes = 0
     const loaded = (): boolean =>
-      fault === 'loaded' || (fault !== 'limit' && pages === 2)
+      fault === 'loaded' ||
+      (fault === 'unmounted' && swipes >= 3) ||
+      (fault !== 'limit' && fault !== 'unmounted' && pages === 2)
     const nodes = (): PublicNode[] => [
       {
         id: 'chat-message-history',
@@ -9539,7 +9543,7 @@ describe('native absent history paging', function () {
       },
       { type: 'ScrollView', text: 'Load earlier messages' },
       { type: 'Other', text: 'Load earlier messages' },
-      ...(fault === 'exhausted'
+      ...(fault === 'exhausted' || fault === 'unmounted'
         ? []
         : Array.from({ length: fault === 'duplicate' ? 2 : 1 }, () => ({
             id: 'settings-pill-button',
@@ -9613,6 +9617,7 @@ describe('native absent history paging', function () {
           expect(Math.min(start[1], end[1])).greaterThan(170.6666717529297)
           expect(Math.max(start[1], end[1])).lessThan(700.6666870117188)
           gestures.push(args)
+          swipes += 1
           if (fault !== 'stuck') {
             const delta = (end[1] - start[1]) * 1.7
             if (loaded()) targetY += delta
@@ -9662,6 +9667,32 @@ describe('native absent history paging', function () {
     expect(paging.outcome).equals('passed')
     expect(paging.pages).has.length(2)
     expect(m.gestures).deep.equals([])
+  })
+
+  it('swipes a fully loaded virtualized history to mount an unmounted target without paging', async () => {
+    const m = model('unmounted')
+    const before = await m.scenario.ui.nodes()
+    expect(before.some(node => node.id === 'chat-bubble-' + target.id)).equals(
+      false
+    )
+    await m.scenario.nativeHistoryTarget(target)
+    expect(m.taps).deep.equals([])
+    expect(m.gestures).has.length(3)
+    const search = m.scenario.observations.find(
+      row => row.nativeLoadedTarget === target.id
+    )!
+    expect(search.outcome).equals('found')
+    expect(search.swipes).has.length(3)
+    // Latest first: the finger moves up, then down toward older rows.
+    const [latest, , older] = search.swipes as Array<{
+      startY: number
+      endY: number
+    }>
+    expect(latest.startY).greaterThan(latest.endY)
+    expect(older.startY).lessThan(older.endY)
+    expect(
+      m.scenario.observations.some(row => row.nativeHistoryTarget != null)
+    ).equals(false)
   })
 
   it('rejects explicit disabled metadata on the normalized Android earlier Button', async () => {
