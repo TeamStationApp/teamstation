@@ -50,7 +50,8 @@ export interface ChatHistoryListProps<T> {
   footer: React.ReactElement | null
   /** Rows kept mounted while off screen: jump targets and selected sources. */
   alwaysRender?: string[]
-  initialScroll?: 'end' | { index: number; viewOffset?: number }
+  /** The latest rows first; a saved reader is restored by measurement. */
+  initialScroll?: 'end'
   estimatedItemSize: number
   estimatedListSize: { width: number; height: number }
   drawDistance?: number

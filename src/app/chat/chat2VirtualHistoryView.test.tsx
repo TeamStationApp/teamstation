@@ -1044,3 +1044,70 @@ describe('virtualized reader saved under the floating pin band', function () {
     ).equals(114)
   })
 })
+
+describe('virtualized reader reopened onto a longer history', function () {
+  it('restores the saved row when the opened view adds taller rows above it', async function () {
+    // Rows above the reader are taller than the list's estimate.
+    const heights = new Map<string, number>()
+    for (const item of history(42, 198)) heights.set(item.id, 150)
+    const listed = view({ messages: history(40, 200) })
+    const opened = view({ messages: history(42, 198) })
+    let open = false
+    const state = fixture(listed)
+    // The list's cached view shows first; opening adds two earlier rows.
+    const engine: ChatScreenEngine = {
+      ...state.engine,
+      view: () => (open ? opened : listed),
+      open: async () => {
+        await wait(40)
+        open = true
+        return opened
+      }
+    }
+    const layout = listLayout(heights)
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: 2000,
+      followNewest: false,
+      scrollAnchor: { id: 'msg_215', relativeY: 200 }
+    })
+    await render(engine, new ChatDraftOwner(workspace))
+    const node = scroller()
+    const extent = (): number =>
+      TOP +
+      (open ? opened : listed).messages.reduce(
+        (total, item) => total + (heights.get(item.id) ?? ROW) + 8,
+        0
+      ) +
+      400
+    Object.defineProperties(node, {
+      clientHeight: { configurable: true, value: VIEWPORT },
+      clientWidth: { configurable: true, value: 360 },
+      scrollHeight: { configurable: true, get: extent },
+      scrollWidth: { configurable: true, value: 360 }
+    })
+    node.scroll = options => {
+      node.scrollTop = (options as ScrollToOptions).top ?? 0
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    }
+    const content = node.firstElementChild as HTMLElement & {
+      __reactLayoutHandler: (event: unknown) => void
+    }
+    for (let pass = 0; pass < 3; pass += 1)
+      await act(async () => {
+        content.__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 360, height: extent() } }
+        })
+        await wait(80)
+      })
+    await settle(() => open && layout.readerTop('msg_215') === 200)
+    expect(open).equals(true)
+    expect(
+      layout.readerTop('msg_215'),
+      'The saved row, not the row at its old index'
+    ).equals(200)
+  })
+})

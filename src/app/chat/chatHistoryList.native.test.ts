@@ -229,24 +229,16 @@ describe('native virtualized chat history', function () {
     ).equals('msg_1')
   })
 
-  it('opens a saved reader at its anchor row and lays out newly pinned rows at once', async function () {
-    const first = harness({
-      initialScroll: { index: 1, viewOffset: 40 },
-      alwaysRender: ['msg_1']
-    })
+  it('leaves a saved reader to measured restoration and lays out newly pinned rows at once', async function () {
+    // An index from the first view would name another row once the opened
+    // view adds rows above it: the list gets no index to scroll to.
+    const first = harness({ alwaysRender: ['msg_1'] })
     await mount(first.element)
-    expect(listProps.initialScrollIndex).deep.equals({
-      index: 1,
-      viewOffset: 40
-    })
+    expect(listProps.initialScrollIndex).equals(undefined)
+    expect(listProps.initialScrollAtEnd).equals(undefined)
     expect(listProps.alwaysRender).deep.equals({ keys: ['msg_1'] })
     const version = listProps.dataVersion as number
-    await mount(
-      harness({
-        initialScroll: { index: 1, viewOffset: 40 },
-        alwaysRender: ['msg_1']
-      }).element
-    )
+    await mount(harness({ alwaysRender: ['msg_1'] }).element)
     expect(listProps.dataVersion, 'Same pinned rows').equals(version)
     await mount(harness({ alwaysRender: ['msg_1', 'msg_2'] }).element)
     expect(listProps.dataVersion).equals(version + 1)
