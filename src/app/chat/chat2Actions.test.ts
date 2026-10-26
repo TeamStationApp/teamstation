@@ -8682,6 +8682,11 @@ describe('native scenario navigation and mention handoff', function () {
       readAndroidIme: async () => ({
         bounds: { x: 0, y: 600, width: 400, height: 400 }
       }),
+      readAndroidImeState: async () => ({
+        state: 'open',
+        flags: {},
+        keyboard: { x: 0, y: 600, width: 400, height: 400 }
+      }),
       assertKeyboard: async () => {
         expect(keyboard).equals(true)
         calls.push('reply-keyboard')
@@ -9032,6 +9037,8 @@ describe('native scenario navigation and mention handoff', function () {
       readAndroidIme: async () => ({
         bounds: androidImeFrame(imeRaw(), { width: 400, height: 1000 })
       }),
+      readAndroidImeState: async () =>
+        androidCaptureImeState(imeRaw(), { width: 400, height: 1000 }),
       observeAndroidIme: async () => {
         const viewport = { width: 400, height: 1000 }
         const state = androidCaptureImeState(imeRaw(), viewport)

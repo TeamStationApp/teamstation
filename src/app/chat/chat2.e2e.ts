@@ -2544,7 +2544,10 @@ export class Scenarios {
         : current.nodes.some(
               node => node.id === 'chat-composer' && node.focused === true
             )
-          ? [(await ui.readAndroidIme()).bounds]
+          ? // A phone keeps the composer focused with its keyboard hidden.
+            [(await ui.readAndroidImeState()).keyboard].filter(
+              (box): box is NonNullable<typeof box> => box != null
+            )
           : []
     if (keyboard.length > 0) end = Math.max(end, startedAt + 120000)
     // iOS swipes about a screen per read of a ~2600-node tree, and the
