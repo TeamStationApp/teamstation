@@ -29,6 +29,7 @@ import {
   type ChatSetup,
   type Enrolment,
   ensureEnrolled,
+  holdsStore,
   StaleChatSetupError
 } from './links'
 import { headOf, syncLog } from './log'
@@ -260,10 +261,27 @@ export class ChatEngine {
     return this.options.now?.() ?? Date.now()
   }
 
-  /** Stopped at sign-out, the engine enrols nobody. */
+  /**
+   * Whether the engine's user still has the key store: it was not stopped,
+   * and nobody else has enrolled on the store or signed out of it since.
+   */
+  private get live(): boolean {
+    return !this.stopped && holdsStore(this.options.store, this.options.userId)
+  }
+
+  /**
+   * Stopped at sign-out, the engine enrols nobody; once it has started, nor
+   * after its user lost the store.
+   */
   private get setup(): ChatSetup {
     const { client, store, userId, device } = this.options
-    return { client, store, userId, device, current: () => !this.stopped }
+    return {
+      client,
+      store,
+      userId,
+      device,
+      current: () => (this.context == null ? !this.stopped : this.live)
+    }
   }
 
   /** The key work's context; throws until `start()` reached `ready`. */
@@ -304,7 +322,7 @@ export class ChatEngine {
   async start(): Promise<Enrolment['state']> {
     const enrolment = await ensureEnrolled(this.setup)
     // Stopped while it ran: whoever signs in next gets an engine of their own.
-    if (this.stopped) throw new StaleChatSetupError()
+    if (!this.live) throw new StaleChatSetupError()
     if (this.context == null) {
       this.context = {
         client: this.options.client,
@@ -313,7 +331,7 @@ export class ChatEngine {
         keys: new KeyHolder(
           this.options.store,
           enrolment.record,
-          () => !this.stopped
+          () => this.live
         ),
         identities: this.identities,
         pageSize: this.options.pageSize ?? 100,
