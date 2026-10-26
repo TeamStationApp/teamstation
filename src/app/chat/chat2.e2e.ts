@@ -47,6 +47,7 @@ import {
   flattenPublicHierarchy,
   iosPublicRead,
   iosRawTree,
+  nativeClass,
   type PublicNode,
   readAndroidComposerKeyboard,
   readIosComposerKeyboard,
@@ -1072,7 +1073,8 @@ export async function observeComposerCaptureReady(
           )
         if (typeof selector.text === 'string')
           assert(
-            found.text === selector.text && found.class === 'Button',
+            found.text === selector.text &&
+              nativeClass(found.class) === 'Button',
             'Exact observed iOS composer Button required'
           )
       }
