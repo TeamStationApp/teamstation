@@ -50,6 +50,7 @@ import {
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
+import { flagLabel } from '../components/roleLabels'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -1041,16 +1042,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
   }
 }))
 
-const ROLE_LABELS: Record<Role, string> = {
-  admin: 'Admin',
-  coach: 'Coach',
-  assistant: 'Assistant',
-  scorekeeper: 'Scorekeeper',
-  songkeeper: 'Songkeeper',
-  videographer: 'Videographer'
+/**
+ * The line under a staff name: `Coach · Scorekeeper`. The flags read as the
+ * role switches name them; a function rather than a label table, which
+ * Tess's sitemap would read as the team's tabs.
+ */
+export function staffSubtitle(person: StaffEntry): string {
+  return person.roles.map(roleLabel).join(' · ')
 }
 
-/** The line under a staff name: `Coach · Scorekeeper`. */
-export function staffSubtitle(person: StaffEntry): string {
-  return person.roles.map(role => ROLE_LABELS[role]).join(' · ')
+function roleLabel(role: Role): string {
+  return role === 'admin' ? 'Admin' : flagLabel(role)
 }

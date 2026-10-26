@@ -39,6 +39,11 @@
         "Resend code",
         "Cancel email change",
         "Saving…",
+        "Chat",
+        "Chat devices",
+        "The devices that can read your chats",
+        "Reported messages",
+        "Chat messages people reported, for site administrators",
         "Walk-up songs",
         "Apple Music settings",
         "Fade Apple Music using the phone’s volume",
@@ -74,9 +79,65 @@
       "settings": []
     },
     {
+      "name": "chat",
+      "path": "/chat",
+      "title": "Chats",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "chatDevices",
+      "path": "/chat/devices",
+      "title": "Chat devices",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "chatInfo",
+      "path": "/chat/:conversationId/info",
+      "title": "Conversation information",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "chatLink",
+      "path": "/chat/link",
+      "title": "Link this device",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "chatMembers",
+      "path": "/chat/:conversationId/members",
+      "title": "Conversation information",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "chatNew",
+      "path": "/chat/new",
+      "title": "New message",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "chatReports",
+      "path": "/admin/chat/reports",
+      "title": "Reported messages",
+      "tabs": [],
+      "settings": []
+    },
+    {
       "name": "coachGame",
       "path": "/games/:gameId/coach/:teamId",
       "title": "Coach game",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "conversation",
+      "path": "/chat/:conversationId",
+      "title": "Conversation",
       "tabs": [],
       "settings": []
     },
@@ -673,6 +734,22 @@
         "Throws",
         "Saved.",
         "Save",
+        "Birth month cleared.",
+        "Birth month saved.",
+        "Birth month",
+        "Not set",
+        "Born %s %s · %s today",
+        "The month and year only, never the day. A birthday counts from the first of the month after.",
+        "Month",
+        "Year",
+        "One year earlier",
+        "One year later",
+        "Save birth month",
+        "Clear birth month",
+        "Guardians and family",
+        "Cannot load the guardians.",
+        "Nobody is linked yet.",
+        "Change guardians and family",
         "Cannot load this player’s walk-up song.",
         "Cannot remove this walk-up song.",
         "No walk-up song yet",
@@ -686,7 +763,22 @@
         "Stop",
         "Preview",
         "Tap again to remove",
-        "Remove"
+        "Remove",
+        "Guardian",
+        "Adult family member",
+        "An invitation is on its way to %s. Only that address can accept it.",
+        "%s is linked.",
+        "Done",
+        "Guardians and family of %s",
+        "A guardian joins the team through this link. An adult family member gets no access; they only count for who may message the player.",
+        "Remove %s",
+        "Add somebody",
+        "E-mail address or name",
+        "parent@example.com, or a name on the team",
+        "Add %s",
+        "Add by e-mail",
+        "Family",
+        "That person has no way to sign in. Add them by e-mail address instead."
       ]
     },
     {
