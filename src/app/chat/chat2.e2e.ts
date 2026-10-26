@@ -2685,6 +2685,36 @@ export class Scenarios {
       ;(proof.samples as unknown[]).push({ box, band })
       return { nodes, box, band }
     }
+    // A page loaded above a phone's reader can leave the next earlier control
+    // outside the rendered window, so it is in no tree at all. There the
+    // status bar's scroll to top climbs toward the history's start (where the
+    // control is the list's header) until the control mounts; each touch must
+    // mount a different set of rows.
+    if (earlier && ui.surface === 'ios' && ui.physical) {
+      const climb: Json[] = []
+      for (;;) {
+        const nodes = await ui.nodes(undefined, signal())
+        if (
+          nodes.some(matchesTarget) ||
+          nodes.some(node => node.id === 'chat-bubble-' + target.id)
+        )
+          break
+        const rows = nodes
+          .flatMap(node =>
+            node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+          )
+          .join('\n')
+        assert(
+          climb.length === 0 || climb.at(-1)!.rows !== rows,
+          'System scroll to top must move toward the earlier control'
+        )
+        assert(climb.length < 20, 'Earlier control must mount near the start')
+        climb.push({ rows })
+        proof.earlierControlClimb = climb.length
+        await ui.device.tapOnPoint({ x: 60, y: 20 }, { signal: signal() })
+        await new Promise(resolve => setTimeout(resolve, 1500))
+      }
+    }
     const initial = await read()
     if (initial == null) return handoff()
     let current = initial
@@ -2768,14 +2798,15 @@ export class Scenarios {
       // system's own scroll to top, a touch on the status bar, brings the
       // loaded history's start (where the paged-in target lies) toward the
       // reader first; the measured drags take over from there. Above a freshly
-      // loaded page one touch can stop short while the new rows measure, so
-      // the history is read until it rests, and touched at most three times,
-      // each required to bring the target nearer.
+      // loaded page one touch stops about 1,200 pt nearer while the new rows
+      // measure, so the history is read until it rests, and touched at most
+      // twenty times, each required to bring the target nearer. A phone's
+      // 450 pt drags also get three times the simulator's forty.
       const statusBar: Json[] = []
       while (
         ui.surface === 'ios' &&
         ui.physical &&
-        statusBar.length < 3 &&
+        statusBar.length < 20 &&
         current.box.y < current.band.top &&
         distance() > (current.band.bottom - current.band.top) * 8
       ) {
@@ -2799,7 +2830,7 @@ export class Scenarios {
       }
       for (let step = 0; !intersects(); step++) {
         assert(
-          step < 40 && Date.now() < end,
+          step < (ui.physical ? 120 : 40) && Date.now() < end,
           'Bounded native reading-band scroll required'
         )
         const before = distance()
