@@ -63,6 +63,13 @@ export const ROUND_TRIP_SAMPLES: Record<string, string> = {
   handle: 'h'.repeat(43)
 }
 
+/**
+ * Routes only a development build has: the chat crypto bench, whose address
+ * exists only in a served web bundle or a phone built with `TS_CHAT_BENCH=1`.
+ * Nobody using the app can open them, so Tess is never given them.
+ */
+export const DEV_ONLY_ROUTES = new Set(['chatBench'])
+
 /** The routes whose screens are settings, listed with their text. */
 const SETTINGS_ROUTES = new Set([
   'account',
@@ -117,57 +124,59 @@ export function generateSitemap(options: SitemapOptions = {}): Sitemap {
   }
   const shell = readShell(sources)
 
-  const routes = routeMembers(sources).map(member => {
-    const build = (extra: Record<string, unknown> = {}): string => {
-      let path: unknown
-      try {
-        path = routing.routePath({
-          ...member.sample,
-          ...extra
-        } as unknown as Route)
-      } catch (error) {
-        throw new Error(
-          `Route ${member.name}: routePath failed: ${String(error)}`
+  const routes = routeMembers(sources)
+    .filter(member => !DEV_ONLY_ROUTES.has(member.name))
+    .map(member => {
+      const build = (extra: Record<string, unknown> = {}): string => {
+        let path: unknown
+        try {
+          path = routing.routePath({
+            ...member.sample,
+            ...extra
+          } as unknown as Route)
+        } catch (error) {
+          throw new Error(
+            `Route ${member.name}: routePath failed: ${String(error)}`
+          )
+        }
+        if (typeof path !== 'string')
+          throw new Error(`Route ${member.name}: routePath gave no address`)
+        return member.tokens.reduce(
+          (text, [token, name]) => text.split(token).join(`:${name}`),
+          path
         )
       }
-      if (typeof path !== 'string')
-        throw new Error(`Route ${member.name}: routePath gave no address`)
-      return member.tokens.reduce(
-        (text, [token, name]) => text.split(token).join(`:${name}`),
-        path
-      )
-    }
-    const path = build()
-    roundTrip(member.name, path, routing.parseRoute)
+      const path = build()
+      roundTrip(member.name, path, routing.parseRoute)
 
-    const screen = shell.screens.get(member.name)
-    const tabs: SitemapTab[] = []
-    if (screen != null)
-      for (const list of candidateLists(sources, screen)) {
-        const param = homeOf(list, member.properties)
-        if (param == null) continue
-        for (const { id, label } of list) {
-          if (tabs.some(tab => tab.param === param && tab.id === id)) continue
-          tabs.push({ param, id, label, path: build({ [param]: id }) })
+      const screen = shell.screens.get(member.name)
+      const tabs: SitemapTab[] = []
+      if (screen != null)
+        for (const list of candidateLists(sources, screen)) {
+          const param = homeOf(list, member.properties)
+          if (param == null) continue
+          for (const { id, label } of list) {
+            if (tabs.some(tab => tab.param === param && tab.id === id)) continue
+            tabs.push({ param, id, label, path: build({ [param]: id }) })
+          }
         }
-      }
 
-    const roots =
-      screen == null
-        ? []
-        : SETTINGS_ROUTES.has(member.name)
-          ? [screen]
-          : (SETTINGS_TABS[member.name] ?? []).flatMap(component =>
-              importedFile(sources, screen, component)
-            )
-    return {
-      name: member.name,
-      path,
-      title: shell.titles.get(member.name) ?? humanize(member.name),
-      tabs,
-      settings: settingsText(sources, roots)
-    }
-  })
+      const roots =
+        screen == null
+          ? []
+          : SETTINGS_ROUTES.has(member.name)
+            ? [screen]
+            : (SETTINGS_TABS[member.name] ?? []).flatMap(component =>
+                importedFile(sources, screen, component)
+              )
+      return {
+        name: member.name,
+        path,
+        title: shell.titles.get(member.name) ?? humanize(member.name),
+        tabs,
+        settings: settingsText(sources, roots)
+      }
+    })
   routes.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   return { routes }
 }
