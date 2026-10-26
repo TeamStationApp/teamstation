@@ -234,6 +234,20 @@ describe('seasonSlots', () => {
     expect(slots[slots.length - 1].date).equals('2027-03-31')
   })
 
+  it('leaves the days after a period’s end date and before the next with no slots', () => {
+    const [spring, june] = season().settings.windows
+    const slots = slotsOf({
+      seasons: [season({ windows: [{ ...spring, until: '2027-05-20' }, june] })]
+    })
+    // 2027-05-20 is a Thursday, 2027-05-22 a Saturday.
+    expect(on(slots, '2027-05-20')).length(25)
+    for (let day = 21; day <= 31; day++)
+      expect(on(slots, `2027-05-${day}`), `May ${day}`).length(0)
+    expect(on(slots, '2027-06-01')).length(19)
+    // With no end date, the last period runs to the season's last day.
+    expect(slots[slots.length - 1].date).equals('2027-07-31')
+  })
+
   it('marks the part of the day, the day and the starts that pack the time', () => {
     const saturday = on(slotsOf(), '2027-03-06')
     const start = (time: string): Slot =>

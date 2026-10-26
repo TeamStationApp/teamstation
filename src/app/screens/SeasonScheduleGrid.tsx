@@ -1,6 +1,7 @@
 import React, { useImperativeHandle } from 'react'
 import { Pressable, Text, type TextInput, View } from 'react-native'
 
+import { monthDay } from '../../common/calendarDates'
 import {
   doubleheadersLabel,
   type SetupSeason
@@ -34,14 +35,6 @@ interface Column {
   title: string
   widthRem: number
   value: (season: SetupSeason) => string
-}
-
-function shortDay(date: string): string {
-  return new Intl.DateTimeFormat('en', {
-    timeZone: 'UTC',
-    month: 'short',
-    day: 'numeric'
-  }).format(new Date(`${date}T12:00:00Z`))
 }
 
 function count(n: number, one: string, many = `${one}s`): string {
@@ -127,7 +120,7 @@ export const GRID_COLUMNS: Column[] = [
     title: 'Dates',
     widthRem: 9,
     value: season =>
-      `${shortDay(season.settings.startsOn)} – ${shortDay(season.settings.endsOn)}`
+      `${monthDay(season.settings.startsOn)} – ${monthDay(season.settings.endsOn)}`
   },
   {
     id: 'blackouts',

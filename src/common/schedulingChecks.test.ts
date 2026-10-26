@@ -165,8 +165,76 @@ describe('schedulingChecks', () => {
         [FIELD]
       ).map(check => check.message)
     ).deep.equals([
+      'Demo Regular has no game windows Mar 1 – May 31.',
       'Demo Regular: the Tuesday window 18:00–19:00 from Jun 1 is shorter than a 90-minute game.'
     ])
+    // A period with an end date names it.
+    expect(
+      schedulingChecks(
+        [
+          season({
+            windows: [
+              {
+                from: '2027-03-01',
+                until: '2027-05-31',
+                hours: [{ weekday: 2, start: '18:00', end: '19:00' }]
+              },
+              {
+                from: '2027-06-01',
+                hours: [{ weekday: 6, start: '08:00', end: '18:00' }]
+              }
+            ]
+          })
+        ],
+        [FIELD]
+      ).map(check => check.message)
+    ).deep.equals([
+      'Demo Regular: the Tuesday window 18:00–19:00 from Mar 1 to May 31 is shorter than a 90-minute game.'
+    ])
+  })
+
+  it('names the days of the season no period covers, without blocking the run', () => {
+    const gaps = (
+      windows: CheckedSeason['settings']['windows']
+    ): Array<{ message: string; blocking: boolean }> =>
+      schedulingChecks([season({ windows })], [FIELD])
+        .filter(check => check.kind === 'windowGap')
+        .map(({ message, blocking }) => ({ message, blocking }))
+    const hours = [{ weekday: 6, start: '08:00', end: '18:00' }]
+    // An end date before the next period, and after the last one.
+    expect(
+      gaps([
+        { from: '2027-03-01', until: '2027-05-20', hours },
+        { from: '2027-06-01', until: '2027-07-30', hours }
+      ])
+    ).deep.equals([
+      {
+        message: 'Demo Regular has no game windows May 21 – May 31.',
+        blocking: false
+      },
+      { message: 'Demo Regular has no game windows Jul 31.', blocking: false }
+    ])
+    // Periods without end dates, and ones that run past the season, leave
+    // nothing out; periods before or after the season are ignored.
+    expect(
+      gaps([
+        { from: '2027-01-01', until: '2027-01-31', hours },
+        { from: '2027-02-15', hours },
+        { from: '2027-06-01', until: '2027-12-31', hours }
+      ])
+    ).deep.equals([])
+    expect(
+      gaps([
+        { from: '2027-03-01', until: '2027-03-01', hours },
+        { from: '2027-03-02', hours },
+        { from: '2027-09-01', hours }
+      ])
+    ).deep.equals([])
+    // A season with no hours at all is blocked instead.
+    expect(
+      gaps([{ from: '2027-03-10', until: '2027-03-12', hours: [] }])
+    ).deep.equals([])
+    expect(kinds([season({ windows: [] })])).deep.equals(['noWindows'])
   })
 
   it('says a single team and game plainly', () => {

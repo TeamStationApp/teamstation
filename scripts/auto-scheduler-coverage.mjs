@@ -49,6 +49,8 @@ const tsSuites = [
   // M1: the venue registry, availability and ownership.
   'src/migrate/migrations/077venues.test.ts',
   'src/common/fieldAvailability.test.ts',
+  'src/common/calendarDates.test.ts',
+  'src/common/eventSchedule.test.ts',
   'src/common/venues.test.ts',
   'src/server/venues/ownership.test.ts',
   // M2: the venue API, photos and notifications.

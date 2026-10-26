@@ -1,5 +1,9 @@
+import { addDays } from './calendarDates'
 import { gameCalendarDay, gameTime } from './gameTime'
 import { wallMinutes, wallTimeOf, type WeekdayHours } from './venues'
+
+// Re-exported for the modules that import it from here.
+export { addDays }
 
 /** When a field is open: its dates, weekly hours and blackouts, in a zone. */
 export interface Availability {
@@ -49,13 +53,6 @@ export function effectiveAvailability(
 /** The weekday of a calendar date, 0 being Sunday. */
 export function weekdayOf(date: string): number {
   return new Date(`${date}T12:00:00Z`).getUTCDay()
-}
-
-/** The calendar date `days` after `date`. */
-export function addDays(date: string, days: number): string {
-  const next = new Date(`${date}T12:00:00Z`)
-  next.setUTCDate(next.getUTCDate() + days)
-  return next.toISOString().slice(0, 10)
 }
 
 /**
@@ -110,13 +107,21 @@ export function fieldWindows(
   return hoursOn(availability.hours, date, availability.timezone)
 }
 
-/** One period of a season's game windows, in force from `from` onward. */
+/**
+ * One period of a season's game windows, in force from `from` through
+ * `until`, or, with no `until`, until the next period or the season's end.
+ */
 export interface WindowPeriod {
   from: string
+  /** The period's last day, inclusive. */
+  until?: string
   hours: WeekdayHours[]
 }
 
-/** The period in force on a date: the last that has begun. */
+/**
+ * The period in force on a date: the last that has begun, unless it ended
+ * before the date, which leaves the date with no windows.
+ */
 export function periodOn(
   periods: WindowPeriod[],
   date: string
@@ -126,7 +131,7 @@ export function periodOn(
     a.from.localeCompare(b.from)
   ))
     if (period.from <= date) found = period
-  return found
+  return found?.until == null || date <= found.until ? found : null
 }
 
 /** The season's game windows on a date in its zone. */

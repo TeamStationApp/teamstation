@@ -3,12 +3,14 @@ import {
   asBoolean,
   asNumber,
   asObject,
+  asOptional,
   asString,
   type Cleaner
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
-import type { WindowPeriod } from './fieldAvailability'
+import { daysBetween } from './calendarDates'
+import { addDays, type WindowPeriod } from './fieldAvailability'
 import { asCalendarDate, isRecord } from './groupCreation'
 import {
   asBlackouts,
@@ -51,7 +53,10 @@ export interface ScheduleSettings {
   startsOn: string
   endsOn: string
   blackouts: string[]
-  /** The weekly game windows, each period in force from its `from` date. */
+  /**
+   * The weekly game windows, each period in force from its `from` date
+   * through its `until`, or until the next period or the season's end.
+   */
   windows: WindowPeriod[]
 }
 
@@ -87,7 +92,10 @@ function asGameCount(what: string): Cleaner<number> {
   }
 }
 
-/** A season's window periods: dated, one per date, oldest first. */
+/**
+ * A season's window periods: dated, one per date, oldest first, each ending,
+ * if it has an end date, on or after its start and before the next begins.
+ */
 export function asWindowPeriods(raw: unknown): WindowPeriod[] {
   if (!Array.isArray(raw)) throw new TypeError('Choose the game windows')
   if (raw.length > MAX_WINDOW_PERIODS)
@@ -96,16 +104,77 @@ export function asWindowPeriods(raw: unknown): WindowPeriod[] {
     )
   const periods = raw.map((entry: unknown): WindowPeriod => {
     if (!isRecord(entry)) throw new TypeError('Choose the game windows')
-    return {
-      from: asCalendarDate(entry.from),
-      hours: asWeeklyHours(entry.hours)
-    }
+    const from = asCalendarDate(entry.from)
+    const hours = asWeeklyHours(entry.hours)
+    if (entry.until == null) return { from, hours }
+    const until = asCalendarDate(entry.until)
+    if (until < from)
+      throw new TypeError(
+        'End each period of game windows on or after the day it starts'
+      )
+    return { from, until, hours }
   })
   periods.sort((a, b) => a.from.localeCompare(b.from))
-  for (let i = 1; i < periods.length; i++)
+  for (let i = 1; i < periods.length; i++) {
     if (periods[i].from === periods[i - 1].from)
       throw new TypeError('Start each period of game windows on its own date')
+    const until = periods[i - 1].until
+    if (until != null && until >= periods[i].from)
+      throw new TypeError('Periods of game windows can’t overlap')
+  }
   return periods
+}
+
+/**
+ * The periods with one more starting on `date`, a copy of the weekly hours
+ * of the period before it. A date inside a dated period splits it: that
+ * period ends the day before, and the new one ends where it did. Otherwise
+ * the new period has no end date. A date no period comes before starts
+ * with no hours.
+ */
+export function addWindowPeriod(
+  windows: readonly WindowPeriod[],
+  date: string
+): WindowPeriod[] {
+  const before = [...windows].reverse().find(period => period.from < date)
+  const hours = (before?.hours ?? []).map(day => ({ ...day }))
+  const until = before?.until
+  const splits = until != null && until >= date
+  const added: WindowPeriod = splits
+    ? { from: date, until, hours }
+    : { from: date, hours }
+  return [
+    ...windows.map(period =>
+      splits && period === before
+        ? { ...period, until: addDays(date, -1) }
+        : period
+    ),
+    added
+  ].sort((a, b) => a.from.localeCompare(b.from))
+}
+
+/**
+ * Another season's window periods, moved to this season: every date shifts
+ * by the days between the two seasons' starts, so each period keeps its
+ * place in the season, its length and its gaps. Periods that would start
+ * after this season ends are dropped, and an end past it ends with it. The
+ * weekly hours are kept as they are. Empty when no period is left.
+ */
+export function copyWindowPeriods(
+  source: Pick<ScheduleSettings, 'startsOn' | 'windows'>,
+  target: Pick<ScheduleSettings, 'startsOn' | 'endsOn'>
+): WindowPeriod[] {
+  const shift = daysBetween(source.startsOn, target.startsOn)
+  return source.windows.flatMap((period): WindowPeriod[] => {
+    const from = addDays(period.from, shift)
+    if (from > target.endsOn) return []
+    const hours = period.hours.map(day => ({ ...day }))
+    if (period.until == null) return [{ from, hours }]
+    const until = addDays(period.until, shift)
+    return [
+      { from, until: until > target.endsOn ? target.endsOn : until, hours }
+    ]
+  })
 }
 
 /** A whole set of settings, as a season admin saves it. */
@@ -175,12 +244,19 @@ export function defaultScheduleSettings(season: {
   }
 }
 
-const asWirePeriod = asObject({
+const asWirePeriodFields = asObject({
   from: asString,
+  until: asOptional(asString),
   hours: asArray(
     asObject({ weekday: asNumber, start: asString, end: asString })
   )
 })
+
+/** A period as the server sends it, with its end date only when it has one. */
+function asWirePeriod(raw: unknown): WindowPeriod {
+  const { until, ...period } = asWirePeriodFields(raw)
+  return until == null ? period : { ...period, until }
+}
 
 const asWireSettings = asObject({
   fieldSize: asFieldSize,

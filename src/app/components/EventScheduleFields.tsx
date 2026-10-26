@@ -207,11 +207,14 @@ const months = [
 export function CalendarPicker({
   value,
   onChoose,
-  onCancel
+  onCancel,
+  other
 }: {
   value: string
   onChoose: (date: string) => void
   onCancel: () => void
+  /** A choice other than a date, such as "No end date", above Cancel. */
+  other?: { label: string; onPress: () => void }
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -351,6 +354,15 @@ export function CalendarPicker({
           onChoose(selected)
         }}
       />
+      {other != null && (
+        <Button
+          label={other.label}
+          kind="secondary"
+          onPress={() => {
+            other.onPress()
+          }}
+        />
+      )}
       <CancelAction
         label="Cancel"
         accessibilityLabel="Cancel date picker"
