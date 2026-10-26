@@ -362,6 +362,31 @@ describe('games on registry fields', function () {
     expect(await warningKinds(id)).deep.equals([])
   })
 
+  it('links a game in T-ball, a size apart from 46/60, and names it when the field drops it', async () => {
+    // Field 1 is 46/60 and 50/70: T-ball is not one of its sizes.
+    const refused = await propose(
+      { fieldId: FIELD, fieldSize: 'T-ball' },
+      {},
+      101,
+      400
+    )
+    expect(refused.message).includes('cannot be set up as T-ball')
+    await request('PUT', `/venues/${VENUE}/fields/${FIELD}`, {
+      sizes: ['T-ball', '46/60']
+    })
+    const id = (await propose({ fieldId: FIELD, fieldSize: 'T-ball' }))
+      .gameId as string
+    expect((await scheduling(id)).field).include({ size: 'T-ball' })
+    expect(await warningKinds(id)).deep.equals([])
+    await request('PUT', `/venues/${VENUE}/fields/${FIELD}`, {
+      sizes: ['46/60']
+    })
+    const [warning] = await gameFieldWarnings(f.h.db, id, f.clock)
+    expect(warning.message).equals(
+      'Field 1 at Example Park can no longer be set up as T-ball. Choose another field or size for this game.'
+    )
+  })
+
   it('forgets a told warning once its game is played, looking only at upcoming games otherwise', async () => {
     const id = (await propose({ fieldId: FIELD, fieldSize: '50/70' }))
       .gameId as string

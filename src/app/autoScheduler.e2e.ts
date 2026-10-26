@@ -290,13 +290,24 @@ async function e2(run: Run): Promise<void> {
   const photo = await fieldPhoto(run)
   const admin = await run.session('autoScheduler-e2', 101)
   await run.visit(admin, `/venues/${venueId}`)
-  await contains(admin.page, 'No fields yet')
+  // An empty venue's Add field is a whole row, with no header Add.
+  await admin.page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[aria-label="Add field"]')]
+        .map(node => node.textContent)
+        .join('|') === 'addAdd fieldchevron_right',
+    { timeout: 15000 }
+  )
   for (const [name, sizes] of [
-    ['Field 1', ['T-ball 46/60', '50/70']],
+    // T-ball and 46/60 are two sizes; Field 1 is 46/60, not T-ball.
+    ['Field 1', ['46/60', '50/70']],
     ['Field 2', ['50/70', '55/80']]
   ] as const) {
     await tapLabel(admin, 'Add field')
     await fill(admin.m, 'Field name', name)
+    await admin.page.waitForSelector('[aria-label="T-ball"]', {
+      timeout: 15000
+    })
     for (const size of sizes) await tapLabel(admin, size)
     await tapLast(admin, 'Add field')
     await contains(admin.page, `${name} added.`)
@@ -339,11 +350,11 @@ async function e2(run: Run): Promise<void> {
   await contains(admin.page, 'This field now keeps its own hours.')
   await tapLabel(admin, 'Field hours: Saturday, Closed')
   await admin.m.tapOn({ text: 'Open', timeout: 15000 })
-  await tapLabel(admin, 'Opens 5:00 PM')
+  await tapLabel(admin, 'Opens 9:00 AM')
   await tapLabel(admin, 'Hour 08')
   await tapLabel(admin, 'Period AM')
   await admin.m.tapOn({ text: 'Use time', timeout: 15000 })
-  await tapLabel(admin, 'Closes 9:00 PM')
+  await tapLabel(admin, 'Closes 5:00 PM')
   await tapLabel(admin, 'Hour 06')
   await admin.m.tapOn({ text: 'Use time', timeout: 15000 })
   await admin.m.tapOn({ text: 'Done', timeout: 15000 })

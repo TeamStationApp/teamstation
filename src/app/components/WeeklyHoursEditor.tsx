@@ -35,20 +35,38 @@ export function hoursLabel(entry: WeekdayHours | undefined): string {
     : `${clockLabel(entry.start)} – ${clockLabel(entry.end)}`
 }
 
+/** The hours a closed day takes when it is turned open, by default. */
+export interface OpenDefault {
+  /** "HH:MM". */
+  start: string
+  /** "HH:MM", after `start`. */
+  end: string
+}
+
+/** A venue's or a field's day turned open: 9:00 AM to 5:00 PM. */
+export const VENUE_OPEN_DEFAULT: OpenDefault = { start: '09:00', end: '17:00' }
+
+/** A season's game window turned open: 5:00 PM to 9:00 PM. */
+export const WINDOW_OPEN_DEFAULT: OpenDefault = { start: '17:00', end: '21:00' }
+
 /**
  * A week of hours, one row per day. Tapping a day opens it: open or closed,
- * and when, in the 5-minute steps every time picker uses.
+ * and when, in the 5-minute steps every time picker uses. A closed day turned
+ * open starts at `openDefault`, a game window's 5:00 PM to 9:00 PM unless
+ * it is given.
  */
 export function WeeklyHoursEditor({
   value,
   onChange,
   disabled = false,
-  label = 'Hours'
+  label = 'Hours',
+  openDefault = WINDOW_OPEN_DEFAULT
 }: {
   value: WeekdayHours[]
   onChange: (hours: WeekdayHours[]) => void
   disabled?: boolean
   label?: string
+  openDefault?: OpenDefault
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [day, setDay] = useState<number>()
@@ -81,6 +99,7 @@ export function WeeklyHoursEditor({
         <DayHoursSheet
           weekday={day}
           entry={value.find(item => item.weekday === day)}
+          openDefault={openDefault}
           onChoose={entry => {
             onChange(
               [
@@ -102,18 +121,20 @@ export function WeeklyHoursEditor({
 function DayHoursSheet({
   weekday,
   entry,
+  openDefault,
   onChoose,
   onCancel
 }: {
   weekday: number
   entry: WeekdayHours | undefined
+  openDefault: OpenDefault
   onChoose: (entry: WeekdayHours | undefined) => void
   onCancel: () => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [open, setOpen] = useState(entry != null)
-  const [start, setStart] = useState(entry?.start ?? '17:00')
-  const [end, setEnd] = useState(entry?.end ?? '21:00')
+  const [start, setStart] = useState(entry?.start ?? openDefault.start)
+  const [end, setEnd] = useState(entry?.end ?? openDefault.end)
   const [picking, setPicking] = useState<'start' | 'end'>()
   const valid = !open || end === '24:00' || start < end
   if (picking != null)

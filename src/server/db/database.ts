@@ -1055,6 +1055,8 @@ export interface LeagueScheduleSetupsTable {
   league_id: string
   season_ids: Generated<string[]>
   field_ids: Generated<string[]>
+  /** Fields added from other venues, listed whether chosen or not. */
+  added_field_ids: Generated<string[]>
   updated_at: Generated<Date>
 }
 

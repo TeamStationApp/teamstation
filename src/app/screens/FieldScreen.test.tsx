@@ -186,6 +186,9 @@ describe('the field screen', () => {
         fieldId="fld_one"
       />
     )
+    // T-ball is a size of its own, beside 46/60.
+    expect(hasLabel('T-ball')).equals(true)
+    expect(hasLabel('46/60')).equals(true)
     await tapLabel('50/70')
     expect(record.updates).deep.equals([])
     await tapLabel('60/90')
@@ -247,6 +250,12 @@ describe('the field screen', () => {
     await tapText('Use time')
     await tapText('Done')
     await settle()
+    // A closed day turned open starts at 9:00 AM to 5:00 PM.
+    await press('Field hours: Monday, Closed')
+    await tapText('Open')
+    expect(hasLabel('Opens 9:00 AM')).equals(true)
+    await tapText('Done')
+    await settle()
     await tapText('Venue hours')
     await settle()
     await press('Add blackout dates')
@@ -261,6 +270,12 @@ describe('the field screen', () => {
       { startsOn: null, endsOn: null },
       { hours: [{ weekday: 6, start: '08:00', end: '18:00' }] },
       { hours: [{ weekday: 6, start: '08:00', end: '22:00' }] },
+      {
+        hours: [
+          { weekday: 1, start: '09:00', end: '17:00' },
+          { weekday: 6, start: '08:00', end: '22:00' }
+        ]
+      },
       { hours: null },
       { blackouts: ['2027-03-10', '2027-03-11'] },
       { blackouts: [] }

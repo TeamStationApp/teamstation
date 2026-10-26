@@ -61,6 +61,17 @@ function fakeClient(
   return { client, calls }
 }
 
+/**
+ * What each control labelled "Add field" reads: the header's small "Add", or
+ * the empty list's row, its plus icon (drawn from its name on the web), its
+ * title and its chevron.
+ */
+function addFieldControls(): string[] {
+  return [...document.querySelectorAll('[aria-label="Add field"]')].map(
+    node => node.textContent ?? ''
+  )
+}
+
 const owner = (canEdit = true): VenueDetail['rights'] => ({
   canEdit,
   claimLeagues: [],
@@ -79,7 +90,8 @@ describe('the venue screen', () => {
     expect(approvalLabel('2027-04-08T12:00:00Z')).equals(
       'approved automatically on Apr 8, 2027'
     )
-    expect(sizesLabel(['46/60', '50/70'])).equals('T-ball 46/60 · 50/70')
+    expect(sizesLabel(['46/60', '50/70'])).equals('46/60 · 50/70')
+    expect(sizesLabel(['T-ball', '46/60'])).equals('T-ball · 46/60')
   })
 
   it('shows a load failure and retries', async () => {
@@ -341,7 +353,9 @@ describe('the venue screen', () => {
         onClaimed={() => undefined}
       />
     )
-    expect(text()).includes('T-ball 46/60 · 50/70')
+    expect(text()).includes('46/60 · 50/70')
+    // With a field, Add is the header's, and there is no Add field row.
+    expect(addFieldControls()).deep.equals(['Add'])
     await press('Open Field 1')
     expect(opened).deep.equals(['ven_demo/fld_one'])
     await press('Add field')
@@ -350,7 +364,7 @@ describe('the venue screen', () => {
     await tapLabel('50/70')
     await tapLabel('55/80')
     await tapLabel('55/80')
-    await tapLabel('T-ball 46/60')
+    await tapLabel('46/60')
     await tapText('Add field')
     await settle()
     expect(calls.createField).deep.equals([
@@ -363,8 +377,17 @@ describe('the venue screen', () => {
     expect(calls.deleteField).deep.equals([['ven_demo', 'fld_one']])
   })
 
-  it('cancels adding a field and shows an empty field list', async () => {
-    const { client, calls } = fakeClient(venueDetail({ rights: owner() }))
+  it('shows an empty venue’s owner an Add field row in place of the header’s Add, until a field exists', async () => {
+    const { client, calls } = fakeClient(
+      venueDetail({ rights: owner() }),
+      method =>
+        method === 'createField'
+          ? venueDetail({
+              fields: [venueField({ name: 'Tee Field', sizes: ['T-ball'] })],
+              rights: owner()
+            })
+          : venueDetail({ rights: owner() })
+    )
     await mount(
       <VenueScreen
         client={client}
@@ -373,10 +396,24 @@ describe('the venue screen', () => {
         onClaimed={() => undefined}
       />
     )
-    expect(text()).includes('No fields yet')
+    expect(addFieldControls()).deep.equals(['addAdd fieldchevron_right'])
+    expect(text()).not.includes('No fields')
     await press('Add field')
     await press('Cancel')
     expect(calls.createField).equals(undefined)
+    await press('Add field')
+    // T-ball and 46/60 are two choices.
+    expect(hasLabel('T-ball')).equals(true)
+    expect(hasLabel('46/60')).equals(true)
+    await fill('Field name', 'Tee Field')
+    await tapLabel('T-ball')
+    await tapText('Add field')
+    await settle()
+    expect(calls.createField).deep.equals([
+      ['ven_demo', { name: 'Tee Field', sizes: ['T-ball'] }]
+    ])
+    expect(text()).includes('Tee FieldT-ball')
+    expect(addFieldControls()).deep.equals(['Add'])
     await unmount()
     const reader = fakeClient(venueDetail())
     await mount(
@@ -419,6 +456,9 @@ describe('the venue screen', () => {
     await settle()
     await press('Default hours: Tuesday, Closed')
     await tapText('Open')
+    // A day turned open starts at 9:00 AM to 5:00 PM.
+    expect(hasLabel('Opens 9:00 AM')).equals(true)
+    expect(hasLabel('Closes 5:00 PM')).equals(true)
     await tapText('Done')
     await settle()
     // Its blackouts list as ranges; a new range joins them.
@@ -439,7 +479,7 @@ describe('the venue screen', () => {
         'ven_demo',
         {
           defaultHours: [
-            { weekday: 2, start: '17:00', end: '21:00' },
+            { weekday: 2, start: '09:00', end: '17:00' },
             { weekday: 6, start: '08:00', end: '18:00' }
           ]
         }

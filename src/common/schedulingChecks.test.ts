@@ -114,6 +114,13 @@ describe('schedulingChecks', () => {
       'Demo Regular has no chosen field that sets up as 60/90.'
     ])
     expect(buildable(noField)).equals(false)
+    // T-ball is a size of its own: a 46/60 field does not set up as it.
+    expect(
+      schedulingChecks(
+        [season({ fieldSize: 'T-ball' })],
+        [{ ...FIELD, sizes: ['46/60'] }]
+      ).map(check => check.message)
+    ).deep.equals(['Demo Regular has no chosen field that sets up as T-ball.'])
     expect(kinds([season()], [{ ...FIELD, deleted: true }])).deep.equals([
       'noField'
     ])

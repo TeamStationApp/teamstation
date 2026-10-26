@@ -90,7 +90,10 @@ const tsSuites = [
   'src/common/eventTime.test.ts',
   'src/common/seasonScheduling.test.ts',
   'src/server/groups/authority.test.ts',
-  'src/server/groups/parentTerms.test.ts'
+  'src/server/groups/parentTerms.test.ts',
+  // Fixes M5: T-ball as a size of its own, and the add icon in the phone font.
+  'src/migrate/migrations/086fieldSizes.test.ts',
+  'src/app/components/iconFont.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */

@@ -419,8 +419,9 @@ async function f1(run: Run): Promise<void> {
     'Demo Regular Teams: 7 teams and 2 exhibition teams'
   )
   expect(grid.adjacent).equals(true)
-  // 4.5 rem each, where Teams was 7 and Size 5.
-  expect(grid.teamsWidth).equals(grid.sizeWidth)
+  // Teams is 4.5 rem, where it was 7; Size is a little wider, for 46/60 MP.
+  expect(grid.teamsWidth).equals(72)
+  expect(grid.sizeWidth).greaterThan(grid.teamsWidth)
   expect(grid.textGap).lessThan(40)
   expect(new Set(grid.headerHeights).size).equals(1)
   expect(grid.headerHeights[0]).greaterThan(0)
@@ -445,8 +446,57 @@ async function f1(run: Run): Promise<void> {
     '16x0',
     join(run.artifacts, 'season-grid-after.png')
   ])
+  // The longest size, 46/60 MP, keeps the Size cell on one line, as tall as
+  // the Teams cell beside it.
+  await fx.f.h.db
+    .updateTable('season_schedule_settings')
+    .set({ field_size: '46/60 MP' })
+    .where('season_id', '=', fx.f.seasonA)
+    .execute()
+  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+  await labelled(b, 'Demo Regular Size: 46/60 MP')
+  const size = await b.page.evaluate(() => {
+    const line = (label: string): { lines: number; width: number } => {
+      const node = document.querySelector(`[aria-label="${label}"]`)!
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      const tops = new Set(
+        [...range.getClientRects()].map(rect => Math.round(rect.top))
+      )
+      // Its unwrapped width, measured in the cell's own font.
+      const context = document.createElement('canvas').getContext('2d')!
+      context.font = getComputedStyle(node.firstElementChild!).font
+      return {
+        lines: tops.size,
+        width: context.measureText(String(node.textContent)).width
+      }
+    }
+    const height = (label: string): number =>
+      document
+        .querySelector(`[aria-label^="${label}"]`)!
+        .getBoundingClientRect().height
+    return {
+      ...line('Demo Regular Size: 46/60 MP'),
+      cell: height('Demo Regular Size: '),
+      teams: height('Demo Regular Teams: '),
+      teamsWidth: document
+        .querySelector('[aria-label^="Demo Regular Teams: "]')!
+        .getBoundingClientRect().width,
+      sizeWidth: document
+        .querySelector('[aria-label^="Demo Regular Size: "]')!
+        .getBoundingClientRect().width
+    }
+  })
+  trace(`size ${JSON.stringify(size)}`)
+  await scrollToText(b, 'SCHEDULE SETTINGS')
+  await run.capture(join(run.support, 'season-grid-after-mp.png'))
+  expect(size.lines).equals(1)
+  expect(size.cell).equals(size.teams)
+  // Teams stays 4.5 rem; Size is wider by what 46/60 MP needs.
+  expect(size.teamsWidth).equals(72)
+  expect(size.sizeWidth).greaterThan(size.width)
   await run.pass(
-    'the Auto-Scheduler row is the last card on the Seasons tab, below the seasons and out of the hero; Game MINS, Between MINS, # Regular and # Exhibition edit in place with the whole number selected, Tab and Enter save 100, 5, 6 and 2, 47 is refused with the 5-minute message and Escape restores 100; after a reload the cells read bare numbers under GAME MINS, BETWEEN MINS, # REGULAR and # EXHIBITION, Teams reads 7 + 2 beside Size, and no dialog opens'
+    'the Auto-Scheduler row is the last card on the Seasons tab, below the seasons and out of the hero; Game MINS, Between MINS, # Regular and # Exhibition edit in place with the whole number selected, Tab and Enter save 100, 5, 6 and 2, 47 is refused with the 5-minute message and Escape restores 100; after a reload the cells read bare numbers under GAME MINS, BETWEEN MINS, # REGULAR and # EXHIBITION, Teams reads 7 + 2 beside Size, and no dialog opens; set to 46/60 MP, the Size cell stays one line, as tall as Teams'
   )
 }
 
@@ -1023,6 +1073,116 @@ async function f4(run: Run): Promise<void> {
   )
 }
 
+/** Scrolls the element matching this selector to the middle of the screen. */
+async function centerOn(b: BrowserSession, selector: string): Promise<void> {
+  await b.page.waitForSelector(selector, { timeout: 15000 })
+  await b.page.evaluate((wanted: string) => {
+    const node = document.querySelector(wanted)
+    if (node !== null) node.scrollIntoView({ block: 'center' })
+  }, selector)
+  await new Promise(resolve => setTimeout(resolve, 600))
+}
+
+/** What each control labelled "Add field" reads, in page order. */
+async function addFieldControls(b: BrowserSession): Promise<string[]> {
+  return await b.page.evaluate(() =>
+    [...document.querySelectorAll('[aria-label="Add field"]')].map(node =>
+      String(node.textContent)
+    )
+  )
+}
+
+/**
+ * F5: an empty venue offers a whole "Add field" row in place of the header's
+ * Add; T-ball and 46/60 are two sizes; a day turned open fills 9 to 5.
+ */
+async function f5(run: Run): Promise<void> {
+  const { fx, b, state } = run
+  const venuePath = `/venues/${state.venueId!}`
+  await run.visit(venuePath)
+  await contains(b.page, 'Default hours')
+  // The row: its plus tile (the web draws the icon from its name), its title
+  // and its chevron; and no header Add beside it.
+  await b.page.waitForFunction(
+    () => document.querySelector('[aria-label="Add field"]') !== null,
+    { timeout: 15000 }
+  )
+  expect(await addFieldControls(b)).deep.equals(['addAdd fieldchevron_right'])
+  expect(await b.page.evaluate(() => document.body.innerText)).not.includes(
+    'No fields yet'
+  )
+  await b.page.evaluate(() => {
+    const found = [...document.querySelectorAll('div, span')].find(
+      node => node.childElementCount === 0 && node.textContent === 'FIELDS'
+    )
+    if (found !== undefined) found.scrollIntoView({ block: 'center' })
+  })
+  await new Promise(resolve => setTimeout(resolve, 600))
+  await run.capture('venue-empty-after.png')
+  // Add field's sizes: T-ball and 46/60 apart.
+  await tapLabel(b, 'Add field')
+  await contains(b.page, 'The sizes it can be set up in.')
+  await labelled(b, 'T-ball')
+  await labelled(b, '46/60')
+  expect(
+    await b.page.evaluate(() =>
+      [...document.querySelectorAll('[role="checkbox"]')].map(node =>
+        node.getAttribute('aria-label')
+      )
+    )
+  ).deep.equals(['T-ball', '46/60 MP', '46/60', '50/70', '55/80', '60/90'])
+  await run.capture('field-sizes-after.png')
+  await fill(b.m, 'Field name', 'Tee Field')
+  await tapLabel(b, 'T-ball')
+  await tapText(b, 'Add field')
+  await contains(b.page, 'Tee Field added.')
+  // With a field, the row is gone and the header's Add is back.
+  await b.page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[aria-label="Add field"]')].map(
+        node => node.textContent
+      )[0] === 'Add',
+    { timeout: 15000 }
+  )
+  expect(await addFieldControls(b)).deep.equals(['Add'])
+  const teeRow = await b.page.evaluate(() => {
+    const row = document.querySelector('[aria-label="Open Tee Field"]')
+    return row === null ? null : row.textContent
+  })
+  expect(teeRow).equals('Tee FieldT-ball')
+  const venue = await api<{ fields: Array<{ name: string; sizes: string[] }> }>(
+    fx,
+    ADMIN,
+    'GET',
+    venuePath
+  )
+  expect(venue.fields.map(field => [field.name, field.sizes])).deep.equals([
+    ['Tee Field', ['T-ball']]
+  ])
+  // Monday, opened from Closed, fills 9:00 AM to 5:00 PM.
+  await centerOn(b, '[aria-label="Default hours: Monday, Closed"]')
+  await tapLabel(b, 'Default hours: Monday, Closed')
+  await contains(b.page, 'Done')
+  await tapText(b, 'Open')
+  await labelled(b, 'Opens 9:00 AM')
+  await labelled(b, 'Closes 5:00 PM')
+  await run.capture('hours-default-after.png')
+  await tapText(b, 'Done')
+  await contains(b.page, 'Hours saved.')
+  const hours = await api<{ defaultHours: unknown[] }>(
+    fx,
+    ADMIN,
+    'GET',
+    venuePath
+  )
+  expect(hours.defaultHours).deep.equals([
+    { weekday: 1, start: '09:00', end: '17:00' }
+  ])
+  await run.pass(
+    'Example Park with no fields shows a full-width "Add field" row with the plus in its icon tile and no header Add; Add field lists T-ball, 46/60 MP, 46/60, 50/70, 55/80 and 60/90 as six choices; after adding Tee Field with T-ball only the row is gone, the header Add is back and Tee Field reads T-ball; Monday opened from Closed fills 9:00 AM – 5:00 PM and saves 09:00–17:00'
+  )
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   F1: { start: 'E7', run: f1 },
   F2: { start: 'E7', run: f2 },
@@ -1034,7 +1194,8 @@ const SCENARIOS: Record<string, Scenario> = {
     run: f2b
   },
   F3: { start: 'E7', run: f3 },
-  F4: { start: 'E3', run: f4 }
+  F4: { start: 'E3', run: f4 },
+  F5: { start: 'E2', run: f5 }
 }
 
 /** Merges the scenarios' browser coverage into one istanbul file. */

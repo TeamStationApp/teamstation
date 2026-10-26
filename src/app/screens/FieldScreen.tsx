@@ -27,7 +27,10 @@ import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
 import { SegmentedPill } from '../components/SegmentedPill'
-import { WeeklyHoursEditor } from '../components/WeeklyHoursEditor'
+import {
+  VENUE_OPEN_DEFAULT,
+  WeeklyHoursEditor
+} from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -303,6 +306,7 @@ export function FieldScreen({
               ...entry
             }))}
             disabled={!editable || !ownHours || busy}
+            openDefault={VENUE_OPEN_DEFAULT}
             onChange={hours => {
               save({ hours }, 'Hours saved.').catch(() => undefined)
             }}
