@@ -1938,6 +1938,22 @@ export class Chat2UI {
       device.assertNotVisible = async args => await pollNotVisible(once, args)
     }
     await this.device.launchApp({ appId: this.fixture.appId })
+    // A phone's Google Password Manager sheet outlives the app that raised it,
+    // and its own Password label would read as the app's sign-in form.
+    if (
+      platform === 'android' &&
+      configured.physical &&
+      (await this.visible(
+        { text: '^Save password to Google Password Manager' },
+        3000
+      ))
+    ) {
+      await this.device.tapOn({ text: '^Not now$' })
+      this.steps.push({
+        name: 'Phone password manager offer from an earlier run declined',
+        outcome: 'passed'
+      })
+    }
     // A cold two-core emulator can raise the system's own ANR dialog over the
     // app; wait for System UI rather than closing anything, and record it.
     if (
