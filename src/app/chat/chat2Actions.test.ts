@@ -33,6 +33,8 @@ import {
   iosPublicRead,
   iosRawTree,
   nativeClass,
+  PHONE_TYPING_KEYS_PER_SECOND,
+  phoneTyping,
   pollNotVisible,
   type PublicNode,
   readAndroidComposerKeyboard,
@@ -13823,5 +13825,16 @@ describe('phone reach of a far native anchor', function () {
     await m.scenario.nativeAnchorReady(far)
     expect(m.taps).deep.equals([])
     expect(m.drags[0]).equals(80)
+  })
+})
+
+describe('phone typing rate', function () {
+  it('slows WebDriverAgent typing on a physical iPhone only', function () {
+    expect(phoneTyping('ios', true)).deep.equals({
+      typingFrequency: PHONE_TYPING_KEYS_PER_SECOND
+    })
+    expect(PHONE_TYPING_KEYS_PER_SECOND).lessThan(60)
+    expect(phoneTyping('ios', false)).deep.equals({})
+    expect(phoneTyping('android', true)).deep.equals({})
   })
 })
