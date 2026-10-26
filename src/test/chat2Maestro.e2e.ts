@@ -4333,10 +4333,13 @@ export class Chat2UI {
           const expected = '@' + member.name + ' '
           const ready =
             this.surface === 'ios'
-              ? // iOS snapshot serialization trims outer whitespace; interior spaces stay exact.
+              ? // The simulator's snapshot trims outer whitespace and a phone's
+                // WebDriverAgent keeps it; interior spaces stay exact in both.
                 e.type === 'TextView' &&
                 e.enabled === true &&
-                (e as IosReadNode).value === expected.trimEnd() &&
+                [expected, expected.trimEnd()].includes(
+                  (e as IosReadNode).value ?? ''
+                ) &&
                 current.filter(node => node.type === 'Keyboard').length === 1 &&
                 current.some(
                   node =>
