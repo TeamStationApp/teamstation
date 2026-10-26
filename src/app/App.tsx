@@ -1377,14 +1377,6 @@ function Shell(props: AppProps): React.ReactElement {
     setTessOpen(false)
   }, [])
   useTessBack(tessShown && !tessWide, closeTess)
-  /**
-   * A link in the chat. On a wide screen the pane beside it goes there and
-   * the chat stays; on a narrow one the chat closes to show it.
-   */
-  const openTessLink = (path: string): void => {
-    if (!tessWide) setTessOpen(false)
-    goToRoute(routeOfUrl(path))
-  }
   // What the pane shows, for Tess on a wide screen, read when a message is
   // sent: its address and title, and the steps of the tab that led there.
   // A team opened by its address has no name until its page loads one.
@@ -1414,6 +1406,18 @@ function Shell(props: AppProps): React.ReactElement {
     },
     [chatListNavigation]
   )
+  /**
+   * A link in Tess's chat. On a wide screen the pane beside it goes there and
+   * the chat stays; on a narrow one the chat closes to show it. Like every
+   * other way out of an open chat, it waits for the chat's reading position
+   * to be kept first.
+   */
+  const openTessLink = (path: string): void => {
+    captureChatLeave(() => {
+      if (!tessWide) setTessOpen(false)
+      goToRoute(routeOfUrl(path))
+    })
+  }
 
   /** The tab, or — pressed on the tab already showing — that tab's root. */
   const selectTab = (next: NavTabId): void => {
