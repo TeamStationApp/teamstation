@@ -1486,13 +1486,12 @@ export async function submitPasswordSignIn(
       break
     observation.wrongCredentialsRetried = true
   }
-  // A fresh iOS install offers to save the typed password, over whatever the
-  // app shows next; the synthetic password is never saved.
-  if (
-    ui.surface === 'ios' &&
-    (await ui.visible({ text: exactText('Not Now') }, 5000))
-  ) {
-    await ui.text('Not Now')
+  // A fresh install offers to save the typed password (iOS, or Google
+  // Password Manager on a phone), over whatever the app shows next; the
+  // synthetic password is never saved.
+  const decline = ui.surface === 'ios' ? 'Not Now' : 'Not now'
+  if (ui.native && (await ui.visible({ text: exactText(decline) }, 5000))) {
+    await ui.text(decline)
     observation.savePasswordDeclined = true
   }
   observation.outcome = 'passed'
