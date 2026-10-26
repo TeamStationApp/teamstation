@@ -42,12 +42,92 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 globalThis.MediaSource = {
   isTypeSupported: type => /hvc1|hev1/.test(type)
 }
+// JSDOM has no layout. React Native Web's observer stays silent, as before:
+// tests deliver its layouts through `__reactLayoutHandler`. A virtualized
+// list (Legend List) observes border boxes instead, and a browser reports
+// those both when observation starts and whenever layout changes. Report a
+// scroll viewport as filling the window at first, then every layout a test
+// delivers to an element, to the border-box observers of that element.
+const borderBoxObservers = new Map()
+function reportBorderBox(target, size) {
+  for (const observer of borderBoxObservers.get(target) ?? [])
+    observer.callback(
+      [
+        {
+          target,
+          contentRect: { left: 0, top: 0, ...size },
+          borderBoxSize: [{ blockSize: size.height, inlineSize: size.width }]
+        }
+      ],
+      observer
+    )
+}
 globalThis.ResizeObserver = class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  constructor(callback) {
+    this.callback = callback
+  }
+
+  observe(target, options) {
+    if (options?.box !== 'border-box') return
+    const observers = borderBoxObservers.get(target) ?? new Set()
+    observers.add(this)
+    borderBoxObservers.set(target, observers)
+    if (typeof target.getScrollableNode !== 'function') return
+    queueMicrotask(() => {
+      if (!borderBoxObservers.get(target)?.has(this)) return
+      const rect = target.getBoundingClientRect()
+      const root = document.documentElement
+      reportBorderBox(
+        target,
+        rect.width > 0 && rect.height > 0
+          ? { width: rect.width, height: rect.height }
+          : {
+              width: root.clientWidth || window.innerWidth,
+              height: root.clientHeight || window.innerHeight
+            }
+      )
+    })
+  }
+
+  unobserve(target) {
+    borderBoxObservers.get(target)?.delete(this)
+  }
+
+  disconnect() {
+    for (const observers of borderBoxObservers.values()) observers.delete(this)
+  }
 }
 window.ResizeObserver = globalThis.ResizeObserver
+Object.defineProperty(
+  globalThis.HTMLElement.prototype,
+  '__reactLayoutHandler',
+  {
+    configurable: true,
+    get() {
+      return this.__testLayoutHandler
+    },
+    set(handler) {
+      this.__testLayoutHandler =
+        typeof handler !== 'function'
+          ? handler
+          : event => {
+              const result = handler(event)
+              const layout = event?.nativeEvent?.layout
+              if (layout != null && borderBoxObservers.has(this))
+                reportBorderBox(this, {
+                  width: layout.width,
+                  height: layout.height
+                })
+              return result
+            }
+    }
+  }
+)
+// The virtualized list compensates scrolling with `scrollBy`.
+globalThis.HTMLElement.prototype.scrollBy ??= function (options) {
+  this.scrollTop += options?.top ?? 0
+  this.scrollLeft += options?.left ?? 0
+}
 window.matchMedia = query => ({
   matches: false,
   media: query,
