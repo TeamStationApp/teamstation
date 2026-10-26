@@ -2588,6 +2588,9 @@ export class Scenarios {
           current.band.bottom - current.band.top - 32
         ) <=
         current.band.bottom - 7.5
+    // A target taller than the reader leaves only a narrow landing window.
+    const readerTall = (): boolean =>
+      current.box.height >= current.band.bottom - current.band.top - 32
     const distance = (): number =>
       current.box.y >= current.band.bottom
         ? current.box.y - current.band.bottom
@@ -2698,7 +2701,8 @@ export class Scenarios {
     }
     for (let step = 0; !safe(); step++) {
       assert(
-        step < (ui.surface === 'ios' ? 8 : 4) && current.box.height > 0,
+        step < (ui.surface === 'ios' || readerTall() ? 8 : 4) &&
+          current.box.height > 0,
         'Positive native target must clear header, pins and composer'
       )
       const { box, band } = current
@@ -2711,23 +2715,20 @@ export class Scenarios {
       // and moves it about its own length, so on iOS one slow drag may span
       // the reader: a growing QA history left E9/E10 hundreds of points away
       // after the flicks, past eight eighth-of-a-reader steps.
-      const limit =
-        ui.surface === 'ios'
-          ? band.bottom - band.top - 24
-          : Math.max(48, (band.bottom - band.top) / 8)
-      // A slow iOS drag moves about 10 pt less than its length (touch slop),
-      // so it can land in a 17 pt window; a 48 pt minimum overshot it both
-      // ways for E10's reader-tall target.
-      const size =
-        ui.surface === 'ios'
-          ? Math.min(limit, Math.max(20, Math.abs(desired) + 10))
-          : Math.min(limit, Math.max(48, Math.abs(desired)))
-      if (
-        await swipe(
-          Math.sign(desired) * size,
-          ui.surface === 'ios' ? 1000 : 200
-        )
-      )
+      // Android's quick drags flung E10's reader-tall target past the same
+      // narrow window, so a reader-tall Android target is dragged slowly too.
+      const slow = ui.surface === 'ios' || readerTall()
+      const limit = slow
+        ? band.bottom - band.top - 24
+        : Math.max(48, (band.bottom - band.top) / 8)
+      // A slow drag moves about its touch slop less than its length (about
+      // 10 pt on iOS, 8 dp on the Pixel), so it can land in a 17 pt window; a
+      // 48 pt minimum overshot it both ways for E10's reader-tall target.
+      const slop = ui.surface === 'ios' ? 10 : 21
+      const size = slow
+        ? Math.min(limit, Math.max(20, Math.abs(desired) + slop))
+        : Math.min(limit, Math.max(48, Math.abs(desired)))
+      if (await swipe(Math.sign(desired) * size, slow ? 1000 : 200))
         return handoff()
     }
     proof.outcome = 'passed'
