@@ -1489,9 +1489,10 @@ export async function submitPasswordSignIn(
   // A fresh install offers to save the typed password (iOS, or Google
   // Password Manager on a phone), over whatever the app shows next; the
   // synthetic password is never saved.
-  const decline = ui.surface === 'ios' ? 'Not Now' : 'Not now'
-  if (ui.native && (await ui.visible({ text: exactText(decline) }, 5000))) {
-    await ui.text(decline)
+  // Google offers Never instead of Not now once it has been declined before.
+  const decline = ui.surface === 'ios' ? '^Not Now$' : '^(Not now|Never)$'
+  if (ui.native && (await ui.visible({ text: decline }, 5000))) {
+    await ui.device.tapOn({ text: decline })
     observation.savePasswordDeclined = true
   }
   observation.outcome = 'passed'
