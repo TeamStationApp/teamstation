@@ -3466,6 +3466,12 @@ export class Scenarios {
     } else {
       await ui.device.addMedia({ files: [files.photo] })
       await ui.text('Attach')
+      // Attach toggles its sources; a retried tap that landed before they
+      // rendered closes them again.
+      if (!(await ui.visible({ text: exactText('Photo library') }, 3000))) {
+        this.observations.push({ attachRetapped: true })
+        await ui.text('Attach')
+      }
       await ui.text('Photo library')
       for (const selector of need(
         files.nativePicker?.[ui.surface],
