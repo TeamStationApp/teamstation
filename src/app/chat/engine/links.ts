@@ -63,6 +63,15 @@ import {
  * the stored record belongs to another user, the record is wiped and the
  * device starts again as a new one. A record that cannot be read at all is
  * kept until the person resets chat on this device (`resetUnreadableChat`).
+ *
+ * The app keeps one client and one store across sign-out and the next
+ * sign-in, and the client speaks for whoever is signed in now. Work still
+ * going for the user before would wipe the next user's record, register a
+ * device or ask for a link on their account, under a record of its own; the
+ * next user's enrolment would then take the store back, and the two would
+ * go on taking it from each other. So the latest user to enrol on a store
+ * owns it, and work for anyone else changes nothing there
+ * (`StaleChatSetupError`).
  */
 
 /** The client calls the key routes need. */
@@ -90,12 +99,29 @@ export interface ChatSetup {
   userId: string
   /** How this device names itself when it registers. */
   device: { name: string; platform: 'web' | 'ios' | 'android' }
+  /**
+   * Whether `userId` is still the one signed in here (always, by default).
+   * Once it is not, `ensureEnrolled` starts nothing for it.
+   */
+  current?: () => boolean
 }
 
 export type Enrolment =
   | { state: 'ready'; record: ChatKeyRecord }
   | { state: 'link'; record: ChatKeyRecord }
   | { state: 'reset'; record: ChatKeyRecord }
+
+/**
+ * Refused because the setup's user is no longer the one signed in here:
+ * another user has enrolled on its store since, or `ChatSetup.current` says
+ * so. Nothing was changed.
+ */
+export class StaleChatSetupError extends Error {
+  constructor() {
+    super('Chat was set up for a user who is no longer signed in')
+    this.name = 'StaleChatSetupError'
+  }
+}
 
 /** `details.reason` of a refusal, if it carries one. */
 export function reasonOf(error: unknown): string | undefined {
@@ -109,27 +135,64 @@ export function spacedCode(code: string): string {
   return `${code.slice(0, 3)} ${code.slice(3)}`
 }
 
-const inFlight = new Map<ChatKeyStore, Promise<Enrolment>>()
+/** The user each store's latest enrolment was for. */
+const owners = new Map<ChatKeyStore, string>()
+
+const inFlight = new Map<
+  ChatKeyStore,
+  { userId: string; run: Promise<Enrolment> }
+>()
 
 /**
- * Brings this device to `ready`, `link` or `reset`. Calls for one store at
- * the same time share one run, so a screen mounted twice registers one
- * device, not two.
+ * Throws `StaleChatSetupError` once another user owns the setup's store.
+ * Sign-out names no user: it acts for whoever the session is.
+ */
+function stillOwner(setup: { store: ChatKeyStore; userId?: string }): void {
+  const owner = owners.get(setup.store)
+  if (setup.userId != null && owner != null && owner !== setup.userId)
+    throw new StaleChatSetupError()
+}
+
+/** Saves `record` to the setup's store, while its user still owns it. */
+async function keep(
+  setup: Pick<ChatSetup, 'store' | 'userId'>,
+  record: ChatKeyRecord
+): Promise<void> {
+  stillOwner(setup)
+  await setup.store.save(record)
+}
+
+/**
+ * Brings this device to `ready`, `link` or `reset`, and makes the setup's
+ * user the store's owner. Calls for one user and store at the same time
+ * share one run, so a screen mounted twice registers one device, not two.
+ * A run for another user (one who has signed out since) is never shared:
+ * this one waits for it to end, and it changes nothing more.
  */
 export async function ensureEnrolled(setup: ChatSetup): Promise<Enrolment> {
+  if (setup.current?.() === false) throw new StaleChatSetupError()
+  owners.set(setup.store, setup.userId)
   const running = inFlight.get(setup.store)
-  if (running != null) return await running
-  const run = enrolOnce(setup).finally(() => {
-    inFlight.delete(setup.store)
-  })
-  inFlight.set(setup.store, run)
-  return await run
+  if (running?.userId === setup.userId) return await running.run
+  const before = running?.run.catch(() => undefined)
+  const entry = {
+    userId: setup.userId,
+    run: (async () => {
+      await before
+      return await enrolOnce(setup)
+    })().finally(() => {
+      if (inFlight.get(setup.store) === entry) inFlight.delete(setup.store)
+    })
+  }
+  inFlight.set(setup.store, entry)
+  return await entry.run
 }
 
 async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
   const { client, store, userId } = setup
   let record = await store.load()
   if (record != null && record.userId !== userId) {
+    stillOwner(setup)
     await store.wipe()
     record = undefined
   }
@@ -138,6 +201,7 @@ async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
     if (mine != null) return await settle(setup, record, mine)
   }
   const keys = newDeviceKeys()
+  stillOwner(setup)
   const device = await client.registerChatDevice({
     name: setup.device.name,
     platform: setup.device.platform,
@@ -145,7 +209,7 @@ async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
     signPublicKey: b64(keys.sign.publicKey)
   })
   const fresh = newRecord(userId, device.id, keys)
-  await store.save(fresh)
+  await keep(setup, fresh)
   return await settle(setup, fresh, await client.myChatKeys())
 }
 
@@ -155,12 +219,14 @@ async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
  * the device back.
  */
 async function bindDevice(
-  setup: Pick<ChatSetup, 'client' | 'store'>,
+  setup: Pick<ChatSetup, 'client' | 'store'> & { userId?: string },
   record: ChatKeyRecord
 ): Promise<ChatMyKeys | undefined> {
   const { client, store } = setup
   const mine = await client.myChatKeys()
   if (mine.deviceId === record.deviceId) return mine
+  // Proving the device binds it to the session, whoever that is now.
+  stillOwner(setup)
   try {
     const challenge = await client.chatResumeChallenge(record.deviceId)
     const signature = signResume(
@@ -178,6 +244,7 @@ async function bindDevice(
   } catch (error) {
     const reason = reasonOf(error)
     if (reason === 'deviceRevoked' || reason === 'unknownDevice') {
+      stillOwner(setup)
       await store.wipe()
       return undefined
     }
@@ -192,14 +259,14 @@ async function settle(
   start: ChatKeyRecord,
   mine: ChatMyKeys
 ): Promise<Enrolment> {
-  const { client, store } = setup
+  const { client } = setup
   let record = start
   if (mine.identity == null) return await enrol(setup, record)
   if (record.identity?.id !== mine.identity.id) {
     // Keys of an identity that is no longer the user's (replaced by a reset
     // elsewhere, or never accepted): worth nothing, and not to be used.
     record = { ...record, identity: undefined, puks: [], epochKeys: {} }
-    await store.save(record)
+    await keep(setup, record)
   }
   if (record.identity != null && mine.linked) {
     record = await syncPuks(setup, record, mine)
@@ -285,7 +352,7 @@ async function enrol(
   const { record, body } = newIdentity(start)
   // Kept before it is published: an identity the server accepted and this
   // device forgot could only be reset.
-  await setup.store.save(record)
+  await keep(setup, record)
   await setup.client.enrolChat(body)
   return { state: 'ready', record }
 }
@@ -301,7 +368,7 @@ export async function resetIdentity(
   start: ChatKeyRecord
 ): Promise<ChatKeyRecord> {
   const { record, body } = newIdentity(start)
-  await setup.store.save(record)
+  await keep(setup, record)
   await setup.client.resetChatIdentity(body)
   return record
 }
@@ -376,7 +443,7 @@ async function syncPuks(
       .sort(([a], [b]) => a - b)
       .map(([generation, keys]) => ({ generation, keys }))
   }
-  await setup.store.save(record)
+  await keep(setup, record)
   return record
 }
 
@@ -389,7 +456,7 @@ export async function rotatePuk(
   setup: ChatSetup,
   start: ChatKeyRecord
 ): Promise<ChatKeyRecord> {
-  const { client, store } = setup
+  const { client } = setup
   const identity = start.identity
   const current = latestPuk(start)
   if (identity == null || current == null) return start
@@ -441,7 +508,7 @@ export async function rotatePuk(
     ...start,
     puks: [...start.puks, { generation, keys: puk }]
   }
-  await store.save(record)
+  await keep(setup, record)
   return record
 }
 
@@ -463,7 +530,7 @@ export async function startLink(
   setup: ChatSetup,
   start: ChatKeyRecord
 ): Promise<{ record: ChatKeyRecord; link: ChatLink; code: string }> {
-  const { client, store } = setup
+  const { client } = setup
   if (start.pendingLinkId != null) {
     const open = await client.chatLink(start.pendingLinkId).catch(() => null)
     if (open != null && !open.expired && !open.approved) {
@@ -474,9 +541,10 @@ export async function startLink(
       }
     }
   }
+  stillOwner(setup)
   const link = await client.requestChatLink()
   const record = { ...start, pendingLinkId: link.id }
-  await store.save(record)
+  await keep(setup, record)
   return { record, link, code: ownLinkCode(record, link.id) }
 }
 
@@ -494,7 +562,7 @@ export async function pollLink(
   setup: ChatSetup,
   start: ChatKeyRecord
 ): Promise<LinkPoll> {
-  const { client, store } = setup
+  const { client } = setup
   const linkId = start.pendingLinkId
   if (linkId == null) return { state: 'expired', record: start }
   let link: ChatLink
@@ -503,13 +571,13 @@ export async function pollLink(
   } catch (error) {
     if (!(error instanceof HttpError) || error.code !== 'notFound') throw error
     const record = { ...start, pendingLinkId: undefined }
-    await store.save(record)
+    await keep(setup, record)
     return { state: 'expired', record }
   }
   if (link.box == null) {
     if (!link.expired) return { state: 'waiting' }
     const record = { ...start, pendingLinkId: undefined }
-    await store.save(record)
+    await keep(setup, record)
     return { state: 'expired', record }
   }
   const mine = await client.myChatKeys()
@@ -538,7 +606,7 @@ export async function pollLink(
   if (installed.puks.length !== mine.generations.length) {
     throw new Error('The link did not carry every per-user key')
   }
-  await store.save(installed)
+  await keep(setup, installed)
   return { state: 'installed', record: installed }
 }
 

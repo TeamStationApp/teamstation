@@ -47,10 +47,16 @@ type Step =
  * none of those can be reached, **I can't reach my other devices** leads to
  * a reset, after a warning; a user with no active device left goes straight
  * there.
+ *
+ * Kept through a change of user, it starts again for the one signed in now.
  */
 export function LinkDeviceScreen(
   props: LinkDeviceScreenProps
 ): React.ReactElement {
+  return <LinkDevice key={props.userId} {...props} />
+}
+
+function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
   const { client, userId, onDone } = props
   const store = props.store ?? keyStore
   const pollMs = props.pollMs ?? LINK_POLL_MS
@@ -89,6 +95,8 @@ export function LinkDeviceScreen(
     ensureEnrolled(setup)
       .then(async (enrolment): Promise<Step> => {
         if (enrolment.state === 'ready') return { kind: 'linked' }
+        // Gone since (signed out): nothing to ask for.
+        if (!live) return { kind: 'loading' }
         if (enrolment.state === 'reset') {
           return { kind: 'reset', record: enrolment.record, fromLink: false }
         }
