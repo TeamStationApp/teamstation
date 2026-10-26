@@ -669,6 +669,16 @@ function selectedVariant(mode: string): { nodes: CaptureNode[] } {
   if (mode === 'wrong-bubble') bubble.identifier = 'chat-bubble-other'
   if (mode === 'outside-ancestry') body.parentIndex = 1
   if (mode === 'duplicate-body') raw.nodes.push({ ...body, index: 9 })
+  if (mode === 'nested-body' || mode === 'nested-moved-body')
+    raw.nodes.push({
+      ...body,
+      index: 9,
+      parentIndex: body.index,
+      rect:
+        mode === 'nested-moved-body'
+          ? { ...body.rect, y: body.rect.y + 30 }
+          : { ...body.rect }
+    })
   if (mode === 'cycle') body.parentIndex = body.index
   if (mode === 'invalid-number') body.rect.width = NaN
   if (mode === 'tall') body.rect.height = 300
@@ -762,6 +772,7 @@ describe('chat capture selected-clone ancestry', function () {
     'wrong-bubble',
     'outside-ancestry',
     'duplicate-body',
+    'nested-moved-body',
     'cycle',
     'invalid-number',
     'layer-elsewhere'
@@ -779,6 +790,19 @@ describe('chat capture selected-clone ancestry', function () {
         ).throws()
       }
     )
+  it('reads a phone Text nested in its own StaticText as one body at the outer frame', function () {
+    const actual = iosSpotlightCaptureGeometry(
+      rawBytes(selectedVariant('nested-body')),
+      selectedMessage
+    )
+    expect(actual.bodyApplicable).equals(true)
+    expect(actual.geometry.body).deep.equals({
+      x: 32,
+      y: 206,
+      width: 216,
+      height: 24
+    })
+  })
   it('reads the preview through its animated layer listed beside it at its origin', function () {
     const actual = iosSpotlightCaptureGeometry(
       rawBytes(selectedVariant('layer-sibling')),

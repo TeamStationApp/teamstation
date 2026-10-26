@@ -678,15 +678,23 @@ export function iosSpotlightCaptureGeometry(
   const bodyApplicable = expected.body.trim() !== ''
   if (bodyApplicable) {
     // The wrapper can repeat its label; only the actual StaticText is body proof.
-    const body = unique(
-      nodes.filter(
-        node =>
-          node.type === 'StaticText' &&
-          node.label === expected.body &&
-          under(node, bubble)
-      ),
-      'body StaticText inside bubble'
+    const texts = nodes.filter(
+      node =>
+        node.type === 'StaticText' &&
+        node.label === expected.body &&
+        under(node, bubble)
     )
+    // A phone lists a Text nested in a Text of the same words as a StaticText
+    // inside a StaticText with one frame: one body, read at its outer node.
+    const outer = texts.filter(
+      node => !texts.some(other => other !== node && under(node, other))
+    )
+    assert(
+      outer.length !== 1 ||
+        texts.every(node => same(rect(node), rect(outer[0]))),
+      'A nested body StaticText must share its outer frame'
+    )
+    const body = unique(outer, 'body StaticText inside bubble')
     geometry.body = rect(body)
     assert(
       intersects(geometry.body, geometry.preview),
