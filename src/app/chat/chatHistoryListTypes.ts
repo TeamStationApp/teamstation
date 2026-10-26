@@ -26,13 +26,6 @@ export interface ChatHistoryState {
 export interface ChatHistoryHandle {
   scrollTo: (options: { y: number; animated?: boolean }) => void
   scrollToEnd: (options?: { animated?: boolean }) => void
-  /** Bring a row that may not be mounted into the rendered window. */
-  scrollToIndex: (params: {
-    index: number
-    viewOffset?: number
-    viewPosition?: number
-    animated?: boolean
-  }) => Promise<void>
   /** A row's own measured height, before the list's observer may report it. */
   reportRowHeight: (key: string, height: number) => void
   /** The scroll viewport's host view (the scroll element on the web). */
@@ -93,5 +86,7 @@ export interface ChatHistoryKeyboard {
   listProps: unknown
   /** The list itself pads its end for the composer and the keyboard. */
   managesEndInset: boolean
+  /** The content's own end padding, given the clearance the overlays need. */
+  endPadding: (contentBottom: number) => number
   scrollToEnd: (list: ChatHistoryHandle | null, animated: boolean) => void
 }

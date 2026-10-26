@@ -38,9 +38,8 @@ function HistoryScrollView(
     (node: ScrollNode | null) => {
       // Legend List's scroll compensation looks for the content node.
       if (node != null) node.getContentNode = () => node.getInnerViewNode?.()
-      if (typeof ref === 'function') ref(node as never)
-      else if (ref != null)
-        (ref as React.RefObject<ScrollNode | null>).current = node
+      // Legend List combines its own refs into one callback.
+      ;(ref as (node: ScrollNode | null) => void)(node)
     },
     [ref]
   )
@@ -59,13 +58,8 @@ export function ChatHistoryList<T>(
     return pinned.current.version
   }
   const gap = useRef(0)
-  const flat = StyleSheet.flatten(props.contentContainerStyle)
-  gap.current =
-    typeof flat?.rowGap === 'number'
-      ? flat.rowGap
-      : typeof flat?.gap === 'number'
-        ? flat.gap
-        : 0
+  const gapValue = Number(StyleSheet.flatten(props.contentContainerStyle)?.gap)
+  gap.current = Number.isFinite(gapValue) ? gapValue : 0
   const scroll = (): ScrollNode | undefined =>
     (list.current?.getNativeScrollRef() as ScrollNode | null) ?? undefined
   useImperativeHandle(
@@ -76,9 +70,6 @@ export function ChatHistoryList<T>(
       },
       scrollToEnd: options => {
         scroll()?.scrollToEnd(options)
-      },
-      scrollToIndex: async params => {
-        await list.current?.scrollToIndex(params)
       },
       reportRowHeight: (key, height) => {
         // React Native Web observes the row as the list does; whichever
@@ -205,6 +196,9 @@ export function ChatHistoryList<T>(
   )
 }
 
+/** Browser content keeps its whole end clearance as padding. */
+const allEndPadding = (contentBottom: number): number => contentBottom
+
 /** The browser has no software keyboard to coordinate with the list. */
 export function useChatHistoryKeyboard(
   _options: ChatHistoryKeyboardOptions
@@ -214,6 +208,7 @@ export function useChatHistoryKeyboard(
     onComposerLayout: () => {},
     listProps: undefined,
     managesEndInset: false,
+    endPadding: allEndPadding,
     scrollToEnd: (list, animated) => {
       list?.scrollToEnd({ animated })
     }
@@ -225,4 +220,9 @@ export function ChatKeyboardProvider(props: {
   children: React.ReactNode
 }): React.ReactElement {
   return <>{props.children}</>
+}
+
+/** The whole app, with the keyboard coordination its chat history uses. */
+export function withChatKeyboard(app: React.ReactElement): React.ReactElement {
+  return <ChatKeyboardProvider>{app}</ChatKeyboardProvider>
 }
