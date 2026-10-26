@@ -210,14 +210,62 @@ interface IosReadNode extends PublicNode {
   label?: string
 }
 
+/**
+ * The raw iOS tree as flat nodes. The simulator runner serves them as JSON;
+ * a physical device's WebDriverAgent serves its XML tree, whose `name` is the
+ * accessibility identifier when one is set and otherwise repeats the label.
+ */
+export function iosRawTree(raw: Uint8Array): { nodes: unknown[] } {
+  const text = Buffer.from(raw).toString('utf8')
+  if (!text.trimStart().startsWith('<')) {
+    const tree = object(JSON.parse(text))
+    assert(Array.isArray(tree.nodes), 'Actual raw native node array required')
+    return { nodes: tree.nodes }
+  }
+  const dom = new JSDOM(text, { contentType: 'text/xml' })
+  try {
+    const nodes: Args[] = []
+    const walk = (element: Element, parentIndex?: number): void => {
+      const index = nodes.length
+      const attr = (key: string): string | undefined =>
+        element.getAttribute(key) ?? undefined
+      const number = (key: string): number => Number(attr(key))
+      const name = attr('name')
+      const label = attr('label')
+      nodes.push({
+        index,
+        ...(parentIndex == null ? {} : { parentIndex }),
+        type: (attr('type') ?? element.tagName).replace(/^XCUIElementType/, ''),
+        ...(name != null && name !== label ? { identifier: name } : {}),
+        ...(label == null ? {} : { label }),
+        ...(attr('value') == null ? {} : { value: attr('value') }),
+        ...(attr('placeholderValue') == null
+          ? {}
+          : { placeholderValue: attr('placeholderValue') }),
+        rect: {
+          x: number('x'),
+          y: number('y'),
+          width: number('width'),
+          height: number('height')
+        },
+        enabled: attr('enabled') === 'true'
+      })
+      for (const child of Array.from(element.children)) walk(child, index)
+    }
+    walk(dom.window.document.documentElement)
+    return { nodes }
+  } finally {
+    dom.window.close()
+  }
+}
+
 /** Read native metadata without copying text or changing the clipboard. */
 export function iosPublicRead(
   raw: Uint8Array,
   selected: Args,
   expectedType?: string
 ): { nodes: IosReadNode[]; element?: IosReadNode } {
-  const tree = object(JSON.parse(Buffer.from(raw).toString('utf8')))
-  assert(Array.isArray(tree.nodes), 'Actual raw native node array required')
+  const tree = iosRawTree(raw)
   const nodes = tree.nodes.map((entry: unknown): IosReadNode => {
     const n = object(entry)
     assert(Number.isInteger(n.index), 'Native public node index required')
@@ -1505,10 +1553,7 @@ export function observedNativeValue(
       (expected.identifier !== '' || expected.label !== ''),
     'Named observed native identity required'
   )
-  const tree = JSON.parse(Buffer.from(raw).toString('utf8')) as {
-    nodes?: unknown
-  }
-  assert(Array.isArray(tree.nodes), 'Actual raw native node array required')
+  const tree = iosRawTree(raw)
   const matches = tree.nodes.filter((entry: unknown) => {
     if (entry == null || typeof entry !== 'object') return false
     const n = entry as Record<string, unknown>
@@ -1751,6 +1796,15 @@ export class Chat2UI {
         )
   }
 
+  /** A connected phone rather than a simulator or emulator. */
+  get physical(): boolean {
+    const devices = this.fixture.devices as Chat2Fixture['devices'] | undefined
+    return (
+      this.native &&
+      devices?.[this.surface === 'ios' ? 'ios' : 'android'].physical === true
+    )
+  }
+
   private async startNative(): Promise<void> {
     const platform = this.surface === 'ios' ? 'ios' : 'android'
     const configured = this.fixture.devices[platform]
@@ -1765,7 +1819,26 @@ export class Chat2UI {
       'Device does not match the owned descriptor'
     )
     this.deviceId = requestedDevice
-    if (platform === 'android') {
+    if (configured.physical) {
+      // Lanes share no device, and a phone is neither booted nor shut down.
+      const present =
+        platform === 'ios'
+          ? spawnSync('xcrun', ['devicectl', 'list', 'devices'], {
+              encoding: 'utf8',
+              timeout: 20000
+            })
+              .stdout.split('\n')
+              .some(
+                line =>
+                  line.includes(this.deviceId) && /\bconnected\b/.test(line)
+              )
+          : spawnSync(
+              process.env.CHAT2_ADB ?? 'adb',
+              ['-s', this.deviceId, 'get-state'],
+              { encoding: 'utf8', timeout: 5000 }
+            ).stdout.trim() === 'device'
+      assert(present, 'Connected physical device required')
+    } else if (platform === 'android') {
       const sims = JSON.parse(
         execFileSync('xcrun', ['simctl', 'list', 'devices', '--json'], {
           encoding: 'utf8'
@@ -1794,7 +1867,9 @@ export class Chat2UI {
         'Own Android target must stop before iOS starts'
       )
     }
-    if (process.env.CHAT2_NATIVE_PREBOOTED !== '1') {
+    if (configured.physical) {
+      // Nothing to boot.
+    } else if (process.env.CHAT2_NATIVE_PREBOOTED !== '1') {
       const started = await need(this.daemon, 'Daemon required').startDevice({
         platform,
         name: configured.name,
@@ -1840,8 +1915,10 @@ export class Chat2UI {
       device: this.deviceId,
       platform,
       driver: configured.driver,
+      ...(configured.teamId == null ? {} : { teamId: configured.teamId }),
       appId: this.fixture.appId,
-      ...(process.env.CHAT2_UPDATE_OWN_APP === '1'
+      ...(process.env.CHAT2_UPDATE_OWN_APP === '1' &&
+      !(configured.physical && platform === 'ios')
         ? {
             appFile:
               platform === 'ios'
@@ -1873,7 +1950,44 @@ export class Chat2UI {
         outcome: 'passed'
       })
     }
-    if (platform === 'ios') {
+    if (platform === 'ios' && configured.physical) {
+      // A phone's app container cannot be read, so the lane's own install of
+      // the exact bound bundle is the binding, re-hashed here.
+      const receipt = object(
+        JSON.parse(
+          readFileSync(
+            need(
+              process.env.CHAT2_PHYSICAL_INSTALL_RECEIPT,
+              'Physical iOS install receipt required'
+            ),
+            'utf8'
+          )
+        )
+      )
+      const app = dirname(this.binding.binding.artifact)
+      assert(
+        receipt.device === this.deviceId &&
+          receipt.appId === this.fixture.appId &&
+          receipt.app === app &&
+          receipt.executableSha256 === this.binding.binding.sha256 &&
+          digest(this.binding.binding.artifact) === this.binding.binding.sha256,
+        'Physical install differs from final bound build'
+      )
+      if (this.binding.binding.bundle != null)
+        assert(
+          receipt.bundleSha256 === this.binding.binding.bundle.sha256 &&
+            digest(join(app, basename(this.binding.binding.bundle.path))) ===
+              this.binding.binding.bundle.sha256,
+          'Physically installed iOS JS differs from final source'
+        )
+      this.steps.push({
+        name: 'Installed iOS build/source binding',
+        outcome: 'passed',
+        physical: true,
+        installReceipt: process.env.CHAT2_PHYSICAL_INSTALL_RECEIPT,
+        installedArtifactSha256: this.binding.binding.sha256
+      })
+    } else if (platform === 'ios') {
       const installed = execFileSync(
         'xcrun',
         [
@@ -3584,6 +3698,48 @@ export class Chat2UI {
   }
 
   private async openNativeLink(path: string): Promise<void> {
+    if (this.physical) {
+      // A phone may also hold the store TeamStation, which claims the same
+      // scheme; deliver the link to the QA app by its own identifier.
+      const link = this.fixture.scheme + ':/' + path
+      const result =
+        this.surface === 'ios'
+          ? spawnSync(
+              'xcrun',
+              [
+                'devicectl',
+                'device',
+                'process',
+                'launch',
+                '--device',
+                this.deviceId,
+                '--payload-url',
+                link,
+                this.fixture.appId
+              ],
+              { encoding: 'utf8', timeout: 60000 }
+            )
+          : spawnSync(
+              process.env.CHAT2_ADB ?? 'adb',
+              [
+                '-s',
+                this.deviceId,
+                'shell',
+                'am',
+                'start',
+                '-W',
+                '-a',
+                'android.intent.action.VIEW',
+                '-d',
+                link,
+                '-p',
+                this.fixture.appId
+              ],
+              { encoding: 'utf8', timeout: 60000 }
+            )
+      assert(result.status === 0, 'QA app link delivery failed')
+      return
+    }
     await this.device.openLink({
       link: this.native
         ? this.fixture.scheme + ':/' + path
@@ -4894,13 +5050,26 @@ export class Chat2UI {
         this.daemon == null
           ? undefined
           : await this.connectCleanup?.().catch(() => this.daemon)
+      const physical = this.physical
       if (daemon != null) {
+        if (physical && this.deviceId !== '') {
+          // Never power, reboot or reset a phone; only the QA app stops.
+          try {
+            await this.device?.stopApp({ appId: this.fixture.appId })
+            this.cleanup.physicalAppStopped = true
+          } catch (failure) {
+            this.cleanup.physicalAppStopError = redact(
+              this.fixture,
+              String(failure)
+            )
+          }
+        }
         try {
           await daemon.detach(this.deviceId)
         } catch (failure) {
           this.cleanup.detachError = redact(this.fixture, String(failure))
         }
-        if (this.native && this.deviceId !== '') {
+        if (this.native && this.deviceId !== '' && !physical) {
           try {
             await daemon.stopDevice(this.deviceId, { force: true })
             this.cleanup.deviceStopRequested = true
@@ -4918,7 +5087,14 @@ export class Chat2UI {
         this.cleanup.daemonPid = daemon.info?.pid
       }
       try {
-        if (this.native && this.deviceId !== '') {
+        if (physical && this.deviceId !== '') {
+          this.cleanup.nativeAbsence = {
+            id: this.deviceId,
+            physical: true,
+            appStopped: this.cleanup.physicalAppStopped === true,
+            absent: this.cleanup.physicalAppStopped === true
+          }
+        } else if (this.native && this.deviceId !== '') {
           const platform = this.surface
           if (platform === 'ios') {
             const result = spawnSync(
