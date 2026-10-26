@@ -13875,3 +13875,105 @@ describe('phone typing rate', function () {
     expect(phoneTyping('android', true)).deep.equals({})
   })
 })
+
+describe('phone climb to an unmounted earlier control', function () {
+  const later: Chat2Message = {
+    id: 'msg_paged',
+    seq: 1,
+    body: 'Paged original',
+    authorId: 'usr_peer'
+  }
+  function climber(mountAfter: number | undefined): {
+    scenario: Scenarios
+    taps: Array<{ x: number; y: number }>
+  } {
+    const taps: Array<{ x: number; y: number }> = []
+    const nodes = (): Array<{
+      id?: string
+      type?: string
+      text?: string
+      bounds: { x: number; y: number; width: number; height: number }
+    }> => [
+      {
+        id: 'chat-message-history',
+        bounds: { x: 0, y: 0, width: 390, height: 844 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        bounds: { x: 64, y: 47, width: 274, height: 48 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 0, y: 670, width: 390, height: 70 }
+      },
+      // Each touch mounts other rows, unless the history no longer moves.
+      {
+        id:
+          'chat-bubble-row' +
+          (mountAfter === undefined ? 0 : Math.min(taps.length, mountAfter)),
+        bounds: { x: 48, y: 400, width: 273, height: 100 }
+      },
+      ...(mountAfter !== undefined && taps.length >= mountAfter
+        ? [
+            {
+              type: 'Button',
+              text: 'Load earlier messages',
+              bounds: { x: 16, y: 200, width: 358, height: 49 }
+            }
+          ]
+        : [])
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      deadline: AbortSignal.timeout(20000),
+      steps: [],
+      fixture: { devices: { ios: { physical: true } } },
+      device: {
+        hierarchy: async () => ({
+          nodes: nodes().map((node, index) => ({
+            index,
+            type: node.type ?? 'Other',
+            identifier: node.id,
+            label: node.text,
+            rect: node.bounds,
+            enabled: true
+          }))
+        }),
+        platformInfo: async () => ({ screenWidth: 390, screenHeight: 844 }),
+        tapOnPoint: async (point: { x: number; y: number }) => {
+          taps.push(point)
+        }
+      }
+    })
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      taps
+    }
+  }
+  it('touches the status bar until the earlier control mounts, then frames it', async function () {
+    this.timeout(30000)
+    const m = climber(2)
+    await m.scenario.nativeAnchorReady(later, true)
+    expect(m.taps).deep.equals([
+      { x: 60, y: 20 },
+      { x: 60, y: 20 }
+    ])
+    const proof = m.scenario.observations.find(
+      row => row.nativeEarlierControlFor === later.id
+    )!
+    expect(proof.earlierControlClimb).equals(2)
+    expect(proof.outcome).equals('passed')
+  })
+  it('refuses a climb whose touches no longer move the history', async function () {
+    this.timeout(30000)
+    const m = climber(undefined)
+    expect(
+      String(await captureFailure(m.scenario.nativeAnchorReady(later, true)))
+    ).contains('System scroll to top must move toward the earlier control')
+    expect(m.taps).has.length(1)
+  })
+})
