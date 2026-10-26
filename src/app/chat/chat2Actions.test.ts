@@ -3408,7 +3408,13 @@ describe('chat native adapter compatibility', function () {
       }
       let value = 'Previous draft'
       let browserReads = 0
-      actual.dom = async () => {
+      let released = 0
+      actual.dom = async script => {
+        // The composer outside any closing overlay's inert background.
+        if (script.includes('aria-hidden')) {
+          released++
+          return { present: true, inert: false }
+        }
         browserReads++
         return browserReads === 1
           ? { focused: true, editable: true, value }
@@ -3416,6 +3422,7 @@ describe('chat native adapter compatibility', function () {
       }
       actual.draft = async () => value
       await actual.replaceDraft('Exact\ntext')
+      expect(released).equals(surface === 'android' ? 0 : 1)
       expect(calls).deep.equals([
         ['focus', { id: 'chat-composer' }],
         ['erase', surface === 'android' ? undefined : { characters: 1 }],
