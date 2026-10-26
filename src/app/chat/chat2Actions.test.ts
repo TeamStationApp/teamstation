@@ -3712,6 +3712,34 @@ describe('chat native adapter compatibility', function () {
     )
     expect(actual.steps[0].osChooserClaimed).equals(false)
   })
+  it('taps Attach again when its sources did not stay open', async () => {
+    const actual = ui([], 'android')
+    const calls: unknown[] = []
+    actual.device.addMedia = async () => {}
+    actual.text = async label => {
+      calls.push(label)
+    }
+    actual.device.tapOn = async selector => {
+      calls.push(selector)
+    }
+    actual.present = async id => {
+      calls.push(id)
+    }
+    actual.visible = async () => false
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: {
+        files: {
+          photo: '/tmp/synthetic-photo.png',
+          nativePicker: { android: [{ text: 'Observed synthetic photo' }] }
+        }
+      },
+      observations: []
+    }) as Scenarios
+    await scenario.attachPhoto()
+    expect(calls.slice(0, 3)).deep.equals(['Attach', 'Attach', 'Photo library'])
+    expect(scenario.observations).deep.includes({ attachRetapped: true })
+  })
   it('preserves native attachment order and does not upload after a failed web Attach action', async () => {
     const actual = ui([], 'android')
     const calls: unknown[] = []
@@ -3727,6 +3755,7 @@ describe('chat native adapter compatibility', function () {
     actual.present = async id => {
       calls.push(id)
     }
+    actual.visible = async () => true
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       f: {
