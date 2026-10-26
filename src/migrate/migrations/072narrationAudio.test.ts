@@ -32,6 +32,10 @@ describe('060 keeps the announcer’s spoken sentences', function () {
     }
   })
 
+  // Up to and including it: the later account cutover (075) cannot be
+  // reversed, so a roll down from the latest would stop there.
+  const throughIt = migrations.filter(m => m.name <= '072narrationAudio')
+
   const table = async (): Promise<string | null> =>
     (
       await pool.query<{ name: string | null }>(
@@ -41,7 +45,7 @@ describe('060 keeps the announcer’s spoken sentences', function () {
 
   it('adds the table, one row per digest', async function () {
     expect(await table()).equals(null)
-    expect((await migrateUp(pool, migrations)).applied).includes(
+    expect((await migrateUp(pool, throughIt)).applied).includes(
       '072narrationAudio'
     )
     await pool.query(
@@ -64,13 +68,7 @@ describe('060 keeps the announcer’s spoken sentences', function () {
   })
 
   it('rolls down by dropping it', async function () {
-    expect(
-      await migrateDown(
-        pool,
-        migrations,
-        migrations.filter(m => m.name >= '072narrationAudio').length
-      )
-    ).includes('072narrationAudio')
+    expect(await migrateDown(pool, throughIt, 1)).includes('072narrationAudio')
     expect(await table()).equals(null)
   })
 })
