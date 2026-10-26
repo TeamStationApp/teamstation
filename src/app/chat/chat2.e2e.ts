@@ -3016,15 +3016,19 @@ export class Scenarios {
     const search = async (from: 'latest' | 'sweep' | 'down'): Promise<Json> => {
       const step = from === 'down' ? 'down' : 'sweep'
       let swept = await read(from)
-      // Each history end stops it; a bound covers an end that never reports.
+      // From the latest end the sweep always climbs, even when the reader was
+      // already there. Each history end stops it; a bound covers an end that
+      // never reports.
+      let moving = swept.moved === true || from === 'latest'
       for (
         let steps = 0;
-        steps < 500 && swept.targetCount !== 1 && swept.moved === true;
+        steps < 500 && swept.targetCount !== 1 && moving;
         steps++
       ) {
         await new Promise(resolve => setTimeout(resolve, 200))
         swept = await read()
         if (swept.targetCount !== 1) swept = await read(step)
+        moving = swept.moved === true
       }
       return await settled()
     }
@@ -3036,11 +3040,12 @@ export class Scenarios {
       if (current.targetCount !== 1 && current.earlier == null)
         current = await search('down')
       if (current.targetCount === 1) {
-        const actual = await read('target')
-        const box = actual.target as PublicNode['bounds']
-        const history = actual.history as NonNullable<PublicNode['bounds']>
-        assert(
-          box != null &&
+        const intersects = (sample: Json): boolean => {
+          const box = sample.target as PublicNode['bounds']
+          const history = sample.history as NonNullable<PublicNode['bounds']>
+          return (
+            sample.targetCount === 1 &&
+            box != null &&
             [
               box.x,
               box.y,
@@ -3058,7 +3063,21 @@ export class Scenarios {
             box.x < history.x + history.width &&
             box.x + box.width > history.x &&
             box.y < history.y + history.height &&
-            box.y + box.height > history.y,
+            box.y + box.height > history.y
+          )
+        }
+        // Rows the move brings in measure and shift the target again; centre
+        // it until the settled history holds it.
+        let rested = await read('target')
+        for (let attempt = 0; attempt < 5; attempt++) {
+          rested = await settled()
+          if (rested.targetCount !== 1 || intersects(rested)) break
+          await read('target')
+        }
+        // A target the window let go of is found again by the search.
+        if (rested.targetCount !== 1) continue
+        assert(
+          intersects(rested),
           'Actual target must intersect public history'
         )
         return

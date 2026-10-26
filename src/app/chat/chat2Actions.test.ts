@@ -9713,6 +9713,8 @@ describe('web virtualized history target search', function () {
     arrival?: string
     /** The app restores its owned reader after an unowned script scroll. */
     restores?: boolean
+    /** Rows above the target measure 500px smaller as the centring lands. */
+    measuresOnCentre?: boolean
   }): {
     scenario: Scenarios
     clicks: number[]
@@ -9732,6 +9734,9 @@ describe('web virtualized history target search', function () {
     h.append(content)
     doc.body.append(h)
     let top = 0
+    let landings = 0
+    // Content above the target that measured smaller than its estimate.
+    let lift = 0
     // The app's pending reader restoration, until a person's input owns it.
     let held: number | undefined
     let wheeled = false
@@ -9750,6 +9755,14 @@ describe('web virtualized history target search', function () {
         get: () => top,
         set: (value: number) => {
           top = Math.min(max(), Math.max(0, value))
+          if (options.measuresOnCentre === true && lift === 0) {
+            const index = rows.indexOf(target.id)
+            const y = header() + index * ROW
+            if (index >= 0 && y >= top - 300 && y <= top + VIEWPORT + 300)
+              landings += 1
+            // The second landing near the target is the harness centring it.
+            if (landings === 2) lift = 500
+          }
           render()
           if (options.restores === true && !wheeled && held != null) {
             // Rows measured at the new place change the extent; the app then
@@ -9780,21 +9793,30 @@ describe('web virtualized history target search', function () {
     }
     const list = doc.createElement('div')
     content.append(wrap, list)
+    const yOf = (id: string): number => {
+      const index = rows.indexOf(id)
+      return (
+        header() +
+        index * ROW -
+        (index >= rows.indexOf(target.id) - 3 ? lift : 0)
+      )
+    }
     const render = (): void => {
       if (pages.length > 0) {
         if (!wrap.contains(button)) wrap.append(button)
       } else button.remove()
       list.replaceChildren()
-      rows.forEach((id, index) => {
-        const y = header() + index * ROW
+      rows.forEach(id => {
+        const y = yOf(id)
         // The mounted window: the viewport and 300px either side.
         if (y + ROW < top - 300 || y > top + VIEWPORT + 300) return
         const row = doc.createElement('div')
         row.setAttribute('data-testid', 'chat-message-' + id)
         const bubble = doc.createElement('div')
         bubble.setAttribute('data-testid', 'chat-bubble-' + id)
+        // Live, as a browser's: later measurement moves a mounted row.
         bubble.getBoundingClientRect = () =>
-          new dom.window.DOMRect(48, y - top, 280, ROW - 8)
+          new dom.window.DOMRect(48, yOf(id) - top, 280, ROW - 8)
         bubble.scrollIntoView = () => {
           h.scrollTop = y - VIEWPORT / 2
         }
@@ -9903,7 +9925,10 @@ describe('web virtualized history target search', function () {
     expect(positions).includes('sweep')
     expect(positions).includes('down')
     expect(positions.indexOf('down')).greaterThan(positions.indexOf('sweep'))
-    expect(positions.at(-1)).equals('target')
+    expect(positions).includes('target')
+    expect(positions.lastIndexOf('target')).greaterThan(
+      positions.lastIndexOf('down')
+    )
   })
 
   it('moves the history as a person so the app stops restoring its old reader', async () => {
@@ -9921,8 +9946,11 @@ describe('web virtualized history target search', function () {
     const samples = proof.samples as Array<{
       value: { position: string; offset: number; targetCount: number }
     }>
+    // The settled read after the last centring.
     const framed = samples.at(-1)!.value
-    expect(framed.position).equals('target')
+    expect(samples.some(sample => sample.value.position === 'target')).equals(
+      true
+    )
     expect(framed.targetCount).equals(1)
     // Still in place after the app's restoration delay.
     await new Promise(resolve => setTimeout(resolve, 250))
@@ -9930,6 +9958,42 @@ describe('web virtualized history target search', function () {
       `return {offset:document.querySelector('[data-testid="chat-message-history"]').scrollTop}`
     )
     expect(after.offset).equals(framed.offset)
+  })
+
+  it('centres the target again when rows measured by the centring move it out of the history', async () => {
+    const m = model({
+      rows: [...ids('recent', 10), target.id, ...ids('later', 60)],
+      pages: [],
+      offset: 'end',
+      measuresOnCentre: true
+    })
+    await m.scenario.webHistoryTarget(target)
+    const proof = m.scenario.observations.find(
+      row => row.publicHistoryTarget === target.id
+    )!
+    const samples = proof.samples as Array<{
+      value: {
+        position: string
+        targetCount: number
+        target: { y: number; height: number } | null
+      }
+    }>
+    const centrings = samples.filter(
+      sample => sample.value.position === 'target'
+    )
+    expect(centrings.length, 'Centred again after the shift').at.least(2)
+    // The first centring settled with the target above the history.
+    expect(
+      samples.some(
+        sample =>
+          sample.value.position === '' &&
+          sample.value.target != null &&
+          sample.value.target.y + sample.value.target.height < 0
+      )
+    ).equals(true)
+    const last = samples.at(-1)!.value
+    expect(last.targetCount).equals(1)
+    expect(last.target!.y).within(0, VIEWPORT)
   })
 
   it('still refuses a target that is nowhere in a fully loaded history', async () => {
