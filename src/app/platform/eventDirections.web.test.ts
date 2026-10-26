@@ -1,7 +1,11 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 
-import { copyEventAddress, openEventDirections } from './eventDirections'
+import {
+  copyEventAddress,
+  openEventDirections,
+  openPointDirections
+} from './eventDirections'
 
 const originalOpen = window.open.bind(window)
 const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
@@ -30,6 +34,36 @@ describe('browser address actions', () => {
     )
     expect(target).equals('_blank')
     expect(features).equals('noopener,noreferrer')
+  })
+  it('opens a point’s Google directions by its coordinates, and logs the URL in development', async () => {
+    const opened: Array<[string, string, string]> = []
+    window.open = (input, target, features) => {
+      opened.push([String(input), target ?? '', features ?? ''])
+      return null
+    }
+    const info = console.info
+    const logged: unknown[] = []
+    console.info = (...args: unknown[]) => {
+      logged.push(...args)
+    }
+    const global = globalThis as { __DEV__?: boolean }
+    const before = global.__DEV__
+    global.__DEV__ = true
+    try {
+      await openPointDirections({
+        latitude: 40.0212,
+        longitude: -75.2191,
+        label: 'Example Park · Field 1'
+      })
+    } finally {
+      console.info = info
+      if (before === undefined) delete global.__DEV__
+      else global.__DEV__ = before
+    }
+    const url =
+      'https://www.google.com/maps/dir/?api=1&destination=40.0212,-75.2191'
+    expect(opened).deep.equals([[url, '_blank', 'noopener,noreferrer']])
+    expect(logged).deep.equals(['[directions] ' + url])
   })
   it('copies through clipboard, falls back to selected text and cleans up on failure', async () => {
     let copied = ''

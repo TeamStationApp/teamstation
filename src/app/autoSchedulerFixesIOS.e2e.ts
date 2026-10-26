@@ -1,12 +1,22 @@
-// The Auto-Scheduler fixes' iOS scenarios, I1, I3 and I4, against a Release
-// build of the app on a physical iPad or iPhone. Each part of a scenario
-// starts from a fresh fixture seeded to its own start state, so none depends
-// on another's leftovers.
+// The Auto-Scheduler fixes' iOS scenarios, I1 to I4, against the app on a
+// physical iPad or iPhone. Each part of a scenario starts from a fresh
+// fixture seeded to its own start state, so none depends on another's
+// leftovers.
 //
-// The app is built with TS_API_BASE_URL=http://<host>:<port>/api/v1 (see
-// src/MOBILE.md, "Installing on a real iPhone"). This script serves every
-// part's fresh fixture on that one LAN address, starting it again for each
-// part, and signs in as 101 each time.
+// The app talks to TS_API_BASE_URL=http://<host>:<port>/api/v1 (see
+// src/MOBILE.md): a Release build with it inlined for I1, I3 and I4, and for
+// I2 a Debug build served by Metro started with it and `--reset-cache`, since
+// only a development build logs the `[directions] <url>` line I2 reads from
+// the device's log (idevicesyslog, from Homebrew's libimobiledevice). With
+// TS_AUTO_SCHEDULER_IOS_RELEASE=1, I2 runs on a Release build: it takes its
+// Info tab shot and opens Apple Maps on the field, without the URL check.
+// This script serves every part's fresh fixture on that one LAN address,
+// starting it again for each part, and signs in as 101 each time.
+//
+// The app is never let see the device's location: the Field Manager would
+// show distances from it, and Apple Maps shows it. Apple Maps' own screen
+// goes to coverage/autoSchedulerFixesIOS, outside the artifacts directory;
+// directions-ios-apple-maps.png there is a copy cropped by hand.
 //
 //   TS_MAESTRO_D_CLIENT=$HOME/git/maestro-d/npm/maestro-d \
 //   MAESTRO_D_BIN=$HOME/.maestro-d/bin/maestro-d \
@@ -18,23 +28,27 @@
 //   TS_AUTO_SCHEDULER_ARTIFACTS=<artifacts directory> \
 //     node -r sucrase/register src/app/autoSchedulerFixesIOS.e2e.ts --only I1
 //
-// `--only` takes a scenario (I1, I3, I4) or one part of one (I3a to I3c), or
+// `--only` takes a scenario (I1 to I4) or one part of one (I3a to I3c), or
 // several, comma-separated. With no `--only`, every scenario runs in order.
 // Each scenario's PASS lines go to support/<scenario>.log in the artifacts
 // directory, after its `$` line. TS_AUTO_SCHEDULER_IOS_OUT, when set, takes
 // those logs and the screenshots named without a directory instead.
-import { mkdir, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer, request as forward, type Server } from 'node:http'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import type { EventLocation } from '../common/eventInfo'
 import type { VenueDetail } from '../common/venues'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
   api,
   type AutoSchedulerFixture,
   autoSchedulerFixture,
+  FIELD_ONE_PIN,
+  G1,
   seedThrough
 } from '../test/autoSchedulerFixture'
 import {
@@ -69,6 +83,10 @@ interface Run {
   state: { venueId?: string; fieldId?: string }
   artifacts: string
   support: string
+  /** The device's hardware UDID, for its log. */
+  device: string
+  /** The command line this run was started with, for a log's first line. */
+  command: string
   visit: (path: string) => Promise<void>
   /** A screenshot into the artifacts directory, or to an absolute path. */
   capture: (name: string) => Promise<void>
@@ -267,7 +285,18 @@ async function signIn(
   m: MaestroHandle,
   fx: AutoSchedulerFixture
 ): Promise<void> {
-  await m.launchApp({ appId: APP_ID, stopApp: true, clearState: false })
+  // Location refused: with no permissions named, WebDriverAgent accepts
+  // every alert, the location one too, and the Field Manager would show
+  // distances from where the device really is. On a physical device this
+  // sets only WebDriverAgent's alert handling, to dismiss every system
+  // alert, so the app must already be allowed on the local network (answer
+  // that once by hand after installing it).
+  await m.launchApp({
+    appId: APP_ID,
+    stopApp: true,
+    clearState: false,
+    permissions: { all: 'unset' }
+  })
   const deadline = Date.now() + 60000
   for (;;) {
     await allowLocalNetwork(m)
@@ -399,12 +428,22 @@ async function i1Search(run: Run): Promise<void> {
   const { fx, m } = run
   await run.visit(`/groups/league/${fx.f.leagueA}/scheduler/fields`)
   await show(m, 'Field Manager')
+  // The Field Manager asks where the device is, and is refused.
+  await new Promise(resolve => setTimeout(resolve, 2000))
+  await refuseLocation(m, 12000)
   await tap(m, 'Search venues')
   await m.inputText({ text: 'Example Park' })
   await show(m, `Open ${EXAMPLE_PARK.name}`)
   await show(m, `Open ${MORE_PARKS[0]}`)
   await m.hideKeyboard()
   await new Promise(resolve => setTimeout(resolve, 1000))
+  // With location refused, no row shows a distance from the device.
+  expect(
+    (await nodes(m))
+      .map(n => n.text ?? '')
+      .filter(text => /\d km\b/.test(text)),
+    'a distance from the device'
+  ).deep.equals([])
   const all = [EXAMPLE_PARK.name, ...MORE_PARKS]
   const first = await named(m)
   await run.capture('field-search-ios-after.png')
@@ -919,12 +958,230 @@ async function i4(run: Run): Promise<void> {
   )
 }
 
+/**
+ * The device's log from now on, as idevicesyslog relays it: the React
+ * Native JavaScript lines a Debug build writes to the unified log, teed to
+ * support/ios-js.log. `next` waits for a line holding the text.
+ */
+function deviceLog(
+  device: string,
+  file: string
+): {
+  seen: (text: string) => boolean
+  next: (text: string, timeout: number) => Promise<string>
+  stop: () => Promise<void>
+} {
+  const child = spawn('idevicesyslog', ['-u', device, '--no-colors'], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  const lines: string[] = []
+  let partial = ''
+  child.stdout.setEncoding('utf8')
+  child.stdout.on('data', (chunk: string) => {
+    const parts = (partial + chunk).split('\n')
+    partial = parts.pop() ?? ''
+    lines.push(...parts)
+  })
+  // The app's JavaScript console lines, which React Native logs under its
+  // React category; the rest of the device log is other processes' and the
+  // app's native noise.
+  const kept = (): string[] =>
+    lines.filter(line => line.includes('TeamStation(React)'))
+  return {
+    seen: text => lines.some(line => line.includes(text)),
+    next: async (text, timeout) => {
+      const deadline = Date.now() + timeout
+      for (;;) {
+        const found = lines.find(line => line.includes(text))
+        if (found != null) return found
+        if (Date.now() > deadline)
+          throw new Error(`No device log line with ${text}`)
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+    },
+    stop: async () => {
+      child.kill()
+      await writeFile(file, kept().join('\n') + '\n')
+    }
+  }
+}
+
+/**
+ * The directions log: each run's `$` line and the URL it opened. A run
+ * replaces its own platform's lines and keeps the other's.
+ */
+async function logDirections(
+  artifacts: string,
+  command: string,
+  url: string
+): Promise<void> {
+  const file = join(artifacts, 'directions.log')
+  const kept = (await readFile(file, 'utf8').catch(() => ''))
+    .split('\n')
+    .filter(
+      line =>
+        line !== '' &&
+        !line.startsWith('ios: ') &&
+        !line.startsWith(
+          '$ node -r sucrase/register src/app/autoSchedulerFixesIOS.e2e.ts'
+        )
+    )
+  await writeFile(file, [...kept, command, `ios: ${url}`].join('\n') + '\n')
+}
+
+/**
+ * I2: a field-linked game's Info tab names the field after its venue, its
+ * map is centred on the field's own point, and the address routes Apple Maps
+ * to that point, with the URL a development build logs.
+ */
+async function i2(run: Run): Promise<void> {
+  const { fx, m } = run
+  const title = 'Example Park · Field 1'
+  // The map shows the point the event location answer gives: Field 1's own
+  // pin, never the venue's or a geocoded address.
+  const location = await api<EventLocation>(
+    fx,
+    ADMIN,
+    'GET',
+    `/events/${G1}/location`
+  )
+  expect({
+    latitude: location.latitude,
+    longitude: location.longitude
+  }).deep.equals(FIELD_ONE_PIN)
+  // A launch with no permissions has WebDriverAgent accept every alert,
+  // which takes the directions sheet's first choice before the test can.
+  // Bring the app back with no alert handling, so the sheet waits.
+  await m.launchApp({
+    appId: APP_ID,
+    stopApp: false,
+    clearState: false,
+    permissions: { all: 'unset' }
+  })
+  await run.visit(`/games/${G1}?tab=info`)
+  await show(m, `.*${title}.*`)
+  // On an iPhone the title sits under the floating tab
+  // bar at the top of the tab; bring it up to the middle of the screen,
+  // under the map, so the shot shows both.
+  {
+    const card = (await nodes(m)).find(
+      n => (n.text ?? '').includes(title) && n.bounds != null
+    )
+    const screen = ((await m.hierarchy()) as Node).bounds
+    if (card?.bounds != null && screen != null) {
+      const y = card.bounds.y / screen.height
+      trace(`${title} at ${y.toFixed(2)}`)
+      if (y > 0.75) {
+        await m.swipe({ start: '3%,70%', end: '3%,50%', duration: 2000 })
+        await m.waitForAnimationToEnd()
+        const after = (await nodes(m)).find(
+          n => (n.text ?? '').includes(title) && n.bounds != null
+        )
+        trace(
+          `${title} now at ${((after?.bounds?.y ?? 0) / screen.height).toFixed(2)}`
+        )
+      }
+    }
+  }
+  // Framed as game-info-field-ios-before.png: the top of the Info tab, the
+  // map's tiles loaded.
+  await new Promise(resolve => setTimeout(resolve, 6000))
+  await run.capture('game-info-field-ios-after.png')
+  const url = `https://maps.apple.com/?daddr=${FIELD_ONE_PIN.latitude},${FIELD_ONE_PIN.longitude}&q=${encodeURIComponent(title)}`
+  // A Release build logs nothing; its directions are what Apple Maps shows.
+  const release = process.env.TS_AUTO_SCHEDULER_IOS_RELEASE === '1'
+  const log = release
+    ? undefined
+    : deviceLog(run.device, join(run.support, 'ios-js.log'))
+  let line: string | undefined
+  let maps: string[]
+  try {
+    // Let the relay connect before the tap.
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    trace('tap Open directions')
+    await m.tapOn({
+      text: 'Open directions',
+      retryTapIfNoChange: false,
+      timeout: 15000
+    })
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    await run.capture(join(run.support, 'I2-directions-sheet.png'))
+    expect(
+      log?.seen('[directions]') ?? false,
+      'a URL opened before Apple Maps was chosen'
+    ).equals(false)
+    // The sheet's choice, not Apple Maps' own search field once it opens.
+    const choice = (await nodes(m)).find(
+      n => n.text === 'Apple Maps' && n.type === 'Button' && n.bounds != null
+    )
+    expect(choice, 'the sheet’s Apple Maps choice').not.equals(undefined)
+    trace('tap the sheet’s Apple Maps')
+    await m.tapOn({
+      point: `${Math.round(choice!.bounds!.x + choice!.bounds!.width / 2)},${Math.round(choice!.bounds!.y + choice!.bounds!.height / 2)}`,
+      retryTapIfNoChange: false
+    })
+    if (log != null) {
+      line = await log.next(`[directions] ${url}`, 20000)
+      trace(`device log: ${line.trim()}`)
+    }
+    // Give Apple Maps time to open and route. On its first launch Maps
+    // shows a one-time notice about its ads over the route: let it go.
+    await new Promise(resolve => setTimeout(resolve, 6000))
+    const notice = await nodes(m)
+    if (
+      notice.some(
+        n => n.text === 'Ads' || (n.text ?? '').includes('local ads')
+      ) &&
+      notice.some(n => n.text === 'Continue')
+    ) {
+      await tap(m, 'Continue')
+      await new Promise(resolve => setTimeout(resolve, 4000))
+    }
+    // Apple Maps shows where the device is: keep its screen out of the
+    // artifacts directory.
+    const own = resolve('coverage/autoSchedulerFixesIOS')
+    await mkdir(own, { recursive: true })
+    await run.capture(join(own, 'I2-apple-maps.png'))
+    const texts = (await nodes(m)).map(n => n.text ?? '')
+    maps = texts.filter(text => /Field 1|Example Park|40\.0212/.test(text))
+    // Apple Maps names the destination by its own lookup of the point: the
+    // route's last stop, the row above Add Stop. The start, the device's
+    // own location, is never reported.
+    const stop = texts.indexOf('Add Stop')
+    const destination = texts
+      .slice(0, Math.max(stop, 0))
+      .filter(text => text !== '')
+      .pop()
+    if (
+      texts.includes('Directions') &&
+      destination != null &&
+      destination !== 'My Location'
+    )
+      maps.push(`Directions to ${destination}`)
+  } finally {
+    await log?.stop()
+  }
+  trace(`Apple Maps shows: ${maps.join(' | ')}`)
+  if (line == null) expect(maps, 'Apple Maps on the field').not.deep.equals([])
+  else await logDirections(run.artifacts, run.command, url)
+  // Back to the app, as a person returning from Maps.
+  await m.launchApp({ appId: APP_ID, stopApp: false, clearState: false })
+  const logged =
+    line == null
+      ? 'a Release build, which logs no URL'
+      : `logged "[directions] ${url}" (support/ios-js.log)`
+  await run.pass(
+    `G1's Info tab reads "${title}" above the address, its map centred on Field 1's own pin ${FIELD_ONE_PIN.latitude}, ${FIELD_ONE_PIN.longitude} (the event location answer); tapping the address offered Apple Maps, and choosing it (${logged}) opened Apple Maps on that destination${maps.length > 0 ? ` (on screen: ${maps.slice(0, 3).join(' | ')})` : ''}`
+  )
+}
+
 /** The scenarios, each a list of parts. */
 const SCENARIOS: Record<string, Part[]> = {
   I1: [
     { id: 'I1', start: 'E2', run: i1Search },
     { id: 'I1', start: 'E3', run: i1Map }
   ],
+  I2: [{ id: 'I2', start: 'E5', run: i2 }],
   I3: [
     { id: 'I3a', start: 'E7', run: i3a },
     { id: 'I3b', start: 'E2', run: i3b },
@@ -996,6 +1253,8 @@ async function main(): Promise<void> {
             state,
             artifacts,
             support,
+            device,
+            command,
             visit: async path => {
               trace(`visit ${path}`)
               await session.openLink({
@@ -1019,12 +1278,16 @@ async function main(): Promise<void> {
             }
           })
         } catch (error) {
+          // A failure can be anywhere, Apple Maps or a system alert's map
+          // of the device's location among them: outside the artifacts.
+          const own = resolve('coverage/autoSchedulerFixesIOS')
+          await mkdir(own, { recursive: true })
           await writeFile(
-            join(support, `${part.id}-failure.png`),
+            join(own, `${part.id}-failure.png`),
             await session.screenshot()
           )
           await writeFile(
-            join(support, `${part.id}-failure-hierarchy.json`),
+            join(own, `${part.id}-failure-hierarchy.json`),
             JSON.stringify(await session.hierarchy(), null, 2)
           )
           throw error

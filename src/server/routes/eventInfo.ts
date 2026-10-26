@@ -90,7 +90,25 @@ export function eventInfoRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      const info = await resolveEvent(db, req.actor, param(req.params.id))
+      const info = await resolveEvent(db, req.actor, param(req.params.id), {
+        withField: true
+      })
+      const googleMapsApiKey =
+        options.googleMapsApiKey ?? serverConfig.googleMaps?.webApiKey
+      const keyed =
+        googleMapsApiKey != null && googleMapsApiKey !== ''
+          ? { googleMapsApiKey }
+          : {}
+      // A game on a registry field is at the field's own point: no lookup.
+      if (info.field != null) {
+        res.set('Cache-Control', 'no-store').json({
+          latitude: info.field.latitude,
+          longitude: info.field.longitude,
+          tileUrl,
+          ...keyed
+        })
+        return
+      }
       const address = info.address?.trim() ?? ''
       const location = address !== '' ? address : (info.venue?.trim() ?? '')
       const team = await db
@@ -132,14 +150,10 @@ export function eventInfoRoutes(
           : address !== '' && info.latitude != null && info.longitude != null
             ? { latitude: info.latitude, longitude: info.longitude }
             : await geocoder.lookup(query)
-      const googleMapsApiKey =
-        options.googleMapsApiKey ?? serverConfig.googleMaps?.webApiKey
       res.set('Cache-Control', 'no-store').json({
         ...coordinates,
         tileUrl,
-        ...(googleMapsApiKey != null && googleMapsApiKey !== ''
-          ? { googleMapsApiKey }
-          : {})
+        ...keyed
       })
     })
   )
