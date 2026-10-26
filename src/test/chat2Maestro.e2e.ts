@@ -1825,10 +1825,10 @@ export class Chat2UI {
 
   /** A connected phone rather than a simulator or emulator. */
   get physical(): boolean {
-    const devices = this.fixture.devices as Chat2Fixture['devices'] | undefined
+    const devices = this.fixture?.devices as Chat2Fixture['devices'] | undefined
     return (
       this.native &&
-      devices?.[this.surface === 'ios' ? 'ios' : 'android'].physical === true
+      devices?.[this.surface === 'ios' ? 'ios' : 'android']?.physical === true
     )
   }
 

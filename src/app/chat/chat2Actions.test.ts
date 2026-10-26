@@ -44,6 +44,7 @@ import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import {
   androidMentionHeaderGeometry,
+  clearOfTabBar,
   compareIosComposerFrames,
   innermostLabelled,
   iosMentionHeaderGeometry,
@@ -52,6 +53,7 @@ import {
   observeInfoCaptureReady,
   observeMentionHeader,
   observeSpotlightCaptureReady,
+  PHYSICAL_SPOTLIGHT_MS,
   Scenarios,
   submitPasswordSignIn
 } from './chat2.e2e'
@@ -735,6 +737,7 @@ interface CaptureSample {
 }
 interface CaptureObservation {
   outcome: string
+  timeoutMs?: number
   samples: CaptureSample[]
   failureArtifacts?: Array<{ path: string }>
 }
@@ -1075,6 +1078,26 @@ describe('chat native capture readiness transport', function () {
         expect(
           captureImages.some(bytes => bytes.equals(readFileSync(image.path)))
         ).equals(true)
+      }
+    )
+  for (const physical of [true, false])
+    it(
+      (physical ? 'gives' : 'does not give') +
+        ' a phone its longer settled-spotlight budget for slow samples',
+      async function () {
+        const { ui } = spotlight('stable')
+        const slow = ui.device.screenshot.bind(ui.device)
+        ui.device.screenshot = (async (options: { signal: AbortSignal }) => {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          return await slow(options)
+        }) as typeof ui.device.screenshot
+        Object.assign(ui, { physical })
+        const run = observeSpotlightCaptureReady(ui, 270, selectedMessage)
+        if (physical) expect((await run).spotlightCaptureReady).equals(true)
+        else expect(String(await captureFailure(run))).contains('Timed out')
+        expect(captureObservation(ui).timeoutMs).equals(
+          physical ? PHYSICAL_SPOTLIGHT_MS : 270
+        )
       }
     )
   it('propagates raw hierarchy failure without inventing an image or readiness', async function () {
@@ -10943,8 +10966,14 @@ describe('native pinned jump settlement', function () {
             ? false
             : selector.text === '^Pinned messages$' || mode !== 'missing-pin',
       present: async (id: string) => {
+        // iOS takes the pinned row once its frame settles.
+        if (id === 'chat-pin-' + target.id) return
         expect(id).equals('chat-bubble-' + target.id)
         events.push('present')
+      },
+      publicBounds: async (id: string) => {
+        expect(id).equals('chat-pin-' + target.id)
+        return { x: 25, y: 331, width: 340, height: 48 }
       },
       device: {
         tapOn: async (selector: { id?: string; text?: string }) => {
@@ -12978,11 +13007,44 @@ describe('native below-reader attention count', function () {
       })
       Object.assign(s, { count: async () => shown })
       expect(await s.expectBelowReaderCount(fixture)).equals(shown)
-      expect(s.observations.at(-1)).deep.equals({
+      expect(s.observations.at(-1)).deep.includes({
         belowReaderCountRange: [6, 7],
         observedBelowReaderCount: shown
       })
+      expect(
+        (s.observations.at(-1)!.observedCounts as Array<{ count: number }>).map(
+          row => row.count
+        )
+      ).deep.equals([shown])
     }
+  })
+  it('reports each count the app showed when none settles in the range', async function () {
+    this.timeout(200000)
+    const s = scenario(true)
+    const shown = [220, 219]
+    let reads = 0
+    const actualNow = Date.now
+    let offset = 0
+    Date.now = () => actualNow() + offset
+    try {
+      Object.assign(s, {
+        count: async () => {
+          // Each read models a little over a minute of the 180 s wait.
+          offset += 61000
+          return shown[Math.min(reads++, shown.length - 1)]
+        }
+      })
+      expect(
+        String(await captureFailure(s.expectBelowReaderCount(fixture)))
+      ).contains('complete verified attention count between')
+    } finally {
+      Date.now = actualNow
+    }
+    expect(
+      (s.observations.at(-1)!.observedCounts as Array<{ count: number }>).map(
+        row => row.count
+      )
+    ).deep.equals([220, 219])
   })
   it('keeps the fixture count on web', async () => {
     const s = scenario(false)
@@ -13364,5 +13426,367 @@ describe('native element type names', function () {
     expect(nativeClass('XCUIElementTypeButton')).equals('Button')
     expect(nativeClass('Button')).equals('Button')
     expect(nativeClass(undefined)).equals(undefined)
+  })
+})
+
+describe('phone Sign out against the floating tab bar', function () {
+  const bar = (y: number): PublicNode[] => [
+    {
+      type: 'Other',
+      text: 'Home',
+      bounds: { x: 41, y, width: 308, height: 68 }
+    },
+    ...['Home', 'Videos', 'Schedule', 'Search', 'Chat'].map(
+      (text, i): PublicNode => ({
+        type: 'Other',
+        text,
+        bounds: { x: 48 + i * 60, y: y + 8, width: 54, height: 53 }
+      })
+    )
+  ]
+  const page = (signOutY: number): PublicNode[] => [
+    { type: 'Application', bounds: { x: 0, y: 0, width: 390, height: 844 } },
+    // A page's own Chat setting is not a tab.
+    {
+      type: 'StaticText',
+      text: 'Chat',
+      bounds: { x: 16, y: 300, width: 40, height: 20 }
+    },
+    {
+      type: 'Button',
+      text: 'Sign out',
+      bounds: { x: 16, y: signOutY - 10, width: 358, height: 50 }
+    },
+    {
+      type: 'StaticText',
+      text: 'Sign out',
+      bounds: { x: 160, y: signOutY, width: 70, height: 22 }
+    },
+    ...bar(741)
+  ]
+  it('measures Sign out against the bar of the lowest quarter', function () {
+    expect(clearOfTabBar(page(760), 'Sign out')).deep.equals({
+      target: { x: 160, y: 760, width: 70, height: 22 },
+      barTop: 741,
+      clear: false
+    })
+    expect(clearOfTabBar(page(700), 'Sign out').clear).equals(true)
+    expect(() => clearOfTabBar(page(700).slice(0, 4), 'Sign out')).throws(
+      'Observed floating tab bar required'
+    )
+  })
+  function scenario(
+    physical: boolean,
+    places: number[]
+  ): { scenario: Scenarios; calls: string[] } {
+    const calls: string[] = []
+    let read = 0
+    const ui = {
+      surface: 'ios',
+      physical,
+      nodes: async () => page(places[Math.min(read++, places.length - 1)]),
+      text: async (text: string) => {
+        calls.push('text ' + text)
+      },
+      tapObserved: async (node: PublicNode) => {
+        calls.push(`tap ${node.bounds!.x},${node.bounds!.y}`)
+      },
+      measuredSwipe: async (input: { startY: number; endY: number }) => {
+        calls.push(`drag ${input.startY}>${input.endY}`)
+      }
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      calls
+    }
+  }
+  it('drags a phone page until Sign out clears the bar, then taps its frame', async function () {
+    const { scenario: s, calls } = scenario(true, [760, 760, 700])
+    await s.tapSignOut()
+    // Sign out's bottom (782) is 41 below the bar's top (741): drag 161 up.
+    expect(calls).deep.equals(['drag 701>540', 'drag 701>540', 'tap 160,700'])
+    expect(
+      (s.observations[0].physicalSignOut as Array<{ drags: number }>).map(
+        row => row.drags
+      )
+    ).deep.equals([0, 1, 2])
+  })
+  it('refuses a Sign out the phone page never brings clear of the bar', async function () {
+    const { scenario: s, calls } = scenario(true, [760])
+    const error = await s.tapSignOut().then(
+      () => undefined,
+      (failure: unknown) => failure
+    )
+    expect(String(error)).contains('Sign out must clear the floating tab bar')
+    expect(calls).deep.equals([
+      'drag 701>540',
+      'drag 701>540',
+      'drag 701>540',
+      'drag 701>540'
+    ])
+  })
+  it('keeps the simulator tap by label', async function () {
+    const { scenario: s, calls } = scenario(false, [760])
+    await s.tapSignOut()
+    expect(calls).deep.equals(['text Sign out'])
+  })
+})
+
+describe('photo attachment on a phone without a media API', function () {
+  function scenario(
+    surface: string,
+    physical: boolean
+  ): {
+    scenario: Scenarios
+    calls: string[]
+    steps: Array<Record<string, unknown>>
+  } {
+    const calls: string[] = []
+    const steps: Array<Record<string, unknown>> = []
+    const ui = {
+      surface,
+      physical,
+      native: surface !== 'web-wide',
+      steps,
+      present: async (id: string) => {
+        calls.push('present ' + id)
+      },
+      text: async (text: string) => {
+        calls.push('text ' + text)
+      },
+      visible: async () => true,
+      uploadPhoto: async () => {
+        calls.push('upload')
+      },
+      device: {
+        addMedia: async () => {
+          calls.push('addMedia')
+        },
+        tapOn: async () => {
+          calls.push('picker')
+        }
+      }
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: [],
+        f: {
+          files: {
+            photo: '/synthetic.png',
+            nativePicker: {
+              ios: [{ text: 'Photo' }],
+              android: [{ text: 'Photo' }]
+            }
+          }
+        }
+      }) as Scenarios,
+      calls,
+      steps
+    }
+  }
+  it('reports a physical iPhone attachment as not run and touches nothing', async function () {
+    const { scenario: s, calls, steps } = scenario('ios', true)
+    await s.attachPhoto()
+    expect(calls).deep.equals([])
+    expect(s.photoAttachSkipped).equals(true)
+    expect(s.expectedAttachments).equals(0)
+    expect(s.observations).deep.equals([
+      { photoAttach: 'skipped-physical-ios-no-media-api' }
+    ])
+    expect(steps).deep.equals([
+      {
+        name: 'Photo attachment',
+        outcome: 'not-run',
+        reason: 'skipped-physical-ios-no-media-api'
+      }
+    ])
+    await s.presentAttachment()
+    expect(calls).deep.equals([])
+  })
+  for (const [surface, physical] of [
+    ['ios', false],
+    ['android', true]
+  ] as const)
+    it(`still attaches and requires the chip on ${surface}${physical ? ' phone' : ' simulator'}`, async function () {
+      const { scenario: s, calls } = scenario(surface, physical)
+      await s.attachPhoto()
+      expect(calls).deep.equals([
+        'addMedia',
+        'text Attach',
+        'text Photo library',
+        'picker',
+        'present chat-attachment-chip'
+      ])
+      expect(s.photoAttachSkipped).equals(false)
+      expect(s.expectedAttachments).equals(1)
+      await s.presentAttachment()
+      expect(calls.at(-1)).equals('present chat-attachment-chip')
+      expect(s.observations).deep.equals([])
+    })
+})
+
+describe('settled pinned-list row', function () {
+  function scenario(
+    surface: string,
+    frames: number[]
+  ): { scenario: Scenarios; calls: string[] } {
+    const calls: string[] = []
+    let read = 0
+    const ui = {
+      surface,
+      present: async (id: string) => {
+        calls.push('present ' + id)
+      },
+      publicBounds: async () => {
+        const y = frames[Math.min(read++, frames.length - 1)]
+        calls.push('read ' + y)
+        return { x: 25, y, width: 340, height: 48 }
+      },
+      id: async (id: string) => {
+        calls.push('tap ' + id)
+      }
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      calls
+    }
+  }
+  it('taps an iOS row only once two reads of its frame agree', async function () {
+    const { scenario: s, calls } = scenario('ios', [600, 420, 331, 331])
+    await s.tapPinnedRow('msg_old')
+    expect(calls).deep.equals([
+      'present chat-pin-msg_old',
+      'read 600',
+      'read 420',
+      'read 331',
+      'read 331',
+      'tap chat-pin-msg_old'
+    ])
+    expect(s.observations).deep.equals([
+      {
+        settledPinnedRow: 'msg_old',
+        frame: { x: 25, y: 331, width: 340, height: 48 }
+      }
+    ])
+  })
+  it('taps an Android row directly', async function () {
+    const { scenario: s, calls } = scenario('android', [331])
+    await s.tapPinnedRow('msg_old')
+    expect(calls).deep.equals(['tap chat-pin-msg_old'])
+  })
+})
+
+describe('phone reach of a far native anchor', function () {
+  const far: Chat2Message = {
+    id: 'msg_far',
+    seq: 1,
+    body: 'Far loop anchor',
+    authorId: 'usr_peer'
+  }
+  function reader(physical: boolean): {
+    scenario: Scenarios
+    taps: Array<{ x: number; y: number }>
+    drags: number[]
+  } {
+    const taps: Array<{ x: number; y: number }> = []
+    const drags: number[] = []
+    let rect = { x: 48, y: -59202, width: 273, height: 100 }
+    const nodes = (): PublicNode[] => [
+      {
+        id: 'chat-message-history',
+        bounds: { x: 0, y: 0, width: 390, height: 844 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        bounds: { x: 64, y: 47, width: 274, height: 48 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 0, y: 670, width: 390, height: 70 }
+      },
+      { id: 'chat-bubble-' + far.id, bounds: { ...rect } }
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      deadline: AbortSignal.timeout(10000),
+      steps: [],
+      fixture: {
+        devices: { ios: { physical } }
+      },
+      device: {
+        hierarchy: async () => ({
+          nodes: nodes().map((node, index) => ({
+            index,
+            type: 'Other',
+            identifier: node.id,
+            rect: node.bounds,
+            enabled: true
+          }))
+        }),
+        platformInfo: async () => ({ screenWidth: 390, screenHeight: 844 }),
+        tapOnPoint: async (point: { x: number; y: number }) => {
+          taps.push(point)
+          // The system scrolls the history's start to the reader.
+          if (point.y < 47) rect = { ...rect, y: 300 }
+        },
+        dragAndDrop: async (args: {
+          from: { point: string }
+          to: { point: string }
+          duration: number
+        }) => {
+          const delta =
+            Number(args.to.point.split(',')[1]) -
+            Number(args.from.point.split(',')[1])
+          drags.push(args.duration)
+          // A simulator flick flings; a phone drag moves its own length.
+          rect = {
+            ...rect,
+            y: rect.y + (physical || args.duration > 80 ? delta : delta * 40)
+          }
+        }
+      }
+    }) as Chat2UI
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      taps,
+      drags
+    }
+  }
+  it('brings a far target to a phone reader with the status-bar scroll to top', async function () {
+    const m = reader(true)
+    await m.scenario.nativeAnchorReady(far)
+    expect(m.taps).deep.equals([{ x: 60, y: 20 }])
+    const proof = m.scenario.observations.find(
+      row => row.nativeAnchor === far.id
+    )!
+    expect(proof.outcome).equals('passed')
+    expect(proof.statusBarScrollToTop).deep.includes({
+      point: { x: 60, y: 20 },
+      before: 59202 + 95 - 100
+    })
+  })
+  it('refuses a status-bar touch that leaves the far target where it was', async function () {
+    const m = reader(true)
+    m.scenario.ui.device.tapOnPoint = async () => {}
+    expect(
+      String(await captureFailure(m.scenario.nativeAnchorReady(far)))
+    ).contains('System scroll to top must bring the far target nearer')
+  })
+  it('keeps the simulator on its measured flicks', async function () {
+    const m = reader(false)
+    await m.scenario.nativeAnchorReady(far)
+    expect(m.taps).deep.equals([])
+    expect(m.drags[0]).equals(80)
   })
 })
