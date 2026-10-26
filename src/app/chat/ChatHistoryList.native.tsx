@@ -107,11 +107,7 @@ export function ChatHistoryList<T>(
       // Legend List lays out a newly pinned row with its next pass; a new
       // version makes that pass now, before the row is measured.
       dataVersion={pinnedVersion(alwaysRender)}
-      {...(initialScroll === 'end'
-        ? { initialScrollAtEnd: true }
-        : initialScroll == null
-          ? {}
-          : { initialScrollIndex: initialScroll })}
+      {...(initialScroll === 'end' ? { initialScrollAtEnd: true } : {})}
       ListHeaderComponent={header}
       ListFooterComponent={footer}
       maintainVisibleContentPosition={{ size: true, data: false }}

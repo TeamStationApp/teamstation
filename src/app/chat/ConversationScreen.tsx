@@ -508,10 +508,10 @@ export function ConversationScreen(
   )
   const historyRestorations = useRef(0)
   // Where the virtualized list first renders its window: the latest rows for a
-  // follower, or the saved anchor's row for a reader (measured exactly below).
-  const initialScroll = useRef<
-    'end' | { index: number; viewOffset: number } | undefined
-  >(undefined)
+  // follower. A saved reader is restored by its row's measured place instead:
+  // an index chosen from the first view moves to another row when the opened
+  // view adds rows above it, and the list keeps scrolling to that index.
+  const initialScroll = useRef<'end' | undefined>(undefined)
   const initialScrollChosen = useRef(false)
   const restoringAnchor = useRef(false)
   const restoreAnchorDirty = useRef(false)
@@ -2385,17 +2385,10 @@ export function ConversationScreen(
   }
   if (!initialScrollChosen.current) {
     initialScrollChosen.current = true
-    const anchor = restoreAnchor.current
-    const index =
-      anchor == null
-        ? -1
-        : view.messages.findIndex(message => message.id === anchor.id)
     initialScroll.current =
-      index >= 0 && anchor != null
-        ? { index, viewOffset: anchor.relativeY }
-        : restoreTarget.current == null
-          ? 'end'
-          : undefined
+      restoreAnchor.current == null && restoreTarget.current == null
+        ? 'end'
+        : undefined
   }
   // Rows that must stay mounted wherever the reader is: the selected
   // message's source while its actions are open, and a jump's target.
