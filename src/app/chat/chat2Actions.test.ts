@@ -4946,6 +4946,29 @@ describe('chat native adapter compatibility', function () {
       iosRawTree(Buffer.from(JSON.stringify({ nodes: [{ index: 0 }] }))).nodes
     ).deep.equals([{ index: 0 }])
   })
+  it('reads a phone Text nested in a Text of the same words as one node', () => {
+    const text = (y: number, inner = ''): string =>
+      `<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Mention a member" label="Mention a member" enabled="true" x="16" y="${y}" width="181" height="27">${inner}</XCUIElementTypeStaticText>`
+    const xml = (inner: string): Buffer =>
+      Buffer.from(
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+          '<XCUIElementTypeOther type="XCUIElementTypeOther" name="chat-picker-header" enabled="true" x="0" y="40" width="390" height="60">' +
+          inner +
+          '</XCUIElementTypeOther>'
+      )
+    const same = iosRawTree(xml(text(57, text(57)))).nodes as Array<{
+      label?: string
+    }>
+    expect(same.filter(node => node.label === 'Mention a member')).has.length(1)
+    const moved = iosRawTree(xml(text(57, text(80)))).nodes as Array<{
+      label?: string
+      parentIndex?: number
+    }>
+    expect(moved.filter(node => node.label === 'Mention a member')).has.length(
+      2
+    )
+    expect(moved[2].parentIndex).equals(1)
+  })
   it('reads the actual unique Button instead of a large identically labelled wrapper', () => {
     const result = iosPublicRead(
       raw([
