@@ -13499,6 +13499,13 @@ describe('phone Sign out against the floating tab bar', function () {
       text: 'Sign out',
       bounds: { x: 160, y: signOutY, width: 70, height: 22 }
     },
+    // The scrolled page's content and last row extend past the screen.
+    { type: 'Other', bounds: { x: 0, y: -900, width: 390, height: 2700 } },
+    {
+      type: 'Button',
+      text: 'Delete account',
+      bounds: { x: 129, y: 837, width: 132, height: 49 }
+    },
     ...bar(741)
   ]
   it('measures Sign out against the bar of the lowest quarter', function () {
@@ -13508,7 +13515,7 @@ describe('phone Sign out against the floating tab bar', function () {
       clear: false
     })
     expect(clearOfTabBar(page(700), 'Sign out').clear).equals(true)
-    expect(() => clearOfTabBar(page(700).slice(0, 4), 'Sign out')).throws(
+    expect(() => clearOfTabBar(page(700).slice(0, 6), 'Sign out')).throws(
       'Observed floating tab bar required'
     )
   })
