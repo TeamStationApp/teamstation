@@ -361,6 +361,13 @@ export function ConversationScreen(
     active:
       props.active !== false && mentionChoosing == null && reacting == null
   })
+  const { endPadding, managesEndInset } = keyboard
+  // Clearance the list keeps as a scroll inset instead of content padding.
+  const insetOutsideContent = useCallback(
+    (contentBottom: number): number =>
+      contentBottom - endPadding(contentBottom),
+    [endPadding]
+  )
   const readRevision = useRef<number | undefined>(undefined)
   const paneActive = useRef(props.active !== false)
   paneActive.current = props.active !== false
@@ -563,10 +570,10 @@ export function ConversationScreen(
    * estimate until its neighbours are measured.
    */
   const contentYOf = (id: string): number | undefined => {
-    const position = scroller.current?.state()?.positionByKey(id)
-    return position == null || !Number.isFinite(position)
-      ? undefined
-      : contentTop.current + historyHeader.current + position
+    const position = scroller.current?.state()?.positionByKey(id) ?? Number.NaN
+    return Number.isFinite(position)
+      ? contentTop.current + historyHeader.current + position
+      : undefined
   }
   const readingAnchor = useCallback(
     (
@@ -1462,9 +1469,14 @@ export function ConversationScreen(
       top: viewport.readableTop,
       bottom: viewport.contentBottom
     }
+    // An end inset outside the scroll content (native) still ends the history.
+    if (scrolled.current.content > 0)
+      scrolled.current.content +=
+        insetOutsideContent(viewport.contentBottom) -
+        insetOutsideContent(previous.bottom)
     if (
       previous.top === viewport.readableTop &&
-      (previous.bottom === viewport.contentBottom || keyboard.managesEndInset)
+      (previous.bottom === viewport.contentBottom || managesEndInset)
     )
       return
     if (!mounted.current || !paneActive.current) return
@@ -1503,7 +1515,8 @@ export function ConversationScreen(
     viewport.readableTop,
     viewport.contentBottom,
     theme,
-    keyboard.managesEndInset
+    managesEndInset,
+    insetOutsideContent
   ])
 
   // Open the chat, and keep its view current from the engine's events. A
@@ -2594,9 +2607,7 @@ export function ConversationScreen(
             styles.messages,
             {
               paddingTop: viewport.contentTop,
-              paddingBottom: keyboard.managesEndInset
-                ? 0
-                : viewport.contentBottom,
+              paddingBottom: keyboard.endPadding(viewport.contentBottom),
               paddingLeft: Math.max(margin, insets.left),
               paddingRight: Math.max(margin, insets.right)
             }
@@ -2671,8 +2682,12 @@ export function ConversationScreen(
               })
             restoreReadingAnchor()
           }}
-          onContentSizeChange={(width, height) => {
+          onContentSizeChange={(width, contentHeight) => {
             if (!mounted.current || !paneActive.current) return
+            // The reader's extent includes the end clearance wherever the
+            // platform keeps it: content padding, or the scroll view's inset.
+            const height =
+              contentHeight + insetOutsideContent(viewport.contentBottom)
             if (scrolled.current.contentWidth !== width) {
               widthRevision.current += 1
               if (restoringAnchor.current) restoreAnchorDirty.current = true
