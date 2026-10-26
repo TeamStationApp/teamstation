@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Text, useWindowDimensions, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type {
   BattingRow,
@@ -29,7 +29,8 @@ import {
   StatGrid,
   useHandoff,
   useHeaderHandoff,
-  useHeaderSlot
+  useHeaderSlot,
+  usePaneWidth
 } from '../components'
 import { ActionList } from '../components/ActionRow'
 import { Badge } from '../components/Badge'
@@ -125,7 +126,7 @@ export function SeasonPresentation(
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const { width } = useWindowDimensions()
+  const width = usePaneWidth()
   const mayView = publicDetail?.canViewPrivate ?? true
   const management = props.management
   // Its members and role holders read the season's people, as the server

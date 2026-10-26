@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, beforeEach, describe, it } from 'mocha'
 
+import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
 import { userIdOfGumbo } from '../../common/userId'
@@ -11,6 +12,7 @@ import {
 } from '../../test/accountHarness'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { testPasswordParameters } from '../../test/passwordFixtures'
+import { callTools, fakeModel, say, TEST_SETTINGS } from '../../test/tessFakes'
 import { changeNodeAccount } from '../admin/nodeAdministration'
 import { closeInto } from '../admin/people'
 import { createEmailCode } from '../auth/emailCodes'
@@ -28,6 +30,12 @@ import { walkUpSongRoutes } from '../routes/walkUpSongs'
 import { addAdults, attachEmail } from '../teams/addAdults'
 import { addPlayers } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
+import { runTurn } from '../tess/agent'
+import { storeAttachment } from '../tess/attachments'
+import { proposeChange } from '../tess/changes'
+import { appendMessages, saveContextTokens } from '../tess/conversation'
+import { ACCOUNT_DELETED } from '../tess/liveUser'
+import { withTurn } from '../tess/turns'
 import { deleteAccount, DELETED_NAME } from './deleteAccount'
 
 const ROOT = '/me/account'
@@ -399,6 +407,194 @@ describe('deleting an account', function () {
       null
     )
     expect(verified.status).equals(401)
+  })
+
+  it('removes everything Tess keeps of the person, and nobody else’s', async () => {
+    const proof = 'b8'.repeat(32)
+    const leaving = await person('Ozzie Smith', 'ozzie@example.test', proof)
+    const staying = await person('Lou Brock', 'lou@example.test', proof)
+    const tessTables = [
+      'tess_conversations',
+      'tess_messages',
+      'tess_attachments',
+      'tess_changes',
+      'tess_usage_weeks'
+    ] as const
+    for (const [n, userId] of [leaving.id, staying.id].entries()) {
+      await h.db
+        .insertInto('tess_conversations')
+        .values({ user_id: userId, summary: 'They asked about the schedule' })
+        .execute()
+      await h.db
+        .insertInto('tess_messages')
+        .values({
+          user_id: userId,
+          role: 'user',
+          content: JSON.stringify([{ type: 'text', text: 'When do we play?' }])
+        })
+        .execute()
+      await h.db
+        .insertInto('tess_attachments')
+        .values({
+          id: `00000000-0000-4000-8000-00000000010${n}`,
+          user_id: userId,
+          name: 'lineup.csv',
+          media_type: 'text/csv',
+          kind: 'csv',
+          data: Buffer.from('name\n')
+        })
+        .execute()
+      await h.db
+        .insertInto('tess_changes')
+        .values({
+          id: `00000000-0000-4000-8000-00000000020${n}`,
+          user_id: userId,
+          method: 'POST',
+          path: '/teams/tem_account/games',
+          body: JSON.stringify({ opponent: 'Demo Eagles' }),
+          summary: 'Add a game against Demo Eagles',
+          expires_at: new Date(Date.now() + 1800000)
+        })
+        .execute()
+      await h.db
+        .insertInto('tess_usage_weeks')
+        .values({
+          user_id: userId,
+          week_start: '2026-10-19',
+          input_tokens: 5000,
+          output_tokens: 700,
+          requests: 2
+        })
+        .execute()
+    }
+    const left = async (
+      table: (typeof tessTables)[number],
+      userId: string
+    ): Promise<number> =>
+      (
+        await h.db
+          .selectFrom(table)
+          .select('user_id')
+          .where('user_id', '=', userId)
+          .execute()
+      ).length
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+
+    for (const table of tessTables) {
+      expect(await left(table, leaving.id), table).equals(0)
+      expect(await left(table, staying.id), table).equals(1)
+    }
+  })
+
+  it('keeps nothing Tess writes after it, from a turn still running or one begun later', async () => {
+    const leaving = await person(
+      'Willie Stargell',
+      'willie@example.test',
+      'b9'.repeat(32)
+    )
+    const tessTables = [
+      'tess_conversations',
+      'tess_messages',
+      'tess_attachments',
+      'tess_changes',
+      'tess_usage_weeks'
+    ] as const
+    const kept = async (): Promise<Record<string, number>> => {
+      const counts: Record<string, number> = {}
+      for (const table of tessTables)
+        counts[table] = (
+          await h.db
+            .selectFrom(table)
+            .select('user_id')
+            .where('user_id', '=', leaving.id)
+            .execute()
+        ).length
+      return counts
+    }
+    const none = Object.fromEntries(tessTables.map(table => [table, 0]))
+    const refusal = async (promise: Promise<unknown>): Promise<HttpError> => {
+      try {
+        await promise
+      } catch (error) {
+        expect(error).instanceOf(HttpError)
+        return error as HttpError
+      }
+      throw new Error('Expected a refusal')
+    }
+    const model = fakeModel()
+    const deps = {
+      db: h.db,
+      settings: TEST_SETTINGS,
+      origin: () => h.origin,
+      fetch: model.fetch
+    }
+    const user = {
+      userId: leaving.id,
+      isAdmin: false,
+      credentials: { authorization: `Bearer ${leaving.session}` }
+    }
+    // Tess is asked something and looks it up; her answer waits until the
+    // account is gone.
+    let answer: () => void = () => {}
+    const answered = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    model.reply(
+      callTools([{ name: 'api_get', input: { path: '/me' } }]),
+      async () => {
+        await answered
+        return say('Your next game is on Saturday.')
+      }
+    )
+    const turn = refusal(runTurn(deps, user, { text: 'When do we play?' }))
+    while (model.messageCalls().length < 2)
+      await new Promise(resolve => setTimeout(resolve, 10))
+    expect((await kept()).tess_messages).equals(3)
+    expect((await kept()).tess_usage_weeks).equals(1)
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+    expect(await kept()).deep.equals(none)
+    answer()
+    const stopped = await turn
+    expect(stopped.status).equals(410)
+    expect(stopped.message).equals(ACCOUNT_DELETED)
+    expect(await kept()).deep.equals(none)
+
+    // Nor does anything Tess would write later.
+    for (const write of [
+      async () => await withTurn(h.db, leaving.id, async () => 'held'),
+      async () =>
+        await appendMessages(h.db, leaving.id, [
+          { role: 'assistant', content: [{ type: 'text', text: 'Saturday.' }] }
+        ]),
+      async () => {
+        await saveContextTokens(h.db, leaving.id, 1200)
+      },
+      async () =>
+        await proposeChange(
+          h.db,
+          leaving.id,
+          {
+            method: 'POST',
+            path: '/teams/tem_account/games',
+            summary: 'Add a game against Demo Eagles'
+          },
+          new Date()
+        ),
+      async () =>
+        await storeAttachment(h.db, leaving.id, {
+          name: 'lineup.csv',
+          mediaType: 'text/csv',
+          data: Buffer.from('name\n').toString('base64')
+        })
+    ])
+      expect((await refusal(write())).status).equals(410)
+    expect(await kept()).deep.equals(none)
   })
 
   it('keeps the last administrator of a team, and lets a second one go', async () => {

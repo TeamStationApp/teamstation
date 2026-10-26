@@ -7,6 +7,7 @@ import {
   asOptional,
   asString,
   asTuple,
+  asUnknown,
   type Cleaner
 } from 'cleaners'
 
@@ -140,6 +141,7 @@ import {
   type ScheduleSetup,
   type SeasonScheduleSettings
 } from './seasonScheduling'
+import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
 import {
   asUmpireLeaderboard,
   asUmpireLeagues,
@@ -1576,11 +1578,343 @@ export const asHealth = asObject({
   dictation: asOptional(asBoolean, false),
   dictationModels: asOptional(asArray(asString), []),
   /** Whether the replay's announcer can speak; absent from an older server. */
-  narration: asOptional(asBoolean)
+  narration: asOptional(asBoolean),
+  /**
+   * Whether Tess, the assistant, is available. Absent from an older server,
+   * which has no Tess: only `true` shows her.
+   */
+  tess: asOptional(asBoolean)
 })
-export type Health = Omit<ReturnType<typeof asHealth>, 'narration'> & {
+export type Health = Omit<ReturnType<typeof asHealth>, 'narration' | 'tess'> & {
   narration?: boolean
+  tess?: boolean
 }
+
+/** A string of at most `max` characters. */
+function asTextUpTo(max: number): Cleaner<string> {
+  return raw => {
+    const text = asString(raw)
+    if (text.length > max)
+      throw new TypeError(`Expected at most ${max} characters`)
+    return text
+  }
+}
+
+/**
+ * The page open beside Tess on a wide screen, and the pages that led there:
+ * sent with a message so she knows what "this game" is. A narrow screen,
+ * where the chat covers the app, sends none.
+ */
+export const asTessScreen = asObject({
+  path: asTextUpTo(2000),
+  title: asTextUpTo(200),
+  stack: asOptional(
+    asArray(asObject({ path: asTextUpTo(2000), title: asTextUpTo(200) })),
+    () => []
+  )
+})
+export type TessScreen = ReturnType<typeof asTessScreen>
+
+/**
+ * The id the app gives a message it sends, up to 64 letters, digits, `-`
+ * and `_`. The conversation shows it on the message, so the app can tell
+ * whether a send whose answer it lost was kept.
+ */
+export const asTessClientId: Cleaner<string> = raw => {
+  const id = asString(raw)
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id))
+    throw new TypeError('Expected up to 64 letters, digits, - and _')
+  return id
+}
+
+/** `POST /me/tess/messages`: what the person said, and what they attached. */
+export const asTessMessageBody = asObject({
+  text: asTextUpTo(20000),
+  attachmentIds: asOptional(asArray(asString), () => []),
+  screen: asOptional(asTessScreen),
+  clientId: asOptional(asTessClientId)
+})
+export type TessMessageBody = ReturnType<typeof asTessMessageBody>
+
+/** `POST /me/tess/attachments`: one file, its bytes in base64. */
+export const asTessAttachmentBody = asObject({
+  name: asTextUpTo(1000),
+  /** May be empty: the type is then read from the name's extension. */
+  mediaType: asOptional(asString, ''),
+  data: asString
+})
+export type TessAttachmentBody = ReturnType<typeof asTessAttachmentBody>
+
+export const asTessAttachmentKind = asLiteral(
+  'image',
+  'csv',
+  'text',
+  'markdown'
+)
+export type TessAttachmentKind = ReturnType<typeof asTessAttachmentKind>
+
+/**
+ * The most a picture for Tess may hold, in bytes: 5 MB of base64, the most
+ * the model takes. The server refuses more, and the app does not send it.
+ */
+export const TESS_MAX_IMAGE_BYTES = (5 * 1024 * 1024 * 3) / 4
+/** The most a CSV, plain text or Markdown file for Tess may hold, in bytes. */
+export const TESS_MAX_TEXT_BYTES = 1024 * 1024
+/** The most attachments one message may name. */
+export const TESS_MAX_ATTACHMENTS = 5
+
+/** The media types Tess reads, and what each is to her. */
+const TESS_TYPES: Readonly<Record<string, TessAttachmentKind>> = {
+  'image/png': 'image',
+  'image/jpeg': 'image',
+  'image/gif': 'image',
+  'image/webp': 'image',
+  'text/csv': 'csv',
+  'text/plain': 'text',
+  'text/markdown': 'markdown'
+}
+
+/** Other names the same types travel under. */
+const TESS_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  'image/jpg': 'image/jpeg',
+  'application/csv': 'text/csv',
+  'text/comma-separated-values': 'text/csv',
+  'text/x-markdown': 'text/markdown'
+}
+
+/** The type a file name's extension says. */
+const TESS_EXTENSIONS: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  csv: 'text/csv',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown'
+}
+
+/** What a browser's file chooser offers for Tess, by type and by name. */
+export const TESS_ACCEPT = [
+  'image/*',
+  ...new Set(
+    Object.keys(TESS_EXTENSIONS)
+      .filter(extension => TESS_TYPES[TESS_EXTENSIONS[extension]] !== 'image')
+      .map(extension => `.${extension}`)
+  ),
+  ...Object.keys(TESS_TYPES).filter(type => !type.startsWith('image/'))
+].join(',')
+
+/**
+ * The type a file for Tess is, from the media type it came with or, when
+ * that is missing or names nothing she reads (a CSV that Windows calls a
+ * spreadsheet), from its name's extension. Null for a file she cannot read.
+ * The app and the server both read files by this.
+ */
+export function tessUploadType(
+  name: string,
+  mediaType: string | null | undefined
+): { kind: TessAttachmentKind; mediaType: string } | null {
+  const given = (mediaType ?? '').split(';')[0].trim().toLowerCase()
+  const known = TESS_TYPE_ALIASES[given] ?? given
+  const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1].toLowerCase()
+  const type =
+    TESS_TYPES[known] != null
+      ? known
+      : extension == null
+        ? undefined
+        : TESS_EXTENSIONS[extension]
+  return type == null ? null : { kind: TESS_TYPES[type], mediaType: type }
+}
+
+/** An uploaded file, as a message names it. */
+export const asTessAttachment = asObject({
+  id: asString,
+  name: asString,
+  kind: asTessAttachmentKind
+})
+export type TessAttachment = ReturnType<typeof asTessAttachment>
+
+/**
+ * A change Tess proposed: what the server will run, from the stored request
+ * rather than her words, and where it stands. It runs only when the person
+ * holds Confirm.
+ */
+export const asTessChange = asObject({
+  id: asString,
+  summary: asString,
+  method: asLiteral('POST', 'PUT', 'PATCH', 'DELETE'),
+  path: asString,
+  body: asOptional(asUnknown, null),
+  /**
+   * `unknown`: it began to run and gave no answer in time, or the server
+   * lost track of it, so whether it happened has to be checked.
+   */
+  status: asLiteral(
+    'pending',
+    'running',
+    'done',
+    'failed',
+    'expired',
+    'unknown'
+  )
+})
+export type TessChange = ReturnType<typeof asTessChange>
+
+/** How a step Tess took went: still going, worked, or failed. */
+export const asTessStepStatus = asLiteral('running', 'done', 'failed')
+export type TessStepStatus = ReturnType<typeof asTessStepStatus>
+
+/**
+ * One step Tess took for a reply: a tool call, labelled by the server in
+ * words of its own ("Reading: Get a team's schedule"), never its path.
+ */
+export const asTessStep = asObject({
+  label: asString,
+  status: asTessStepStatus
+})
+export type TessStep = ReturnType<typeof asTessStep>
+
+/**
+ * One message of the conversation as the app shows it: the person's text
+ * with their attachments, or Tess's reply with the changes she proposed in
+ * it, the summaries of her thinking and the steps she took. Her tool calls
+ * and their results are not shown.
+ */
+const asTessMessageShape = asObject({
+  id: asString,
+  role: asLiteral('user', 'assistant'),
+  text: asString,
+  attachments: asArray(
+    asObject({
+      id: asString,
+      name: asString,
+      kind: asTessAttachmentKind,
+      /** Its bytes were replaced by a description to keep the conversation short. */
+      described: asBoolean
+    })
+  ),
+  changes: asArray(asTessChange),
+  createdAt: asString,
+  /** The id the app sent a message of the person's with, if it sent one. */
+  clientId: asOptional(asString),
+  /** On a reply: the summaries of Tess's thinking, joined. */
+  thinking: asOptional(asString),
+  /** On a reply: each step she took, in order. */
+  steps: asOptional(asArray(asTessStep))
+})
+export type TessMessage = Omit<
+  ReturnType<typeof asTessMessageShape>,
+  'clientId' | 'thinking' | 'steps'
+> & { clientId?: string; thinking?: string; steps?: TessStep[] }
+/** A message, without `clientId`, `thinking` or `steps` when it has none. */
+export const asTessMessage: Cleaner<TessMessage> = raw => {
+  const { clientId, thinking, steps, ...message } = asTessMessageShape(raw)
+  return {
+    ...message,
+    ...(clientId == null ? {} : { clientId }),
+    ...(thinking == null ? {} : { thinking }),
+    ...(steps == null ? {} : { steps })
+  }
+}
+
+/** `GET /me/tess`: the conversation, and its size in tokens. */
+const asTessConversationShape = asObject({
+  available: asBoolean,
+  messages: asArray(asTessMessage),
+  contextTokens: asNumber,
+  /**
+   * Tess is answering a message or a confirmed change now; what she stores
+   * shows on a later read.
+   */
+  answering: asOptional(asBoolean)
+})
+export type TessConversation = Omit<
+  ReturnType<typeof asTessConversationShape>,
+  'answering'
+> & { answering?: boolean }
+export const asTessConversation: Cleaner<TessConversation> =
+  asTessConversationShape
+
+/** `POST /me/tess/changes/:changeId/confirm`: the change, and Tess's report. */
+export const asTessConfirmation = asObject({
+  change: asTessChange,
+  messages: asArray(asTessMessage)
+})
+export type TessConfirmation = ReturnType<typeof asTessConfirmation>
+
+/**
+ * What a streamed turn tells as it happens (`streamTessMessage`,
+ * `streamTessConfirm`): pieces of Tess's thinking's summary and of her text;
+ * each step as it starts and ends, by its tool call's id; and, once the turn
+ * has begun, the person's message as stored (or, for a confirm, the change
+ * as it ended).
+ */
+export type TessStreamEvent =
+  | { type: 'thinking'; delta: string }
+  | { type: 'text'; delta: string }
+  | { type: 'step'; id: string; label: string; status: TessStepStatus }
+  | { type: 'stored'; messages: TessMessage[]; change?: TessChange }
+
+const asTessDelta = asObject({ delta: asString })
+const asTessStepEvent = asObject({
+  id: asString,
+  label: asString,
+  status: asTessStepStatus
+})
+const asTessStored = asObject({
+  messages: asArray(asTessMessage),
+  change: asOptional(asTessChange)
+})
+
+/** One streamed event by its name, or null for one this app does not know. */
+export function tessStreamEventOf(
+  name: string,
+  raw: unknown
+): TessStreamEvent | null {
+  switch (name) {
+    case 'thinking':
+    case 'text':
+      return { type: name, delta: asTessDelta(raw).delta }
+    case 'step':
+      return { type: 'step', ...asTessStepEvent(raw) }
+    case 'stored': {
+      const { messages, change } = asTessStored(raw)
+      return change == null
+        ? { type: 'stored', messages }
+        : { type: 'stored', messages, change }
+    }
+    default:
+      return null
+  }
+}
+
+/**
+ * A streamed turn that failed once begun, as its `error` event told it: the
+ * error the request would have failed with, and whether the server still
+ * has the message, or the confirmation, it stored. One Tess failed to answer
+ * before storing anything of her answer is taken back, and the changes it
+ * expired are pending again.
+ */
+export class TessTurnError extends HttpError {
+  readonly kept: boolean
+
+  constructor(error: HttpError, kept: boolean) {
+    super(error.code, error.message, error.details)
+    this.name = 'TessTurnError'
+    this.kept = kept
+  }
+}
+
+/** One UTC week, from Monday, of the caller's use of Tess. */
+export const asTessUsageWeek = asObject({
+  weekStart: asString,
+  inputTokens: asNumber,
+  outputTokens: asNumber,
+  requests: asNumber
+})
+export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>
 
 /** The response header a screen's read carries its revision in. */
 export const REVISION_HEADER = 'x-teamstation-revision'
@@ -1605,11 +1939,33 @@ export interface RequestOptions {
   headers?: Record<string, string>
 }
 
+/**
+ * The part of `XMLHttpRequest` a streamed call uses: on the web and in React
+ * Native alike, `onprogress` sees the answer's text grow as it arrives,
+ * where React Native's `fetch` has no streaming body.
+ */
+export interface StreamingRequest {
+  open: (method: string, url: string) => void
+  setRequestHeader: (name: string, value: string) => void
+  getResponseHeader: (name: string) => string | null
+  send: (body?: string) => void
+  withCredentials: boolean
+  readonly status: number
+  readonly responseText: string
+  onprogress: (() => void) | null
+  onload: (() => void) | null
+  onerror: (() => void) | null
+  ontimeout: (() => void) | null
+  onabort: (() => void) | null
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
   /** Swapped out in tests. Defaults to the platform's own. */
   fetch?: typeof fetch
+  /** Makes the request a streamed call sends; the platform's `XMLHttpRequest` by default. */
+  streamingRequest?: () => StreamingRequest
   passwordKdf?: PasswordKdf
   passwordCosts?: ClientPasswordCosts
   passwordTargetMs?: number
@@ -2146,6 +2502,7 @@ export class TeamStationClient {
   /** Where the API is, which is also where its sockets are. */
   readonly baseUrl: string
   private readonly doFetch: typeof fetch
+  private readonly newStreamingRequest?: () => StreamingRequest
   private readonly passwordKdf?: PasswordKdf
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
@@ -2208,6 +2565,7 @@ export class TeamStationClient {
     this.passwordTargetMs = options.passwordTargetMs
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
+    this.newStreamingRequest = options.streamingRequest
   }
 
   /** The revision the last answer from `path` carried, if any did. */
@@ -2544,6 +2902,123 @@ export class TeamStationClient {
   /** What the server can do, including whether it takes dictation. */
   async health(): Promise<Health> {
     return await this.request('GET', '/health', asHealth)
+  }
+
+  /** The caller's conversation with Tess. */
+  async tess(): Promise<TessConversation> {
+    return await this.request('GET', '/me/tess', asTessConversation)
+  }
+
+  /**
+   * Says something to Tess, with any attachments already uploaded and, on a
+   * wide screen, the page beside the chat. Answers the new message and
+   * everything Tess added after it. `clientId` comes back on the stored
+   * message, so a send whose answer never arrived can be looked for.
+   */
+  async sendTessMessage(
+    text: string,
+    options: {
+      attachmentIds?: string[]
+      screen?: TessScreen
+      clientId?: string
+    } = {}
+  ): Promise<TessMessage[]> {
+    return (
+      await this.request(
+        'POST',
+        '/me/tess/messages',
+        asObject({ messages: asArray(asTessMessage) }),
+        {
+          text,
+          ...(options.attachmentIds == null ||
+          options.attachmentIds.length === 0
+            ? {}
+            : { attachmentIds: options.attachmentIds }),
+          ...(options.screen == null ? {} : { screen: options.screen }),
+          ...(options.clientId == null ? {} : { clientId: options.clientId })
+        }
+      )
+    ).messages
+  }
+
+  /** Uploads one file for a later message to name. */
+  async uploadTessAttachment(
+    file: TessAttachmentBody
+  ): Promise<TessAttachment> {
+    return await this.request(
+      'POST',
+      '/me/tess/attachments',
+      asTessAttachment,
+      file
+    )
+  }
+
+  /** Runs a change Tess proposed, once the person has held Confirm. */
+  async confirmTessChange(changeId: string): Promise<TessConfirmation> {
+    return await this.request(
+      'POST',
+      `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
+      asTessConfirmation
+    )
+  }
+
+  /**
+   * `sendTessMessage`, streamed: Tess's thinking, her steps and her text go
+   * to `onEvent` as they happen, and it answers the same messages once she
+   * is done. A refusal before her turn begins is the error `sendTessMessage`
+   * throws; a failure in it is the one it would have thrown, as a
+   * `TessTurnError` that says whether the message is kept; and a stream
+   * that stops before she is done is `offline`, as a lost answer is.
+   */
+  async streamTessMessage(
+    text: string,
+    options: {
+      attachmentIds?: string[]
+      screen?: TessScreen
+      clientId?: string
+    },
+    onEvent: (event: TessStreamEvent) => void
+  ): Promise<TessMessage[]> {
+    return (
+      await this.streamTess(
+        '/me/tess/messages',
+        asObject({ messages: asArray(asTessMessage) }),
+        {
+          text,
+          ...(options.attachmentIds == null ||
+          options.attachmentIds.length === 0
+            ? {}
+            : { attachmentIds: options.attachmentIds }),
+          ...(options.screen == null ? {} : { screen: options.screen }),
+          ...(options.clientId == null ? {} : { clientId: options.clientId })
+        },
+        onEvent
+      )
+    ).messages
+  }
+
+  /** `confirmTessChange`, streamed as `streamTessMessage` is. */
+  async streamTessConfirm(
+    changeId: string,
+    onEvent: (event: TessStreamEvent) => void
+  ): Promise<TessConfirmation> {
+    return await this.streamTess(
+      `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
+      asTessConfirmation,
+      undefined,
+      onEvent
+    )
+  }
+
+  /** The caller's tokens with Tess, week by week, newest first. */
+  async tessUsage(): Promise<TessUsageWeek[]> {
+    return (
+      await this.request(
+        'GET',
+        '/me/tess/usage',
+        asObject({ weeks: asArray(asTessUsageWeek) })
+      )
+    ).weeks
   }
 
   /** The server's clock, in milliseconds since the epoch. */
@@ -4324,6 +4799,155 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * A `POST` whose answer is a stream of events (`text/event-stream`): each
+   * one Tess tells as it happens goes to `onEvent`, and `done` is the answer,
+   * cleaned by `cleaner`, or `error` the failure. A JSON answer is taken as
+   * it is: a refusal, or a server that does not stream.
+   */
+  private async streamTess<T>(
+    path: string,
+    cleaner: Cleaner<T>,
+    body: unknown,
+    onEvent: (event: TessStreamEvent) => void
+  ): Promise<T> {
+    return await observeApi(
+      'POST',
+      path,
+      async () =>
+        await new Promise<T>((resolve, reject) => {
+          this.streamUnobserved(path, cleaner, body, onEvent, resolve, reject)
+        }),
+      this.captureAnalytics
+    )
+  }
+
+  private streamUnobserved<T>(
+    path: string,
+    cleaner: Cleaner<T>,
+    body: unknown,
+    onEvent: (event: TessStreamEvent) => void,
+    resolve: (value: T) => void,
+    reject: (error: unknown) => void
+  ): void {
+    const make =
+      this.newStreamingRequest ??
+      (() => {
+        const Platform = (
+          globalThis as { XMLHttpRequest?: new () => StreamingRequest }
+        ).XMLHttpRequest
+        if (Platform == null) throw new Error('No XMLHttpRequest here')
+        return new Platform()
+      })
+    const xhr = make()
+    let settled = false
+    let read = 0
+    const events = serverSentEvents()
+    const settle = (outcome: () => T): void => {
+      if (settled) return
+      settled = true
+      try {
+        resolve(outcome())
+      } catch (error) {
+        reject(error)
+      }
+    }
+    const lost = (): void => {
+      if (settled) return
+      this.offline = true
+      settle(() => {
+        throw new HttpError(
+          'offline',
+          'Cannot reach TeamStation. Check your connection and try again.'
+        )
+      })
+    }
+    const ok = (): boolean => xhr.status >= 200 && xhr.status < 300
+    const streaming = (): boolean =>
+      ok() &&
+      (xhr.getResponseHeader('content-type') ?? '').includes(
+        'text/event-stream'
+      )
+    const take = ({ event: name, data }: ServerSentEvent): void => {
+      // A comment, `: keep-alive`, has no data.
+      if (data == null) return
+      let value: unknown
+      try {
+        value = JSON.parse(data)
+      } catch {
+        return
+      }
+      if (name === 'done') {
+        settle(() => cleaner(value))
+        return
+      }
+      if (name === 'error') {
+        settle(() => {
+          throw streamError(value)
+        })
+        return
+      }
+      let event: TessStreamEvent | null
+      try {
+        event = tessStreamEventOf(name, value)
+      } catch {
+        return
+      }
+      if (event != null && !settled) onEvent(event)
+    }
+    const pump = (): void => {
+      if (!streaming()) return
+      const text = xhr.responseText
+      const more = text.slice(read)
+      read = text.length
+      for (const event of events.push(more)) take(event)
+    }
+    xhr.onprogress = pump
+    xhr.onload = () => {
+      this.offline = false
+      if (xhr.status === 401) this.onSessionRefused?.()
+      if (!ok()) {
+        settle(() => {
+          throw errorFrom(xhr.status, xhr.responseText)
+        })
+        return
+      }
+      if (!streaming()) {
+        settle(() => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(xhr.responseText)
+          } catch {
+            throw new HttpError(
+              'internal',
+              'The server sent something unreadable'
+            )
+          }
+          return cleaner(parsed)
+        })
+        return
+      }
+      pump()
+      for (const event of events.end()) take(event)
+      // The stream ended before Tess was done: the answer was lost.
+      lost()
+    }
+    xhr.onerror = lost
+    xhr.ontimeout = lost
+    xhr.onabort = lost
+    xhr.open('POST', `${this.baseUrl}${path}`)
+    // The cookie on the web, as `request` sends it.
+    xhr.withCredentials = true
+    xhr.setRequestHeader('accept', 'text/event-stream')
+    if (body !== undefined)
+      xhr.setRequestHeader('content-type', 'application/json')
+    if (this.analyticsApp != null)
+      xhr.setRequestHeader('x-teamstation-app', this.analyticsApp)
+    if (this.token != null)
+      xhr.setRequestHeader('authorization', `Bearer ${this.token}`)
+    xhr.send(body === undefined ? undefined : JSON.stringify(body))
+  }
+
   private async requestUnobserved<T>(
     method: string,
     path: string,
@@ -4418,6 +5042,24 @@ function revisionOf(response: Response): string | null {
 
 /** For the endpoints whose body carries nothing a caller needs. */
 const asUnknownOk: Cleaner<null> = () => null
+
+/**
+ * The failure a stream's `error` event carries: the error the server would
+ * have answered with, or its status, as a `TessTurnError` when it says
+ * whether the turn's message is kept.
+ */
+function streamError(value: unknown): HttpError {
+  let error: HttpError
+  try {
+    const api = asApiError(value)
+    error = new HttpError(api.code, api.message, api.details)
+  } catch {
+    const status = (value as { status?: unknown } | null)?.status
+    error = errorFrom(typeof status === 'number' ? status : 500, '')
+  }
+  const kept = (value as { kept?: unknown } | null)?.kept
+  return typeof kept === 'boolean' ? new TessTurnError(error, kept) : error
+}
 
 /**
  * Turns a failed response back into the same `HttpError` the server threw, so

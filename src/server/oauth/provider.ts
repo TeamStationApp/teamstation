@@ -3,16 +3,20 @@ import { type Kysely, sql } from 'kysely'
 import Provider, { type Account, interactionPolicy } from 'oidc-provider'
 
 import { asGumboId, asUserId } from '../../common/userId'
-import type { Actor } from '../auth/sessions'
+import { type Actor, isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { makeOAuthAdapter, oauthHash } from './adapter'
 import { loadOAuthSecrets, type OAuthConfig } from './config'
 
+/**
+ * The person themselves, signed in on a session that is still good, or
+ * undefined: never a machine acting for them, a token or Tess (`isMachine`).
+ */
 export async function activeHuman(
   db: Kysely<Database>,
   actor: Actor | undefined
 ): Promise<Actor | undefined> {
-  if (actor?.sessionId == null || actor.apiTokenId != null) return undefined
+  if (actor?.sessionId == null || isMachine(actor)) return undefined
   const row = await db
     .selectFrom('auth_sessions')
     .innerJoin('users', 'users.id', 'auth_sessions.user_id')

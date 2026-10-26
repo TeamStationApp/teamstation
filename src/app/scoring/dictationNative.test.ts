@@ -452,7 +452,10 @@ describe('dictation on the phone', function () {
   it('keeps a space hook so the scoring screen calls the same thing', async function () {
     function Probe(): null {
       useSpaceToTalk(true, true, {
-        current: { hold() {}, release() {} }
+        current: {
+          hold: () => true,
+          release() {}
+        }
       })
       return null
     }

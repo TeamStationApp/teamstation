@@ -2,14 +2,14 @@ import { asObject, asOptional, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
-import { forbidden } from '../../common/errors'
+import { forbidden, unavailable } from '../../common/errors'
 import { type Tool, toolSchema } from '../../common/scoring/actions'
 import {
   type RosterTool,
   rosterToolSchema
 } from '../../common/scoring/rosterCommands'
 import { canScore, isHeadCoach, roleScopes } from '../access'
-import type { Actor } from '../auth/sessions'
+import { type Actor, isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 
@@ -27,6 +27,11 @@ export interface Scope {
   tools: readonly Tool[]
   /** Roster tools, offered beside `tools`. Absent means none. */
   rosterTools?: readonly RosterTool[]
+  /**
+   * The utterance ends at its transcript: the LLM is never asked, and the
+   * socket takes the next `start` as soon as the words are sent.
+   */
+  transcriptOnly?: boolean
   /** Throws, an `HttpError` or a `TypeError`, unless the actor may speak about the target. */
   authorise: (
     db: Kysely<Database>,
@@ -70,7 +75,34 @@ async function authoriseRoster(
   )
 }
 
-export const SCOPES: ReadonlyMap<string, Scope> = new Map([
+/**
+ * The scopes, as this server offers them: `tess` speaks only where Tess is
+ * configured, and, as `/me/tess` does, only to a person signed in themselves,
+ * never to a machine token.
+ */
+export function dictationScopes(options: {
+  tess: boolean
+}): ReadonlyMap<string, Scope> {
+  return new Map<string, Scope>([
+    ...SCOPES_BUT_TESS,
+    [
+      // Tess: what was said becomes the person's next chat message, and Tess
+      // reads it with that person's own permissions. The target is `{}`.
+      'tess',
+      {
+        tools: [],
+        transcriptOnly: true,
+        authorise: async (_db, actor) => {
+          if (!options.tess)
+            throw unavailable('Tess is not available on this server')
+          if (isMachine(actor)) throw forbidden('Sign in to talk to Tess')
+        }
+      }
+    ]
+  ])
+}
+
+const SCOPES_BUT_TESS: ReadonlyArray<[string, Scope]> = [
   [
     'scoring',
     {
@@ -88,4 +120,9 @@ export const SCOPES: ReadonlyMap<string, Scope> = new Map([
     'roster',
     { tools: [], rosterTools: rosterToolSchema(), authorise: authoriseRoster }
   ]
-])
+]
+
+/** The scopes on a server without Tess. */
+export const SCOPES: ReadonlyMap<string, Scope> = dictationScopes({
+  tess: false
+})

@@ -13,7 +13,9 @@ describe('safe error reconstruction and rate counters', () => {
       file => !/\.(?:test|d)\.ts$/.test(file)
     )
     for (const file of source)
-      expect(SERVER_CODE_FILES.has(file.slice(4, -3) + '.js'), file).equals(true)
+      expect(SERVER_CODE_FILES.has(file.slice(4, -3) + '.js'), file).equals(
+        true
+      )
     const raw = {
       event_id: '00000000000040008000000000000001',
       timestamp: Date.now() / 1000,

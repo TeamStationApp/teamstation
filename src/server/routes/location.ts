@@ -7,6 +7,7 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
+import { isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import {
   EVENT_PLACE_ATTRIBUTION,
@@ -95,7 +96,7 @@ export function locationRoutes(
       const session = sessionToken(req.query.session)
       const places = findPlaces(query)
       const google = cities?.googlePlaces
-      const signedIn = req.actor != null && req.actor.apiTokenId == null
+      const signedIn = req.actor != null && !isMachine(req.actor)
       // Legacy callers omit session and keep their catalogue data and attribution.
       if (
         google != null &&
@@ -133,8 +134,7 @@ export function locationRoutes(
         throw badRequest('Location identifier is invalid')
       const session = sessionToken(req.query.session)
       if (id.startsWith('google:')) {
-        if (req.actor == null || req.actor.apiTokenId != null)
-          throw unauthorized()
+        if (req.actor == null || isMachine(req.actor)) throw unauthorized()
         if (cities?.googlePlaces == null) throw notFound()
         await limit(req.actor.userId, true)
         res.set('Cache-Control', 'no-store').json({

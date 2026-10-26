@@ -39,7 +39,10 @@ describe('app layout', function () {
   it('renders the pane unconditionally', function () {
     // Inside a branch it could be unmounted by a width change, which is
     // exactly the bug this file exists for.
-    expect(source).match(/<View key="pane" style={styles\.pane}>/)
+    // It may carry props of its own (what the narrow Tess layer hides it
+    // with), never a condition.
+    expect(source).match(/<View key="pane" style={styles\.pane}[\s>]/)
+    expect(source).not.match(/&&\s*\(?\s*<View key="pane"/)
   })
 
   it('draws the header over the content rather than above it', function () {

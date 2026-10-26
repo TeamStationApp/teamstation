@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import { Text } from 'react-native'
 
 import {
@@ -20,6 +20,7 @@ export function TeamPage({
   team: hint,
   onSettings,
   onCreateGame,
+  onLoaded,
   ...presentation
 }: Omit<
   TeamScreenProps,
@@ -35,6 +36,8 @@ export function TeamPage({
   team?: TeamSummary
   onSettings?: (id: string) => void
   onCreateGame?: (id: string) => void
+  /** The team as the server named it, each time it loads. */
+  onLoaded?: (team: { id: string; name: string }) => void
 }): React.ReactElement {
   const theme = useTheme()
   const [refreshRevision, setRefreshRevision] = useState(0)
@@ -49,6 +52,8 @@ export function TeamPage({
   const detail = currentResult?.detail
   const error = currentResult?.error ?? ''
   const begin = useLatestRequest()
+  const loaded = useRef(onLoaded)
+  loaded.current = onLoaded
   const load = useCallback(async (): Promise<void> => {
     const current = begin()
     try {
@@ -56,6 +61,7 @@ export function TeamPage({
       if (!current()) return
       setResult({ id, client, detail: found, error: '' })
       setRefreshRevision(value => value + 1)
+      loaded.current?.({ id: found.group.id, name: found.group.name })
     } catch (error) {
       if (!current()) return
       setResult({

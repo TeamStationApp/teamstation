@@ -608,10 +608,18 @@ describe('collector durable HTTP and provider boundary', function () {
         )
         expect(response.status).equals(403)
       } finally {
-        await new Promise<void>(resolve => withoutToken.close(() => resolve()))
+        await new Promise<void>(resolve =>
+          withoutToken.close(() => {
+            resolve()
+          })
+        )
       }
     } finally {
-      await new Promise<void>(resolve => server.close(() => resolve()))
+      await new Promise<void>(resolve =>
+        server.close(() => {
+          resolve()
+        })
+      )
     }
   })
 

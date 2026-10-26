@@ -13,7 +13,22 @@ export interface Actor {
   apiTokenId?: string
   /** The human login this actor came from; absent for machine tokens. */
   sessionId?: string
+  /**
+   * Set when Tess's tools sent the request: the person's own session, but a
+   * machine acting for them, not the person. See `isMachine`.
+   */
+  viaTess?: true
   scopes: string[]
+}
+
+/**
+ * Whether a machine is acting for the person rather than the person
+ * themselves: a machine token, or Tess's tools on their session. A route for
+ * the person alone (their account, its keys, approving another app) refuses
+ * either one.
+ */
+export function isMachine(actor: Actor): boolean {
+  return actor.apiTokenId != null || actor.viaTess === true
 }
 
 const SESSION_DAYS = 30

@@ -22,6 +22,7 @@ import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 import { schedulingSetupPaths } from './scheduler/schedulingSetupOpenApi'
+import { tessPaths } from './tess/openApi'
 import { umpirePaths } from './umpires/openApi'
 import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 import { venuePaths } from './venues/venuesOpenApi'
@@ -1481,6 +1482,11 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'boolean',
               description:
                 "Whether the replay's announcer can speak on this server"
+            },
+            tess: {
+              type: 'boolean',
+              description:
+                'Whether Tess, the assistant, is available on this server'
             }
           }
         },
@@ -2352,6 +2358,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...creationPaths(errorResponse),
       ...gameApprovalPaths(errorResponse),
       ...umpirePaths(errorResponse),
+      ...tessPaths(errorResponse),
       ...venuePaths(errorResponse),
       ...schedulingSetupPaths(errorResponse),
       ...schedulePreviewPaths(errorResponse),

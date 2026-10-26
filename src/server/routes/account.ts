@@ -33,6 +33,7 @@ import {
   readPasswordRecord
 } from '../auth/passwords'
 import { checkLimits, type LimitRule, recordAttempts } from '../auth/rateLimit'
+import { isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
@@ -126,8 +127,7 @@ async function lockAccount(
 
 function accountId(req: Request): string {
   if (req.actor == null) throw unauthorized()
-  if (req.actor.apiTokenId != null)
-    throw forbidden('Sign in to manage your account')
+  if (isMachine(req.actor)) throw forbidden('Sign in to manage your account')
   return req.actor.userId
 }
 

@@ -10,6 +10,7 @@ import type {
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { rosterFullName, shortName } from '../../common/names'
 import { coachesTeam, keepsSongs, managesRoster } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
@@ -54,6 +55,8 @@ export interface PlayerScreenProps {
   /** Which tab to open on, from the address. */
   initialTab?: PlayerTab
   onTab?: (tab: PlayerTab, correcting?: boolean) => void
+  /** Back from a profile the viewer may not see. */
+  onBack?: () => void
   /**
    * The team the page was opened for, the address's `onTeam`: the roster
    * row or the box-score side that was tapped. Both filters start on it, and
@@ -167,6 +170,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onOpenMoment,
     onOpenTeam,
     onRemovedFromTeam,
+    onBack,
     forTeam,
     roles,
     viewer,
@@ -325,6 +329,9 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       : tab
 
   const [error, setError] = useState<string | undefined>(undefined)
+  // A profile the viewer may not see, or that is gone: the server answers
+  // 404 for both, so that it never says which.
+  const [denied, setDenied] = useState(false)
   const [highlights, setHighlights] = useState<PlayerHighlight[]>([])
   const [nextBefore, setNextBefore] = useState<string | undefined>(undefined)
   const [withoutVideo, setWithoutVideo] = useState(0)
@@ -406,6 +413,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     setBefore(undefined)
     setStats(undefined)
     setError(undefined)
+    setDenied(false)
     setFilter(startingFilter(undefined, forTeam))
     setVideoFilter(startingFilter(undefined, forTeam))
   }, [userId, forTeam])
@@ -430,13 +438,18 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
         }
       })
       .catch((caught: unknown) => {
-        if (!cancelled) {
+        if (cancelled) return
+        if (
+          caught instanceof HttpError &&
+          (caught.status === 404 || caught.status === 403)
+        )
+          setDenied(true)
+        else
           setError(
             caught instanceof Error
               ? caught.message
               : lstrings.player_cannot_load
           )
-        }
       })
     return () => {
       cancelled = true
@@ -512,6 +525,27 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     tab: shownTab,
     anchorOnRow: false
   })
+
+  if (denied)
+    return (
+      <Screen centreContent>
+        <View testID="Player unavailable" style={styles.unavailable}>
+          <Text accessibilityRole="header" style={styles.unavailableTitle}>
+            {lstrings.player_unavailable}
+          </Text>
+          <Text style={styles.unavailableBody}>
+            {lstrings.player_unavailable_body}
+          </Text>
+          {onBack != null && (
+            <Button
+              label={lstrings.common_back}
+              kind="secondary"
+              onPress={onBack}
+            />
+          )}
+        </View>
+      </Screen>
+    )
 
   return (
     <Screen {...pinned.screen}>
@@ -1003,5 +1037,23 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
     color: theme.dangerColor
+  },
+  unavailable: {
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceMdRem),
+    paddingVertical: theme.rem(theme.spaceXlRem)
+  },
+  unavailableBody: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.9375),
+    color: theme.secondaryTextColor,
+    textAlign: 'center'
+  },
+  unavailableTitle: {
+    fontFamily: theme.boldTextFont,
+    fontSize: theme.rem(1.25),
+    fontWeight: '700',
+    color: theme.primaryTextColor,
+    textAlign: 'center'
   }
 }))
