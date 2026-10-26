@@ -113,4 +113,32 @@ describe('mediaOrigins', function () {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('prints a deployment’s origins from the deploy script, and its usage without a file', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-origins-'))
+    const script = join(process.cwd(), 'src/deploy/mediaOrigins.mjs')
+    try {
+      const config = join(dir, 'serverConfig.json')
+      writeFileSync(
+        config,
+        JSON.stringify({ primaryUrlOverride: 'devhost1.example-ts.test' })
+      )
+      const out = execFileSync(process.execPath, [script, config], {
+        cwd: dir,
+        encoding: 'utf8'
+      })
+      expect(out.trim()).equals(
+        'https://devhost1.example-ts.test https://*.mzstatic.com'
+      )
+      let status: number | undefined
+      try {
+        execFileSync(process.execPath, [script], { cwd: dir, stdio: 'pipe' })
+      } catch (caught: unknown) {
+        status = (caught as { status?: number }).status
+      }
+      expect(status).equals(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

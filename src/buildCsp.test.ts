@@ -235,17 +235,21 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     })
 
     it('writes the policy and no integrity when serving', async function () {
-      server = spawn(process.execPath, ['src/build.mjs', '--serve'], {
-        cwd: root,
-        env: {
-          ...process.env,
-          TS_WEB_OUT_DIR: served,
-          TS_SERVE_PORT: '0',
-          TS_API_BASE_URL: 'http://127.0.0.1:9120/api/v1',
-          TS_MEDIA_ORIGINS: 'http://127.0.0.1:9120 http://127.0.0.1:9197'
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
+      server = spawn(
+        process.execPath,
+        ['-r', './src/test/exitOnTerm.cjs', 'src/build.mjs', '--serve'],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            TS_WEB_OUT_DIR: served,
+            TS_SERVE_PORT: '0',
+            TS_API_BASE_URL: 'http://127.0.0.1:9120/api/v1',
+            TS_MEDIA_ORIGINS: 'http://127.0.0.1:9120 http://127.0.0.1:9197'
+          },
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
       const address = await new Promise<string>((resolve, reject) => {
         let said = ''
         const hear = (chunk: Buffer): void => {
@@ -281,7 +285,14 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(worklet.status).equals(200)
       expect(worklet.headers.get('content-type')).matches(/javascript/)
       expect(await worklet.text()).contains("registerProcessor('pcm16k'")
-      server.kill('SIGKILL')
+      // Stopped with SIGTERM, so its coverage is written as it exits.
+      const stopped = server
+      await new Promise<void>(resolve => {
+        stopped.once('exit', () => {
+          resolve()
+        })
+        stopped.kill('SIGTERM')
+      })
       server = undefined
     })
   })
