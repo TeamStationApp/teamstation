@@ -1421,6 +1421,51 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - react-native-keyboard-controller (1.22.8):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - react-native-keyboard-controller/common (= 1.22.8)
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
+  - react-native-keyboard-controller/common (1.22.8):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - react-native-netinfo (12.0.1):
     - hermes-engine
     - RCTRequired
@@ -2375,6 +2420,7 @@ DEPENDENCIES:
   - "react-native-document-picker (from `../node_modules/@react-native-documents/picker`)"
   - "react-native-geolocation (from `../node_modules/@react-native-community/geolocation`)"
   - react-native-image-picker (from `../node_modules/react-native-image-picker`)
+  - react-native-keyboard-controller (from `../node_modules/react-native-keyboard-controller`)
   - "react-native-netinfo (from `../node_modules/@react-native-community/netinfo`)"
   - react-native-quick-base64 (from `../node_modules/react-native-quick-base64`)
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
@@ -2551,6 +2597,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-community/geolocation"
   react-native-image-picker:
     :path: "../node_modules/react-native-image-picker"
+  react-native-keyboard-controller:
+    :path: "../node_modules/react-native-keyboard-controller"
   react-native-netinfo:
     :path: "../node_modules/@react-native-community/netinfo"
   react-native-quick-base64:
@@ -2715,6 +2763,7 @@ SPEC CHECKSUMS:
   react-native-document-picker: dc236df61d18acb1e8aebe6fd79cdb0eedf4679d
   react-native-geolocation: 4df18d46fa149833c615b98082a9598c2f0521a1
   react-native-image-picker: 870b31525256975a2d4b6b20a54db9b380cd725d
+  react-native-keyboard-controller: fe6d2b20f745751821c31d12cc60f42686ba0439
   react-native-netinfo: 58601963060e4df0c1b6b6980d4f24ce2751e64c
   react-native-quick-base64: 2dae6dfe4f0e5d631cba762516a760063ef26d6c
   react-native-safe-area-context: b3e507b0dbfb44dfadb29f7a31e884ac13789723
@@ -2769,4 +2818,4 @@ SPEC CHECKSUMS:
 
 PODFILE CHECKSUM: e640e31c98f7f22603a13f787b2a6d3a08e20f4a
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.17.0
