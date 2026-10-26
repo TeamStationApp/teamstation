@@ -75,8 +75,16 @@ function browserLayout(order: () => string[]): {
   const history = (): HTMLElement | null =>
     document.querySelector('[data-testid="chat-message-history"]')
   const scrollTop = (): number => history()?.scrollTop ?? 0
+  // The content's top padding clears the measured header and pin band.
+  const top = (): number => {
+    const padding = Number.parseFloat(
+      (history()?.firstElementChild as HTMLElement | null)?.style.paddingTop ??
+        ''
+    )
+    return Number.isFinite(padding) ? padding : TOP
+  }
   const rowTop = (id: string): number =>
-    TOP + header.height + order().indexOf(id) * STEP
+    top() + header.height + order().indexOf(id) * STEP
   const place = (node: HTMLElement): DOMRect | undefined => {
     // The list's container around a row carries the gap below it.
     const child = (node.firstElementChild as HTMLElement | null)?.dataset
@@ -94,7 +102,7 @@ function browserLayout(order: () => string[]): {
     return undefined
   }
   const content = (): number =>
-    TOP + header.height + order().length * STEP + 200
+    top() + header.height + order().length * STEP + 200
   const bounds = Object.getOwnPropertyDescriptor(
     HTMLElement.prototype,
     'getBoundingClientRect'
@@ -151,6 +159,7 @@ function fixture(initial: ConversationView): {
   readonly shown: ConversationView
   readonly reactions: string[]
   setLoad: (work: () => Promise<ConversationView>) => void
+  update: (next: ConversationView) => void
 } {
   let shown = initial
   const reactions: string[] = []
@@ -200,6 +209,11 @@ function fixture(initial: ConversationView): {
     reactions,
     setLoad: work => {
       load = work
+    },
+    update: next => {
+      shown = next
+      for (const listener of listeners)
+        listener({ type: 'conversation', conversationId: 'cnv_1' })
     }
   }
 }
@@ -224,30 +238,37 @@ function history(count: number, first = 100): MessageView[] {
 
 async function render(
   engine: ChatScreenEngine,
-  owner: ChatDraftOwner
+  owner: ChatDraftOwner,
+  conversationId: string | null = 'cnv_1'
 ): Promise<HTMLElement> {
-  stops.push(measureChatTestViewport({ width: 390, height: VIEWPORT }))
-  host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
+  if (root == null) {
+    stops.push(measureChatTestViewport({ width: 390, height: VIEWPORT }))
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+  }
   await act(async () => {
     root!.render(
       <ThemeProvider>
         <HeaderSlotProvider headerHeight={48} onHandoff={() => {}}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <ChatOverlayHost>
-              <ConversationScreen
-                engine={engine}
-                userId={userIdOfGumbo(1)}
-                conversationId="cnv_1"
-                onMembers={() => {}}
-                draftOwner={owner}
-                onDraftChange={next => {
-                  owner.write('cnv_1', next)
-                }}
-                draft={owner.draft('cnv_1')}
-                files={files}
-              />
+              {/* No conversation: another route, such as its Info page. */}
+              {conversationId != null && (
+                <ConversationScreen
+                  key={conversationId}
+                  engine={engine}
+                  userId={userIdOfGumbo(1)}
+                  conversationId={conversationId}
+                  onMembers={() => {}}
+                  draftOwner={owner}
+                  onDraftChange={next => {
+                    owner.write(conversationId, next)
+                  }}
+                  draft={owner.draft(conversationId)}
+                  files={files}
+                />
+              )}
             </ChatOverlayHost>
           </GestureHandlerRootView>
         </HeaderSlotProvider>
@@ -255,7 +276,7 @@ async function render(
     )
     await wait()
   })
-  return host
+  return host!
 }
 
 function scroller(): HTMLElement {
@@ -306,7 +327,8 @@ async function userScroll(offset: number): Promise<void> {
 
 /** Each act scope commits what the screen scheduled, as a browser would. */
 async function settle(done: () => boolean): Promise<void> {
-  for (let tick = 0; tick < 40 && !done(); tick += 1)
+  // Bounded generously: a loaded machine delays layout and measurement work.
+  for (let tick = 0; tick < 150 && !done(); tick += 1)
     await act(async () => {
       await wait(20)
     })
@@ -429,6 +451,7 @@ describe('virtualized chat message history', function () {
     await userScroll(TOP + 80 * STEP + 200 - VIEWPORT)
     expect(mounted()).not.includes('msg_140')
     expect(mounted()).includes('msg_178')
+    await settle(() => owner.attention('cnv_1')!.seen.has('msg_178'))
     expect(
       owner.attention('cnv_1')!.seen.has('msg_140'),
       'An unmounted row is never viewed'
@@ -873,6 +896,8 @@ describe('virtualized earlier pages in a browser layout', function () {
     // The browser's content size notification and the new rows' sizes arrive
     // after the page; the reader must not move for either.
     await contentLayout()
+    // Rows above measure across frames; a busy machine delays those frames.
+    await settle(() => layout.readerTop(reader.id) === reading)
     await act(async () => {
       await wait(300)
     })
@@ -896,5 +921,126 @@ describe('virtualized earlier pages in a browser layout', function () {
     // The earlier control is in view: the new rows mount just above the
     // held reader and report their real, taller sizes after the page lands.
     await earlierPage(false, { id: 'msg_200', relativeY: TOP, offset: 0 })
+  })
+})
+
+describe('virtualized reader saved under the floating pin band', function () {
+  const pinned = {
+    messageId: 'msg_170',
+    pinnedAt: '2027-04-01T17:00:00.000Z'
+  }
+  type Layout = ReturnType<typeof browserLayout>
+  async function handle(testId: string, height: number): Promise<void> {
+    const node = host!.querySelector<
+      HTMLElement & { __reactLayoutHandler: (event: unknown) => void }
+    >(`[data-testid="${testId}"]`)
+    expect(node, testId).not.equals(null)
+    await act(async () => {
+      node!.__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 360, height } }
+      })
+      await wait(60)
+    })
+  }
+  /** A browser lays out a (re)opened history, then its floating pin band. */
+  async function open(
+    state: ReturnType<typeof fixture>,
+    owner: ChatDraftOwner,
+    conversationId = 'cnv_1'
+  ): Promise<void> {
+    await render(state.engine, owner, conversationId)
+    scrollExtent(() => state.shown.messages.map(item => item.id))
+    await act(async () => {
+      ;(
+        scroller().firstElementChild as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 6000 } }
+      })
+      await wait(60)
+    })
+    await steady()
+    // The browser's scroll event acknowledges the restoration before the
+    // band has measured, as it can on a busy machine.
+    await act(async () => {
+      scroller().dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      await wait(150)
+    })
+    if (state.shown.pins != null && state.shown.pins.length > 0)
+      await handle('chat-pinned-band', 58)
+    await steady()
+  }
+  /** Until the history has not moved for 300ms: restorations have run. */
+  async function steady(): Promise<void> {
+    let last = Number.NaN
+    let since = Date.now()
+    for (let tick = 0; tick < 150; tick += 1) {
+      const top = scroller().scrollTop
+      if (top !== last) {
+        last = top
+        since = Date.now()
+      } else if (Date.now() - since >= 300) return
+      await act(async () => {
+        await wait(20)
+      })
+    }
+  }
+  const shownAt = (layout: Layout, id: string): number =>
+    layout.rowTop(id) - scroller().scrollTop
+
+  async function readAt(layout: Layout, id: string, y: number): Promise<void> {
+    await userScroll(layout.rowTop(id) - y)
+    expect(shownAt(layout, id)).equals(y)
+  }
+
+  it('restores it exactly after Info and Back and after a conversation switch', async function () {
+    const state = fixture(view({ messages: history(80), pins: [pinned] }))
+    const layout = browserLayout(() =>
+      state.shown.messages.map(item => item.id)
+    )
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    await open(state, owner)
+    // Partly behind the band (header 48 + band 58), as a person left it.
+    await readAt(layout, 'msg_130', 70)
+    expect(owner.draft('cnv_1').scrollAnchor).deep.equals({
+      id: 'msg_130',
+      relativeY: 70,
+      readableTop: 106
+    })
+    // Information, then Back: the history mounts again and the band measures
+    // from zero.
+    await render(state.engine, owner, null)
+    await open(state, owner)
+    expect(shownAt(layout, 'msg_130'), 'After Info and Back').equals(70)
+    // Another conversation, then this one again.
+    await render(state.engine, owner, 'cnv_2')
+    await open(state, owner)
+    expect(shownAt(layout, 'msg_130'), 'After a conversation switch').equals(70)
+    expect(owner.draft('cnv_1').scrollAnchor?.relativeY).equals(70)
+  })
+
+  it('still clears a reader from a band that genuinely newly covers it', async function () {
+    const state = fixture(view({ messages: history(80) }))
+    const layout = browserLayout(() =>
+      state.shown.messages.map(item => item.id)
+    )
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    await open(state, owner)
+    await readAt(layout, 'msg_130', 70)
+    // A reader saved without pins, reopened, then a pin arrives.
+    await render(state.engine, owner, null)
+    await open(state, owner)
+    expect(shownAt(layout, 'msg_130')).equals(70)
+    await act(async () => {
+      state.update({ ...state.shown, pins: [pinned] })
+      await wait()
+    })
+    await handle('chat-pinned-band', 58)
+    await steady()
+    expect(
+      shownAt(layout, 'msg_130'),
+      'The new band uncovers the row it now covers'
+    ).equals(114)
   })
 })

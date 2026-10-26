@@ -19,8 +19,17 @@ export interface ChatDraft {
   hasScrollPosition?: boolean
   /** Preserve automatic following only when the saved view was at its end. */
   followNewest?: boolean
-  /** Opaque row and its viewport position survive content re-folding on reopen. */
-  scrollAnchor?: { id: string; relativeY: number; bodyInset?: number }
+  /**
+   * Opaque row and its viewport position survive content re-folding on reopen.
+   * `readableTop` is the overlays' clearance it was saved under, so floating
+   * chrome measured again on reopen is not mistaken for newly covering it.
+   */
+  scrollAnchor?: {
+    id: string
+    relativeY: number
+    bodyInset?: number
+    readableTop?: number
+  }
 }
 export interface ChatWorkspaceState {
   drafts: Map<string, ChatDraft>

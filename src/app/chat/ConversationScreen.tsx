@@ -404,6 +404,28 @@ export function ConversationScreen(
     height: 0,
     content: 0
   })
+  // A reader saved partly under the top chrome remembers the clearance it
+  // was read under; one restored from a draft keeps that until the overlays
+  // have been measured again. Only such a reader could look newly covered.
+  const stampAnchor = (
+    anchor: ChatDraft['scrollAnchor']
+  ): ChatDraft['scrollAnchor'] =>
+    anchor == null ||
+    anchor.readableTop != null ||
+    anchor.relativeY + (anchor.bodyInset ?? 0) >= readableTop.current
+      ? anchor
+      : { ...anchor, readableTop: readableTop.current }
+  const unstampAnchor = (): void => {
+    const anchor = scrolled.current.anchor
+    if (anchor?.readableTop == null) return
+    const { readableTop: _saved, ...live } = anchor
+    scrolled.current.anchor = live
+  }
+  // Without pins, nothing measured later can cover the saved reader again.
+  const pinless = view != null && !hasPins
+  useEffect(() => {
+    if (pinless) unstampAnchor()
+  }, [pinless])
   /** The draft as the screen holds it now, with what a caller just changed. */
   const currentDraft = useCallback(
     (changed: Partial<ChatDraft> = {}): ChatDraft => {
@@ -416,7 +438,7 @@ export function ConversationScreen(
         scrollOffset: scrolled.current.offset,
         hasScrollPosition: scrolled.current.hasPosition,
         followNewest: scrolled.current.followNewest,
-        scrollAnchor: scrolled.current.anchor,
+        scrollAnchor: stampAnchor(scrolled.current.anchor),
         ...changed
       }
       return { ...draft, ...(mentionTokens == null ? {} : { mentionTokens }) }
@@ -1513,12 +1535,23 @@ export function ConversationScreen(
     }
     const anchor = scrolled.current.anchor
     if (anchor != null) {
+      // Chrome that already covered a reader saved under it (the pin band,
+      // measured again from zero after a reopen) does not newly cover it.
+      const coveredFrom = Math.max(
+        previous.top,
+        anchor.readableTop ?? previous.top
+      )
+      // Once measured back to that clearance, ordinary chrome rules resume.
+      const settled =
+        anchor.readableTop != null && viewport.readableTop >= anchor.readableTop
+      if (settled) unstampAnchor()
+      const { readableTop: _saved, ...live } = anchor
       restoreAnchor.current = {
-        ...anchor,
+        ...(settled ? live : anchor),
         relativeY:
           anchorAfterChromeChange(
             anchor.relativeY + (anchor.bodyInset ?? 0),
-            previous.top,
+            coveredFrom,
             viewport.readableTop,
             theme.rem(0.5)
           ) - (anchor.bodyInset ?? 0)
@@ -2230,7 +2263,11 @@ export function ConversationScreen(
             ? undefined
             : {
                 id: anchor.id,
-                relativeY: anchor.relativeY + scrolled.current.offset - actual
+                relativeY: anchor.relativeY + scrolled.current.offset - actual,
+                // The acknowledged restoration is still the saved reader.
+                ...(anchor.readableTop == null
+                  ? {}
+                  : { readableTop: anchor.readableTop })
               }
         )
       }

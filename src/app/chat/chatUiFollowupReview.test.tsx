@@ -372,7 +372,8 @@ describe('chat review persistent submission ownership', function () {
       expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(240)
       expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
         id: 'msg_original',
-        relativeY: -40
+        relativeY: -40,
+        readableTop: 104
       })
       await workspace(engine, state, 'cnv_solstice')
       expect(input().value).equals('Other unsent body')
@@ -1461,7 +1462,8 @@ describe('chat measured chrome reader anchors', function () {
     ).equals(-700)
     expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
       id: 'msg_original',
-      relativeY: -700
+      relativeY: -700,
+      readableTop: 48
     })
     await act(async () => {
       engine.update('cnv_aurora', {
@@ -1556,7 +1558,8 @@ describe('chat review final native scroll positions', function () {
       ).deep.equals(tokens)
       expect(saved.scrollAnchor).deep.equals({
         id: 'msg_original',
-        relativeY: 0
+        relativeY: 0,
+        readableTop: 48
       })
     }
     await workspace(engine, state, null)
@@ -1576,7 +1579,8 @@ describe('chat review final native scroll positions', function () {
     expect(state.drafts.get('cnv_aurora')!.text).equals('@Shohei Ohtani ')
     expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
       id: 'msg_original',
-      relativeY: 0
+      relativeY: 0,
+      readableTop: 48
     })
   })
 
@@ -3659,7 +3663,8 @@ describe('post-deep review2 current geometry persistence', function () {
       )
       expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
         id: 'msg_original',
-        relativeY: 30
+        relativeY: 30,
+        readableTop: 48
       })
       await type('New current unsent caption')
       const beforeReads = reads
@@ -3692,7 +3697,8 @@ describe('post-deep review2 current geometry persistence', function () {
       expect(saved.followNewest).equals(false)
       expect(saved.scrollAnchor).deep.equals({
         id: 'msg_original',
-        relativeY: -34
+        relativeY: -34,
+        readableTop: 48
       })
       expect(saved.text).equals('New current unsent caption')
       expect(saved.replyTo?.id).equals('msg_original')

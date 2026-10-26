@@ -1629,7 +1629,11 @@ describe('chat follow-up conversation message integration', function () {
     expect(saved.followNewest, 'the current viewport is not at the end').equals(
       false
     )
-    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -95 })
+    expect(saved.scrollAnchor).deep.equals({
+      id: reading.id,
+      relativeY: -95,
+      readableTop: 48
+    })
     expect(visible.row.getBoundingClientRect().top).equals(-95)
 
     await show(false)
@@ -1875,7 +1879,11 @@ describe('chat follow-up conversation message integration', function () {
     expect(visible.scroller.scrollTop).equals(804)
     expect(visible.row.getBoundingClientRect().top).equals(-247)
     expect(saved.scrollOffset).equals(804)
-    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -247 })
+    expect(saved.scrollAnchor).deep.equals({
+      id: reading.id,
+      relativeY: -247,
+      readableTop: 48
+    })
     await visible.layout()
     expect(visible.scroller.scrollTop).equals(804)
     expect(visible.row.getBoundingClientRect().top).equals(-247)
@@ -1935,7 +1943,8 @@ describe('chat follow-up conversation message integration', function () {
     expect(visible.row.getBoundingClientRect().top).equals(-247)
     expect(saved.scrollAnchor).deep.equals({
       id: reading.id,
-      relativeY: -247
+      relativeY: -247,
+      readableTop: 48
     })
 
     await show(false)
@@ -1965,7 +1974,11 @@ describe('chat follow-up conversation message integration', function () {
     expect(visible.scroller.scrollTop).equals(804)
     expect(visible.row.getBoundingClientRect().top).equals(-247)
     expect(saved.scrollOffset).equals(804)
-    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -247 })
+    expect(saved.scrollAnchor).deep.equals({
+      id: reading.id,
+      relativeY: -247,
+      readableTop: 48
+    })
 
     visible.geometry.y += 63
     visible.geometry.height += 63
@@ -2071,7 +2084,11 @@ describe('chat follow-up conversation message integration', function () {
     await reopened.layout()
     expect(reopened.scroller.scrollTop).equals(804)
     expect(reopened.row.getBoundingClientRect().top).equals(-247)
-    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: -247 })
+    expect(saved.scrollAnchor).deep.equals({
+      id: reading.id,
+      relativeY: -247,
+      readableTop: 48
+    })
   })
 
   it('preserves the current reading anchor when a cancelled history request later prepends, including append growth and late scroll/layout events', async function () {
