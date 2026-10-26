@@ -2929,7 +2929,7 @@ export class Scenarios {
         const targets=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(targets.length>1||targets.some(n=>!h.contains(n)))throw Error('Ambiguous or unscoped history target');
         const controls=Array.from(h.querySelectorAll('button,[role="button"]')).filter(n=>n.textContent.trim()==='Load earlier messages');if(controls.length>1)throw Error('Unique public Load earlier control required');const control=controls[0];
         if(position==='earlier'){if(!control)throw Error('No earlier control for missing target');control.scrollIntoView({block:'center',behavior:'instant'})}
-        let moved=false;if(position==='latest'||position==='sweep'||position==='down'){const was=h.scrollTop;h.scrollTop=position==='latest'?h.scrollHeight:position==='down'?was+h.clientHeight*0.8:Math.max(0,was-h.clientHeight*0.8);moved=h.scrollTop!==was;h.dispatchEvent(new Event('scroll'))}
+        let moved=false;if(position==='latest'||position==='sweep'||position==='down'){const was=h.scrollTop;h.scrollTop=position==='latest'?h.scrollHeight:position==='down'?Math.min(Math.max(0,h.scrollHeight-h.clientHeight),was+h.clientHeight*0.8):Math.max(0,was-h.clientHeight*0.8);moved=h.scrollTop!==was;h.dispatchEvent(new Event('scroll'))}
         if(position==='target'){if(targets.length!==1)throw Error('Actual target required');targets[0].scrollIntoView({block:'center',behavior:'instant'})}
         let css;if(control){let n=control,parts=[];while(n!==h){const p=n.parentElement;if(!p)throw Error('Actual history ancestry required');parts.unshift('*:nth-child('+(Array.from(p.children).indexOf(n)+1)+')');n=p}css='[data-testid="chat-message-history"] > '+parts.join(' > ');if(document.querySelectorAll(css).length!==1||document.querySelector(css)!==control)throw Error('Unique scoped earlier control required')}
         const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
@@ -2972,7 +2972,12 @@ export class Scenarios {
     const search = async (from: 'latest' | 'sweep' | 'down'): Promise<Json> => {
       const step = from === 'down' ? 'down' : 'sweep'
       let swept = await read(from)
-      while (swept.targetCount !== 1 && swept.moved === true) {
+      // Each history end stops it; a bound covers an end that never reports.
+      for (
+        let steps = 0;
+        steps < 500 && swept.targetCount !== 1 && swept.moved === true;
+        steps++
+      ) {
         await new Promise(resolve => setTimeout(resolve, 200))
         swept = await read()
         if (swept.targetCount !== 1) swept = await read(step)
