@@ -5416,6 +5416,40 @@ describe('chat native adapter compatibility', function () {
       expect(taps).deep.equals([{ id: 'chat-composer' }])
     }
   })
+  it('proves a locked Android composer raises no keyboard when tapped and Send is disabled', async () => {
+    for (const [ime, enabled, ok] of [
+      ['already-closed', false, true],
+      ['open', false, false],
+      ['already-closed', undefined, false]
+    ] as const) {
+      const actual = ui([], 'android')
+      const taps: unknown[] = []
+      actual.device.tapOn = async args => {
+        taps.push(args)
+      }
+      actual.readAndroidImeState = async () => ({ state: ime, flags: {} })
+      actual.nodes = async () => [
+        { id: 'chat-composer', type: 'EditText' },
+        { text: 'Send', type: 'Button', enabled }
+      ]
+      if (ok) {
+        expect(await actual.assertComposerNotEditable(0)).deep.includes({
+          keyboard: false,
+          ime: 'already-closed',
+          sendDisabled: true
+        })
+      } else
+        await actual.assertComposerNotEditable(0).then(
+          () => {
+            throw Error('Unexpected success')
+          },
+          (error: unknown) => {
+            expect(String(error)).not.contains('Unexpected success')
+          }
+        )
+      expect(taps).deep.equals([{ id: 'chat-composer' }])
+    }
+  })
   it('runs the real E5 movement callback with documented endpoints and a sub-hold delay', async () => {
     const actual = ui([])
     const calls: unknown[] = []

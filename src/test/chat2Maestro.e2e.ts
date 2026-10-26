@@ -2731,7 +2731,7 @@ export class Chat2UI {
    * A locked conversation keeps its composer on screen but not editable. The
    * driver counts a read-only web field as enabled and iOS reports such a
    * field enabled too, so prove it: on web the field is read-only or disabled;
-   * on iOS a tap on it raises no keyboard. Send is disabled on both.
+   * on iOS and Android a tap on it raises no keyboard. Send is disabled on all.
    */
   async assertComposerNotEditable(settle = 1500): Promise<Args> {
     if (!this.native) {
@@ -2746,6 +2746,31 @@ export class Chat2UI {
       )
       assert(state.sendDisabled === true, 'Send must be positively disabled')
       return { surface: this.surface, ...state }
+    }
+    if (this.surface === 'android') {
+      // Android reports the window's input method directly: a tap on a
+      // locked composer leaves it closed.
+      await this.device.tapOn({ id: 'chat-composer' })
+      await new Promise(resolve => setTimeout(resolve, settle))
+      const ime = await this.readAndroidImeState()
+      const send = (await this.nodes()).filter(
+        node => node.text === 'Send' && /(?:^|\.)Button$/.test(node.type ?? '')
+      )
+      assert(
+        ime.state === 'already-closed',
+        'A tap on a locked composer must raise no keyboard'
+      )
+      assert(
+        send.length === 1 && send[0].enabled === false,
+        'Send must be positively disabled'
+      )
+      return {
+        surface: this.surface,
+        tapped: true,
+        keyboard: false,
+        ime: ime.state,
+        sendDisabled: true
+      }
     }
     assert(this.surface === 'ios', 'Composer editability is proven on iOS')
     await this.device.tapOn({ id: 'chat-composer' })
