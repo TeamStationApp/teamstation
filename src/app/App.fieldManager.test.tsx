@@ -330,7 +330,8 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
           id: 'fld_one',
           name: 'Field 1',
           venueName: 'Example Park',
-          sizes: ['50/70']
+          sizes: ['50/70'],
+          timezone: 'America/New_York'
         }
       ]
     })

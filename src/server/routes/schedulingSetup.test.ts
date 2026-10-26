@@ -8,6 +8,7 @@ import type {
 } from '../../common/seasonScheduling'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { chosenSeasonIds, scheduleSetup } from '../scheduler/setup'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 
 const SETTINGS: ScheduleSettings = {
@@ -216,6 +217,69 @@ describe('scheduling setup routes', function () {
         )
       ).status
     ).equals(404)
+  })
+
+  it('writes no zone to a season with its settings, and supersedes none of its pending requests', async () => {
+    const path = `/seasons/${f.seasonA}/schedule-settings`
+    const stored = async (): Promise<string> =>
+      (
+        await f.h.db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', f.seasonA)
+          .executeTakeFirstOrThrow()
+      ).timezone
+    const sent = await f.h.request(
+      'POST',
+      '/relationship-requests',
+      {
+        kind: 'participation',
+        teamId: f.teamB,
+        seasonId: f.seasonA,
+        sender: { kind: 'season', id: f.seasonA },
+        idempotencyKey: 'season-settings-no-zone'
+      },
+      101
+    )
+    expect(sent.status, await sent.clone().text()).equals(201)
+    const { id } = (await sent.json()) as { id: string }
+    expect(await stored()).equals('UTC')
+    // A zone sent with the settings is not part of them, and is ignored.
+    const saved = await json<SeasonScheduleSettings>(
+      await f.h.request(
+        'PUT',
+        path,
+        { ...SETTINGS, timezone: 'America/Los_Angeles' },
+        101
+      )
+    )
+    expect(saved).not.have.property('timezone')
+    await json(await f.h.request('PUT', path, SETTINGS, 101))
+    expect(await stored()).equals('UTC')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('pending')
+  })
+
+  it('reads the chosen seasons still of the league, in the order the setup lists them', async () => {
+    expect(await chosenSeasonIds(f.h.db, f.leagueA)).deep.equals([])
+    // Another league's season is not one of this league's run.
+    await f.h.db
+      .insertInto('league_schedule_setups')
+      .values({
+        league_id: f.leagueA,
+        season_ids: [f.playoffs, f.seasonB, f.seasonA]
+      })
+      .execute()
+    const ids = await chosenSeasonIds(f.h.db, f.leagueA)
+    expect(ids).deep.equals([f.playoffs, f.seasonA])
+    expect(ids).deep.equals((await scheduleSetup(f.h.db, f.leagueA)).seasonIds)
   })
 
   it('chooses the league’s seasons and claimed venues’ fields, for a league admin only', async () => {

@@ -83,7 +83,12 @@ const tsSuites = [
   'src/server/autoScheduler/publish.test.ts',
   'src/server/autoScheduler/reschedule.test.ts',
   'src/server/autoScheduler/rules.test.ts',
-  'src/server/autoScheduler/buildOffThread.test.ts'
+  'src/server/autoScheduler/buildOffThread.test.ts',
+  // Fixes M2: a season is dates, scheduled in each field’s local time.
+  'src/common/eventTime.test.ts',
+  'src/common/seasonScheduling.test.ts',
+  'src/server/groups/authority.test.ts',
+  'src/server/groups/parentTerms.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */

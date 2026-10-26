@@ -2,7 +2,6 @@ import {
   addDays,
   fieldWindows,
   intersect,
-  type Interval,
   mergeIntervals,
   seasonWindows,
   wallInstant,
@@ -12,7 +11,7 @@ import { gameCalendarDay } from '../gameTime'
 import { MINUTE_STEP } from '../seasonScheduling'
 import type { FieldSize } from '../venues'
 import { firstNonZero } from './score'
-import type { EngineField, EngineInput, EngineSeason } from './types'
+import type { EngineInput, EngineSeason } from './types'
 
 export const MINUTE = 60_000
 export const DAY = 86_400_000
@@ -23,7 +22,7 @@ export const MORNING = 0
 export const AFTERNOON = 1
 export const EVENING = 2
 
-/** Where a game falls on a season's calendar, in the season's zone. */
+/** Where a game falls on the calendar, in its field's zone. */
 export interface GamePoint {
   date: string
   /** Days since 1970-01-01, for spacing. */
@@ -87,21 +86,23 @@ export function alignUp(instant: number): number {
   return Math.ceil(instant / STEP) * STEP
 }
 
-/** Reads instants as calendar points in one season's zone. */
-export class SeasonClock {
+/**
+ * Reads instants as calendar points in a zone: the zone of the field a game
+ * is on, since a season is only dates and each field keeps its own time.
+ */
+export class LocalClock {
   private readonly cutoffs = new Map<string, [number, number]>()
 
-  constructor(readonly timezone: string) {}
-
-  /** The part of the day an instant on a date falls in. */
-  timeOfDay(date: string, instant: number): number {
-    let cutoffs = this.cutoffs.get(date)
+  /** The part of the day an instant on a date in a zone falls in. */
+  timeOfDay(date: string, instant: number, timezone: string): number {
+    const key = `${timezone} ${date}`
+    let cutoffs = this.cutoffs.get(key)
     if (cutoffs == null) {
       cutoffs = [
-        wallInstant(date, '12:00', this.timezone),
-        wallInstant(date, '17:00', this.timezone)
+        wallInstant(date, '12:00', timezone),
+        wallInstant(date, '17:00', timezone)
       ]
-      this.cutoffs.set(date, cutoffs)
+      this.cutoffs.set(key, cutoffs)
     }
     return instant < cutoffs[0]
       ? MORNING
@@ -110,76 +111,58 @@ export class SeasonClock {
         : EVENING
   }
 
-  /** The calendar point of an instant. */
-  pointOf(instant: number): GamePoint {
-    const date = gameCalendarDay(new Date(instant).toISOString(), this.timezone)
-    return this.pointOn(date, instant)
+  /** The calendar point of an instant in a zone. */
+  pointOf(instant: number, timezone: string): GamePoint {
+    const date = gameCalendarDay(new Date(instant).toISOString(), timezone)
+    return this.pointOn(date, instant, timezone)
   }
 
   /** The calendar point of an instant already known to fall on `date`. */
-  pointOn(date: string, instant: number): GamePoint {
+  pointOn(date: string, instant: number, timezone: string): GamePoint {
     return {
       date,
       day: dayNumber(date),
       weekday: weekdayOf(date),
-      timeOfDay: this.timeOfDay(date, instant)
+      timeOfDay: this.timeOfDay(date, instant, timezone)
     }
   }
 }
 
-/** A field's open time on a season's date, read across zones if they differ. */
-function fieldOpenOn(
-  field: EngineField,
-  date: string,
+/**
+ * The first date a season may still get a game on a field in a zone: its
+ * first day, or, once it is under way, that zone's today.
+ */
+export function firstOpenDate(
+  season: EngineSeason,
+  notBefore: number,
   timezone: string
-): Interval[] {
-  if (field.availability.timezone === timezone)
-    return fieldWindows(field.availability, date)
-  return [-1, 0, 1].flatMap(offset =>
-    fieldWindows(field.availability, addDays(date, offset))
-  )
-}
-
-/** The first date a season may still get a game. */
-export function firstOpenDate(season: EngineSeason, notBefore: number): string {
-  const today = gameCalendarDay(
-    new Date(notBefore).toISOString(),
-    season.timezone
-  )
+): string {
+  const today = gameCalendarDay(new Date(notBefore).toISOString(), timezone)
   return today > season.settings.startsOn ? today : season.settings.startsOn
 }
 
 /**
- * Every start a season's game can take on the run's fields: each date of the
- * season that isn't a blackout, each field that sets up as its size, and
+ * Every start a season's game can take on the run's fields: each field that
+ * sets up as its size, each date of the season that isn't a blackout, and
  * every 5-minute step where the whole game fits inside both the field's
- * open time and the season's window. Zones in use are offset from UTC by
- * whole multiples of five minutes, so a 5-minute step in UTC is one on the
- * wall clock as well.
+ * open time and the season's window. A season is only dates, so its days,
+ * blackouts and windows are read in the zone of each field, as the field's
+ * own hours are, and two fields in different zones each keep their own.
+ * Zones in use are offset from UTC by whole multiples of five minutes, so a
+ * 5-minute step in UTC is one on the wall clock as well.
  */
 export function seasonSlots(
   input: EngineInput,
   season: EngineSeason,
-  clock: SeasonClock
+  clock: LocalClock
 ): SeasonSlots {
-  const { settings, timezone } = season
+  const { settings } = season
   const gameMs = settings.gameMinutes * MINUTE
   const stride = gameMs + settings.bufferMinutes * MINUTE
   const blackouts = new Set(settings.blackouts)
   const fields = input.fields.filter(field =>
     field.sizes.includes(settings.fieldSize)
   )
-
-  const dates: Array<{ date: string; open: Interval[] }> = []
-  for (
-    let date = firstOpenDate(season, input.notBefore);
-    date <= settings.endsOn;
-    date = addDays(date, 1)
-  ) {
-    if (blackouts.has(date)) continue
-    const open = seasonWindows(settings.windows, timezone, date)
-    if (open.length > 0) dates.push({ date, open })
-  }
 
   const slots: Slot[] = []
   const windows: SeasonWindow[] = []
@@ -193,8 +176,16 @@ export function seasonSlots(
       other =>
         other.id !== season.id && field.sizes.includes(other.settings.fieldSize)
     ).length
-    for (const { date, open } of dates) {
-      const fieldOpen = fieldOpenOn(field, date, timezone)
+    const { timezone } = field.availability
+    for (
+      let date = firstOpenDate(season, input.notBefore, timezone);
+      date <= settings.endsOn;
+      date = addDays(date, 1)
+    ) {
+      if (blackouts.has(date)) continue
+      const open = seasonWindows(settings.windows, timezone, date)
+      if (open.length === 0) continue
+      const fieldOpen = fieldWindows(field.availability, date)
       if (fieldOpen.length === 0) continue
       const weekday = weekdayOf(date)
       for (const interval of mergeIntervals(intersect(fieldOpen, open))) {
@@ -207,13 +198,13 @@ export function seasonSlots(
           at += stride
         ) {
           supply.games++
-          supply.timeOfDay[clock.timeOfDay(date, at)]++
+          supply.timeOfDay[clock.timeOfDay(date, at, timezone)]++
           supply.weekdays[weekday]++
         }
         const first = alignUp(start)
         for (let at = first; at + gameMs <= interval.end; at += STEP)
           slots.push({
-            ...clock.pointOn(date, at),
+            ...clock.pointOn(date, at, timezone),
             index: 0,
             seasonId: season.id,
             fieldId: field.id,

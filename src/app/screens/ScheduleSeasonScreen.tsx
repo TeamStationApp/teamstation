@@ -121,9 +121,7 @@ export function ScheduleSeasonScreen({
         <Text accessibilityRole="header" style={styles.title}>
           {season.name}
         </Text>
-        <Text style={styles.meta}>
-          Times are in the season’s time zone, {season.timezone}.
-        </Text>
+        <Text style={styles.meta}>Times are local to each field.</Text>
         {error !== '' && (
           <Text accessibilityRole="alert" style={styles.error}>
             {error}

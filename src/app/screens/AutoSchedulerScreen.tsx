@@ -72,6 +72,11 @@ export function AutoSchedulerScreen({
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
   const [asking, setAsking] = useState<{ existing: number }>()
   const [building, setBuilding] = useState(false)
+  // Each season's save in flight, which its next save waits for, and the
+  // settings its last save stored, which that next save builds on,
+  // so a sheet's save can't send back a number a cell's save just changed.
+  const saving = useRef(new Map<string, Promise<unknown>>())
+  const stored = useRef(new Map<string, Pick<SetupSeason, 'settings'>>())
   const grid = useRef<SeasonScheduleGridHandle>(null)
   // The screen's own scroll view, which lifts an open grid cell above the
   // keyboard.
@@ -93,6 +98,7 @@ export function AutoSchedulerScreen({
     ]).then(
       ([found, listed]) => {
         if (!current()) return
+        stored.current.clear()
         setSetup(found)
         setToReschedule(listed)
       },
@@ -110,6 +116,24 @@ export function AutoSchedulerScreen({
     setError('')
     try {
       if (!(await flush())) return
+      // A cell's save still on its way, as when Build's tap blurred the
+      // cell, lands first, so the build reads the numbers the grid shows.
+      for (;;) {
+        const pending = [...saving.current.values()]
+        if (pending.length === 0) break
+        await Promise.allSettled(pending)
+      }
+      // The checks again, on what those saves stored.
+      if (request.mode === 'full' && setup != null) {
+        const seasons = chosenSeasons(setup).map(item => ({
+          ...item,
+          ...stored.current.get(item.id)
+        }))
+        const fields = setup.fields.filter(field =>
+          setup.fieldIds.includes(field.id)
+        )
+        if (!buildable(schedulingChecks(seasons, fields))) return
+      }
       const preview = await client.buildSchedulePreview(leagueId, request)
       onOpenPreview(preview.id)
     } catch (failure) {
@@ -136,7 +160,16 @@ export function AutoSchedulerScreen({
       setBusy(true)
       setError('')
       try {
-        setSetup(await client.saveScheduleSetup(leagueId, choice))
+        const answer = await client.saveScheduleSetup(leagueId, choice)
+        // A cell's save that answered while this choice was on its way
+        // stored newer settings than this answer read: keep them.
+        setSetup({
+          ...answer,
+          seasons: answer.seasons.map(item => {
+            const kept = stored.current.get(item.id)
+            return kept == null ? item : { ...item, saved: true, ...kept }
+          })
+        })
       } catch (failure) {
         failed(failure)
       } finally {
@@ -148,17 +181,37 @@ export function AutoSchedulerScreen({
   /**
    * Saves a season's settings and merges the answer into the setup. It
    * resolves null, or the message saying why it failed, and leaves the rest
-   * of the screen usable, so a grid cell can show its own failure.
+   * of the screen usable, so a grid cell can show its own failure. A
+   * season's saves go one at a time, each onto what the one before stored.
    */
   const storeSettings = async (
     season: SetupSeason,
     changes: Partial<ScheduleSettings>
   ): Promise<string | null> => {
+    const before = saving.current.get(season.id)
+    const next = (async () => {
+      await before
+      return await sendSettings(season, changes)
+    })()
+    saving.current.set(season.id, next)
+    try {
+      return await next
+    } finally {
+      if (saving.current.get(season.id) === next)
+        saving.current.delete(season.id)
+    }
+  }
+  const sendSettings = async (
+    shown: SetupSeason,
+    changes: Partial<ScheduleSettings>
+  ): Promise<string | null> => {
+    const season = { ...shown, ...stored.current.get(shown.id) }
     try {
       const saved = await client.saveScheduleSettings(season.id, {
         ...season.settings,
         ...changes
       })
+      stored.current.set(season.id, { settings: saved.settings })
       setSetup(current =>
         current == null
           ? current

@@ -76,7 +76,6 @@ export function season(
   return {
     id: SEASON,
     name: 'Demo Spring',
-    timezone: ZONE,
     participants: PARTICIPANTS,
     exhibitionTeams: EXHIBITION_TEAMS,
     ...changes,

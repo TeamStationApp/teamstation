@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { Keyboard, Platform } from 'react-native'
 
@@ -103,6 +103,13 @@ function fakeClient(
     existing?: number
     failBuild?: boolean
     listed?: GameToReschedule[]
+    /** What the first settings save waits for before it answers. */
+    holdFirstSave?: Promise<void>
+    /**
+     * What each setup choice waits for before it answers. Its answer has
+     * the seasons' first settings, as a choice read before a save would.
+     */
+    holdChoice?: Promise<void>
   } = {}
 ): {
   client: TeamStationClient
@@ -110,6 +117,8 @@ function fakeClient(
   sent: Array<'save' | 'build' | 'fieldManager'>
   choices: Array<{ seasonIds: string[]; fieldIds: string[] }>
   saves: Array<[string, ScheduleSettings]>
+  /** Anything a save sent beyond the season and its settings. */
+  extras: unknown[][]
   builds: PreviewRequest[]
 } {
   let setup = first instanceof Error ? setupOf() : first
@@ -118,6 +127,7 @@ function fakeClient(
     sent: [] as Array<'save' | 'build' | 'fieldManager'>,
     choices: [] as Array<{ seasonIds: string[]; fieldIds: string[] }>,
     saves: [] as Array<[string, ScheduleSettings]>,
+    extras: [] as unknown[][],
     builds: [] as PreviewRequest[],
     client: undefined as unknown as TeamStationClient
   }
@@ -150,6 +160,7 @@ function fakeClient(
       choice: { seasonIds: string[]; fieldIds: string[] }
     ) => {
       record.choices.push(choice)
+      await options.holdChoice
       if (options.failChoice === true)
         throw new Error('Choose fields of claimed venues')
       setup = { ...setup, ...choice }
@@ -157,10 +168,13 @@ function fakeClient(
     },
     saveScheduleSettings: async (
       seasonId: string,
-      settings: ScheduleSettings
+      settings: ScheduleSettings,
+      ...extra: unknown[]
     ) => {
       record.sent.push('save')
       record.saves.push([seasonId, settings])
+      record.extras.push(extra)
+      if (record.saves.length === 1) await options.holdFirstSave
       if (options.failSave === true) throw new Error('')
       return { seasonId, saved: true, settings }
     }
@@ -214,6 +228,15 @@ const disabled = (node: HTMLElement): boolean =>
 
 describe('the Auto-Scheduler setup', () => {
   afterEach(unmount)
+  // The viewer is in Pacific Time.
+  const zone = process.env.TZ
+  before(() => {
+    process.env.TZ = 'America/Los_Angeles'
+  })
+  after(() => {
+    if (zone == null) delete process.env.TZ
+    else process.env.TZ = zone
+  })
 
   it('totals a season’s games', () => {
     expect(seasonGameTotal(season())).equals(10 + 7)
@@ -339,6 +362,159 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Demo Regular Dates: Mar 8 – Mar 20')
     await tapText('Cancel')
     expect(fake.saves.length).equals(5)
+  })
+
+  it('saves and builds a season at the UTC default with no zone, as every other', async () => {
+    const fake = fakeClient(
+      setupOf({
+        seasons: [
+          season({ timezone: 'UTC' }),
+          season({ id: 'sea_c', name: 'Demo Fall' })
+        ],
+        seasonIds: ['sea_a', 'sea_c']
+      })
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    await tapLabel('Demo Regular Regular-season games: 3')
+    await fill('Edit Demo Regular Regular-season games', '4')
+    await key('Enter')
+    await tapLabel('Demo Fall Game length in minutes: 90')
+    await fill('Edit Demo Fall Game length in minutes', '80')
+    await key('Enter')
+    expect(fake.saves.map(([seasonId]) => seasonId)).deep.equals([
+      'sea_a',
+      'sea_a',
+      'sea_c'
+    ])
+    // A season is only dates: no save or build names a zone.
+    expect(fake.extras).deep.equals([[], [], []])
+    for (const [, saved] of fake.saves)
+      expect(saved).not.have.property('timezone')
+    await tapText('Build schedule')
+    await settle(20)
+    expect(fake.builds).deep.equals([{ mode: 'full' }])
+  })
+
+  it('saves a sheet’s choice after a cell’s save still in flight, onto what that save stored', async () => {
+    let release = (): void => undefined
+    const fake = fakeClient(
+      setupOf({ seasons: [season({ timezone: 'UTC' })] }),
+      {
+        holdFirstSave: new Promise(resolve => {
+          release = resolve
+        })
+      }
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    // The cell's save is still on its way when the size is chosen.
+    await tapLabel('Demo Regular Size: 50/70')
+    await press('60/90')
+    await settle(20)
+    expect(fake.saves).length(1)
+    release()
+    await settle(50)
+    expect(fake.saves).deep.equals([
+      ['sea_a', { ...SETTINGS, gameMinutes: 75 }],
+      ['sea_a', { ...SETTINGS, gameMinutes: 75, fieldSize: '60/90' }]
+    ])
+    expect(fake.extras).deep.equals([[], []])
+    expect(hasLabel('Demo Regular Game length in minutes: 75')).equals(true)
+    expect(hasLabel('Demo Regular Size: 60/90')).equals(true)
+  })
+
+  it('builds only after a cell’s save still in flight, and on what it stored', async () => {
+    let release = (): void => undefined
+    const fake = fakeClient(setupOf(), {
+      holdFirstSave: new Promise(resolve => {
+        release = resolve
+      })
+    })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    // Build is tapped while the cell's save is still on its way.
+    expect(disabled(buildButton())).equals(false)
+    await tapText('Build schedule')
+    await settle(20)
+    expect(fake.saves).length(1)
+    expect(fake.builds).deep.equals([])
+    release()
+    await settle(50)
+    expect(fake.builds).deep.equals([{ mode: 'full' }])
+    expect(calls.builds).equals(1)
+  })
+
+  it('checks a build again on what a cell’s save in flight stored', async () => {
+    let release = (): void => undefined
+    const fake = fakeClient(
+      setupOf({
+        seasons: [season({ settings: { ...SETTINGS, exhibitionGames: 0 } })]
+      }),
+      {
+        holdFirstSave: new Promise(resolve => {
+          release = resolve
+        })
+      }
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Regular-season games: 3')
+    await fill('Edit Demo Regular Regular-season games', '0')
+    await key('Enter')
+    await tapText('Build schedule')
+    await settle(20)
+    release()
+    await settle(50)
+    // No games left to schedule: nothing is built.
+    expect(fake.saves.at(-1)?.[1].regularGames).equals(0)
+    expect(fake.builds).deep.equals([])
+    expect(text()).includes('Must fix: Demo Regular has no games to schedule.')
+    expect(disabled(buildButton())).equals(true)
+  })
+
+  it('keeps a cell’s save that lands while a choice is on its way, when the choice answers last', async () => {
+    let releaseSave = (): void => undefined
+    let releaseChoice = (): void => undefined
+    const fake = fakeClient(
+      setupOf({
+        fields: [field(), field({ id: 'fld_two', name: 'Field 2' })]
+      }),
+      {
+        holdFirstSave: new Promise(resolve => {
+          releaseSave = resolve
+        }),
+        holdChoice: new Promise(resolve => {
+          releaseChoice = resolve
+        })
+      }
+    )
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Regular-season games: 3')
+    await fill('Edit Demo Regular Regular-season games', '8')
+    await key('Enter')
+    // A field is checked while the cell's save is on its way; the choice
+    // reads the old count, and answers after the save.
+    await tapLabel('Field 2, Example Park')
+    await settle(20)
+    expect(fake.choices.at(-1)?.fieldIds).deep.equals(['fld_one', 'fld_two'])
+    releaseSave()
+    await settle(50)
+    expect(hasLabel('Demo Regular Regular-season games: 8')).equals(true)
+    releaseChoice()
+    await settle(50)
+    expect(hasLabel('Demo Regular Regular-season games: 8')).equals(true)
+    expect(hasLabel('Demo Regular Total games: 35')).equals(true)
   })
 
   it('saves a cell still open before a native build or a season’s screen, and goes nowhere when it refuses', async () => {
@@ -650,6 +826,10 @@ describe('the Auto-Scheduler setup', () => {
     expect(text()).includes('Demo Owls at Demo Hawks')
     expect(text()).includes('Declined')
     expect(text()).includes('A team withdrew')
+    // In the viewer's time, naming the zone of the field it was placed in.
+    expect(text()).includes(
+      'Saturday, April 17, 7:00 AM – 8:30 AM · 10:00 AM EDT at the field'
+    )
     await tapText('Recalculate just these teams')
     await settle(20)
     expect(fake.builds.at(-1)).deep.equals({

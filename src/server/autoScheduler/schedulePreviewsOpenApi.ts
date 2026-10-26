@@ -21,7 +21,7 @@ export function schedulePreviewPaths(
   })
   const preview = {
     description:
-      'The preview: id, leagueId, mode, existing, status (open, published, discarded), options (games, fairness, reasons, unmet), blocking, edits, replacing, publishedOption, publishedAt, published (each published game’s state), teams, seasons and fields'
+      'The preview: id, leagueId, mode, existing, status (open, published, discarded), options (games, fairness, reasons, unmet), blocking, edits, replacing, publishedOption, publishedAt, published (each published game’s state), teams, seasons and fields, each field with its timezone, the zone its games are placed and read in'
   }
   const addedGame = {
     type: 'object',

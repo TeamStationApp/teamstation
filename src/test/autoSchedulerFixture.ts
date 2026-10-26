@@ -128,6 +128,22 @@ export async function autoSchedulerFixture(
   return { f, teams, siteAdmin: 105, outsideAdmin: 103 }
 }
 
+/**
+ * Writes a season's stored zone directly, so it differs from the zone of
+ * the fields it is scheduled on, as the UTC every new season holds does.
+ */
+export async function forceSeasonZone(
+  fx: AutoSchedulerFixture,
+  seasonId: string,
+  timezone: string
+): Promise<void> {
+  await fx.f.h.db
+    .updateTable('seasons')
+    .set({ timezone })
+    .where('id', '=', seasonId)
+    .execute()
+}
+
 /** Calls the API as a fixture user and returns the parsed answer. */
 export async function api<T = unknown>(
   fx: AutoSchedulerFixture,

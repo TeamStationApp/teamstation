@@ -3,8 +3,13 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { FairnessRow, PlannedGame } from '../../common/autoScheduler/types'
-import { eventLocalRange, foreignZoneName } from '../../common/eventTime'
+import {
+  eventLocalRange,
+  foreignZoneName,
+  viewerTimezone
+} from '../../common/eventTime'
 import { wallInstant } from '../../common/fieldAvailability'
+import { gameCalendarDay } from '../../common/gameTime'
 import {
   editedGames,
   type PublishedState,
@@ -42,17 +47,30 @@ function plural(count: number, one: string, many = `${one}s`): string {
 }
 
 /**
- * A game's time in its season's zone, naming the zone when it isn't the
- * viewer's: published games show in the viewer's zone, so the two never
- * read differently without saying so.
+ * A game's time in the viewer's zone. When its field is in another zone,
+ * the label also names that zone, with the start there, the time the game
+ * was placed in: "Monday, March 1, 2:30 PM – 4:00 PM · 5:30 PM EST at the
+ * field".
  */
 export function gameTimeLabel(
   game: { startAt: string; endAt: string | null },
-  timezone: string | undefined
+  fieldZone: string | undefined,
+  viewer: string = viewerTimezone()
 ): string {
-  const range = eventLocalRange(game.startAt, game.endAt, timezone)
-  const zone = timezone == null ? '' : foreignZoneName(game.startAt, timezone)
-  return zone === '' ? range : `${range} ${zone}`
+  const range = eventLocalRange(game.startAt, game.endAt, viewer)
+  const zone =
+    fieldZone == null ? '' : foreignZoneName(game.startAt, fieldZone, viewer)
+  if (zone === '' || fieldZone == null) return range
+  const sameDay =
+    gameCalendarDay(game.startAt, fieldZone) ===
+    gameCalendarDay(game.startAt, viewer)
+  const there = new Intl.DateTimeFormat('en', {
+    timeZone: fieldZone,
+    ...(sameDay ? {} : { weekday: 'short' as const }),
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(new Date(game.startAt))
+  return `${range} · ${there} ${zone} at the field`
 }
 
 /** A team's fairness line, said plainly. */
@@ -344,7 +362,6 @@ export function SchedulePreviewScreen({
                   <ListCard>
                     {group.games.map(game => {
                       const field = fields.get(game.fieldId)
-                      const season = seasons.get(game.seasonId)
                       const state = states.get(game.key)?.state
                       const matchup = `${teamName(game.awayTeamId)} at ${teamName(game.homeTeamId)}`
                       const canReject =
@@ -359,7 +376,7 @@ export function SchedulePreviewScreen({
                               {game.exhibition ? ' · Exhibition' : ''}
                             </Text>
                             <Text style={styles.rowDetail}>
-                              {gameTimeLabel(game, season?.timezone)}
+                              {gameTimeLabel(game, field?.timezone)}
                             </Text>
                             <Text style={styles.rowDetail}>
                               {field == null
@@ -372,7 +389,7 @@ export function SchedulePreviewScreen({
                             <View style={styles.rejectCell}>
                               <DangerText
                                 label="Reject"
-                                accessibilityLabel={`Reject ${matchup}, ${gameTimeLabel(game, season?.timezone)}`}
+                                accessibilityLabel={`Reject ${matchup}, ${gameTimeLabel(game, field?.timezone)}`}
                                 onPress={() => {
                                   reject(game.key)
                                 }}
@@ -559,12 +576,11 @@ function AddGameSheet({
           {row('Size', size == null ? 'Choose' : fieldSizeLabel(size), 'size')}
           {row('Date', date ?? 'Choose', 'date')}
           {row('Start', time == null ? 'Choose' : clockLabel(time), 'time')}
-          {season != null && (
-            <Text style={styles.formNote}>
-              The date and start are in the season’s time zone,{' '}
-              {season.timezone}.
-            </Text>
-          )}
+          <Text style={styles.formNote}>
+            {field == null
+              ? 'The date and start are local to the field you choose.'
+              : `The date and start are local to ${field.name} at ${field.venueName}.`}
+          </Text>
           <CheckRow
             label="Exhibition game"
             checked={exhibition}
@@ -578,7 +594,8 @@ function AddGameSheet({
           disabled={!ready || busy}
           onPress={() => {
             if (!ready) return
-            const start = wallInstant(date, time, season.timezone)
+            // The field's local time, as the engine places games.
+            const start = wallInstant(date, time, field.timezone)
             onAdd({
               seasonId: season.id,
               homeTeamId,

@@ -217,17 +217,6 @@ export async function gamesToReschedule(
         .execute()
     ).map(team => [team.id, team.name])
   )
-  const zones = new Map(
-    (
-      await db
-        .selectFrom('seasons')
-        .select(['id', 'timezone'])
-        .where('id', 'in', [
-          ...new Set(listed.map(({ item }) => item.row.season_id))
-        ])
-        .execute()
-    ).map(season => [season.id, season.timezone])
-  )
   return listed
     .map(({ item, reason }) => {
       const terms = item.request?.terms as GameRequestTerms | undefined
@@ -250,7 +239,8 @@ export async function gamesToReschedule(
         endAt,
         exhibition: item.game?.exhibition ?? terms?.game.exhibition ?? false,
         fieldId: item.game?.field_id ?? terms?.game.fieldId ?? null,
-        timezone: item.game?.timezone ?? zones.get(item.row.season_id) ?? 'UTC',
+        // The zone it was placed in: its field's, as it was proposed.
+        timezone: item.game?.timezone ?? terms?.game.timezone ?? 'UTC',
         reason
       }
     })

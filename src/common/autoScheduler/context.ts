@@ -4,8 +4,8 @@ import {
   dayNumber,
   firstOpenDate,
   type GamePoint,
+  LocalClock,
   MINUTE,
-  SeasonClock,
   seasonSlots,
   type SeasonWindow,
   type Slot,
@@ -23,7 +23,7 @@ export interface SlotGroup {
   slots: Slot[]
 }
 
-/** A fixed game of a season, with where it falls on the season's calendar. */
+/** A fixed game of a season, with where it falls on its field's calendar. */
 export interface FixedPoint {
   game: FixedGame
   point: GamePoint
@@ -36,13 +36,18 @@ export interface SeasonContext {
   season: EngineSeason
   /** Participants, then exhibition teams. */
   teams: string[]
-  clock: SeasonClock
+  clock: LocalClock
+  /**
+   * The zone a game on a field is read in: the field's, or, for a field not
+   * in the run, the zone of the run's first field of the season's size.
+   */
+  zoneOf: (fieldId: string | null) => string
   bufferMs: number
   slots: Slot[]
   groups: SlotGroup[]
   windows: SeasonWindow[]
   supply: Supply
-  /** The first and last day it can still get games. */
+  /** The first and last day it can still get games, on any of its fields. */
   firstDay: number
   lastDay: number
   fixed: FixedPoint[]
@@ -81,26 +86,55 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
   return [...groups.values()]
 }
 
+/**
+ * The zones a season's games are read in: those of the run's fields that
+ * set up as its size, or, with none, of the run's first field, or UTC.
+ */
+function seasonZones(input: EngineInput, season: EngineSeason): string[] {
+  const sized = input.fields.filter(field =>
+    field.sizes.includes(season.settings.fieldSize)
+  )
+  const zones = (sized.length > 0 ? sized : input.fields.slice(0, 1)).map(
+    field => field.availability.timezone
+  )
+  return zones.length > 0 ? [...new Set(zones)] : ['UTC']
+}
+
 /** Reads the input into the slots, groups and starting occupancy of the run. */
 export function buildContext(input: EngineInput): RunContext {
+  const fieldZones = new Map(
+    input.fields.map(field => [field.id, field.availability.timezone])
+  )
+  const clock = new LocalClock()
   const seasons = input.seasons.map((season, index): SeasonContext => {
-    const clock = new SeasonClock(season.timezone)
     const { slots, windows, supply } = seasonSlots(input, season, clock)
+    const zones = seasonZones(input, season)
+    const zoneOf = (fieldId: string | null): string =>
+      (fieldId == null ? undefined : fieldZones.get(fieldId)) ?? zones[0]
     return {
       index,
       season,
       teams: seasonTeams(season),
       clock,
+      zoneOf,
       bufferMs: season.settings.bufferMinutes * MINUTE,
       slots,
       groups: groupSlots(slots),
       windows,
       supply,
-      firstDay: dayNumber(firstOpenDate(season, input.notBefore)),
+      // The earliest of its fields' first days: today comes sooner east.
+      firstDay: Math.min(
+        ...zones.map(zone =>
+          dayNumber(firstOpenDate(season, input.notBefore, zone))
+        )
+      ),
       lastDay: dayNumber(season.settings.endsOn),
       fixed: input.fixed
         .filter(game => game.seasonId === season.id)
-        .map(game => ({ game, point: clock.pointOf(game.start) })),
+        .map(game => ({
+          game,
+          point: clock.pointOf(game.start, zoneOf(game.fieldId))
+        })),
       fieldFree: new Uint8Array(slots.length),
       teamFree: new Map()
     }

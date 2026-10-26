@@ -168,6 +168,31 @@ export async function saveSeasonScheduleSettings(
 }
 
 /**
+ * The seasons chosen for a league's next run that are still the league's,
+ * in the order they were chosen: the setup's `seasonIds`, without reading
+ * the rest of the setup.
+ */
+export async function chosenSeasonIds(
+  db: Db,
+  leagueId: string
+): Promise<string[]> {
+  const chosen = await db
+    .selectFrom('league_schedule_setups')
+    .select('season_ids')
+    .where('league_id', '=', leagueId)
+    .executeTakeFirst()
+  const ids = chosen?.season_ids ?? []
+  if (ids.length === 0) return []
+  const own = await db
+    .selectFrom('seasons')
+    .select('id')
+    .where('league_id', '=', leagueId)
+    .where('id', 'in', ids)
+    .execute()
+  return ids.filter(id => own.some(season => season.id === id))
+}
+
+/**
  * The teams the scheduler gives a season's games: its active and
  * parent-managed teams, not merged away. Flagged ones are its exhibition
  * teams; the rest are its participants.

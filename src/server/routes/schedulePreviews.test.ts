@@ -2,12 +2,14 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { PlannedGame } from '../../common/autoScheduler/types'
+import { eventLocalFields } from '../../common/eventTime'
 import {
   editedGames,
   type Publication,
   type SchedulePreview
 } from '../../common/schedulePreviews'
 import { fieldSizeLabel } from '../../common/venues'
+import { forceSeasonZone } from '../../test/autoSchedulerFixture'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
 
 describe('schedule preview routes', function () {
@@ -400,5 +402,86 @@ describe('schedule preview routes', function () {
         )
       ).status
     ).equals(400)
+  })
+
+  it('builds a season stored as UTC in its field’s local time, and writes no zone', async () => {
+    const seasonA = w.fx.f.seasonA
+    const stored = async (): Promise<string> =>
+      (
+        await w.fx.f.h.db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', seasonA)
+          .executeTakeFirstOrThrow()
+      ).timezone
+    // A season's stored zone, UTC, is not the zone of Field 1, New York.
+    await forceSeasonZone(w.fx, seasonA, 'UTC')
+    const sent = await w.call<{ id: string }>(
+      101,
+      'POST',
+      '/relationship-requests',
+      {
+        kind: 'participation',
+        teamId: w.fx.f.teamB,
+        seasonId: seasonA,
+        sender: { kind: 'season', id: seasonA },
+        idempotencyKey: 'build-no-zone'
+      }
+    )
+    expect(sent.status).equals(201)
+    // A zone sent with a build is not part of it, and is ignored.
+    const built = await build({
+      mode: 'full',
+      existing: 'workAround',
+      timezone: 'America/Los_Angeles'
+    })
+    expect(built.status).equals(201)
+    expect(await stored()).equals('UTC')
+    expect(
+      (
+        await w.fx.f.h.db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', sent.body.id)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('pending')
+    // The preview names each field's zone.
+    expect(
+      built.body.fields.map(field => [field.name, field.timezone])
+    ).deep.equals([['Field 1', 'America/New_York']])
+    // Weekday games meet seasonA's windows, 17:30–21:00 and from June 1
+    // 18:00–21:00, read in Field 1's zone, New York, and the field's
+    // 17:00–21:00 hours: 90 minutes, then 10 between. Read in UTC, a window
+    // would end by 5:00 PM in New York and never meet the field's hours on a
+    // weekday.
+    const weekday = built.body.options[0].games
+      .map(game => eventLocalFields(game.startAt, 'America/New_York'))
+      .filter(local => {
+        const day = new Date(`${local.date}T12:00:00Z`).getUTCDay()
+        return day >= 1 && day <= 5
+      })
+    expect(weekday.length).greaterThan(0)
+    for (const local of weekday)
+      expect(
+        local.date < '2027-06-01' ? ['17:30', '19:10'] : ['18:00', '19:40'],
+        JSON.stringify(local)
+      ).includes(local.time)
+    // Published, each game carries its field's zone, not the season's.
+    const published = await w.call<Publication>(
+      101,
+      'POST',
+      `/schedule-previews/${built.body.id}/publications`,
+      { option: 0 }
+    )
+    expect(published.status).equals(200)
+    const zones = await w.fx.f.h.db
+      .selectFrom('games')
+      .select('timezone')
+      .where('schedule_preview_id', '=', built.body.id)
+      .execute()
+    expect(zones.length).greaterThan(0)
+    for (const game of zones) expect(game.timezone).equals('America/New_York')
+    expect(await stored()).equals('UTC')
   })
 })

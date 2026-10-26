@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
@@ -44,11 +44,14 @@ function fakeClient(
 ): {
   client: TeamStationClient
   saves: ScheduleSettings[]
+  /** Anything a save sent beyond the season and its settings. */
+  extras: unknown[][]
   flags: Array<[string, boolean]>
 } {
   let reads = 0
   const record = {
     saves: [] as ScheduleSettings[],
+    extras: [] as unknown[][],
     flags: [] as Array<[string, boolean]>,
     client: undefined as unknown as TeamStationClient
   }
@@ -67,9 +70,11 @@ function fakeClient(
     },
     saveScheduleSettings: async (
       seasonId: string,
-      settings: ScheduleSettings
+      settings: ScheduleSettings,
+      ...extra: unknown[]
     ) => {
       record.saves.push(settings)
+      record.extras.push(extra)
       return { seasonId, saved: true, settings }
     },
     setExhibitionTeam: async (
@@ -93,15 +98,22 @@ const show = async (client: TeamStationClient): Promise<void> => {
 
 describe('a season of the next schedule', () => {
   afterEach(unmount)
+  // The viewer is in Pacific Time.
+  const zone = process.env.TZ
+  before(() => {
+    process.env.TZ = 'America/Los_Angeles'
+  })
+  after(() => {
+    if (zone == null) delete process.env.TZ
+    else process.env.TZ = zone
+  })
 
   it('loads after a failure, and says when the season has left the league', async () => {
     await show(fakeClient(new Error('down')).client)
     expect(text()).includes('could not load')
     await press('Retry')
     await settle(50)
-    expect(text()).includes(
-      'Times are in the season’s time zone, America/New_York.'
-    )
+    expect(text()).includes('Times are local to each field.')
     await unmount()
     await show(fakeClient(null).client)
     expect(text()).includes('no longer part of the league')
@@ -149,6 +161,32 @@ describe('a season of the next schedule', () => {
     expect(fake.saves.at(-1)?.windows.map(period => period.from)).deep.equals([
       '2027-06-01'
     ])
+  })
+
+  it('says times are local to each field, whatever zone the season holds, and saves no zone', async () => {
+    for (const timezone of ['America/New_York', 'UTC']) {
+      const fake = fakeClient({ ...SEASON, timezone })
+      await show(fake.client)
+      expect(text(), timezone).includes('Times are local to each field.')
+      for (const named of [
+        'UTC',
+        'Coordinated Universal Time',
+        'Eastern Time',
+        'Pacific Time',
+        'time zone'
+      ])
+        expect(text(), timezone).not.includes(named)
+      await tapText('Add game windows')
+      await settle(20)
+      await press('Add blackout day')
+      await chooseCalendarDate('2027-04-17')
+      await settle(20)
+      expect(fake.saves, timezone).length(2)
+      for (const saved of fake.saves)
+        expect(saved, timezone).not.have.property('timezone')
+      expect(fake.extras, timezone).deep.equals([[], []])
+      await unmount()
+    }
   })
 
   it('sets blackout days and exhibition teams', async () => {
