@@ -13815,11 +13815,41 @@ describe('phone reach of a far native anchor', function () {
       row => row.nativeAnchor === far.id
     )!
     expect(proof.outcome).equals('passed')
-    expect(proof.statusBarScrollToTop).deep.includes({
-      point: { x: 60, y: 20 },
-      before: 59202 + 95 - 100
-    })
+    expect(proof.statusBarScrollToTop).deep.equals([
+      { point: { x: 60, y: 20 }, before: 59202 + 95 - 100, after: -305 }
+    ])
   })
+  it('touches the status bar again when the first scroll to top stops short', async function () {
+    const m = reader(true)
+    let touches = 0
+    m.scenario.ui.device.tapOnPoint = async point => {
+      m.taps.push({ x: Number(point.x), y: Number(point.y) })
+      touches += 1
+    }
+    // The first touch stops 1500 pt nearer while a fresh page measures; the
+    // second reaches the history's start.
+    const nodes = m.scenario.ui.device.hierarchy.bind(m.scenario.ui.device)
+    m.scenario.ui.device.hierarchy = async () => {
+      const tree = (await nodes()) as {
+        nodes: Array<{ identifier?: string; rect: { y: number } }>
+      }
+      for (const node of tree.nodes)
+        if (node.identifier === 'chat-bubble-' + far.id)
+          node.rect.y = touches === 0 ? -59202 : touches === 1 ? -57702 : 300
+      return tree
+    }
+    await m.scenario.nativeAnchorReady(far)
+    expect(m.taps).has.length(2)
+    const proof = m.scenario.observations.find(
+      row => row.nativeAnchor === far.id
+    )!
+    expect(
+      (proof.statusBarScrollToTop as Array<{ after: number }>).map(
+        row => row.after
+      )
+    ).deep.equals([57697, -305])
+  })
+
   it('refuses a status-bar touch that leaves the far target where it was', async function () {
     const m = reader(true)
     m.scenario.ui.device.tapOnPoint = async () => {}

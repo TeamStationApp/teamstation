@@ -2766,24 +2766,34 @@ export class Scenarios {
       // fling: about 450 pt each, and a target sixty screens up both outlasts
       // the bounded drags and leaves the rendered window on the way. There the
       // system's own scroll to top, a touch on the status bar, brings the
-      // loaded history's start (where the paged-in target lies) to the reader
-      // first; the measured drags take over from there.
-      if (
+      // loaded history's start (where the paged-in target lies) toward the
+      // reader first; the measured drags take over from there. Above a freshly
+      // loaded page one touch can stop short while the new rows measure, so
+      // the history is read until it rests, and touched at most three times,
+      // each required to bring the target nearer.
+      const statusBar: Json[] = []
+      while (
         ui.surface === 'ios' &&
         ui.physical &&
+        statusBar.length < 3 &&
         current.box.y < current.band.top &&
         distance() > (current.band.bottom - current.band.top) * 8
       ) {
         const before = distance()
         const point = { x: 60, y: 20 }
+        proof.statusBarScrollToTop = statusBar
         await ui.device.tapOnPoint(point, { signal: signal() })
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        const next = await read()
-        if (next == null) return handoff()
-        current = next
-        proof.statusBarScrollToTop = { point, before, after: distance() }
+        for (let reads = 0; reads < 5; reads++) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          const next = await read()
+          if (next == null) return handoff()
+          const resting = Math.abs(next.box.y - current.box.y) < 1
+          current = next
+          if (reads > 0 && resting) break
+        }
+        statusBar.push({ point, before, after: distance() })
         assert(
-          intersects() || distance() < before / 2,
+          intersects() || distance() < before - 1,
           'System scroll to top must bring the far target nearer'
         )
       }
