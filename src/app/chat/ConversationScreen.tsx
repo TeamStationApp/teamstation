@@ -722,6 +722,12 @@ export function ConversationScreen(
     const pending = prepend.current
     if (
       pending != null &&
+      latestView.current?.messages[0]?.seq !== pending.firstSeq
+    )
+      // The page has landed and the person moved on: no late correction.
+      prepend.current = undefined
+    else if (
+      pending != null &&
       latestView.current?.messages[0]?.seq === pending.firstSeq
     ) {
       pending.offset = scrolled.current.offset
@@ -828,7 +834,11 @@ export function ConversationScreen(
       headerCheckDirty: false,
       capturingAnchor: false,
       positions: new Map(messagePositions.current),
-      anchor: readingAnchor(messagePositions.current)
+      // The browser's mounted rows say where the reader is now; a row's
+      // recorded place can predate the list moving it.
+      anchor:
+        readMessageScrollPosition(scroller.current, messageRefs.current)
+          ?.anchor ?? readingAnchor(messagePositions.current)
     }
     prepend.current = pending
     messagePositions.current.clear()
@@ -2719,10 +2729,17 @@ export function ConversationScreen(
               ) {
                 prepend.current = undefined
                 scrolled.current.content = height
-                const target = rememberPosition(
-                  Math.max(0, previous.offset + height - previous.content)
-                )
-                scroller.current?.scrollTo({ y: target, animated: false })
+                // The list holds the first visible row in the commit that
+                // added the page (the browser's list itself, a phone's scroll
+                // view natively), before this later notification; an offset
+                // from it would move that reader again. Only a reader with no
+                // row in view is placed by the content's growth.
+                if (previous.anchor == null || measuringJump.current != null) {
+                  const target = rememberPosition(
+                    Math.max(0, previous.offset + height - previous.content)
+                  )
+                  scroller.current?.scrollTo({ y: target, animated: false })
+                }
                 if (previous.anchor != null && measuringJump.current == null) {
                   const anchor = previous.anchor
                   const generation = jumpGeneration.current
