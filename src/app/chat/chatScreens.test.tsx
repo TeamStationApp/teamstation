@@ -1107,6 +1107,52 @@ describe('chat setup through a change of user', function () {
     ).instanceOf(StaleChatSetupError)
     expect(store.text).equals(kept)
   })
+
+  it('stops waiting when an approved link cannot be installed, and tries again from what the store holds', async function () {
+    const fake = new FakeKeys()
+    fake.withOtherDevice('Pixel 10')
+    const client = fake.client()
+    let offline = false
+    const flaky: ChatKeysClient = {
+      ...client,
+      chatLink: async linkId => {
+        if (offline) throw new HttpError('offline', 'no')
+        return await client.chatLink(linkId)
+      }
+    }
+    const store = new MemoryStore()
+    await render(
+      <LinkDeviceScreen
+        client={flaky}
+        userId={USER}
+        store={store}
+        device={DEVICE}
+        pollMs={40}
+        onDone={() => undefined}
+      />
+    )
+    await until('the code', () => text().includes('Waiting for approval'))
+    // No connection for a while: it keeps waiting.
+    offline = true
+    await settle(150)
+    expect(text()).contains('Waiting for approval')
+    offline = false
+    // Something else moved this browser on to a device of its own, with a
+    // request of its own, and the other device approved both.
+    const shown = store.record()
+    await store.wipe()
+    const now = { client, store, userId: USER, device: DEVICE }
+    const moved = await ensureEnrolled(now)
+    await startLink(now, moved.record)
+    fake.approve(shown.pendingLinkId!)
+    fake.approve(store.record().pendingLinkId!)
+    // The request on screen is approved, but its device is no longer the
+    // session's, so its keys cannot be opened.
+    await until('the failure', () => text().includes('could not be loaded'))
+    await press('Try again')
+    await until('linked', () => text().includes('This device is linked.'))
+    expect(store.record().identity?.id).equals(fake.identity?.id)
+  })
 })
 
 describe('the account screen’s chat', function () {
