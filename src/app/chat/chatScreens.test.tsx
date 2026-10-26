@@ -32,6 +32,7 @@ import {
 import { linkCode } from '../../common/chatCrypto/linkCode'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { windowSize } from '../../test/tessTestKit'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { AccountScreen } from '../screens/AccountScreen'
@@ -1673,5 +1674,115 @@ describe('chat devices in the app', function () {
       conversationId: 'cnv_org'
     })
     expect(document.querySelector('[data-testid="chat-unread"]')).equals(null)
+  })
+
+  it('opens a chat and its members by address, and the browser’s Back leaves New message for the list', async function () {
+    const fake = new FakeKeys()
+    fakeApi(fake, chats([summary({})]))
+    showRoute({ name: 'conversation', conversationId: 'cnv_hawks' }, true)
+    await render(<App />)
+    await until('the chat', () => text().includes('No messages yet'))
+    expect(currentRoute()).deep.equals({
+      name: 'conversation',
+      conversationId: 'cnv_hawks'
+    })
+    await act(async () => {
+      root?.unmount()
+    })
+
+    showRoute({ name: 'chatMembers', conversationId: 'cnv_hawks' }, true)
+    await render(<App />)
+    await until(
+      'the members',
+      () => document.querySelector('[data-testid="chat-info-members"]') != null
+    )
+    await act(async () => {
+      root?.unmount()
+    })
+
+    showRoute({ name: 'chat' }, true)
+    await render(<App />)
+    await until('the list', () => button('Hawks Members') != null)
+    await press('New message')
+    await until('the form', () => currentRoute().name === 'chatNew')
+    await act(async () => {
+      window.history.back()
+    })
+    await until('the list again', () => currentRoute().name === 'chat')
+    await until('its rows', () => button('Hawks Members') != null)
+  })
+
+  it('marks unread chats on the Chat tab in the wide header', async function () {
+    const fake = new FakeKeys()
+    fakeApi(fake, chats([summary({ unread: 1 })]))
+    const wide = await windowSize(1200)
+    try {
+      showRoute({ name: 'chat' }, true)
+      await render(<App />)
+      await until('the list', () => button('Hawks Members') != null)
+      const tab = document.querySelector<HTMLElement>(
+        '[role="tab"][aria-label="Chat"]'
+      )
+      expect(tab, 'the header’s Chat tab').not.equals(null)
+      await until(
+        'its dot',
+        () => tab!.querySelector('[data-testid="chat-unread"]') != null
+      )
+    } finally {
+      await wide.restore()
+    }
+  })
+
+  it('moves between tabs from the wide header while signed out', async function () {
+    globalThis.fetch = async input => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      return url.endsWith('/auth/me')
+        ? Response.json({ error: 'unauthorized' }, { status: 401 })
+        : Response.json([])
+    }
+    const wide = await windowSize(1200)
+    try {
+      showRoute({ name: 'home' }, true)
+      await render(<App />)
+      await until(
+        'the header’s tabs',
+        () =>
+          document.querySelector('[role="tab"][aria-label="Search"]') != null
+      )
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>('[role="tab"][aria-label="Search"]')!
+          .click()
+        await delay(20)
+      })
+      await until('search', () => currentRoute().name === 'discover')
+    } finally {
+      await wide.restore()
+    }
+  })
+
+  it('opens the chat crypto bench in a served build without asking who is signed in', async function () {
+    const asked: string[] = []
+    globalThis.fetch = async input => {
+      asked.push(
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      )
+      return Response.json([])
+    }
+    showRoute({ name: 'chatBench' }, true)
+    expect(window.location.pathname).equals('/dev/chat-bench')
+    await render(<App />)
+    await until('the bench', () => text().includes('Chat crypto bench'))
+    expect(currentRoute()).deep.equals({ name: 'chatBench' })
+    expect(asked.filter(url => url.includes('/auth/me'))).deep.equals([])
   })
 })
