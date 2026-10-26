@@ -3280,8 +3280,11 @@ export class Chat2UI {
       deviceScaleFactor: expected.dpr,
       mobile: expected.coarse
     })
-    const end = Date.now() + 2000
-    const signal = AbortSignal.any([this.deadline, AbortSignal.timeout(2000)])
+    // A virtualized chat history relays out every mounted row for a new
+    // width; the page can take seconds to answer its first read.
+    const budget = 10000
+    const end = Date.now() + budget
+    const signal = AbortSignal.any([this.deadline, AbortSignal.timeout(budget)])
     let actual: Args = {}
     let matches = false
     for (;;) {

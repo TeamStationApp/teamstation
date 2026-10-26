@@ -2252,14 +2252,20 @@ describe('chat native adapter compatibility', function () {
       expect(options?.signal).instanceOf(AbortSignal)
       expect(options?.signal.aborted).equals(false)
       if (fault === 'transport') throw Error('Observed resize transport failed')
-      if (fault !== '' || reads > 1) {
+      if (fault === 'slow' && reads === 1) {
+        // The relayout holds the page past the old two-second budget.
+        await new Promise(resolve => setTimeout(resolve, 2300))
+        if (options?.signal.aborted === true)
+          throw Error('request aborted (INTERRUPTED)')
+      }
+      if ((fault !== '' && fault !== 'slow') || reads > 1) {
         frame = { width: 390, height: 844, dpr: 2, coarse: true, scale: 1 }
         if (fault === 'dimensions') frame.width = 561
         if (fault === 'scale') frame.scale = 0.6951871514320374
         if (fault === 'dpr') frame.dpr = 1
         if (fault === 'pointer') frame.coarse = false
       }
-      if (fault !== '') elapsed += 1001
+      if (fault !== '' && fault !== 'slow') elapsed += 1001
       return await evaluate(args, options)
     }
     let error: unknown
@@ -2291,6 +2297,12 @@ describe('chat native adapter compatibility', function () {
     })
     expect(result.actual.steps.at(-1)?.outcome).equals('passed')
   })
+  it('keeps reading a resized frame whose page answers only after a long relayout', async () => {
+    const result = await resizedViewport('slow')
+    expect(result.error).equals(undefined)
+    expect(result.reads).equals(2)
+    expect(result.actual.steps.at(-1)?.outcome).equals('passed')
+  })
   for (const fault of ['dimensions', 'scale', 'dpr', 'pointer', 'transport'])
     it(
       'rejects a persistent or unobserved resized browser frame: ' + fault,
@@ -2301,7 +2313,7 @@ describe('chat native adapter compatibility', function () {
             ? 'Observed resize transport failed'
             : 'Actual resized viewport/pointer/pixel scale differs'
         )
-        expect(result.reads).at.most(3)
+        expect(result.reads).at.most(11)
         if (fault !== 'transport')
           expect(result.actual.steps.at(-1)?.outcome).equals('failed')
       }
