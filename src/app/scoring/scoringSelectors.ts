@@ -40,6 +40,8 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
     awayScore: board.awayScore,
     homeScore: board.homeScore,
     batter: person(board.batterName),
+    batterHits: board.batterNumHits,
+    batterAtBats: board.batterAtBats,
     batterJersey:
       batter == null ? undefined : session.gameData.players[batter.id]?.jersey,
     pitcher: person(board.pitcherName),

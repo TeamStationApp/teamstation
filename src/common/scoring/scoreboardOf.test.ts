@@ -8,6 +8,7 @@ import { userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
 import { freshGame, newSetup } from './lineup'
+import { nextDecision } from './rules'
 import { scoreboardOfGame } from './scoreboardOf'
 import type { GameState } from './state'
 
@@ -73,6 +74,8 @@ describe('what a scored game puts on its scoreboard', function () {
       half: 'bottom',
       batterName: 'Home 4',
       pitcherName: 'Away 1',
+      batterNumHits: 0,
+      batterAtBats: 0,
       numPitches: 8,
       awayScore: 1,
       homeScore: 0
@@ -93,6 +96,8 @@ describe('what a scored game puts on its scoreboard', function () {
       half: 'top',
       batterName: 'Away 6',
       pitcherName: 'Home 1',
+      batterNumHits: 0,
+      batterAtBats: 0,
       numPitches: 11,
       awayScore: 1,
       homeScore: 0
@@ -106,7 +111,99 @@ describe('what a scored game puts on its scoreboard', function () {
     expect(scoreboardOfGame(empty)).includes({
       pitcherName: '',
       batterName: '',
+      batterNumHits: 0,
+      batterAtBats: 0,
       numPitches: 0
     })
   })
+
+  it("shows the batter's hits and at-bats in this game, and keeps them while the next at-bat is open", function () {
+    const fresh = freshGame('g3', TEAMS, setup)
+    const leadoff = fresh.liveData.linescore.offense.batter?.id
+    if (leadoff == null) throw new Error('Missing leadoff batter')
+    const back = (state: GameState): GameState => {
+      for (
+        let i = 0;
+        i < 40 && state.liveData.linescore.offense.batter?.id !== leadoff;
+        i++
+      )
+        state = punchOut(state)
+      expect(state.liveData.linescore.offense.batter?.id).equals(leadoff)
+      return state
+    }
+
+    const afterSingle = back(finish(drive(fresh, ...SINGLE)))
+    expect(scoreboardOfGame(afterSingle)).includes({
+      batterName: 'Away 1',
+      batterNumHits: 1,
+      batterAtBats: 1
+    })
+    expect(
+      scoreboardOfGame(drive(afterSingle, { type: 'pitch', call: 'B' }))
+    ).includes({ batterNumHits: 1, batterAtBats: 1, balls: 1 })
+
+    const afterStrikeout = back(punchOut(fresh))
+    expect(scoreboardOfGame(afterStrikeout)).includes({
+      batterName: 'Away 1',
+      batterNumHits: 0,
+      batterAtBats: 1
+    })
+
+    const afterWalk = back(baseOnBalls(fresh))
+    expect(scoreboardOfGame(afterWalk)).includes({
+      batterName: 'Away 1',
+      batterNumHits: 0,
+      batterAtBats: 0
+    })
+  })
 })
+
+const SINGLE: ScoringAction[] = [
+  {
+    type: 'ballInPlay',
+    contact: 'swing',
+    launchAngle: 10,
+    location: { x: 5, z: -80 },
+    fielder: 17
+  },
+  { type: 'result', eventType: 'single' }
+]
+
+function drive(state: GameState, ...actions: ScoringAction[]): GameState {
+  for (const action of actions) {
+    const applied = applyAction(state, action)
+    expect(applied.problems, JSON.stringify(action)).deep.equals([])
+    state = applied.state
+  }
+  return state
+}
+
+/** Closes a decided play, as the scorer's next plate appearance would. */
+function finish(state: GameState): GameState {
+  return nextDecision(state) === 'close'
+    ? drive(state, { type: 'gameFlow', kind: 'closePlay' })
+    : state
+}
+
+function punchOut(state: GameState): GameState {
+  return finish(
+    drive(
+      state,
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' }
+    )
+  )
+}
+
+function baseOnBalls(state: GameState): GameState {
+  return finish(
+    drive(
+      state,
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' }
+    )
+  )
+}

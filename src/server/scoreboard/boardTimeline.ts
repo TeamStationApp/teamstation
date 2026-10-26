@@ -12,9 +12,11 @@ import {
   type ScoreboardState,
   type SourceState
 } from '../../common/scoreboard'
+import { finishedPlateLine } from '../../common/scoring/credits'
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
+import type { GamePlay } from '../../common/scoring/state'
 import type { Database } from '../db/database'
 import { atBatInProgress } from '../events/atBatInProgress'
 import { resolveScoringGame } from '../scoring/openRow'
@@ -432,6 +434,31 @@ interface ImportedEvent {
   offense?: { first?: unknown; second?: unknown; third?: unknown }
 }
 
+/** Adds one finished play to the running hits and at-bats. */
+function noteFinishedPlay(
+  lines: Map<number, { hits: number; atBats: number }>,
+  play: GumboPlay
+): void {
+  const eventType = play.result?.eventType
+  const batterId = play.matchup?.batter?.id
+  if (typeof eventType !== 'string' || typeof batterId !== 'number') return
+  const source = (play as { source?: { teamstation?: { outcome?: string } } })
+    .source
+  const playEvents = (play as { playEvents?: GamePlay['playEvents'] })
+    .playEvents
+  const tallied = finishedPlateLine({
+    result: { eventType },
+    source,
+    matchup: { batter: { id: batterId } },
+    playEvents
+  })
+  if (tallied == null) return
+  const line = lines.get(tallied.id) ?? { hits: 0, atBats: 0 }
+  line.hits += tallied.hits
+  line.atBats += tallied.atBats
+  lines.set(tallied.id, line)
+}
+
 /** A play's `playEvents`, or none. */
 function eventsOf(play: unknown): ImportedEvent[] {
   const events = (play as { playEvents?: unknown } | null)?.playEvents
@@ -469,6 +496,17 @@ export function importedBoards(
   reopened: number | undefined
 ): Array<{ at: number | undefined; state: GameScoreboard }> {
   const boards: Array<{ at: number | undefined; state: GameScoreboard }> = []
+  /** Completed hits and at-bats in this game, by batter. */
+  const lines = new Map<number, { hits: number; atBats: number }>()
+  const plateOf = (
+    id: number | null
+  ): { batterNumHits: number; batterAtBats: number } => {
+    const line = id == null ? undefined : lines.get(id)
+    return {
+      batterNumHits: line?.hits ?? 0,
+      batterAtBats: line?.atBats ?? 0
+    }
+  }
   const firstLogged = plays.findIndex(row => storedRecordOf(row.gumbo) != null)
   const last = firstLogged < 0 ? plays.length : firstLogged
   const pitches = new Map<number, number>()
@@ -520,11 +558,15 @@ export function importedBoards(
       ended: boolean
     ): void => {
       // A board with no time is not placed at a neighbour's: what it left
-      // carries on to the next board that has one.
+      // carries on to the next board that has one. A finished plate
+      // appearance counts before that, so the board after the last event
+      // shows it.
+      if (ended) noteFinishedPlay(lines, play)
       if (at == null) return
       if (next != null && ((ended && turns) || situation.outs >= 3)) {
         const nextHalf = halfOf(next)
         const pitcher = mounds.get(nextHalf) ?? refId(next.matchup?.pitcher)
+        const up = refId(next.matchup?.batter)
         boards.push({
           at,
           state: {
@@ -539,7 +581,8 @@ export function importedBoards(
             half: nextHalf,
             awayScore: away,
             homeScore: home,
-            batterName: name(refId(next.matchup?.batter)),
+            batterName: name(up),
+            ...plateOf(up),
             pitcherName: name(pitcher),
             numPitches: pitcher == null ? 0 : (pitches.get(pitcher) ?? 0)
           }
@@ -563,6 +606,7 @@ export function importedBoards(
           awayScore: away,
           homeScore: home,
           batterName: name(batter),
+          ...plateOf(batter),
           pitcherName: name(mound),
           numPitches: mound == null ? 0 : (pitches.get(mound) ?? 0)
         }

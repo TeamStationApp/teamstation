@@ -111,8 +111,15 @@ export const CONTESTED_FIELDS = [
 
 export type ContestedField = (typeof CONTESTED_FIELDS)[number]
 
-/** What the game's scoring says: every contested field, and nothing else. */
-export type GameScoreboard = Pick<ScoreboardState, ContestedField>
+/**
+ * What the game's scoring says: every contested field, and the batter's hits
+ * and at-bats in this game. Those two stay off `CONTESTED_FIELDS`, so a phone
+ * that reports only the batter's line does not become the newer source.
+ */
+export type GameScoreboard = Pick<ScoreboardState, ContestedField> & {
+  batterNumHits: number
+  batterAtBats: number
+}
 
 export function carriesContested(update: ScoreboardUpdate): boolean {
   return CONTESTED_FIELDS.some(field => update[field] !== undefined)

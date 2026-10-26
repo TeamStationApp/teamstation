@@ -166,21 +166,58 @@ export function battingCounts(type: string): {
  * Read from the play's offensive substitutions for its batter, each with the
  * count he came in at; otherwise the batter.
  */
-export function strikeoutBatter(play: GamePlay): number {
+export function strikeoutBatter(play: {
+  matchup: { batter: { id: number } }
+  playEvents: ReadonlyArray<{
+    details?: { code?: string }
+    player?: { id?: number }
+    replacedPlayer?: { id?: number } | null
+    count?: { strikes?: number }
+  }>
+}): number {
   let up = play.matchup.batter.id
   let charged = up
   for (const event of [...play.playEvents].reverse()) {
     const replaced = event.replacedPlayer?.id
+    const playerId = event.player?.id
     if (
-      event.details.code !== 'offensive_substitution' ||
-      event.player.id !== up ||
+      event.details?.code !== 'offensive_substitution' ||
+      playerId !== up ||
       replaced == null
     )
       continue
-    if (event.count.strikes === 2) charged = replaced
+    if (event.count?.strikes === 2) charged = replaced
     up = replaced
   }
   return charged
+}
+
+/**
+ * The hits and at-bats one finished plate appearance adds, and the batter
+ * they count for. Nothing when the play is not a plate appearance, or names
+ * no batter. A strikeout is charged the way `statLines` charges it.
+ */
+export function finishedPlateLine(play: {
+  result: { eventType: string }
+  source?: { teamstation?: { outcome?: string } }
+  matchup?: { batter?: { id: number } | null } | null
+  playEvents?: GamePlay['playEvents']
+}): { id: number; hits: number; atBats: number } | undefined {
+  const batter = play.matchup?.batter
+  if (batter == null) return undefined
+  const type = storedEventType(
+    play.result.eventType,
+    play.source?.teamstation?.outcome
+  )
+  const counts = battingCounts(type)
+  if (!counts.pa) return undefined
+  const id = counts.k
+    ? strikeoutBatter({
+        matchup: { batter },
+        playEvents: play.playEvents ?? []
+      })
+    : batter.id
+  return { id, hits: HITS.has(type) ? 1 : 0, atBats: counts.ab ? 1 : 0 }
 }
 
 /** Each batter's line and each pitcher's line, worked out from the plays. */
