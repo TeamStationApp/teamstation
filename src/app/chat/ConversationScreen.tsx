@@ -974,8 +974,12 @@ export function ConversationScreen(
       // A row the window has unmounted is placed where the list lays it out.
       // Only a mounted row can say where its body or the viewport is.
       if (row == null && !requireMount && !relativeToViewport && !body) {
-        const placed = contentYOf(id)
-        if (placed != null) return placed
+        // contentYOf's placement, read from refs alone so the callbacks that
+        // measure through here keep their identity.
+        const placed =
+          scroller.current?.state()?.positionByKey(id) ?? Number.NaN
+        if (Number.isFinite(placed))
+          return contentTop.current + historyHeader.current + placed
       }
       const content = relativeToViewport
         ? scroller.current?.getNativeScrollRef()
