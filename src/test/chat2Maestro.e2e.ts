@@ -420,6 +420,23 @@ export async function pollNotVisible(
   }
 }
 
+/** A phone's WebDriverAgent typing rate, in keys per second. */
+export const PHONE_TYPING_KEYS_PER_SECOND = 15
+
+/**
+ * WebDriverAgent types 60 keys a second by default. An iPhone 15 lost the two
+ * keys after an e-mail's first letter, both times, while its keyboard left
+ * the shifted layout; a phone types at a quarter of that rate.
+ */
+export function phoneTyping(
+  platform: 'ios' | 'android',
+  physical: boolean
+): { typingFrequency?: number } {
+  return platform === 'ios' && physical
+    ? { typingFrequency: PHONE_TYPING_KEYS_PER_SECOND }
+    : {}
+}
+
 /** iOS exposes no focus flag: require the actual composer above an observed IME. */
 export async function readIosComposerKeyboard(
   ui: Pick<Chat2UI, 'device'> & { physical?: boolean },
@@ -1957,7 +1974,8 @@ export class Chat2UI {
       driverStartTimeout: 180,
       // iOS re-reads the whole accessibility tree for each command; a long
       // conversation pushed single commands past 30 s.
-      commandTimeout: platform === 'ios' ? 90000 : 30000
+      commandTimeout: platform === 'ios' ? 90000 : 30000,
+      ...phoneTyping(platform, configured.physical)
     })
     if (platform === 'ios') {
       const device = this.device
