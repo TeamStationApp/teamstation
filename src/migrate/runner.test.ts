@@ -113,9 +113,11 @@ describe('migrations', function () {
 
   it('refuses reverse identity migrations without changing the applied schema', async () => {
     // Later migrations reverse on their own; the latest identity cutover refuses.
+    // By name, the order the runner applies and reverses them in.
     const later = migrations
       .filter(migration => migration.name > '075chatCanonicalUserIds')
       .map(migration => migration.name)
+      .sort()
     await migrateDown(pool, migrations, later.length)
     const before = (
       await pool.query('select name from schema_migrations order by name')
@@ -377,10 +379,16 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '075chatCanonicalUserIds',
           '075umpireTypes',
           '076umpireNotes',
+          '077analyticsEvents',
           '077venues',
           '078gameFields',
           '079seasonScheduling',
-          '080schedulePreviews'
+          '080schedulePreviews',
+          '081teamKeyedAvailability',
+          '082gamePregame',
+          '083playGeneration',
+          '084gamePlayArchives',
+          '085tess'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
