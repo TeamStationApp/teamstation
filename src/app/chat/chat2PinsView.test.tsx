@@ -362,6 +362,101 @@ describe('floating personal pin summary', function () {
     expect(moves.filter(y => y !== 2156 && y !== settled)).deep.equals([])
   })
 
+  it('floats the jump notice above the composer band so the bottom inset and reader stay put', async function () {
+    const state = fixture(
+      view({
+        messages: [message({ id: 'msg_current', seq: 200 })],
+        pins: [pin('msg_older')],
+        hasEarlier: true,
+        historyBefore: 200
+      })
+    )
+    let complete: ((next: ConversationView) => void) | undefined
+    let loads = 0
+    state.setLoad(async () => {
+      loads += 1
+      if (loads === 1) throw new Error('Unavailable')
+      return await new Promise<ConversationView>(resolve => {
+        complete = resolve
+      })
+    })
+    const node = await render(
+      <ConversationScreen
+        engine={state.engine}
+        conversationId="cnv_1"
+        userId={userIdOfGumbo(1)}
+        onMembers={() => {}}
+        files={{ ...files, PICK_SOURCES: [] }}
+      />
+    )
+    const history = node.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    const band = node.querySelector<HTMLElement>(
+      '[data-testid="chat-composer-band"]'
+    )!
+    const content = (): string =>
+      (history.firstElementChild as HTMLElement).style.paddingBottom
+    // The band measures what it holds, as a phone lays it out.
+    const measureBand = async (): Promise<void> => {
+      await layout(band, 56 + 32 * band.querySelectorAll('div').length)
+    }
+    await measureBand()
+    const inset = content()
+    history.scrollTop = 137
+    await click(node.querySelector('[data-testid="chat-pinned-summary"]')!)
+    expect(loads).equals(1)
+    const notice = node.querySelector<HTMLElement>(
+      '[data-testid="chat-history-notice"]'
+    )
+    expect(notice, 'The failure notice floats over the history').not.equals(
+      null
+    )
+    const retry = node.querySelector<HTMLElement>(
+      '[data-testid="chat-history-jump-retry"]'
+    )!
+    expect(notice!.contains(retry)).equals(true)
+    // The attention control moves up clear of it.
+    const controls = (): number =>
+      Number.parseFloat(
+        node.querySelector<HTMLElement>(
+          '[data-testid="chat-attention-controls"]'
+        )!.style.bottom
+      )
+    const below = controls()
+    await layout(notice!, 40)
+    expect(controls()).equals(below + 40)
+    expect(notice!.textContent).contains('unavailable')
+    expect(band.contains(retry), 'Not in the composer band').equals(false)
+    expect(band.textContent).not.contains('unavailable')
+    await measureBand()
+    expect(content(), 'The bottom inset is unchanged').equals(inset)
+    expect(history.scrollTop).equals(137)
+    // The Loading row and its Cancel float there as well.
+    await click(button('Try again'))
+    const cancel = node.querySelector<HTMLElement>(
+      '[data-testid="chat-history-jump-cancel"]'
+    )!
+    expect(band.contains(cancel)).equals(false)
+    expect(
+      node
+        .querySelector('[data-testid="chat-history-notice"]')!
+        .contains(cancel)
+    ).equals(true)
+    await measureBand()
+    expect(content()).equals(inset)
+    await click(button('Cancel'))
+    await act(async () => {
+      complete?.({ ...state.shown, hasEarlier: false })
+      await wait()
+    })
+    expect(
+      node.querySelector('[data-testid="chat-history-notice"]'),
+      'Nothing left to say'
+    ).equals(null)
+    expect(history.scrollTop).equals(137)
+  })
+
   it('keeps the reader in place on a failed resolution and ignores a pending target after Cancel', async function () {
     const state = fixture(
       view({
