@@ -57,11 +57,17 @@ export function useVideoListRefresh(options: {
 }
 
 /**
- * Which video a game page opens on: a live one ahead of anything already
- * recorded, then one that is ready, then any.
+ * Which video a game page opens on: a live one whose camera is sending now,
+ * then any live one, then one that is ready, then any.
+ *
+ * A video stays live after its camera drops, so the recording can resume on
+ * the same row, and the first live one in the list was often a camera that
+ * had stopped while another went on sending: "Watch live" opened on a picture
+ * that never moved.
  */
 export function openingVideo(videos: VideoSummary[]): VideoSummary | undefined {
   return (
+    videos.find(item => item.status === 'live' && item.receiving) ??
     videos.find(item => item.status === 'live') ??
     videos.find(item => item.status === 'ready') ??
     videos[0]

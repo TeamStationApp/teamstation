@@ -144,6 +144,14 @@ describe('the video a game page opens on', function () {
     expect(openingVideo([failed])).equals(failed)
     expect(openingVideo([])).equals(undefined)
   })
+
+  it('opens on a live camera that is sending, not one that has stopped', function () {
+    const stopped = video('s', 'live')
+    const sending = { ...video('x', 'live'), receiving: true }
+    expect(openingVideo([stopped, sending])).equals(sending)
+    // Nothing sending: the first live one still, as before.
+    expect(openingVideo([stopped, video('r', 'ready')])).equals(stopped)
+  })
 })
 
 describe('two lists of videos', function () {
