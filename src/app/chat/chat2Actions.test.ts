@@ -29,6 +29,7 @@ import {
   androidDismissReference,
   androidImeFrame,
   androidScopedBounds,
+  bounded,
   Chat2UI,
   iosPublicRead,
   iosRawTree,
@@ -7388,6 +7389,17 @@ describe('positive Android IME observations', function () {
       focusChecks: () => focusChecks
     }
   }
+  it('bounds a browser protocol call that never answers and passes one that does', async () => {
+    expect(await bounded(Promise.resolve('answered'), 50, 'Probe')).equals(
+      'answered'
+    )
+    const stalled = new Promise<string>(() => {})
+    const error = await bounded(stalled, 20, 'Browser target probe').then(
+      () => undefined,
+      (failure: unknown) => failure
+    )
+    expect(String(error)).includes('Browser target probe timed out')
+  })
   it('accepts positive shown legacy and current native-coordinate window formats', () => {
     expect(androidImeFrame(shown, viewport)).deep.equals({
       x: 0,

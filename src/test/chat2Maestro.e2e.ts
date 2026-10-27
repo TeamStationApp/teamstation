@@ -21,7 +21,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { JSDOM } from 'jsdom'
-import puppeteer, { type Browser, type CDPSession } from 'puppeteer'
+import puppeteer, { type Browser, type CDPSession, TargetType } from 'puppeteer'
 
 import {
   Chat2Blocked,
@@ -112,6 +112,27 @@ interface Bounds {
   y: number
   width: number
   height: number
+}
+
+/** A browser protocol call that cannot stall a run: it fails after `ms`. */
+export async function bounded<T>(
+  work: Promise<T>,
+  ms: number,
+  what: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(what + ' timed out'))
+        }, ms)
+      })
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** Parse the same OS window formats used by the Android driver, with positive visibility. */
@@ -2170,7 +2191,16 @@ export class Chat2UI {
       defaultViewport: null
     })
     await this.device.openLink({ link: this.fixture.webUrl })
-    this.cdp = await this.currentWebTarget()
+    // A target that stalls is retried with a fresh marker; three stalls fail
+    // the run in seconds rather than at the lease deadline.
+    for (let attempt = 1; this.cdp == null; attempt++) {
+      try {
+        this.cdp = await this.currentWebTarget()
+      } catch (error) {
+        if (attempt >= 3) throw error
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
+    }
     const pageError = (kind: string, text: string): void => {
       if (this.pageErrors.length < 50)
         this.pageErrors.push({
@@ -2242,6 +2272,9 @@ export class Chat2UI {
     let retained: CDPSession | undefined
     let marked = false
     let ownedPageCount = 0
+    // A same-origin target that cannot be read (a prerender, a closing page)
+    // cannot be the marked Maestro page; it is recorded, not used.
+    const unreadable: string[] = []
     let targetId: string | undefined
     try {
       let selected: CDPSession | undefined
@@ -2262,41 +2295,60 @@ export class Chat2UI {
           'Owned Maestro page marker required'
         )
         const matches: CDPSession[] = []
-        for (const page of await browser.pages()) {
+        // The browser's page targets, read without waiting for each page
+        // object: one target that never finishes attaching must not stall the
+        // run, and every protocol call below is bounded.
+        for (const target of browser.targets()) {
+          if (target.type() !== TargetType.PAGE) continue
           let pageOrigin: string
           try {
-            pageOrigin = new URL(page.url()).origin
+            pageOrigin = new URL(target.url()).origin
           } catch {
             continue
           }
           if (pageOrigin !== origin) continue
           ownedPageCount++
           try {
-            const session = await page.createCDPSession()
+            const session = await bounded(
+              target.createCDPSession(),
+              10000,
+              'Browser target session'
+            )
             sessions.push(session)
-            const probe = await session.send('Runtime.evaluate', {
-              expression:
-                '({marker:document.documentElement.getAttribute(' +
-                name +
-                ')===' +
-                value +
-                ',origin:location.origin})',
-              returnByValue: true
-            })
+            const probe = await bounded(
+              session.send('Runtime.evaluate', {
+                expression:
+                  '({marker:document.documentElement.getAttribute(' +
+                  name +
+                  ')===' +
+                  value +
+                  ',origin:location.origin})',
+                returnByValue: true
+              }),
+              10000,
+              'Browser target probe'
+            )
             assert(probe.exceptionDetails == null, 'Public DOM probe failed')
             const observed = object(probe.result.value)
             if (observed.marker === true && observed.origin === origin)
               matches.push(session)
-          } catch {
-            throw new Error('Owned browser target read probe failed')
+          } catch (error) {
+            unreadable.push(String(error).slice(0, 200))
           }
         }
         assert(
           matches.length === 1,
-          'Exactly one Maestro-marked owned browser target required'
+          'Exactly one Maestro-marked owned browser target required' +
+            (unreadable.length > 0
+              ? '; unreadable: ' + unreadable.join(' | ')
+              : '')
         )
         selected = matches[0]
-        const info = await selected.send('Target.getTargetInfo')
+        const info = await bounded(
+          selected.send('Target.getTargetInfo'),
+          10000,
+          'Browser target identity'
+        )
         assert(
           info.targetInfo.type === 'page' &&
             new URL(info.targetInfo.url).origin === origin &&
@@ -2324,6 +2376,7 @@ export class Chat2UI {
         outcome: 'passed',
         ownedOrigin: origin,
         ownedPageCount,
+        unreadableCount: unreadable.length,
         matchCount: 1,
         targetId,
         markerSha256: createHash('sha256').update(marker).digest('hex'),
@@ -2332,7 +2385,10 @@ export class Chat2UI {
       return retained
     } finally {
       for (const session of sessions)
-        if (session !== retained) await session.detach()
+        if (session !== retained)
+          await bounded(session.detach(), 5000, 'Browser target detach').catch(
+            () => {}
+          )
     }
   }
 
