@@ -123,7 +123,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         the app sits. Centring it looked tidy in isolation and broke the one
         line everything else is aligned to.
       */}
-        <View style={styles.side}>
+        <View testID="headerLeading" style={styles.side}>
           {onBack != null && (
             <Pressable
               accessibilityRole="button"
@@ -158,14 +158,25 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             </View>
           ) : (
             title != null && (
-              <Text style={styles.title} numberOfLines={1}>
-                {title}
-              </Text>
+              // In a box of its own that takes only the room the back button
+              // and the trailing controls leave. A phone lays a bare text
+              // out at its full width in this row and never truncates it, so
+              // a long title ran under the bell.
+              <View testID="headerTitle" style={styles.titleBox}>
+                <Text
+                  style={styles.title}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {title}
+                </Text>
+              </View>
             )
           )}
         </View>
 
         <View
+          testID="headerTrailing"
           style={[
             styles.side,
             styles.sideEnd,
@@ -306,8 +317,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
   headerWide: {
     paddingHorizontal: theme.rem(edgeMarginRem(theme, 'tablet'))
   },
+  // Spelled out rather than `flex: 1`, which a phone reads as unshrinkable.
   side: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
     flexDirection: 'row',
     alignItems: 'center',
     minWidth: theme.rem(3)
@@ -353,8 +367,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     marginLeft: theme.rem(-theme.spaceXsRem),
     marginRight: theme.rem(theme.spaceXsRem)
   },
-  title: {
+  titleBox: {
+    flexGrow: 1,
     flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
+    justifyContent: 'center'
+  },
+  title: {
     fontFamily: theme.boldTextFont,
     fontSize: theme.rem(1.125),
     fontWeight: '700',
