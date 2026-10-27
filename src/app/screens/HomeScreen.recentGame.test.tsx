@@ -14,6 +14,7 @@ import {
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { HomeScreen } from './HomeScreen'
+import { RECENT_GAME_WINDOW_MS } from './recentGameWindow'
 
 let root: Root | undefined
 let host: HTMLElement | undefined
@@ -73,8 +74,13 @@ interface Opened {
   games: Array<{ id: string; options: unknown }>
 }
 
+/** An hour after `recent` started: inside its three days. */
+const STARTED = Date.parse('2026-10-04T19:30:00Z')
+const HOUR = 60 * 60 * 1000
+
 async function renderHome(
-  setup: (client: TeamStationClient) => void = () => undefined
+  setup: (client: TeamStationClient) => void = () => undefined,
+  at: number = STARTED + HOUR
 ): Promise<{ container: HTMLElement; opened: Opened }> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.teams = async () => [team]
@@ -92,6 +98,7 @@ async function renderHome(
         <GestureHandlerRootView>
           <HomeScreen
             client={client}
+            now={() => at}
             onOpenTeam={opened_ => opened.teams.push(opened_.id)}
             onOpenSeason={opened_ => opened.seasons.push(opened_.id)}
             onOpenGame={(id, _title, options) =>
@@ -130,6 +137,44 @@ async function press(container: HTMLElement, label: string): Promise<void> {
 }
 
 describe('HomeScreen', function () {
+  it('shows the recent game only while it started less than three days ago', async function () {
+    const shown = async (at: number): Promise<boolean> => {
+      const { container } = await renderHome(undefined, at)
+      const has = /recent game/i.test(container.textContent ?? '')
+      await act(async () => {
+        root?.unmount()
+      })
+      host?.remove()
+      return has
+    }
+    expect(await shown(STARTED + RECENT_GAME_WINDOW_MS - 1)).equals(true)
+    expect(await shown(STARTED + RECENT_GAME_WINDOW_MS)).equals(false)
+    expect(await shown(STARTED + 4 * 24 * HOUR)).equals(false)
+    expect(await shown(STARTED - 1)).equals(false)
+    // Live now and the rest of Home stay.
+    const { container } = await renderHome(undefined, STARTED + 4 * 24 * HOUR)
+    expect(container.textContent).includes('Badgers (Ripken)')
+    expect(container.textContent).includes('QPLL Fall 2026')
+  })
+
+  it('leaves out a recent game with no start', async function () {
+    const { container } = await renderHome(client => {
+      client.recentGame = async () => ({ ...recent, startAt: null })
+    })
+    expect(container.textContent).not.match(/recent game/i)
+  })
+
+  it('does not paint a stored recent game older than three days while the read is out', async function () {
+    const { container } = await renderHome(
+      client => {
+        client.cached = (async () => [recent]) as typeof client.cached
+        client.recentGame = async () => await new Promise(() => undefined)
+      },
+      STARTED + 4 * 24 * HOUR
+    )
+    expect(container.textContent).not.match(/recent game/i)
+  })
+
   it('does not offer game controls for a pending event that has no published score or recording', async function () {
     const { container, opened } = await renderHome(client => {
       client.recentGame = async () =>

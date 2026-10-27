@@ -24,6 +24,9 @@ import { LIVE_DELAY_SEC } from '../player/liveDelay'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { HomeScreen } from './HomeScreen'
 
+/** An hour after the recent game's start: inside its three days. */
+const JUST_AFTER = (): number => Date.parse('2026-05-20T18:00:00.000Z')
+
 let root: Root | undefined
 
 const delay = async (ms: number): Promise<void> => {
@@ -293,6 +296,7 @@ async function mount(setup: Setup = {}): Promise<Calls> {
       <ThemeProvider>
         <HomeScreen
           client={client}
+          now={JUST_AFTER}
           onCreateGroup={() => undefined}
           onOpenTeam={opened => calls.teams.push(opened)}
           onOpenSeason={opened => calls.seasons.push(opened)}
@@ -953,6 +957,7 @@ describe('the home screen’s players', function () {
       <ThemeProvider>
         <HomeScreen
           client={client}
+          now={JUST_AFTER}
           onCreateGroup={() => undefined}
           onOpenTeam={() => undefined}
           onOpenSeason={() => undefined}

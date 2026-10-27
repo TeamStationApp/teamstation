@@ -47,6 +47,7 @@ import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
+import { recentGameIsCurrent } from './recentGameWindow'
 
 export interface HomeScreenProps {
   client: TeamStationClient
@@ -66,6 +67,8 @@ export interface HomeScreenProps {
   onOpenPlayer?: (userId: string, title: string) => void
   /** Home's lists loaded: the phone reads ahead what it needs offline. */
   onLoaded?: () => void
+  /** The clock the Recent game's three days are measured on. */
+  now?: () => number
 }
 
 /**
@@ -80,6 +83,15 @@ export interface HomeScreenProps {
  */
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
+  const now = props.now ?? Date.now
+  /** The newest played game, when it started less than three days ago. */
+  const inWindow = useCallback(
+    (game: SeasonGame | null | undefined): SeasonGame | undefined =>
+      game != null && recentGameIsCurrent(game.startAt, now())
+        ? game
+        : undefined,
+    [now]
+  )
   const styles = getStyles(useTheme())
   // Offline, the phone has no stream to play: what was live is not offered.
   const offline = usePhoneOffline(client)
@@ -114,20 +126,20 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     try {
       const newest = await client.recentGame()
       if (current()) {
-        setRecent(newest ?? undefined)
+        setRecent(inWindow(newest))
         setRecentError(undefined)
       }
     } catch (caught) {
       if (current())
         setRecentError(caught instanceof Error ? caught.message : 'Cannot load')
     }
-  }, [client, beginRecent])
+  }, [client, beginRecent, inWindow])
   /** The recent game as the phone last stored it, until the read returns. */
   const paintRecent = useCallback(async (): Promise<void> => {
-    const current = beginRecent()
+    const latest = beginRecent()
     const stored = await client.cached(HOME_RECENT, asArray(asSeasonGame))
-    if (current() && stored != null) setRecent(stored[0])
-  }, [client, beginRecent])
+    if (latest() && stored != null) setRecent(inWindow(stored[0]))
+  }, [client, beginRecent, inWindow])
   // Each of Home's three loads waits for the home scope's acknowledgement,
   // and reads again when that scope moves past what it read.
   useForegroundRefresh(useScreenScope(refreshRecent, client, paintRecent))

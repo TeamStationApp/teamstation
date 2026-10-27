@@ -128,6 +128,7 @@ describe('a live game the phone read before it lost signal', function () {
     await draw(
       <HomeScreen
         client={client}
+        now={() => Date.parse('2026-10-04T20:30:00Z')}
         onOpenTeam={() => undefined}
         onOpenSeason={() => undefined}
         onOpenGame={() => undefined}
