@@ -12964,6 +12964,23 @@ describe('iOS absence polling', function () {
     expect(result).equals('gone')
     expect(calls).equals(3)
   })
+  it('asks a phone again when its driver says the element is visible', async () => {
+    let calls = 0
+    const result = await pollNotVisible(
+      async () => {
+        calls++
+        if (calls < 2)
+          throw new Error(
+            'assertNotVisible: id="^chat-pin-msg_x$": Element should not be visible: id=\'^chat-pin-msg_x$\' (cause: element is visible) (COMMAND_FAILED)'
+          )
+        return 'gone'
+      },
+      { id: '^chat-pin-msg_x$', timeout: 15000 },
+      async () => {}
+    )
+    expect(result).equals('gone')
+    expect(calls).equals(2)
+  })
   it('keeps one look without a timeout, and rethrows other errors at once', async () => {
     let calls = 0
     const once = async (): Promise<unknown> => {

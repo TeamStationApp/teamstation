@@ -434,9 +434,12 @@ export async function pollNotVisible(
     try {
       return await once(args)
     } catch (error) {
-      const visible = /unexpectedly visible|element visible/.test(
-        error instanceof Error ? error.message : String(error)
-      )
+      // The simulator says "element visible"; WebDriverAgent on a phone says
+      // "should not be visible (cause: element is visible)".
+      const visible =
+        /unexpectedly visible|element (?:is )?visible|should not be visible/.test(
+          error instanceof Error ? error.message : String(error)
+        )
       if (!visible || Date.now() >= until) throw error
       await pause()
     }
@@ -890,10 +893,16 @@ export async function dismissIosChatKeyboard(
         'Public keyboard/menu state changed across screenshot'
       )
       const after = await geometry(nodes)
-      assert(
-        same(before, after),
-        'Native keyboard geometry moved across screenshot'
-      )
+      // A physical phone can still be settling its keyboard while a raster is
+      // taken: that frame proves nothing, and the next observation decides
+      // (within the bounded capture budget). Only a frame bracketed by one
+      // unchanged geometry is ever accepted.
+      if (!same(before, after)) {
+        reference = undefined
+        since = Date.now()
+        row.movedAcrossScreenshot = Number(row.movedAcrossScreenshot ?? 0) + 1
+        continue
+      }
       const signature = JSON.stringify({
         geometry: after,
         rawSha256: frame.rawSha256
@@ -3539,7 +3548,9 @@ export class Chat2UI {
       assert(
         [
           'launchApp',
+          'stopApp',
           'tapOn',
+          'dragAndDrop',
           'scrollUntilVisible',
           'back',
           'pressKey',
@@ -3547,6 +3558,15 @@ export class Chat2UI {
         ].includes(action.command),
         'Unsupported Settings recipe command'
       )
+      // A phone's Settings resumes where it was left; only Settings is
+      // stopped, so a recipe starts from its root page.
+      if (action.command === 'stopApp')
+        assert(
+          ['com.apple.Preferences', 'com.android.settings'].includes(
+            String(action.args.appId)
+          ),
+          'Settings recipe may stop only OS Settings'
+        )
       if (action.command === 'launchApp')
         assert(
           [
@@ -3560,6 +3580,8 @@ export class Chat2UI {
         this.device[
           action.command as
             | 'launchApp'
+            | 'stopApp'
+            | 'dragAndDrop'
             | 'tapOn'
             | 'scrollUntilVisible'
             | 'back'

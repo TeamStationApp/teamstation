@@ -2587,6 +2587,27 @@ export class Scenarios {
     proof.outcome = 'passed'
   }
 
+  /**
+   * A conversation read on a phone. A system overlay (a delivered
+   * notification, iOS's "Connecting…" HUD) can hide the app from one
+   * snapshot, which then lists no history at all: read again, briefly.
+   */
+  async conversationNodes(signal: AbortSignal): Promise<PublicNode[]> {
+    const ui = this.ui
+    let nodes = await ui.nodes(undefined, signal)
+    for (
+      let attempt = 0;
+      attempt < 5 &&
+      ui.native &&
+      !nodes.some(node => node.id === 'chat-message-history');
+      attempt++
+    ) {
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      nodes = await ui.nodes(undefined, signal)
+    }
+    return nodes
+  }
+
   /** Native existence assertions include clipped and occluded rows; measure before acting. */
   async nativeAnchorReady(
     target: Chat2Message,
@@ -2634,7 +2655,7 @@ export class Scenarios {
         }
       | undefined
     > => {
-      const nodes = await ui.nodes(undefined, signal())
+      const nodes = await this.conversationNodes(signal())
       if (earlier) {
         const matches = nodes.filter(
           node => node.id === 'chat-bubble-' + target.id
@@ -3247,7 +3268,7 @@ export class Scenarios {
             : []
         )
         .join('\n')
-    let nodes = await ui.nodes(undefined, signal)
+    let nodes = await this.conversationNodes(signal)
     // A phone's drags carry no fling, so sweeping sixty screens back takes a
     // quarter of an hour. There the history's start is reached with the status
     // bar's scroll to top (touched until the rows rest, as a fresh page can
@@ -3338,7 +3359,7 @@ export class Scenarios {
         const before = bubbles(nodes)
         await ui.measuredSwipe(input, signal)
         await new Promise(resolve => setTimeout(resolve, 350))
-        nodes = await ui.nodes(undefined, signal)
+        nodes = await this.conversationNodes(signal)
         still = bubbles(nodes) === before ? still + 1 : 0
       }
     }
