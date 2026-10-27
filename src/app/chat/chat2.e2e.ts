@@ -2698,6 +2698,9 @@ export class Scenarios {
       ;(proof.samples as unknown[]).push({ box, band })
       return { nodes, box, band }
     }
+    // Each earlier page puts the next one ~10,000 pt further up a growing
+    // QA history, and an iOS read takes seconds; the climbs below share it.
+    if (earlier) end = startedAt + (ui.surface === 'ios' ? 900000 : 600000)
     // A page loaded above a phone's reader can leave the next earlier control
     // outside the rendered window, so it is in no tree at all. There the
     // status bar's scroll to top climbs toward the history's start (where the
@@ -2728,6 +2731,61 @@ export class Scenarios {
         await new Promise(resolve => setTimeout(resolve, 1500))
       }
     }
+    // Android has no status-bar scroll to top: drags toward the history's
+    // start, inside the actual reading band, bring the header control in.
+    if (earlier && ui.surface === 'android') {
+      const climb: Json[] = []
+      for (;;) {
+        const nodes = await ui.nodes(undefined, signal())
+        if (
+          nodes.some(matchesTarget) ||
+          nodes.some(node => node.id === 'chat-bubble-' + target.id)
+        )
+          break
+        const rows = nodes
+          .flatMap(node =>
+            node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+          )
+          .join('\n')
+        assert(
+          climb.length === 0 || climb.at(-1)!.rows !== rows,
+          'Drags toward the start must move the history'
+        )
+        assert(climb.length < 120, 'Earlier control must mount near the start')
+        climb.push({ rows })
+        proof.earlierControlClimb = climb.length
+        const box = (key: string): NonNullable<PublicNode['bounds']> =>
+          need(
+            nodes.find(node => node.id === key)?.bounds,
+            'Actual native climb geometry required: ' + key
+          )
+        const history = box('chat-message-history')
+        const header = box('chat-conversation-identity')
+        const pins = nodes.find(node => node.id === 'chat-pinned-band')?.bounds
+        const top = Math.max(
+          history.y,
+          header.y + header.height,
+          pins == null ? 0 : pins.y + pins.height
+        )
+        const bottom = Math.min(
+          history.y + history.height,
+          box('chat-composer-band').y
+        )
+        assert(bottom - top > 160, 'Actual native climb band required')
+        const x = Math.round(history.x + history.width / 2)
+        await ui.measuredSwipe(
+          {
+            startX: x,
+            endX: x,
+            startY: Math.round(top + (bottom - top) * 0.2),
+            endY: Math.round(top + (bottom - top) * 0.8),
+            duration: 250
+          },
+          signal()
+        )
+        await new Promise(resolve => setTimeout(resolve, 600))
+      }
+    }
     const initial = await read()
     if (initial == null) return handoff()
     let current = initial
@@ -2746,10 +2804,7 @@ export class Scenarios {
           : []
     if (keyboard.length > 0) end = Math.max(end, startedAt + 120000)
     // iOS swipes about a screen per read of a ~2600-node tree, and the
-    // earlier control sits a long history above the reader.
-    // Each earlier page puts the next one ~10,000 pt further up a growing
-    // QA history, and an iOS read takes seconds.
-    if (earlier) end = startedAt + (ui.surface === 'ios' ? 900000 : 180000)
+    // earlier control sits a long history above the reader (budget above).
     assert(keyboard.length <= 1, 'Unique actual native Keyboard required')
     const intersects = (): boolean =>
       current.box.height > 0 &&
@@ -3029,7 +3084,7 @@ export class Scenarios {
     // Each iOS page is a long climb to its earlier control (see nativeAnchorReady).
     const signal = AbortSignal.any([
       ui.deadline,
-      AbortSignal.timeout(ui.surface === 'ios' ? 1200000 : 300000)
+      AbortSignal.timeout(ui.surface === 'ios' ? 1200000 : 900000)
     ])
     const targetCount = (nodes: PublicNode[]): number => {
       const count = nodes.filter(node => node.id === id).length

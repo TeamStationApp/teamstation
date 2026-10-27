@@ -10453,10 +10453,17 @@ describe('native absent history paging', function () {
     ).equals(false)
   })
 
-  it('searches only toward older rows for the oldest post', async () => {
+  it('searches only toward older rows for the oldest post, then climbs to it', async () => {
     const m = model('unmounted', 'android')
     Object.assign(m.scenario.f.messages, { oldest: target })
-    await captureFailure(m.scenario.nativeHistoryTarget(target))
+    // The loaded search gives up without an earlier control; Android's climb
+    // toward the history's start then mounts the oldest post itself.
+    await m.scenario.nativeHistoryTarget(target)
+    const climb = m.scenario.observations.find(
+      row => row.nativeEarlierControlFor === target.id
+    )!
+    expect(climb.outcome).equals('target-loaded')
+    expect(climb.earlierControlClimb).at.least(1)
     const search = m.scenario.observations.find(
       row => row.nativeLoadedTarget === target.id
     )!
@@ -14047,6 +14054,102 @@ describe('phone climb to an unmounted earlier control', function () {
     )!
     expect(proof.earlierControlClimb).equals(2)
     expect(proof.outcome).equals('passed')
+  })
+  function androidClimber(mountAfter: number | undefined): {
+    scenario: Scenarios
+    swipes: Array<{ startY: number; endY: number }>
+  } {
+    const swipes: Array<{ startY: number; endY: number }> = []
+    const nodes = (): Array<{
+      id?: string
+      type?: string
+      text?: string
+      bounds: { x: number; y: number; width: number; height: number }
+    }> => [
+      {
+        id: 'chat-message-history',
+        bounds: { x: 0, y: 0, width: 412, height: 915 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        bounds: { x: 64, y: 40, width: 274, height: 48 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 0, y: 720, width: 412, height: 120 }
+      },
+      // Each drag mounts other rows, unless the history no longer moves.
+      {
+        id:
+          'chat-bubble-row' +
+          (mountAfter === undefined ? 0 : Math.min(swipes.length, mountAfter)),
+        bounds: { x: 48, y: 400, width: 300, height: 100 }
+      },
+      ...(mountAfter !== undefined && swipes.length >= mountAfter
+        ? [
+            {
+              type: 'android.widget.Button',
+              text: 'Load earlier messages',
+              bounds: { x: 16, y: 200, width: 380, height: 49 }
+            }
+          ]
+        : [])
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'android',
+      deadline: AbortSignal.timeout(20000),
+      steps: [],
+      fixture: { devices: { android: { physical: true } } },
+      device: {
+        hierarchy: async () => ({
+          nodes: nodes().map((node, index) => ({
+            index,
+            type: node.type ?? 'android.view.View',
+            identifier: node.id,
+            label: node.text,
+            rect: node.bounds,
+            enabled: true
+          }))
+        }),
+        platformInfo: async () => ({ screenWidth: 412, screenHeight: 915 }),
+        swipe: async (input: { startY: number; endY: number }) => {
+          swipes.push({ startY: input.startY, endY: input.endY })
+        }
+      }
+    })
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      swipes
+    }
+  }
+  it('drags an Android history toward its start until the earlier control mounts, then frames it', async function () {
+    this.timeout(30000)
+    const m = androidClimber(2)
+    await m.scenario.nativeAnchorReady(later, true)
+    expect(m.swipes).has.length(2)
+    // Each drag moves down inside the band between the header and composer.
+    for (const swipe of m.swipes) {
+      expect(swipe.endY).greaterThan(swipe.startY)
+      expect(swipe.startY).greaterThan(88)
+      expect(swipe.endY).lessThan(720)
+    }
+    const proof = m.scenario.observations.find(
+      row => row.nativeEarlierControlFor === later.id
+    )!
+    expect(proof.earlierControlClimb).equals(2)
+    expect(proof.outcome).equals('passed')
+  })
+  it('refuses an Android climb whose drags no longer move the history', async function () {
+    this.timeout(30000)
+    const m = androidClimber(undefined)
+    expect(
+      String(await captureFailure(m.scenario.nativeAnchorReady(later, true)))
+    ).contains('Drags toward the start must move the history')
+    expect(m.swipes).has.length(1)
   })
   it('refuses a climb whose touches no longer move the history', async function () {
     this.timeout(30000)

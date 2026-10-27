@@ -1797,7 +1797,11 @@ export class Chat2UI {
     // the long ones (E5 frames four messages across a long QA history) need
     // most of an hour on a shared, loaded host.
     // iOS E5 on the grown QA history runs past ninety minutes on a loaded host.
-    this.deadline = AbortSignal.timeout(surface === 'ios' ? 10800000 : 900000)
+    // Android's own climbs of the grown history (E9's oldest row) take most
+    // of twenty minutes.
+    this.deadline = AbortSignal.timeout(
+      surface === 'ios' ? 10800000 : surface === 'android' ? 2700000 : 900000
+    )
     this.artifactRoot = resolve(
       need(process.env.CHAT2_ARTIFACTS, 'CHAT2_ARTIFACTS required')
     )
