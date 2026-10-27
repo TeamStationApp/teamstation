@@ -751,6 +751,9 @@ export function iosSpotlightCaptureGeometry(
   }
 }
 
+/** An Android loaded-row sweep drag's duration: slow enough not to fling a screen. */
+export const ANDROID_SWEEP_MS = 1500
+
 /** A short Android reader-tall drag's duration, clear of the long press. */
 export const ANDROID_SHORT_DRAG_MS = 300
 
@@ -3256,14 +3259,21 @@ export class Scenarios {
         )
         // A finger moving up reads toward the latest rows, down toward older.
         const middle = (top + bottom) / 2
-        const delta = direction * (bottom - top) * (olderOnly ? 0.9 : 0.6)
+        // A quick Pixel drag flings more than a screen between reads, past a
+        // row the driver lists only while it is on screen (E10's loop anchor
+        // was swept past); Android drags half a reader slowly instead.
+        const slowAndroid = ui.surface === 'android'
+        const delta =
+          direction *
+          (bottom - top) *
+          (slowAndroid ? 0.5 : olderOnly ? 0.9 : 0.6)
         const x = Math.round(history.x + history.width / 2)
         const input = {
           startX: x,
           endX: x,
           startY: Math.round(middle - delta / 2),
           endY: Math.round(middle + delta / 2),
-          duration: 200
+          duration: slowAndroid ? ANDROID_SWEEP_MS : 200
         }
         ;(proof.swipes as unknown[]).push(input)
         const before = bubbles(nodes)
