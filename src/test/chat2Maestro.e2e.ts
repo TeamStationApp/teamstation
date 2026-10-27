@@ -1744,6 +1744,8 @@ export class Chat2UI {
   daemon?: Daemon
   browser?: Browser
   cdp?: CDPSession
+  /** The page's uncaught exceptions and console errors, kept with a failure. */
+  readonly pageErrors: Array<{ at: string; kind: string; text: string }> = []
   environment?: Args
   deviceId = ''
   cleanup: Args = {}
@@ -2169,6 +2171,28 @@ export class Chat2UI {
     })
     await this.device.openLink({ link: this.fixture.webUrl })
     this.cdp = await this.currentWebTarget()
+    const pageError = (kind: string, text: string): void => {
+      if (this.pageErrors.length < 50)
+        this.pageErrors.push({
+          at: new Date().toISOString(),
+          kind,
+          text: text.slice(0, 4000)
+        })
+    }
+    this.cdp.on('Runtime.exceptionThrown', event => {
+      const details = event.exceptionDetails
+      pageError('exception', details.exception?.description ?? details.text)
+    })
+    this.cdp.on('Runtime.consoleAPICalled', event => {
+      if (event.type !== 'error') return
+      pageError(
+        'console.error',
+        event.args
+          .map(arg => arg.description ?? String(arg.value ?? ''))
+          .join(' ')
+      )
+    })
+    await this.cdp.send('Runtime.enable')
     await this.cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: metrics.width,
@@ -5269,6 +5293,11 @@ export class Chat2UI {
             await this.device.hierarchy()
           )
         } catch {}
+        if (this.pageErrors.length > 0)
+          privateJson(
+            join(this.runDir, 'failure-page-errors.json'),
+            this.pageErrors
+          )
       }
     } finally {
       if (this.cdp != null) await this.cdp.detach().catch(() => {})
