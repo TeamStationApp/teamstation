@@ -20,6 +20,7 @@ import {
   shot,
   signInWeb
 } from './kit.e2e'
+import { stepHalfEnds } from './replayGaps'
 
 /**
  * The replay in Chromium at a phone's size, against a server and web build
@@ -29,8 +30,9 @@ import {
  *     The pills under the final and the in-progress game's hero card.
  *     `before` expects no Replay or Live pill; `after` expects them.
  *
- *   REPLAY_SCENARIO=replay
- *     The final game's replay from its pill: the controls, the pitch pacing,
+ *   REPLAY_SCENARIO=replay [REPLAY_PITCH_MS=5000]
+ *     The final game's replay from its pill: the controls, the pitch pacing
+ *     (each pitch held for the node's pitch delay, REPLAY_PITCH_MS),
  *     the first home run, pause and play, the box score's pitchers, Exit,
  *     the imported game with nothing to replay, and the wide layout.
  *
@@ -272,6 +274,28 @@ async function cardUntil(
   }
 }
 
+/** The final game's steps, each one's kind and whether it ends a half. */
+async function finalSteps(): Promise<{
+  kinds: string[]
+  halfEnds: boolean[]
+}> {
+  const client = new TeamStationClient({
+    baseUrl: required('REPLAY_API'),
+    token: await sessionFor(LEAGUE)
+  })
+  const [game, stored] = await Promise.all([
+    client.game(FINAL),
+    client.gameEvents(FINAL)
+  ])
+  const context = replayContextOf(game, stored)
+  assert.ok(context != null, 'no context')
+  const timeline = replayTimelineOf(stored, context)
+  return {
+    kinds: timeline.steps.map(step => step.kind),
+    halfEnds: stepHalfEnds(timeline)
+  }
+}
+
 async function replay(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
   await openGame(m, FINAL)
@@ -284,21 +308,37 @@ async function replay(m: Device): Promise<void> {
   const video = join(await artifactsDir(), 'replay-first-inning-web.mp4')
   const recorder = screenRecorder(m)
 
-  // The steps' pacing: when the card's sentence changes, for six steps.
+  // The steps' pacing: when the card's sentence changes, for eight steps.
+  // The announcer is off as the replay opens, so no step waits for speech.
+  const pitchMs = Number(process.env.REPLAY_PITCH_MS ?? 5000)
+  const { kinds, halfEnds } = await finalSteps()
   const changes: number[] = []
   let last = await cardUntil(m, 'the card', text => text !== '', 15000)
+  assert.equal(last, 'Play ball!', 'the replay opens on Play ball!')
   await shot(m, 'replay-open')
-  while (changes.length < 6) {
+  while (changes.length < 8) {
     const before = last
-    last = await cardUntil(m, 'the next step', text => text !== before, 15000)
+    last = await cardUntil(
+      m,
+      'the next step',
+      text => text !== before,
+      pitchMs + 15000
+    )
     changes.push(Date.now())
   }
+  // The n-th change starts the n-th step: a gap is a pitch's when its step
+  // is a pitch that does not end a half.
   const gaps = changes.slice(1).map((at, i) => at - changes[i])
   console.log(`step gaps (ms): ${gaps.join(', ')}`)
-  const pitchGaps = gaps.filter(gap => gap < 5200)
-  assert.ok(pitchGaps.length >= 3, `few pitch-length gaps: ${gaps.join(', ')}`)
-  for (const gap of pitchGaps)
-    assert.ok(gap >= 4000, `a pitch came after ${gap} ms`)
+  const pitchGaps = gaps.filter(
+    (gap, i) => kinds[i] === 'pitch' && !halfEnds[i]
+  )
+  console.log(`pitch gaps (ms): ${pitchGaps.join(', ')}`)
+  assert.ok(pitchGaps.length >= 3, `few pitch gaps: ${gaps.join(', ')}`)
+  for (const gap of pitchGaps) {
+    assert.ok(gap >= pitchMs - 100, `a pitch came after ${gap} ms`)
+    assert.ok(gap < pitchMs + 1000, `a pitch held ${gap} ms`)
+  }
 
   const homer = await cardUntil(
     m,

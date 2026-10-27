@@ -18,11 +18,13 @@ import {
   scored
 } from '../../test/replayGameFixture'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
+import { stepHalfEnds } from './replayGaps'
 import {
   CATCH_UP_MS,
   catchingUp,
   CELEBRATION_MS,
   HALF_MS,
+  halfOf,
   IN_PLAY_TAIL_MS,
   LIVE_HALF_MS,
   LIVE_SLOT_MS,
@@ -152,7 +154,9 @@ describe('replay machine', function () {
     )
   })
 
-  it('throws a pitch every four and a half seconds, and waits longer for a ball in play and a new half', async function () {
+  it('throws a pitch every five seconds, and waits longer for a ball in play and a new half', async function () {
+    expect(SLOT_MS.pitch).equals(5000)
+    expect(LIVE_SLOT_MS.pitch).equals(1500)
     const timeline = await timelineOf(finalGame())
     const { started } = run(
       startReplay('replay', timeline),
@@ -166,6 +170,46 @@ describe('replay machine', function () {
     // The double play ends the top of the 1st.
     expect(at('4-1') - at('3-2')).greaterThanOrEqual(SLOT_MS.inPlay + HALF_MS)
     expect(IN_PLAY_TAIL_MS).lessThan(SLOT_MS.inPlay)
+  })
+
+  it('holds each pitch for the node’s pitch delay', async function () {
+    const timeline = await timelineOf(finalGame())
+    const start = startReplay('replay', timeline, false, 7000)
+    expect(start.pitchSlotMs).equals(7000)
+    expect(startReplay('replay', timeline).pitchSlotMs).equals(SLOT_MS.pitch)
+    const { started } = run(start, state => state.shown?.key === '0-2')
+    const at = (key: string): number => started.get(key)!
+    expect(at('0-1') - at('0-0')).equals(7000)
+    expect(at('0-2') - at('0-1')).equals(7000)
+  })
+
+  it('marks the steps that end a half, as the replay pauses after them', async function () {
+    const timeline = await timelineOf(finalGame())
+    const ends = stepHalfEnds(timeline)
+    expect(ends).length(timeline.steps.length)
+    // The double play ends the top of the 1st.
+    expect(ends[timeline.steps.findIndex(step => step.key === '3-2')]).equals(
+      true
+    )
+    expect(ends[timeline.steps.findIndex(step => step.key === '0-0')]).equals(
+      false
+    )
+    // Stepped through the same timeline, the replay changes half after
+    // exactly those steps, which are the ones it adds `HALF_MS` to.
+    let state = startReplay('replay', timeline)
+    let now = 0
+    const changed: boolean[] = []
+    while (!state.final && now < 3_600_000) {
+      now += 100
+      const before = halfOf(state.scoring)
+      const shown = state.shown
+      state = field(replayReducer(state, { type: 'TICK', now }))
+      if (state.shown !== shown && state.shown != null)
+        changed[timeline.steps.indexOf(state.shown)] =
+          halfOf(state.scoring) !== before
+    }
+    expect(state.final).equals(true)
+    expect(changed).deep.equals(ends)
   })
 
   it('flies a ball to where the scorer put it, at the angle set, and lights up a home run', async function () {
@@ -505,11 +549,13 @@ describe('replay machine', function () {
     it('snaps to the corrected game when the scorer changes a play', async function () {
       const lastPitch = actions.findLastIndex(action => action.type === 'pitch')
       const before = await timelineOf(scored(actions.slice(0, lastPitch + 1)))
-      let state = startReplay('live', before)
+      let state = startReplay('live', before, false, 7000)
       const corrected = extendTimeline(before, await correctedGame(), context)
       expect(corrected.kind).equals('rewrite')
       state = replayReducer(state, { type: 'CHANGED', change: corrected })
       expect(state.changed).equals(true)
+      // Snapped, it keeps the node's pitch delay.
+      expect(state.pitchSlotMs).equals(7000)
       expect(replayCard(state, WORDS).line).match(
         /^Play changed by the scorer\. /
       )
@@ -847,8 +893,9 @@ describe('replay machine', function () {
       // Three pitches into the bottom of the first.
       const cut = firstActionOfHalf(actions, 1, 'bottom') + 3
       const before = await timelineOf(scored(actions.slice(0, cut)))
-      let state = startReplay('live', before)
+      let state = startReplay('live', before, false, 7000)
       expect(state.follows).equals(true)
+      expect(state.pitchSlotMs).equals(7000)
       // A newer copy makes new step objects: the rewind still finds the
       // step shown by its key.
       const same = extendTimeline(
@@ -860,6 +907,7 @@ describe('replay machine', function () {
       const back = rewind(state, 1000)
       expect(back.mode).equals('replay')
       expect(back.follows).equals(true)
+      expect(back.pitchSlotMs).equals(7000)
       expect(back.notice?.text).equals('Rewind to bottom of first')
       expect(back.queue.length).greaterThan(1)
       expect(catchingUp(back)).equals(false)
@@ -872,10 +920,23 @@ describe('replay machine', function () {
       const queued = replayReducer(back, { type: 'CHANGED', change: grown })
       expect(queued.queue.length).greaterThan(back.queue.length)
       const played = run(queued, next => next.queue.length === 0, 1000)
-      // Pitches at replay pace, not hurried.
-      const starts = [...played.started.values()]
-      const gaps = starts.slice(1).map((at, i) => at - starts[i])
-      expect(Math.min(...gaps)).greaterThanOrEqual(SLOT_MS.pitch)
+      // Pitches at the node's replay pace, not hurried.
+      const order = [...played.started.entries()]
+      const kinds = new Map(
+        grown.timeline.steps.map(step => [step.key, step.kind])
+      )
+      const gaps = order.slice(1).map(([, at], i) => ({
+        kind: kinds.get(order[i][0]),
+        gap: at - order[i][1]
+      }))
+      const paced = gaps.filter(entry => entry.kind === 'pitch')
+      expect(paced.length).greaterThan(0)
+      expect(Math.min(...paced.map(entry => entry.gap))).greaterThanOrEqual(
+        7000
+      )
+      expect(Math.min(...gaps.map(entry => entry.gap))).greaterThanOrEqual(
+        SLOT_MS.inPlay
+      )
       expect(played.state.mode).equals('live')
       // Live again: the next step takes a live slot.
       const more = extendTimeline(
