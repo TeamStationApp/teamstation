@@ -4859,8 +4859,7 @@ export class Scenarios {
     const quote = await this.identityLegacyRead(baseline.reply, 'quote')
     assert(
       quote.text === resolvedLabel ||
-        quote.text ===
-          'Jump to message from Former member: Message unavailable',
+        quote.text === 'Jump to the earlier message this replies to',
       'Exact rendered legacy quote required'
     )
     const bounds = need(quote.bounds, 'Actual legacy quote bounds required')
@@ -4896,7 +4895,9 @@ export class Scenarios {
     const scopeId =
       (kind === 'body' ? 'chat-message-body-' : 'chat-message-') + message.id
     const text =
-      kind === 'body' ? exactText(message.body) : '^Jump to message from .*'
+      kind === 'body'
+        ? exactText(message.body)
+        : '^(Jump to message from .*|Jump to the earlier message this replies to)$'
     const type =
       kind === 'quote'
         ? 'Button'

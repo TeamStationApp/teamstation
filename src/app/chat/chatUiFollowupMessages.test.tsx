@@ -1154,9 +1154,16 @@ describe('chat follow-up reply and personal pin views', function () {
         onJump={() => {}}
       />
     )
-    expect(
-      button('Jump to message from Former member: Message unavailable')
-    ).not.equals(undefined)
+    expect(button('Jump to the earlier message this replies to')).not.equals(
+      undefined
+    )
+    // Not loaded is not "left the team": no author is claimed and no
+    // snapshot text is shown until the original itself loads.
+    const shown = document.body.textContent ?? ''
+    expect(shown).contains('Earlier message')
+    expect(shown).contains('Tap to show it')
+    expect(shown).not.contains('Former member')
+    expect(shown).not.contains('Message unavailable')
   })
 
   it('lists personal pins with current content and safe unavailable states and an empty state', async function () {
@@ -2214,7 +2221,7 @@ describe('chat follow-up conversation message integration', function () {
       ])
       expect(anchor.getBoundingClientRect().top).equals(320)
       expect(scroller.scrollTop).equals(80)
-      await press('Jump to message from Former member: Message unavailable')
+      await press('Jump to the earlier message this replies to')
       expect(loads).equals(2)
       expect(finish).not.equals(undefined)
 
@@ -2562,7 +2569,7 @@ describe('chat follow-up conversation message integration', function () {
     await measured(scroller, 640, 400)
     await measured(scroller.firstElementChild as HTMLElement, 640, 1000)
     expect(moves.at(-1)?.[0]).equals(120)
-    await press('Jump to message from Former member: Message unavailable')
+    await press('Jump to the earlier message this replies to')
     expect(loads).equals(2)
     const row = document.querySelector<HTMLElement>(
       '[data-testid="chat-message-msg_original"]'
@@ -2730,7 +2737,7 @@ describe('chat follow-up conversation message integration', function () {
       await press(
         cancelAt === 'manual-overlap'
           ? 'Load earlier messages'
-          : 'Jump to message from Former member: Message unavailable'
+          : 'Jump to the earlier message this replies to'
       )
       if (cancelAt === 'manual-overlap') {
         expect(
@@ -3213,14 +3220,14 @@ describe('chat follow-up conversation message integration', function () {
     scroller.scroll = options => {
       moves.push(options)
     }
-    await press('Jump to message from Former member: Message unavailable')
+    await press('Jump to the earlier message this replies to')
     expect(document.body.textContent).contains('Message unavailable')
     expect(moves).length(0)
     engine.current = { ...engine.current, hasEarlier: true, historyBefore: 10 }
     engine.loadEarlier = async () => {
       throw new Error('Unavailable')
     }
-    await press('Jump to message from Former member: Message unavailable')
+    await press('Jump to the earlier message this replies to')
     expect(moves).length(0)
   })
 

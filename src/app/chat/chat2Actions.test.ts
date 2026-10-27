@@ -8233,7 +8233,7 @@ describe('native installed legacy reply navigation', () => {
     const hierarchy = (): Tree => {
       const label =
         mode === 'unavailable'
-          ? 'Jump to message from Former member: Message unavailable'
+          ? 'Jump to the earlier message this replies to'
           : 'Jump to message from You: Original legacy text.'
       const currentQuote: Tree = {
         type: mode === 'wrong-type' ? 'Other' : 'Button',
@@ -8451,7 +8451,7 @@ describe('native installed legacy reply navigation', () => {
           expect((proof?.element as PublicNode).text).equals(
             mode === 'resolved'
               ? 'Jump to message from You: Original legacy text.'
-              : 'Jump to message from Former member: Message unavailable'
+              : 'Jump to the earlier message this replies to'
           )
           expect(
             actual.calls.some(

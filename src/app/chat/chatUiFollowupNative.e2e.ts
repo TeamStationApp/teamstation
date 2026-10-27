@@ -2520,8 +2520,10 @@ async function main(): Promise<void> {
           !nodes.some(node => node.id === `chat-message-${deep.originalId}`),
         'Actual cold >100 original absence required'
       )
-      const quote = strings(flatten(row)).find(label =>
-        label.startsWith('Jump to message from ')
+      const quote = strings(flatten(row)).find(
+        label =>
+          label.startsWith('Jump to message from ') ||
+          label === 'Jump to the earlier message this replies to'
       )
       assert(quote != null)
       if (platform === 'android') {
@@ -3008,8 +3010,10 @@ async function main(): Promise<void> {
       assert(row != null, 'Current reply must remain available')
       const anchorBefore = row.bounds
       const composerBefore = await composerValue(m)
-      const quote = strings(flatten(row)).find(label =>
-        label.startsWith('Jump to message from ')
+      const quote = strings(flatten(row)).find(
+        label =>
+          label.startsWith('Jump to message from ') ||
+          label === 'Jump to the earlier message this replies to'
       )
       assert(quote != null, 'Reply must expose a normal quote action')
       const errorsBefore = nodes.filter(

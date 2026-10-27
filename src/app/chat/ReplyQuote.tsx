@@ -14,17 +14,20 @@ export function ReplyQuote(props: {
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
-  const name =
-    props.quote.status === 'unavailable'
-      ? lstrings.chat_former_member
-      : props.quote.authorId === props.userId
-        ? lstrings.chat_you
-        : (props.quote.authorName ?? lstrings.chat_former_member)
+  // An original older than the loaded history is not shown from the reply's
+  // encrypted snapshot, which is no authority for who wrote what: the quote
+  // says only that it replies to an earlier message, until that loads.
+  const earlier = props.quote.status === 'unavailable'
+  const name = earlier
+    ? lstrings.chat_quote_earlier
+    : props.quote.authorId === props.userId
+      ? lstrings.chat_you
+      : (props.quote.authorName ?? lstrings.chat_former_member)
   const contents = (
     <>
       <Text style={styles.name}>{name}</Text>
       <Text style={styles.text} numberOfLines={3}>
-        {props.quote.snippet}
+        {earlier ? lstrings.chat_quote_show : props.quote.snippet}
       </Text>
     </>
   )
@@ -33,11 +36,11 @@ export function ReplyQuote(props: {
     <Pressable
       {...props.messageGesture?.pressProps}
       accessibilityRole="button"
-      accessibilityLabel={sprintf(
-        lstrings.chat_jump_reply,
-        name,
-        props.quote.snippet
-      )}
+      accessibilityLabel={
+        earlier
+          ? lstrings.chat_jump_earlier_reply
+          : sprintf(lstrings.chat_jump_reply, name, props.quote.snippet)
+      }
       onPress={event => {
         if (props.messageGesture?.canOpen(event) === false) return
         props.onJump?.(props.quote.id)

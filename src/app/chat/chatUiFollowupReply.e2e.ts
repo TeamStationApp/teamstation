@@ -161,7 +161,7 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
     'Old original must actually be absent before paging'
   )
   assert(
-    before.label.includes('Message unavailable'),
+    before.label === 'Jump to the earlier message this replies to',
     'Unloaded original must not expose the cached snippet'
   )
   const wire = await evaluate<Array<{ id: string; seq: number }>>(
@@ -559,7 +559,7 @@ async function paging(device: Device, results: CaseResult[]): Promise<void> {
       Math.abs(exhausted.top - before.top) <= 2,
       'Exhausted paging must keep reading position'
     )
-    assert(exhausted.label.includes('Message unavailable'))
+    assert.equal(exhausted.label, 'Jump to the earlier message this replies to')
     results.push({
       case: 'scoped empty-page exhaustion',
       pass: true,

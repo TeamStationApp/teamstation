@@ -31,6 +31,7 @@ export interface QuoteView {
   authorId: string
   authorName: string | undefined
   snippet: string
+  /** `unavailable`: the original is not in the loaded history (yet). */
   status?: MessageStatus | 'unavailable'
 }
 
