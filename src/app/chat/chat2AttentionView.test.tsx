@@ -491,6 +491,88 @@ describe('attention controls and synchronized reading visits', function () {
   })
 })
 
+describe('a jump past rows the attention discovery held back', function () {
+  it('loads a further page after revealing them, rather than reporting the message unavailable', async function () {
+    const reply = message({
+      id: 'msg_reply',
+      seq: 220,
+      quote: {
+        id: 'msg_original',
+        authorId: userIdOfGumbo(1),
+        authorName: 'Aaron Judge',
+        snippet: '',
+        status: 'unavailable'
+      }
+    })
+    const initial = view({
+      ownReadSeq: 200,
+      historyBefore: 201,
+      hasEarlier: true,
+      messages: [reply],
+      pins: [{ messageId: 'msg_ancient', pinnedAt: '2027-04-01T17:00:00.000Z' }]
+    })
+    const state = fixture(initial)
+    const original = message({
+      id: 'msg_original',
+      seq: 20,
+      mine: true,
+      senderUserId: userIdOfGumbo(1)
+    })
+    // Discovery's page: the original and a row it keeps out of the history.
+    const discovered = view({
+      ...initial,
+      historyBefore: 20,
+      messages: [original, message({ id: 'msg_held', seq: 100 }), reply]
+    })
+    const ancient = message({ id: 'msg_ancient', seq: 5 })
+    const exhausted = view({
+      ...discovered,
+      hasEarlier: false,
+      historyBefore: 5,
+      messages: [ancient, ...discovered.messages]
+    })
+    const pages = [discovered, exhausted]
+    state.setLoad(async () => {
+      const next = pages.shift() ?? exhausted
+      state.update(next)
+      return next
+    })
+    await render(screen(state.engine))
+    for (let tries = 0; tries < 50 && state.loads < 1; tries++)
+      await act(async () => {
+        await wait(40)
+      })
+    expect(state.loads, 'Discovery read one page').equals(1)
+    expect(
+      host!.querySelector('[data-testid="chat-message-body-msg_held"]'),
+      'Discovery keeps its page out of the history'
+    ).equals(null)
+    await click('chat-pinned-summary')
+    for (
+      let tries = 0;
+      tries < 100 &&
+      host!.querySelector('[data-testid="chat-bubble-msg_ancient"]') == null &&
+      host!.querySelector('[data-testid="chat-history-jump-retry"]') == null;
+      tries++
+    )
+      await act(async () => {
+        await wait(40)
+      })
+    expect(
+      host!.querySelector('[data-testid="chat-history-jump-retry"]'),
+      'The jump does not stop at the held-back rows'
+    ).equals(null)
+    expect(state.loads, 'It read the page with the pinned message').equals(2)
+    expect(
+      host!.querySelector('[data-testid="chat-bubble-msg_ancient"]')
+    ).not.equals(null)
+    expect(
+      host!.querySelector('[data-testid="chat-message-body-msg_held"]'),
+      'The held-back rows are revealed on the way'
+    ).not.equals(null)
+  })
+})
+
 describe('attention discovery longer than one page budget', function () {
   this.timeout(20000)
   const target = message({

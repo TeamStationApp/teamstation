@@ -1233,8 +1233,15 @@ export function ConversationScreen(
       await new Promise<void>(resolve => setTimeout(resolve, 10))
     }
   }
+  /**
+   * The next older rows: the ones attention discovery already holds back,
+   * when there are any, or else a page. A search that compares the engine's
+   * own view between steps, as a jump's does, asks for a page every time:
+   * revealed rows do not change that view, so they would read as no progress.
+   */
   const loadOlder = async (
-    cancelled: () => boolean = () => false
+    cancelled: () => boolean = () => false,
+    page = false
   ): Promise<ConversationView> => {
     initialFollow.current = false
     const visit = readingVisit.current
@@ -1260,7 +1267,8 @@ export function ConversationScreen(
           restoreReadingAnchor()
         }
         await waitForReading()
-        return engine.view(conversationId) ?? raw
+        if (!page) return engine.view(conversationId) ?? raw
+        if (stopped()) throw new AttentionCancelled()
       }
       const next = await loadOlderPage(stopped)
       if (visit !== readingVisit.current) throw new AttentionCancelled()
@@ -1374,7 +1382,8 @@ export function ConversationScreen(
             () =>
               generation !== jumpGeneration.current ||
               !mounted.current ||
-              !paneActive.current
+              !paneActive.current,
+            true
           )
       },
       conversationId,
