@@ -4335,8 +4335,7 @@ export class Scenarios {
       controls[name] = need(
         ui.surface === 'ios'
           ? await ui.observedBounds({ text: exactText(name) }, 'Button')
-          : (await ui.device.copyTextFrom({ text: exactText(name) })).element
-              ?.bounds,
+          : await ui.observedBounds({ text: exactText(name) }),
         'Actual native control bounds required: ' + name
       )
     const composerBand = await ui.publicBounds('chat-composer-band')

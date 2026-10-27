@@ -5137,14 +5137,15 @@ describe('chat native adapter compatibility', function () {
     ])
     expect(await nonempty.draft()).equals('Actual\nsecond line')
   })
-  it('keeps the Android copyTextFrom path unchanged', async () => {
+  it('keeps the Android draft on copyTextFrom and reads public text passively', async () => {
     const actual = ui([], 'android')
     actual.device.copyTextFrom = async () => ({
       data: 'Android draft',
       element: { bounds: box }
     })
+    actual.nodes = async () => [{ id: 'item', text: 'Android item' }]
     expect(await actual.draft()).equals('Android draft')
-    expect(await actual.publicText('item')).equals('Android draft')
+    expect(await actual.publicText('item')).equals('Android item')
   })
   it('requires the actual observed OS menu item before tapping Copy', async () => {
     const actual = ui([
@@ -5876,6 +5877,51 @@ describe('chat native adapter compatibility', function () {
     expect(commands).deep.equals(['hold', 'Select All', 'Cut', 'hold', 'Paste'])
     expect(value).equals('')
     expect(clipboard).equals('Disposable sentinel')
+  })
+  it('installs a phone sentinel word by double tap and Cut, without Select All', async () => {
+    const actual = ui([])
+    Object.assign(actual, { fixture: { devices: { ios: { physical: true } } } })
+    const commands: string[] = []
+    let value = ''
+    let clipboard = ''
+    let menu = ''
+    actual.replaceDraft = async text => {
+      value = text
+    }
+    // A phone's hold raises a menu only on an empty draft.
+    actual.device.longPressOn = async () => {
+      commands.push('hold')
+      menu = value === '' ? 'Paste' : ''
+    }
+    Object.assign(actual.device, {
+      doubleTapOn: async (args: { id: string; point: string }) => {
+        expect(args).deep.equals({ id: 'chat-composer', point: '20%,50%' })
+        commands.push('double tap')
+        // One word is the whole draft only when it has no spaces.
+        menu = value.includes(' ') ? '' : 'Cut'
+      },
+      hierarchyRaw: async () =>
+        raw([
+          node(0, 'TextView', {
+            identifier: 'chat-composer',
+            label: 'Message',
+            value
+          }),
+          ...(menu === '' ? [] : [node(1, 'MenuItem', { label: menu })])
+        ])
+    })
+    actual.device.tapOnPoint = async () => {
+      commands.push(menu)
+      if (menu === 'Cut') {
+        clipboard = value
+        value = ''
+      } else if (menu === 'Paste') value = clipboard
+      menu = ''
+    }
+    await actual.clipboardSentinel('Disposable sentinel')
+    expect(commands).deep.equals(['double tap', 'Cut', 'hold', 'Paste'])
+    expect(value).equals('')
+    expect(clipboard).equals('Disposablesentinel')
   })
   async function zoomedInfoMember(fault = ''): Promise<{
     calls: string[]
@@ -14466,4 +14512,159 @@ describe('newest-page side of a post', function () {
         })
       ).equals(side)
     })
+})
+
+describe('Android copied-text overlay', function () {
+  const overlay: PublicNode[] = [
+    {
+      id: 'com.android.systemui:id/clipboard_ui',
+      text: 'Clipboard',
+      bounds: { x: 0, y: 1985, width: 686, height: 352 }
+    },
+    {
+      id: 'com.android.systemui:id/dismiss_button',
+      text: 'Dismiss copied text',
+      bounds: { x: 210, y: 2016, width: 126, height: 126 }
+    }
+  ]
+  function android(nodes: () => PublicNode[]): {
+    ui: Chat2UI
+    calls: string[]
+  } {
+    const calls: string[] = []
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'android',
+      steps: [],
+      nodes: async () => nodes(),
+      tapObserved: async (node: PublicNode) => {
+        calls.push(`tap ${node.bounds!.x},${node.bounds!.y}`)
+      },
+      device: {
+        copyTextFrom: async () => {
+          calls.push('copy')
+          return { data: 'Draft', element: {} }
+        }
+      }
+    }) as Chat2UI
+    return { ui, calls }
+  }
+  it('reads the attention count passively, writing nothing to the clipboard', async function () {
+    const { ui, calls } = android(() => [
+      {
+        id: 'chat-attention-count',
+        type: 'Button',
+        text: '3 unread mentions and replies below',
+        bounds: { x: 918, y: 1645, width: 116, height: 115 }
+      }
+    ])
+    expect(await ui.publicText('chat-attention-count')).equals(
+      '3 unread mentions and replies below'
+    )
+    expect(calls).deep.equals([])
+  })
+  it('refuses an absent or duplicated Android public text', async function () {
+    const { ui } = android(() => [])
+    expect(
+      String(await captureFailure(ui.publicText('chat-attention-count')))
+    ).contains('Native public text required: chat-attention-count')
+  })
+  it("dismisses the overlay a driver read's clipboard write raised", async function () {
+    let shown = false
+    const { ui, calls } = android(() => (shown ? overlay : []))
+    ui.device.copyTextFrom = async () => {
+      calls.push('copy')
+      shown = true
+      return { data: 'Draft', element: {} }
+    }
+    expect(await ui.draft()).equals('Draft')
+    expect(calls).deep.equals(['copy', 'tap 210,2016'])
+    expect(ui.steps).deep.equals([
+      { name: 'Android copied-text overlay dismissed', outcome: 'passed' }
+    ])
+  })
+  it('leaves the screen alone when no overlay is up, and on iOS', async function () {
+    const { ui, calls } = android(() => [])
+    expect(await ui.closeAndroidClipboardOverlay()).equals(false)
+    Object.assign(ui, { surface: 'ios', nodes: async () => overlay })
+    expect(await ui.closeAndroidClipboardOverlay()).equals(false)
+    expect(calls).deep.equals([])
+  })
+})
+
+describe('Android draft clear read-back', function () {
+  function composer(
+    erased: boolean,
+    menuClears = true
+  ): { ui: Chat2UI; calls: string[] } {
+    const calls: string[] = []
+    let value = 'Synthetic typing transport probe'
+    let selected = false
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'android',
+      steps: [],
+      nodes: async () => [],
+      id: async () => {
+        calls.push('focus')
+      },
+      append: async (text: string) => {
+        calls.push('type')
+        value += text
+      },
+      device: {
+        // The Pixel's eraseText can pass and leave the draft.
+        eraseText: async () => {
+          calls.push('erase')
+          if (erased) value = ''
+        },
+        // An empty field reads as its placeholder.
+        copyTextFrom: async () => ({ data: value === '' ? 'Message' : value }),
+        longPressOn: async () => {
+          calls.push('hold')
+        },
+        tapOn: async (selector: { text: string }) => {
+          expect(selector.text).equals('^Select all$')
+          calls.push('select all')
+          selected = true
+        },
+        pressKey: async (args: { key: string }) => {
+          expect(args.key).equals('backspace')
+          calls.push('delete')
+          if (selected && menuClears) value = ''
+        }
+      }
+    }) as Chat2UI
+    return { ui, calls }
+  }
+  it('takes an erased Android draft read as its placeholder as empty', async function () {
+    const { ui, calls } = composer(true)
+    await ui.replaceDraft('Next')
+    expect(calls).deep.equals(['focus', 'erase', 'type'])
+    expect(ui.steps).deep.equals([])
+  })
+  it('clears a draft eraseText left through the menu, then types', async function () {
+    const { ui, calls } = composer(false)
+    await ui.replaceDraft('')
+    expect(calls).deep.equals([
+      'focus',
+      'erase',
+      'hold',
+      'select all',
+      'delete'
+    ])
+    expect(ui.steps).deep.equals([
+      {
+        name: 'Android draft cleared again through its menu',
+        leftLength: 32,
+        outcome: 'passed'
+      }
+    ])
+  })
+  it('fails with the text a second clear still left', async function () {
+    const { ui } = composer(false, false)
+    expect(String(await captureFailure(ui.replaceDraft('')))).contains(
+      'Android draft must clear; still read: "Synthetic typing transport probe"'
+    )
+  })
 })
