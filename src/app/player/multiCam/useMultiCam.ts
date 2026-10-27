@@ -162,6 +162,11 @@ export interface MultiCamOptions {
  */
 export const DRY_CHECK_MS = 250
 
+/** Tenths of a second from `since` to `now`, for the readout. */
+function secondsSince(now: number, since: number | undefined): number {
+  return Math.round((now - (since ?? now)) / 100) / 10
+}
+
 /** How often a joining tile looks to see whether the game has reached it. */
 const JOIN_POLL_MS = 30
 
@@ -1416,12 +1421,32 @@ export function useMultiCam(
             `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
             `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
             (tile?.parked != null ? `  parked ${tile.parked}` : '') +
-            (leftOut.current.has(video.id) ? '  left out' : '')
+            (leftOut.current.has(video.id) ? '  left out' : '') +
+            // What the gate holds against it: how long it has been short,
+            // where it was last sent, and what places it on the wall.
+            (shortSince.current.has(video.id)
+              ? `  short ${secondsSince(now, shortSince.current.get(video.id))}s`
+              : '') +
+            (heldPlace.current.has(video.id)
+              ? `  sent ${heldPlace.current.get(video.id)?.toFixed(1)}`
+              : '') +
+            `  map ${mappingOfRef.current(video.id)?.source ?? 'none'}`
           )
         })
+        const heard = chosen.find(video => video.id === heardId)
+        const waits = [...shortSince.current.values()]
         lines.push(
           `clock ${((clockMs - (takeRef.current?.fromMs ?? clockMs)) / 1000).toFixed(1)}s  ` +
-            `${flowing.current ? 'playing' : 'held'}  ahead ≤ ${ceiling.toFixed(0)}s`
+            `${flowing.current ? 'playing' : 'held'}  ahead ≤ ${ceiling.toFixed(0)}s` +
+            (heard != null
+              ? `  heard ${names.get(heard.id) ?? heard.id}`
+              : '') +
+            (flowing.current
+              ? ''
+              : `  gate ${waits.length} short` +
+                (waits.length > 0
+                  ? ` ${secondsSince(now, Math.min(...waits))}s`
+                  : ''))
         )
         setReadout(lines)
       }

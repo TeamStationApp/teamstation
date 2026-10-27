@@ -990,6 +990,30 @@ describe('useMultiCam buffering', function () {
     expect(tiles.B.paused).equals(false)
   })
 
+  it('reads out, under debug, what the gate holds against each tile and who is heard', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, { debug: true }, tiles => {
+      fill(tiles.A, [120, 123])
+      fill(tiles.B, [60, 70])
+    })
+    await ticks(1)
+    const [a, b, clock] = mc().readout
+    expect(a).match(
+      /^A {8} buf 3\.0s {2}ready 4 {2}at 120\.0 {2}to 120\.0 {2}paused {2}ok {2}short \d+(\.\d)?s/
+    )
+    // No tile has said where it sits on the wall yet.
+    expect(a).match(/ {2}map none$/)
+    expect(b).not.match(/short/)
+    expect(clock).match(
+      / {2}held {2}ahead ≤ \d+s {2}heard A {2}gate 1 short \d+(\.\d)?s$/
+    )
+
+    fill(tiles.A, [120, 126])
+    await ticks(2)
+    expect(mc().readout[2]).match(/ {2}playing {2}ahead ≤ \d+s {2}heard A$/)
+    expect(tiles.A.paused).equals(false)
+  })
+
   it('sends a lone recording across a start hole wider than its player jumps, and plays it', async function () {
     this.timeout(5000)
     // Three seconds of nothing where it is to start, then the footage.

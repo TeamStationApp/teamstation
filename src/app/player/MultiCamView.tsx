@@ -4,10 +4,11 @@ import { Text, View } from 'react-native'
 
 import { webStyle } from '../components/glass'
 import { PaneFrameContext, usePaneFrame } from '../components/useBreakpoint'
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import { useVideoAnalytics } from '../observability/useVideoAnalytics'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
+import { playerDebug } from './debugFlag'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import type { ParkReason } from './multiCam/align'
 import {
@@ -98,12 +99,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    */
   /** Whether this browser can play the video at all (`playable.ts`). */
   const playable = useMemo(() => playableHere(), [])
-  const debug = useMemo(
-    () =>
-      typeof location !== 'undefined' &&
-      new URLSearchParams(location.search).get('debug') === '1',
-    []
-  )
+  const debug = useMemo(() => playerDebug(), [])
 
   // The game's board and box score, at the wall time of the master tile's
   // frame, and the angles around them (`playerLayout`).
@@ -434,7 +430,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       ) : null}
 
       {debug && mc.readout.length > 0 ? (
-        <View style={styles.readout} pointerEvents="none">
+        <View
+          testID="playerReadout"
+          style={styles.readout}
+          pointerEvents="none"
+        >
           {mc.readout.map(line => (
             <Text key={line} style={styles.readoutText}>
               {line}
@@ -699,6 +699,10 @@ function Tile(props: {
   return (
     <View
       dataSet={{ tileState }}
+      // A picture, named for its angle, to assistive technology — and to the
+      // end-to-end suite, which finds each tile's place on the glass by it.
+      role="img"
+      aria-label={sprintf(lstrings.angles_tile_label, name)}
       style={[
         styles.tile,
         {
