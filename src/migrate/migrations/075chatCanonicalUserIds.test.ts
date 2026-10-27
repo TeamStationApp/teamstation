@@ -44,7 +44,8 @@ const chatNames = new Set([
   '053chatPreferences',
   '057chatMasterCompatibility',
   '068chatUserIdBridge',
-  '075chatCanonicalUserIds'
+  '075chatCanonicalUserIds',
+  '087loginOffOnly'
 ])
 
 async function scratch(
@@ -548,19 +549,23 @@ async function accountEffects(pool: Pool): Promise<void> {
         [[a, b]]
       )
     ).rows.map(row => row.login_enabled)
-  expect(await enabled()).deep.equals([false, false])
+  // Switched on before any way in, as an account settles (087).
+  expect(await enabled()).deep.equals([true, true])
   await pool.query(
     `update users set password_hash='fixture hash' where id=$1`,
     [a]
   )
-  expect(await enabled()).deep.equals([true, false])
+  expect(await enabled()).deep.equals([true, true])
   await pool.query(`update users set password_hash=null where id=$1`, [a])
-  expect(await enabled()).deep.equals([false, false])
+  expect(await enabled()).deep.equals([false, true])
   await pool.query(
     `insert into user_emails(id,user_id,email,is_primary,source) values('eml_high',$1,'new@example.test',true,'manual')`,
     [a]
   )
-  expect(await enabled()).deep.equals([true, false])
+  // An address never switches an account on.
+  expect(await enabled()).deep.equals([false, true])
+  await pool.query(`update users set login_enabled=true where id=$1`, [a])
+  expect(await enabled()).deep.equals([true, true])
   await pool.query(`update user_emails set user_id=$1 where id='eml_high'`, [b])
   expect(await enabled()).deep.equals([false, true])
   await pool.query(`delete from user_emails where id='eml_high'`)
@@ -576,7 +581,7 @@ async function accountEffects(pool: Pool): Promise<void> {
         [a]
       )
     ).rows
-  ).deep.equals([{ login_enabled: true, disabled: true, deleted: true }])
+  ).deep.equals([{ login_enabled: false, disabled: true, deleted: true }])
   await fails(
     pool.query(`update users set disabled_at=null where id=$1`, [a]),
     'users_deleted_stays_disabled'

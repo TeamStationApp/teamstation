@@ -1638,9 +1638,8 @@ describe('a team’s people by external id', function () {
         .select(['login_enabled'])
         .where('id', '=', fixtureUserId(known))
         .executeTakeFirstOrThrow()
-      // An address is a way to sign in, so the trigger from
-      // 051guardiansAndAccounts makes this an account.
-      expect(user.login_enabled).equals(true)
+      // Never changed for somebody already here.
+      expect(user.login_enabled).equals(false)
       signIns.push({
         email: 'quin@example.test',
         userId: fixtureUserId(known),
