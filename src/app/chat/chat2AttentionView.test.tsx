@@ -1901,6 +1901,130 @@ describe('conversation information navigation reader ownership', function () {
       expect(workspace.drafts.get('cnv_1')?.replyTo?.id).equals(current.id)
       expect(workspace.drafts.get('cnv_1')?.picked).deep.equals([picked])
     })
+
+  for (const answered of [true, false])
+    it(`measures a phone reader where the keyboard left it before information navigation (${answered ? 'measured' : 'measurement never answers'})`, async function () {
+      restore = measureChatTestViewport({ width: 1200, height: 844 })
+      const current = message({ id: 'msg_keyboard_reader', seq: 300 })
+      const state = fixture(view({ messages: [current] }))
+      const workspace = newChatWorkspaceState()
+      workspace.drafts.set('cnv_1', {
+        text: '',
+        picked: [],
+        hasScrollPosition: true,
+        followNewest: false,
+        scrollOffset: 0
+      })
+      let members = 0
+      let captured: ReturnType<ChatDraftOwner['draft']> | undefined
+      const node = await render(
+        <ChatWorkspace
+          engine={state.engine}
+          userId={userIdOfGumbo(1)}
+          state={workspace}
+          conversationId="cnv_1"
+          onOpen={() => {}}
+          onMembers={() => {
+            members += 1
+            captured = workspace.drafts.get('cnv_1')
+          }}
+          onNewMessage={() => {}}
+          onTitle={() => {}}
+        />
+      )
+      const history = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-history"]'
+      )!
+      const row = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-row-msg_keyboard_reader"]'
+      )!
+      const scrollEvent = (top: number): unknown => ({
+        nativeEvent: {
+          contentOffset: { x: 0, y: top },
+          contentSize: { width: 900, height: 3000 },
+          layoutMeasurement: { width: 900, height: 844 }
+        }
+      })
+      history.getBoundingClientRect = () => new window.DOMRect(0, 0, 900, 844)
+      ;(history.firstElementChild as HTMLElement).getBoundingClientRect = () =>
+        new window.DOMRect(0, -history.scrollTop, 900, 3000)
+      row.getBoundingClientRect = () =>
+        new window.DOMRect(24, 1000 - history.scrollTop, 852, 100)
+      Object.defineProperties(history, {
+        clientHeight: { configurable: true, value: 844 },
+        clientWidth: { configurable: true, value: 900 },
+        scrollHeight: { configurable: true, value: 3000 }
+      })
+      history.scroll = options => {
+        history.scrollTop = Math.min(
+          (options as ScrollToOptions).top ?? 0,
+          2156
+        )
+        readingCallbacks(history).onScroll(scrollEvent(history.scrollTop))
+      }
+      Object.defineProperty(row, 'measureLayout', {
+        configurable: true,
+        value: (
+          _parent: unknown,
+          done: (x: number, y: number, width: number, height: number) => void
+        ) => {
+          done(24, 1000, 852, 100)
+        }
+      })
+      await layout(row, 1000, 100, 852)
+      await layout(history, 0, 844, 900)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(900, 3000)
+        history.scrollTop = 550
+        readingCallbacks(history).onScroll(scrollEvent(550))
+        await wait()
+      })
+      // The keyboard leaving moved the content 47 lower without a scroll
+      // event. Only a window measurement sees where the row is now.
+      type Measure = (
+        done: (x: number, y: number, width: number, height: number) => void
+      ) => void
+      const windowAt = (
+        node: HTMLElement,
+        top: number,
+        height: number
+      ): void => {
+        Object.defineProperty(node, 'measureInWindow', {
+          configurable: true,
+          get: (): Measure => done => {
+            if (answered) done(24, top, 852, height)
+          },
+          set: () => {}
+        })
+      }
+      windowAt(row, 40 + 450 + 47, 100)
+      windowAt(history, 40, 844)
+      const identity = node.querySelector<HTMLElement>(
+        '[data-testid="chat-conversation-identity"]'
+      )!
+      const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+      await act(async () => {
+        Object.defineProperty(Platform, 'OS', { ...saved, value: 'ios' })
+        try {
+          identity.click()
+        } finally {
+          Object.defineProperty(Platform, 'OS', saved)
+        }
+        await wait()
+      })
+      await until(() => members > 0)
+      expect(members).equals(1)
+      expect(
+        captured?.scrollAnchor,
+        answered
+          ? 'Back restores where the person last saw the row'
+          : 'A phone that never answers keeps the remembered reader'
+      ).deep.equals({
+        id: current.id,
+        relativeY: answered ? 497 : 450
+      })
+      expect(captured?.scrollOffset).equals(550)
+    })
 })
 
 describe('conversation width reflow reader ownership', function () {

@@ -606,12 +606,43 @@ export function ConversationScreen(
         restoreAnchor.current = physical.anchor
       }
     }
-    const next = currentDraft({
-      followNewest: scrolled.current.followNewest || atBottom.current
-    })
-    draftOwner.write(conversationId, next)
-    onDraftChange(next)
-    onMembers()
+    const leave = (): void => {
+      const next = currentDraft({
+        followNewest: scrolled.current.followNewest || atBottom.current
+      })
+      draftOwner.write(conversationId, next)
+      onDraftChange(next)
+      onMembers()
+    }
+    // A phone's content can move without a scroll event (the keyboard
+    // leaving moves it by the composer's change), which leaves the remembered
+    // reader where it was before. The row is measured where it is on screen
+    // now, so Back restores what the person last saw.
+    const anchor = scrolled.current.anchor
+    if (
+      Platform.OS !== 'web' &&
+      anchor != null &&
+      !restoringAnchor.current &&
+      measuringJump.current == null &&
+      menuReading.current == null &&
+      !scrolled.current.followNewest &&
+      !atBottom.current
+    ) {
+      const started = Date.now()
+      measurePosition(
+        anchor.id,
+        () => !mounted.current || Date.now() - started > 300,
+        true
+      )
+        .then(y => {
+          if (y != null && scrolled.current.anchor?.id === anchor.id)
+            scrolled.current.anchor = { ...anchor, relativeY: y }
+        })
+        .catch(() => undefined)
+        .finally(leave)
+      return
+    }
+    leave()
   }
   /**
    * A row's top in scroll content, where the virtualized list places it.
@@ -1070,6 +1101,30 @@ export function ConversationScreen(
           })
           content.measureInWindow((_x, top, width, height) => {
             if (Number.isFinite(top) && width > 0 && height > 0) viewportY = top
+            finish()
+          })
+          return
+        }
+        if (Platform.OS !== 'web') {
+          // The same measure a row's placement records (rowPlaced): both tops
+          // in the window. A transform on the list's content (the keyboard-
+          // aware list's) then counts alike when a reader is saved and when
+          // it is restored; measureLayout leaves it out, which put a reopened
+          // reader that far from where it was left.
+          let rowTop: number | undefined
+          let contentTopInWindow: number | undefined
+          const finish = (): void => {
+            if (rowTop == null || contentTopInWindow == null) return
+            clearTimeout(timer)
+            resolve(rowTop - contentTopInWindow)
+          }
+          row.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0) rowTop = top
+            finish()
+          })
+          content.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0)
+              contentTopInWindow = top
             finish()
           })
           return
