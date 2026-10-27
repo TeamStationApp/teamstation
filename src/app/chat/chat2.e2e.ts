@@ -2986,13 +2986,23 @@ export class Scenarios {
     )
   }
 
-  /** Whether the protocol peer's newest page of this chat holds the post. */
-  async inNewestPage(target: Chat2Message): Promise<boolean> {
+  /** Which half of the protocol peer's newest page of this chat holds the post. */
+  async newestPageSide(
+    target: Chat2Message
+  ): Promise<'latest' | 'older' | undefined> {
     const peer = await this.protocolPeer()
     const view = await peer.engine.open(this.group)
-    const found = view.messages.some(message => message.id === target.id)
-    this.observations.push({ newestPagePost: target.id, found })
-    return found
+    const index = view.messages.findIndex(message => message.id === target.id)
+    // The half of the newest page the post lies in tells which end of the
+    // loaded history is nearer.
+    const side =
+      index < 0
+        ? undefined
+        : index >= view.messages.length / 2
+          ? 'latest'
+          : 'older'
+    this.observations.push({ newestPagePost: target.id, side })
+    return side
   }
 
   /** Fetch absent native rows through the actual public earlier-page button. */
@@ -3029,14 +3039,11 @@ export class Scenarios {
     // newest page is loaded and only outside the mounted window; a phone's
     // slow drags cannot afford pages climbed in the wrong direction, so it is
     // searched among the loaded rows first.
-    if (
-      ui.surface === 'ios' &&
-      ui.physical &&
-      nodes.some(earlierButton) &&
-      (await this.inNewestPage(target)) &&
-      (await this.nativeLoadedTarget(target, signal, 'latest'))
-    )
-      return
+    if (ui.surface === 'ios' && ui.physical && nodes.some(earlierButton)) {
+      const side = await this.newestPageSide(target)
+      if (side != null && (await this.nativeLoadedTarget(target, signal, side)))
+        return
+    }
     // With every page loaded, the virtualized history may still hold the
     // target outside its mounted window.
     const oldest = target.seq <= (this.f.messages.oldest?.seq ?? -Infinity)

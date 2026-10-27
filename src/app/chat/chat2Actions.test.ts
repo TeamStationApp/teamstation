@@ -10442,7 +10442,7 @@ describe('native absent history paging', function () {
       fixture: { devices: { ios: { physical: true } } }
     })
     // An older post outside the protocol peer's newest page.
-    Object.assign(m.scenario, { inNewestPage: async () => false })
+    Object.assign(m.scenario, { newestPageSide: async () => undefined })
     await m.scenario.nativeHistoryTarget(target)
     expect(m.taps).has.length(2)
     // The first far earlier control is reached through the status bar.
@@ -10460,7 +10460,7 @@ describe('native absent history paging', function () {
       fixture: { devices: { ios: { physical: true } } }
     })
     // An older post outside the protocol peer's newest page.
-    Object.assign(m.scenario, { inNewestPage: async () => false })
+    Object.assign(m.scenario, { newestPageSide: async () => undefined })
     expect(
       String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
     ).includes('Enabled public native earlier Button required')
@@ -14120,9 +14120,9 @@ describe('phone search of a loaded newest-page post', function () {
         ui,
         observations: [],
         f: { messages: {} },
-        inNewestPage: async () => {
+        newestPageSide: async () => {
           calls.push('newest')
-          return newest
+          return newest ? 'older' : undefined
         },
         nativeLoadedTarget: async (
           _: Chat2Message,
@@ -14143,7 +14143,7 @@ describe('phone search of a loaded newest-page post', function () {
   it('searches a phone newest-page post among the loaded rows, not the earlier pages', async function () {
     const m = history(true, true)
     await m.scenario.nativeHistoryTarget(post)
-    expect(m.calls).deep.equals(['newest', 'loaded latest'])
+    expect(m.calls).deep.equals(['newest', 'loaded older'])
   })
   for (const [newest, found] of [
     [false, false],
@@ -14432,4 +14432,38 @@ describe('phone hold point', function () {
       String(await captureFailure(scenario(664, 400).phoneHoldPoint(long)))
     ).contains('Visible unobscured part of the bubble required for a hold')
   })
+})
+
+describe('newest-page side of a post', function () {
+  for (const [id, side] of [
+    ['msg_first', 'older'],
+    ['msg_last', 'latest'],
+    ['msg_paged', undefined]
+  ] as const)
+    it(`places ${id} on the ${String(side)} side`, async function () {
+      const scenario = Object.assign(Object.create(Scenarios.prototype), {
+        group: 'cnv_group',
+        observations: [],
+        protocolPeer: async () => ({
+          engine: {
+            open: async () => ({
+              messages: [
+                { id: 'msg_first' },
+                { id: 'msg_second' },
+                { id: 'msg_third' },
+                { id: 'msg_last' }
+              ]
+            })
+          }
+        })
+      }) as Scenarios
+      expect(
+        await scenario.newestPageSide({
+          id,
+          seq: 1,
+          body: 'Post',
+          authorId: 'usr_peer'
+        })
+      ).equals(side)
+    })
 })
