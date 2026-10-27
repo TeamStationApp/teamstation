@@ -50,7 +50,8 @@ describe('concurrent public and legacy team-follow APIs', function () {
     pool = new Pool({ connectionString: connection })
     await migrateUp(pool, migrations)
     await pool.query(
-      'insert into users (id, display_name, password_hash) values ($1, $2, $3)',
+      // An account, switched on: a password is a way in, never the switch.
+      'insert into users (id, display_name, password_hash, login_enabled) values ($1, $2, $3, true)',
       [person, 'Example Follower', 'fixture']
     )
     await pool.query('insert into teams (id, name) values ($1, $2)', [
