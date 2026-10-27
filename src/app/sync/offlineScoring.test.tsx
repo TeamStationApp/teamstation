@@ -49,6 +49,8 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
   offline: boolean
   /** Another device saved the lineups: live posts are stale. */
   stale: boolean
+  /** While set, a play's save waits on it before it is answered. */
+  holdPlays?: Promise<void>
   posts: Post[]
 } {
   const plays = new Map(stored.plays.map(play => [play.about.atBatIndex, play]))
@@ -127,6 +129,7 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
   const state = {
     offline: false,
     stale: false,
+    holdPlays: undefined as Promise<void> | undefined,
     posts: [] as Post[],
     fetch: (async (url: unknown, init?: RequestInit) => {
       if (state.offline) throw new TypeError('Load failed')
@@ -175,6 +178,7 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
             details: { stale: true }
           })
         if (path === '/games/g1/events') {
+          await state.holdPlays
           for (const index of body.remove as number[]) plays.delete(index)
           for (const play of body.plays as GumboPlay[])
             plays.set(play.about.atBatIndex, play)
@@ -427,6 +431,72 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     expect(served).includes(String(SERVER_GUMBO))
     expect(served).not.includes(String(local!.gumboId))
     expect(stored(eventsKey('g1'))!.pending).equals(0)
+  })
+
+  it('puts the offline line at the top over a field moved under it, says nothing of a tap, and Saving… only while the queue goes out', async function () {
+    const { client, net, rows } = await preparedPhone()
+    net.offline = true
+    await open(client)
+    expect(status()).equals(OFFLINE_BANNER)
+    // At the top, one line, in the web's place above the board: nothing
+    // moves for it there (a phone makes a band, `scoringStatusPlacement`).
+    const line = document.querySelector<HTMLElement>(
+      '[aria-label="Save status"]'
+    )!
+    const frame = line.parentElement!.parentElement!
+    expect(frame.style.top).equals('8px')
+    expect(frame.style.height).equals('28px')
+    const moved = (): boolean =>
+      [...document.querySelectorAll<HTMLElement>('div')].some(node =>
+        node.style.transform.includes('translateY(28px)')
+      )
+    expect(moved()).equals(false)
+    await click('Ball')
+    await settle(50)
+    await click('Ball')
+    await settle(50)
+    expect(status()).equals(OFFLINE_BANNER)
+    expect(document.body.textContent).not.includes('Saving…')
+    expect(rows().filter(row => row.chain === 'game:g1').length).greaterThan(0)
+
+    // Another game's write the server refused, held on this phone.
+    executors
+      .at(-1)!
+      .db.prepare(
+        `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path, body, depends_on, state, attempts, lease_until, game_id, message)
+         VALUES ('other', 'other-key', 0, 'game:g2', 'POST', '/games/g2/events', '{}', '[]', 'dead', 1, NULL, 'g2', 'Refused')`
+      )
+      .run()
+
+    // Back online, with this game's plays answered only when let go.
+    let release: () => void = () => undefined
+    net.holdPlays = new Promise<void>(resolve => {
+      release = resolve
+    })
+    net.offline = false
+    // Any request that reaches the server again says so, as the phone's own
+    // reads do the moment it has signal.
+    client.offline = false
+    client.wakeOutbox(true)
+    const draining = client.drainOutbox()
+    await settle(50)
+    expect(status()).equals('Saving…')
+    // Saving… sits where a save's line always sat, out of the band.
+    expect(
+      document.querySelector<HTMLElement>('[aria-label="Save status"]')!
+        .parentElement!.parentElement!.style.height
+    ).equals('')
+    release()
+    await act(async () => {
+      await draining
+      await client.drainOutbox()
+    })
+    await settle(50)
+    expect(rows().filter(row => row.chain === 'game:g1')).deep.equals([])
+    // g2's refused write is still on the phone; it keeps nothing busy here.
+    expect(rows().some(row => row.chain === 'game:g2')).equals(true)
+    expect(hasLabel('Save status')).equals(false)
+    expect(moved()).equals(false)
   })
 
   it("says the server copy moved on over a parked game, and gives the phone's innings up for it once confirmed", async function () {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View, type ViewStyle } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
 import { GlassView } from '../components/GlassView'
@@ -40,7 +40,7 @@ import {
   toastTopBelow,
   WEB_MENU_BUTTON
 } from './fieldSafeArea'
-import type { FieldCanvasProps } from './fieldTypes'
+import type { BaseProjection, FieldCanvasProps } from './fieldTypes'
 import { useFieldSurface } from './useFieldSurface'
 
 /** The scoring screen's camera, which the replay frames its field with too. */
@@ -111,6 +111,154 @@ export interface BaseballScreenProps {
    */
   sound?: { on: boolean; onToggle: () => void }
   onDismissHint?: () => void
+  /**
+   * Points kept clear across the top for a line drawn there (the scoring
+   * screen's offline line): the field, its scoreboard and the header row
+   * start that much lower. 0, the default, is the layout without one.
+   */
+  topBand?: number
+}
+
+/**
+ * The field's holder under a band across the top: moved down, keeping its
+ * size, so the GL canvas never lays itself out again (a resize blanks a
+ * frame) and its bottom runs under the deck, which a phone has room for.
+ */
+export function fieldHolderStyle(band: number): ViewStyle {
+  return band === 0
+    ? { flex: 1 }
+    : { flex: 1, transform: [{ translateY: band }] }
+}
+
+/**
+ * The canvas's own callbacks, with every screen point they report moved down
+ * by the band the canvas sits under: the bases, a runner's Safe and Out
+ * targets and a held runner's anchor, which the controls over the field draw
+ * from. Ground points are the field's own and need nothing.
+ */
+export function bandedField(
+  field: FieldCanvasProps,
+  band: number
+): FieldCanvasProps {
+  if (band === 0) return field
+  const down = <T extends { y: number }>(point: T): T => ({
+    ...point,
+    y: point.y + band
+  })
+  const { onBaseProjection, onRunnerDrag, onRunnerHold } = field
+  return {
+    ...field,
+    ...(onBaseProjection == null
+      ? {}
+      : {
+          onBaseProjection: projection => {
+            onBaseProjection({
+              ...projection,
+              bases: projection.bases.map(down),
+              ...(projection.heads == null
+                ? {}
+                : { heads: projection.heads.map(down) }),
+              ...(projection.feet == null
+                ? {}
+                : { feet: projection.feet.map(down) })
+            })
+          }
+        }),
+    ...(onRunnerDrag == null
+      ? {}
+      : {
+          onRunnerDrag: view => {
+            onRunnerDrag(
+              view == null
+                ? null
+                : { ...view, safe: down(view.safe), out: down(view.out) }
+            )
+          }
+        }),
+    ...(onRunnerHold == null
+      ? {}
+      : {
+          onRunnerHold: (id, anchor) => {
+            onRunnerHold(id, down(anchor))
+          }
+        })
+  }
+}
+
+/** The board the canvas reports, moved down by the band its canvas sits under. */
+export function bandedBounds(
+  canvas: ScoreboardBounds,
+  band: number
+): ScoreboardBounds {
+  return band === 0 ? canvas : { ...canvas, y: canvas.y + band }
+}
+
+/**
+ * The canvas's steady reports, its bases and its board, moved down by the
+ * band. The canvas reports only when its own values change, and a band moves
+ * the canvas without changing them, so the last of each, kept as the canvas
+ * gave it, is moved again whenever the band comes or goes.
+ */
+export function useBandedReports(
+  field: FieldCanvasProps,
+  band: number
+): {
+  field: FieldCanvasProps
+  bounds: ScoreboardBounds | undefined
+  onScoreboardBounds: (canvas: ScoreboardBounds) => void
+} {
+  const [bounds, setBounds] = useState<ScoreboardBounds>()
+  const canvasBoard = useRef<ScoreboardBounds>(undefined)
+  const canvasBases = useRef<BaseProjection>(undefined)
+  const onScoreboardBounds = useCallback(
+    (canvas: ScoreboardBounds) => {
+      canvasBoard.current = canvas
+      setBounds(bandedBounds(canvas, band))
+    },
+    [band]
+  )
+  const banded = bandedField(field, band)
+  const report = banded.onBaseProjection
+  const latest = useRef(report)
+  latest.current = report
+  useEffect(() => {
+    if (canvasBoard.current != null)
+      setBounds(bandedBounds(canvasBoard.current, band))
+    if (canvasBases.current != null) latest.current?.(canvasBases.current)
+  }, [band])
+  return {
+    field:
+      report == null
+        ? banded
+        : {
+            ...banded,
+            onBaseProjection: projection => {
+              canvasBases.current = projection
+              report(projection)
+            }
+          },
+    bounds,
+    onScoreboardBounds
+  }
+}
+
+/**
+ * The safe area's padding with `band` more at the top: added on a phone,
+ * whose inset is a number, and through `calc()` on the web, whose inset is
+ * the browser's `env()`.
+ */
+export function bandedSafe(safe: ViewStyle, band: number): ViewStyle {
+  if (band === 0) return safe
+  const top = safe.paddingTop
+  return {
+    ...safe,
+    paddingTop:
+      typeof top === 'number'
+        ? top + band
+        : top == null
+          ? `${band}px`
+          : `calc(${String(top)} + ${band}px)`
+  }
 }
 /** Immersive scoring surface, with one fixed responsive camera. */
 export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
@@ -136,7 +284,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   }, [props.historyLabel, closeHistory])
   const surface = useFieldSurface()
   const theme = useTheme()
-  const [bounds, setBounds] = useState<ScoreboardBounds>()
+  const band = props.topBand ?? 0
+  const {
+    field: bandedCanvas,
+    bounds,
+    onScoreboardBounds
+  } = useBandedReports(props.field, band)
   const [viewportHeight, setViewportHeight] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(0)
   const [header, setHeader] = useState<ScoreboardBounds>()
@@ -174,13 +327,13 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           }}
         />
       )}
-      <View style={{ flex: 1 }}>
+      <View style={fieldHolderStyle(band)}>
         {props.suspended !== true && (
           <FieldCanvas
-            {...props.field}
+            {...bandedCanvas}
             {...SCORING_CAMERA}
             bottomExtension={112}
-            onScoreboardBounds={setBounds}
+            onScoreboardBounds={onScoreboardBounds}
           />
         )}
       </View>
@@ -188,7 +341,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         pointerEvents="box-none"
         style={[
           { position: 'absolute', inset: 0, justifyContent: 'space-between' },
-          surface.safe
+          bandedSafe(surface.safe, band)
         ]}
       >
         <View

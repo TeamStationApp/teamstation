@@ -47,3 +47,46 @@ export function scoringStatusFrame(native: boolean, insets: Insets): ViewStyle {
     alignItems: 'center'
   }
 }
+
+/** How tall the band across the top is while the offline line sits in it. */
+export const SCORING_OFFLINE_BAND = 28
+
+/**
+ * Where the offline line sits. On a phone: a filled band across the very
+ * top, the line centred in its last `SCORING_OFFLINE_BAND` points under the
+ * status bar; the field, its scoreboard and ☰ start under the band
+ * (`BaseballScreen`'s `topBand`), so the line covers none of them and keeps
+ * off the space above home plate, and the fill covers the strip the field
+ * leaves. On the web the line keeps its place 8 from the top, between the
+ * speaker and ☰ and above the board, and nothing moves: the web's field is
+ * framed from the window's width, so a shorter canvas would only push home
+ * plate under the deck.
+ */
+export function scoringOfflineFrame(
+  native: boolean,
+  insets: Insets,
+  fill: string
+): ViewStyle {
+  if (!native)
+    return {
+      position: 'absolute',
+      top: FIELD_EDGE_GAP,
+      left: 0,
+      right: 0,
+      height: SCORING_OFFLINE_BAND,
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  const top = Math.max(FIELD_EDGE_GAP, insets.top)
+  return {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingTop: top,
+    height: top + SCORING_OFFLINE_BAND,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: fill
+  }
+}
