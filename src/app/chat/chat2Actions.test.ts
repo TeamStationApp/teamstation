@@ -14001,13 +14001,22 @@ describe('phone search of a loaded newest-page post', function () {
     scenario: Scenarios
     swipes: () => number
     touches: () => number
+    jumps: () => number
   } {
     let swipes = 0
     let touches = 0
+    let jumps = 0
     let older = 0
     const ui = {
       surface: 'ios',
       physical,
+      visible: async (selector: { id?: string }) =>
+        selector.id === 'chat-jump-latest',
+      id: async (id: string) => {
+        expect(id).equals('chat-jump-latest')
+        jumps += 1
+        older = -2
+      },
       nodes: async (): Promise<PublicNode[]> => [
         {
           id: 'chat-message-history',
@@ -14045,7 +14054,8 @@ describe('phone search of a loaded newest-page post', function () {
         observations: []
       }) as Scenarios,
       swipes: () => swipes,
-      touches: () => touches
+      touches: () => touches,
+      jumps: () => jumps
     }
   }
   it('finds an older post from a phone history start reached by the status bar', async function () {
@@ -14060,7 +14070,7 @@ describe('phone search of a loaded newest-page post', function () {
     expect([m.touches(), m.swipes()]).deep.equals([1, 0])
     expect(m.scenario.observations[0].statusBarStart).equals(1)
   })
-  it('sweeps a phone history to its latest end by moving rows, then from its start', async function () {
+  it('sweeps a phone history older from its latest end, then from its start', async function () {
     this.timeout(20000)
     const m = sweeping(true)
     expect(
@@ -14070,8 +14080,10 @@ describe('phone search of a loaded newest-page post', function () {
         'latest'
       )
     ).equals(true)
-    // Two drags reach the latest end and two more prove it stopped.
-    expect([m.swipes(), m.touches()]).deep.equals([4, 1])
+    // Go to latest leaves the reader at the latest end; five older drags
+    // reach the post's rows.
+    expect([m.jumps(), m.swipes(), m.touches()]).deep.equals([1, 5, 0])
+    expect(m.scenario.observations[0].latestJump).equals(true)
   })
   it('keeps the simulator stopping on an unchanged mounted set', async function () {
     this.timeout(20000)
