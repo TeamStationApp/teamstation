@@ -3,11 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import {
-  type DictationModel,
-  dictationModelOf,
-  type Health
-} from '../../common/api'
+import { dictationModelOf } from '../../common/api'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { scoringPreferences } from './scoringPreferences'
 import { ScoringSettings } from './ScoringSettings'
@@ -20,16 +16,6 @@ afterEach(async () => {
   })
   root = undefined
 })
-function health(dictation: boolean, models: string[]): () => Promise<Health> {
-  return async () => ({
-    status: 'ok',
-    version: '1',
-    database: 'ok',
-    migrations: 1,
-    dictation,
-    dictationModels: models
-  })
-}
 async function render(
   userId: string,
   props: Partial<React.ComponentProps<typeof ScoringSettings>> = {}
@@ -51,51 +37,30 @@ async function render(
 function find(label: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 }
-function chosen(): string[] {
-  return [...document.querySelectorAll('[role="radio"]')]
-    .filter(node => node.getAttribute('aria-checked') === 'true')
-    .map(node => String(node.getAttribute('aria-label')))
-}
-
 describe('the settings sheet', function () {
-  it('lists every dictation model first, the server’s ones to pick', async function () {
-    const picked: DictationModel[] = []
-    await render('models', {
-      health: health(true, ['grok-4.3', 'gpt-6-luna', 'claude-haiku-5-5']),
-      onDictationModelChange: model => picked.push(model)
-    })
-    const group = find('Dictation Model')!
-    expect(group.textContent).match(/^Dictation Model/)
+  it('offers no dictation model, only the switches and the reset', async function () {
+    await scoringPreferences.update('stored', stored => ({
+      ...stored,
+      dictationModel: 'gpt-6-luna'
+    }))
+    await render('stored')
+    expect(find('Dictation Model')).equals(null)
+    expect(document.querySelectorAll('[role="radio"]')).length(0)
+    expect(document.body.textContent).not.includes('Dictation Model')
     expect(
-      [...group.querySelectorAll('[role="radio"]')].map(node =>
+      [...document.querySelectorAll('[aria-label]')].map(node =>
         node.getAttribute('aria-label')
       )
-    ).deep.equals(['Grok 4.3', 'GPT-6 Luna', 'GPT-6 Sol', 'Claude Haiku 5.5'])
-    // Nothing picked yet: the default, which this server offers.
-    expect(chosen()).deep.equals(['Claude Haiku 5.5'])
-    expect(find('GPT-6 Sol')?.getAttribute('aria-disabled')).equals('true')
-    expect(find('GPT-6 Sol')?.textContent).includes('not set up')
-    // It comes before the other settings.
-    const all = [...document.querySelectorAll('[aria-label]')].map(node =>
-      node.getAttribute('aria-label')
-    )
-    expect(all.indexOf('Dictation Model')).lessThan(
-      all.indexOf('Toggle scoring sound')
-    )
-    await act(async () => {
-      find('GPT-6 Luna')!.click()
-    })
-    expect(chosen()).deep.equals(['GPT-6 Luna'])
-    expect(picked).deep.equals(['gpt-6-luna'])
-    expect((await scoringPreferences.read('models')).dictationModel).equals(
+    ).deep.equals([
+      'Toggle scoring sound',
+      'Toggle play animations',
+      'Toggle switch-hitter help',
+      'Reset shown count'
+    ])
+    // The model stored before stays what dictation sends.
+    expect((await scoringPreferences.read('stored')).dictationModel).equals(
       'gpt-6-luna'
     )
-  })
-
-  it('shows no models where the server takes no dictation', async function () {
-    await render('none', { health: health(false, []) })
-    expect(find('Dictation Model')).equals(null)
-    expect(find('Toggle scoring sound')).not.equals(null)
   })
 
   it('turns sound and switch-hitter help on and off with switches', async function () {

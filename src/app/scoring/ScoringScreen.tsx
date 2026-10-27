@@ -3153,8 +3153,6 @@ function ScoringPanel(props: {
           {sheet === 'settings' && (
             <ScoringSettings
               userId={props.userId}
-              health={props.persistent ? health : noDictation}
-              onDictationModelChange={setDictationModel}
               onSoundChange={setSound}
               onAnimationsChange={enabled => {
                 dispatch({ type: 'PRESENTATION', enabled })
