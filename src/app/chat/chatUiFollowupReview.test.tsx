@@ -1608,8 +1608,8 @@ describe('chat review final native scroll positions', function () {
     await workspace(engine, state, null)
     expect(
       document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
-        .style.display
-    ).equals('none')
+        .style.visibility
+    ).equals('hidden')
     const hidden = state.drafts.get('cnv_aurora')!
     reading.moves.length = 0
     await reading.deliver(retained, 'onScrollEndDrag', 0)
@@ -2086,8 +2086,8 @@ describe('chat review2 arrival host, confirmation focus and list terminals', fun
     ).equals('none')
     expect(
       document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
-        .style.display
-    ).equals('flex')
+        .style.visibility
+    ).not.equals('hidden')
     const send = async (id: string): Promise<void> => {
       await act(async () => {
         engine.emit({ type: 'messageAlert', conversationId: id })

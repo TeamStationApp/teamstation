@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Text, useWindowDimensions, View } from 'react-native'
+import { Platform, Text, useWindowDimensions, View } from 'react-native'
 
 import { Screen } from '../components'
 import { lstrings } from '../locales/strings'
@@ -31,6 +31,25 @@ export interface ChatWorkspaceProps {
   onNewMessage: () => void
   onTitle: (conversationId: string, title: string) => void
 }
+
+/**
+ * The conversation behind the list keeps its place while it is hidden. In a
+ * browser it stays laid out at its own size, invisible and out of reach: a
+ * `display: none` history measures every row it mounts as empty, and at the
+ * top of a long history its list mounts rows without end until React gives up.
+ */
+const hiddenPane =
+  Platform.OS === 'web'
+    ? ({
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        visibility: 'hidden',
+        pointerEvents: 'none'
+      } as const)
+    : ({ display: 'none' } as const)
 
 /** Selection and drafts survive both pane layouts and route transitions. */
 export function ChatWorkspace(props: ChatWorkspaceProps): React.ReactElement {
@@ -173,12 +192,10 @@ function WorkspaceContent(
         </View>
         <View
           testID="chat-message-pane"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            display: messagesVisible ? 'flex' : 'none'
-          }}
+          style={[
+            { flex: 1, minWidth: 0, minHeight: 0 },
+            messagesVisible ? undefined : hiddenPane
+          ]}
         >
           {selected == null ? (
             <View

@@ -862,8 +862,8 @@ describe('chat read sessions preserve personal unread', function () {
     await showWorkspace(engine, state)
     expect(
       document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
-        .style.display
-    ).equals('none')
+        .style.visibility
+    ).equals('hidden')
     const beforeReveal = reads.length
     await measure(
       document.querySelector('[data-testid="chat-workspace"]')!,
@@ -872,8 +872,8 @@ describe('chat read sessions preserve personal unread', function () {
     )
     expect(
       document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
-        .style.display
-    ).equals('flex')
+        .style.visibility
+    ).not.equals('hidden')
     expect(
       engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread,
       'width changes do not explicitly reselect a conversation'
@@ -1068,7 +1068,7 @@ describe('chat repeated offscreen announcements', function () {
     )!
     expect(state.selectedId).equals('cnv_aurora')
     expect(listPane.style.display).equals('flex')
-    expect(messagePane.style.display).equals('none')
+    expect(messagePane.style.visibility).equals('hidden')
     const region = container.querySelector<HTMLElement>('[aria-live="polite"]')!
     const mutations: MutationRecord[] = []
     const observer = new MutationObserver(records => mutations.push(...records))
@@ -1095,7 +1095,7 @@ describe('chat repeated offscreen announcements', function () {
 
       await render(workspace('cnv_aurora'))
       expect(listPane.style.display).equals('none')
-      expect(messagePane.style.display).equals('flex')
+      expect(messagePane.style.visibility).not.equals('hidden')
       const announcedChild = region.firstChild
       mutations.length = 0
       await alert()

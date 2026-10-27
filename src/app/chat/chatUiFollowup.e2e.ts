@@ -254,8 +254,8 @@ async function s2(daemon: Daemon): Promise<void> {
       const messages=document.querySelector('[data-testid="chat-message-pane"]');
       if(!list || !messages)throw new Error('Workspace panes missing');
       if(getComputedStyle(list).display==='none')throw new Error('Chat list hidden');
-      if(${narrow} && getComputedStyle(messages).display!=='none')throw new Error('Narrow message pane should be hidden on list route');
-      if(!${narrow} && getComputedStyle(messages).display==='none')throw new Error('Wide message pane missing');
+      if(${narrow} && getComputedStyle(messages).visibility!=='hidden')throw new Error('Narrow message pane should be hidden on list route');
+      if(!${narrow} && getComputedStyle(messages).visibility==='hidden')throw new Error('Wide message pane missing');
       if(!document.body.innerText.includes('Team Members'))throw new Error('Structured pills missing');
       return JSON.stringify({viewport:innerWidth,paneLayout:${narrow}?'narrow':'wide',scopePills:true});
     `

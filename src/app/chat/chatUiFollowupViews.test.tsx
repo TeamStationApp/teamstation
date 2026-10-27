@@ -614,8 +614,8 @@ describe('chat UI follow-up workspace', function () {
     await layout(document.querySelector('[data-testid="chat-workspace"]')!, 320)
     expect(
       document.querySelector<HTMLElement>('[data-testid="chat-message-pane"]')!
-        .style.display
-    ).equals('none')
+        .style.visibility
+    ).equals('hidden')
     expect(engine.closed).contains('Aurora')
     await layout(
       document.querySelector('[data-testid="chat-workspace"]')!,
