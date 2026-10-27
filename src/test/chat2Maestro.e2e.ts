@@ -732,8 +732,9 @@ export function iosKeyboardDismissPoint(input: {
 /** Dismiss through one observed gutter, with one observed OS-menu transition. */
 export async function dismissIosChatKeyboard(
   ui: Pick<Chat2UI, 'device' | 'steps' | 'runDir'>,
-  // Long conversations make every iOS read slow on a loaded simulator.
-  timeout = 300000
+  // Long conversations make every iOS read slow on a loaded simulator, and a
+  // phone's read of a fully loaded history (E9's top) slower still.
+  timeout = 900000
 ): Promise<void> {
   const end = Date.now() + timeout
   const remaining = (): number => {
@@ -4716,6 +4717,16 @@ export class Chat2UI {
           'Enabled Delete key must belong to actual Keyboard'
         )
         await tap(key)
+        // Without Select All one Delete removes the selected word or one
+        // character: when text remains, the rest of the observed draft
+        // follows, and the caller's fresh read decides.
+        if (
+          menu == null &&
+          current != null &&
+          Array.from(current).length > 1 &&
+          !rawEmpty(await read())
+        )
+          for (let n = 1; n < Array.from(current).length; n++) await tap(key)
       }
       try {
         await api.tapOn({ id: 'chat-composer' }, options)
@@ -4983,26 +4994,33 @@ export class Chat2UI {
       return value
     }
     if (this.surface === 'ios') {
-      const node = await this.iosRead({ id: 'chat-composer' }, 'TextView')
-      assert(
-        node.enabled === true,
-        'Actual enabled iOS editable composer required'
-      )
-      if (
-        node.value != null &&
-        node.value !== node.placeholderValue &&
-        node.value !== node.label
-      )
-        return node.value
-      if (node.index < 0 && node.text != null && node.text !== node.label)
-        return node.text
+      // A paste or edit can still be landing in the field when it is read:
+      // three reads, a second apart, before the value counts as ambiguous.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 1000))
+        const node = await this.iosRead({ id: 'chat-composer' }, 'TextView')
+        assert(
+          node.enabled === true,
+          'Actual enabled iOS editable composer required'
+        )
+        if (
+          node.value != null &&
+          node.value !== node.placeholderValue &&
+          node.value !== node.label
+        )
+          return node.value
+        if (node.index < 0 && node.text != null && node.text !== node.label)
+          return node.text
+      }
       throw new Chat2Blocked(
         'Native composer value is empty, placeholder, or ambiguous; an explicit empty-UI proof is required'
       )
     }
     const value = await this.device.copyTextFrom({ id: 'chat-composer' })
     await this.closeAndroidClipboardOverlay()
-    if (typeof value.data === 'string') return value.data
+    // An empty field's text is its placeholder (its hint), which is no draft.
+    if (typeof value.data === 'string')
+      return value.data === ANDROID_COMPOSER_PLACEHOLDER ? '' : value.data
     throw new Chat2Blocked('Native public composer text could not be read')
   }
 

@@ -2999,8 +2999,9 @@ export class Scenarios {
     }
     for (let step = 0; !safe(); step++) {
       assert(
-        step < (ui.surface === 'ios' || readerTall() ? 8 : 4) &&
-          current.box.height > 0,
+        // A phone's slow, fling-free drags move a tall row a little at a
+        // time: both platforms get eight measured framing drags.
+        step < 8 && current.box.height > 0,
         'Positive native target must clear header, pins and composer'
       )
       const { box, band } = current
@@ -3283,7 +3284,11 @@ export class Scenarios {
           ? ['end', 1, 'start', -1]
           : ['start', -1]
         : first === 'latest'
-          ? [-1, 1]
+          ? // From the latest end one sweep toward older rows reaches every
+            // loaded row; sweeping there first from the reader repeats it.
+            ui.surface === 'android'
+            ? ['end', 1]
+            : [-1, 1]
           : [1, -1]
     for (const [index, direction] of sweeps.entries()) {
       if (nodes.some(node => node.id === id)) break
@@ -3341,12 +3346,13 @@ export class Scenarios {
         const middle = (top + bottom) / 2
         // A quick Pixel drag flings more than a screen between reads, past a
         // row the driver lists only while it is on screen (E10's loop anchor
-        // was swept past); Android drags half a reader slowly instead.
+        // was swept past); Android drags most of a reader slowly instead,
+        // which never moves a row past the screen between reads.
         const slowAndroid = ui.surface === 'android'
         const delta =
           direction *
           (bottom - top) *
-          (slowAndroid ? 0.5 : olderOnly ? 0.9 : 0.6)
+          (slowAndroid ? 0.8 : olderOnly ? 0.9 : 0.6)
         const x = Math.round(history.x + history.width / 2)
         const input = {
           startX: x,

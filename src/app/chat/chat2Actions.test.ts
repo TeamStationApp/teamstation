@@ -14837,7 +14837,7 @@ describe('Android draft clear read-back', function () {
 })
 
 describe('Android loaded-row sweep', function () {
-  it('drags half a reader slowly, so no row flings past between reads', async function () {
+  it('drags most of a reader slowly, so no row flings past between reads', async function () {
     const post: Chat2Message = {
       id: 'msg_loop_anchor',
       seq: 2,
@@ -14885,8 +14885,9 @@ describe('Android loaded-row sweep', function () {
     expect(swipes).has.length(2)
     for (const swipe of swipes) {
       expect(swipe.duration).equals(1500)
-      // Half the 255..1886 reader, toward older rows (the finger moves down).
-      expect(swipe.endY - swipe.startY).within(815, 816)
+      // Most (0.8) of the 255..1886 reader, toward older rows (the finger
+      // moves down): slow, so still no fling past a read.
+      expect(swipe.endY - swipe.startY).within(1304, 1306)
     }
   })
 })
