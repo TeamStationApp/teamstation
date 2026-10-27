@@ -80,6 +80,7 @@ export interface Chat2Device {
     args: Args,
     options?: { signal: AbortSignal }
   ) => Promise<unknown>
+  doubleTapOn: (args: Args) => Promise<unknown>
   uploadFile: (args: Args) => Promise<unknown>
   addMedia: (args: Args) => Promise<unknown>
   startRecording: (args: Args) => Promise<unknown>
@@ -419,6 +420,9 @@ export async function pollNotVisible(
     }
   }
 }
+
+/** The Android composer's placeholder, which an empty field reads as. */
+export const ANDROID_COMPOSER_PLACEHOLDER = 'Message'
 
 /** A phone's WebDriverAgent typing rate, in keys per second. */
 export const PHONE_TYPING_KEYS_PER_SECOND = 15
@@ -2544,6 +2548,24 @@ export class Chat2UI {
     }
     if (this.surface !== 'ios') {
       await this.device.setClipboard({ text })
+      await this.closeAndroidClipboardOverlay()
+      return
+    }
+    if (this.physical) {
+      // A phone's hold on a draft only moves its caret and raises no menu,
+      // and its double tap selects one word (Cut, Copy, Paste; no Select
+      // All). The phone's sentinel is that word: the text without its spaces.
+      const word = text.replace(/\s+/g, '')
+      await this.replaceDraft(word)
+      await this.device.doubleTapOn({ id: 'chat-composer', point: '20%,50%' })
+      await this.iosMenuAction('Cut')
+      await this.pasteClipboard()
+      assert.equal(
+        await this.draft(),
+        word,
+        'Observed OS sentinel Cut/Paste required'
+      )
+      await this.replaceDraft('')
       return
     }
     await this.replaceDraft(text)
@@ -3302,12 +3324,12 @@ export class Chat2UI {
             node => node.id === id && node.bounds != null
           )?.bounds
         : undefined
-    return (
-      found ??
-      need(
-        (await this.device.copyTextFrom(selected)).element?.bounds,
-        'Measured public element bounds required'
-      )
+    if (found != null) return found
+    const copied = await this.device.copyTextFrom(selected)
+    await this.closeAndroidClipboardOverlay()
+    return need(
+      copied.element?.bounds,
+      'Measured public element bounds required'
     )
   }
 
@@ -3333,12 +3355,39 @@ export class Chat2UI {
       )
       return text
     }
-    const result = await this.device.copyTextFrom({ id })
+    // The driver's copyTextFrom writes the device clipboard, and Android 13+
+    // answers each write with a copied-text overlay over the app; the text
+    // is read from the passive hierarchy instead.
+    const found = (await this.nodes()).filter(
+      node => node.id === id && typeof node.text === 'string'
+    )
     assert(
-      typeof result.data === 'string',
+      found.length === 1 && found[0].text !== '',
       'Native public text required: ' + id
     )
-    return result.data
+    return found[0].text!
+  }
+
+  /**
+   * Android 13+ shows a copied-text overlay (preview, Share, Send to nearby
+   * device) after each clipboard write, including the driver's own
+   * copyTextFrom; it covers the lower screen until dismissed. Close it with
+   * its own Dismiss control.
+   */
+  async closeAndroidClipboardOverlay(): Promise<boolean> {
+    if (this.surface !== 'android') return false
+    const dismiss = (await this.nodes()).find(
+      node =>
+        node.id === 'com.android.systemui:id/dismiss_button' &&
+        node.bounds != null
+    )
+    if (dismiss == null) return false
+    await this.tapObserved(dismiss)
+    this.steps.push({
+      name: 'Android copied-text overlay dismissed',
+      outcome: 'passed'
+    })
+    return true
   }
 
   async resize(width: number, height: number): Promise<void> {
@@ -4698,7 +4747,40 @@ export class Chat2UI {
       return
     }
     await this.device.eraseText()
+    if (this.surface === 'android') await this.androidDraftCleared()
     if (text !== '') await this.append(text)
+  }
+
+  /**
+   * The Pixel's eraseText can pass and leave the draft (E10's typing probe
+   * stayed in all six runs, two lines tall, shrinking the reader). The draft
+   * is read back; the empty field reads as '' or its placeholder. A draft
+   * left behind is cleared once more through the field's own menu (Select
+   * all, then the Delete key), and a draft that still stays fails with what
+   * was read.
+   */
+  async androidDraftCleared(): Promise<void> {
+    const empty = (value: string): boolean =>
+      value === '' || value === ANDROID_COMPOSER_PLACEHOLDER
+    const left = await this.draft()
+    if (empty(left)) return
+    const proof: Args = {
+      name: 'Android draft cleared again through its menu',
+      leftLength: left.length,
+      outcome: 'failed'
+    }
+    this.steps.push(proof)
+    await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
+    await this.device.tapOn({ text: '^Select all$' })
+    // The driver's eraseText clears through the field's setText, which this
+    // field can miss; the Delete key goes through the keyboard.
+    await this.device.pressKey({ key: 'backspace' })
+    const after = await this.draft()
+    assert(
+      empty(after),
+      'Android draft must clear; still read: ' + JSON.stringify(after)
+    )
+    proof.outcome = 'passed'
   }
 
   /** Wait for the browser composer to leave any modal overlay's inert background. */
@@ -4782,6 +4864,7 @@ export class Chat2UI {
       )
     }
     const value = await this.device.copyTextFrom({ id: 'chat-composer' })
+    await this.closeAndroidClipboardOverlay()
     if (typeof value.data === 'string') return value.data
     throw new Chat2Blocked('Native public composer text could not be read')
   }
