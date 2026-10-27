@@ -3671,12 +3671,18 @@ export class Chat2UI {
               recipe.restoreVerify.length > 0,
             'Native appearance requires observed restoration recipe'
           )
-          await this.device.setDarkMode({ enabled: name === 'dark' })
+          // A physical iPhone has no driver-level appearance switch: its
+          // observed Display & Brightness recipe sets it instead.
+          if (!(this.surface === 'ios' && this.physical))
+            await this.device.setDarkMode({ enabled: name === 'dark' })
           await this.settingsActions(recipe.set)
           await this.settingsVerify(recipe.verify)
           await this.device.launchApp({ appId: this.fixture.appId })
           row.environment = {
-            method: 'Maestro setDarkMode',
+            method:
+              this.surface === 'ios' && this.physical
+                ? 'Observed Display & Brightness recipe'
+                : 'Maestro setDarkMode',
             requested: name,
             observed: await this.device.platformInfo()
           }
@@ -4616,9 +4622,27 @@ export class Chat2UI {
         })
         return bytes
       }
+      // A system banner (a delivered notification) can cover the app for one
+      // snapshot, which then lists neither the editor nor the keyboard: read
+      // again, briefly.
+      const appRaw = async (): Promise<Uint8Array> => {
+        let raw = await actionRaw()
+        for (
+          let attempt = 0;
+          attempt < 4 &&
+          iosPublicRead(raw, { id: 'chat-composer' }, 'TextView').element ==
+            null &&
+          iosPublicRead(raw, {}, 'Keyboard').element == null;
+          attempt++
+        ) {
+          await new Promise(resolve => setTimeout(resolve, 1500))
+          raw = await actionRaw()
+        }
+        return raw
+      }
       const remove = async (current?: string): Promise<void> => {
         await api.longPressOn({ id: 'chat-composer', duration: 600 }, options)
-        let raw = await actionRaw()
+        let raw = await appRaw()
         let menu = iosPublicRead(
           raw,
           { text: exactText('Select All') },
@@ -4639,7 +4663,7 @@ export class Chat2UI {
           await api.tapOnPoint(end, options)
           await new Promise(resolve => setTimeout(resolve, 700))
           await api.tapOnPoint(end, options)
-          raw = await actionRaw()
+          raw = await appRaw()
           menu = iosPublicRead(
             raw,
             { text: exactText('Select All') },
@@ -4649,7 +4673,7 @@ export class Chat2UI {
         if (menu != null) {
           assert(menu.enabled === true, 'Enabled observed Select All required')
           await tap(menu)
-          raw = await actionRaw()
+          raw = await appRaw()
         }
         // An absent Select All is no claim about selection; the fresh value proves deletion.
         const key = need(
