@@ -145,18 +145,9 @@ describe('the manage page', function () {
         display_name: name,
         login_enabled: true,
         created_at: now,
-        updated_at: now
+        updated_at: now,
+        email
       })
-      await db
-        .insertInto('user_emails')
-        .values({
-          id: makeId('userEmail'),
-          user_id: userIdOfGumbo(id),
-          email,
-          is_primary: true,
-          verified_at: now
-        })
-        .execute()
     }
     for (const [id, user, token] of [
       ['ses_boss', bossId, BOSS],

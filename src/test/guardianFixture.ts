@@ -148,21 +148,12 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       display_name: `${p.first} ${p.last}`,
       first_name: p.first,
       last_name: p.last,
-      login_enabled: p.email != null
+      login_enabled: p.email != null,
+      email: p.email,
+      emailId: `email_guardian_${p.id}`
     })
     if (p.email == null) continue
     emails[p.id] = p.email
-    await db
-      .insertInto('user_emails')
-      .values({
-        id: `email_guardian_${p.id}`,
-        user_id: userIdOfGumbo(p.id),
-        email: p.email,
-        is_primary: true,
-        verified_at: new Date(),
-        source: 'manual'
-      })
-      .execute()
     f.h.tokens.set(
       p.id,
       (await createSession(db, userIdOfGumbo(p.id), 'guardian')).token
