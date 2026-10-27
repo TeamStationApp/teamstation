@@ -141,6 +141,8 @@ export async function addPerson(
     legacyId: made.legacyId,
     display_name: label,
     is_admin: options.isAdmin === true,
+    // Signed in below, so an account that can be.
+    login_enabled: true,
     created_at: now,
     updated_at: now
   })

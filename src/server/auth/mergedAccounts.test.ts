@@ -57,19 +57,9 @@ describe('signing in to merged accounts', function () {
               proof,
               testPasswordParameters,
               userIdOfGumbo(id)
-            )
+            ),
+      email
     })
-    await h.db
-      .insertInto('user_emails')
-      .values({
-        id: makeId('userEmail'),
-        user_id: userIdOfGumbo(id),
-        email,
-        is_primary: true,
-        verified_at: new Date(),
-        source: 'manual'
-      })
-      .execute()
     return { id, email, signedIn: await signIn(id) }
   }
 

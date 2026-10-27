@@ -77,6 +77,7 @@ export async function accountHarness(
     [101, 'Babe Ruth'],
     [102, 'Lou Gehrig']
   ] as const) {
+    const email = id === 101 ? 'alex@example.com' : 'casey@example.com'
     const values = {
       id,
       legacyId: `usr_account_${id}`,
@@ -90,18 +91,19 @@ export async function accountHarness(
         'insert into users(id,"legacyId",display_name,login_enabled,first_name,last_name) values($1,$2,$3,$4,$5,$6)',
         [id, values.legacyId, label, true, values.first_name, values.last_name]
       )
-    } else await insertFixtureUsers(db, values)
-    await db
-      .insertInto('user_emails')
-      .values({
-        id: `email_${id}`,
-        user_id: accountId(id),
-        email: id === 101 ? 'alex@example.com' : 'casey@example.com',
-        is_primary: true,
-        verified_at: new Date(),
-        source: 'manual'
-      })
-      .execute()
+      await db
+        .insertInto('user_emails')
+        .values({
+          id: `email_${id}`,
+          user_id: accountId(id),
+          email,
+          is_primary: true,
+          verified_at: new Date(),
+          source: 'manual'
+        })
+        .execute()
+    } else
+      await insertFixtureUsers(db, { ...values, email, emailId: `email_${id}` })
   }
   await db
     .insertInto('teams')

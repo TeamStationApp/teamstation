@@ -79,23 +79,14 @@ export async function groupFixture(
         first_name: name.split(' ')[0],
         last_name: name.split(' ').slice(1).join(' '),
         login_enabled: true,
-        is_admin: id === 105
+        is_admin: id === 105,
+        email: `fixture${id}@example.com`,
+        emailId: `email_creation_${id}`
       })
       h.tokens.set(
         id,
         (await createSession(h.db, userIdOfGumbo(id), 'creation-fixture')).token
       )
-      await h.db
-        .insertInto('user_emails')
-        .values({
-          id: `email_creation_${id}`,
-          user_id: userIdOfGumbo(id),
-          email: `fixture${id}@example.com`,
-          is_primary: true,
-          verified_at: new Date(),
-          source: 'manual'
-        })
-        .execute()
     }
     const create = async (
       kind: 'league' | 'season' | 'team',
