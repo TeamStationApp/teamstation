@@ -1014,6 +1014,31 @@ describe('useMultiCam buffering', function () {
     expect(tiles.A.paused).equals(false)
   })
 
+  it('keeps looking once a second while the grid re-renders faster than that, as it does after a scrub', async function () {
+    this.timeout(8000)
+    const { mc, tiles, rerender } = await grid({}, { debug: true }, tiles => {
+      fill(tiles.A, [120, 130])
+      fill(tiles.B, [60, 70])
+    })
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    /** What the readout last said A holds: it is only rewritten by a look. */
+    const shown = (): number =>
+      Number(/ buf (-?[0-9.]+)s/.exec(mc().readout[0] ?? '')?.[1])
+    // Three seconds of renders a third of a second apart, each changing
+    // something the look reads (which angle is heard), while A's buffer
+    // grows a second at a time.
+    for (let step = 1; step <= 10; step++) {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      })
+      fill(tiles.A, [120, 130 + step])
+      await rerender({ audioId: step % 2 === 0 ? 'A' : 'B' })
+    }
+    // Looked at within the last second or so: at least 17 of the 20 s.
+    expect(shown()).least(16)
+  })
+
   it('plays a lone angle its player calls ready, though the gate measures it short at the clock for ever (the iPhone freeze)', async function () {
     this.timeout(8000)
     // Safari's state when it froze: paused at 306 s, six seconds loaded and
