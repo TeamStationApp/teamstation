@@ -14176,7 +14176,10 @@ describe('phone search of a loaded newest-page post', function () {
   })
   // The post is three drags older than the reader, which starts two drags
   // from the latest end; the history's start holds it.
-  function sweeping(physical: boolean): {
+  function sweeping(
+    physical: boolean,
+    postAt = 3
+  ): {
     scenario: Scenarios
     swipes: () => number
     touches: () => number
@@ -14212,7 +14215,7 @@ describe('phone search of a loaded newest-page post', function () {
         // The same tall rows stay mounted while a phone's drags move them.
         { id: 'chat-bubble-tall-a', bounds: frame(-900 + older * 300) },
         { id: 'chat-bubble-tall-b', bounds: frame(-100 + older * 300) },
-        ...(older >= 3 ? [{ id: 'chat-bubble-' + post.id }] : [])
+        ...(older >= postAt ? [{ id: 'chat-bubble-' + post.id }] : [])
       ],
       measuredSwipe: async (input: { startY: number; endY: number }) => {
         swipes += 1
@@ -14223,7 +14226,7 @@ describe('phone search of a loaded newest-page post', function () {
         tapOnPoint: async (point: { x: number; y: number }) => {
           expect(point).deep.equals({ x: 60, y: 20 })
           touches += 1
-          older = 3
+          older = postAt
         }
       }
     }
@@ -14263,6 +14266,20 @@ describe('phone search of a loaded newest-page post', function () {
     // reach the post's rows.
     expect([m.jumps(), m.swipes(), m.touches()]).deep.equals([1, 5, 0])
     expect(m.scenario.observations[0].latestJump).equals(true)
+  })
+  it('looks only thirty drags back from a phone history latest end before starting from its start', async function () {
+    this.timeout(40000)
+    // Forty drags older: the grown QA history's old posts sit near its start.
+    const m = sweeping(true, 40)
+    expect(
+      await m.scenario.nativeLoadedTarget(
+        post,
+        AbortSignal.timeout(35000),
+        'latest'
+      )
+    ).equals(true)
+    expect([m.jumps(), m.swipes(), m.touches()]).deep.equals([1, 30, 1])
+    expect(m.scenario.observations[0].statusBarStart).equals(1)
   })
   it('keeps the simulator stopping on an unchanged mounted set', async function () {
     this.timeout(20000)

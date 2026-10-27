@@ -3264,7 +3264,7 @@ export class Scenarios {
         : first === 'latest'
           ? [-1, 1]
           : [1, -1]
-    for (const direction of sweeps) {
+    for (const [index, direction] of sweeps.entries()) {
       if (nodes.some(node => node.id === id)) break
       if (direction === 'end') {
         if (await ui.visible({ id: 'chat-jump-latest' }, 500)) {
@@ -3290,8 +3290,12 @@ export class Scenarios {
         continue
       }
       let still = 0
+      // On a phone the sweep back from the latest end only looks near it: the
+      // sweep from the history's start that follows covers every loaded row,
+      // and an old target in a grown history is far nearer that end.
+      const limit = placed && first === 'latest' && index === 1 ? 30 : 200
       // A few loaded pages are many screens; each end stops the history.
-      for (let step = 0; step < 200 && still < 2; step++) {
+      for (let step = 0; step < limit && still < 2; step++) {
         if (nodes.some(node => node.id === id)) break
         const one = (key: string): NonNullable<PublicNode['bounds']> =>
           need(
