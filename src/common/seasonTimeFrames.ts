@@ -20,6 +20,40 @@ function frame(ordinal: number): SeasonTimeFrame {
   }
 }
 
+/** The four seasons a season's date range may be set to. */
+export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall'
+
+const SEASON_INDEX: Record<SeasonName, number> = {
+  Spring: 0,
+  Summer: 1,
+  Fall: 2,
+  Winter: 3
+}
+
+/**
+ * The dates of one season of `year`: Spring is March to May, Summer June to
+ * August, Fall September to November, and Winter December of `year` to
+ * February 28 of the next.
+ */
+export function presetFrame(year: number, season: SeasonName): SeasonTimeFrame {
+  return frame(year * 4 + SEASON_INDEX[season])
+}
+
+/** Which season of which year these dates are exactly, if they are one. */
+export function presetOf(
+  startsOn: string | null,
+  endsOn: string | null
+): { year: number; season: SeasonName } | null {
+  const year = Number(startsOn?.slice(0, 4))
+  if (!Number.isInteger(year)) return null
+  for (const season of Object.keys(SEASON_INDEX) as SeasonName[]) {
+    const candidate = presetFrame(year, season)
+    if (candidate.startsOn === startsOn && candidate.endsOn === endsOn)
+      return { year, season }
+  }
+  return null
+}
+
 /** Winter uses the year in which it starts; January belongs to last year's Winter. */
 export function seasonTimeFrames(now = new Date()): SeasonTimeFrame[] {
   if (!Number.isFinite(now.getTime()))

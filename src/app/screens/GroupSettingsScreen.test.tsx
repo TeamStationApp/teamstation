@@ -329,6 +329,7 @@ describe('group settings identity and individual saves', () => {
     it(`shows ${kind} identity and saves the name without leaving settings`, async () => {
       const f = fixture(kind)
       const opened: GroupRef[] = []
+      const timeFrames: GroupRef[] = []
       let changed = 0
       await mount(
         <GroupSettingsScreen
@@ -336,6 +337,9 @@ describe('group settings identity and individual saves', () => {
           groupRef={{ kind, id: 'alias' }}
           onLocation={ref => {
             opened.push(ref)
+          }}
+          onOpenTimeFrame={ref => {
+            timeFrames.push(ref)
           }}
           onChanged={() => {
             changed++
@@ -362,6 +366,18 @@ describe('group settings identity and individual saves', () => {
       if (kind === 'season') {
         expect(text()).not.includes('Toronto')
         expect(text()).includes('Time frame')
+        // The row opens the date-range screen; the page has no picker.
+        const row = [
+          ...document.querySelectorAll<HTMLElement>('[role="button"]')
+        ].find(node => node.textContent?.includes('Time frame') === true)!
+        await act(async () => {
+          row.click()
+        })
+        expect(timeFrames).deep.equals([{ kind: 'season', id: 'canonical' }])
+        expect(text()).not.includes('Use this range')
+        expect(document.querySelector('[aria-label="Previous month"]')).equals(
+          null
+        )
       } else {
         await press('Toronto, Ontario, Canada')
         expect(opened).deep.equals([{ kind, id: 'canonical' }])

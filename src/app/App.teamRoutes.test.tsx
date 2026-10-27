@@ -14,6 +14,20 @@ import { userIdOfGumbo } from '../common/userId'
 import { App, stackFor } from './App'
 
 describe('team route frames', () => {
+  it('puts season settings under a season’s date-range screen opened by its address', () => {
+    const route = {
+      name: 'seasonTimeFrame' as const,
+      kind: 'season' as const,
+      id: 'sea1'
+    }
+    const stack = stackFor(route).home!
+    expect(stack.at(-1)).deep.equals(route)
+    expect(stack.at(-2)).deep.include({
+      name: 'groupSettings',
+      kind: 'season',
+      id: 'sea1'
+    })
+  })
   it('reconstructs Settings under every directly opened management child', () => {
     for (const name of [
       'groupLocation',
@@ -433,7 +447,9 @@ describe('a season’s and a league’s People tab, however the page is opened',
   /** Opens `path` in the app as a signed-in member, and answers the tabs. */
   async function open(
     path: string,
-    canSeePeople: boolean
+    canSeePeople: boolean,
+    /** The member manages the season, and may change its settings. */
+    manage = false
   ): Promise<{ tabs: string[]; asked: unknown[]; done: () => Promise<void> }> {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
@@ -462,8 +478,19 @@ describe('a season’s and a league’s People tab, however the page is opened',
     ]
     proto.group = async ref => {
       asked.push(['group', ref.kind, ref.id])
-      return detailOf(ref.kind === 'league' ? 'league' : 'season', canSeePeople)
+      const detail = detailOf(
+        ref.kind === 'league' ? 'league' : 'season',
+        canSeePeople
+      )
+      return manage ? { ...detail, canManage: true } : detail
     }
+    proto.updateGroup = (async (
+      ref: { kind: string; id: string },
+      fields: unknown
+    ) => {
+      asked.push(['update', ref.kind, ref.id, fields])
+      return {}
+    }) as unknown as typeof proto.updateGroup
     proto.seasonGames = async () => []
     proto.seasonTeams = async () => []
     proto.standings = async () => []
@@ -503,6 +530,61 @@ describe('a season’s and a league’s People tab, however the page is opened',
       }
     }
   }
+
+  it('opens a season’s date range at its address, saves to season settings, and opens it again from the Time frame row', async () => {
+    const opened = await open(
+      '/groups/season/sea_spring/settings/time-frame',
+      true,
+      true
+    )
+    const press = async (label: string): Promise<void> => {
+      const node = document.querySelector<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(node, label).not.equals(null)
+      await act(async () => {
+        node!.click()
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+    }
+    try {
+      expect(document.body.textContent).includes('Set date range')
+      const year = new Date().getFullYear()
+      await press(`Spring ${year}`)
+      const save = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.textContent === 'Save')!
+      await act(async () => {
+        save.click()
+        await new Promise(resolve => setTimeout(resolve, 80))
+      })
+      expect(opened.asked).deep.include([
+        'update',
+        'season',
+        'sea_spring',
+        {
+          label: `Spring ${year}`,
+          startsOn: `${year}-03-01`,
+          endsOn: `${year}-05-31`
+        }
+      ])
+      expect(window.location.pathname).equals(
+        '/groups/season/sea_spring/settings'
+      )
+      const row = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.textContent?.includes('Time frame') === true)!
+      await act(async () => {
+        row.click()
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+      expect(window.location.pathname).equals(
+        '/groups/season/sea_spring/settings/time-frame'
+      )
+    } finally {
+      await opened.done()
+    }
+  })
 
   it('shows the season’s People at its own address, as Home opens it, for whoever the server lets read them', async () => {
     const seen = await open('/seasons/sea_spring?tab=people', true)

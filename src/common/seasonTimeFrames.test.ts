@@ -3,6 +3,8 @@ import { describe, it } from 'mocha'
 
 import {
   formatDateRange,
+  presetFrame,
+  presetOf,
   seasonPeriodLabel,
   seasonTimeFrames
 } from './seasonTimeFrames'
@@ -50,5 +52,33 @@ describe('reference season time frames', () => {
       formatDateRange('2027-12-01', '2028-02-29')
     )
     expect(seasonPeriodLabel(null, null)).equals('Time frame not set')
+  })
+  it('gives each season of a year its dates, and reads them back', () => {
+    expect(presetFrame(2026, 'Spring')).deep.equals({
+      label: 'Spring 2026',
+      startsOn: '2026-03-01',
+      endsOn: '2026-05-31'
+    })
+    expect(presetFrame(2026, 'Summer')).deep.include({
+      startsOn: '2026-06-01',
+      endsOn: '2026-08-31'
+    })
+    expect(presetFrame(2026, 'Fall')).deep.include({
+      startsOn: '2026-09-01',
+      endsOn: '2026-11-30'
+    })
+    expect(presetFrame(2026, 'Winter')).deep.include({
+      startsOn: '2026-12-01',
+      endsOn: '2027-02-28'
+    })
+    for (const season of ['Winter', 'Spring', 'Summer', 'Fall'] as const) {
+      const { startsOn, endsOn, label } = presetFrame(2031, season)
+      expect(presetOf(startsOn, endsOn)).deep.equals({ year: 2031, season })
+      expect(seasonPeriodLabel(startsOn, endsOn)).equals(label)
+    }
+    // A winter ending February 29, or any other range, is no preset.
+    expect(presetOf('2027-12-01', '2028-02-29')).equals(null)
+    expect(presetOf('2026-03-02', '2026-05-31')).equals(null)
+    expect(presetOf(null, null)).equals(null)
   })
 })

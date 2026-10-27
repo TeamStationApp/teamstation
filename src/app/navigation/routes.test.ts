@@ -25,6 +25,25 @@ describe('addresses', function () {
       expect(roundTrip(route)).deep.equals(route)
     }
   })
+  it('round-trips a season’s date-range screen, which no team or league has', () => {
+    const route: Route = {
+      name: 'seasonTimeFrame',
+      kind: 'season',
+      id: 'sea 1'
+    }
+    expect(routePath(route)).equals(
+      '/groups/season/sea%201/settings/time-frame'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    // A team return is a team's; a season carries none.
+    expect(
+      parseRoute('/groups/season/sea1/settings/time-frame', 'team=alias')
+    ).deep.equals({ name: 'seasonTimeFrame', kind: 'season', id: 'sea1' })
+    for (const kind of ['team', 'league'] as const)
+      expect(
+        parseRoute(`/groups/${kind}/g1/settings/time-frame`, '')
+      ).deep.include({ name: 'groupSettings', kind, id: 'g1' })
+  })
   it('round-trips team settings return addresses, including aliases and selected sections', () => {
     for (const address of ['team', 'group'] as const)
       for (const tab of [undefined, 'schedule', 'roster']) {
