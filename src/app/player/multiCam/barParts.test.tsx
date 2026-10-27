@@ -191,10 +191,11 @@ describe('the multi-camera bar’s parts', function () {
     /** The bar's track, 200 px wide from the left edge, and a way to touch it. */
     async function track(panPage: boolean): Promise<{
       slider: HTMLElement
-      scrubs: number[]
+      /** Each seek asked for, and whether it was the finger lifting. */
+      scrubs: Array<[number, boolean]>
       touch: (type: string, x: number, y: number) => Promise<void>
     }> {
-      const scrubs: number[] = []
+      const scrubs: Array<[number, boolean]> = []
       host = document.createElement('div')
       document.body.appendChild(host)
       root = createRoot(host)
@@ -205,7 +206,7 @@ describe('the multi-camera bar’s parts', function () {
               window={{ fromMs: 0, toMs: 100_000 }}
               atMs={0}
               angles={[]}
-              onScrub={ms => scrubs.push(ms)}
+              onScrub={(ms, final) => scrubs.push([ms, final === true])}
               onInteract={() => undefined}
               visible
               panPage={panPage}
@@ -247,16 +248,20 @@ describe('the multi-camera bar’s parts', function () {
       expect(scrubs).deep.equals([])
     })
 
-    it('scrubs on a sideways drag, and seeks on a tap', async function () {
+    it('scrubs on a sideways drag, lands where it lifts, and seeks on a tap', async function () {
       const { scrubs, touch } = await track(true)
       await touch('pointerdown', 100, 40)
       await touch('pointermove', 150, 42)
       await touch('pointermove', 160, 42)
       await touch('pointerup', 160, 42)
-      expect(scrubs).deep.equals([75_000, 80_000])
+      expect(scrubs).deep.equals([
+        [75_000, false],
+        [80_000, false],
+        [80_000, true]
+      ])
       await touch('pointerdown', 50, 40)
       await touch('pointerup', 51, 40)
-      expect(scrubs.at(-1)).equals(25_500)
+      expect(scrubs.at(-1)).deep.equals([25_500, true])
     })
 
     it('otherwise keeps every drag, scrubbing from the first touch', async function () {
@@ -265,7 +270,28 @@ describe('the multi-camera bar’s parts', function () {
       await touch('pointerdown', 100, 40)
       await touch('pointermove', 102, 10)
       await touch('pointerup', 102, 10)
-      expect(scrubs).deep.equals([50_000, 51_000])
+      expect(scrubs).deep.equals([
+        [50_000, false],
+        [51_000, false],
+        [51_000, true]
+      ])
+    })
+
+    it('lands where a scrub the browser cancels last was', async function () {
+      const { scrubs, touch } = await track(false)
+      await touch('pointerdown', 20, 40)
+      await touch('pointermove', 150, 40)
+      await touch('pointercancel', 150, 40)
+      expect(scrubs.at(-1)).deep.equals([75_000, true])
+    })
+
+    it('lands where the finger lifts, past its last move', async function () {
+      // A quick drag's last move can be well short of where it lifts.
+      const { scrubs, touch } = await track(false)
+      await touch('pointerdown', 20, 40)
+      await touch('pointermove', 60, 40)
+      await touch('pointerup', 180, 40)
+      expect(scrubs.at(-1)).deep.equals([90_000, true])
     })
   })
 })

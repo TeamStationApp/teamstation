@@ -204,6 +204,33 @@ describe('VideoPoster playing a live game', function () {
     })
   })
 
+  it('asks Safari to play once it knows what the video is', async function () {
+    const asked: string[] = []
+    await onSafari(async () => {
+      const proto = window.HTMLMediaElement.prototype
+      Object.defineProperty(proto, 'play', {
+        configurable: true,
+        value: async function (this: HTMLVideoElement) {
+          asked.push('play')
+        }
+      })
+      const container = await render(
+        <VideoPoster size="hero" videoUrl="https://media/game.m3u8" />
+      )
+      const video = container.querySelector('video')!
+      // Metadata, and no `canplay` after it: Safari waiting to be asked.
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(asked).deep.equals(['play'])
+      // Moving: shown, and asked no more.
+      await act(async () => {
+        video.dispatchEvent(new window.Event('playing'))
+      })
+      expect(asked).deep.equals(['play'])
+    })
+  })
+
   it('leaves a recording where it opens', async function () {
     await onSafari(async () => {
       const container = await render(

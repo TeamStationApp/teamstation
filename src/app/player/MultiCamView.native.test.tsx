@@ -210,6 +210,17 @@ function placed(): {
 describe('the board over the phone’s grid (C5)', function () {
   afterEach(unmount)
 
+  it('names each tile as a picture of its angle', async function () {
+    await grid({ Grid: PhoneGrid, width: 402, height: 874 })
+    const named = [...document.querySelectorAll('video')].map(video => {
+      let node = video.parentElement
+      while (node?.style.top === '') node = node.parentElement
+      return node?.getAttribute('aria-label') ?? null
+    })
+    expect(named).length(4)
+    for (const label of named) expect(label).match(/^Angle \S+ angle$/)
+  })
+
   it('draws one board on the top of the screen, the stacked angles butted under it, upright', async function () {
     await grid({ Grid: PhoneGrid, width: 402, height: 874 })
     const { at, board } = placed()

@@ -59,6 +59,7 @@ import {
   heldAhead,
   isDry,
   isReady,
+  readyWhereItStands,
   START_GAP_SEC,
   strayed,
   type TileBuffer,
@@ -74,6 +75,7 @@ import {
   swap,
   tileRects
 } from './layout'
+import { scrubSeeks } from './scrubSeeks'
 import { angleLabels, soundAngle } from './takes'
 import type { TileHandle } from './tileHandle'
 
@@ -161,6 +163,11 @@ export interface MultiCamOptions {
  * left has usually frozen by the next look.
  */
 export const DRY_CHECK_MS = 250
+
+/** Tenths of a second from `since` to `now`, for the readout. */
+function secondsSince(now: number, since: number | undefined): number {
+  return Math.round((now - (since ?? now)) / 100) / 10
+}
 
 /** How often a joining tile looks to see whether the game has reached it. */
 const JOIN_POLL_MS = 30
@@ -306,6 +313,12 @@ export interface MultiCam {
   toggle: () => void
   skip: (deltaSec: number) => void
   goTo: (wallMs: number) => void
+  /**
+   * A drag along the bar: the playhead follows every move, the players are
+   * sought at most four times a second, and `final` — the finger lifting, or
+   * a tap — is always sought (`scrubSeeks`).
+   */
+  scrub: (wallMs: number, final?: boolean) => void
   showBar: () => void
   beginSlow: () => boolean
   endSlow: () => void
@@ -1303,11 +1316,31 @@ export function useMultiCam(
   const gate = useCallback(
     (instant: number, finished?: Map<string, boolean>): boolean => {
       const now = Date.now()
-      const waits = awaited(instant, finished).map(video => {
+      const awaiting = awaited(instant, finished)
+      const alone = awaiting.length === 1
+      const waits = awaiting.map(video => {
+        const element = elements.current.get(video.id)
         // One just moved holds nothing yet where it was sent.
-        const ready =
+        let ready =
           !placeHeld(video, instant) &&
-          isReady(bufferAt(video, elements.current.get(video.id), instant))
+          isReady(bufferAt(video, element, instant))
+        // A player that says it can play where it stands is not kept waiting
+        // for seconds it will never fetch: Safari loads little ahead of a
+        // paused video, so the grid's own measure, taken at its clock, can
+        // stay short for ever — a lone angle has nobody to be left out for.
+        const since = shortSince.current.get(video.id) ?? now
+        if (
+          !ready &&
+          element != null &&
+          readyWhereItStands({
+            waitedMs: now - since,
+            readyState: element.readyState,
+            aheadSec: bufferOf(element).aheadSec,
+            alone
+          })
+        ) {
+          ready = true
+        }
         if (ready) shortSince.current.delete(video.id)
         else if (!shortSince.current.has(video.id)) {
           shortSince.current.set(video.id, now)
@@ -1337,6 +1370,9 @@ export function useMultiCam(
         from == null || fromElement == null
           ? null
           : wallAt(from, fromElement.currentTime)
+      // Never further than that, even for a tile released on its player's
+      // word: right after a seek its picture still stands where the seek
+      // came from, and starting from there undid the seek.
       const startAt =
         there != null && Math.abs(there - instant) < 3000 ? there : instant
       if (startAt !== instant) {
@@ -1371,318 +1407,334 @@ export function useMultiCam(
    * rather than letting that tile freeze on its own and the others play on
    * past it.
    */
+  const dryCheck = useRef(() => {})
+  dryCheck.current = () => {
+    if (!playing || !flowing.current || slowFrame.current !== 0) return
+    const instant = atWallRef.current
+    if (instant == null) return
+    const now = Date.now()
+    const dry = awaited(instant).some(video => runningDry(video, now))
+    if (!dry) return
+    hold()
+    setWaiting(anyPicture())
+  }
   useEffect(() => {
     const timer = setInterval(() => {
-      if (!playing || !flowing.current || slowFrame.current !== 0) return
-      const instant = atWallRef.current
-      if (instant == null) return
-      const now = Date.now()
-      const dry = awaited(instant).some(video => runningDry(video, now))
-      if (!dry) return
-      hold()
-      setWaiting(anyPicture())
+      dryCheck.current()
     }, DRY_CHECK_MS)
     return () => {
       clearInterval(timer)
     }
-  }, [anyPicture, awaited, hold, playing, runningDry])
+  }, [])
 
   // The watchdog. Once a second, not once a frame: four tiles through Media
   // Source were measured holding to 17 ms of each other over ten minutes, so
   // there is nothing here to chase — and hls.js ignores ManagedMediaSource's
   // `endstreaming` while an element is seeking, so a busier loop would suppress
   // WebKit's own load shedding on a phone.
+  //
+  // Both this and the dry check run on one timer each, started once, that
+  // calls the newest render's look through a ref. A timer remade whenever the
+  // tiles, the gate or the angles change was put back to a full second each
+  // time — and after a scrub they change several times a second, so for
+  // seconds at a time nothing looked at all: no stall noticed, no tile put
+  // back in step, no readout.
+  const watchdog = useRef(() => {})
+  watchdog.current = () => {
+    // Nothing is inferred while slow motion is stepping the clock itself.
+    if (slowFrame.current !== 0) return
+    const now = Date.now()
+
+    /** What each tile is doing, for `?debug=1`. */
+    const showReadout = (clockMs: number, ceiling: number): void => {
+      const lines = chosen.map(video => {
+        const element = elements.current.get(video.id)
+        const tile = tiles[video.id]
+        if (element == null) return `${names.get(video.id) ?? video.id}: —`
+        const stalled =
+          tile?.stalledSince == null
+            ? 'ok'
+            : `stalled ${Math.round((now - tile.stalledSince) / 100) / 10}s`
+        return (
+          `${(names.get(video.id) ?? video.id).padEnd(9)} ` +
+          `buf ${bufferAhead(element).toFixed(1)}s  ` +
+          `ready ${element.readyState}  ` +
+          `at ${element.currentTime.toFixed(1)}  ` +
+          `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
+          `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
+          (tile?.parked != null ? `  parked ${tile.parked}` : '') +
+          (leftOut.current.has(video.id) ? '  left out' : '') +
+          // What the gate holds against it: how long it has been short,
+          // where it was last sent, and what places it on the wall.
+          (shortSince.current.has(video.id)
+            ? `  short ${secondsSince(now, shortSince.current.get(video.id))}s`
+            : '') +
+          (heldPlace.current.has(video.id)
+            ? `  sent ${heldPlace.current.get(video.id)?.toFixed(1)}`
+            : '') +
+          `  map ${mappingOfRef.current(video.id)?.source ?? 'none'}`
+        )
+      })
+      const heard = chosen.find(video => video.id === heardId)
+      const waits = [...shortSince.current.values()]
+      lines.push(
+        `clock ${((clockMs - (takeRef.current?.fromMs ?? clockMs)) / 1000).toFixed(1)}s  ` +
+          `${flowing.current ? 'playing' : 'held'}  ahead ≤ ${ceiling.toFixed(0)}s` +
+          (heard != null ? `  heard ${names.get(heard.id) ?? heard.id}` : '') +
+          (flowing.current
+            ? ''
+            : `  gate ${waits.length} short` +
+              (waits.length > 0
+                ? ` ${secondsSince(now, Math.min(...waits))}s`
+                : ''))
+      )
+      setReadout(lines)
+    }
+
+    // A tile that has stopped moving on its own. By the clock, never by the
+    // `waiting` event, which fires on every seek this view makes on purpose
+    // — and never before a tile has any pictures at all, because a tile that
+    // is still opening its source has not stalled, it has not started.
+    const finishedNow = new Map<string, boolean>()
+    /** Which tiles this tick found stuck, before React has re-rendered. */
+    const stuckNow = new Map<string, boolean>()
+    for (const video of chosen) {
+      const tileElement = elements.current.get(video.id)
+      if (tileElement == null) continue
+      if (tileElement.readyState >= 2) everStarted.current.add(video.id)
+      // What it has drawn, which is the one thing our own seeking cannot
+      // fake: the alignment moves a starved tile's `currentTime` forward on
+      // every tick, so a frozen picture reports a position that keeps
+      // changing.
+      const quality = tileElement.getVideoPlaybackQuality?.()
+      const drawn = quality?.totalVideoFrames ?? tileElement.currentTime
+      const lastDrawn = frames.current.get(video.id)
+      const progressed = lastDrawn == null || drawn !== lastDrawn
+      frames.current.set(video.id, drawn)
+      // A tile that has never had a frame is opening, not stalling; one this
+      // view has just moved is quiet because of us.
+      const started = everStarted.current.has(video.id)
+      const ours = isOurSilence(now, seekedAt.current.get(video.id))
+      const stalled =
+        started &&
+        !ours &&
+        hasStalled({
+          paused: tileElement.paused,
+          progressed,
+          unchangedForMs: WATCHDOG_MS
+        })
+      stuckNow.set(video.id, stalled)
+      // Worked out here rather than inside the state updater below, which
+      // React may run later or twice: the rest of this tick reads it.
+      const finished = isFinished({
+        ended: tileElement.ended === true,
+        atSec: tileElement.currentTime,
+        mediaSec: video.status === 'live' ? null : mediaLengthOf(tileElement)
+      })
+      finishedNow.set(video.id, finished)
+      setTiles(current => {
+        const held = current[video.id] ?? freshTile()
+        // Drawing again clears the record; stalling starts it; and a silence
+        // this view caused leaves it exactly as it was. Clearing it on an
+        // amnesty tick is what let a starved tile's stall be wiped over and
+        // over, since a starved tile is the one that gets seeked most.
+        const since = stalled
+          ? (held.stalledSince ?? now)
+          : progressed
+            ? null
+            : ours
+              ? held.stalledSince
+              : null
+        if (held.stalledSince === since && held.ended === finished) {
+          return current
+        }
+        return {
+          ...current,
+          [video.id]: { ...held, stalledSince: since, ended: finished }
+        }
+      })
+    }
+
+    // A live grid opens behind the newest footage its tiles have
+    // (`liveOpeningMs`), once they have pictures and a mapping to say where
+    // that is.
+    if (atWallRef.current == null) {
+      // Every live angle that may yet play, the ones still being asked
+      // for included: the opening waits for them (`LIVE_OPEN_WAIT_MS`).
+      // And only once each has a picture: before it, a player can say little
+      // about where its footage ends. A move or the bar does not wait for
+      // that, since a seek out of what they hold takes every tile's picture
+      // away at once while their footage is no less there.
+      const at = chosen
+        .filter(video => video.status === 'live' && urls[video.id] !== null)
+        .map(video =>
+          (elements.current.get(video.id)?.readyState ?? 0) < HAVE_CURRENT_DATA
+            ? null
+            : newestWallOf(video)
+        )
+      if (liveSince.current == null && at.some(one => one != null)) {
+        liveSince.current = now
+      }
+      const opening = liveOpeningMs(at, now - (liveSince.current ?? now))
+      if (opening != null) {
+        atWallRef.current = opening
+        setAtWallMs(opening)
+      }
+    }
+
+    /**
+     * Who the clock is read from.
+     *
+     * Only a tile that is **showing this moment**: not parked, not still
+     * being put back, and actually moving. A parked tile is paused wherever
+     * it happened to stop, and reading the time off one of those is how the
+     * view used to throw itself back to the start of the game the moment
+     * somebody scrubbed past the end of the longest recording.
+     */
+    const instant = atWallRef.current
+
+    /**
+     * The tiles that *ought* to be showing this moment: the take covers it
+     * as far as they are concerned, whatever they are actually managing.
+     */
+    const covering = placeables().filter(tile => {
+      if (instant == null) return false
+      // A tile that has finished expects nothing more of the take, whatever
+      // the arithmetic makes of its declared length. Read from this tick's
+      // own reckoning, not from the state written a moment ago: React has
+      // not re-rendered yet, and the tick's lag was a second of `Waiting for
+      // the pictures` at the end of every take.
+      if (finishedNow.get(tile.id) === true || tile.ended === true) {
+        return false
+      }
+      const element = elements.current.get(tile.id)
+      const summary = chosen.find(video => video.id === tile.id)
+      const correction = correctionFor({
+        wallMs: instant,
+        follower: {
+          video: tile.video,
+          atSec: element?.currentTime ?? 0,
+          mediaSec: summary == null ? null : endOfTile(summary, element)
+        }
+      })
+      return correction.kind !== 'park'
+    })
+
+    /** And of those, the ones actually putting pictures up right now. */
+    const showing = covering.filter(tile => {
+      if (restoring.current.has(tile.id)) return false
+      const tileElement = elements.current.get(tile.id)
+      if (tileElement == null || tileElement.paused) return false
+      // Not stuck, either: a picture that has stopped is not a clock,
+      // however healthy the connection looks.
+      const stalledSince = tiles[tile.id]?.stalledSince
+      if (stalledSince != null && holdExpired(now - stalledSince)) return false
+      // And showing *this* moment. A tile still sitting at its own zero —
+      // freshly attached, or one the alignment has not reached yet — is not
+      // the truth about where the game is; it is the thing to be corrected.
+      const there = wallAt(tile.video, tileElement.currentTime)
+      return (
+        there != null && (instant == null || Math.abs(there - instant) < 2000)
+      )
+    })
+
+    const leader = masterOf(showing, heardId)
+    if (leader != null) setMasterId(leader)
+    const leaderVideo = chosen.find(video => video.id === leader)
+    const leaderElement = leader == null ? null : elements.current.get(leader)
+
+    let wallMs: number | null = null
+    if (leaderVideo != null && leaderElement != null) {
+      wallMs = wallAt(leaderVideo, leaderElement.currentTime)
+    } else if (playing && instant != null && covering.length === 0) {
+      // Nothing covers this moment — every camera is parked, or the take has
+      // run past the last of them — so the clock keeps its own time rather
+      // than being dragged back to whatever a stopped picture says, and the
+      // stretch between recordings can be watched through and left. It stops
+      // at the end of the take: a clock that runs past the last recording is
+      // counting nothing.
+      //
+      // Only when nothing *covers* it. A camera that should be showing this
+      // moment and is stuck is a picture to wait for, not a reason to run on
+      // without it: letting the clock advance there skipped two minutes of a
+      // game during a two-minute stall, and made the view seek every starved
+      // element once a second to keep up the fiction.
+      const end = takeRef.current?.toMs
+      wallMs = Math.min(instant + WATCHDOG_MS, end ?? Number.MAX_SAFE_INTEGER)
+    }
+
+    // A tile that was left out joins in once it holds enough where the game
+    // is now.
+    let rejoined = false
+    for (const id of [...leftOut.current]) {
+      const video = chosen.find(one => one.id === id)
+      const ready =
+        video != null &&
+        instant != null &&
+        isReady(bufferAt(video, elements.current.get(id), instant))
+      if (video != null && !ready) continue
+      leftOut.current.delete(id)
+      rejoined = true
+    }
+    if (rejoined) showLeftOut()
+
+    /**
+     * Waiting: a tile the grid waits for is short of pictures, or somebody's
+     * camera covers this moment and none of them is managing to draw it.
+     *
+     * Said out loud, because still pictures with no explanation is the state
+     * a viewer cannot diagnose. And **held**, every tile where it is, until
+     * every one of them holds a few seconds (`buffering.ts`). Letting them
+     * go the moment each had its next frame started them with nothing in
+     * hand, so the first to run dry stopped them all again a moment later:
+     * a stutter that never settled.
+     */
+    const waitingNow = playing && covering.length > 0 && showing.length === 0
+    if (playing && instant != null) {
+      const dry = awaited(instant, finishedNow).some(video =>
+        runningDry(video, now)
+      )
+      if (flowing.current && (waitingNow || dry)) hold()
+      if (!flowing.current) {
+        if (gate(instant, finishedNow)) return
+        hold()
+        setWaiting(anyPicture())
+        if (debug) showReadout(instant, AHEAD_SEC)
+        return
+      }
+    }
+    setWaiting(false)
+
+    if (wallMs == null) return
+
+    // Ended is a property of the moment as well as of the tiles: at the end
+    // of the take with nothing playing, the game is over whether the tiles
+    // call themselves ended or merely parked.
+    const end = takeRef.current?.toMs
+    setEnded(
+      everythingEnded(placeables()) ||
+        (showing.length === 0 && end != null && wallMs >= end - 1000)
+    )
+
+    if (debug) showReadout(wallMs, AHEAD_SEC)
+
+    setAtWallMs(wallMs)
+    // A master that has stopped drawing is not a clock to pull everybody
+    // back to. Aligning to it put the others back a second on every tick
+    // until it was handed over — three healthy pictures jerking backwards
+    // for the one that was stuck. They play on instead, and are put back on
+    // it in one step when it moves again, or follow whoever takes over.
+    const leaderStuck = leader != null && stuckNow.get(leader) === true
+    if (!leaderStuck) alignTo(wallMs, undefined, undefined, 'settle')
+  }
   useEffect(() => {
     const timer = setInterval(() => {
-      // Nothing is inferred while slow motion is stepping the clock itself.
-      if (slowFrame.current !== 0) return
-      const now = Date.now()
-
-      /** What each tile is doing, for `?debug=1`. */
-      const showReadout = (clockMs: number, ceiling: number): void => {
-        const lines = chosen.map(video => {
-          const element = elements.current.get(video.id)
-          const tile = tiles[video.id]
-          if (element == null) return `${names.get(video.id) ?? video.id}: —`
-          const stalled =
-            tile?.stalledSince == null
-              ? 'ok'
-              : `stalled ${Math.round((now - tile.stalledSince) / 100) / 10}s`
-          return (
-            `${(names.get(video.id) ?? video.id).padEnd(9)} ` +
-            `buf ${bufferAhead(element).toFixed(1)}s  ` +
-            `ready ${element.readyState}  ` +
-            `at ${element.currentTime.toFixed(1)}  ` +
-            `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
-            `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
-            (tile?.parked != null ? `  parked ${tile.parked}` : '') +
-            (leftOut.current.has(video.id) ? '  left out' : '')
-          )
-        })
-        lines.push(
-          `clock ${((clockMs - (takeRef.current?.fromMs ?? clockMs)) / 1000).toFixed(1)}s  ` +
-            `${flowing.current ? 'playing' : 'held'}  ahead ≤ ${ceiling.toFixed(0)}s`
-        )
-        setReadout(lines)
-      }
-
-      // A tile that has stopped moving on its own. By the clock, never by the
-      // `waiting` event, which fires on every seek this view makes on purpose
-      // — and never before a tile has any pictures at all, because a tile that
-      // is still opening its source has not stalled, it has not started.
-      const finishedNow = new Map<string, boolean>()
-      /** Which tiles this tick found stuck, before React has re-rendered. */
-      const stuckNow = new Map<string, boolean>()
-      for (const video of chosen) {
-        const tileElement = elements.current.get(video.id)
-        if (tileElement == null) continue
-        if (tileElement.readyState >= 2) everStarted.current.add(video.id)
-        // What it has drawn, which is the one thing our own seeking cannot
-        // fake: the alignment moves a starved tile's `currentTime` forward on
-        // every tick, so a frozen picture reports a position that keeps
-        // changing.
-        const quality = tileElement.getVideoPlaybackQuality?.()
-        const drawn = quality?.totalVideoFrames ?? tileElement.currentTime
-        const lastDrawn = frames.current.get(video.id)
-        const progressed = lastDrawn == null || drawn !== lastDrawn
-        frames.current.set(video.id, drawn)
-        // A tile that has never had a frame is opening, not stalling; one this
-        // view has just moved is quiet because of us.
-        const started = everStarted.current.has(video.id)
-        const ours = isOurSilence(now, seekedAt.current.get(video.id))
-        const stalled =
-          started &&
-          !ours &&
-          hasStalled({
-            paused: tileElement.paused,
-            progressed,
-            unchangedForMs: WATCHDOG_MS
-          })
-        stuckNow.set(video.id, stalled)
-        // Worked out here rather than inside the state updater below, which
-        // React may run later or twice: the rest of this tick reads it.
-        const finished = isFinished({
-          ended: tileElement.ended === true,
-          atSec: tileElement.currentTime,
-          mediaSec: video.status === 'live' ? null : mediaLengthOf(tileElement)
-        })
-        finishedNow.set(video.id, finished)
-        setTiles(current => {
-          const held = current[video.id] ?? freshTile()
-          // Drawing again clears the record; stalling starts it; and a silence
-          // this view caused leaves it exactly as it was. Clearing it on an
-          // amnesty tick is what let a starved tile's stall be wiped over and
-          // over, since a starved tile is the one that gets seeked most.
-          const since = stalled
-            ? (held.stalledSince ?? now)
-            : progressed
-              ? null
-              : ours
-                ? held.stalledSince
-                : null
-          if (held.stalledSince === since && held.ended === finished) {
-            return current
-          }
-          return {
-            ...current,
-            [video.id]: { ...held, stalledSince: since, ended: finished }
-          }
-        })
-      }
-
-      // A live grid opens behind the newest footage its tiles have
-      // (`liveOpeningMs`), once they have pictures and a mapping to say where
-      // that is.
-      if (atWallRef.current == null) {
-        // Every live angle that may yet play, the ones still being asked
-        // for included: the opening waits for them (`LIVE_OPEN_WAIT_MS`).
-        // And only once each has a picture: before it, a player can say little
-        // about where its footage ends. A move or the bar does not wait for
-        // that, since a seek out of what they hold takes every tile's picture
-        // away at once while their footage is no less there.
-        const at = chosen
-          .filter(video => video.status === 'live' && urls[video.id] !== null)
-          .map(video =>
-            (elements.current.get(video.id)?.readyState ?? 0) <
-            HAVE_CURRENT_DATA
-              ? null
-              : newestWallOf(video)
-          )
-        if (liveSince.current == null && at.some(one => one != null)) {
-          liveSince.current = now
-        }
-        const opening = liveOpeningMs(at, now - (liveSince.current ?? now))
-        if (opening != null) {
-          atWallRef.current = opening
-          setAtWallMs(opening)
-        }
-      }
-
-      /**
-       * Who the clock is read from.
-       *
-       * Only a tile that is **showing this moment**: not parked, not still
-       * being put back, and actually moving. A parked tile is paused wherever
-       * it happened to stop, and reading the time off one of those is how the
-       * view used to throw itself back to the start of the game the moment
-       * somebody scrubbed past the end of the longest recording.
-       */
-      const instant = atWallRef.current
-
-      /**
-       * The tiles that *ought* to be showing this moment: the take covers it
-       * as far as they are concerned, whatever they are actually managing.
-       */
-      const covering = placeables().filter(tile => {
-        if (instant == null) return false
-        // A tile that has finished expects nothing more of the take, whatever
-        // the arithmetic makes of its declared length. Read from this tick's
-        // own reckoning, not from the state written a moment ago: React has
-        // not re-rendered yet, and the tick's lag was a second of `Waiting for
-        // the pictures` at the end of every take.
-        if (finishedNow.get(tile.id) === true || tile.ended === true) {
-          return false
-        }
-        const element = elements.current.get(tile.id)
-        const summary = chosen.find(video => video.id === tile.id)
-        const correction = correctionFor({
-          wallMs: instant,
-          follower: {
-            video: tile.video,
-            atSec: element?.currentTime ?? 0,
-            mediaSec: summary == null ? null : endOfTile(summary, element)
-          }
-        })
-        return correction.kind !== 'park'
-      })
-
-      /** And of those, the ones actually putting pictures up right now. */
-      const showing = covering.filter(tile => {
-        if (restoring.current.has(tile.id)) return false
-        const tileElement = elements.current.get(tile.id)
-        if (tileElement == null || tileElement.paused) return false
-        // Not stuck, either: a picture that has stopped is not a clock,
-        // however healthy the connection looks.
-        const stalledSince = tiles[tile.id]?.stalledSince
-        if (stalledSince != null && holdExpired(now - stalledSince))
-          return false
-        // And showing *this* moment. A tile still sitting at its own zero —
-        // freshly attached, or one the alignment has not reached yet — is not
-        // the truth about where the game is; it is the thing to be corrected.
-        const there = wallAt(tile.video, tileElement.currentTime)
-        return (
-          there != null && (instant == null || Math.abs(there - instant) < 2000)
-        )
-      })
-
-      const leader = masterOf(showing, heardId)
-      if (leader != null) setMasterId(leader)
-      const leaderVideo = chosen.find(video => video.id === leader)
-      const leaderElement = leader == null ? null : elements.current.get(leader)
-
-      let wallMs: number | null = null
-      if (leaderVideo != null && leaderElement != null) {
-        wallMs = wallAt(leaderVideo, leaderElement.currentTime)
-      } else if (playing && instant != null && covering.length === 0) {
-        // Nothing covers this moment — every camera is parked, or the take has
-        // run past the last of them — so the clock keeps its own time rather
-        // than being dragged back to whatever a stopped picture says, and the
-        // stretch between recordings can be watched through and left. It stops
-        // at the end of the take: a clock that runs past the last recording is
-        // counting nothing.
-        //
-        // Only when nothing *covers* it. A camera that should be showing this
-        // moment and is stuck is a picture to wait for, not a reason to run on
-        // without it: letting the clock advance there skipped two minutes of a
-        // game during a two-minute stall, and made the view seek every starved
-        // element once a second to keep up the fiction.
-        const end = takeRef.current?.toMs
-        wallMs = Math.min(instant + WATCHDOG_MS, end ?? Number.MAX_SAFE_INTEGER)
-      }
-
-      // A tile that was left out joins in once it holds enough where the game
-      // is now.
-      let rejoined = false
-      for (const id of [...leftOut.current]) {
-        const video = chosen.find(one => one.id === id)
-        const ready =
-          video != null &&
-          instant != null &&
-          isReady(bufferAt(video, elements.current.get(id), instant))
-        if (video != null && !ready) continue
-        leftOut.current.delete(id)
-        rejoined = true
-      }
-      if (rejoined) showLeftOut()
-
-      /**
-       * Waiting: a tile the grid waits for is short of pictures, or somebody's
-       * camera covers this moment and none of them is managing to draw it.
-       *
-       * Said out loud, because still pictures with no explanation is the state
-       * a viewer cannot diagnose. And **held**, every tile where it is, until
-       * every one of them holds a few seconds (`buffering.ts`). Letting them
-       * go the moment each had its next frame started them with nothing in
-       * hand, so the first to run dry stopped them all again a moment later:
-       * a stutter that never settled.
-       */
-      const waitingNow = playing && covering.length > 0 && showing.length === 0
-      if (playing && instant != null) {
-        const dry = awaited(instant, finishedNow).some(video =>
-          runningDry(video, now)
-        )
-        if (flowing.current && (waitingNow || dry)) hold()
-        if (!flowing.current) {
-          if (gate(instant, finishedNow)) return
-          hold()
-          setWaiting(anyPicture())
-          if (debug) showReadout(instant, AHEAD_SEC)
-          return
-        }
-      }
-      setWaiting(false)
-
-      if (wallMs == null) return
-
-      // Ended is a property of the moment as well as of the tiles: at the end
-      // of the take with nothing playing, the game is over whether the tiles
-      // call themselves ended or merely parked.
-      const end = takeRef.current?.toMs
-      setEnded(
-        everythingEnded(placeables()) ||
-          (showing.length === 0 && end != null && wallMs >= end - 1000)
-      )
-
-      if (debug) showReadout(wallMs, AHEAD_SEC)
-
-      setAtWallMs(wallMs)
-      // A master that has stopped drawing is not a clock to pull everybody
-      // back to. Aligning to it put the others back a second on every tick
-      // until it was handed over — three healthy pictures jerking backwards
-      // for the one that was stuck. They play on instead, and are put back on
-      // it in one step when it moves again, or follow whoever takes over.
-      const leaderStuck = leader != null && stuckNow.get(leader) === true
-      if (!leaderStuck) alignTo(wallMs, undefined, undefined, 'settle')
+      watchdog.current()
     }, WATCHDOG_MS)
     return () => {
       clearInterval(timer)
     }
-  }, [
-    alignTo,
-    anyPicture,
-    awaited,
-    debug,
-    gate,
-    heardId,
-    hold,
-    names,
-    placeables,
-    playing,
-    runningDry,
-    chosen,
-    tiles,
-    urls
-  ])
+  }, [])
 
   /**
    * The address follows the moment, every few seconds.
@@ -1768,6 +1820,36 @@ export function useMultiCam(
       alignTo(wallMs)
     },
     [alignTo, awaited]
+  )
+
+  // A drag's seeks, coalesced; the newest `goTo` is the one they make.
+  const goToRef = useRef(goTo)
+  goToRef.current = goTo
+  const scrubber = useMemo(
+    () =>
+      scrubSeeks(wallMs => {
+        goToRef.current(wallMs)
+      }),
+    []
+  )
+  useEffect(
+    () => () => {
+      scrubber.cancel()
+    },
+    [scrubber]
+  )
+  const scrub = useCallback(
+    (wallMs: number, final = true): void => {
+      if (final) {
+        scrubber.end(wallMs)
+        return
+      }
+      // The playhead goes with the finger; the pictures follow at their pace.
+      atWallRef.current = wallMs
+      setAtWallMs(wallMs)
+      scrubber.move(wallMs)
+    },
+    [scrubber]
   )
 
   const toggle = useCallback((): void => {
@@ -2107,7 +2189,7 @@ export function useMultiCam(
     if (state.frame !== 0) return
     state.frame = requestAnimationFrame(() => {
       state.frame = 0
-      if (state.scrubTo != null) goTo(state.scrubTo)
+      if (state.scrubTo != null) scrub(state.scrubTo, false)
     })
   }
 
@@ -2134,7 +2216,7 @@ export function useMultiCam(
     settlePress(state)
     setArmedTile(null)
     if (state.mode === 'held') endSlow()
-    if (state.mode === 'scrub' && state.scrubTo != null) goTo(state.scrubTo)
+    if (state.mode === 'scrub' && state.scrubTo != null) scrub(state.scrubTo)
     if (state.mode === 'pending' && !state.travelled) {
       runZoneRef.current(angleZoneFor(x, y, width, height))
     }
@@ -2297,6 +2379,7 @@ export function useMultiCam(
     toggle,
     skip,
     goTo,
+    scrub,
     showBar,
     beginSlow,
     endSlow,

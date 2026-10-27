@@ -12,7 +12,7 @@ import {
 } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import { useVideoAnalytics } from '../observability/useVideoAnalytics'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
@@ -202,7 +202,7 @@ function MultiCamGrid(
     attaching,
     attached,
     dropTile,
-    goTo,
+    scrub,
     moveTile,
     pressCancel,
     pressEnd,
@@ -379,7 +379,7 @@ function MultiCamGrid(
               window={mc.take}
               atMs={mc.atWallMs}
               angles={mc.barAngles(mc.take)}
-              onScrub={goTo}
+              onScrub={scrub}
               onTrackWidth={setTrackWidth}
               onInteract={showBar}
               visible={mc.barShown}
@@ -499,6 +499,11 @@ function Tile(props: {
 
   return (
     <View
+      // A picture, named for its angle, to assistive technology — and to the
+      // end-to-end suite, which finds each tile's place on the glass by it.
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel={sprintf(lstrings.angles_tile_label, name)}
       style={[
         styles.tile,
         {

@@ -19,7 +19,7 @@ afterEach(async function () {
 describe("the phone's bar (U33b)", function () {
   it('has no buttons, says how wide its track is, and scrubs on a drag along it', async function () {
     const widths: number[] = []
-    const scrubs: number[] = []
+    const scrubs: Array<[number, boolean]> = []
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -30,7 +30,7 @@ describe("the phone's bar (U33b)", function () {
             window={{ fromMs: 0, toMs: 100_000 }}
             atMs={25_000}
             angles={[]}
-            onScrub={ms => scrubs.push(ms)}
+            onScrub={(ms, final) => scrubs.push([ms, final === true])}
             onTrackWidth={px => widths.push(px)}
             onInteract={() => undefined}
             visible
@@ -80,6 +80,11 @@ describe("the phone's bar (U33b)", function () {
     await mouse('mousedown', 50)
     await mouse('mousemove', 150)
     await mouse('mouseup', 150)
-    expect(scrubs).deep.equals([25_000, 75_000])
+    // The finger lifting lands where it lifts.
+    expect(scrubs).deep.equals([
+      [25_000, false],
+      [75_000, false],
+      [75_000, true]
+    ])
   })
 })

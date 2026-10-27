@@ -262,6 +262,35 @@ describe("the grid beside Tess's chat", function () {
       expect(px(tile.style.left) + px(tile.style.width)).lessThanOrEqual(880)
   })
 
+  it('names each tile as a picture of its angle', async function () {
+    await grid({ width: 1280, height: 900, playable: true })
+    const named = [...document.querySelectorAll('[role="img"][aria-label]')]
+      .map(node => node.getAttribute('aria-label'))
+      .filter(label => label?.endsWith(' angle'))
+    expect(named.length).equals(tiles().length)
+    expect(named.length).greaterThan(0)
+    for (const label of named) expect(label).match(/^\S.* angle$/)
+  })
+
+  it('draws what each tile is doing under ?debug=1, where the suite reads it', async function () {
+    this.timeout(15000)
+    // The test page has a window but no global `location`; the flag reads it.
+    window.history.replaceState(null, '', '/?debug=1')
+    Object.assign(globalThis, { location: window.location })
+    try {
+      await grid({ width: 1280, height: 900, playable: true, ids: ['a', 'b'] })
+      playAt(20)
+      playingIs(true)
+      // The watchdog draws it once a second.
+      await settle(1500)
+      const readout = document.querySelector('[data-testid="playerReadout"]')
+      expect(readout?.textContent).match(/clock -?[0-9.]+s/)
+    } finally {
+      Reflect.deleteProperty(globalThis, 'location')
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
   it("calls the bar up from a mouse over the bottom third of the pane, not the window's", async function () {
     this.timeout(15000)
     // The pane from 100 to 700: its bottom third starts at 500, the 768

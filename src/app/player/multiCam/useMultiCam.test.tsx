@@ -990,6 +990,98 @@ describe('useMultiCam buffering', function () {
     expect(tiles.B.paused).equals(false)
   })
 
+  it('reads out, under debug, what the gate holds against each tile and who is heard', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, { debug: true }, tiles => {
+      fill(tiles.A, [120, 123])
+      fill(tiles.B, [60, 70])
+    })
+    await ticks(1)
+    const [a, b, clock] = mc().readout
+    expect(a).match(
+      /^A {8} buf 3\.0s {2}ready 4 {2}at 120\.0 {2}to 120\.0 {2}paused {2}ok {2}short \d+(\.\d)?s/
+    )
+    // No tile has said where it sits on the wall yet.
+    expect(a).match(/ {2}map none$/)
+    expect(b).not.match(/short/)
+    expect(clock).match(
+      / {2}held {2}ahead ≤ \d+s {2}heard A {2}gate 1 short \d+(\.\d)?s$/
+    )
+
+    fill(tiles.A, [120, 126])
+    await ticks(2)
+    expect(mc().readout[2]).match(/ {2}playing {2}ahead ≤ \d+s {2}heard A$/)
+    expect(tiles.A.paused).equals(false)
+  })
+
+  it('keeps looking once a second while the grid re-renders faster than that, as it does after a scrub', async function () {
+    this.timeout(8000)
+    const { mc, tiles, rerender } = await grid({}, { debug: true }, tiles => {
+      fill(tiles.A, [120, 130])
+      fill(tiles.B, [60, 70])
+    })
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    /** What the readout last said A holds: it is only rewritten by a look. */
+    const shown = (): number =>
+      Number(/ buf (-?[0-9.]+)s/.exec(mc().readout[0] ?? '')?.[1])
+    // Three seconds of renders a third of a second apart, each changing
+    // something the look reads (which angle is heard), while A's buffer
+    // grows a second at a time.
+    for (let step = 1; step <= 10; step++) {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      })
+      fill(tiles.A, [120, 130 + step])
+      await rerender({ audioId: step % 2 === 0 ? 'A' : 'B' })
+    }
+    // Looked at within the last second or so: at least 17 of the 20 s.
+    expect(shown()).least(16)
+  })
+
+  it('plays a lone angle its player calls ready, though the gate measures it short at the clock for ever (the iPhone freeze)', async function () {
+    this.timeout(8000)
+    // Safari's state when it froze: paused at 306 s, six seconds loaded and
+    // no more, ready to play by its own word; the clock 3.5 s ahead of it.
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0)], order: ['A'], atMs: T0 + 309_500 },
+      { debug: true },
+      tiles => {
+        fill(tiles.A, [306, 312])
+        tiles.A.currentTime = 306
+      }
+    )
+    // Alone, it waits only for its player's word — not two seconds, not
+    // five seconds of buffer at the clock.
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
+  })
+
+  it('holds a grid of several angles for two seconds before trusting a player that stands ready', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid(
+      {
+        videos: [video('A', 0), video('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 309_500
+      },
+      {},
+      tiles => {
+        for (const tile of [tiles.A, tiles.B]) {
+          fill(tile, [306, 312])
+          tile.currentTime = 306
+        }
+      }
+    )
+    await ticks(1)
+    expect(mc().waiting).equals(true)
+    expect(tiles.A.paused).equals(true)
+    await ticks(3)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused).equals(false)
+  })
+
   it('sends a lone recording across a start hole wider than its player jumps, and plays it', async function () {
     this.timeout(5000)
     // Three seconds of nothing where it is to start, then the footage.

@@ -212,9 +212,23 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       // There are no controls on this one, so there is no one to overrule.
       video.addEventListener('canplay', start)
       video.addEventListener('loadeddata', start)
+      // Safari loads only what a video is until something asks it to play, so
+      // `canplay` never comes and the card sat on its poster for good. Asked
+      // as soon as it knows what it is, and shown once it is moving.
+      const ask = (): void => {
+        if (!video.paused) return
+        video.play().catch(() => undefined)
+      }
+      const shown = (): void => {
+        setMoving(true)
+      }
+      video.addEventListener('loadedmetadata', ask)
+      video.addEventListener('playing', shown)
       teardown.current = () => {
         video.removeEventListener('canplay', start)
         video.removeEventListener('loadeddata', start)
+        video.removeEventListener('loadedmetadata', ask)
+        video.removeEventListener('playing', shown)
         detach()
       }
     },

@@ -41,7 +41,8 @@ export interface MultiCamBarProps {
   window: Window
   atMs: number
   angles: BarAngle[]
-  onScrub: (wallMs: number) => void
+  /** `final` is the finger lifting, or a tap; a move while dragging is not. */
+  onScrub: (wallMs: number, final?: boolean) => void
   /**
    * The track's width in px, whenever it is laid out: a drag across the
    * pictures moves the playhead by a share of it.
