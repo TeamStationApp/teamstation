@@ -6,7 +6,13 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { Pressable, StatusBar, useWindowDimensions, View } from 'react-native'
+import {
+  Platform,
+  Pressable,
+  StatusBar,
+  useWindowDimensions,
+  View
+} from 'react-native'
 
 import { type GameDetail, parseStoredGame } from '../../common/api'
 import type { GameSocketListener } from '../../common/gameSocket'
@@ -113,21 +119,54 @@ export const FLOATING_BUTTON = {
   elevation: 6
 } as const
 
-/** What Exit and the speaker take across, from the window's left edge. */
-export const CONTROLS_WIDTH = 16 + 76 + 10 + 44 + 8
+/** What the speaker takes across, upper left, from the window's left edge. */
+export const SPEAKER_RESERVE = 16 + 44 + 8
+
+/** What Exit takes across, upper right, from the field column's right edge. */
+export const EXIT_RESERVE = 16 + 76 + 8
 
 /** The row Exit and the speaker sit in, under the safe area. */
 export const CONTROLS_ROW = 56
 
 /**
  * Where the field starts, from the window's top. When the 3D scoreboard
- * leaves room on its left for Exit and the speaker, at the top; when it
- * spans the width (a phone), under their row, so they cover neither the
- * board nor a fielder.
+ * leaves room for the speaker on its left (when there is one) and for Exit
+ * on its right, at the top; when it runs under either (a phone), under their
+ * row, so they cover neither the board nor a fielder.
  */
-export function fieldTop(board: ScreenRect | null, safeTop: number): number {
-  if (board == null || board.x >= CONTROLS_WIDTH) return 0
-  return safeTop + CONTROLS_ROW
+export function fieldTop(
+  board: ScreenRect | null,
+  safeTop: number,
+  /** The field column's right edge, inside its safe padding, where Exit ends. */
+  width: number,
+  /** The speaker is drawn: the announcer is offered. */
+  speaker: boolean
+): number {
+  if (board == null) return 0
+  const underSpeaker = speaker && board.x < SPEAKER_RESERVE
+  const underExit = board.x + board.width > width - EXIT_RESERVE
+  return underSpeaker || underExit ? safeTop + CONTROLS_ROW : 0
+}
+
+/**
+ * How far the play, pause, rewind and announcer glyphs sit below their
+ * box's middle: a phone's icon font draws them high, the web's centred.
+ */
+export function replayIconDrop(os: string): number {
+  return os === 'ios' || os === 'android' ? 2 : 0
+}
+
+/** A glyph moved down by the platform's drop, to meet its button's centre. */
+function Dropped(props: { children: React.ReactNode }): React.ReactElement {
+  const drop = replayIconDrop(Platform.OS)
+  return (
+    <View
+      testID="replay-icon"
+      style={drop === 0 ? undefined : { transform: [{ translateY: drop }] }}
+    >
+      {props.children}
+    </View>
+  )
 }
 
 /** The field's framing for a window: the box score's share below it. */
@@ -372,15 +411,23 @@ function ReplayView(props: {
     typeof surfaceStyle.safe.paddingTop === 'number'
       ? surfaceStyle.safe.paddingTop
       : 0
+  const safeRight =
+    typeof surfaceStyle.safe.paddingRight === 'number'
+      ? surfaceStyle.safe.paddingRight
+      : 0
+  const fieldWidth = layout.side ? width - SIDE_DECK_WIDTH : width
+  // Exit sits in the field's column, inside its safe padding, and the board
+  // is measured across that column, not the window.
+  const exitEdge = fieldWidth - safeRight
   useEffect(() => {
     setOffset(0)
   }, [width])
   useEffect(() => {
     if (offset === 0) {
-      const top = fieldTop(scoreboardRect, safeTop)
+      const top = fieldTop(scoreboardRect, safeTop, exitEdge, props.narration)
       if (top > 0) setOffset(top)
     }
-  }, [scoreboardRect, offset, safeTop])
+  }, [scoreboardRect, offset, safeTop, exitEdge, props.narration])
   const [cardBottom, setCardBottom] = useState(0)
 
   const session = state.scoring.session
@@ -444,7 +491,6 @@ function ReplayView(props: {
     paused: lstrings.replay_paused,
     changed: lstrings.replay_play_changed
   })
-  const fieldWidth = layout.side ? width - SIDE_DECK_WIDTH : width
   const field = (
     <FieldCanvas
       {...SCORING_CAMERA}
@@ -484,26 +530,9 @@ function ReplayView(props: {
       }}
     />
   )
-  const topLeft = (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10
-      }}
-    >
-      <View style={{ minWidth: 76 }}>
-        <ScoringButton
-          label={lstrings.replay_exit}
-          color={surface.dangerFill}
-          shape="pill"
-          onPress={props.onExit}
-        />
-      </View>
+  // The speaker alone upper left, Exit upper right.
+  const topControls = (
+    <>
       {props.narration && (
         <Pressable
           accessibilityRole="button"
@@ -513,6 +542,9 @@ function ReplayView(props: {
           testID="replay-speaker"
           onPress={toggleSound}
           style={{
+            position: 'absolute',
+            top: 0,
+            left: 16,
             width: 44,
             height: 44,
             borderRadius: 12,
@@ -527,16 +559,30 @@ function ReplayView(props: {
               : CONTROL_COLORS.micOn.border
           }}
         >
-          <Icon
-            name={muted ? 'volume_off' : 'volume_up'}
-            size={1.5}
-            color={
-              muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
-            }
-          />
+          <Dropped>
+            <Icon
+              name={muted ? 'volume_off' : 'volume_up'}
+              size={1.5}
+              color={
+                muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
+              }
+            />
+          </Dropped>
         </Pressable>
       )}
-    </View>
+      <View
+        testID="replay-exit"
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: 0, right: 16, minWidth: 76 }}
+      >
+        <ScoringButton
+          label={lstrings.replay_exit}
+          color={surface.dangerFill}
+          shape="pill"
+          onPress={props.onExit}
+        />
+      </View>
+    </>
   )
   const pauseButton = state.final ? null : (
     <Pressable
@@ -550,11 +596,13 @@ function ReplayView(props: {
       }}
       style={[FLOATING_BUTTON, { right: FLOATING_MARGIN }]}
     >
-      <Icon
-        name={state.paused ? 'play_arrow' : 'pause'}
-        size={1.75}
-        color={surface.activeText}
-      />
+      <Dropped>
+        <Icon
+          name={state.paused ? 'play_arrow' : 'pause'}
+          size={1.75}
+          color={surface.activeText}
+        />
+      </Dropped>
     </Pressable>
   )
   const rewindButton =
@@ -575,7 +623,9 @@ function ReplayView(props: {
         }}
         style={[FLOATING_BUTTON, { left: FLOATING_MARGIN }]}
       >
-        <Icon name="skip_previous" size={1.75} color={surface.activeText} />
+        <Dropped>
+          <Icon name="skip_previous" size={1.75} color={surface.activeText} />
+        </Dropped>
       </Pressable>
     )
   const playCard = (
@@ -613,7 +663,7 @@ function ReplayView(props: {
           style={[{ position: 'absolute', inset: 0 }, surfaceStyle.safe]}
         >
           <View pointerEvents="box-none" style={{ flex: 1 }}>
-            {topLeft}
+            {topControls}
           </View>
         </View>
         {!layout.side && (

@@ -24,16 +24,18 @@ import type { FieldCanvas } from '../field/FieldCanvas'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   CONTROLS_ROW,
-  CONTROLS_WIDTH,
   DECK_SHARE,
+  EXIT_RESERVE,
   fieldTop,
   FLOATING_BUTTON,
   FLOATING_MARGIN,
   GameReplayScreen,
   type ReplayClient,
+  replayIconDrop,
   replayLayout,
   type ReplaySocket,
-  SIDE_CARD_ROOM
+  SIDE_CARD_ROOM,
+  SPEAKER_RESERVE
 } from './GameReplayScreen'
 
 type FieldProps = Parameters<typeof FieldCanvas>[0]
@@ -432,16 +434,70 @@ describe('the replay screen', function () {
     expect(scoreboard?.pitcherJersey).equals(pitcher?.jersey)
   })
 
-  it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {
-    // Room to the scoreboard's left: the field starts at the top.
-    expect(
-      fieldTop({ x: CONTROLS_WIDTH, y: 20, width: 300, height: 120 }, 47)
-    ).equals(0)
-    expect(fieldTop(null, 47)).equals(0)
-    // A phone's board spans the width: the field starts under the controls.
-    expect(fieldTop({ x: 30, y: 50, width: 340, height: 120 }, 47)).equals(
-      47 + CONTROLS_ROW
+  it('puts the speaker upper left and Exit upper right, and the rewind and pause in the bottom corners', async function () {
+    resize(402, 874)
+    announcer.health = true
+    await show(gameOf(), finalGame())
+    expect(flat(propsOf('replay-speaker').style)).deep.include({
+      position: 'absolute',
+      top: 0,
+      left: 16
+    })
+    expect(flat(propsOf('replay-speaker').style)).not.have.property('right')
+    expect(flat(propsOf('replay-exit').style)).deep.include({
+      position: 'absolute',
+      top: 0,
+      right: 16,
+      minWidth: 76
+    })
+    expect(flat(propsOf('replay-exit').style)).not.have.property('left')
+    expect(flat(propsOf('replay-rewind').style)).deep.include({ left: 16 })
+    expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
+  })
+
+  it('drops the glyphs 2 points on a phone, and not on the web', function () {
+    expect(replayIconDrop('ios')).equals(2)
+    expect(replayIconDrop('android')).equals(2)
+    expect(replayIconDrop('web')).equals(0)
+  })
+
+  it('leaves the web’s glyphs where they are', async function () {
+    resize(402, 874)
+    announcer.health = true
+    await show(gameOf(), finalGame())
+    const icons = document.querySelectorAll<HTMLElement>(
+      '[data-testid="replay-icon"]'
     )
+    // The speaker's, pause's and rewind's.
+    expect(icons.length).equals(3)
+    for (const icon of icons) expect(icon.style.transform).equals('')
+  })
+
+  it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {
+    expect(SPEAKER_RESERVE).equals(68)
+    expect(EXIT_RESERVE).equals(100)
+    // Clear of both: the field starts at the top.
+    expect(
+      fieldTop(
+        { x: SPEAKER_RESERVE, y: 20, width: 1200 - 100 - 68, height: 120 },
+        47,
+        1200,
+        true
+      )
+    ).equals(0)
+    expect(fieldTop(null, 47, 402, true)).equals(0)
+    // Under the speaker only while there is one.
+    const left = { x: 30, y: 20, width: 300, height: 120 }
+    expect(fieldTop(left, 47, 1200, true)).equals(47 + CONTROLS_ROW)
+    expect(fieldTop(left, 47, 1200, false)).equals(0)
+    // Under Exit.
+    expect(
+      fieldTop({ x: 800, y: 20, width: 350, height: 120 }, 47, 1200, false)
+    ).equals(47 + CONTROLS_ROW)
+    // A phone's board spans the width: the field starts under the controls.
+    expect(
+      fieldTop({ x: 30, y: 50, width: 340, height: 120 }, 47, 402, true)
+    ).equals(47 + CONTROLS_ROW)
     resize(402, 874)
     await show(gameOf(), finalGame())
     await showCatcher()
@@ -464,6 +520,22 @@ describe('the replay screen', function () {
         ?.style.top ?? '0'
     )
     expect(cardTop).greaterThan(CATCHER.y + CATCHER.height + moved)
+  })
+
+  it('moves the field under Exit when the board reaches the field column’s edge beside the box score', async function () {
+    // A phone on its side: the field's column is 874 - 360 = 514 wide.
+    resize(874, 402)
+    await show(gameOf(), finalGame())
+    await showCatcher()
+    const fieldBox = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="replay-field"]')
+    expect(['', '0px']).includes(fieldBox()?.style.marginTop ?? '')
+    await act(async () => {
+      field().onScoreboardBounds?.({ x: 200, y: 20, width: 300, height: 100 })
+    })
+    expect(
+      Number.parseFloat(fieldBox()?.style.marginTop ?? '0')
+    ).greaterThanOrEqual(CONTROLS_ROW)
   })
 
   it('turns the announcer on and off', async function () {
