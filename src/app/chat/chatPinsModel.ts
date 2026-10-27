@@ -28,6 +28,9 @@ export function pinPreview(
   messages: readonly MessageView[]
 ): { sender?: string; excerpt: string } {
   const message = messages.find(message => message.id === pin.messageId)
+  // A pinned post older than the loaded history (all of it, after a fresh
+  // sign-in) is not unavailable: it is earlier, and the jump loads it.
+  if (message == null) return { excerpt: lstrings.chat_pin_earlier }
   return {
     sender:
       message?.status === 'ok'

@@ -1191,11 +1191,13 @@ describe('chat follow-up reply and personal pin views', function () {
       .contains('You')
       .and.contains('Current caption')
       .and.contains('Locked message')
-      .and.contains('Message unavailable')
+      .and.contains('Earlier message. Tap to show it.')
+      .and.not.contains('Message unavailable')
       .and.not.contains('Stale caption')
     await press('Current caption')
     await press('Locked message')
-    await press('Message unavailable')
+    // A pinned post outside the loaded history is earlier, and its jump loads it.
+    await press('Earlier message. Tap to show it.')
     expect(jumps).deep.equals(['msg_own', 'msg_locked', 'msg_missing'])
     await render(
       <PinnedMessages

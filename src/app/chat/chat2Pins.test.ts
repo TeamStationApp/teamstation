@@ -46,8 +46,10 @@ describe('personal pin presentation', function () {
       expect(preview.sender).equals(undefined)
       expect(preview.excerpt).not.contains('Never show')
     }
-    expect(pinPreview(pin, []).sender).equals(undefined)
-    expect(pinPreview(pin, []).excerpt).contains('unavailable')
+    // Not loaded yet is earlier, never unavailable.
+    expect(pinPreview(pin, [])).deep.equals({
+      excerpt: 'Earlier message. Tap to show it.'
+    })
     expect(
       pinPreview(pin, [message({ body: 'a'.repeat(240) })]).excerpt
     ).length(201)

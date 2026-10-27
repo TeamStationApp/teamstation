@@ -632,6 +632,7 @@ export const enUs = {
   chat_jump_earlier_reply: 'Jump to the earlier message this replies to',
   chat_quote_earlier: 'Earlier message',
   chat_quote_show: 'Tap to show it',
+  chat_pin_earlier: 'Earlier message. Tap to show it.',
   chat_delete_for_everyone: 'Delete for everyone',
   chat_report: 'Report',
   chat_report_title: 'Report this message?',
