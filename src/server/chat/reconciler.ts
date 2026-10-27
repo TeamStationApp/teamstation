@@ -31,7 +31,7 @@ import {
  * Keeps every scope chat's members equal to its audience, and every DM
  * within its rules.
  *
- * Triggers on the roster tables (migration 051) upsert `chat_dirty` rows —
+ * Triggers on the roster tables (migration 051) append `chat_dirty` rows —
  * a team, season, league or user whose chats may have changed — and notify
  * `chat_dirty`. The reconciler, in the primary only, takes them with
  * `delete … returning` and expands them into conversations:
@@ -382,32 +382,45 @@ export async function processMarks(
 }
 
 /**
- * Takes every mark there is and reconciles what they reach. On a failure the
- * marks go back (without a notify, so a broken conversation is retried by
+ * Takes every mark there is and reconciles what they reach. The queue is
+ * append-only (088chatDirtyQueue), so a scope marked many times while the
+ * reconciler was behind is coalesced here and read once. Marks appended
+ * while it drains are left for the next drain. On a failure the marks go
+ * back, once each (without a notify, so a broken conversation is retried by
  * the next notify or the sweep rather than in a loop). Answers how many
- * marks were taken.
+ * scopes were taken.
  */
 export async function drainDirty(
   db: Kysely<Database>,
   now: Date,
   log: (message: string) => void = () => undefined
 ): Promise<number> {
-  const marks = await db
+  const taken = await db
     .deleteFrom('chat_dirty')
     .returning(['scope_type', 'scope_id'])
     .execute()
+  const marks = distinctMarks(taken)
   if (marks.length === 0) return 0
   try {
     await processMarks(db, marks, now, log)
   } catch (error) {
-    await db
-      .insertInto('chat_dirty')
-      .values(marks)
-      .onConflict(oc => oc.columns(['scope_type', 'scope_id']).doNothing())
-      .execute()
+    await db.insertInto('chat_dirty').values(marks).execute()
     throw error
   }
   return marks.length
+}
+
+/** Each scope once, in the order it was first marked. */
+export function distinctMarks<
+  T extends { scope_type: string; scope_id: string }
+>(marks: readonly T[]): T[] {
+  const seen = new Set<string>()
+  return marks.filter(mark => {
+    const key = `${mark.scope_type}:${mark.scope_id}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /**

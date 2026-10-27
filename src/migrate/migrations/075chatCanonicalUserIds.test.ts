@@ -45,7 +45,8 @@ const chatNames = new Set([
   '057chatMasterCompatibility',
   '068chatUserIdBridge',
   '075chatCanonicalUserIds',
-  '087loginOffOnly'
+  '087loginOffOnly',
+  '088chatDirtyQueue'
 ])
 
 async function scratch(
@@ -457,7 +458,8 @@ async function triggerEffects(pool: Pool): Promise<void> {
     await pool.query(sql, args)
     const actual = (
       await pool.query(
-        `select scope_type||':'||scope_id as mark from chat_dirty order by 1`
+        // The queue appends a mark per write (088); a scope is read once.
+        `select distinct scope_type||':'||scope_id as mark from chat_dirty order by 1`
       )
     ).rows.map(row => row.mark)
     expect(actual, sql).deep.equals([...expected].sort())
