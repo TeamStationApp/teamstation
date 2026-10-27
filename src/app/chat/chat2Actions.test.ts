@@ -13995,12 +13995,15 @@ describe('phone search of a loaded newest-page post', function () {
     width: 390,
     height: 100
   })
+  // The post is three drags older than the reader, which starts two drags
+  // from the latest end; the history's start holds it.
   function sweeping(physical: boolean): {
     scenario: Scenarios
     swipes: () => number
+    touches: () => number
   } {
     let swipes = 0
-    // Older (a finger moving down) advances toward the post; latest returns.
+    let touches = 0
     let older = 0
     const ui = {
       surface: 'ios',
@@ -14025,7 +14028,15 @@ describe('phone search of a loaded newest-page post', function () {
       ],
       measuredSwipe: async (input: { startY: number; endY: number }) => {
         swipes += 1
-        older += input.endY > input.startY ? 1 : -1
+        // A finger moving down reads older rows; the latest end stops it.
+        older = Math.max(-2, older + (input.endY > input.startY ? 1 : -1))
+      },
+      device: {
+        tapOnPoint: async (point: { x: number; y: number }) => {
+          expect(point).deep.equals({ x: 60, y: 20 })
+          touches += 1
+          older = 3
+        }
       }
     }
     return {
@@ -14033,11 +14044,11 @@ describe('phone search of a loaded newest-page post', function () {
         ui,
         observations: []
       }) as Scenarios,
-      swipes: () => swipes
+      swipes: () => swipes,
+      touches: () => touches
     }
   }
-  it('keeps sweeping a phone history whose mounted rows move without changing', async function () {
-    this.timeout(20000)
+  it('finds an older post from a phone history start reached by the status bar', async function () {
     const m = sweeping(true)
     expect(
       await m.scenario.nativeLoadedTarget(
@@ -14046,7 +14057,21 @@ describe('phone search of a loaded newest-page post', function () {
         'older'
       )
     ).equals(true)
-    expect(m.swipes()).equals(3)
+    expect([m.touches(), m.swipes()]).deep.equals([1, 0])
+    expect(m.scenario.observations[0].statusBarStart).equals(1)
+  })
+  it('sweeps a phone history to its latest end by moving rows, then from its start', async function () {
+    this.timeout(20000)
+    const m = sweeping(true)
+    expect(
+      await m.scenario.nativeLoadedTarget(
+        post,
+        AbortSignal.timeout(15000),
+        'latest'
+      )
+    ).equals(true)
+    // Two drags reach the latest end and two more prove it stopped.
+    expect([m.swipes(), m.touches()]).deep.equals([4, 1])
   })
   it('keeps the simulator stopping on an unchanged mounted set', async function () {
     this.timeout(20000)
@@ -14058,6 +14083,7 @@ describe('phone search of a loaded newest-page post', function () {
         'older'
       )
     ).equals(false)
+    expect(m.touches()).equals(0)
   })
   function history(
     newest: boolean,
