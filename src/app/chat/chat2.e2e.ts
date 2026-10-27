@@ -3181,17 +3181,28 @@ export class Scenarios {
     // bar's scroll to top (touched until the rows rest, as a fresh page can
     // stop one touch short), and one sweep toward the latest rows from there
     // covers what the first sweep did not.
-    const sweeps: Array<1 | -1 | 'start'> = olderOnly
+    // A post sought latest-first is reached from the latest end, which the
+    // app's own Go to latest control brings to the reader.
+    const sweeps: Array<1 | -1 | 'start' | 'end'> = olderOnly
       ? [1]
       : placed
         ? first === 'latest'
-          ? [-1, 'start', -1]
+          ? ['end', 1, 'start', -1]
           : ['start', -1]
         : first === 'latest'
           ? [-1, 1]
           : [1, -1]
     for (const direction of sweeps) {
       if (nodes.some(node => node.id === id)) break
+      if (direction === 'end') {
+        if (await ui.visible({ id: 'chat-jump-latest' }, 500)) {
+          await ui.id('chat-jump-latest')
+          await new Promise(resolve => setTimeout(resolve, 1500))
+          nodes = await ui.nodes(undefined, signal)
+          proof.latestJump = true
+        }
+        continue
+      }
       if (direction === 'start') {
         let touches = 0
         while (touches < 20) {
