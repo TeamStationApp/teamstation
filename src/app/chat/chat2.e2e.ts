@@ -751,6 +751,9 @@ export function iosSpotlightCaptureGeometry(
   }
 }
 
+/** A short Android reader-tall drag's duration, clear of the long press. */
+export const ANDROID_SHORT_DRAG_MS = 300
+
 /** A phone's settled-spotlight budget: about fifteen of its samples. */
 export const PHYSICAL_SPOTLIGHT_MS = 30000
 
@@ -2774,9 +2777,13 @@ export class Scenarios {
         duration
       }
       assert(
-        // A slow drag (iOS, or a reader-tall Android target) is sized from
-        // its touch slop, so it may be as short as 20.
-        Math.abs(delta) >= (duration >= 1000 ? 20 : 48) &&
+        // A slow drag (iOS, or a short one for a reader-tall Android target)
+        // is sized from its touch slop, so it may be as short as 20.
+        Math.abs(delta) >=
+          ((ui.surface === 'ios' && duration >= 1000) ||
+          (ui.surface === 'android' && duration === ANDROID_SHORT_DRAG_MS)
+            ? 20
+            : 48) &&
           Math.min(input.startY, input.endY) > band.top &&
           Math.max(input.startY, input.endY) < band.bottom,
         'Meaningful gesture must stay inside actual reading band'
@@ -2933,8 +2940,16 @@ export class Scenarios {
       const size = slow
         ? Math.min(limit, Math.max(20, Math.abs(desired) + slop))
         : Math.min(limit, Math.max(48, Math.abs(desired)))
-      if (await swipe(Math.sign(desired) * size, slow ? 1000 : 200))
-        return handoff()
+      // An Android drag shorter than 48 px held for a second is still inside
+      // the Pixel's 21 px touch slop when the long-press timeout ends, and
+      // opens the message's actions; it moves in 300 ms instead, still far
+      // below the fling speed.
+      const duration = !slow
+        ? 200
+        : ui.surface === 'android' && size < 48
+          ? ANDROID_SHORT_DRAG_MS
+          : 1000
+      if (await swipe(Math.sign(desired) * size, duration)) return handoff()
     }
     proof.outcome = 'passed'
     return current.nodes
@@ -3521,7 +3536,11 @@ export class Scenarios {
         duration: 200
       })
     } else {
-      const point = ui.native ? undefined : await this.zoomedHoldPoint(target)
+      const point = !ui.native
+        ? await this.zoomedHoldPoint(target)
+        : ui.surface === 'ios' && ui.physical
+          ? await this.phoneHoldPoint(target)
+          : undefined
       await ui.device.longPressOn({
         id: 'chat-bubble-' + target.id,
         ...(point == null ? {} : { point }),
@@ -3529,6 +3548,49 @@ export class Scenarios {
       })
       await ui.device.assertVisible({ text: exactText('Reply'), timeout: 5000 })
     }
+  }
+
+  /**
+   * A phone's driver holds an element at its frame's centre, which for a
+   * reader-tall bubble lies under the composer, where the hold opens the
+   * keyboard instead. There the hold point is the centre of the bubble's
+   * part in the unobscured reader, relative to the bubble; a bubble whose
+   * centre is in the reader keeps the driver's own centre.
+   */
+  async phoneHoldPoint(target: Chat2Message): Promise<string | undefined> {
+    const nodes = await this.ui.nodes()
+    const box = (id: string): NonNullable<PublicNode['bounds']> | undefined =>
+      nodes.find(node => node.id === id)?.bounds
+    const bubble = need(
+      box('chat-bubble-' + target.id),
+      'Actual bubble for a hold required'
+    )
+    const history = need(box('chat-message-history'), 'Actual history required')
+    const header = need(
+      box('chat-conversation-identity'),
+      'Actual header required'
+    )
+    const composer = need(box('chat-composer-band'), 'Actual composer required')
+    const pins = box('chat-pinned-band')
+    const band = {
+      top: Math.max(
+        history.y,
+        header.y + header.height,
+        pins == null ? 0 : pins.y + pins.height
+      ),
+      bottom: Math.min(history.y + history.height, composer.y)
+    }
+    const centre = bubble.y + bubble.height / 2
+    if (centre > band.top + 8 && centre < band.bottom - 8) return undefined
+    const top = Math.max(bubble.y, band.top)
+    const bottom = Math.min(bubble.y + bubble.height, band.bottom)
+    assert(
+      bubble.height > 0 && bottom - top >= 16,
+      'Visible unobscured part of the bubble required for a hold'
+    )
+    const point = `50%,${Math.round((((top + bottom) / 2 - bubble.y) / bubble.height) * 1000) / 10}%`
+    this.observations.push({ phoneHold: target.id, bubble, band, point })
+    return point
   }
 
   /**

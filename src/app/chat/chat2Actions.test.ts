@@ -14313,7 +14313,8 @@ describe('Android reader-tall slow approach', function () {
     await scenario.nativeAnchorReady(tall)
     expect(swipes).has.length(1)
     expect(Math.abs(swipes[0].endY - swipes[0].startY)).lessThan(48)
-    expect(swipes[0].duration).equals(1000)
+    // Held for a second, a drag this short would be a long press.
+    expect(swipes[0].duration).equals(300)
     expect(y).within(262.5, 279.5)
   })
 })
@@ -14367,5 +14368,56 @@ describe('app-header Back on native', function () {
     expect(String(await captureFailure(m.scenario.headerBack()))).contains(
       'Unique observed app-header Back required'
     )
+  })
+})
+
+describe('phone hold point', function () {
+  const long: Chat2Message = {
+    id: 'msg_long',
+    seq: 3,
+    body: 'Long post',
+    authorId: 'usr_peer'
+  }
+  function scenario(bubbleY: number, height: number): Scenarios {
+    const ui = {
+      nodes: async (): Promise<PublicNode[]> => [
+        {
+          id: 'chat-message-history',
+          bounds: { x: 0, y: 0, width: 390, height: 844 }
+        },
+        {
+          id: 'chat-conversation-identity',
+          bounds: { x: 64, y: 47, width: 274, height: 48 }
+        },
+        {
+          id: 'chat-pinned-band',
+          bounds: { x: 16, y: 95, width: 358, height: 65 }
+        },
+        {
+          id: 'chat-composer-band',
+          bounds: { x: 16, y: 670, width: 358, height: 70 }
+        },
+        {
+          id: 'chat-bubble-' + long.id,
+          bounds: { x: 48, y: bubbleY, width: 273, height }
+        }
+      ]
+    }
+    return Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+  }
+  it("holds a reader-tall bubble's part in the reader, not its centre under the composer", async function () {
+    // 167..1209: the reader shows 167..670, whose centre is 418.5.
+    expect(await scenario(167, 1042).phoneHoldPoint(long)).equals('50%,24.1%')
+  })
+  it("keeps the driver's centre for a bubble centred in the reader", async function () {
+    expect(await scenario(300, 129).phoneHoldPoint(long)).equals(undefined)
+  })
+  it('refuses a bubble with no usable part in the reader', async function () {
+    expect(
+      String(await captureFailure(scenario(664, 400).phoneHoldPoint(long)))
+    ).contains('Visible unobscured part of the bubble required for a hold')
   })
 })
