@@ -14686,3 +14686,58 @@ describe('Android draft clear read-back', function () {
     )
   })
 })
+
+describe('Android loaded-row sweep', function () {
+  it('drags half a reader slowly, so no row flings past between reads', async function () {
+    const post: Chat2Message = {
+      id: 'msg_loop_anchor',
+      seq: 2,
+      body: 'Loop anchor',
+      authorId: 'usr_peer'
+    }
+    const swipes: Array<{ startY: number; endY: number; duration: number }> = []
+    const ui = {
+      surface: 'android',
+      physical: true,
+      nodes: async (): Promise<PublicNode[]> => [
+        {
+          id: 'chat-message-history',
+          bounds: { x: 0, y: 0, width: 1080, height: 2400 }
+        },
+        {
+          id: 'chat-conversation-identity',
+          bounds: { x: 168, y: 132, width: 744, height: 123 }
+        },
+        {
+          id: 'chat-composer-band',
+          bounds: { x: 42, y: 1886, width: 996, height: 185 }
+        },
+        ...(swipes.length >= 2 ? [{ id: 'chat-bubble-' + post.id }] : [])
+      ],
+      measuredSwipe: async (input: {
+        startY: number
+        endY: number
+        duration: number
+      }) => {
+        swipes.push(input)
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+    expect(
+      await scenario.nativeLoadedTarget(
+        post,
+        AbortSignal.timeout(15000),
+        'older'
+      )
+    ).equals(true)
+    expect(swipes).has.length(2)
+    for (const swipe of swipes) {
+      expect(swipe.duration).equals(1500)
+      // Half the 255..1886 reader, toward older rows (the finger moves down).
+      expect(swipe.endY - swipe.startY).within(815, 816)
+    }
+  })
+})
