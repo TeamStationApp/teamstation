@@ -1,3 +1,4 @@
+import { addDays } from './calendarDates'
 import {
   effectiveEventEnd,
   eventLocalFields,
@@ -142,12 +143,6 @@ function selectedInstant(instant: string, selected: boolean): string {
   return date.toISOString()
 }
 
-function nextDay(date: string): string {
-  const day = new Date(`${date}T12:00:00Z`)
-  day.setUTCDate(day.getUTCDate() + 1)
-  return day.toISOString().slice(0, 10)
-}
-
 /** Draft updates remain recoverable even during an invalid wall-time edit. */
 export function changeEventSchedule(
   draft: EventScheduleDraft,
@@ -199,7 +194,7 @@ export function changeEventSchedule(
         Date.parse(retained) > Date.parse(scheduleStart(next))
           ? next.date
           : next.endTime <= next.time
-            ? nextDay(next.date)
+            ? addDays(next.date, 1)
             : next.date
     }
   } catch {

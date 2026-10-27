@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
@@ -126,7 +126,8 @@ function previewOf(overrides: Partial<SchedulePreview> = {}): SchedulePreview {
       {
         id: 'sea_a',
         name: 'Demo Regular',
-        timezone: 'America/New_York',
+        // The season's stored zone, which no time is read in.
+        timezone: 'UTC',
         gameMinutes: 90,
         participants: ['tem_hawks', 'tem_owls', 'tem_foxes'],
         exhibitionTeams: ['tem_otters']
@@ -137,7 +138,8 @@ function previewOf(overrides: Partial<SchedulePreview> = {}): SchedulePreview {
         id: 'fld_one',
         name: 'Field 1',
         venueName: 'Example Park',
-        sizes: ['46/60', '50/70']
+        sizes: ['46/60', '50/70'],
+        timezone: 'America/New_York'
       }
     ],
     ...overrides
@@ -248,8 +250,17 @@ async function show(
 
 describe('a schedule preview', () => {
   afterEach(unmount)
+  // The viewer is in Pacific Time; Field 1 is in New York.
+  const zone = process.env.TZ
+  before(() => {
+    process.env.TZ = 'America/Los_Angeles'
+  })
+  after(() => {
+    if (zone == null) delete process.env.TZ
+    else process.env.TZ = zone
+  })
 
-  it('names the season’s zone on a time only when it is not the viewer’s', () => {
+  it('shows a time in the viewer’s zone, naming the field’s zone and start there when it differs', () => {
     expect(
       foreignZoneName(
         '2027-07-01T16:00:00.000Z',
@@ -264,18 +275,28 @@ describe('a schedule preview', () => {
         'America/New_York'
       )
     ).equals('')
-    const viewer = Intl.DateTimeFormat().resolvedOptions().timeZone
-    const range = gameTimeLabel(
-      { startAt: '2027-07-01T16:00:00.000Z', endAt: null },
-      viewer
+    const noon = { startAt: '2027-07-01T16:00:00.000Z', endAt: null }
+    // A Los Angeles viewer of a New York field.
+    expect(gameTimeLabel(noon, 'America/New_York')).equals(
+      'Thursday, July 1, 9:00 AM – 12:00 PM · 12:00 PM EDT at the field'
     )
-    expect(range).not.match(/ [A-Z]{3,4}$/)
+    // A field in the viewer's own zone, or none, adds nothing.
+    const range = gameTimeLabel(noon, 'America/Los_Angeles')
+    expect(range).equals('Thursday, July 1, 9:00 AM – 12:00 PM')
+    expect(gameTimeLabel(noon, undefined)).equals(range)
+    // A start on another day there names its weekday.
     expect(
       gameTimeLabel(
-        { startAt: '2027-07-01T16:00:00.000Z', endAt: null },
-        undefined
+        { startAt: '2027-07-02T03:30:00.000Z', endAt: '2027-07-02T05:00:00Z' },
+        'Asia/Tokyo'
       )
-    ).equals(range)
+    ).equals(
+      'Thursday, July 1, 8:30 PM – 10:00 PM · Fri 12:30 PM GMT+9 at the field'
+    )
+    // Read by a New York viewer, the same game names no zone.
+    expect(gameTimeLabel(noon, 'America/New_York', 'America/New_York')).equals(
+      'Thursday, July 1, 12:00 PM – 3:00 PM'
+    )
   })
 
   it('reads a team’s fairness plainly', () => {
@@ -315,6 +336,10 @@ describe('a schedule preview', () => {
     expect(text()).includes('Demo Owls at Demo Hawks')
     expect(text()).includes('Demo Otters at Demo Foxes · Exhibition')
     expect(text()).includes('Field 1, Example Park · 50/70')
+    // Each row reads in the viewer's time, and names the field's zone.
+    expect(text()).includes(
+      'Saturday, April 17, 5:00 AM – 6:30 AM · 8:00 AM EDT at the field'
+    )
     await tapText('Option 2')
     expect(text()).includes('Demo Hawks plays 4 of its 5 games on Saturdays')
     expect(text()).not.includes('What couldn’t be met'.toUpperCase())
@@ -394,6 +419,9 @@ describe('a schedule preview', () => {
     const fake = fakeClient(previewOf(), { failEdit: true })
     await show(fake.client)
     await tapText('Add game')
+    expect(text()).includes(
+      'The date and start are local to the field you choose.'
+    )
     await tapLabel('Home: Choose')
     await press('Demo Hawks')
     await tapLabel('Away: Choose')
@@ -409,9 +437,12 @@ describe('a schedule preview', () => {
     await tapLabel('Minute 00')
     await tapLabel('Period AM')
     await tapText('Use time')
+    // The note names the field the start is read at.
     expect(text()).includes(
-      'The date and start are in the season’s time zone, America/New_York.'
+      'The date and start are local to Field 1 at Example Park.'
     )
+    expect(text()).not.includes('America/New_York')
+    expect(text()).not.includes('Eastern Time')
     await tapLabel('Exhibition game')
     await tapLabel('Season: Demo Regular')
     await press('Demo Regular')
@@ -433,6 +464,8 @@ describe('a schedule preview', () => {
             exhibition: true,
             fieldId: 'fld_one',
             size: '50/70',
+            // 10:00 AM in New York, Field 1's zone, though the viewer is
+            // in Los Angeles, where it would be 17:00Z.
             startAt: '2027-05-01T14:00:00.000Z',
             endAt: '2027-05-01T15:30:00.000Z'
           }

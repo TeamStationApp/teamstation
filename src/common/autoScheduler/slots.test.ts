@@ -9,8 +9,8 @@ import {
   dayNumber,
   EVENING,
   firstOpenDate,
+  LocalClock,
   MORNING,
-  SeasonClock,
   seasonSlots,
   type Slot
 } from './slots'
@@ -21,11 +21,29 @@ const at = (date: string, time: string, zone = ZONE): number =>
 function slotsOf(changes: Parameters<typeof input>[0] = {}): Slot[] {
   const run = input(changes)
   const [first] = run.seasons
-  return seasonSlots(run, first, new SeasonClock(first.timezone)).slots
+  return seasonSlots(run, first, new LocalClock()).slots
 }
 
 const on = (slots: Slot[], date: string): Slot[] =>
   slots.filter(slot => slot.date === date)
+
+const iso = (instant: number): string => new Date(instant).toISOString()
+
+/** Field 1 in New York: weekday evenings 17:00–21:00, Saturdays 08:00–18:00. */
+function newYork(
+  hours = [
+    ...hoursOn([1, 2, 3, 4, 5], '17:00', '21:00'),
+    ...hoursOn([6], '08:00', '18:00')
+  ]
+): ReturnType<typeof field> {
+  return field({
+    availability: {
+      ...field().availability,
+      timezone: 'America/New_York',
+      hours
+    }
+  })
+}
 
 describe('seasonSlots', () => {
   it('fills each window with every 5-minute start where the game fits', () => {
@@ -76,22 +94,113 @@ describe('seasonSlots', () => {
     expect(on(slots, '2027-03-06')).length(0)
   })
 
-  it('reads a field in another zone in its own zone', () => {
+  it('reads a season’s windows in the local time of the field, not in UTC', () => {
+    // The season holds only dates; its 17:30–21:00 weekday window is read
+    // on a New York field in New York, as the field's 17:00–21:00 hours are.
+    const slots = slotsOf({ fields: [newYork()] })
+    // May 3, 2027 is a Monday on daylight time, UTC−4.
+    const monday = on(slots, '2027-05-03')
+    expect(iso(monday[0].start)).equals('2027-05-03T21:30:00.000Z')
+    expect(iso(monday[monday.length - 1].end)).equals(
+      '2027-05-04T01:00:00.000Z'
+    )
+    expect(monday).length(25)
+    expect(monday.every(slot => slot.timeOfDay === EVENING)).equals(true)
+    // Read in UTC, the window would be 13:30–17:00 in New York, before the
+    // field opens, so no weekday game would start at 17:30Z or before 21:00Z.
+    const weekdays = slots.filter(
+      slot => slot.weekday >= 1 && slot.weekday <= 5
+    )
+    expect(weekdays.length).greaterThan(0)
+    expect(
+      weekdays.some(slot => iso(slot.start).endsWith('T17:30:00.000Z'))
+    ).equals(false)
+    expect(
+      weekdays.every(
+        slot =>
+          slot.start >= wallInstant(slot.date, '17:30', 'America/New_York')
+      )
+    ).equals(true)
+  })
+
+  it('blocks a blackout date on the field’s local calendar day, late games too', () => {
+    // 60-minute games until 22:00 local, so the last start, 21:00 in New
+    // York, is already the next day in UTC.
+    const late = hoursOn([1, 2, 3, 4, 5], '17:30', '22:00')
     const slots = slotsOf({
-      fields: [
-        field({
-          availability: {
-            ...field().availability,
-            timezone: 'America/New_York',
-            hours: hoursOn([1], '17:30', '21:00')
-          }
+      seasons: [
+        season({
+          gameMinutes: 60,
+          blackouts: ['2027-05-04'],
+          windows: [{ from: '2027-03-01', hours: late }]
         })
-      ]
+      ],
+      fields: [newYork(hoursOn([1, 2, 3, 4, 5], '17:00', '22:00'))]
     })
-    // 17:30–21:00 in New York is 16:30–20:00 in Chicago.
+    // Tuesday May 4 has nothing, even at 21:00, which is 01:00Z on May 5.
+    expect(on(slots, '2027-05-04')).length(0)
+    expect(
+      slots.filter(
+        slot =>
+          slot.start >= Date.parse('2027-05-04T04:00:00Z') &&
+          slot.start < Date.parse('2027-05-05T04:00:00Z')
+      )
+    ).length(0)
+    // Monday's 21:00 start, 01:00Z on May 4, is Monday's, so it stays.
+    expect(on(slots, '2027-05-03').map(slot => iso(slot.start))).includes(
+      '2027-05-04T01:00:00.000Z'
+    )
+    // Wednesday's is there as well, dated Wednesday.
+    const wednesday = on(slots, '2027-05-05')
+    expect(iso(wednesday[wednesday.length - 1].start)).equals(
+      '2027-05-06T01:00:00.000Z'
+    )
+  })
+
+  it('reads the season’s first and last day as the field’s local days', () => {
+    const slots = slotsOf({
+      seasons: [season({ startsOn: '2027-03-01', endsOn: '2027-03-05' })],
+      fields: [newYork()]
+    })
+    // Monday March 1's first start, 17:30 in New York on standard time.
+    expect(iso(slots[0].start)).equals('2027-03-01T22:30:00.000Z')
+    expect(slots[0].date).equals('2027-03-01')
+    // Friday March 5's last start, 19:30, is March 6 in UTC, but the
+    // season's last day in New York, so it is in.
+    const last = slots[slots.length - 1]
+    expect(last.date).equals('2027-03-05')
+    expect(iso(last.start)).equals('2027-03-06T00:30:00.000Z')
+    expect(on(slots, '2027-03-06')).length(0)
+    // Under way, a season starts at each field's own today.
+    const lateMonday = Date.parse('2027-03-02T03:00:00Z')
+    expect(firstOpenDate(season(), lateMonday, 'America/New_York')).equals(
+      '2027-03-01'
+    )
+    expect(firstOpenDate(season(), lateMonday, 'Asia/Tokyo')).equals(
+      '2027-03-02'
+    )
+  })
+
+  it('reads two fields in different zones each in its own', () => {
+    const east = newYork()
+    const west = {
+      ...east,
+      id: 'fld_west',
+      name: 'West Field',
+      availability: { ...east.availability, timezone: 'America/Los_Angeles' }
+    }
+    const slots = slotsOf({ fields: [east, west] })
     const monday = on(slots, '2027-03-01')
-    expect(monday).length(13)
-    expect(monday[12].end).equals(at('2027-03-01', '20:00'))
+    const first = (fieldId: string): Slot =>
+      present(monday.find(slot => slot.fieldId === fieldId))
+    // 17:30 in New York, then 17:30 in Los Angeles, three hours later.
+    expect(iso(first('fld_one').start)).equals('2027-03-01T22:30:00.000Z')
+    expect(iso(first('fld_west').start)).equals('2027-03-02T01:30:00.000Z')
+    for (const id of ['fld_one', 'fld_west']) {
+      const own = monday.filter(slot => slot.fieldId === id)
+      expect(own, id).length(25)
+      expect(own.every(slot => slot.timeOfDay === EVENING)).equals(true)
+    }
   })
 
   it('only uses fields that set up as the season’s size', () => {
@@ -125,6 +234,20 @@ describe('seasonSlots', () => {
     expect(slots[slots.length - 1].date).equals('2027-03-31')
   })
 
+  it('leaves the days after a period’s end date and before the next with no slots', () => {
+    const [spring, june] = season().settings.windows
+    const slots = slotsOf({
+      seasons: [season({ windows: [{ ...spring, until: '2027-05-20' }, june] })]
+    })
+    // 2027-05-20 is a Thursday, 2027-05-22 a Saturday.
+    expect(on(slots, '2027-05-20')).length(25)
+    for (let day = 21; day <= 31; day++)
+      expect(on(slots, `2027-05-${day}`), `May ${day}`).length(0)
+    expect(on(slots, '2027-06-01')).length(19)
+    // With no end date, the last period runs to the season's last day.
+    expect(slots[slots.length - 1].date).equals('2027-07-31')
+  })
+
   it('marks the part of the day, the day and the starts that pack the time', () => {
     const saturday = on(slotsOf(), '2027-03-06')
     const start = (time: string): Slot =>
@@ -151,7 +274,7 @@ describe('seasonSlots', () => {
     const { supply, windows } = seasonSlots(
       run,
       run.seasons[0],
-      new SeasonClock(ZONE)
+      new LocalClock()
     )
     // Five weekday evenings of two games, and a Saturday of six.
     expect(supply).deep.equals({
@@ -176,7 +299,7 @@ describe('seasonSlots', () => {
         season({ fieldSize: '60/90' }, { id: 'sea_big' })
       ]
     })
-    const [slot] = seasonSlots(run, run.seasons[0], new SeasonClock(ZONE)).slots
+    const [slot] = seasonSlots(run, run.seasons[0], new LocalClock()).slots
     expect(slot.scarcity).equals(1)
   })
 
@@ -215,21 +338,27 @@ describe('slot helpers', () => {
     expect(dayNumber('1970-01-02')).equals(1)
   })
 
-  it('reads an instant as a point in the season’s zone', () => {
-    const clock = new SeasonClock(ZONE)
-    // 01:00 UTC on Sunday is Saturday evening in Chicago.
-    expect(clock.pointOf(Date.parse('2027-03-07T01:00:00Z'))).deep.equals({
-      date: '2027-03-06',
-      day: dayNumber('2027-03-06'),
-      weekday: 6,
-      timeOfDay: EVENING
-    })
+  it('reads an instant as a point in a field’s zone', () => {
+    const clock = new LocalClock()
+    // 01:00 UTC on Sunday is Saturday evening in Chicago, and Sunday
+    // morning in Tokyo.
+    expect(clock.pointOf(Date.parse('2027-03-07T01:00:00Z'), ZONE)).deep.equals(
+      {
+        date: '2027-03-06',
+        day: dayNumber('2027-03-06'),
+        weekday: 6,
+        timeOfDay: EVENING
+      }
+    )
+    expect(
+      clock.pointOf(Date.parse('2027-03-07T01:00:00Z'), 'Asia/Tokyo')
+    ).deep.include({ date: '2027-03-07', weekday: 0, timeOfDay: MORNING })
   })
 
   it('starts a season today when it is already under way', () => {
-    expect(firstOpenDate(season(), Date.parse('2027-04-10T17:00:00Z'))).equals(
-      '2027-04-10'
-    )
-    expect(firstOpenDate(season(), 0)).equals('2027-03-01')
+    expect(
+      firstOpenDate(season(), Date.parse('2027-04-10T17:00:00Z'), ZONE)
+    ).equals('2027-04-10')
+    expect(firstOpenDate(season(), 0, ZONE)).equals('2027-03-01')
   })
 })

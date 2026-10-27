@@ -13,6 +13,7 @@ import {
 import { buildContext } from './context'
 import { field, fixedGame, hoursOn, input, season, ZONE } from './fixtures.test'
 import { buildOptions } from './index'
+import { dayNumber } from './slots'
 import type { EngineBooking, EngineInput } from './types'
 
 const SATURDAYS = hoursOn([6], '08:00', '18:00')
@@ -70,15 +71,21 @@ describe('capacityCause', () => {
     ])
   }).timeout(30_000)
 
-  it('names T-ball by its label', () => {
-    const context = buildContext(
+  it('names T-ball and 46/60 as two sizes', () => {
+    const tBall = buildContext(
+      saturdays({ fieldSize: 'T-ball', regularGames: 8 })
+    )
+    expect(capacityCause(tBall, tBall.seasons[0], 'regular', 8)).equals(
+      'not enough T-ball field time to give every team 8 games'
+    )
+    expect(capacityCause(tBall, tBall.seasons[0], 'regular', 1)).equals(
+      'not enough T-ball field time to give every team 1 game'
+    )
+    const small = buildContext(
       saturdays({ fieldSize: '46/60', regularGames: 8 })
     )
-    expect(capacityCause(context, context.seasons[0], 'regular', 8)).equals(
-      'not enough T-ball 46/60 field time to give every team 8 games'
-    )
-    expect(capacityCause(context, context.seasons[0], 'regular', 1)).equals(
-      'not enough T-ball 46/60 field time to give every team 1 game'
+    expect(capacityCause(small, small.seasons[0], 'regular', 8)).equals(
+      'not enough 46/60 field time to give every team 8 games'
     )
   }).timeout(30_000)
 
@@ -264,6 +271,66 @@ describe('capacity helpers', () => {
         ]
       })
     ).equals(0)
+  }).timeout(30_000)
+
+  it('counts a field’s time in its own zone, wherever the field is', () => {
+    // Saturdays 08:00–18:00 in Tokyo: the season's window is read there
+    // too, so the field holds the same six games as one in Chicago.
+    const tokyo = buildContext(
+      saturdays({ endsOn: '2027-03-06' }, { timezone: 'Asia/Tokyo' })
+    )
+    const [demo] = tokyo.seasons
+    expect(fieldCapacity(tokyo, demo)).equals(6)
+    expect(
+      demo.windows.map(window => new Date(window.start).toISOString())
+    ).deep.equals(['2027-03-05T23:00:00.000Z'])
+  }).timeout(30_000)
+
+  it('reads a fixed game’s day in its field’s zone, or the run’s for a field outside it', () => {
+    const run = (fields: EngineInput['fields']): EngineInput =>
+      input({
+        fields,
+        notBefore: Date.parse('2027-03-02T03:00:00Z'),
+        fixed: [
+          // 01:00Z on March 7 is Saturday evening in Chicago.
+          fixedGame('g1', 'tem_hawks', 'tem_owls', '2027-03-07T01:00:00Z'),
+          fixedGame(
+            'g2',
+            'tem_hawks',
+            'tem_foxes',
+            '2027-03-07T01:00:00Z',
+            90,
+            { fieldId: 'fld_elsewhere' }
+          ),
+          // And Sunday morning in Tokyo.
+          fixedGame('g3', 'tem_owls', 'tem_foxes', '2027-03-07T01:00:00Z', 90, {
+            fieldId: 'fld_tokyo'
+          })
+        ]
+      })
+    const tokyo = field({
+      id: 'fld_tokyo',
+      availability: { ...field().availability, timezone: 'Asia/Tokyo' }
+    })
+    const [demo] = buildContext(run([field(), tokyo])).seasons
+    expect(demo.zoneOf('fld_tokyo')).equals('Asia/Tokyo')
+    expect(demo.zoneOf('fld_elsewhere')).equals(ZONE)
+    expect(demo.zoneOf(null)).equals(ZONE)
+    expect(demo.fixed.map(entry => entry.point.date)).deep.equals([
+      '2027-03-06',
+      '2027-03-06',
+      '2027-03-07'
+    ])
+    // Late on March 1 in Chicago it is already March 2 in Tokyo, so the
+    // season can still get games from Chicago's March 1.
+    expect(demo.firstDay).equals(dayNumber('2027-03-01'))
+    // A season with no field of its size reads the run's first field.
+    const [big] = buildContext(
+      run([field({ sizes: ['60/90'], availability: tokyo.availability })])
+    ).seasons
+    expect(big.zoneOf(null)).equals('Asia/Tokyo')
+    expect(big.firstDay).equals(dayNumber('2027-03-02'))
+    expect(buildContext(run([])).seasons[0].zoneOf(null)).equals('UTC')
   }).timeout(30_000)
 
   it('counts the games a team could play with and without its own commitments', () => {

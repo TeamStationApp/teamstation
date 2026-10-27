@@ -8,8 +8,12 @@ import {
   asPin,
   asVenueChanges,
   asVenueDetail,
+  asVenueMap,
   asWeeklyHours,
+  blackoutRanges,
+  FIELD_SIZES,
   fieldSizeLabel,
+  rangeDates,
   wallMinutes,
   wallTimeOf
 } from './venues'
@@ -87,10 +91,60 @@ describe('venue cleaners', () => {
     )
   })
 
+  it('collapses blackout days into ranges, and expands a range', () => {
+    expect(blackoutRanges([])).deep.equals([])
+    // A single day, and the input in any order with repeats.
+    expect(blackoutRanges(['2027-04-10'])).deep.equals([
+      { from: '2027-04-10', to: '2027-04-10' }
+    ])
+    expect(
+      blackoutRanges([
+        '2027-04-04',
+        '2027-04-02',
+        '2027-04-03',
+        '2027-04-03',
+        '2027-05-29'
+      ])
+    ).deep.equals([
+      { from: '2027-04-02', to: '2027-04-04' },
+      { from: '2027-05-29', to: '2027-05-29' }
+    ])
+    // Across a month end, a leap day and a year end.
+    expect(blackoutRanges(['2027-04-30', '2027-05-01'])).deep.equals([
+      { from: '2027-04-30', to: '2027-05-01' }
+    ])
+    expect(
+      blackoutRanges(['2028-02-28', '2028-02-29', '2028-03-01'])
+    ).deep.equals([{ from: '2028-02-28', to: '2028-03-01' }])
+    expect(blackoutRanges(rangeDates('2026-12-20', '2027-01-02'))).deep.equals([
+      { from: '2026-12-20', to: '2027-01-02' }
+    ])
+    // Both ends are included; one day is a range of one; reversed is none.
+    expect(rangeDates('2027-03-10', '2027-03-11')).deep.equals([
+      '2027-03-10',
+      '2027-03-11'
+    ])
+    expect(rangeDates('2026-12-20', '2027-01-02')).length(14)
+    expect(rangeDates('2027-05-29', '2027-05-29')).deep.equals(['2027-05-29'])
+    expect(rangeDates('2027-05-29', '2027-05-28')).deep.equals([])
+  })
+
   it('reads sizes, pins and venue changes', () => {
     expect(asFieldSizeChoice('50/70')).equals('50/70')
     fails(() => asFieldSizeChoice('70/100'), 'Choose a field size')
-    expect(fieldSizeLabel('46/60')).equals('T-ball 46/60')
+    expect(asFieldSizeChoice('T-ball')).equals('T-ball')
+    expect(FIELD_SIZES).deep.equals([
+      'T-ball',
+      '46/60 MP',
+      '46/60',
+      '50/70',
+      '55/80',
+      '60/90'
+    ])
+    expect(fieldSizeLabel('T-ball')).equals('T-ball')
+    expect(asFieldSizeChoice('46/60 MP')).equals('46/60 MP')
+    expect(fieldSizeLabel('46/60 MP')).equals('46/60 MP')
+    expect(fieldSizeLabel('46/60')).equals('46/60')
     expect(fieldSizeLabel('60/90')).equals('60/90')
     expect(asPin({ latitude: 40, longitude: -75 })).deep.equals({
       latitude: 40,
@@ -206,13 +260,31 @@ describe('venue cleaners', () => {
         canRemoveOwners: false,
         decidableClaimIds: []
       },
-      map: {
-        latitude: 40,
-        longitude: -75,
-        tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png'
-      }
+      map: { latitude: 40, longitude: -75 }
     })
     expect(detail.rights.claimBlocked).equals(null)
-    expect(detail.map.googleMapsApiKey).equals(undefined)
+    expect(detail.map).deep.equals({
+      latitude: 40,
+      longitude: -75,
+      googleMapsApiKey: undefined
+    })
+  })
+
+  it('reads the venue map as a point and Google’s key, with no tiles', () => {
+    // An older server's tile address is dropped: the maps are Google's on
+    // the web and Apple's on iOS.
+    expect(
+      asVenueMap({
+        latitude: 40.01,
+        longitude: -75.21,
+        googleMapsApiKey: 'placeholder-key',
+        tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png'
+      })
+    ).deep.equals({
+      latitude: 40.01,
+      longitude: -75.21,
+      googleMapsApiKey: 'placeholder-key'
+    })
+    expect(() => asVenueMap({ latitude: 40.01 })).throws()
   })
 })

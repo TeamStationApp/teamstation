@@ -47,9 +47,10 @@ export async function proposePlanned(
   )
   for (const game of games) {
     if (done.has(game.key)) continue
+    // A game is shown in its field's zone, the zone it was placed in.
     const timezone =
-      snap.seasons.find(season => season.id === game.seasonId)?.timezone ??
-      'UTC'
+      snap.engine.fields.find(field => field.id === game.fieldId)?.availability
+        .timezone ?? 'UTC'
     const request = await proposeGame(
       trx,
       actor,

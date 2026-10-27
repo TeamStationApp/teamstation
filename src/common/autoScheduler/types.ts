@@ -10,12 +10,14 @@ import type { FieldSize } from '../venues'
  * ISO strings in its output, which is stored as JSON.
  */
 
-/** A season of the run, with the teams it schedules. */
+/**
+ * A season of the run, with the teams it schedules. A season is only dates:
+ * its days, blackouts and game windows are read in the zone of the field a
+ * game is placed on.
+ */
 export interface EngineSeason {
   id: string
   name: string
-  /** The zone its game windows and blackout days are read in. */
-  timezone: string
   settings: ScheduleSettings
   /** Unflagged teams: each plays `regularGames` and `exhibitionGames`. */
   participants: string[]
@@ -126,7 +128,7 @@ export interface FairnessRow {
   mornings: number
   afternoons: number
   evenings: number
-  /** Games per weekday, Sunday first, in the season's zone. */
+  /** Games per weekday, Sunday first, each in its field's zone. */
   weekdays: number[]
   /** The fewest and most days between two of its games; null with fewer than two. */
   shortestGapDays: number | null

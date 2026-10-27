@@ -1,7 +1,11 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { EXAMPLE_PARK, googlePlacesStub } from '../../test/googlePlacesStub'
+import {
+  EXAMPLE_PARK,
+  googlePlacesStub,
+  MORE_PARKS
+} from '../../test/googlePlacesStub'
 import { googlePlaces } from './googlePlaces'
 
 describe('Google city lookup', () => {
@@ -160,6 +164,52 @@ describe('Google city lookup', () => {
     })
     expect(stub.calls[0].body).deep.equals({
       textQuery: 'Harbor',
+      languageCode: 'en',
+      pageSize: 5
+    })
+  })
+  it('asks for more venue places near a point when told, and five with no bias otherwise', async () => {
+    const client = googlePlaces({
+      apiKey: 'placeholder-key',
+      baseUrl: stub.baseUrl
+    })
+    const near = { latitude: 40, longitude: -75.2 }
+    const parks = await client.eventPlaces('Example Park', 'venue', {
+      limit: 20,
+      near
+    })
+    // The stub's twelve parks, without its six street addresses.
+    expect(parks.map(place => place.name)).deep.equals([
+      EXAMPLE_PARK.name,
+      ...MORE_PARKS
+    ])
+    expect(parks[1]).deep.equals({
+      id: 'google:alder-park',
+      name: 'Alder Park',
+      address: '2 Park Row, Demo City'
+    })
+    expect(stub.calls[0].body).deep.equals({
+      textQuery: 'Example Park',
+      languageCode: 'en',
+      pageSize: 20,
+      locationBias: { circle: { center: near, radius: 50000 } }
+    })
+    // A smaller limit slices what Google sends back.
+    expect(
+      await client.eventPlaces('Example Park', 'venue', { limit: 3 })
+    ).length(3)
+    expect(stub.calls[1].body).deep.equals({
+      textQuery: 'Example Park',
+      languageCode: 'en',
+      pageSize: 3
+    })
+    expect(
+      (await client.eventPlaces('Example Park', 'venue')).map(
+        place => place.name
+      )
+    ).deep.equals([EXAMPLE_PARK.name, ...MORE_PARKS.slice(0, 4)])
+    expect(stub.calls[2].body).deep.equals({
+      textQuery: 'Example Park',
       languageCode: 'en',
       pageSize: 5
     })

@@ -12,6 +12,7 @@ import { asLiteral } from './asLiteral'
 import { asCalendarDate, isRecord } from './groupCreation'
 import { asRoles, type Role } from './roles'
 import { asUserId } from './userId'
+import { asFieldSize } from './venues'
 
 export type Rsvp = 'yes' | 'maybe' | 'no'
 export type RsvpChoice = Rsvp | null
@@ -352,7 +353,21 @@ export interface EventFieldWarning {
   kind: 'conflict' | 'outsideAvailability' | 'fieldDeleted' | 'sizeRemoved'
   message: string
 }
+/**
+ * The registry field a game is on: its name, the size it is set up in, and
+ * its point, which is the field's pin or, without one, its venue's.
+ */
+export const asEventField = asObject({
+  id: asString,
+  name: asString,
+  size: asFieldSize,
+  latitude: asNumber,
+  longitude: asNumber
+})
+export type EventField = ReturnType<typeof asEventField>
 export interface EventInfo extends ReturnType<typeof asInfo> {
+  /** On a game linked to a registry field: the field. */
+  field?: EventField
   /** On a game linked to a registry field: what is wrong with it. */
   fieldWarnings?: EventFieldWarning[]
   notes?: string | null
@@ -369,6 +384,8 @@ export const asEventInfo: Cleaner<EventInfo> = raw => {
     if (raw.eventType !== undefined)
       answer.eventType = asEventType(raw.eventType)
   }
+  if (isRecord(raw) && raw.field !== undefined)
+    answer.field = asEventField(raw.field)
   if (isRecord(raw) && raw.fieldWarnings !== undefined)
     answer.fieldWarnings = asArray(
       asObject({

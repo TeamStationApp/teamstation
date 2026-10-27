@@ -13,8 +13,9 @@ import {
   unmount
 } from '../../test/gameFormDom'
 import {
-  chooseCalendarDate,
+  chooseDateRange,
   hasLabel,
+  pinMapDrawn,
   tapLabel,
   tapText,
   venueDetail,
@@ -57,7 +58,7 @@ function fakeClient(
 
 const owned = (fieldOverrides = {}): VenueDetail =>
   venueDetail({
-    defaultBlackouts: ['2027-07-04'],
+    defaultBlackouts: ['2027-07-04', '2027-07-05'],
     fields: [venueField(fieldOverrides)],
     rights: {
       canEdit: true,
@@ -118,8 +119,18 @@ describe('the field screen', () => {
     expect(text()).includes('The pin marks the field.')
     expect(hasLabel('Field name')).equals(false)
     expect(hasLabel('Add photo')).equals(false)
-    expect(hasLabel('Add blackout day')).equals(false)
-    expect(document.querySelector('[data-testid="pin-map"]')).not.equals(null)
+    expect(hasLabel('Add blackout dates')).equals(false)
+    // A read-only Google map on the field's own pin.
+    expect(pinMapDrawn()).deep.equals({
+      config: {
+        latitude: 40.021,
+        longitude: -75.221,
+        key: '',
+        editable: false,
+        timeoutMs: 15000
+      },
+      foreignTiles: false
+    })
   })
 
   it('saves its name, sizes, photo and pin for an owner', async () => {
@@ -141,6 +152,12 @@ describe('the field screen', () => {
       />
     )
     expect(text()).includes('Drag the pin onto the field itself')
+    // The owner's map drags, from the venue's point while the field has none.
+    expect(pinMapDrawn().config).include({
+      latitude: 40.02,
+      longitude: -75.22,
+      editable: true
+    })
     await fill('Field name', 'North Diamond')
     await press('Save name')
     await settle()
@@ -186,6 +203,9 @@ describe('the field screen', () => {
         fieldId="fld_one"
       />
     )
+    // T-ball is a size of its own, beside 46/60.
+    expect(hasLabel('T-ball')).equals(true)
+    expect(hasLabel('46/60')).equals(true)
     await tapLabel('50/70')
     expect(record.updates).deep.equals([])
     await tapLabel('60/90')
@@ -216,7 +236,12 @@ describe('the field screen', () => {
         fieldId="fld_one"
       />
     )
-    expect(text()).includes('The venue is also closed on Sunday, July 4, 2027.')
+    // The venue's blackouts read as ranges, with no Remove.
+    expect(text()).includes('The venue is also closed on these days:')
+    expect(text()).includes('Jul 4 – Jul 5 · 2 days')
+    expect(
+      hasLabel('Remove blackout Sunday, July 4, 2027 – Monday, July 5, 2027')
+    ).equals(false)
     await press('Dates: Open all year')
     await press('Cancel')
     await press('Dates: Open all year')
@@ -242,18 +267,34 @@ describe('the field screen', () => {
     await tapText('Use time')
     await tapText('Done')
     await settle()
+    // A closed day turned open starts at 9:00 AM to 5:00 PM.
+    await press('Field hours: Monday, Closed')
+    await tapText('Open')
+    expect(hasLabel('Opens 9:00 AM')).equals(true)
+    await tapText('Done')
+    await settle()
     await tapText('Venue hours')
     await settle()
-    await press('Add blackout day')
-    await chooseCalendarDate('2027-04-17')
-    await press('Remove blackout Saturday, April 17, 2027')
+    await press('Add blackout dates')
+    await chooseDateRange('2027-03-10', '2027-03-11')
+    await settle()
+    expect(text()).includes('Mar 10 – Mar 11 · 2 days')
+    await press(
+      'Remove blackout Wednesday, March 10, 2027 – Thursday, March 11, 2027'
+    )
     await settle()
     expect(record.updates.slice(1)).deep.equals([
       { startsOn: null, endsOn: null },
       { hours: [{ weekday: 6, start: '08:00', end: '18:00' }] },
       { hours: [{ weekday: 6, start: '08:00', end: '22:00' }] },
+      {
+        hours: [
+          { weekday: 1, start: '09:00', end: '17:00' },
+          { weekday: 6, start: '08:00', end: '22:00' }
+        ]
+      },
       { hours: null },
-      { blackouts: ['2027-04-17'] },
+      { blackouts: ['2027-03-10', '2027-03-11'] },
       { blackouts: [] }
     ])
   })

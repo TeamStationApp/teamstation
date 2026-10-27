@@ -43,7 +43,9 @@ export async function creationHarness(
   bindHost = '127.0.0.1',
   mountExtra?: MountExtra,
   cityLookup?: GooglePlaces,
-  eventOptions: Parameters<typeof eventInfoRoutes>[2] = {}
+  eventOptions: Parameters<typeof eventInfoRoutes>[2] = {},
+  /** The venue map's Google key: none unless a test serves Google's stub. */
+  venueOptions: { googleMapsApiKey?: string } = {}
 ): Promise<AccountHarness> {
   const h: AccountHarness = await accountHarness(
     webRoot,
@@ -109,7 +111,14 @@ export async function creationHarness(
         })
       )
       app.use('/api/v1', eventListRoutes(db, media))
-      app.use('/api/v1', venueRoutes(db, media, { places: cityLookup, clock }))
+      app.use(
+        '/api/v1',
+        venueRoutes(db, media, {
+          places: cityLookup,
+          clock,
+          googleMapsApiKey: venueOptions.googleMapsApiKey ?? ''
+        })
+      )
       app.use('/api/v1', schedulingSetupRoutes(db, { clock }))
       app.use('/api/v1', schedulePreviewRoutes(db, { clock }))
       app.use(

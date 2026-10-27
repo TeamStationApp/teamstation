@@ -4,13 +4,15 @@ import './types'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { gameCalendarDay } from '../gameTime'
 import {
   EXHIBITION_TEAMS,
   fixedGame,
   input,
   PARTICIPANTS,
   saturdaysInput,
-  season
+  season,
+  ZONE
 } from './fixtures.test'
 import { buildOptions } from './index'
 import type { EngineInput, EngineResult, PlannedGame } from './types'
@@ -86,6 +88,28 @@ describe('buildOptions', () => {
       // Fixed games stay out of the new games, but count in the totals.
       expect(option.games).length(19)
       expect(option.score).length(6)
+    }
+  }).timeout(30_000)
+
+  it('places no game on a day no window period covers', () => {
+    const [spring, june] = season().settings.windows
+    const { options } = buildOptions(
+      input({
+        seasons: [
+          season({ windows: [{ ...spring, until: '2027-05-20' }, june] })
+        ],
+        fixed: [G1, NOON]
+      })
+    )
+    expect(options.length).greaterThan(0)
+    for (const option of options) {
+      expect(option.games.length).greaterThan(0)
+      const dates = option.games.map(game =>
+        gameCalendarDay(game.startAt, ZONE)
+      )
+      expect(
+        dates.filter(date => date >= '2027-05-21' && date <= '2027-05-31')
+      ).deep.equals([])
     }
   }).timeout(30_000)
 

@@ -247,7 +247,9 @@ export const asSchedulePreview = asObject({
       id: asString,
       name: asString,
       venueName: asString,
-      sizes: asArray(asFieldSize)
+      sizes: asArray(asFieldSize),
+      /** The field's zone: its games are placed and read in its local time. */
+      timezone: asString
     })
   )
 })

@@ -8,6 +8,7 @@ import type {
 } from '../../common/seasonScheduling'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { chosenSeasonIds, scheduleSetup } from '../scheduler/setup'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 
 const SETTINGS: ScheduleSettings = {
@@ -170,6 +171,18 @@ describe('scheduling setup routes', function () {
       { ...SETTINGS, doubleheaders: 'sometimes' },
       { ...SETTINGS, endsOn: '2027-02-01' },
       { ...SETTINGS, windows: [SETTINGS.windows[0], SETTINGS.windows[0]] },
+      // An end date before its start, and one that overlaps the next period.
+      {
+        ...SETTINGS,
+        windows: [{ ...SETTINGS.windows[1], until: '2027-02-28' }]
+      },
+      {
+        ...SETTINGS,
+        windows: [
+          SETTINGS.windows[0],
+          { ...SETTINGS.windows[1], until: '2027-04-01' }
+        ]
+      },
       'settings'
     ])
       expect(
@@ -187,6 +200,19 @@ describe('scheduling setup routes', function () {
         windows: [SETTINGS.windows[1], SETTINGS.windows[0]]
       }
     })
+    // A period's end date is kept, and read back.
+    const ended = [
+      { ...SETTINGS.windows[1], until: '2027-03-20' },
+      SETTINGS.windows[0]
+    ]
+    expect(
+      await json(
+        await f.h.request('PUT', path, { ...SETTINGS, windows: ended }, 101)
+      )
+    ).deep.nested.include({ 'settings.windows': ended })
+    expect(
+      await json(await f.h.request('GET', path, undefined, 101))
+    ).deep.nested.include({ 'settings.windows': ended })
     expect(
       await json(
         await f.h.request('PUT', path, { ...SETTINGS, windows: [] }, 101)
@@ -218,11 +244,201 @@ describe('scheduling setup routes', function () {
     ).equals(404)
   })
 
-  it('chooses the league’s seasons and claimed venues’ fields, for a league admin only', async () => {
+  it('writes no zone to a season with its settings, and supersedes none of its pending requests', async () => {
+    const path = `/seasons/${f.seasonA}/schedule-settings`
+    const stored = async (): Promise<string> =>
+      (
+        await f.h.db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', f.seasonA)
+          .executeTakeFirstOrThrow()
+      ).timezone
+    const sent = await f.h.request(
+      'POST',
+      '/relationship-requests',
+      {
+        kind: 'participation',
+        teamId: f.teamB,
+        seasonId: f.seasonA,
+        sender: { kind: 'season', id: f.seasonA },
+        idempotencyKey: 'season-settings-no-zone'
+      },
+      101
+    )
+    expect(sent.status, await sent.clone().text()).equals(201)
+    const { id } = (await sent.json()) as { id: string }
+    expect(await stored()).equals('UTC')
+    // A zone sent with the settings is not part of them, and is ignored.
+    const saved = await json<SeasonScheduleSettings>(
+      await f.h.request(
+        'PUT',
+        path,
+        { ...SETTINGS, timezone: 'America/Los_Angeles' },
+        101
+      )
+    )
+    expect(saved).not.have.property('timezone')
+    await json(await f.h.request('PUT', path, SETTINGS, 101))
+    expect(await stored()).equals('UTC')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('pending')
+  })
+
+  it('reads the chosen seasons still of the league, in the order the setup lists them', async () => {
+    expect(await chosenSeasonIds(f.h.db, f.leagueA)).deep.equals([])
+    // Another league's season is not one of this league's run.
+    await f.h.db
+      .insertInto('league_schedule_setups')
+      .values({
+        league_id: f.leagueA,
+        season_ids: [f.playoffs, f.seasonB, f.seasonA]
+      })
+      .execute()
+    const ids = await chosenSeasonIds(f.h.db, f.leagueA)
+    expect(ids).deep.equals([f.playoffs, f.seasonA])
+    expect(ids).deep.equals((await scheduleSetup(f.h.db, f.leagueA)).seasonIds)
+  })
+
+  it('keeps the fields added from other venues listed, checked or not, until they are removed', async () => {
+    const own = await venue('ven_own', f.leagueA)
+    const other = await venue('ven_other', f.leagueB)
+    const unclaimed = await venue('ven_none', null)
+    const path = `/leagues/${f.leagueA}/schedule-setup`
+    const put = async (body: unknown): Promise<ScheduleSetup> =>
+      await json<ScheduleSetup>(await f.h.request('PUT', path, body, 101))
+    const listed = (setup: ScheduleSetup): string[] =>
+      setup.fields.map(field => field.id)
+    const read = async (): Promise<ScheduleSetup> =>
+      await json<ScheduleSetup>(await f.h.request('GET', path, undefined, 101))
+    expect((await read()).addedFieldIds).deep.equals([])
+    // Add field chooses a field and adds it to the list.
+    const added = await put({
+      seasonIds: [],
+      fieldIds: [own, unclaimed, other],
+      addedFieldIds: [unclaimed, other]
+    })
+    expect(added.addedFieldIds).deep.equals([unclaimed, other])
+    expect(listed(added)).deep.equals([unclaimed, other, own])
+    // Unchecked, both stay listed; a save that leaves the list out keeps it.
+    const unchecked = await put({ seasonIds: [], fieldIds: [own] })
+    expect(unchecked.fieldIds).deep.equals([own])
+    expect(unchecked.addedFieldIds).deep.equals([unclaimed, other])
+    expect(listed(unchecked)).deep.equals([unclaimed, other, own])
+    expect(listed(await read())).deep.equals([unclaimed, other, own])
+    // Remove takes one off the list.
+    const removed = await put({
+      seasonIds: [],
+      fieldIds: [own],
+      addedFieldIds: [other]
+    })
+    expect(removed.addedFieldIds).deep.equals([other])
+    expect(listed(removed)).deep.equals([other, own])
+    // The list must be one of ids; an unknown one is dropped from it.
+    for (const addedFieldIds of ['all', ['']]) {
+      const response = await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [], fieldIds: [], addedFieldIds },
+        101
+      )
+      expect(response.status, JSON.stringify(addedFieldIds)).equals(400)
+    }
+    const unknown = await put({
+      seasonIds: [],
+      fieldIds: [own],
+      addedFieldIds: ['fld_missing', other, other]
+    })
+    expect(unknown.addedFieldIds).deep.equals([other])
+    // Deleted, an unchecked added field is no longer listed, and a chosen
+    // one is listed as deleted, not as added.
+    await put({ seasonIds: [], fieldIds: [own, other], addedFieldIds: [other] })
+    await f.h.db
+      .updateTable('venue_fields')
+      .set({ deleted_at: new Date() })
+      .where('id', '=', other)
+      .execute()
+    const deleted = await read()
+    expect(deleted.addedFieldIds).deep.equals([])
+    expect(deleted.fields.find(field => field.id === other)?.deleted).equals(
+      true
+    )
+    const resent = await put({
+      seasonIds: [],
+      fieldIds: [own],
+      addedFieldIds: deleted.addedFieldIds
+    })
+    expect(listed(resent)).deep.equals([own])
+  })
+
+  it('drops an added field deleted while the setup is open from the list a later save resends', async () => {
+    const own = await venue('ven_own', f.leagueA)
+    const other = await venue('ven_other', f.leagueB)
+    const unclaimed = await venue('ven_none', null)
+    const path = `/leagues/${f.leagueA}/schedule-setup`
+    const put = async (body: unknown): Promise<ScheduleSetup> =>
+      await json<ScheduleSetup>(await f.h.request('PUT', path, body, 101))
+    // Both added, the other league's unchecked.
+    const open = await put({
+      seasonIds: [],
+      fieldIds: [own, unclaimed],
+      addedFieldIds: [unclaimed, other]
+    })
+    expect(open.addedFieldIds).deep.equals([unclaimed, other])
+    // Its owner deletes it while the screen still lists it.
+    await f.h.db
+      .updateTable('venue_fields')
+      .set({ deleted_at: new Date() })
+      .where('id', '=', other)
+      .execute()
+    // A season's checkbox resends the list the screen holds, and saves.
+    const toggled = await put({
+      seasonIds: [f.seasonA],
+      fieldIds: open.fieldIds,
+      addedFieldIds: open.addedFieldIds
+    })
+    expect(toggled.seasonIds).deep.equals([f.seasonA])
+    expect(toggled.fieldIds).deep.equals([own, unclaimed])
+    expect(toggled.addedFieldIds).deep.equals([unclaimed])
+    const stored = await f.h.db
+      .selectFrom('league_schedule_setups')
+      .select('added_field_ids')
+      .where('league_id', '=', f.leagueA)
+      .executeTakeFirstOrThrow()
+    expect(stored.added_field_ids).deep.equals([unclaimed])
+    // A deleted field can still not be chosen.
+    const chosen = await f.h.request(
+      'PUT',
+      path,
+      {
+        seasonIds: [f.seasonA],
+        fieldIds: [own, other],
+        addedFieldIds: [unclaimed, other]
+      },
+      101
+    )
+    expect(chosen.status).equals(400)
+    expect(await chosen.text()).includes('Choose fields that exist')
+  })
+
+  it('chooses the league’s seasons and any field in the registry, for a league admin only', async () => {
     const own = await venue('ven_own', f.leagueA)
     const other = await venue('ven_other', f.leagueB)
     const unclaimed = await venue('ven_none', null)
     const waiting = await venue('ven_waiting', f.leagueB, 'pending')
+    const gone = await venue('ven_gone', f.leagueA)
+    await f.h.db
+      .updateTable('venue_fields')
+      .set({ deleted_at: new Date() })
+      .where('id', '=', gone)
+      .execute()
     await activeTeam('tem_active', f.seasonA)
     await json(await flag(f.seasonA, f.teamA, true))
     const path = `/leagues/${f.leagueA}/schedule-setup`
@@ -238,11 +454,14 @@ describe('scheduling setup routes', function () {
     expect(first.seasonIds).deep.equals([])
     expect(first.fields.map(field => field.id)).deep.equals([own])
     expect(first.fields[0]).deep.include({
+      name: 'Field 1',
       venueName: 'Demo Park ven_own',
       sizes: ['50/70', '60/90'],
       startsOn: '2027-03-15',
       endsOn: '2027-10-31',
-      deleted: false
+      deleted: false,
+      ours: true,
+      ownerNames: ['Demo League A']
     })
     expect(first.seasons.map(season => season.id).sort()).deep.equals(
       [f.seasonA, f.playoffs].sort()
@@ -258,9 +477,6 @@ describe('scheduling setup routes', function () {
     })
     for (const bad of [
       { seasonIds: [f.seasonB], fieldIds: [] },
-      { seasonIds: [], fieldIds: [unclaimed] },
-      { seasonIds: [], fieldIds: [waiting] },
-      { seasonIds: [], fieldIds: ['fld_missing'] },
       { seasonIds: 'all', fieldIds: [] },
       { seasonIds: [''], fieldIds: [] },
       []
@@ -269,20 +485,79 @@ describe('scheduling setup routes', function () {
         (await f.h.request('PUT', path, bad, 101)).status,
         JSON.stringify(bad)
       ).equals(400)
+    // A deleted or unknown field can't be chosen.
+    for (const fieldIds of [[gone], ['fld_missing'], [own, 'fld_missing']]) {
+      const response = await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [], fieldIds },
+        101
+      )
+      const text = await response.text()
+      expect(response.status, JSON.stringify(fieldIds)).equals(400)
+      expect(text).includes('Choose fields that exist')
+    }
+    // A field of another league's venue, of an unclaimed venue, or of a
+    // venue whose claim is still waiting, can be chosen.
     const chosen = await json<ScheduleSetup>(
       await f.h.request(
         'PUT',
         path,
-        { seasonIds: [f.seasonA, f.seasonA], fieldIds: [own, other] },
+        {
+          seasonIds: [f.seasonA, f.seasonA],
+          fieldIds: [own, other, unclaimed, waiting]
+        },
         101
       )
     )
     expect(chosen.seasonIds).deep.equals([f.seasonA])
-    expect(chosen.fieldIds).deep.equals([own, other])
-    // A chosen field of another league's venue is listed with the league's.
-    expect(chosen.fields.map(field => field.id)).deep.equals([other, own])
-    // A pending claim counts once its seven days pass.
+    expect(chosen.fieldIds).deep.equals([own, other, unclaimed, waiting])
+    // Chosen fields of other venues are listed with the league's, each with
+    // whose venue it is.
+    expect(
+      chosen.fields.map(field => ({
+        id: field.id,
+        ours: field.ours,
+        ownerNames: field.ownerNames
+      }))
+    ).deep.equals([
+      { id: unclaimed, ours: false, ownerNames: [] },
+      { id: other, ours: false, ownerNames: ['Demo League B'] },
+      { id: own, ours: true, ownerNames: ['Demo League A'] },
+      { id: waiting, ours: false, ownerNames: [] }
+    ])
+    // A pending claim counts once its seven days pass, and a co-owner's
+    // claim adds its league, sorted by name.
+    await f.h.db
+      .insertInto('venue_claims')
+      .values({
+        id: 'vcl_coowner',
+        venue_id: 'ven_other',
+        league_id: f.leagueA,
+        kind: 'coOwner',
+        requested_by: userIdOfGumbo(101),
+        status: 'approved',
+        requested_at: f.clock.now(),
+        approves_at: new Date(f.clock.now().getTime() + CLAIM_WAIT_MS),
+        decided_at: f.clock.now()
+      })
+      .execute()
     f.advance(CLAIM_WAIT_MS)
+    const matured = await json<ScheduleSetup>(
+      await f.h.request('GET', path, undefined, 101)
+    )
+    expect(
+      matured.fields
+        .filter(field => field.id === waiting || field.id === other)
+        .map(field => ({
+          id: field.id,
+          ours: field.ours,
+          ownerNames: field.ownerNames
+        }))
+    ).deep.equals([
+      { id: other, ours: true, ownerNames: ['Demo League A', 'Demo League B'] },
+      { id: waiting, ours: false, ownerNames: ['Demo League B'] }
+    ])
     await json(
       await f.h.request(
         'PUT',

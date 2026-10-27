@@ -11,10 +11,21 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
+import { addDays } from './calendarDates'
 import { asCalendarDate, isRecord } from './groupCreation'
 
-/** The field sizes, fixed: base path / pitching distance, in feet. */
-export const FIELD_SIZES = ['46/60', '50/70', '55/80', '60/90'] as const
+/**
+ * The field sizes, fixed and smallest first: T-ball, machine pitch on a
+ * 46/60 field, then base path / pitching distance in feet.
+ */
+export const FIELD_SIZES = [
+  'T-ball',
+  '46/60 MP',
+  '46/60',
+  '50/70',
+  '55/80',
+  '60/90'
+] as const
 export type FieldSize = (typeof FIELD_SIZES)[number]
 export const asFieldSize = asLiteral(...FIELD_SIZES)
 
@@ -25,9 +36,9 @@ export function asFieldSizeChoice(raw: unknown): FieldSize {
   return raw as FieldSize
 }
 
-/** How a size reads in the app. */
+/** How a size reads in the app: the size itself. */
 export function fieldSizeLabel(size: FieldSize): string {
-  return size === '46/60' ? 'T-ball 46/60' : size
+  return size
 }
 
 /** The longest a size switch may take, in minutes. */
@@ -95,11 +106,39 @@ export function asWeeklyHours(raw: unknown): WeekdayHours[] {
   return hours.sort((a, b) => a.weekday - b.weekday)
 }
 
+/** The most days the blackouts of a season, venue or field can cover. */
+export const MAX_BLACKOUT_DAYS = 366
+
 /** The blackout days: distinct calendar dates, earliest first. */
 export function asBlackouts(raw: unknown): string[] {
   if (!Array.isArray(raw)) throw new TypeError('Choose the blackout days')
-  if (raw.length > 366) throw new TypeError('Choose at most 366 blackout days')
+  if (raw.length > MAX_BLACKOUT_DAYS)
+    throw new TypeError(`Choose at most ${MAX_BLACKOUT_DAYS} blackout days`)
   return [...new Set(raw.map(asCalendarDate))].sort()
+}
+
+/** A run of blackout days, both ends included. */
+export interface DateRange {
+  from: string
+  to: string
+}
+
+/** Blackout days as runs of consecutive days, earliest first. */
+export function blackoutRanges(dates: readonly string[]): DateRange[] {
+  const ranges: DateRange[] = []
+  for (const date of [...new Set(dates)].sort()) {
+    const last = ranges[ranges.length - 1]
+    if (last !== undefined && addDays(last.to, 1) === date) last.to = date
+    else ranges.push({ from: date, to: date })
+  }
+  return ranges
+}
+
+/** Every day from `from` through `to`; none when `to` comes first. */
+export function rangeDates(from: string, to: string): string[] {
+  const dates: string[] = []
+  for (let date = from; date <= to; date = addDays(date, 1)) dates.push(date)
+  return dates
 }
 
 /** A pin's coordinates, both or neither. */
@@ -290,7 +329,6 @@ export type VenueSummary = ReturnType<typeof asVenueSummary>
 export const asVenueMap = asObject({
   latitude: asNumber,
   longitude: asNumber,
-  tileUrl: asString,
   googleMapsApiKey: asOptional(asString)
 })
 export type VenueMap = ReturnType<typeof asVenueMap>

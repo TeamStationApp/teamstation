@@ -9,6 +9,7 @@ import {
   asEventLocationFields,
   type EventAttendee,
   eventDate,
+  type EventField,
   type EventInfo,
   eventText,
   PRACTICE_TITLE,
@@ -21,6 +22,7 @@ import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import { shortName } from '../../common/names'
 import { type Role, ROLES } from '../../common/roles'
+import { asFieldSize } from '../../common/venues'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
@@ -43,10 +45,16 @@ type ResolvedEvent = Omit<EventInfo, 'attendees' | 'replyUserIds'> & {
 }
 const iso = (date: Date | null): string | null => date?.toISOString() ?? null
 
+/**
+ * An event or game the actor can see, with their rights to it. A game's
+ * registry field is read only when `withField` asks for it: the info answer
+ * and the location route name it, and the write paths never read it.
+ */
 export async function resolveEvent(
   db: Kysely<Database>,
   actor: Actor,
-  id: string
+  id: string,
+  options: { withField?: boolean } = {}
 ): Promise<ResolvedEvent> {
   const fresh = await currentActor(db, actor)
   const scopes = await visibleScopes(db, fresh.userId, fresh.isAdmin)
@@ -105,6 +113,10 @@ export async function resolveEvent(
     .select('name')
     .where('id', '=', game.home_team_id)
     .executeTakeFirstOrThrow()
+  const field =
+    options.withField === true
+      ? await gameField(db, game.field_id, game.field_size)
+      : undefined
   return {
     id,
     eventKind: 'game',
@@ -132,8 +144,45 @@ export async function resolveEvent(
         kind: 'team',
         id: game.home_team_id
       })) ||
-      (await canScheduleFor(db, fresh, { kind: 'team', id: game.away_team_id }))
+      (await canScheduleFor(db, fresh, {
+        kind: 'team',
+        id: game.away_team_id
+      })),
+    ...(field == null ? {} : { field })
   }
+}
+
+/**
+ * The registry field a game is on, named even once deleted, at its pin or,
+ * without one, its venue's point.
+ */
+async function gameField(
+  db: Kysely<Database>,
+  fieldId: string | null,
+  size: string | null
+): Promise<EventField | undefined> {
+  if (fieldId == null || size == null) return undefined
+  const row = await db
+    .selectFrom('venue_fields')
+    .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')
+    .select([
+      'venue_fields.name',
+      'venue_fields.pin_latitude',
+      'venue_fields.pin_longitude',
+      'venues.latitude',
+      'venues.longitude'
+    ])
+    .where('venue_fields.id', '=', fieldId)
+    .executeTakeFirst()
+  return row == null
+    ? undefined
+    : {
+        id: fieldId,
+        name: row.name,
+        size: asFieldSize(size),
+        latitude: row.pin_latitude ?? row.latitude,
+        longitude: row.pin_longitude ?? row.longitude
+      }
 }
 
 /** Direct event attendance deliberately does not inherit season/league people. */
@@ -373,7 +422,7 @@ export async function readEventInfo(
   media: MediaContext,
   teamId?: string
 ): Promise<EventInfo> {
-  const event = await resolveEvent(db, actor, id)
+  const event = await resolveEvent(db, actor, id, { withField: true })
   const fresh = await currentActor(db, actor)
   const scopes = await visibleScopes(db, fresh.userId, fresh.isAdmin)
   const teams = await db

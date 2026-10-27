@@ -19,7 +19,7 @@ import {
 } from '../components'
 import {
   BlackoutDatesEditor,
-  dateLabel
+  BlackoutRangeList
 } from '../components/BlackoutDatesEditor'
 import { CheckRow } from '../components/CheckRow'
 import { DateRangePicker } from '../components/DateRangePicker'
@@ -27,7 +27,10 @@ import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
 import { SegmentedPill } from '../components/SegmentedPill'
-import { WeeklyHoursEditor } from '../components/WeeklyHoursEditor'
+import {
+  VENUE_OPEN_DEFAULT,
+  WeeklyHoursEditor
+} from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -213,7 +216,6 @@ export function FieldScreen({
           <PinMap
             settings={{
               ...pin,
-              tileUrl: venue.map.tileUrl,
               googleMapsApiKey: venue.map.googleMapsApiKey,
               editable
             }}
@@ -303,16 +305,22 @@ export function FieldScreen({
               ...entry
             }))}
             disabled={!editable || !ownHours || busy}
+            openDefault={VENUE_OPEN_DEFAULT}
             onChange={hours => {
               save({ hours }, 'Hours saved.').catch(() => undefined)
             }}
           />
           <Text style={styles.subhead}>Blackout days</Text>
           {venue.defaultBlackouts.length > 0 && (
-            <Text style={styles.sentence}>
-              The venue is also closed on{' '}
-              {venue.defaultBlackouts.map(dateLabel).join(', ')}.
-            </Text>
+            <>
+              <Text style={styles.sentence}>
+                The venue is also closed on these days:
+              </Text>
+              <BlackoutRangeList dates={venue.defaultBlackouts} />
+              <Text style={styles.sentence}>
+                This field’s own blackout days:
+              </Text>
+            </>
           )}
           <BlackoutDatesEditor
             value={field.blackouts}

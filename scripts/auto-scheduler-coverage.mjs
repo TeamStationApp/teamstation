@@ -49,6 +49,8 @@ const tsSuites = [
   // M1: the venue registry, availability and ownership.
   'src/migrate/migrations/077venues.test.ts',
   'src/common/fieldAvailability.test.ts',
+  'src/common/calendarDates.test.ts',
+  'src/common/eventSchedule.test.ts',
   'src/common/venues.test.ts',
   'src/server/venues/ownership.test.ts',
   // M2: the venue API, photos and notifications.
@@ -83,7 +85,21 @@ const tsSuites = [
   'src/server/autoScheduler/publish.test.ts',
   'src/server/autoScheduler/reschedule.test.ts',
   'src/server/autoScheduler/rules.test.ts',
-  'src/server/autoScheduler/buildOffThread.test.ts'
+  'src/server/autoScheduler/buildOffThread.test.ts',
+  // Fixes M2: a season is dates, scheduled in each field’s local time.
+  'src/common/eventTime.test.ts',
+  'src/common/seasonScheduling.test.ts',
+  'src/server/groups/authority.test.ts',
+  'src/server/groups/parentTerms.test.ts',
+  // Fixes M5: T-ball as a size of its own, and the add icon in the phone font.
+  'src/migrate/migrations/086fieldSizes.test.ts',
+  'src/app/components/iconFont.test.ts',
+  // Fixes M8: the pin map's Google-only document.
+  'src/app/components/pinMapDocument.test.ts',
+  // Fixes M9: the field on a game's Info tab, and directions to its point.
+  'src/common/eventInfo.test.ts',
+  'src/app/platform/eventDirections.test.ts',
+  'src/app/platform/eventDirections.web.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -107,7 +123,17 @@ const appSuites = [
   'src/app/screens/SeasonScheduleGrid.test.tsx',
   'src/app/screens/ScheduleSeasonScreen.test.tsx',
   // M6: the preview screen.
-  'src/app/screens/SchedulePreviewScreen.test.tsx'
+  'src/app/screens/SchedulePreviewScreen.test.tsx',
+  // Fixes M1: the league page's Auto-Scheduler row and the grid's cells.
+  'src/app/components/GridNumberCell.test.tsx',
+  'src/app/components/WideTable.test.tsx',
+  'src/app/screens/LeaguePage.test.tsx',
+  // Fixes M4: blackout ranges.
+  'src/app/components/BlackoutDatesEditor.test.tsx',
+  // Fixes M6: any registry field for a run, through the picker's field mode.
+  'src/app/screens/FieldPickerScene.test.tsx',
+  // Fixes M9: the native directions to a field's point.
+  'src/app/platform/eventDirections.native.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

@@ -2,33 +2,40 @@ import React, { useEffect, useRef, useState } from 'react'
 import { View } from 'react-native'
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps'
 
-import { PinMap as WebPinMap } from './PinMap.native'
 import type { PinMapProps } from './pinMapDocument'
+import { PinMapUnavailable } from './PinMapUnavailable'
 
 /**
- * The pin map on Android: Google's SDK, with a pin that drags when it may,
- * and the WebView's map when the SDK has not drawn in 15 seconds.
+ * The pin map on Android: Google's SDK, with a pin that drags when it may.
+ * When the SDK has not drawn in 15 seconds, the "couldn’t load" panel takes
+ * its place, and its Retry gives the SDK another try.
  */
 export function PinMap({
   settings,
   onMove,
   fallbackAfterMs = 15000
 }: PinMapProps): React.ReactElement {
-  const [fallback, setFallback] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   const loaded = useRef(false)
   useEffect(() => {
+    loaded.current = false
     const timer = setTimeout(() => {
-      if (!loaded.current) setFallback(true)
+      if (!loaded.current) setFailed(true)
     }, fallbackAfterMs)
     return () => {
       clearTimeout(timer)
     }
-  }, [fallbackAfterMs])
-  if (fallback)
+  }, [fallbackAfterMs, attempt])
+  if (failed)
     return (
-      <WebPinMap
-        settings={{ ...settings, googleMapsApiKey: undefined }}
-        onMove={onMove}
+      <PinMapUnavailable
+        latitude={settings.latitude}
+        longitude={settings.longitude}
+        onRetry={() => {
+          setFailed(false)
+          setAttempt(count => count + 1)
+        }}
       />
     )
   const coordinate = {
@@ -45,6 +52,7 @@ export function PinMap({
       }}
     >
       <MapView
+        key={attempt}
         testID="pin-map"
         accessibilityLabel="Field location map"
         provider={PROVIDER_GOOGLE}
@@ -62,6 +70,8 @@ export function PinMap({
         toolbarEnabled={false}
       >
         <Marker
+          testID="pin-map-marker"
+          accessibilityLabel="Field pin"
           coordinate={coordinate}
           title="Field location"
           draggable={settings.editable}

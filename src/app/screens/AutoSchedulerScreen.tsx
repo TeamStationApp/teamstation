@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, Text, View } from 'react-native'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { ActivityIndicator, type ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
@@ -11,64 +11,50 @@ import {
 } from '../../common/schedulePreviews'
 import { buildable, schedulingChecks } from '../../common/schedulingChecks'
 import {
-  BUFFER_MINUTES,
   DOUBLEHEADERS,
   doubleheadersLabel,
-  GAME_MINUTES,
-  MAX_GAMES,
   type ScheduleSettings,
   type ScheduleSetup,
+  type ScheduleSetupChoice,
+  type SetupField,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
-import {
-  Button,
-  ListCard,
-  ListRow,
-  Screen,
-  SectionHeader,
-  TextField
-} from '../components'
+import { Button, ListCard, ListRow, Screen, SectionHeader } from '../components'
 import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
+import { DangerText } from '../components/DangerText'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { PickerDialog } from '../components/PickerDialog'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { FieldPickerScene } from './FieldPickerScene'
 import { gameTimeLabel } from './SchedulePreviewScreen'
-import { type GridColumn, SeasonScheduleGrid } from './SeasonScheduleGrid'
+import {
+  type GridColumn,
+  SeasonScheduleGrid,
+  type SeasonScheduleGridHandle
+} from './SeasonScheduleGrid'
 import { sizesLabel } from './VenueScreen'
-
-type NumberColumn =
-  'gameMinutes' | 'bufferMinutes' | 'regularGames' | 'exhibitionGames'
-
-const NUMBERS: Record<
-  NumberColumn,
-  { label: string; min: number; max: number; step: number }
-> = {
-  gameMinutes: { label: 'Game length, in minutes', ...GAME_MINUTES, step: 5 },
-  bufferMinutes: {
-    label: 'Time between games, in minutes',
-    ...BUFFER_MINUTES,
-    step: 5
-  },
-  regularGames: {
-    label: 'Regular-season games per team',
-    min: 0,
-    max: MAX_GAMES,
-    step: 1
-  },
-  exhibitionGames: {
-    label: 'Exhibition games per team',
-    min: 0,
-    max: MAX_GAMES,
-    step: 1
-  }
-}
 
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
   return setup.seasons.filter(season => setup.seasonIds.includes(season.id))
+}
+
+/**
+ * A run field's detail: its sizes, and, for a field of a venue the league
+ * doesn't own, the venue and who owns it.
+ */
+export function setupFieldDetail(field: SetupField): string {
+  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
+  const sizes = sizesLabel(field.sizes)
+  if (field.ours) return sizes
+  const owners =
+    field.ownerNames.length === 0
+      ? 'unclaimed'
+      : `claimed by ${field.ownerNames.join(', ')}`
+  return `${sizes} · ${field.venueName} · ${owners}`
 }
 
 /**
@@ -102,11 +88,26 @@ export function AutoSchedulerScreen({
     seasonId: string
     column: GridColumn
   }>()
-  const [numberText, setNumberText] = useState('')
-  const [numberError, setNumberError] = useState('')
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
   const [asking, setAsking] = useState<{ existing: number }>()
   const [building, setBuilding] = useState(false)
+  const [picking, setPicking] = useState(false)
+  // Each season's save in flight, which its next save waits for, and the
+  // settings its last save stored, which that next save builds on,
+  // so a sheet's save can't send back a number a cell's save just changed.
+  const saving = useRef(new Map<string, Promise<unknown>>())
+  const stored = useRef(new Map<string, Pick<SetupSeason, 'settings'>>())
+  const grid = useRef<SeasonScheduleGridHandle>(null)
+  // The screen's own scroll view, which lifts an open grid cell above the
+  // keyboard.
+  const page = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  /**
+   * Saves the grid's open cell, if any. A tap on a native button leaves the
+   * cell focused, with no blur to save it, so a build or a move to another
+   * screen saves it first, and goes nowhere if the cell refuses its text.
+   */
+  const flush = async (): Promise<boolean> =>
+    (await grid.current?.flush()) ?? true
   const begin = useLatestRequest()
   useEffect(() => {
     const current = begin()
@@ -117,6 +118,7 @@ export function AutoSchedulerScreen({
     ]).then(
       ([found, listed]) => {
         if (!current()) return
+        stored.current.clear()
         setSetup(found)
         setToReschedule(listed)
       },
@@ -133,6 +135,25 @@ export function AutoSchedulerScreen({
     setBuilding(true)
     setError('')
     try {
+      if (!(await flush())) return
+      // A cell's save still on its way, as when Build's tap blurred the
+      // cell, lands first, so the build reads the numbers the grid shows.
+      for (;;) {
+        const pending = [...saving.current.values()]
+        if (pending.length === 0) break
+        await Promise.allSettled(pending)
+      }
+      // The checks again, on what those saves stored.
+      if (request.mode === 'full' && setup != null) {
+        const seasons = chosenSeasons(setup).map(item => ({
+          ...item,
+          ...stored.current.get(item.id)
+        }))
+        const fields = setup.fields.filter(field =>
+          setup.fieldIds.includes(field.id)
+        )
+        if (!buildable(schedulingChecks(seasons, fields))) return
+      }
       const preview = await client.buildSchedulePreview(leagueId, request)
       onOpenPreview(preview.id)
     } catch (failure) {
@@ -155,11 +176,20 @@ export function AutoSchedulerScreen({
     )
   }
   const choose = useCallback(
-    async (choice: { seasonIds: string[]; fieldIds: string[] }) => {
+    async (choice: ScheduleSetupChoice) => {
       setBusy(true)
       setError('')
       try {
-        setSetup(await client.saveScheduleSetup(leagueId, choice))
+        const answer = await client.saveScheduleSetup(leagueId, choice)
+        // A cell's save that answered while this choice was on its way
+        // stored newer settings than this answer read: keep them.
+        setSetup({
+          ...answer,
+          seasons: answer.seasons.map(item => {
+            const kept = stored.current.get(item.id)
+            return kept == null ? item : { ...item, saved: true, ...kept }
+          })
+        })
       } catch (failure) {
         failed(failure)
       } finally {
@@ -168,17 +198,40 @@ export function AutoSchedulerScreen({
     },
     [client, leagueId]
   )
-  const saveSettings = async (
+  /**
+   * Saves a season's settings and merges the answer into the setup. It
+   * resolves null, or the message saying why it failed, and leaves the rest
+   * of the screen usable, so a grid cell can show its own failure. A
+   * season's saves go one at a time, each onto what the one before stored.
+   */
+  const storeSettings = async (
     season: SetupSeason,
     changes: Partial<ScheduleSettings>
-  ): Promise<boolean> => {
-    setBusy(true)
-    setError('')
+  ): Promise<string | null> => {
+    const before = saving.current.get(season.id)
+    const next = (async () => {
+      await before
+      return await sendSettings(season, changes)
+    })()
+    saving.current.set(season.id, next)
+    try {
+      return await next
+    } finally {
+      if (saving.current.get(season.id) === next)
+        saving.current.delete(season.id)
+    }
+  }
+  const sendSettings = async (
+    shown: SetupSeason,
+    changes: Partial<ScheduleSettings>
+  ): Promise<string | null> => {
+    const season = { ...shown, ...stored.current.get(shown.id) }
     try {
       const saved = await client.saveScheduleSettings(season.id, {
         ...season.settings,
         ...changes
       })
+      stored.current.set(season.id, { settings: saved.settings })
       setSetup(current =>
         current == null
           ? current
@@ -191,17 +244,33 @@ export function AutoSchedulerScreen({
               )
             }
       )
-      return true
+      return null
     } catch (failure) {
-      failed(failure)
-      return false
+      return failure instanceof Error && failure.message !== ''
+        ? failure.message
+        : 'That could not be saved. Try again.'
+    }
+  }
+  /** A sheet's save, whose failure shows at the top of the screen. */
+  const saveSettings = async (
+    season: SetupSeason,
+    changes: Partial<ScheduleSettings>
+  ): Promise<boolean> => {
+    setBusy(true)
+    setError('')
+    try {
+      const failure = await storeSettings(season, changes)
+      if (failure != null) setError(failure)
+      return failure == null
     } finally {
       setBusy(false)
     }
   }
   if (setup == null)
     return (
-      <Screen>
+      // The same scroll view as the loaded screen's, which holds this ref
+      // from its first render: a ref handed to it later never reaches it.
+      <Screen scrollRef={page}>
         <View style={styles.page}>
           <Text accessibilityRole="header" style={styles.title}>
             Auto-Scheduler
@@ -236,48 +305,38 @@ export function AutoSchedulerScreen({
     editing == null
       ? undefined
       : setup.seasons.find(season => season.id === editing.seasonId)
+  /**
+   * Moves to another screen once the grid's open cell is saved, and nowhere
+   * if the cell refuses its text: the screen unmounts with no blur to save it.
+   */
+  const leave = (go: () => void): void => {
+    flush().then(
+      done => {
+        if (done) go()
+      },
+      () => undefined
+    )
+  }
+  const openSeason = (seasonId: string): void => {
+    leave(() => {
+      onOpenSeason(seasonId)
+    })
+  }
+  const openFieldManager = (): void => {
+    leave(onFieldManager)
+  }
   const edit = (seasonId: string, column: GridColumn): void => {
     if (column === 'teams' || column === 'blackouts' || column === 'windows') {
-      onOpenSeason(seasonId)
+      openSeason(seasonId)
       return
     }
-    const season = setup.seasons.find(item => item.id === seasonId)
-    if (season != null && column in NUMBERS)
-      setNumberText(String(season.settings[column as NumberColumn]))
-    setNumberError('')
     setEditing({ seasonId, column })
   }
   const close = (): void => {
     setEditing(undefined)
   }
-  const numberColumn =
-    editing != null && editing.column in NUMBERS
-      ? (editing.column as NumberColumn)
-      : undefined
-  const saveNumber = (): void => {
-    if (editedSeason == null || numberColumn == null) return
-    const rule = NUMBERS[numberColumn]
-    const value = Number(numberText.trim())
-    if (
-      numberText.trim() === '' ||
-      !Number.isInteger(value) ||
-      value < rule.min ||
-      value > rule.max ||
-      value % rule.step !== 0
-    ) {
-      setNumberError(
-        `Choose ${rule.min} to ${rule.max}${rule.step === 1 ? '' : `, in ${rule.step}-minute steps`}.`
-      )
-      return
-    }
-    saveSettings(editedSeason, { [numberColumn]: value })
-      .then(ok => {
-        if (ok) close()
-      })
-      .catch(() => undefined)
-  }
   return (
-    <Screen>
+    <Screen scrollRef={page}>
       <View style={styles.page}>
         <Text accessibilityRole="header" style={styles.title}>
           Auto-Scheduler
@@ -288,7 +347,7 @@ export function AutoSchedulerScreen({
             title="Field Manager"
             subtitle="Find, claim and set up the venues and fields your league plays on"
             emblemIcon="stadium"
-            onPress={onFieldManager}
+            onPress={openFieldManager}
           />
         </ListCard>
         {error !== '' && (
@@ -319,7 +378,8 @@ export function AutoSchedulerScreen({
                       .filter(id =>
                         id === season.id ? !on : setup.seasonIds.includes(id)
                       ),
-                    fieldIds: liveFieldIds
+                    fieldIds: liveFieldIds,
+                    addedFieldIds: setup.addedFieldIds
                   }).catch(() => undefined)
                 }}
               />
@@ -334,54 +394,108 @@ export function AutoSchedulerScreen({
               days and exhibition teams.
             </Text>
             <SeasonScheduleGrid
+              ref={grid}
               seasons={seasons}
               onEdit={edit}
-              onOpenSeason={onOpenSeason}
+              onSaveNumber={async (seasonId, column, value) =>
+                await storeSettings(
+                  // The grid shows only the setup's own seasons.
+                  setup.seasons.find(item => item.id === seasonId)!,
+                  { [column]: value }
+                )
+              }
+              onOpenSeason={openSeason}
+              scrollToKeyboard={(input, gap) => {
+                // React Native's sum takes the scroll view to start at the
+                // window's top; the measured top keeps it right if not.
+                const view = page.current
+                view?.measureInWindow((_x, top) => {
+                  view.scrollResponderScrollNativeHandleToKeyboard(
+                    input,
+                    gap + top,
+                    true
+                  )
+                })
+              }}
             />
           </>
         )}
         <SectionHeader
           title="Fields for this run"
           note={String(fields.length)}
+          // Beside two actions, a phone wraps the title rather than cut it.
+          titleLines={2}
           actions={[
+            {
+              label: 'Add field',
+              accessibilityLabel: 'Add a field to this run',
+              onPress: () => {
+                setPicking(true)
+              }
+            },
             {
               label: 'Field Manager',
               accessibilityLabel: 'Open the Field Manager',
-              onPress: onFieldManager
+              onPress: openFieldManager
             }
           ]}
         />
         {setup.fields.length === 0 ? (
           <Text style={styles.meta}>
-            Your league has no fields yet. Claim a venue and add its fields in
-            the Field Manager.
+            Add any field in the registry, or claim a venue and add its fields
+            in the Field Manager.
           </Text>
         ) : (
           <ListCard>
-            {setup.fields.map(field => (
-              <CheckRow
-                key={field.id}
-                label={`${field.name}, ${field.venueName}`}
-                detail={
-                  field.deleted
-                    ? 'Deleted. Uncheck it to leave it out.'
-                    : sizesLabel(field.sizes)
-                }
-                checked={setup.fieldIds.includes(field.id)}
-                disabled={busy}
-                onToggle={() => {
-                  const on = setup.fieldIds.includes(field.id)
-                  choose({
-                    seasonIds: setup.seasonIds,
-                    fieldIds: setup.fields
-                      .map(item => item.id)
-                      .filter(id =>
-                        id === field.id ? !on : liveFieldIds.includes(id)
-                      )
-                  }).catch(() => undefined)
-                }}
-              />
-            ))}
+            {setup.fields.map(field => {
+              const label = `${field.name}, ${field.venueName}`
+              const row = (
+                <CheckRow
+                  key={field.id}
+                  label={label}
+                  detail={setupFieldDetail(field)}
+                  checked={setup.fieldIds.includes(field.id)}
+                  disabled={busy}
+                  onToggle={() => {
+                    const on = setup.fieldIds.includes(field.id)
+                    choose({
+                      seasonIds: setup.seasonIds,
+                      fieldIds: setup.fields
+                        .map(item => item.id)
+                        .filter(id =>
+                          id === field.id ? !on : liveFieldIds.includes(id)
+                        ),
+                      addedFieldIds: setup.addedFieldIds
+                    }).catch(() => undefined)
+                  }}
+                />
+              )
+              // A field added from another venue stays listed, checked or
+              // not, until it is removed, which also takes it off the run.
+              if (field.ours || !setup.addedFieldIds.includes(field.id))
+                return row
+              return (
+                <View key={field.id} style={styles.fieldRow}>
+                  <View style={styles.fieldCheck}>{row}</View>
+                  <View style={styles.removeCell}>
+                    <DangerText
+                      label="Remove"
+                      accessibilityLabel={`Remove ${label} from the list`}
+                      disabled={busy}
+                      onPress={() => {
+                        choose({
+                          seasonIds: setup.seasonIds,
+                          fieldIds: liveFieldIds.filter(id => id !== field.id),
+                          addedFieldIds: setup.addedFieldIds.filter(
+                            id => id !== field.id
+                          )
+                        }).catch(() => undefined)
+                      }}
+                    />
+                  </View>
+                </View>
+              )
+            })}
           </ListCard>
         )}
         <SectionHeader title="Early warnings" note={String(checks.length)} />
@@ -454,6 +568,29 @@ export function AutoSchedulerScreen({
           </>
         )}
       </View>
+      {picking && (
+        <FieldPickerScene
+          client={client}
+          onChooseField={chosen => {
+            setPicking(false)
+            choose({
+              seasonIds: setup.seasonIds,
+              fieldIds: [
+                ...liveFieldIds.filter(id => id !== chosen.id),
+                chosen.id
+              ],
+              // It stays listed once unchecked, until it is removed.
+              addedFieldIds: [
+                ...setup.addedFieldIds.filter(id => id !== chosen.id),
+                chosen.id
+              ]
+            }).catch(() => undefined)
+          }}
+          onClose={() => {
+            setPicking(false)
+          }}
+        />
+      )}
       {asking != null && (
         <ChoiceSheet
           title={`These seasons already have ${asking.existing === 1 ? 'an upcoming game' : `${asking.existing} upcoming games`}`}
@@ -519,24 +656,6 @@ export function AutoSchedulerScreen({
           onClose={close}
         />
       )}
-      {editedSeason != null && numberColumn != null && (
-        <PickerDialog onClose={close}>
-          <View style={styles.dialog}>
-            <Text style={styles.dialogTitle}>{editedSeason.name}</Text>
-            <TextField
-              label={NUMBERS[numberColumn].label}
-              value={numberText}
-              onChangeText={setNumberText}
-              keyboardType="number-pad"
-              autoFocus
-              error={numberError === '' ? undefined : numberError}
-              onSubmitEditing={saveNumber}
-            />
-            <Button label="Save" disabled={busy} onPress={saveNumber} />
-            <Button label="Cancel" kind="text" onPress={close} />
-          </View>
-        </PickerDialog>
-      )}
       {editedSeason != null && editing?.column === 'dates' && (
         <PickerDialog onClose={close}>
           <DateRangePicker
@@ -585,10 +704,16 @@ export const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.9375),
     color: '#211B00'
   },
-  dialog: { gap: theme.rem(0.75), padding: theme.rem(1) },
-  dialogTitle: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1.125),
-    color: theme.primaryTextColor
+  fieldRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const
+  },
+  fieldCheck: { flex: 1 },
+  removeCell: {
+    alignSelf: 'stretch' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: theme.rem(1),
+    borderLeftWidth: 1,
+    borderLeftColor: theme.defaultBorderColor
   }
 }))

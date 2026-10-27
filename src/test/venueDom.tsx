@@ -34,10 +34,29 @@ export function venueDetail(overrides: Partial<VenueDetail> = {}): VenueDetail {
     map: {
       latitude: 40.02,
       longitude: -75.22,
-      tileUrl: 'https://tiles.example.test/{z}/{x}/{y}.png',
       googleMapsApiKey: undefined
     },
     ...overrides
+  }
+}
+
+/**
+ * The settings the screen's web pin map was drawn with, read back from its
+ * framed document, and whether that document holds any tiles but Google's.
+ */
+export function pinMapDrawn(): {
+  config: Record<string, unknown>
+  foreignTiles: boolean
+} {
+  const html =
+    document
+      .querySelector('iframe[data-testid="pin-map"]')
+      ?.getAttribute('srcdoc') ?? ''
+  const config = /const config=(\{.*?\});/.exec(html)
+  expect(config, 'the pin map document').not.equals(null)
+  return {
+    config: JSON.parse(config![1]) as Record<string, unknown>,
+    foreignTiles: /leaflet|openstreetmap|tileUrl/i.test(html)
   }
 }
 
@@ -123,5 +142,27 @@ export async function chooseCalendarDate(date: string): Promise<void> {
   await pressSchedule(MONTHS[Number(date.slice(5, 7)) - 1])
   await pressSchedule(`Choose ${date}`)
   await pressSchedule('Use date')
+  await settle(0)
+}
+
+/**
+ * Picks a range in an open two-tap range calendar, `from` then `to`, moving
+ * month by month to each, and uses it. The same day twice is one day.
+ */
+export async function chooseDateRange(from: string, to: string): Promise<void> {
+  for (const day of [from, to]) {
+    for (let month = 0; month < 36 && !hasLabel(day); month++) {
+      const shown = [
+        ...document.querySelectorAll<HTMLElement>('[aria-label^="20"]')
+      ]
+        .map(node => node.getAttribute('aria-label') ?? '')
+        .find(label => /^\d{4}-\d{2}-\d{2}$/.test(label))
+      await tapLabel(
+        shown != null && shown > day ? 'Previous month' : 'Next month'
+      )
+    }
+    await tapLabel(day)
+  }
+  await tapText('Use this range')
   await settle(0)
 }

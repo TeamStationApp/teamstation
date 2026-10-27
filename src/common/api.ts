@@ -139,6 +139,7 @@ import {
   asSeasonScheduleSettings,
   type ScheduleSettings,
   type ScheduleSetup,
+  type ScheduleSetupChoice,
   type SeasonScheduleSettings
 } from './seasonScheduling'
 import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
@@ -3550,9 +3551,13 @@ export class TeamStationClient {
   }
 
   /** Chooses the seasons and fields of the league's next schedule. */
+  /**
+   * Chooses a run's seasons and fields. With `addedFieldIds`, it replaces
+   * the fields added from other venues, which stay listed, chosen or not.
+   */
   async saveScheduleSetup(
     leagueId: string,
-    choice: { seasonIds: string[]; fieldIds: string[] }
+    choice: ScheduleSetupChoice
   ): Promise<ScheduleSetup> {
     return await this.request(
       'PUT',

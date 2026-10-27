@@ -13,6 +13,7 @@ import {
   Badge,
   Button,
   Card,
+  Emblem,
   ListCard,
   Screen,
   SectionHeader,
@@ -28,7 +29,10 @@ import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
 import { useConfirmedAction } from '../components/useConfirmedAction'
-import { WeeklyHoursEditor } from '../components/WeeklyHoursEditor'
+import {
+  VENUE_OPEN_DEFAULT,
+  WeeklyHoursEditor
+} from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { openEventDirections } from '../platform/eventDirections'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
@@ -388,7 +392,8 @@ export function VenueScreen({
               title="Fields"
               note={String(detail.fields.length)}
               actions={
-                rights.canEdit
+                // An empty venue's Add is the row below, so it is not twice.
+                rights.canEdit && detail.fields.length > 0
                   ? [
                       {
                         label: 'Add',
@@ -402,11 +407,22 @@ export function VenueScreen({
               }
             />
             {detail.fields.length === 0 ? (
-              <Text style={styles.sentence}>
-                {rights.canEdit
-                  ? 'No fields yet. Add one for each diamond here.'
-                  : 'No fields have been set up here yet.'}
-              </Text>
+              rights.canEdit ? (
+                <ActionList bounded>
+                  <ActionRow
+                    title="Add field"
+                    leading={<Emblem fallback="" icon="add" />}
+                    onOpen={() => {
+                      setAddingField(true)
+                    }}
+                    openLabel="Add field"
+                  />
+                </ActionList>
+              ) : (
+                <Text style={styles.sentence}>
+                  No fields have been set up here yet.
+                </Text>
+              )
             ) : (
               <ActionList bounded>
                 {detail.fields.map(field => (
@@ -470,6 +486,7 @@ export function VenueScreen({
               label="Default hours"
               value={detail.defaultHours.map(entry => ({ ...entry }))}
               disabled={busy}
+              openDefault={VENUE_OPEN_DEFAULT}
               onChange={hours => {
                 run(
                   async () =>
@@ -501,7 +518,6 @@ export function VenueScreen({
             settings={{
               latitude: detail.map.latitude,
               longitude: detail.map.longitude,
-              tileUrl: detail.map.tileUrl,
               googleMapsApiKey: detail.map.googleMapsApiKey,
               editable: false
             }}

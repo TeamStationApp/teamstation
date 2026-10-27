@@ -25,7 +25,8 @@ import { SegmentedPill } from '../components/SegmentedPill'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import {
   copyEventAddress,
-  openEventDirections
+  openEventDirections,
+  openPointDirections
 } from '../platform/eventDirections'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GameUmpires } from '../umpires/GameUmpires'
@@ -109,6 +110,14 @@ export function EventInfoTab({
       : info?.venue
   const latitude = info?.latitude
   const longitude = info?.longitude
+  // A game on a registry field names it after its venue: "Example Park ·
+  // Field 1".
+  const place =
+    info?.field == null
+      ? info?.venue
+      : [info.venue?.trim(), info.field.name]
+          .filter(part => part != null && part !== '')
+          .join(' · ')
   useEffect(() => {
     setLocation(undefined)
     setMapError('')
@@ -132,20 +141,31 @@ export function EventInfoTab({
       active = false
     }
   }, [address, latitude, longitude, client, eventId, mapRetry])
+  const directionsFailed = (error: unknown): void => {
+    if (live.current)
+      setNotice(
+        error instanceof Error ? error.message : 'Directions could not open.'
+      )
+  }
   const directions = (): void => {
     if (address == null) return
+    const field = info?.field
+    if (field != null) {
+      setNotice('')
+      openPointDirections({
+        latitude: field.latitude,
+        longitude: field.longitude,
+        label: place ?? field.name
+      }).catch(directionsFailed)
+      return
+    }
     const venueOnly = (info?.address?.trim() ?? '') === ''
     if (venueOnly && location == null) return
     const destination = venueOnly
       ? `${location!.latitude},${location!.longitude}`
       : address
     setNotice('')
-    openEventDirections(destination).catch((error: unknown) => {
-      if (live.current)
-        setNotice(
-          error instanceof Error ? error.message : 'Directions could not open.'
-        )
-    })
+    openEventDirections(destination).catch(directionsFailed)
   }
   const copy = (): void => {
     if (address == null) return
@@ -292,8 +312,10 @@ export function EventInfoTab({
               style={styles.addressRow}
             >
               <View style={styles.addressText}>
-                {info.venue != null && info.venue !== address && (
-                  <Text style={styles.name}>{info.venue}</Text>
+                {place != null && place !== address && (
+                  <Text testID="event-place" style={styles.name}>
+                    {place}
+                  </Text>
                 )}
                 <View testID="event-address">
                   <Text selectable style={styles.name}>

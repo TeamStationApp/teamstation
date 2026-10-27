@@ -11,6 +11,7 @@ import {
   Emblem,
   HandoffView,
   initialsOf,
+  ListCard,
   ListRow,
   PillTabs,
   SectionHeader,
@@ -169,16 +170,6 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               ? 'Location not set'
               : localityLabel(group.locality)}
           </Text>
-          {detail.canManage && props.onAutoScheduler != null && (
-            <ListRow
-              title="Auto-Scheduler"
-              subtitle="Fields, season settings and schedules"
-              emblemIcon="event"
-              onPress={() => {
-                props.onAutoScheduler?.(league)
-              }}
-            />
-          )}
         </Card>
       }
       sections={
@@ -255,6 +246,20 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               />
             ))}
           </ActionList>
+          {detail.canManage && props.onAutoScheduler != null && (
+            <View style={styles.autoScheduler}>
+              <ListCard>
+                <ListRow
+                  title="Auto-Scheduler"
+                  subtitle="Fields, season settings and schedules"
+                  emblemIcon="event"
+                  onPress={() => {
+                    props.onAutoScheduler?.(league)
+                  }}
+                />
+              </ListCard>
+            </View>
+          )}
         </View>
       )}
       {tab === 'teams' && (
@@ -414,6 +419,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pressed: { opacity: 0.6 },
   section: { gap: theme.rem(theme.spaceMdRem) },
+  // The section's own gap, then a larger one: the last thing on the tab.
+  autoScheduler: { marginTop: theme.rem(theme.spaceLgRem) },
   muted: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.9375),

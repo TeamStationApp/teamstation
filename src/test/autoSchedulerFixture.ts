@@ -1,4 +1,5 @@
 import { userIdOfGumbo } from '../common/userId'
+import { EXAMPLE_PARK } from './googlePlacesStub'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
 
 /** The season the scheduler builds: spring through July, on Eastern time. */
@@ -44,13 +45,24 @@ export interface AutoSchedulerFixture {
  */
 export async function autoSchedulerFixture(
   webRoot?: string,
-  options: { cityLookup?: Parameters<typeof groupFixture>[3] } = {}
+  options: {
+    cityLookup?: Parameters<typeof groupFixture>[3]
+    /**
+     * The Google key for the venue and event maps, for a run that serves
+     * Google's stub. Without it both maps keep the harness's empty key.
+     */
+    googleMapsApiKey?: string
+  } = {}
 ): Promise<AutoSchedulerFixture> {
   const f = await groupFixture(
     webRoot,
     undefined,
     undefined,
-    options.cityLookup
+    options.cityLookup,
+    options.googleMapsApiKey == null
+      ? {}
+      : { googleMapsApiKey: options.googleMapsApiKey },
+    { googleMapsApiKey: options.googleMapsApiKey }
   )
   for (const [id, name] of [
     [101, 'Demo League Admin'],
@@ -128,6 +140,22 @@ export async function autoSchedulerFixture(
   return { f, teams, siteAdmin: 105, outsideAdmin: 103 }
 }
 
+/**
+ * Writes a season's stored zone directly, so it differs from the zone of
+ * the fields it is scheduled on, as the UTC every new season holds does.
+ */
+export async function forceSeasonZone(
+  fx: AutoSchedulerFixture,
+  seasonId: string,
+  timezone: string
+): Promise<void> {
+  await fx.f.h.db
+    .updateTable('seasons')
+    .set({ timezone })
+    .where('id', '=', seasonId)
+    .execute()
+}
+
 /** Calls the API as a fixture user and returns the parsed answer. */
 export async function api<T = unknown>(
   fx: AutoSchedulerFixture,
@@ -168,6 +196,15 @@ export async function seedClaimedPark(
   return venue.id
 }
 
+/**
+ * Field 1's own pin: 0.0012° north and 0.0009° east of Example Park's point,
+ * so the field's point and the venue's differ.
+ */
+export const FIELD_ONE_PIN = {
+  latitude: Number((EXAMPLE_PARK.location.latitude + 0.0012).toFixed(6)),
+  longitude: Number((EXAMPLE_PARK.location.longitude + 0.0009).toFixed(6))
+}
+
 /** Field 1 as E2 leaves it, and Field 2 deleted; returns Field 1's id. */
 export async function seedFields(
   fx: AutoSchedulerFixture,
@@ -183,7 +220,8 @@ export async function seedFields(
       sizes: ['46/60', '50/70'],
       startsOn: '2026-10-01',
       endsOn: '2027-09-30',
-      hours: FIELD_ONE_HOURS
+      hours: FIELD_ONE_HOURS,
+      pin: FIELD_ONE_PIN
     }
   )
   const withTwo = await api<{ fields: Array<{ id: string; name: string }> }>(
@@ -196,6 +234,48 @@ export async function seedFields(
   const two = withTwo.fields.find(field => field.name === 'Field 2')!
   await api(fx, 101, 'DELETE', `/venues/${venueId}/fields/${two.id}`)
   return withOne.fields.find(field => field.name === 'Field 1')!.id
+}
+
+/** Harbor Field, a venue in the registry nobody has claimed. */
+export const HARBOR_VENUE = 'ven_autoSchedulerHarbor'
+/** Its one field, Harbor Diamond. */
+export const HARBOR_DIAMOND = 'fld_autoSchedulerHarborDiamond'
+
+/**
+ * Puts the Google stub's Harbor Field in the registry as a venue nobody has
+ * claimed, with one field, Harbor Diamond: 50/70, Saturdays 08:00–18:00,
+ * open 2026-10-01 to 2027-09-30. An unclaimed venue has no owner to add its
+ * fields through the API, so they are written directly, as a venue whose
+ * last owner left would hold them. Returns the field's id.
+ */
+export async function seedHarborField(
+  fx: AutoSchedulerFixture
+): Promise<string> {
+  await fx.f.h.db
+    .insertInto('venues')
+    .values({
+      id: HARBOR_VENUE,
+      google_place_id: 'harbor-field',
+      name: 'Harbor Field',
+      address: '1 Demo Way, Demo City',
+      latitude: 40.05,
+      longitude: -75.18,
+      timezone: SEASON_TIMEZONE
+    })
+    .execute()
+  await fx.f.h.db
+    .insertInto('venue_fields')
+    .values({
+      id: HARBOR_DIAMOND,
+      venue_id: HARBOR_VENUE,
+      name: 'Harbor Diamond',
+      sizes: ['50/70'],
+      starts_on: '2026-10-01',
+      ends_on: '2027-09-30',
+      hours: JSON.stringify([{ weekday: 6, start: '08:00', end: '18:00' }])
+    })
+    .execute()
+  return HARBOR_DIAMOND
 }
 
 /** The state the full pass reaches just before a scenario. */

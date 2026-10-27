@@ -4,7 +4,14 @@ import React, { act } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import type { VenueSummary } from '../../common/venues'
-import { fill, mount, settle, text, unmount } from '../../test/gameFormDom'
+import {
+  fill,
+  find,
+  mount,
+  settle,
+  text,
+  unmount
+} from '../../test/gameFormDom'
 import { FieldManagerScreen } from './FieldManagerScreen'
 
 const OWN: VenueSummary = {
@@ -64,5 +71,40 @@ describe('the Field Manager', () => {
       query: 'Park',
       near: { latitude: 40, longitude: -75 }
     })
+  })
+
+  it('lists every place a search finds, after the person’s own venues', async () => {
+    const parks = Array.from({ length: 13 }, (_, index): VenueSummary => ({
+      id: null,
+      placeId: `park-${index}`,
+      name: `Demo Park ${index + 1}`,
+      address: `${index + 1} Park Row, Demo City`,
+      owners: [],
+      pendingClaim: false,
+      claimed: false,
+      group: 'unclaimed',
+      distanceKm: null
+    }))
+    const client = {
+      venues: async ({ query }: { query?: string }) =>
+        query === '' ? [OWN] : [OWN, ...parks]
+    } as unknown as TeamStationClient
+    await mount(
+      <FieldManagerScreen
+        client={client}
+        onOpenVenue={() => undefined}
+        onOpenPlace={() => undefined}
+        locate={async () => await Promise.reject(new Error('denied'))}
+      />
+    )
+    await settle(50)
+    await fill('Search venues', 'Park')
+    await settle(400)
+    expect(text()).includes('Unclaimed venues')
+    for (const park of parks)
+      expect(find(`Open ${park.name}`), park.name).not.equals(undefined)
+    expect(text().indexOf('Example Park')).lessThan(
+      text().indexOf('Demo Park 1')
+    )
   })
 })

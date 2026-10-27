@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
-import type { VenueDetail } from '../../common/venues'
+import { rangeDates, type VenueDetail } from '../../common/venues'
 import {
   fill,
   mount,
@@ -13,8 +13,9 @@ import {
   unmount
 } from '../../test/gameFormDom'
 import {
-  chooseCalendarDate,
+  chooseDateRange,
   hasLabel,
+  pinMapDrawn,
   tapLabel,
   tapText,
   venueDetail,
@@ -61,6 +62,17 @@ function fakeClient(
   return { client, calls }
 }
 
+/**
+ * What each control labelled "Add field" reads: the header's small "Add", or
+ * the empty list's row, its plus icon (drawn from its name on the web), its
+ * title and its chevron.
+ */
+function addFieldControls(): string[] {
+  return [...document.querySelectorAll('[aria-label="Add field"]')].map(
+    node => node.textContent ?? ''
+  )
+}
+
 const owner = (canEdit = true): VenueDetail['rights'] => ({
   canEdit,
   claimLeagues: [],
@@ -79,7 +91,8 @@ describe('the venue screen', () => {
     expect(approvalLabel('2027-04-08T12:00:00Z')).equals(
       'approved automatically on Apr 8, 2027'
     )
-    expect(sizesLabel(['46/60', '50/70'])).equals('T-ball 46/60 · 50/70')
+    expect(sizesLabel(['46/60', '50/70'])).equals('46/60 · 50/70')
+    expect(sizesLabel(['T-ball', '46/60'])).equals('T-ball · 46/60')
   })
 
   it('shows a load failure and retries', async () => {
@@ -99,6 +112,37 @@ describe('the venue screen', () => {
     await settle()
     expect(calls.venue).length(2)
     expect(text()).includes('Example Park')
+  })
+
+  it('draws the venue on a read-only Google map, even for its owner', async () => {
+    const { client } = fakeClient(
+      venueDetail({
+        rights: owner(),
+        map: {
+          latitude: 40.03,
+          longitude: -75.23,
+          googleMapsApiKey: 'placeholder-key'
+        }
+      })
+    )
+    await mount(
+      <VenueScreen
+        client={client}
+        venueId="ven_demo"
+        onOpenField={() => undefined}
+        onClaimed={() => undefined}
+      />
+    )
+    expect(pinMapDrawn()).deep.equals({
+      config: {
+        latitude: 40.03,
+        longitude: -75.23,
+        key: 'placeholder-key',
+        editable: false,
+        timeoutMs: 15000
+      },
+      foreignTiles: false
+    })
   })
 
   it('claims a Google place for the person’s one league and opens the new venue', async () => {
@@ -341,7 +385,9 @@ describe('the venue screen', () => {
         onClaimed={() => undefined}
       />
     )
-    expect(text()).includes('T-ball 46/60 · 50/70')
+    expect(text()).includes('46/60 · 50/70')
+    // With a field, Add is the header's, and there is no Add field row.
+    expect(addFieldControls()).deep.equals(['Add'])
     await press('Open Field 1')
     expect(opened).deep.equals(['ven_demo/fld_one'])
     await press('Add field')
@@ -350,7 +396,7 @@ describe('the venue screen', () => {
     await tapLabel('50/70')
     await tapLabel('55/80')
     await tapLabel('55/80')
-    await tapLabel('T-ball 46/60')
+    await tapLabel('46/60')
     await tapText('Add field')
     await settle()
     expect(calls.createField).deep.equals([
@@ -363,8 +409,17 @@ describe('the venue screen', () => {
     expect(calls.deleteField).deep.equals([['ven_demo', 'fld_one']])
   })
 
-  it('cancels adding a field and shows an empty field list', async () => {
-    const { client, calls } = fakeClient(venueDetail({ rights: owner() }))
+  it('shows an empty venue’s owner an Add field row in place of the header’s Add, until a field exists', async () => {
+    const { client, calls } = fakeClient(
+      venueDetail({ rights: owner() }),
+      method =>
+        method === 'createField'
+          ? venueDetail({
+              fields: [venueField({ name: 'Tee Field', sizes: ['T-ball'] })],
+              rights: owner()
+            })
+          : venueDetail({ rights: owner() })
+    )
     await mount(
       <VenueScreen
         client={client}
@@ -373,10 +428,24 @@ describe('the venue screen', () => {
         onClaimed={() => undefined}
       />
     )
-    expect(text()).includes('No fields yet')
+    expect(addFieldControls()).deep.equals(['addAdd fieldchevron_right'])
+    expect(text()).not.includes('No fields')
     await press('Add field')
     await press('Cancel')
     expect(calls.createField).equals(undefined)
+    await press('Add field')
+    // T-ball and 46/60 are two choices.
+    expect(hasLabel('T-ball')).equals(true)
+    expect(hasLabel('46/60')).equals(true)
+    await fill('Field name', 'Tee Field')
+    await tapLabel('T-ball')
+    await tapText('Add field')
+    await settle()
+    expect(calls.createField).deep.equals([
+      ['ven_demo', { name: 'Tee Field', sizes: ['T-ball'] }]
+    ])
+    expect(text()).includes('Tee FieldT-ball')
+    expect(addFieldControls()).deep.equals(['Add'])
     await unmount()
     const reader = fakeClient(venueDetail())
     await mount(
@@ -394,7 +463,8 @@ describe('the venue screen', () => {
   it('saves the size switch time, default hours, blackouts and photo', async () => {
     const venue = venueDetail({
       rights: owner(),
-      photoUrl: 'https://images.example.test/venue-640.png'
+      photoUrl: 'https://images.example.test/venue-640.png',
+      defaultBlackouts: rangeDates('2027-07-03', '2027-07-05')
     })
     const { client, calls } = fakeClient(venue)
     let picked = 0
@@ -418,10 +488,15 @@ describe('the venue screen', () => {
     await settle()
     await press('Default hours: Tuesday, Closed')
     await tapText('Open')
+    // A day turned open starts at 9:00 AM to 5:00 PM.
+    expect(hasLabel('Opens 9:00 AM')).equals(true)
+    expect(hasLabel('Closes 5:00 PM')).equals(true)
     await tapText('Done')
     await settle()
-    await press('Add blackout day')
-    await chooseCalendarDate('2027-07-04')
+    // Its blackouts list as ranges; a new range joins them.
+    expect(text()).includes('Jul 3 – Jul 5 · 3 days')
+    await press('Add blackout dates')
+    await chooseDateRange('2026-12-20', '2027-01-02')
     await settle()
     expect(document.querySelector('[data-testid="place-photo"]')).not.equals(
       null
@@ -436,12 +511,20 @@ describe('the venue screen', () => {
         'ven_demo',
         {
           defaultHours: [
-            { weekday: 2, start: '17:00', end: '21:00' },
+            { weekday: 2, start: '09:00', end: '17:00' },
             { weekday: 6, start: '08:00', end: '18:00' }
           ]
         }
       ],
-      ['ven_demo', { defaultBlackouts: ['2027-07-04'] }],
+      [
+        'ven_demo',
+        {
+          defaultBlackouts: [
+            ...rangeDates('2026-12-20', '2027-01-02'),
+            ...rangeDates('2027-07-03', '2027-07-05')
+          ]
+        }
+      ],
       ['ven_demo', { photo: { contentType: 'image/png', base64: 'AAAA' } }]
     ])
   })

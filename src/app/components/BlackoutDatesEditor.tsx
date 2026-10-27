@@ -1,11 +1,18 @@
 import React, { useState } from 'react'
 import { Text, View } from 'react-native'
 
+import { monthDay } from '../../common/calendarDates'
+import {
+  blackoutRanges,
+  type DateRange,
+  MAX_BLACKOUT_DAYS,
+  rangeDates
+} from '../../common/venues'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ActionList, ActionRow } from './ActionRow'
 import { Button } from './Button'
 import { DangerText } from './DangerText'
-import { CalendarPicker } from './EventScheduleFields'
+import { DateRangePicker } from './DateRangePicker'
 import { PickerDialog } from './PickerDialog'
 
 /** "2027-07-04" as "Sunday, July 4, 2027". */
@@ -20,7 +27,73 @@ export function dateLabel(date: string): string {
 }
 
 /**
- * Blackout days: a list of dates, each removable, and a calendar to add one.
+ * How a range of blackout days reads: "Dec 20 – Jan 2 · 14 days", or
+ * "Apr 10" for one day, with its year, or years, beside it.
+ */
+export function blackoutRangeLabel({ from, to }: DateRange): {
+  title: string
+  detail: string
+  spoken: string
+} {
+  if (from === to)
+    return {
+      title: monthDay(from),
+      detail: from.slice(0, 4),
+      spoken: dateLabel(from)
+    }
+  const days = rangeDates(from, to).length
+  return {
+    title: `${monthDay(from)} – ${monthDay(to)} · ${days} days`,
+    detail:
+      from.slice(0, 4) === to.slice(0, 4)
+        ? from.slice(0, 4)
+        : `${from.slice(0, 4)} – ${to.slice(0, 4)}`,
+    spoken: `${dateLabel(from)} – ${dateLabel(to)}`
+  }
+}
+
+/**
+ * Blackout days listed as ranges of consecutive days, each removable when
+ * `onRemove` is given.
+ */
+export function BlackoutRangeList({
+  dates,
+  onRemove
+}: {
+  dates: readonly string[]
+  onRemove?: (range: DateRange) => void
+}): React.ReactElement {
+  return (
+    <ActionList bounded>
+      {blackoutRanges(dates).map(range => {
+        const label = blackoutRangeLabel(range)
+        return (
+          <ActionRow
+            key={range.from}
+            title={label.title}
+            detail={label.detail}
+            end={
+              onRemove == null ? undefined : (
+                <DangerText
+                  label="Remove"
+                  accessibilityLabel={`Remove blackout ${label.spoken}`}
+                  onPress={() => {
+                    onRemove(range)
+                  }}
+                />
+              )
+            }
+          />
+        )
+      })}
+    </ActionList>
+  )
+}
+
+/**
+ * Blackout days, kept as a list of dates and shown as ranges: each range
+ * removable as a whole, and a calendar that adds a range, or one day, at a
+ * time. Ranges that touch or overlap join into one.
  */
 export function BlackoutDatesEditor({
   value,
@@ -38,34 +111,32 @@ export function BlackoutDatesEditor({
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [adding, setAdding] = useState(false)
+  const [refused, setRefused] = useState(false)
   return (
     <View style={styles.list}>
       {value.length === 0 ? (
         <Text style={styles.empty}>{empty}</Text>
       ) : (
-        <ActionList bounded>
-          {value.map(date => (
-            <ActionRow
-              key={date}
-              title={dateLabel(date)}
-              end={
-                disabled ? undefined : (
-                  <DangerText
-                    label="Remove"
-                    accessibilityLabel={`Remove blackout ${dateLabel(date)}`}
-                    onPress={() => {
-                      onChange(value.filter(item => item !== date))
-                    }}
-                  />
-                )
-              }
-            />
-          ))}
-        </ActionList>
+        <BlackoutRangeList
+          dates={value}
+          onRemove={
+            disabled
+              ? undefined
+              : ({ from, to }) => {
+                  setRefused(false)
+                  onChange(value.filter(date => date < from || date > to))
+                }
+          }
+        />
+      )}
+      {refused && (
+        <Text accessibilityRole="alert" style={styles.error}>
+          Blackouts can cover at most {MAX_BLACKOUT_DAYS} days.
+        </Text>
       )}
       {!disabled && (
         <Button
-          label="Add blackout day"
+          label="Add blackout dates"
           kind="secondary"
           onPress={() => {
             setAdding(true)
@@ -78,11 +149,15 @@ export function BlackoutDatesEditor({
             setAdding(false)
           }}
         >
-          <CalendarPicker
-            value={today ?? new Date().toISOString().slice(0, 10)}
-            onChoose={date => {
-              onChange([...new Set([...value, date])].sort())
+          <DateRangePicker
+            now={today == null ? undefined : new Date(`${today}T12:00:00`)}
+            onChoose={({ startsOn, endsOn }) => {
               setAdding(false)
+              const next = [
+                ...new Set([...value, ...rangeDates(startsOn, endsOn)])
+              ].sort()
+              setRefused(next.length > MAX_BLACKOUT_DAYS)
+              if (next.length <= MAX_BLACKOUT_DAYS) onChange(next)
             }}
             onCancel={() => {
               setAdding(false)
@@ -100,5 +175,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.9375),
     color: theme.secondaryTextColor
+  },
+  error: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.9375),
+    color: theme.dangerColor
   }
 }))

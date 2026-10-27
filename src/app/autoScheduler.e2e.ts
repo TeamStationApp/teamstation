@@ -29,6 +29,7 @@ import {
   SEASON_A_WINDOWS,
   seedThrough
 } from '../test/autoSchedulerFixture'
+import { interceptGoogleMaps } from '../test/googleMapsIntercept'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import {
   absent,
@@ -290,13 +291,24 @@ async function e2(run: Run): Promise<void> {
   const photo = await fieldPhoto(run)
   const admin = await run.session('autoScheduler-e2', 101)
   await run.visit(admin, `/venues/${venueId}`)
-  await contains(admin.page, 'No fields yet')
+  // An empty venue's Add field is a whole row, with no header Add.
+  await admin.page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[aria-label="Add field"]')]
+        .map(node => node.textContent)
+        .join('|') === 'addAdd fieldchevron_right',
+    { timeout: 15000 }
+  )
   for (const [name, sizes] of [
-    ['Field 1', ['T-ball 46/60', '50/70']],
+    // T-ball and 46/60 are two sizes; Field 1 is 46/60, not T-ball.
+    ['Field 1', ['46/60', '50/70']],
     ['Field 2', ['50/70', '55/80']]
   ] as const) {
     await tapLabel(admin, 'Add field')
     await fill(admin.m, 'Field name', name)
+    await admin.page.waitForSelector('[aria-label="T-ball"]', {
+      timeout: 15000
+    })
     for (const size of sizes) await tapLabel(admin, size)
     await tapLast(admin, 'Add field')
     await contains(admin.page, `${name} added.`)
@@ -318,16 +330,19 @@ async function e2(run: Run): Promise<void> {
   run.state.fieldId = fieldPath.split('/')[4]
   await uploadPhoto(admin, 'Add photo', photo)
   await contains(admin.page, 'Photo saved.')
-  // Drag the pin: Leaflet's marker, moved and let go inside its frame.
+  // Drag the pin: the Google stub's marker, let go inside its frame.
   const frame = admin.page
     .frames()
     .find(candidate => candidate.url() === 'about:srcdoc')
   expect(frame, 'the pin map frame').not.equals(undefined)
-  await frame!.waitForFunction(() => (window as any).pinMarker != null)
+  await frame!.waitForFunction(
+    () =>
+      document.querySelector('[data-lat][data-draggable="true"]') !== null &&
+      typeof (window as any).__dragPin === 'function',
+    { timeout: 15000 }
+  )
   await frame!.evaluate(() => {
-    const marker = (window as any).pinMarker
-    marker.setLatLng([40.0213, -75.2214])
-    marker.fire('dragend')
+    ;(window as any).__dragPin(40.0213, -75.2214)
   })
   await contains(admin.page, 'Pin saved.')
   await admin.page.evaluate(() => {
@@ -339,11 +354,11 @@ async function e2(run: Run): Promise<void> {
   await contains(admin.page, 'This field now keeps its own hours.')
   await tapLabel(admin, 'Field hours: Saturday, Closed')
   await admin.m.tapOn({ text: 'Open', timeout: 15000 })
-  await tapLabel(admin, 'Opens 5:00 PM')
+  await tapLabel(admin, 'Opens 9:00 AM')
   await tapLabel(admin, 'Hour 08')
   await tapLabel(admin, 'Period AM')
   await admin.m.tapOn({ text: 'Use time', timeout: 15000 })
-  await tapLabel(admin, 'Closes 9:00 PM')
+  await tapLabel(admin, 'Closes 5:00 PM')
   await tapLabel(admin, 'Hour 06')
   await admin.m.tapOn({ text: 'Use time', timeout: 15000 })
   await admin.m.tapOn({ text: 'Done', timeout: 15000 })
@@ -374,20 +389,23 @@ async function e2(run: Run): Promise<void> {
   await tapLabel(admin, '2027-09-30')
   await admin.m.tapOn({ text: 'Use this range', timeout: 15000 })
   await contains(admin.page, 'Oct 1, 2026 – Sep 30, 2027')
-  await admin.m.tapOn({ text: 'Add blackout day', timeout: 15000 })
-  await admin.page.type('input[aria-label="Year"]', '')
-  await admin.page.evaluate(() => {
-    const year = document.querySelector<HTMLInputElement>(
-      'input[aria-label="Year"]'
+  // A blackout of one day: the same day twice in the range calendar.
+  await admin.m.tapOn({ text: 'Add blackout dates', timeout: 15000 })
+  for (let month = 0; month < 24; month++) {
+    const shown = await admin.page.evaluate(
+      () => document.querySelector('[aria-label="2027-04-17"]') != null
     )
-    if (year !== null) year.select()
-  })
-  await admin.page.keyboard.type('2027')
-  await admin.m.tapOn({ css: '[aria-label^="Choose month:"]', timeout: 15000 })
-  await admin.m.tapOn({ text: 'Apr', timeout: 15000 })
-  await tapLabel(admin, 'Choose 2027-04-17')
-  await admin.m.tapOn({ text: 'Use date', timeout: 15000 })
-  await contains(admin.page, 'Saturday, April 17, 2027')
+    if (shown) break
+    await tapLabel(admin, 'Next month')
+  }
+  await tapLabel(admin, '2027-04-17')
+  await tapLabel(admin, '2027-04-17')
+  await admin.m.tapOn({ text: 'Use this range', timeout: 15000 })
+  await contains(admin.page, 'Blackout days saved.')
+  await admin.page.waitForSelector(
+    '[aria-label="Remove blackout Saturday, April 17, 2027"]',
+    { timeout: 15000 }
+  )
   await capture(admin.m, artifacts, 'field-screen-availability.png')
   const field = await fx.f.h.db
     .selectFrom('venue_fields')
@@ -400,7 +418,10 @@ async function e2(run: Run): Promise<void> {
   expect(field.photo_path).not.equals(null)
   // The pin is where it was dropped after a reload.
   await run.visit(admin, `/venues/${venueId}/fields/${run.state.fieldId}`)
-  await contains(admin.page, 'Saturday, April 17, 2027')
+  await admin.page.waitForSelector(
+    '[aria-label="Remove blackout Saturday, April 17, 2027"]',
+    { timeout: 15000 }
+  )
   // Last on this screen: maestro-d's taps stall once the page is scrolled
   // this way, so nothing is tapped after it.
   await showText(admin, 'FIELD SIZES')
@@ -715,21 +736,36 @@ async function setDay(
   )
 }
 
-/** Sets a number in the grid's editor for one cell. */
+/**
+ * Sets a number in one of the grid's spreadsheet cells: a tap opens it with
+ * its whole number selected, typing replaces it, and Enter saves.
+ */
 async function setNumber(
   b: BrowserSession,
   cell: string,
-  label: string,
   value: string
 ): Promise<void> {
+  const input = `input[aria-label="Edit ${cell.slice(0, cell.lastIndexOf(':'))}"]`
   await tapLabel(b, cell)
-  await fill(b.m, label, value)
-  await tapText(b, 'Save')
   await b.page.waitForFunction(
-    (wanted: string) =>
-      document.querySelector(`input[aria-label="${wanted}"]`) === null,
+    (selector: string) => {
+      const node = document.querySelector<HTMLInputElement>(selector)
+      return (
+        node !== null &&
+        document.activeElement === node &&
+        node.selectionStart === 0 &&
+        node.selectionEnd === node.value.length
+      )
+    },
     { timeout: 15000 },
-    label
+    input
+  )
+  await b.m.inputText({ text: value })
+  await b.m.pressKey({ key: 'Enter' })
+  await b.page.waitForFunction(
+    (selector: string) => document.querySelector(selector) === null,
+    { timeout: 15000 },
+    input
   )
 }
 
@@ -810,30 +846,10 @@ async function e6(run: Run): Promise<void> {
   await tapLabel(admin, 'Field 1, Example Park')
   await tapLabel(admin, 'Demo Regular Size: 60/90')
   await tapLabel(admin, '50/70')
-  await setNumber(
-    admin,
-    'Demo Regular Game: 120 min',
-    'Game length, in minutes',
-    '90'
-  )
-  await setNumber(
-    admin,
-    'Demo Regular Between: 15 min',
-    'Time between games, in minutes',
-    '10'
-  )
-  await setNumber(
-    admin,
-    'Demo Regular Regular: 0',
-    'Regular-season games per team',
-    '3'
-  )
-  await setNumber(
-    admin,
-    'Demo Regular Exhibition: 0',
-    'Exhibition games per team',
-    '1'
-  )
+  await setNumber(admin, 'Demo Regular Game length in minutes: 120', '90')
+  await setNumber(admin, 'Demo Regular Time between games in minutes: 15', '10')
+  await setNumber(admin, 'Demo Regular Regular-season games: 0', '3')
+  await setNumber(admin, 'Demo Regular Exhibition games: 0', '1')
   await tapLabel(admin, 'Demo Regular Doubleheaders: Only if necessary')
   await tapLabel(admin, 'Only if necessary')
   // The season's detail: exhibition teams and windows.
@@ -846,14 +862,14 @@ async function e6(run: Run): Promise<void> {
   }
   await tapText(admin, 'Add game windows')
   const march = 'Windows from Monday, March 1, 2027'
-  await contains(admin.page, 'From Monday, March 1, 2027')
+  await contains(admin.page, 'From Mar 1')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, march, day, '17:30', '21:00')
   await setDay(admin, march, 'Saturday', '08:00', '18:00')
   await tapText(admin, 'Add a period from a date')
   await chooseDate(admin, '2027-06-01')
   const june = 'Windows from Tuesday, June 1, 2027'
-  await contains(admin.page, 'From Tuesday, June 1, 2027')
+  await contains(admin.page, 'From Jun 1')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, june, day, '18:00', '21:00')
   // The last day's save may still be on its way.
@@ -895,12 +911,7 @@ async function e6(run: Run): Promise<void> {
     'Must fix: Demo Playoffs has no chosen field that sets up as 55/80.'
   )
   expect(await buildEnabled(admin)).equals(false)
-  await setNumber(
-    admin,
-    'Demo Regular Regular: 3',
-    'Regular-season games per team',
-    '4'
-  )
+  await setNumber(admin, 'Demo Regular Regular-season games: 3', '4')
   await gone(admin, 'an odd number')
   await contains(admin.page, '4 for one, 3 for the other')
   expect(await buildEnabled(admin)).equals(false)
@@ -1567,7 +1578,9 @@ async function main(): Promise<void> {
     cityLookup: googlePlaces({
       apiKey: 'placeholder-key',
       baseUrl: places.baseUrl
-    })
+    }),
+    // The pin maps load Google's script, which the stub answers.
+    googleMapsApiKey: 'test-key'
   })
   const daemon = await maestro(process.env.MAESTRO_D ?? 'seasonAutoScheduler')
   const sessions: BrowserSession[] = []
@@ -1595,6 +1608,7 @@ async function main(): Promise<void> {
       const held = signedIn.get(user)
       if (held != null) return held
       const b = await browserSession(daemon, device, WIDTH, HEIGHT, support)
+      await interceptGoogleMaps(b.page)
       sessions.push(b)
       signedIn.set(user, b)
       const email = EMAILS[user] ?? `fixture${user}@example.com`

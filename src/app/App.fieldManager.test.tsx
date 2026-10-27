@@ -67,6 +67,7 @@ function signedIn(canManage = true): void {
     leagueId,
     seasonIds: ['sea_a'],
     fieldIds: [],
+    addedFieldIds: [],
     seasons: [
       {
         id: 'sea_a',
@@ -170,6 +171,20 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
           ]
     }
     await open('/groups/league/lea_a')
+    // The Seasons tab's last card, below the season list.
+    const row = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(
+      node =>
+        node.getAttribute('aria-label') ===
+        'Auto-Scheduler, Fields, season settings and schedules'
+    )!
+    expect(document.body.textContent).includes('No seasons in this league yet.')
+    expect(
+      [...document.querySelectorAll<HTMLElement>('div')]
+        .find(node => node.textContent === 'No seasons in this league yet.')!
+        .compareDocumentPosition(row) & window.Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
     await press('Auto-Scheduler, Fields, season settings and schedules')
     await settle()
     expect(window.location.pathname).equals('/groups/league/lea_a/scheduler')
@@ -316,7 +331,8 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
           id: 'fld_one',
           name: 'Field 1',
           venueName: 'Example Park',
-          sizes: ['50/70']
+          sizes: ['50/70'],
+          timezone: 'America/New_York'
         }
       ]
     })

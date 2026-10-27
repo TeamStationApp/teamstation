@@ -315,3 +315,60 @@ describe('event information contracts', () => {
     expect(rows[0].response).equals(null)
   })
 })
+
+describe('the event info cleaner’s field', () => {
+  const answer = {
+    id: 'gam_demo',
+    eventKind: 'game',
+    title: null,
+    teamId: 'tea_owls',
+    teamName: 'Owls',
+    startAt: '2027-04-10T14:00:00.000Z',
+    endAt: '2027-04-10T16:00:00.000Z',
+    timezone: 'America/New_York',
+    venue: 'Example Park',
+    address: '1 Example Way, Demo City',
+    latitude: 40.0212,
+    longitude: -75.2191,
+    status: 'scheduled',
+    canManage: false,
+    attendees: [],
+    replyUserIds: []
+  }
+  const FIELD = {
+    id: 'fld_one',
+    name: 'Field 1',
+    size: '50/70',
+    latitude: 40.0212,
+    longitude: -75.2191
+  }
+  it('keeps a game’s field with its id, name, size and point', () => {
+    expect(asEventInfo({ ...answer, field: FIELD }).field).deep.equals(FIELD)
+    expect(
+      asEventInfo({ ...answer, field: { ...FIELD, size: 'T-ball' } }).field
+        ?.size
+    ).equals('T-ball')
+  })
+  it('leaves the field absent when the answer has none', () => {
+    const info = asEventInfo(answer)
+    expect(info).not.property('field')
+    expect(info.venue).equals('Example Park')
+  })
+  it('refuses an answer whose field is malformed, as it does for warnings', () => {
+    for (const field of [
+      null,
+      'Field 1',
+      { ...FIELD, name: undefined },
+      { ...FIELD, size: '70/100' },
+      { ...FIELD, latitude: '40.0212' },
+      { id: 'fld_one', name: 'Field 1', size: '50/70' }
+    ])
+      expect(
+        () => asEventInfo({ ...answer, field }),
+        JSON.stringify(field)
+      ).throws(TypeError)
+    expect(() =>
+      asEventInfo({ ...answer, fieldWarnings: [{ kind: 'flooded' }] })
+    ).throws(TypeError)
+  })
+})

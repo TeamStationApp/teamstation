@@ -53,11 +53,17 @@ import { noticeClaimDecided, noticeClaimFiled } from './venueNotices'
 export interface VenueServices {
   places?: GooglePlaces
   media: MediaContext
-  map: { tileUrl: string; googleMapsApiKey?: string }
+  /**
+   * Google's browser key, for the venue and field maps on the web, and the
+   * tile address installed builds from before Google's maps still require.
+   */
+  map: { googleMapsApiKey?: string; tileUrl: string }
   clock?: Clock
 }
 
 const SEARCH_LIMIT = 50
+/** Google's places for a venue search: enough to list ten after filtering. */
+const GOOGLE_LIMIT = 20
 const GROUPS = ['yours', 'claimed', 'unclaimed'] as const
 
 type VenueRow = Selectable<VenuesTable>
@@ -173,11 +179,15 @@ export async function venueDetail(
   }
 }
 
-/** The map the app draws a venue on: the tiles, or Google's with a key. */
+/**
+ * The map the app draws a venue on: its point, and Google's key. The tile
+ * address is for installed builds whose cleaner still requires one; this
+ * build's cleaner ignores it.
+ */
 function mapAt(
   point: { latitude: number; longitude: number },
   services: VenueServices
-): VenueDetail['map'] {
+): VenueDetail['map'] & { tileUrl: string } {
   const key = services.map.googleMapsApiKey
   return {
     latitude: point.latitude,
@@ -370,7 +380,12 @@ export async function searchVenues(
   let google: VenueSummary[] = []
   try {
     await limitGoogleLookup(db, fresh.userId, false)
-    google = (await services.places.eventPlaces(query, 'venue'))
+    google = (
+      await services.places.eventPlaces(query, 'venue', {
+        limit: GOOGLE_LIMIT,
+        near: search.near
+      })
+    )
       .map(place => ({
         id: null,
         placeId: bareId(place.id),

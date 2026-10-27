@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { VenueDetail, VenueSummary } from '../../common/venues'
 import { accountTestPicture } from '../../test/accountHarness'
-import { EXAMPLE_PARK, googlePlacesStub } from '../../test/googlePlacesStub'
+import {
+  EXAMPLE_PARK,
+  googlePlacesStub,
+  MORE_PARKS
+} from '../../test/googlePlacesStub'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { googlePlaces } from '../location/googlePlaces'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
@@ -45,7 +49,9 @@ describe('venue routes', function () {
       undefined,
       undefined,
       undefined,
-      googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl })
+      googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl }),
+      {},
+      { googleMapsApiKey: 'placeholder-browser-key' }
     )
   })
   afterEach(async () => {
@@ -69,9 +75,15 @@ describe('venue routes', function () {
     expect(place.rights.claimLeagues).deep.equals([
       { id: f.leagueA, name: 'Demo League A' }
     ])
-    expect(place.map).include({
+    // The map is the point and Google's browser key, plus the tile address
+    // that installed builds from before Google's maps still require.
+    expect(place.map).deep.equals({
       latitude: EXAMPLE_PARK.location.latitude,
-      longitude: EXAMPLE_PARK.location.longitude
+      longitude: EXAMPLE_PARK.location.longitude,
+      tileUrl:
+        process.env.TS_EVENT_MAP_TILES ??
+        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      googleMapsApiKey: 'placeholder-browser-key'
     })
     // A place Google doesn't know is no item.
     expect(
@@ -83,6 +95,8 @@ describe('venue routes', function () {
     ).deep.equals([])
     const venue = await claim()
     expect(venue.id).matches(/^ven_/)
+    // A registry venue's map carries the tile address as well.
+    expect((venue.map as { tileUrl?: unknown }).tileUrl).a('string')
     expect(venue).include({
       name: EXAMPLE_PARK.name,
       address: EXAMPLE_PARK.address,
@@ -211,13 +225,34 @@ describe('venue routes', function () {
       venue.id
     ])
     const searched = await list('?query=Example%20Park')
+    // The registry's three, then Google's other eleven parks.
     expect(searched.map(item => item.id ?? item.placeId)).deep.equals([
       venue.id,
       'ven_far',
-      'ven_free'
+      'ven_free',
+      ...MORE_PARKS.map(name => name.toLowerCase().replace(' ', '-'))
     ])
+    expect(searched.slice(3).map(item => item.name)).deep.equals(MORE_PARKS)
     // The search finds Example Park at Google too, but lists it once.
     expect(searched.filter(item => item.placeId === EXAMPLE_PARK.id)).length(1)
+    const asked = stub.calls.filter(
+      call => call.path === '/v1/places:searchText'
+    )
+    expect(asked.at(-1)!.body).deep.equals({
+      textQuery: 'Example Park',
+      languageCode: 'en',
+      pageSize: 20
+    })
+    // From a point, Google is asked for places near it.
+    expect(await list('?query=Example%20Park&near=40,-75.2')).length(14)
+    expect(stub.calls.at(-1)!.body).deep.equals({
+      textQuery: 'Example Park',
+      languageCode: 'en',
+      pageSize: 20,
+      locationBias: {
+        circle: { center: { latitude: 40, longitude: -75.2 }, radius: 50000 }
+      }
+    })
     const harbor = await list('?query=Harbor')
     expect(
       harbor.map(item => [item.id, item.placeId, item.claimed])

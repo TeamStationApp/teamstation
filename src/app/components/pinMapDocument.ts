@@ -1,10 +1,8 @@
-import sdk from '../assets/leafletRuntime.json'
-
-/** Where a map is centred, the pin it shows, and how it is drawn. */
+/** Where a map is centred, the pin it shows, and whether it moves. */
 export interface PinMapSettings {
   latitude: number
   longitude: number
-  tileUrl: string
+  /** Google's browser key. Without one the map cannot load. */
   googleMapsApiKey?: string
   /** Whether the pin can be dragged. */
   editable: boolean
@@ -15,7 +13,7 @@ export interface PinMapProps {
   settings: PinMapSettings
   /** Where the pin was dragged to. */
   onMove?: (pin: { latitude: number; longitude: number }) => void
-  /** How long Android waits for Google's map before drawing the web one. */
+  /** How long Android waits for Google's map before giving up on it. */
   fallbackAfterMs?: number
 }
 
@@ -24,6 +22,17 @@ export interface PinMoved {
   type: 'teamstation:pinMoved'
   latitude: number
   longitude: number
+}
+
+/** What the map shows when it cannot load. */
+export const PIN_MAP_FAILED = 'The map couldn’t load'
+
+/** The point a map is on, as the failure panel names it. */
+export function pinPointText(point: {
+  latitude: number
+  longitude: number
+}): string {
+  return `${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`
 }
 
 /** Reads a posted message as a moved pin, or nothing. */
@@ -64,57 +73,48 @@ function checked(settings: PinMapSettings): void {
     throw new Error('The place could not be located.')
 }
 
+/** Text for the markup, with nothing that could close a tag or a string. */
+const escaped = (text: string): string =>
+  text.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`)
+
 /**
- * Posts a moved pin to whoever holds the map: the web page that framed it,
- * or the app's WebView. Shared by both documents.
+ * Google's map with one advanced marker, which drags when the map is
+ * editable and posts where it was let go: to the web page that framed it, or
+ * to a WebView that holds it.
+ *
+ * A missing key, Google's `gm_authFailure`, a script that fails to load, or
+ * no tiles within `timeoutMs` shows a panel instead: "The map couldn’t load",
+ * the coordinates, and Retry, which loads the document again.
  */
-const POST = `const post=(lat,lng)=>{const message={type:'teamstation:pinMoved',latitude:lat,longitude:lng};if(window.ReactNativeWebView!=null)window.ReactNativeWebView.postMessage(JSON.stringify(message));else if(window.parent!==window)window.parent.postMessage(message,'*')};`
-
-/** The Leaflet map: the tiles, and a pin that drags when it may. */
-export function leafletPinDocument(settings: PinMapSettings): string {
+export function pinMapDocument(
+  settings: PinMapSettings,
+  options: { timeoutMs?: number } = {}
+): string {
   checked(settings)
   const config = JSON.stringify({
     latitude: settings.latitude,
     longitude: settings.longitude,
-    tileUrl: settings.tileUrl,
-    editable: settings.editable
+    key: settings.googleMapsApiKey ?? '',
+    editable: settings.editable,
+    timeoutMs: options.timeoutMs ?? 15000
   }).replace(/</g, '\\u003c')
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="origin"><style>${sdk.css}
-    html,body,#map{height:100%;width:100%;margin:0} .pin-marker{background:#c62828;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px #0006;width:22px;height:22px}
-  </style></head><body><div id="map" aria-label="Field location map"></div><script>${sdk.js}</script><script>
-    const config=${config};${POST}
-    const map=L.map('map',{scrollWheelZoom:false}).setView([config.latitude,config.longitude],17);
-    L.tileLayer(config.tileUrl,{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
-    const marker=L.marker([config.latitude,config.longitude],{draggable:config.editable,icon:L.divIcon({className:'pin-marker',iconSize:[22,22],iconAnchor:[11,11]})}).addTo(map);
-    marker.on('dragend',()=>{const point=marker.getLatLng();post(point.lat,point.lng)});
-    window.pinMap=map;window.pinMarker=marker;
-  </script></body></html>`
-}
-
-/** Google's map, with a draggable advanced marker; Leaflet when it fails. */
-export function googlePinDocument(settings: PinMapSettings): string {
-  checked(settings)
-  if (settings.googleMapsApiKey == null || settings.googleMapsApiKey === '')
-    throw new Error('Google Maps is not configured.')
-  const config = JSON.stringify({
-    latitude: settings.latitude,
-    longitude: settings.longitude,
-    key: settings.googleMapsApiKey,
-    editable: settings.editable
-  }).replace(/</g, '\\u003c')
-  const fallback = JSON.stringify(leafletPinDocument(settings)).replace(
-    /</g,
-    '\\u003c'
-  )
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="origin"><style>
     html,body,#map{height:100%;width:100%;margin:0}
-  </style></head><body><div id="map" aria-label="Field location map"></div><script>
+    #failed{height:100%;box-sizing:border-box;padding:16px;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:#eef2ee;color:#1d2a1f;font:15px/1.35 -apple-system,system-ui,sans-serif;text-align:center}
+    #failed:not([hidden]){display:flex}
+    #failed .title{font-weight:600;font-size:17px;margin:0}
+    #failed .where{margin:0;font-variant-numeric:tabular-nums;color:#4a5a4d}
+    #failed button{margin-top:4px;min-height:44px;padding:0 22px;border:0;border-radius:22px;background:#24452b;color:white;font:600 15px -apple-system,system-ui,sans-serif}
+  </style></head><body><div id="map" aria-label="Field location map"></div><div id="failed" role="alert" hidden><p class="title">${escaped(PIN_MAP_FAILED)}</p><p class="where">${escaped(pinPointText(settings))}</p><button type="button" id="retry">Retry</button></div><script>
     (()=>{
-    const config=${config};${POST}
-    let failed=false;
-    const fail=()=>{if(failed)return;failed=true;clearTimeout(timeout);document.open();document.write(${fallback});document.close()};
+    const config=${config};
+    const post=(lat,lng)=>{const message={type:'teamstation:pinMoved',latitude:lat,longitude:lng};if(window.ReactNativeWebView!=null)window.ReactNativeWebView.postMessage(JSON.stringify(message));else if(window.parent!==window)window.parent.postMessage(message,'*')};
+    let failed=false;let timeout;
+    const fail=()=>{if(failed)return;failed=true;clearTimeout(timeout);document.getElementById('map').hidden=true;document.getElementById('failed').hidden=false;window.pinMapFailed=true};
+    document.getElementById('retry').addEventListener('click',()=>{location.reload()});
+    if(config.key===''){fail();return}
     window.gm_authFailure=fail;
-    const timeout=setTimeout(fail,15000);
+    timeout=setTimeout(fail,config.timeoutMs);
     window.initPinMap=async()=>{try{
       if(failed)return;
       const {Map}=await google.maps.importLibrary('maps');
@@ -125,16 +125,9 @@ export function googlePinDocument(settings: PinMapSettings): string {
       const marker=new AdvancedMarkerElement({map,position:center,title:'Field location',gmpDraggable:config.editable});
       marker.addListener('dragend',()=>{const point=marker.position;post(typeof point.lat==='function'?point.lat():point.lat,typeof point.lng==='function'?point.lng():point.lng)});
       window.pinMap=map;window.pinMarker=marker;
-      map.addListener('tilesloaded',()=>{if(!failed)clearTimeout(timeout)});
+      map.addListener('tilesloaded',()=>{clearTimeout(timeout)});
     }catch{fail()}};
     const script=document.createElement('script');script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key:config.key,loading:'async',callback:'initPinMap',v:'quarterly'});script.async=true;script.onerror=fail;document.head.appendChild(script);
     })();
   </script></body></html>`
-}
-
-/** Google's map when there is a key, Leaflet's otherwise. */
-export function pinMapDocument(settings: PinMapSettings): string {
-  return settings.googleMapsApiKey == null || settings.googleMapsApiKey === ''
-    ? leafletPinDocument(settings)
-    : googlePinDocument(settings)
 }

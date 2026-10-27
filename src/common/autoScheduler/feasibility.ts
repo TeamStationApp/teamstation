@@ -101,7 +101,10 @@ export class Occupancy {
       for (const team of [game.homeTeamId, game.awayTeamId])
         this.bucketsOf(this.teams, team).add(hold)
       if (season != null) {
-        const day = season.clock.pointOf(game.start).day
+        const day = season.clock.pointOf(
+          game.start,
+          season.zoneOf(game.fieldId)
+        ).day
         this.count(season, game.homeTeamId, day, 1)
         this.count(season, game.awayTeamId, day, 1)
       }

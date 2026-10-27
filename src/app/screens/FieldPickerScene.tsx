@@ -17,19 +17,30 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { sizesLabel } from './VenueScreen'
 
 /**
- * Chooses the registry field a game is on: a venue, one of its fields, and
- * the size it is set up in when it can take more than one. A long,
- * searchable picker, so it is a scene of its own that slides up.
+ * What the picker returns. In game mode, the field a game is on, with the
+ * size it is set up in, asked for when the field takes more than one. In
+ * field mode, the venue's field itself, as soon as it is tapped, with no
+ * size step.
  */
-export function FieldPickerScene({
-  client,
-  onChoose,
-  onClose
-}: {
-  client: TeamStationClient
-  onChoose: (field: GameFieldSummary) => void
-  onClose: () => void
-}): React.ReactElement {
+export type FieldPickerMode =
+  | { onChoose: (field: GameFieldSummary) => void; onChooseField?: never }
+  | {
+      onChooseField: (field: VenueField, venue: VenueDetail) => void
+      onChoose?: never
+    }
+
+/**
+ * Chooses a registry field: a venue, then one of its fields, and, for a
+ * game, the size it is set up in. A long, searchable picker, so it is a
+ * scene of its own that slides up.
+ */
+export function FieldPickerScene(
+  props: {
+    client: TeamStationClient
+    onClose: () => void
+  } & FieldPickerMode
+): React.ReactElement {
+  const { client, onClose } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const insets = useInsets()
@@ -63,8 +74,8 @@ export function FieldPickerScene({
     }
   }, [client, query, begin])
   const choose = (chosen: VenueField, size: FieldSize): void => {
-    if (venue?.id == null) return
-    onChoose({
+    if (venue?.id == null || props.onChoose == null) return
+    props.onChoose({
       venueId: venue.id,
       venueName: venue.name,
       fieldId: chosen.id,
@@ -158,7 +169,10 @@ export function FieldPickerScene({
                     title={item.name}
                     subtitle={sizesLabel(item.sizes)}
                     onPress={() => {
-                      if (item.sizes.length === 1) choose(item, item.sizes[0])
+                      if (props.onChooseField != null)
+                        props.onChooseField(item, venue)
+                      else if (item.sizes.length === 1)
+                        choose(item, item.sizes[0])
                       else setField(item)
                     }}
                   />

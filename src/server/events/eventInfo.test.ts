@@ -1495,4 +1495,95 @@ describe('real event info and guardian attendance', function () {
       event_id: survivor.id
     })
   })
+  it('names a game’s registry field, at its pin or its venue’s point, and maps it without a lookup', async () => {
+    // A game with no field has none.
+    expect(await info(gameId)).not.property('field')
+    await f.h.db
+      .insertInto('venues')
+      .values({
+        id: 'ven_info',
+        google_place_id: 'place-info',
+        name: 'Example Park',
+        address: '1 Example Way, Demo City',
+        latitude: 40.02,
+        longitude: -75.22,
+        timezone: 'America/New_York'
+      })
+      .execute()
+    await f.h.db
+      .insertInto('venue_fields')
+      .values({
+        id: 'fld_info',
+        venue_id: 'ven_info',
+        name: 'Field 1',
+        sizes: ['46/60', '50/70'],
+        pin_latitude: 40.0212,
+        pin_longitude: -75.2191
+      })
+      .execute()
+    // As a proposal on the field stores it: the venue, its address and the
+    // field's pin.
+    await f.h.db
+      .updateTable('games')
+      .set({
+        field_id: 'fld_info',
+        field_size: '50/70',
+        venue: 'Example Park',
+        address: '1 Example Way, Demo City',
+        latitude: 40.0212,
+        longitude: -75.2191
+      })
+      .where('id', '=', gameId)
+      .execute()
+    const field = {
+      id: 'fld_info',
+      name: 'Field 1',
+      size: '50/70',
+      latitude: 40.0212,
+      longitude: -75.2191
+    }
+    expect((await info(gameId)).field).deep.equals(field)
+    const location = async (): Promise<Record<string, unknown>> =>
+      await (
+        await f.h.request('GET', `/fixture/events/${gameId}/location`)
+      ).json()
+    expect(await location()).includes({
+      latitude: 40.0212,
+      longitude: -75.2191
+    })
+    // A field-linked game is never looked up, even with no stored point.
+    await f.h.db
+      .updateTable('games')
+      .set({ latitude: null, longitude: null, address: '' })
+      .where('id', '=', gameId)
+      .execute()
+    expect(await location()).includes({
+      latitude: 40.0212,
+      longitude: -75.2191,
+      googleMapsApiKey: 'example-browser-display-key'
+    })
+    expect(locationQueries).deep.equals([])
+    // With no pin, the field is at its venue's point.
+    await f.h.db
+      .updateTable('venue_fields')
+      .set({ pin_latitude: null, pin_longitude: null })
+      .where('id', '=', 'fld_info')
+      .execute()
+    expect((await info(gameId)).field).deep.include({
+      latitude: 40.02,
+      longitude: -75.22
+    })
+    expect(await location()).includes({ latitude: 40.02, longitude: -75.22 })
+    // A deleted field still names itself.
+    await f.h.db
+      .updateTable('venue_fields')
+      .set({ deleted_at: new Date() })
+      .where('id', '=', 'fld_info')
+      .execute()
+    expect((await info(gameId)).field).deep.include({
+      name: 'Field 1',
+      size: '50/70'
+    })
+    expect(locationQueries).deep.equals([])
+  })
 })

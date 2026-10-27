@@ -1,3 +1,5 @@
+import { FIELD_SIZES } from '../../common/venues'
+
 /** The Auto-Scheduler setup's paths, merged into `openApiDocument`. */
 export function schedulingSetupPaths(
   errorResponse: unknown
@@ -46,7 +48,7 @@ export function schedulingSetupPaths(
       'endsOn'
     ],
     properties: {
-      fieldSize: { type: 'string', enum: ['46/60', '50/70', '55/80', '60/90'] },
+      fieldSize: { type: 'string', enum: [...FIELD_SIZES] },
       gameMinutes: {
         type: 'integer',
         minimum: 30,
@@ -76,12 +78,18 @@ export function schedulingSetupPaths(
         type: 'array',
         maxItems: 20,
         description:
-          'Periods of weekly game windows, one per from date; each is in force from its date until the next.',
+          'Periods of weekly game windows, one per from date; each is in force from its date through its until date, or, with none, until the next period or the season’s end. A day no period covers has no windows. Periods can’t overlap.',
         items: {
           type: 'object',
           required: ['from', 'hours'],
           properties: {
             from: { type: 'string', format: 'date' },
+            until: {
+              type: 'string',
+              format: 'date',
+              description:
+                'The period’s last day, inclusive: on or after from, and before the next period’s from'
+            },
             hours: weeklyHours
           }
         }
@@ -91,7 +99,7 @@ export function schedulingSetupPaths(
   const setup = {
     200: {
       description:
-        '{ leagueId, seasonIds, fieldIds, seasons, fields }: the chosen seasons and fields, every season of the league with its settings and team counts, and the fields of the league’s venues and any other chosen field'
+        '{ leagueId, seasonIds, fieldIds, addedFieldIds, seasons, fields }: the chosen seasons and fields, the fields added from other venues, none deleted, every season of the league with its settings and team counts, and the fields of the league’s venues, every added field and any other chosen field; each field has ours, true when the league owns its venue, and ownerNames, the leagues whose claims on the venue count, by name'
     },
     ...errors
   }
@@ -133,7 +141,7 @@ export function schedulingSetupPaths(
         summary: 'Choose the seasons and fields of the league’s next schedule',
         security: [{ bearer: [] }],
         description:
-          'For a league admin. Seasons must belong to the league; fields must be fields, not deleted, of claimed venues.',
+          'For a league admin. Seasons must belong to the league; chosen fields must exist and not be deleted, at any venue, claimed or not. With addedFieldIds, the fields added from other venues are replaced, less any deleted or unknown one, which is dropped; they stay listed in the setup whether chosen or not. Left out, they are kept.',
         parameters: [pathId('leagueId')],
         requestBody: jsonBody({
           type: 'object',
@@ -148,6 +156,13 @@ export function schedulingSetupPaths(
               type: 'array',
               maxItems: 100,
               items: { type: 'string' }
+            },
+            addedFieldIds: {
+              type: 'array',
+              maxItems: 100,
+              items: { type: 'string' },
+              description:
+                'Every field added from another venue, chosen or not, which the setup lists until it is removed from here'
             }
           }
         }),

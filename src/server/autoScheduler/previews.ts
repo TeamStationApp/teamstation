@@ -23,7 +23,7 @@ import { atomic } from '../db/atomic'
 import type { Database, SchedulePreviewsTable } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { requireGroupAdmin } from '../groups/rights'
-import { scheduleSetup } from '../scheduler/setup'
+import { chosenSeasonIds } from '../scheduler/setup'
 import { occupancy } from '../venues/occupancy'
 import { buildOffThread } from './buildOffThread'
 import { noticeTeams, type Tallies } from './cancel'
@@ -109,12 +109,20 @@ export async function previewView(
     seasons: snap.engine.seasons.map(season => ({
       id: season.id,
       name: season.name,
-      timezone: season.timezone,
+      // The season's stored zone, which no time here is read in.
+      timezone:
+        snap.seasons.find(each => each.id === season.id)?.timezone ?? 'UTC',
       gameMinutes: season.settings.gameMinutes,
       participants: season.participants,
       exhibitionTeams: season.exhibitionTeams
     })),
-    fields: snap.fields
+    // Each field's zone, which its games' times are placed and read in.
+    fields: snap.fields.map(field => ({
+      ...field,
+      timezone:
+        snap.engine.fields.find(each => each.id === field.id)?.availability
+          .timezone ?? 'UTC'
+    }))
   }
 }
 
@@ -182,9 +190,9 @@ export async function buildPreview(
     }
     if (request.mode === 'partial' && existing == null) existing = 'replace'
     if (existing == null) {
-      const setup = await scheduleSetup(trx, leagueId, clock)
       const now = clock.now()
-      const ahead = (await runGames(trx, setup.seasonIds)).filter(game =>
+      const seasonIds = await chosenSeasonIds(trx, leagueId)
+      const ahead = (await runGames(trx, seasonIds)).filter(game =>
         upcoming(game, now)
       )
       if (ahead.length > 0)
@@ -357,8 +365,8 @@ export function holdingOf(game: PlannedGame): Holding {
 /**
  * Checks an added game against the hard rules the engine places games by,
  * among the given other games, and says what is wrong with it: it is still
- * to come, within its season's dates, in the season's field size, and
- * between two of the season's teams.
+ * to come, within its season's dates on its field's local calendar, in the
+ * season's field size, and between two of the season's teams.
  */
 export function requireKeepsRules(
   snap: Snapshot,
@@ -370,7 +378,11 @@ export function requireKeepsRules(
   if (season == null) throw badRequest('Choose a season of this run')
   if (Date.parse(game.startAt) <= now.getTime())
     throw badRequest('Choose a time still to come')
-  const day = gameCalendarDay(game.startAt, season.timezone)
+  const field = snap.engine.fields.find(each => each.id === game.fieldId)
+  const day = gameCalendarDay(
+    game.startAt,
+    field?.availability.timezone ?? 'UTC'
+  )
   if (day < season.settings.startsOn || day > season.settings.endsOn)
     throw badRequest(`Choose a day within ${season.name}’s dates`)
   if (game.size !== season.settings.fieldSize)

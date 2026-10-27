@@ -26,10 +26,7 @@ export interface RuleContext {
       switchMs: number
     }
   >
-  seasons: Map<
-    string,
-    { bufferMinutes: number; doubleheaders: Doubleheaders; timezone: string }
-  >
+  seasons: Map<string, { bufferMinutes: number; doubleheaders: Doubleheaders }>
   /** Everything else holding the run's fields and teams. */
   others: Holding[]
 }
@@ -61,8 +58,25 @@ export function ruleProblem(
     return `${where} is not open for all of this game.`
   const season = context.seasons.get(game.seasonId)
   const bufferMs = (season?.bufferMinutes ?? 0) * 60 * 1000
-  const day = (instant: number): string =>
-    gameCalendarDay(new Date(instant).toISOString(), season?.timezone ?? 'UTC')
+  // Each game's day is read in its own field's zone, as the engine reads it.
+  // A game on a field outside the run takes the zone of the run's first
+  // field of the season's size. Only games of this season are compared by
+  // day, and they play on its size, this game's, which this game's field
+  // takes, so there is always such a field.
+  let fallbackZone = field.availability.timezone
+  for (const each of context.fields.values())
+    if (each.sizes.includes(game.size)) {
+      fallbackZone = each.availability.timezone
+      break
+    }
+  const day = (holding: Holding): string =>
+    gameCalendarDay(
+      new Date(holding.start).toISOString(),
+      (holding.fieldId == null
+        ? undefined
+        : context.fields.get(holding.fieldId)?.availability.timezone) ??
+        fallbackZone
+    )
   for (const other of context.others) {
     if (other.key === game.key) continue
     if (other.fieldId === game.fieldId) {
@@ -87,7 +101,7 @@ export function ruleProblem(
     if (
       season?.doubleheaders === 'never' &&
       other.seasonId === game.seasonId &&
-      day(other.start) === day(game.start)
+      day(other) === day(game)
     )
       return 'This season has no doubleheaders, and a team already plays that day.'
   }

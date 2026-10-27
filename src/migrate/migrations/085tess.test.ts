@@ -101,7 +101,14 @@ describe('085 Tess', function () {
   })
 
   it('is registered after every earlier migration', () => {
-    expect(migrations.at(-1)).equals(migration085Tess)
+    const at = migrations.indexOf(migration085Tess)
+    expect(at).above(-1)
+    expect(
+      migrations
+        .slice(at + 1)
+        .filter(item => item.name < migration085Tess.name)
+        .map(item => item.name)
+    ).deep.equals([])
   })
 
   it('creates the five tables with their checks, and rolls back to the schema before it', async () => {

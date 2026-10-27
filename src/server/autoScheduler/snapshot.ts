@@ -339,7 +339,6 @@ export async function snapshot(
       seasons: seasons.map(season => ({
         id: season.id,
         name: season.name,
-        timezone: season.timezone,
         settings: season.settings,
         participants: season.teams
           .filter(team => !team.exhibition)
@@ -411,8 +410,7 @@ export function ruleContext(
         season.id,
         {
           bufferMinutes: season.settings.bufferMinutes,
-          doubleheaders: season.settings.doubleheaders,
-          timezone: season.timezone
+          doubleheaders: season.settings.doubleheaders
         }
       ])
     ),
