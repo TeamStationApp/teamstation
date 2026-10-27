@@ -7,6 +7,7 @@ import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { findUserByEmail } from '../auth/emails'
 import { type Database, makeDatabase } from '../db/database'
 import { guardiansOf } from '../people/guardians'
 import { mintUserId } from '../users/mintUserId'
@@ -14,8 +15,9 @@ import { closeInto } from './people'
 
 /**
  * U2: a merge keeps the person able to sign in and keeps what they follow.
- * Their links stay on the rows they were made for, and still count for the
- * person those rows now are.
+ * Their addresses, password and links stay on the rows they were made for:
+ * signing in follows the merge, and each link still counts for the person
+ * those rows now are.
  *
  * The usual case: a roster import made a row for a parent (no address), and
  * the parent's own account is closed into it.
@@ -81,7 +83,9 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
           return {
             id: row.id,
             display_name: displayName as string,
-            password_hash: (hash as string | undefined) ?? null
+            password_hash: (hash as string | undefined) ?? null,
+            // The accounts; the imported row and the children are not.
+            login_enabled: [account, both, bothClosed].includes(row)
           }
         })
       )
@@ -177,7 +181,7 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
     }
   })
 
-  it('gives the imported row the account’s addresses and password', async function () {
+  it('lets the person sign in to the imported row through the account’s own addresses', async function () {
     const before = await database()
       .selectFrom('users')
       .select(['login_enabled'])
@@ -195,26 +199,34 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
       .execute()
     const kept = rows.find(row => row.id === imported.id)
     const closed = rows.find(row => row.id === account.id)
+    // Switched on, as the account it absorbed was.
     expect(kept).deep.include({
       login_enabled: true,
-      password_hash: 'hash-of-account',
+      password_hash: null,
       merged_into: null
     })
+    // The closed row keeps its password and its addresses.
     expect(closed).deep.include({
-      login_enabled: false,
-      password_hash: null,
+      password_hash: 'hash-of-account',
       merged_into: imported.id
     })
     const emails = await database()
       .selectFrom('user_emails')
-      .select(['email', 'is_primary'])
-      .where('user_id', '=', imported.id)
+      .select(['user_id', 'email', 'is_primary'])
+      .where('email', 'in', ['pat@example.com', 'pat.work@example.com'])
       .orderBy('email')
       .execute()
     expect(emails).deep.equals([
-      { email: 'pat.work@example.com', is_primary: false },
-      { email: 'pat@example.com', is_primary: true }
+      { user_id: account.id, email: 'pat.work@example.com', is_primary: false },
+      { user_id: account.id, email: 'pat@example.com', is_primary: true }
     ])
+    // Either address signs in to the imported row, as itself.
+    for (const email of ['pat@example.com', 'Pat.Work@example.com'])
+      expect(await findUserByEmail(database(), email), email).deep.include({
+        id: imported.id,
+        loginEnabled: true,
+        passwordHash: null
+      })
   })
 
   it('leaves every link where it was made, and each still counts for the person', async function () {
@@ -283,14 +295,22 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
     })
     const emails = await database()
       .selectFrom('user_emails')
-      .select(['email', 'is_primary'])
-      .where('user_id', '=', both.id)
+      .select(['user_id', 'email', 'is_primary'])
+      .where('email', 'in', ['both@example.com', 'both.old@example.com'])
       .orderBy('email')
       .execute()
     expect(emails).deep.equals([
-      { email: 'both.old@example.com', is_primary: false },
-      { email: 'both@example.com', is_primary: true }
+      {
+        user_id: bothClosed.id,
+        email: 'both.old@example.com',
+        is_primary: true
+      },
+      { user_id: both.id, email: 'both@example.com', is_primary: true }
     ])
+    // The closed row's address reaches the survivor, with its password.
+    expect(
+      await findUserByEmail(database(), 'both.old@example.com')
+    ).deep.include({ id: both.id, passwordHash: 'hash-kept' })
     // Closing a row into itself is no merge at all.
     expect(await closeInto(database(), sibling.id, sibling.id)).deep.equals({
       closed: false,
