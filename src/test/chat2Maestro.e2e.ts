@@ -14,6 +14,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -2173,6 +2174,12 @@ export class Chat2UI {
     })
     const metrics = this.metrics()
     const profile = join(browser.profileRoot, this.surface)
+    // The profile is kept between runs, and Chrome reopens a session's pages:
+    // without this every earlier run's page comes back, more each time.
+    rmSync(join(profile, 'Default', 'Sessions'), {
+      recursive: true,
+      force: true
+    })
     this.device = await need(this.daemon, 'Daemon required').attach({
       device: this.deviceId,
       platform: 'web',
