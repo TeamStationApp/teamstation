@@ -241,6 +241,8 @@ interface Setup {
   live?: () => Promise<LiveNow[]>
   videos?: GameDetail['videos']
   playbackUrl?: (videoId: string) => string | null
+  /** The person umpires for a league: Home offers Help Umpire. */
+  onOpenUmpireSchedule?: () => void
 }
 
 interface Calls {
@@ -304,6 +306,13 @@ async function mount(setup: Setup = {}): Promise<Calls> {
             calls.games.push({ gameId, title, options })
           }
           onOpenGroup={setup.groups == null ? undefined : () => undefined}
+          onOpenUmpireSchedule={
+            setup.onOpenUmpireSchedule == null
+              ? undefined
+              : () => {
+                  setup.onOpenUmpireSchedule?.()
+                }
+          }
           onOpenPlayer={
             setup.players == null
               ? undefined
@@ -898,6 +907,40 @@ describe('the home screen’s players', function () {
       [userIdOfGumbo(8), 'Alfonso S']
     ])
     expect(calls.teams).deep.equals([])
+  })
+
+  it('offers Help Umpire between Your Players and Your teams, mask first', async function () {
+    let opened = 0
+    await mount({
+      players: async () => [guarded(7, 'Jordan P')],
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      onOpenUmpireSchedule: () => {
+        opened++
+      }
+    })
+    const page = text()
+    expect(page.indexOf('YOUR PLAYERS')).lessThan(page.indexOf('HELP UMPIRE'))
+    expect(page.indexOf('HELP UMPIRE')).lessThan(page.indexOf('YOUR TEAMS'))
+    const row = labelled('Umpire Schedule')
+    expect(row.textContent).contains('Umpire Schedule')
+    // The mask is drawn ahead of the words.
+    expect(row.querySelector('svg')).not.equals(null)
+    await press(row)
+    expect(opened).equals(1)
+  })
+
+  it('offers Help Umpire with neither players nor teams, and nothing without a league', async function () {
+    await mount({ onOpenUmpireSchedule: () => undefined })
+    expect(text()).includes('HELP UMPIRE')
+    labelled('Umpire Schedule')
+    await act(async () => {
+      root?.unmount()
+    })
+    await mount({ teams: async () => [team('tem_hawks', 'Alta Hawks')] })
+    expect(text()).not.includes('HELP UMPIRE')
+    expect(document.querySelector('[aria-label="Umpire Schedule"]')).equals(
+      null
+    )
   })
 
   it('hides Your Players when there are none, or they cannot be read', async function () {

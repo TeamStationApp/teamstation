@@ -170,7 +170,6 @@ import {
 } from './theme/ThemeContext'
 import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
-import { UmpireMask } from './umpires/UmpireMask'
 import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
 import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
 import { DjGameScreen } from './walkup/DjGameScreen'
@@ -1875,6 +1874,13 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
           onLoaded={prefetchAfterHome}
+          onOpenUmpireSchedule={
+            umpireLeagues.length === 0
+              ? undefined
+              : () => {
+                  push({ name: 'umpireSchedule', id: umpireLeagues[0].id })
+                }
+          }
         />
       ) : tab === 'search' ? (
         <DiscoverScreen
@@ -2821,15 +2827,6 @@ function Shell(props: AppProps): React.ReactElement {
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
-      umpire={
-        umpireLeagues.length === 0 ? undefined : (
-          <UmpireMask
-            onPress={() => {
-              push({ name: 'umpireSchedule', id: umpireLeagues[0].id })
-            }}
-          />
-        )
-      }
       tess={
         tessAvailable && !tessSuppressed
           ? {

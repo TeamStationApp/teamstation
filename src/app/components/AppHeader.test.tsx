@@ -3,7 +3,6 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 
 import { byLabel, click, render, unmount } from '../../test/tessTestKit'
-import { UmpireMask } from '../umpires/UmpireMask'
 import { AppHeader, type AppHeaderProps } from './AppHeader'
 
 /** The header's buttons on the right, by label, in the order drawn. */
@@ -24,24 +23,22 @@ async function header(props: Partial<AppHeaderProps>): Promise<void> {
 describe("the header's Tess button", () => {
   afterEach(unmount)
 
-  it('sits between the umpire button and Notifications', async () => {
+  it('sits before Notifications, with no umpire button in the header', async () => {
     const pressed: string[] = []
     await header({
-      umpire: <UmpireMask onPress={() => pressed.push('umpire')} />,
       tess: { open: false, onPress: () => pressed.push('tess') },
       notifications
     })
-    expect(rightButtons()).deep.equals([
-      'Umpire schedule',
-      'Tess',
-      'Notifications'
-    ])
+    expect(rightButtons()).deep.equals(['Tess', 'Notifications'])
+    expect(document.querySelector('[aria-label="Umpire schedule"]')).equals(
+      null
+    )
     expect(byLabel('Tess').getAttribute('aria-expanded')).equals('false')
     await click(byLabel('Tess'))
     expect(pressed).deep.equals(['tess'])
   })
 
-  it('sits before Notifications with no umpire button, and says it is open', async () => {
+  it('says it is open', async () => {
     await header({
       tess: { open: true, onPress: () => undefined },
       notifications

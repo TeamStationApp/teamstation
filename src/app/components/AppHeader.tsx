@@ -31,7 +31,6 @@ export interface AppHeaderProps {
   handoff?: React.ReactNode
   /** The three destinations, on a wide window. */
   nav?: React.ReactNode
-  umpire?: React.ReactNode
   /** The signed-in person, drawn at the right and opening their account. */
   account?: {
     name: string
@@ -44,8 +43,8 @@ export interface AppHeaderProps {
   isAdmin?: boolean
   notifications?: { pending: boolean; onPress: () => void }
   /**
-   * The button that opens Tess's chat, and closes it again, between the
-   * umpire's and Notifications. Absent where Tess is not offered.
+   * The button that opens Tess's chat, and closes it again, ahead of
+   * Notifications. Absent where Tess is not offered.
    */
   tess?: { onPress: () => void; open: boolean }
 }
@@ -162,7 +161,6 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
 
         <View style={[styles.side, styles.sideEnd]}>
           {nav}
-          {props.umpire}
           {props.tess != null && (
             <Pressable
               accessibilityRole="button"

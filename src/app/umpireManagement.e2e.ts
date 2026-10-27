@@ -287,9 +287,10 @@ async function main(): Promise<void> {
           }
         } else if (scenario === 3) {
           await signIn(103, '/')
-          await page.waitForSelector('[aria-label="Umpire schedule"]')
+          await page.waitForSelector('[aria-label="Umpire Schedule"]')
+          expect(await page.$('[aria-label="Umpire schedule"]')).equals(null)
           await shot('header-wide-after.png')
-          await tap(m, 'Umpire schedule')
+          await tap(m, 'Umpire Schedule')
           await contains(
             page,
             umpireDate('2027-04-04T00:00:00Z', 'America/Los_Angeles')
@@ -344,7 +345,7 @@ async function main(): Promise<void> {
             httpOnly: true
           })
           await b.m.openBrowser({ url: f.h.origin })
-          await b.page.waitForSelector('[aria-label="Umpire schedule"]')
+          await b.page.waitForSelector('[aria-label="Umpire Schedule"]')
           await capture(b.m, artifacts, 'header-narrow-after.png')
         } else if (scenario === 4) {
           await signIn(103, `/umpires/${f.leagueA}`)
@@ -416,7 +417,7 @@ async function main(): Promise<void> {
           await shot('leaderboard-after.png')
         } else if (scenario === 7) {
           await signIn(103, '/')
-          await tap(m, 'Umpire schedule')
+          await tap(m, 'Umpire Schedule')
           await contains(page, 'Demo Visitors')
           await tap(m, 'League view', 'tab')
           await shot('league-switcher-after.png')

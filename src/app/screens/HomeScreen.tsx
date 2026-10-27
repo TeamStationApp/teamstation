@@ -45,6 +45,7 @@ import {
 } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { UmpireMaskDrawing } from '../umpires/UmpireMaskDrawing'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
 import { recentGameIsCurrent } from './recentGameWindow'
@@ -69,6 +70,11 @@ export interface HomeScreenProps {
   onLoaded?: () => void
   /** The clock the Recent game's three days are measured on. */
   now?: () => number
+  /**
+   * Opens the umpire schedule. Given when the person umpires for a league,
+   * and Home then offers it as Help Umpire.
+   */
+  onOpenUmpireSchedule?: () => void
 }
 
 /**
@@ -92,7 +98,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         : undefined,
     [now]
   )
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   // Offline, the phone has no stream to play: what was live is not offered.
   const offline = usePhoneOffline(client)
 
@@ -613,6 +620,24 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 />
               )
             })}
+          </ListCard>
+        </View>
+      )}
+
+      {props.onOpenUmpireSchedule != null && (
+        <View style={styles.section}>
+          <SectionHeader title="Help Umpire" />
+          <ListCard>
+            <ListRow
+              title="Umpire Schedule"
+              leading={
+                <UmpireMaskDrawing
+                  size={theme.rem(1.6)}
+                  color={theme.primaryTextColor}
+                />
+              }
+              onPress={props.onOpenUmpireSchedule}
+            />
           </ListCard>
         </View>
       )}

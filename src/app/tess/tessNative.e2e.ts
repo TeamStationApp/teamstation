@@ -324,7 +324,7 @@ async function main(): Promise<void> {
         node =>
           node.bounds != null &&
           node.bounds.y < 200 &&
-          ['Umpire schedule', 'Tess', 'Notifications'].includes(node.text ?? '')
+          ['Tess', 'Notifications'].includes(node.text ?? '')
       )
       .sort((a, b) => a.bounds!.x - b.bounds!.x)
       .map(node => node.text!)
@@ -407,12 +407,10 @@ async function main(): Promise<void> {
 
     if (layout === 'iphone') {
       // N1: the header.
-      await show('Umpire schedule')
+      await show('Notifications')
       if (!before) await show('Tess')
       expect(await headerOrder()).deep.equals(
-        before
-          ? ['Umpire schedule', 'Notifications']
-          : ['Umpire schedule', 'Tess', 'Notifications']
+        before ? ['Notifications'] : ['Tess', 'Notifications']
       )
       await capture(`header-narrow-${suffix}.png`)
       console.log('N1 header order passed', suffix)
@@ -686,10 +684,7 @@ async function main(): Promise<void> {
       await hidden('Close Tess')
       await show('DJ Game', 30000)
       await show('Notifications')
-      expect(await headerOrder()).deep.equals([
-        'Umpire schedule',
-        'Notifications'
-      ])
+      expect(await headerOrder()).deep.equals(['Notifications'])
       await tap('Back')
       await show('Close Tess', 30000)
       console.log('I5 DJ hid Tess; leaving brought the column back')
