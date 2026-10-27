@@ -34,6 +34,17 @@ import { type Route, routePath } from './routes'
 const history = makeHistory()
 
 /**
+ * The steps a link into the app adds. A chat opened by a link sits over the
+ * chat list, as a chat opened from the list does, so Android's Back from it
+ * lands on the list just as the header's Back does.
+ */
+function linkSteps(route: Route, from: Route | undefined): Route[] {
+  return route.name === 'conversation' && from?.name !== 'chat'
+    ? [{ name: 'chat' }, route]
+    : [route]
+}
+
+/**
  * The address the app was opened on, before anything renders.
  *
  * `App.tsx` reads `currentRoute()` inside `useState` initialisers, which run
@@ -42,7 +53,12 @@ const history = makeHistory()
  * mounts the app at all — and what it found is put here.
  */
 export function seedRoute(url: string | null | undefined): void {
-  history.seed(url == null ? { name: 'home' } : routeOfUrl(url, { appOrigin }))
+  const [first, ...rest] = linkSteps(
+    url == null ? { name: 'home' } : routeOfUrl(url, { appOrigin }),
+    undefined
+  )
+  history.seed(first)
+  for (const step of rest) history.show(step)
 }
 
 /** Where the app currently is. */
@@ -142,10 +158,10 @@ export function useBrowserBack(
       const route = routeOfUrl(event.url, { appOrigin })
       const previous = history.current()
       const depth = history.depth()
-      history.show(route)
+      for (const step of linkSteps(route, previous)) history.show(step)
       deliver(route, () => {
-        if (history.depth() > depth) history.back()
-        else history.show(previous, true)
+        if (history.depth() <= depth) history.show(previous, true)
+        while (history.depth() > depth) history.back()
       })
     }
     const link = Linking.addEventListener('url', opened)
