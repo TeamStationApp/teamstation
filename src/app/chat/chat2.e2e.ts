@@ -2416,12 +2416,14 @@ export class Scenarios {
           ui.surface === 'ios' ? 10000 : 1000
         )
       )
-        // A phone's list can still be sliding in above its keyboard; its row
-        // gets the time two of its reads take.
+        // A phone's list can still be sliding in above its keyboard, and
+        // after a fresh sign-in its rows wait for the pinned posts; its row
+        // gets the time two iPhone reads take. Without it the target is
+        // climbed to page by page, which a grown history cannot finish.
         if (
           await ui.visible(
             { id: 'chat-pin-' + target.id },
-            ui.surface === 'ios' && ui.physical ? 10000 : 500
+            ui.native && ui.physical ? 10000 : 500
           )
         ) {
           await this.tapPinnedRow(target.id)
