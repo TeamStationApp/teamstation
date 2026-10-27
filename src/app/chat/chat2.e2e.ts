@@ -2742,15 +2742,20 @@ export class Scenarios {
       current.box.height > 0 &&
       current.box.y < current.band.bottom &&
       current.box.y + current.box.height > current.band.top
+    // A phone's WebDriverAgent reports whole-point frames: the app's own pin
+    // jump puts a row 8 pt under the pins (178.67 under 170.67 on the
+    // simulator), which a phone reads as 167 under 160. Its margin takes one
+    // point of that rounding.
+    const margin = ui.surface === 'ios' && ui.physical ? 6.5 : 7.5
     const safe = (): boolean =>
       intersects() &&
-      current.box.y >= current.band.top + 7.5 &&
+      current.box.y >= current.band.top + margin &&
       current.box.y +
         Math.min(
           current.box.height,
           current.band.bottom - current.band.top - 32
         ) <=
-        current.band.bottom - 7.5
+        current.band.bottom - margin
     // A target taller than the reader leaves only a narrow landing window.
     const readerTall = (): boolean =>
       current.box.height >= current.band.bottom - current.band.top - 32
@@ -2769,8 +2774,9 @@ export class Scenarios {
         duration
       }
       assert(
-        Math.abs(delta) >=
-          (ui.surface === 'ios' && duration >= 1000 ? 20 : 48) &&
+        // A slow drag (iOS, or a reader-tall Android target) is sized from
+        // its touch slop, so it may be as short as 20.
+        Math.abs(delta) >= (duration >= 1000 ? 20 : 48) &&
           Math.min(input.startY, input.endY) > band.top &&
           Math.max(input.startY, input.endY) < band.bottom,
         'Meaningful gesture must stay inside actual reading band'
@@ -2932,6 +2938,28 @@ export class Scenarios {
     }
     proof.outcome = 'passed'
     return current.nodes
+  }
+
+  /**
+   * The app-header Back, as the browser case requires it. iOS's Back is that
+   * control already; Android's system Back from a cold-linked chat returns
+   * to Home, so Android taps the observed header Back.
+   */
+  async headerBack(): Promise<void> {
+    const ui = this.ui
+    if (ui.surface !== 'android') {
+      await ui.back()
+      return
+    }
+    const backs = (await ui.nodes()).filter(
+      node =>
+        node.text === 'Back' &&
+        /(?:^|\.)Button$/.test(node.type ?? '') &&
+        node.enabled !== false &&
+        node.bounds != null
+    )
+    assert.equal(backs.length, 1, 'Unique observed app-header Back required')
+    await ui.tapObserved(backs[0])
   }
 
   /** A chat's newest post, as the protocol peer reads it. */
@@ -8158,7 +8186,7 @@ export class Scenarios {
           await ui.present(this.controlId('attentionLoading'))
           await ui.replaceDraft('Keep cancelled verification draft')
           if (ui.native) await ui.hideKeyboard()
-          if (ui.native) await ui.back()
+          if (ui.native) await this.headerBack()
           else {
             const back = await ui.dom(`
               const selector='[role="button"][aria-label="Back"]';
