@@ -42,14 +42,18 @@ describe('venue notifications in the inbox', function () {
     await stub?.close()
   })
 
-  it('tells the site administrators of a first claim, lights their bell and opens the venue', async () => {
+  it('tells the site administrators of a first claim in History, with no bell, and opens the venue', async () => {
     const response = await f.h.request('POST', '/venues', {
       placeId: EXAMPLE_PARK.id,
       leagueId: f.leagueA
     })
     const venue = (await response.json()) as VenueDetail
-    const admin = await inbox(105)
-    expect(admin.hasPending).equals(true)
+    // Accepted when it is recorded: History, not Pending, and no bell.
+    const pending = await inbox(105)
+    expect(pending.hasPending).equals(false)
+    expect(pending.items.map(item => item.type)).not.includes('venueClaim')
+    const admin = await inbox(105, true)
+    expect(admin.hasPending).equals(false)
     const notice = admin.items.find(item => item.type === 'venueClaim')!
     expect(notice).include({
       title: 'Demo League A claimed Example Park',
@@ -58,10 +62,10 @@ describe('venue notifications in the inbox', function () {
       viewed: false
     })
     expect(notice.description).includes('7 days')
-    expect((await inbox(102)).items.map(item => item.type)).not.includes(
+    expect((await inbox(102, true)).items.map(item => item.type)).not.includes(
       'venueClaim'
     )
-    // Opened, it leaves Pending for History and the bell goes out.
+    // Opened, it stays in History and out of Pending.
     expect(
       (
         await f.h.request(
@@ -101,7 +105,7 @@ describe('venue notifications in the inbox', function () {
     ).json()) as VenueDetail
     f.advance(CLAIM_WAIT_MS)
     await f.h.request('GET', `/venues/${venue.id!}`, undefined, 102)
-    const decided = (await inbox(101)).items.find(
+    const decided = (await inbox(101, true)).items.find(
       item => item.type === 'venueClaimDecided'
     )!
     expect(decided.title).equals('Example Park: claim approved')
@@ -113,7 +117,11 @@ describe('venue notifications in the inbox', function () {
       102
     )
     for (const user of [101, 105]) {
-      const request = (await inbox(user)).items.find(
+      expect(
+        (await inbox(user)).items.map(item => item.type),
+        `user ${user}`
+      ).not.includes('venueOwnerRequest')
+      const request = (await inbox(user, true)).items.find(
         item => item.type === 'venueOwnerRequest'
       )
       expect(request?.title, `user ${user}`).equals(
@@ -132,7 +140,7 @@ describe('venue notifications in the inbox', function () {
         decision: 'reject'
       }
     )
-    const declined = (await inbox(102)).items.find(
+    const declined = (await inbox(102, true)).items.find(
       item => item.type === 'venueClaimDecided'
     )!
     expect(declined.title).equals('Example Park: request declined')
@@ -171,9 +179,12 @@ describe('venue notifications in the inbox', function () {
       .where('source_type', '=', 'fieldWarning')
       .execute()
     expect(rows).length(2)
-    const page = await inbox(105)
+    const page = await inbox(105, true)
     expect(
       page.items.filter(item => item.type === 'fieldWarning').map(i => i.gameId)
     ).deep.equals(['gam_x', 'gam_x'])
+    expect(
+      (await inbox(105)).items.filter(item => item.type === 'fieldWarning')
+    ).deep.equals([])
   })
 })

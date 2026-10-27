@@ -432,7 +432,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           }
         ],
         description:
-          'hasPending counts actionable requests across every page, every `grant` notification (somebody added you to a team, season or league) not yet viewed, and every `recordingUpload` reminder not yet dismissed. The default list holds all three, reminders first; a reminder is `pending` with `canAct` and carries `gameId` and `liveStreamId`; history holds resolved requests and every piece of information, grants included. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
+          'hasPending counts the rows with `canAct` across every page: requests this person can answer, and `recordingUpload` reminders not yet dismissed. The default list is those rows, reminders first; a reminder is `pending` with `canAct` and carries `gameId` and `liveStreamId`. history holds every other status: decided requests, and every piece of information, grants (somebody added you to a team, season or league) and scheduling notices included, which are recorded `accepted` and so are history from the start. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
         responses
       }
     },

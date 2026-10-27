@@ -60,6 +60,12 @@ async function press(label: string): Promise<void> {
 
 const text = (): string => document.body.textContent ?? ''
 
+function byLabel(label: string): HTMLElement {
+  const node = document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+  expect(node, label).not.equals(null)
+  return node!
+}
+
 const invitation: Notification = {
   id: 'event_guardian_invite',
   requestId: 'request_guardian_invite',
@@ -84,7 +90,7 @@ const request: Notification = {
 }
 
 describe('guardian notifications', function () {
-  it('lists an invitation and a request by the words the server sent', async function () {
+  it('lists an invitation and a request by the words the server sent, each with Accept and Reject', async function () {
     const client = {
       notifications: async () => ({
         items: [invitation, request],
@@ -106,8 +112,127 @@ describe('guardian notifications', function () {
       expect(text()).includes(item.description)
     }
     expect(text().split('Needs your approval')).has.length(3)
-    await press("Grant Hartwig asks to be Alfonso S's guardian")
-    expect(opened).deep.equals(['request_guardian_request'])
+    // Each card is decided where it is: Accept left of Reject, named for it.
+    for (const item of [invitation, request]) {
+      const accept = byLabel(`Accept ${item.title}`)
+      const reject = byLabel(`Reject ${item.title}`)
+      expect(accept.textContent).equals('Accept')
+      expect(reject.textContent).equals('Reject')
+      expect(
+        accept.compareDocumentPosition(reject) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+    }
+    expect(
+      document.querySelectorAll('[data-testid="notification-accept"]')
+    ).length(2)
+    expect(
+      document.querySelectorAll('[data-testid="notification-reject"]')
+    ).length(2)
+    // The card is no button: its title opens nothing.
+    expect(
+      [...document.querySelectorAll('[role="button"]')].some(
+        node => node.getAttribute('aria-label') === request.title
+      )
+    ).equals(false)
+    expect(opened).deep.equals([])
+  })
+
+  it('accepts and rejects on the card, drops it from Pending, and tells the app', async function () {
+    const game: Notification = {
+      ...invitation,
+      id: 'event_game',
+      requestId: 'request_game',
+      type: 'game',
+      title: 'Demo Hawks at Demo Owls'
+    }
+    const decided: Array<[string, string, string]> = []
+    let decidedTimes = 0
+    let history = 0
+    const client = {
+      notifications: async (options: { history?: boolean }) => {
+        if (options.history === true) history++
+        return {
+          items: options.history === true ? [] : [invitation, request, game],
+          hasPending: true,
+          nextCursor: null
+        }
+      },
+      decideRelationship: async (id: string, action: string) => {
+        decided.push(['relationship', id, action])
+        return { id, status: action === 'accept' ? 'accepted' : 'declined' }
+      },
+      decideGameRequest: async (id: string, action: string) => {
+        decided.push(['game', id, action])
+        return { id, status: 'accepted' }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={() => undefined}
+        onDecided={() => {
+          decidedTimes++
+        }}
+      />
+    )
+    await press(`Accept ${invitation.title}`)
+    await press(`Reject ${request.title}`)
+    await press(`Accept ${game.title}`)
+    expect(decided).deep.equals([
+      ['relationship', invitation.requestId, 'accept'],
+      ['relationship', request.requestId, 'decline'],
+      ['game', game.requestId, 'accept']
+    ])
+    expect(decidedTimes).equals(3)
+    expect(text()).not.includes(invitation.title)
+    expect(text()).not.includes(request.title)
+    expect(text()).includes('No approvals are waiting for you.')
+    // History is read again from the server.
+    await press('History')
+    expect(history).equals(1)
+  })
+
+  it('keeps a card whose decision failed, says why, and lets it be pressed again', async function () {
+    let fail = true
+    let release: () => void = () => undefined
+    const gate: { hold?: Promise<void> } = {}
+    const decided: string[] = []
+    const client = {
+      notifications: async () => ({
+        items: [invitation, request],
+        hasPending: true,
+        nextCursor: null
+      }),
+      decideRelationship: async (id: string, action: string) => {
+        await gate.hold
+        if (fail) throw new Error('The request has expired')
+        decided.push(`${id}:${action}`)
+        return { id, status: 'accepted' }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    await press(`Accept ${invitation.title}`)
+    expect(text()).includes('The request has expired')
+    expect(text()).includes(invitation.title)
+    fail = false
+    // One decision out: every card's pills wait for it.
+    gate.hold = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await press(`Accept ${invitation.title}`)
+    expect(
+      byLabel(`Reject ${request.title}`).getAttribute('aria-disabled')
+    ).equals('true')
+    await act(async () => {
+      release()
+      await delay(20)
+    })
+    expect(decided).deep.equals([`${invitation.requestId}:accept`])
+    expect(text()).not.includes(invitation.title)
+    expect(text()).not.includes('The request has expired')
   })
 
   it('accepts an invitation, shows it accepted and tells the app', async function () {
@@ -196,6 +321,67 @@ describe('guardian notifications', function () {
     )
     expect(text()).includes('Accepted')
     expect(roles()).equals(before + 1)
+  })
+  it('asks for the roles and the bell again when Accept is pressed on the list, and stays there', async function () {
+    const asked: string[] = []
+    let current = invitation
+    globalThis.fetch = async (input, init) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      const method = init?.method ?? 'GET'
+      const path = url.split('?')[0]
+      asked.push(`${method} ${path}`)
+      if (
+        path.endsWith('/relationship-requests/request_guardian_invite/accept')
+      )
+        current = { ...current, status: 'accepted', canAct: false }
+      const data = path.endsWith('/auth/me')
+        ? { id: userIdOfGumbo(106), displayName: 'Tim Raines', isAdmin: false }
+        : path.endsWith('/me/roles')
+          ? {
+              teams: {},
+              guardianOf: current.status === 'accepted' ? [201] : []
+            }
+          : path.endsWith('/me/notifications/summary')
+            ? { hasPending: current.status === 'pending' }
+            : path.endsWith('/me/notifications')
+              ? {
+                  items: current.status === 'pending' ? [current] : [],
+                  hasPending: current.status === 'pending',
+                  nextCursor: null
+                }
+              : path.endsWith('/accept')
+                ? { id: invitation.requestId, status: 'accepted' }
+                : {}
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    showRoute(parseRoute('/notifications', ''), true)
+    await mount(<App />)
+    await act(async () => {
+      await delay(50)
+    })
+    const count = (line: string): number =>
+      asked.filter(one => one === line).length
+    const roles = count('GET /api/v1/me/roles')
+    const bell = count('GET /api/v1/me/notifications/summary')
+    await press(`Accept ${invitation.title}`)
+    await act(async () => {
+      await delay(50)
+    })
+    expect(asked).includes(
+      'POST /api/v1/relationship-requests/request_guardian_invite/accept'
+    )
+    expect(count('GET /api/v1/me/roles')).equals(roles + 1)
+    expect(count('GET /api/v1/me/notifications/summary')).greaterThan(bell)
+    expect(window.location.pathname).equals('/notifications')
+    expect(text()).not.includes('Be a guardian of Alfonso S')
   })
 })
 

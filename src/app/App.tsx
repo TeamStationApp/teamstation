@@ -2353,6 +2353,10 @@ function Shell(props: AppProps): React.ReactElement {
         onDismissed={() => {
           refreshNotifications().catch(() => undefined)
         }}
+        onDecided={() => {
+          refreshRoles()
+          refreshNotifications().catch(() => undefined)
+        }}
       />
     ) : top.name === 'notification' ? (
       <NotificationDetailScreen

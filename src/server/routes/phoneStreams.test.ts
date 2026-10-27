@@ -1791,7 +1791,15 @@ describe('phones and Directors asking for their streams by device', function () 
 
       const pending = await call('GET', '/me/notifications', OTHER)
       expect(pending.status).equals(200)
-      const [reminder, grant] = pending.body.items as Body[]
+      // The reminder alone waits in Pending; the grant is History.
+      expect((pending.body.items as Body[]).map(item => item.type)).deep.equals(
+        ['recordingUpload']
+      )
+      const [reminder] = pending.body.items as Body[]
+      const grant = (
+        (await call('GET', '/me/notifications?history=1', OTHER)).body
+          .items as Body[]
+      ).find(item => item.id === grantId)!
       expect(reminder.type).equals('recordingUpload')
       expect(reminder.title).equals('Upload your recording')
       expect(reminder.description).equals(
@@ -1809,17 +1817,12 @@ describe('phones and Directors asking for their streams by device', function () 
         (await call('GET', '/me/notifications/summary', OTHER)).body.hasPending
       ).equals(true)
 
-      // A page at a time, the reminder still leads.
+      // A page of one holds the reminder, and there is no next page.
       const page = await call('GET', '/me/notifications?limit=1', OTHER)
-      expect((page.body.items as Body[])[0].id).equals(reminder.id)
-      const rest = await call(
-        'GET',
-        `/me/notifications?limit=1&cursor=${encodeURIComponent(String(page.body.nextCursor))}`,
-        OTHER
-      )
-      expect((rest.body.items as Body[]).map(item => item.id)).deep.equals([
-        grantId
+      expect((page.body.items as Body[]).map(item => item.id)).deep.equals([
+        reminder.id
       ])
+      expect(page.body.nextCursor).equals(null)
 
       const detail = await call(
         'GET',
@@ -1858,22 +1861,23 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(stored.dismissedAt).not.equals(null)
       expect(stored.viewedAt).not.equals(null)
 
+      // Dismissed, Pending is empty and the bell goes out: the grant never
+      // lit it.
       const after = await call('GET', '/me/notifications', OTHER)
-      expect((after.body.items as Body[]).map(item => item.id)).deep.equals([
-        grantId
-      ])
+      expect(after.body.items).deep.equals([])
+      expect(after.body.hasPending).equals(false)
+      expect(
+        (await call('GET', '/me/notifications/summary', OTHER)).body.hasPending
+      ).equals(false)
       const history = await call('GET', '/me/notifications?history=1', OTHER)
       const kept = (history.body.items as Body[]).find(
         item => item.id === reminder.id
       )
       expect(kept?.status).equals('accepted')
       expect(kept?.canAct).equals(false)
-
-      // With the grant opened, nothing is pending any more.
-      await call('PUT', `/me/notifications/${grantId}/viewed`, OTHER, {})
       expect(
-        (await call('GET', '/me/notifications/summary', OTHER)).body.hasPending
-      ).equals(false)
+        (history.body.items as Body[]).some(item => item.id === grantId)
+      ).equals(true)
 
       // Dismissing twice is still a dismissal.
       expect(

@@ -39,7 +39,8 @@ export function NotificationsScreen({
   onOpen,
   onOpenTarget,
   onUpload,
-  onDismissed
+  onDismissed,
+  onDecided
 }: {
   client: TeamStationClient
   onOpen: (id: string) => void
@@ -52,14 +53,24 @@ export function NotificationsScreen({
   onUpload?: (gameId: string) => void
   /** A reminder was dismissed, so the header's pending dot is asked again. */
   onDismissed?: () => void
+  /**
+   * An approval was accepted or rejected on its card: what the person may do
+   * and the header's pending dot are asked again. The list stays.
+   */
+  onDecided?: () => void
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const [mode, setMode] = useState<'pending' | 'sent' | 'history'>('pending')
   const [items, setItems] = useState<Notification[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [dismissing, setDismissing] = useState<string | undefined>()
+  /** The approval being decided on its card, and how. */
+  const [deciding, setDeciding] = useState<
+    { id: string; action: 'accept' | 'decline' } | undefined
+  >()
   const begin = useLatestRequest()
   const cache = useRef<
     Partial<
@@ -172,6 +183,40 @@ export function NotificationsScreen({
       setDismissing(undefined)
     }
   }
+  /**
+   * Accepts or rejects an approval on its card. Decided, it leaves Pending,
+   * and History reads it again from the server; refused, the card stays with
+   * the reason, to be pressed again.
+   */
+  const decide = async (
+    item: Notification,
+    action: 'accept' | 'decline'
+  ): Promise<void> => {
+    if (deciding != null) return
+    setDeciding({ id: item.requestId, action })
+    setError('')
+    try {
+      if (item.type === 'game')
+        await client.decideGameRequest(item.requestId, action)
+      else await client.decideRelationship(item.requestId, action)
+      const kept = (list: Notification[]): Notification[] =>
+        list.filter(other => other.requestId !== item.requestId)
+      setItems(kept)
+      const pending = cache.current.pending
+      if (pending != null)
+        cache.current.pending = { ...pending, items: kept(pending.items) }
+      delete cache.current.history
+      onDecided?.()
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : 'The request could not be decided. Retry.'
+      )
+    } finally {
+      setDeciding(undefined)
+    }
+  }
   const upload = (item: Notification): void => {
     if (item.gameId != null) onUpload?.(item.gameId)
   }
@@ -264,6 +309,48 @@ export function NotificationsScreen({
                   disabled={dismissing != null}
                   onPress={() => {
                     dismiss(item).catch(() => undefined)
+                  }}
+                />
+              </View>
+            </Card>
+          ) : mode === 'pending' && item.canAct ? (
+            // Decided here, on the card: the list stays on Notifications.
+            <Card key={item.requestId} style={styles.card}>
+              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+              <Text style={styles.name}>{item.title}</Text>
+              <Text style={styles.hint}>{item.description}</Text>
+              <Text style={styles.status}>{statusLine(item, mode)}</Text>
+              <View style={styles.tabs}>
+                <Button
+                  compact
+                  label="Accept"
+                  accessibilityLabel={`Accept ${item.title}`}
+                  testID="notification-accept"
+                  color={theme.successColor}
+                  textColor={theme.buttonTextColor}
+                  busy={
+                    deciding?.id === item.requestId &&
+                    deciding.action === 'accept'
+                  }
+                  disabled={deciding != null}
+                  onPress={() => {
+                    decide(item, 'accept').catch(() => undefined)
+                  }}
+                />
+                <Button
+                  compact
+                  label="Reject"
+                  accessibilityLabel={`Reject ${item.title}`}
+                  testID="notification-reject"
+                  color={theme.dangerColor}
+                  textColor={theme.buttonTextColor}
+                  busy={
+                    deciding?.id === item.requestId &&
+                    deciding.action === 'decline'
+                  }
+                  disabled={deciding != null}
+                  onPress={() => {
+                    decide(item, 'decline').catch(() => undefined)
                   }}
                 />
               </View>

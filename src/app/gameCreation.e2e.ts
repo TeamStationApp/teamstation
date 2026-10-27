@@ -114,10 +114,18 @@ async function main(): Promise<void> {
     await team.goto(f.h.origin + '/notifications', {
       waitUntil: 'networkidle0'
     })
-    await press(team, 'Demo Hawks invited to game vs. Demo Eagles')
-    await text(team, 'Demo Field')
+    // Decided on its card in the list.
+    await team.waitForSelector(
+      '[aria-label="Accept Demo Hawks invited to game vs. Demo Eagles"]'
+    )
     await shot(team, 'notification-game-detail.png')
-    await press(team, 'Accept invitation')
+    await press(team, 'Accept Demo Hawks invited to game vs. Demo Eagles')
+    await team.waitForSelector(
+      '[aria-label="Accept Demo Hawks invited to game vs. Demo Eagles"]',
+      { hidden: true }
+    )
+    expect(new URL(team.url()).pathname).equals('/notifications')
+    await press(team, 'History')
     await text(team, 'Accepted')
     const published = await f.h.db
       .selectFrom('group_requests')

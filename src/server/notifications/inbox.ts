@@ -5,8 +5,7 @@ import type { GroupRef } from '../../common/groupCreation'
 import {
   isSchedulingNews,
   type Notification,
-  RECORDING_UPLOAD,
-  SCHEDULING_NEWS
+  RECORDING_UPLOAD
 } from '../../common/notifications'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
@@ -104,14 +103,13 @@ function compareRows(
 }
 
 /**
- * Whether a notification is new news: one waiting for this person's answer,
- * or a grant they have not opened yet, which lights the bell until they do.
+ * Whether a notification waits on this person: a request they can answer, or
+ * an upload reminder they have not dismissed. These are Pending, and light
+ * the bell. A grant or a scheduling notice is accepted when it is recorded,
+ * so it is History from the start.
  */
 function isNews(row: Notification): boolean {
-  return (
-    row.canAct ||
-    ((row.type === 'grant' || isSchedulingNews(row.type)) && !row.viewed)
-  )
+  return row.canAct
 }
 
 export async function notificationFor(
@@ -425,35 +423,32 @@ export async function inbox(
     const row = await notificationFor(db, fresh, request, clock)
     if (row != null) projected.push(row)
   }
-  // History lists every piece of information; the other tabs read grants and
-  // scheduling notices, which are news until opened, and undismissed upload
-  // reminders, which wait in Pending. All of them light the bell.
+  // History lists every piece of information; the other tabs read only
+  // undismissed upload reminders, which wait in Pending and light the bell.
+  // Grants and scheduling notices are History from the moment they are
+  // recorded.
   const information = await db
     .selectFrom('notification_events')
     .selectAll()
     .where('source_type', '!=', 'groupRequest')
     .$if(options.history !== true, query =>
       query.where(eb =>
-        eb.or([
-          eb('source_type', '=', 'grant'),
-          eb('source_type', 'in', [...SCHEDULING_NEWS]),
-          eb.and([
-            eb('source_type', '=', RECORDING_UPLOAD),
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom('notification_receipts')
-                  .select('notification_receipts.event_id')
-                  .whereRef(
-                    'notification_receipts.event_id',
-                    '=',
-                    'notification_events.id'
-                  )
-                  .where('notification_receipts.user_id', '=', fresh.userId)
-                  .where('notification_receipts.dismissed_at', 'is not', null)
-              )
+        eb.and([
+          eb('source_type', '=', RECORDING_UPLOAD),
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('notification_receipts')
+                .select('notification_receipts.event_id')
+                .whereRef(
+                  'notification_receipts.event_id',
+                  '=',
+                  'notification_events.id'
+                )
+                .where('notification_receipts.user_id', '=', fresh.userId)
+                .where('notification_receipts.dismissed_at', 'is not', null)
             )
-          ])
+          )
         ])
       )
     )
