@@ -182,6 +182,7 @@ export function ConversationScreen(
   const margin = theme.rem(edgeMarginRem(theme, breakpoint))
   const [paneHeaderHeight, setPaneHeaderHeight] = useState(theme.rem(3.5))
   const [composerHeight, setComposerHeight] = useState(theme.rem(3.25))
+  const [noticeHeight, setNoticeHeight] = useState(0)
   const [pinHeight, setPinHeight] = useState(0)
   const viewport = useChatViewport({
     paneHeader: props.paneHeader === true ? paneHeaderHeight : 0,
@@ -337,6 +338,9 @@ export function ConversationScreen(
     attention: boolean
   }>()
   const [resolvingJump, setResolvingJump] = useState(false)
+  // A jump's progress and failure, and any other error, float over the
+  // history above the composer.
+  const notice = error != null || jumpRetry != null || resolvingJump
   useEffect(() => {
     setResolvingJump(false)
     setJumpRetry(undefined)
@@ -2905,7 +2909,7 @@ export function ConversationScreen(
           loading={attentionLoading}
           failed={attentionFailed}
           disabled={resolvingJump}
-          bottom={viewport.contentBottom}
+          bottom={viewport.contentBottom + (notice ? noticeHeight : 0)}
           right={Math.max(margin, insets.right)}
           onLatest={() => {
             historyGeneration.current += 1
@@ -2931,6 +2935,68 @@ export function ConversationScreen(
             setAttentionRevision(value => value + 1)
           }}
         />
+        {notice && (
+          // Floating above the composer band, not in it: the band's height is
+          // the history's bottom inset, and a notice must not move the reader.
+          <GlassView
+            testID="chat-history-notice"
+            radius={theme.rem(1.5)}
+            onLayout={event => {
+              setNoticeHeight(event.nativeEvent.layout.height)
+            }}
+            style={{
+              position: 'absolute',
+              left: Math.max(margin, insets.left),
+              right: Math.max(margin, insets.right),
+              bottom: viewport.contentBottom - theme.rem(0.5),
+              zIndex: 4,
+              gap: theme.rem(0.25),
+              paddingHorizontal: theme.rem(theme.spaceMdRem),
+              paddingVertical: theme.rem(theme.spaceXsRem),
+              borderWidth: 1,
+              borderColor: theme.glassBorderColor,
+              borderRadius: theme.rem(1.5)
+            }}
+          >
+            {error != null && <Text style={shared.error}>{error}</Text>}
+            {jumpRetry != null && !resolvingJump && (
+              <Button
+                testID="chat-history-jump-retry"
+                label={lstrings.common_retry}
+                kind="text"
+                onPress={() => {
+                  jumpTo(jumpRetry.id, jumpRetry.attention)
+                }}
+              />
+            )}
+            {resolvingJump && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: theme.rem(0.5)
+                }}
+              >
+                <Text style={shared.small} accessibilityLiveRegion="polite">
+                  {lstrings.common_loading}
+                </Text>
+                <Button
+                  testID="chat-history-jump-cancel"
+                  label={lstrings.chat_cancel}
+                  kind="text"
+                  textColor={theme.dangerColor}
+                  onPress={() => {
+                    jumpGeneration.current += 1
+                    measuringJump.current = undefined
+                    setMountedTarget(undefined)
+                    setResolvingJump(false)
+                    restoreReadingAnchor()
+                  }}
+                />
+              </View>
+            )}
+          </GlassView>
+        )}
         <View
           testID="chat-composer-band"
           ref={keyboard.composerRef}
@@ -2953,43 +3019,6 @@ export function ConversationScreen(
                 ? sprintf(lstrings.chat_typing_one, typing[0])
                 : sprintf(lstrings.chat_typing_many, typing.join(', '))}
             </Text>
-          )}
-          {error != null && <Text style={shared.error}>{error}</Text>}
-          {jumpRetry != null && !resolvingJump && (
-            <Button
-              testID="chat-history-jump-retry"
-              label={lstrings.common_retry}
-              kind="text"
-              onPress={() => {
-                jumpTo(jumpRetry.id, jumpRetry.attention)
-              }}
-            />
-          )}
-          {resolvingJump && (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: theme.rem(0.5)
-              }}
-            >
-              <Text style={shared.small} accessibilityLiveRegion="polite">
-                {lstrings.common_loading}
-              </Text>
-              <Button
-                testID="chat-history-jump-cancel"
-                label={lstrings.chat_cancel}
-                kind="text"
-                textColor={theme.dangerColor}
-                onPress={() => {
-                  jumpGeneration.current += 1
-                  measuringJump.current = undefined
-                  setMountedTarget(undefined)
-                  setResolvingJump(false)
-                  restoreReadingAnchor()
-                }}
-              />
-            </View>
           )}
           {reported && (
             <Text style={shared.muted} accessibilityLiveRegion="polite">
