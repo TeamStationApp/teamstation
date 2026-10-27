@@ -2934,6 +2934,24 @@ export class Scenarios {
     return current.nodes
   }
 
+  /** A chat's newest post, as the protocol peer reads it. */
+  async newestPost(conversation: string): Promise<MessageView> {
+    const peer = await this.protocolPeer()
+    return need(
+      (await peer.engine.open(conversation)).messages.at(-1),
+      'Newest verified post required'
+    )
+  }
+
+  /** Whether the protocol peer's newest page of this chat holds the post. */
+  async inNewestPage(target: Chat2Message): Promise<boolean> {
+    const peer = await this.protocolPeer()
+    const view = await peer.engine.open(this.group)
+    const found = view.messages.some(message => message.id === target.id)
+    this.observations.push({ newestPagePost: target.id, found })
+    return found
+  }
+
   /** Fetch absent native rows through the actual public earlier-page button. */
   async nativeHistoryTarget(target: Chat2Message): Promise<void> {
     const ui = this.ui
@@ -2964,6 +2982,18 @@ export class Scenarios {
     const earlierButton = (node: PublicNode): boolean =>
       node.text === 'Load earlier messages' &&
       /(?:^|\.)Button$/.test(node.type ?? '')
+    // The app loads the newest page first, so a post of the protocol peer's
+    // newest page is loaded and only outside the mounted window; a phone's
+    // slow drags cannot afford pages climbed in the wrong direction, so it is
+    // searched among the loaded rows first.
+    if (
+      ui.surface === 'ios' &&
+      ui.physical &&
+      nodes.some(earlierButton) &&
+      (await this.inNewestPage(target)) &&
+      (await this.nativeLoadedTarget(target, signal, 'latest'))
+    )
+      return
     // With every page loaded, the virtualized history may still hold the
     // target outside its mounted window.
     const oldest = target.seq <= (this.f.messages.oldest?.seq ?? -Infinity)
@@ -3086,10 +3116,20 @@ export class Scenarios {
     const id = 'chat-bubble-' + target.id
     const proof: Json = { nativeLoadedTarget: target.id, swipes: [] }
     this.observations.push(proof)
+    // A phone's drag moves a tall-row history less than its mounted window,
+    // so the same rows stay mounted while it moves; there only rows that also
+    // keep their places mean the history stopped.
+    const placed = ui.surface === 'ios' && ui.physical
     const bubbles = (nodes: PublicNode[]): string =>
       nodes
         .flatMap(node =>
-          node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
+          node.id?.startsWith('chat-bubble-') === true
+            ? [
+                placed
+                  ? node.id + '@' + Math.round(node.bounds?.y ?? 0)
+                  : node.id
+              ]
+            : []
         )
         .join('\n')
     let nodes = await ui.nodes(undefined, signal)
@@ -7621,7 +7661,15 @@ export class Scenarios {
         }
         await ui.present('chat-jump-latest')
         await ui.id('chat-jump-latest')
-        await ui.present('chat-bubble-' + posted.targets[2].id)
+        // The loop posts three tall spacing rows after each target; a phone's
+        // narrow rows put the last target screens above the latest one, so
+        // a native reader proves the jump by the chat's newest post.
+        await ui.present(
+          'chat-bubble-' +
+            (ui.native
+              ? (await this.newestPost(loop.conversationId)).id
+              : posted.targets[2].id)
+        )
         await ui.present('chat-jump-latest')
         await this.anchor(loop.readerAnchor)
         if (!ui.native) await this.olderWebReader()
