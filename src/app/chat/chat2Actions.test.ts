@@ -11172,6 +11172,24 @@ describe('native pinned jump settlement', function () {
         }
       }
     )
+  it("waits for a phone's sliding pin row before closing the list", async () => {
+    const m = model('delayed', 'ios')
+    const waits: number[] = []
+    const visible = m.scenario.ui.visible.bind(m.scenario.ui)
+    Object.assign(m.scenario.ui, {
+      fixture: { devices: { ios: { physical: true } } },
+      visible: async (
+        selector: { id?: string; text?: string },
+        timeout = 1000
+      ) => {
+        if (selector.id === 'chat-pin-' + target.id) waits.push(timeout)
+        return await visible(selector, timeout)
+      }
+    })
+    await m.scenario.anchor(target)
+    expect(waits).deep.equals([10000])
+    expect(m.events).includes('chat-pin-' + target.id)
+  })
 })
 
 describe('native earlier-control exact-target handoff', function () {

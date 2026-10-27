@@ -2413,7 +2413,14 @@ export class Scenarios {
           ui.surface === 'ios' ? 10000 : 1000
         )
       )
-        if (await ui.visible({ id: 'chat-pin-' + target.id }, 500)) {
+        // A phone's list can still be sliding in above its keyboard; its row
+        // gets the time two of its reads take.
+        if (
+          await ui.visible(
+            { id: 'chat-pin-' + target.id },
+            ui.surface === 'ios' && ui.physical ? 10000 : 500
+          )
+        ) {
           await this.tapPinnedRow(target.id)
           if (ui.native) await this.nativePinJumpReady(target)
         } else if (ui.native) await this.closeNativePinList()
