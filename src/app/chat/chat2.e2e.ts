@@ -3133,11 +3133,36 @@ export class Scenarios {
         )
         .join('\n')
     let nodes = await ui.nodes(undefined, signal)
-    for (const direction of olderOnly
+    // A phone's drags carry no fling, so sweeping sixty screens back takes a
+    // quarter of an hour. There the history's start is reached with the status
+    // bar's scroll to top (touched until the rows rest, as a fresh page can
+    // stop one touch short), and one sweep toward the latest rows from there
+    // covers what the first sweep did not.
+    const sweeps: Array<1 | -1 | 'start'> = olderOnly
       ? [1]
-      : first === 'latest'
-        ? [-1, 1]
-        : [1, -1]) {
+      : placed
+        ? first === 'latest'
+          ? [-1, 'start', -1]
+          : ['start', -1]
+        : first === 'latest'
+          ? [-1, 1]
+          : [1, -1]
+    for (const direction of sweeps) {
+      if (nodes.some(node => node.id === id)) break
+      if (direction === 'start') {
+        let touches = 0
+        while (touches < 20) {
+          touches += 1
+          const before = bubbles(nodes)
+          await ui.device.tapOnPoint({ x: 60, y: 20 }, { signal })
+          await new Promise(resolve => setTimeout(resolve, 1500))
+          nodes = await ui.nodes(undefined, signal)
+          if (nodes.some(node => node.id === id) || bubbles(nodes) === before)
+            break
+        }
+        proof.statusBarStart = touches
+        continue
+      }
       let still = 0
       // A few loaded pages are many screens; each end stops the history.
       for (let step = 0; step < 200 && still < 2; step++) {
