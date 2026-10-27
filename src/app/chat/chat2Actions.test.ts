@@ -10441,6 +10441,8 @@ describe('native absent history paging', function () {
     Object.assign(m.scenario.ui, {
       fixture: { devices: { ios: { physical: true } } }
     })
+    // An older post outside the protocol peer's newest page.
+    Object.assign(m.scenario, { inNewestPage: async () => false })
     await m.scenario.nativeHistoryTarget(target)
     expect(m.taps).has.length(2)
     // The first far earlier control is reached through the status bar.
@@ -10457,6 +10459,8 @@ describe('native absent history paging', function () {
     Object.assign(m.scenario.ui, {
       fixture: { devices: { ios: { physical: true } } }
     })
+    // An older post outside the protocol peer's newest page.
+    Object.assign(m.scenario, { inNewestPage: async () => false })
     expect(
       String(await captureFailure(m.scenario.nativeHistoryTarget(target)))
     ).includes('Enabled public native earlier Button required')
@@ -13975,5 +13979,171 @@ describe('phone climb to an unmounted earlier control', function () {
       String(await captureFailure(m.scenario.nativeAnchorReady(later, true)))
     ).contains('System scroll to top must move toward the earlier control')
     expect(m.taps).has.length(1)
+  })
+})
+
+describe('phone search of a loaded newest-page post', function () {
+  const post: Chat2Message = {
+    id: 'msg_run_end',
+    seq: 9,
+    body: 'Run end',
+    authorId: 'usr_peer'
+  }
+  const frame = (y: number): PublicNode['bounds'] => ({
+    x: 0,
+    y,
+    width: 390,
+    height: 100
+  })
+  function sweeping(physical: boolean): {
+    scenario: Scenarios
+    swipes: () => number
+  } {
+    let swipes = 0
+    // Older (a finger moving down) advances toward the post; latest returns.
+    let older = 0
+    const ui = {
+      surface: 'ios',
+      physical,
+      nodes: async (): Promise<PublicNode[]> => [
+        {
+          id: 'chat-message-history',
+          bounds: { x: 0, y: 0, width: 390, height: 844 }
+        },
+        {
+          id: 'chat-conversation-identity',
+          bounds: { x: 0, y: 47, width: 390, height: 48 }
+        },
+        {
+          id: 'chat-composer-band',
+          bounds: { x: 0, y: 670, width: 390, height: 70 }
+        },
+        // The same tall rows stay mounted while a phone's drags move them.
+        { id: 'chat-bubble-tall-a', bounds: frame(-900 + older * 300) },
+        { id: 'chat-bubble-tall-b', bounds: frame(-100 + older * 300) },
+        ...(older >= 3 ? [{ id: 'chat-bubble-' + post.id }] : [])
+      ],
+      measuredSwipe: async (input: { startY: number; endY: number }) => {
+        swipes += 1
+        older += input.endY > input.startY ? 1 : -1
+      }
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      swipes: () => swipes
+    }
+  }
+  it('keeps sweeping a phone history whose mounted rows move without changing', async function () {
+    this.timeout(20000)
+    const m = sweeping(true)
+    expect(
+      await m.scenario.nativeLoadedTarget(
+        post,
+        AbortSignal.timeout(15000),
+        'older'
+      )
+    ).equals(true)
+    expect(m.swipes()).equals(3)
+  })
+  it('keeps the simulator stopping on an unchanged mounted set', async function () {
+    this.timeout(20000)
+    const m = sweeping(false)
+    expect(
+      await m.scenario.nativeLoadedTarget(
+        post,
+        AbortSignal.timeout(15000),
+        'older'
+      )
+    ).equals(false)
+  })
+  function history(
+    newest: boolean,
+    found: boolean
+  ): { scenario: Scenarios; calls: string[] } {
+    const calls: string[] = []
+    const ui = {
+      native: true,
+      surface: 'ios',
+      physical: true,
+      deadline: AbortSignal.timeout(15000),
+      nodes: async (): Promise<PublicNode[]> => [
+        {
+          type: 'Button',
+          text: 'Load earlier messages',
+          bounds: { x: 16, y: -70000, width: 358, height: 49 }
+        }
+      ]
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: [],
+        f: { messages: {} },
+        inNewestPage: async () => {
+          calls.push('newest')
+          return newest
+        },
+        nativeLoadedTarget: async (
+          _: Chat2Message,
+          __: AbortSignal,
+          first: string
+        ) => {
+          calls.push('loaded ' + first)
+          return found
+        },
+        nativeAnchorReady: async () => {
+          calls.push('page')
+          throw Error('paged')
+        }
+      }) as Scenarios,
+      calls
+    }
+  }
+  it('searches a phone newest-page post among the loaded rows, not the earlier pages', async function () {
+    const m = history(true, true)
+    await m.scenario.nativeHistoryTarget(post)
+    expect(m.calls).deep.equals(['newest', 'loaded latest'])
+  })
+  for (const [newest, found] of [
+    [false, false],
+    [true, false]
+  ] as const)
+    it(`still pages a phone post ${newest ? 'the loaded rows lack' : 'outside the newest page'}`, async function () {
+      const m = history(newest, found)
+      expect(
+        String(await captureFailure(m.scenario.nativeHistoryTarget(post)))
+      ).contains('paged')
+      expect(m.calls.at(-1)).equals('page')
+    })
+})
+
+describe('chat newest post', function () {
+  it("reads a chat's newest post through the protocol peer", async function () {
+    const opened: string[] = []
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      protocolPeer: async () => ({
+        engine: {
+          open: async (conversation: string) => {
+            opened.push(conversation)
+            return { messages: [{ id: 'msg_target' }, { id: 'msg_spacing' }] }
+          }
+        }
+      })
+    }) as Scenarios
+    expect((await scenario.newestPost('cnv_loop')).id).equals('msg_spacing')
+    expect(opened).deep.equals(['cnv_loop'])
+  })
+  it('refuses an empty chat', async function () {
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      protocolPeer: async () => ({
+        engine: { open: async () => ({ messages: [] }) }
+      })
+    }) as Scenarios
+    expect(
+      String(await captureFailure(scenario.newestPost('cnv_empty')))
+    ).contains('Newest verified post required')
   })
 })
