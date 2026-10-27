@@ -202,7 +202,7 @@ function MultiCamGrid(
     attaching,
     attached,
     dropTile,
-    goTo,
+    scrub,
     moveTile,
     pressCancel,
     pressEnd,
@@ -379,7 +379,7 @@ function MultiCamGrid(
               window={mc.take}
               atMs={mc.atWallMs}
               angles={mc.barAngles(mc.take)}
-              onScrub={goTo}
+              onScrub={scrub}
               onTrackWidth={setTrackWidth}
               onInteract={showBar}
               visible={mc.barShown}

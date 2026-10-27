@@ -39,12 +39,12 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
   const span = Math.max(1, take.toMs - take.fromMs)
   const trackWidth = useRef(0)
 
-  const scrubTo = (event: GestureResponderEvent): void => {
+  const scrubTo = (event: GestureResponderEvent, final: boolean): void => {
     onInteract()
     const width = trackWidth.current
     if (width <= 0) return
     const at = Math.min(1, Math.max(0, event.nativeEvent.locationX / width))
-    onScrub(take.fromMs + at * span)
+    onScrub(take.fromMs + at * span, final)
   }
 
   return (
@@ -91,8 +91,16 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
           onStartShouldSetResponder={() => true}
           // A drag along the track keeps the finger even as it wanders up.
           onResponderTerminationRequest={() => false}
-          onResponderGrant={scrubTo}
-          onResponderMove={scrubTo}
+          onResponderGrant={event => {
+            scrubTo(event, false)
+          }}
+          onResponderMove={event => {
+            scrubTo(event, false)
+          }}
+          // Where the finger lifts is where it lands, and a tap still seeks.
+          onResponderRelease={event => {
+            scrubTo(event, true)
+          }}
         >
           {/* `pointerEvents` none, so `locationX` is always the track's own
               and never one of the strips' it happens to be over. */}

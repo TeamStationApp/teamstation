@@ -152,7 +152,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     pressEnd,
     pressCancel,
     setTrackWidth,
-    goTo,
+    scrub,
     showBar,
     moveTile,
     dropTile,
@@ -448,7 +448,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           window={mc.take}
           atMs={mc.atWallMs}
           angles={barAngles(mc.take)}
-          onScrub={goTo}
+          onScrub={scrub}
           onTrackWidth={setTrackWidth}
           onInteract={showBar}
           visible={mc.barShown}

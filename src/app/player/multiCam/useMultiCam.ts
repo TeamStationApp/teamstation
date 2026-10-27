@@ -74,6 +74,7 @@ import {
   swap,
   tileRects
 } from './layout'
+import { scrubSeeks } from './scrubSeeks'
 import { angleLabels, soundAngle } from './takes'
 import type { TileHandle } from './tileHandle'
 
@@ -311,6 +312,12 @@ export interface MultiCam {
   toggle: () => void
   skip: (deltaSec: number) => void
   goTo: (wallMs: number) => void
+  /**
+   * A drag along the bar: the playhead follows every move, the players are
+   * sought at most four times a second, and `final` — the finger lifting, or
+   * a tap — is always sought (`scrubSeeks`).
+   */
+  scrub: (wallMs: number, final?: boolean) => void
   showBar: () => void
   beginSlow: () => boolean
   endSlow: () => void
@@ -1795,6 +1802,36 @@ export function useMultiCam(
     [alignTo, awaited]
   )
 
+  // A drag's seeks, coalesced; the newest `goTo` is the one they make.
+  const goToRef = useRef(goTo)
+  goToRef.current = goTo
+  const scrubber = useMemo(
+    () =>
+      scrubSeeks(wallMs => {
+        goToRef.current(wallMs)
+      }),
+    []
+  )
+  useEffect(
+    () => () => {
+      scrubber.cancel()
+    },
+    [scrubber]
+  )
+  const scrub = useCallback(
+    (wallMs: number, final = true): void => {
+      if (final) {
+        scrubber.end(wallMs)
+        return
+      }
+      // The playhead goes with the finger; the pictures follow at their pace.
+      atWallRef.current = wallMs
+      setAtWallMs(wallMs)
+      scrubber.move(wallMs)
+    },
+    [scrubber]
+  )
+
   const toggle = useCallback((): void => {
     // Stopped where the pictures stop: the clock's last reading is up to a
     // second behind a playing tile, and a skip from it after the pause landed
@@ -2132,7 +2169,7 @@ export function useMultiCam(
     if (state.frame !== 0) return
     state.frame = requestAnimationFrame(() => {
       state.frame = 0
-      if (state.scrubTo != null) goTo(state.scrubTo)
+      if (state.scrubTo != null) scrub(state.scrubTo, false)
     })
   }
 
@@ -2159,7 +2196,7 @@ export function useMultiCam(
     settlePress(state)
     setArmedTile(null)
     if (state.mode === 'held') endSlow()
-    if (state.mode === 'scrub' && state.scrubTo != null) goTo(state.scrubTo)
+    if (state.mode === 'scrub' && state.scrubTo != null) scrub(state.scrubTo)
     if (state.mode === 'pending' && !state.travelled) {
       runZoneRef.current(angleZoneFor(x, y, width, height))
     }
@@ -2322,6 +2359,7 @@ export function useMultiCam(
     toggle,
     skip,
     goTo,
+    scrub,
     showBar,
     beginSlow,
     endSlow,

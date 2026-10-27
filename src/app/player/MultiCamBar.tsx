@@ -79,18 +79,20 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
    */
   const trackRef = useRef<HTMLDivElement | null>(null)
   const scrubbing = useRef(false)
+  /** Where a drag in progress last was, to land there if the browser cancels it. */
+  const lastX = useRef<number | null>(null)
   /**
    * Where a finger came down on the track while the page wants vertical
    * swipes: nothing is scrubbed until it is clear the finger is not one.
    */
   const pending = useRef<{ x: number; y: number; id: number } | null>(null)
-  const scrubTo = (clientX: number): void => {
+  const scrubTo = (clientX: number, final: boolean): void => {
     const node = trackRef.current
     if (node == null) return
     const rect = node.getBoundingClientRect()
     if (rect.width <= 0) return
     const at = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-    onScrub(take.fromMs + at * span)
+    onScrub(take.fromMs + at * span, final)
   }
 
   // The track's width, for a drag across the pictures to be measured in: on
@@ -181,8 +183,9 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
               return
             }
             scrubbing.current = true
+            lastX.current = event.clientX
             ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
-            scrubTo(event.clientX)
+            scrubTo(event.clientX, false)
           }}
           onPointerMove={event => {
             const from = pending.current
@@ -198,18 +201,32 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
                 event.pointerId
               )
             }
-            if (scrubbing.current) scrubTo(event.clientX)
+            if (scrubbing.current) {
+              lastX.current = event.clientX
+              scrubTo(event.clientX, false)
+            }
           }}
           onPointerUp={event => {
-            // A tap that never became a drag still seeks, as it always has.
-            if (pending.current?.id === event.pointerId) scrubTo(event.clientX)
+            // Where the finger lifts is where it lands — a drag's last move
+            // can be well short of it — and a tap that never became a drag
+            // still seeks, as it always has.
+            if (scrubbing.current || pending.current?.id === event.pointerId) {
+              scrubTo(event.clientX, true)
+            }
             pending.current = null
             scrubbing.current = false
           }}
-          // The browser took the drag for the page: nothing was scrubbed.
+          // The browser took the drag for the page before it was a scrub:
+          // nothing was scrubbed. Taken from a scrub already under way, it
+          // lands where the finger last was, not on whatever seek the drag
+          // had last been allowed.
           onPointerCancel={() => {
+            if (scrubbing.current && lastX.current != null) {
+              scrubTo(lastX.current, true)
+            }
             pending.current = null
             scrubbing.current = false
+            lastX.current = null
           }}
         >
           <div style={{ position: 'relative', width: '100%', height: 24 }}>
