@@ -14173,3 +14173,199 @@ describe('chat newest post', function () {
     ).contains('Newest verified post required')
   })
 })
+
+describe('phone whole-point landing margin', function () {
+  const tall: Chat2Message = {
+    id: 'msg_long',
+    seq: 4,
+    body: 'Long post',
+    authorId: 'usr_peer'
+  }
+  // A reader-tall post where the app's pin jump left it: 7 whole points
+  // under the pins, as a phone's WebDriverAgent reads 8.
+  function landed(physical: boolean): {
+    scenario: Scenarios
+    drags: () => number
+  } {
+    let drags = 0
+    let y = 167
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'ios',
+      deadline: AbortSignal.timeout(10000),
+      steps: [],
+      fixture: { devices: { ios: { physical } } },
+      device: {
+        hierarchy: async () => ({
+          nodes: [
+            {
+              id: 'chat-message-history',
+              bounds: { x: 0, y: 0, width: 390, height: 844 }
+            },
+            {
+              id: 'chat-conversation-identity',
+              bounds: { x: 64, y: 47, width: 274, height: 48 }
+            },
+            {
+              id: 'chat-pinned-band',
+              bounds: { x: 16, y: 95, width: 358, height: 65 }
+            },
+            {
+              id: 'chat-composer-band',
+              bounds: { x: 0, y: 670, width: 390, height: 70 }
+            },
+            {
+              id: 'chat-bubble-' + tall.id,
+              bounds: { x: 48, y, width: 273, height: 1042 }
+            }
+          ].map((node, index) => ({
+            index,
+            type: 'Other',
+            identifier: node.id,
+            rect: node.bounds,
+            enabled: true
+          }))
+        }),
+        platformInfo: async () => ({ screenWidth: 390, screenHeight: 844 }),
+        dragAndDrop: async () => {
+          drags += 1
+          y = 176
+        }
+      }
+    }) as Chat2UI
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: []
+      }) as Scenarios,
+      drags: () => drags
+    }
+  }
+  it("takes a phone's whole-point pin-jump landing as clear of the pins", async function () {
+    const m = landed(true)
+    await m.scenario.nativeAnchorReady(tall)
+    expect(m.drags()).equals(0)
+  })
+  it('keeps the simulator margin of seven and a half points', async function () {
+    this.timeout(20000)
+    const m = landed(false)
+    await m.scenario.nativeAnchorReady(tall)
+    expect(m.drags()).equals(1)
+  })
+})
+
+describe('Android reader-tall slow approach', function () {
+  const tall: Chat2Message = {
+    id: 'msg_loop_anchor',
+    seq: 2,
+    body: 'Loop anchor',
+    authorId: 'usr_peer'
+  }
+  it('drags a reader-tall Android target the short slow way into its window', async function () {
+    this.timeout(20000)
+    let y = 248
+    const swipes: Array<{ startY: number; endY: number; duration: number }> = []
+    const nodes = (): PublicNode[] => [
+      {
+        id: 'chat-message-history',
+        bounds: { x: 0, y: 0, width: 1080, height: 2400 }
+      },
+      {
+        id: 'chat-conversation-identity',
+        bounds: { x: 168, y: 132, width: 744, height: 123 }
+      },
+      {
+        id: 'chat-composer-band',
+        bounds: { x: 42, y: 1886, width: 996, height: 185 }
+      },
+      {
+        id: 'chat-bubble-' + tall.id,
+        bounds: { x: 126, y, width: 755, height: 1752 }
+      }
+    ]
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      native: true,
+      surface: 'android',
+      deadline: AbortSignal.timeout(15000),
+      steps: [],
+      fixture: { devices: { android: { physical: true } } },
+      readAndroidImeState: async () => ({ keyboard: undefined }),
+      device: {
+        hierarchy: async () => nodes(),
+        platformInfo: async () => ({ screenWidth: 1080, screenHeight: 2400 }),
+        swipe: async (input: {
+          startY: number
+          endY: number
+          duration: number
+        }) => {
+          swipes.push(input)
+          // A slow Pixel drag moves its length less its 21 px touch slop.
+          y +=
+            Math.sign(input.endY - input.startY) *
+            (Math.abs(input.endY - input.startY) - 21)
+        }
+      }
+    }) as Chat2UI
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui,
+      observations: []
+    }) as Scenarios
+    await scenario.nativeAnchorReady(tall)
+    expect(swipes).has.length(1)
+    expect(Math.abs(swipes[0].endY - swipes[0].startY)).lessThan(48)
+    expect(swipes[0].duration).equals(1000)
+    expect(y).within(262.5, 279.5)
+  })
+})
+
+describe('app-header Back on native', function () {
+  function scenario(
+    surface: string,
+    nodes: PublicNode[]
+  ): { scenario: Scenarios; calls: string[] } {
+    const calls: string[] = []
+    const ui = {
+      surface,
+      nodes: async () => nodes,
+      back: async () => {
+        calls.push('back')
+      },
+      tapObserved: async (node: PublicNode) => {
+        calls.push(`tap ${node.bounds!.x},${node.bounds!.y}`)
+      }
+    }
+    return {
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui
+      }) as Scenarios,
+      calls
+    }
+  }
+  const header: PublicNode = {
+    type: 'Button',
+    text: 'Back',
+    bounds: { x: 32, y: 131, width: 126, height: 126 }
+  }
+  it("taps Android's observed header Back, not the system Back", async function () {
+    const m = scenario('android', [
+      { type: 'TextView', text: 'Back', bounds: header.bounds },
+      header
+    ])
+    await m.scenario.headerBack()
+    expect(m.calls).deep.equals(['tap 32,131'])
+  })
+  it('keeps the iOS header Back', async function () {
+    const m = scenario('ios', [])
+    await m.scenario.headerBack()
+    expect(m.calls).deep.equals(['back'])
+  })
+  it('refuses an Android chat without one header Back', async function () {
+    const m = scenario('android', [
+      header,
+      { ...header, bounds: { x: 900, y: 131, width: 126, height: 126 } }
+    ])
+    expect(String(await captureFailure(m.scenario.headerBack()))).contains(
+      'Unique observed app-header Back required'
+    )
+  })
+})
