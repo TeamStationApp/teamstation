@@ -134,23 +134,24 @@ describe('the line score box (U5)', function () {
     expect(home.slice(-3)).deep.equals(['1', '2', '0'])
   })
 
-  it('shows the latest six innings of twelve in a box shaped for six, with the names and the totals', async function () {
-    const twelve: BoardLine = {
-      away: {
-        innings: [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 2],
-        r: 4,
-        h: 6,
-        e: 0
-      },
-      home: {
-        innings: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, null],
-        r: 1,
-        h: 2,
-        e: 0
-      }
+  const twelve: BoardLine = {
+    away: {
+      innings: [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 2],
+      r: 4,
+      h: 6,
+      e: 0
+    },
+    home: {
+      innings: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, null],
+      r: 1,
+      h: 2,
+      e: 0
     }
+  }
+
+  it('shows the latest six innings of twelve in a box shaped for six, with the names and the totals', async function () {
     await render(
-      <LineScoreBox rect={rectFor(9)} line={twelve} teams={TEAMS} at={1} />
+      <LineScoreBox rect={rectFor(6)} line={twelve} teams={TEAMS} at={1} />
     )
     expect(box()!.getAttribute('data-innings')).equals('[7,8,9,10,11,12]')
     const [head, away] = rows()
@@ -178,6 +179,18 @@ describe('the line score box (U5)', function () {
       '6',
       '0'
     ])
+  })
+
+  it('shows every inning its width holds in a box wider than six innings’ shape', async function () {
+    // Room for nine at six innings' height: a compact box.
+    await render(
+      <LineScoreBox rect={rectFor(9)} line={twelve} teams={TEAMS} at={1} />
+    )
+    expect(box()!.getAttribute('data-innings')).equals('[4,5,6,7,8,9,10,11,12]')
+    const [head, away] = rows()
+    expect(head.slice(0, 2)).deep.equals(['', '4'])
+    expect(away[0]).equals('Visitors')
+    expect(away.slice(-3)).deep.equals(['4', '6', '0'])
   })
 
   it('draws the zeroed line before the first step, and nothing with no room', async function () {

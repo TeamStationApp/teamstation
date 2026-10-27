@@ -41,6 +41,19 @@ describe('the line score box’s columns (U4)', function () {
     expect(lineColumns(roomFor(4) + 20, 12)).deep.equals([9, 10, 11, 12])
   })
 
+  it('fits every inning its width holds when the cap is lifted', function () {
+    // A compact box: the shaped width drawn at three quarters of its height.
+    const compact = roomFor(6) / 0.75
+    expect(lineColumns(compact, 12, Infinity).length).greaterThan(6)
+    expect(lineColumns(compact, 12, Infinity).at(-1)).equals(12)
+    expect(lineColumns(compact, 12)).deep.equals([7, 8, 9, 10, 11, 12])
+    expect(lineColumns(roomFor(9), 12, Infinity)).deep.equals([
+      4, 5, 6, 7, 8, 9, 10, 11, 12
+    ])
+    // Never more than the game has played.
+    expect(lineColumns(roomFor(9), 3, Infinity)).deep.equals([1, 2, 3])
+  })
+
   it('is shaped for six innings beside the names and the totals', function () {
     expect(LINE_BOX_WIDTH).equals(roomFor(6))
   })

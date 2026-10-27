@@ -53,9 +53,14 @@ export function currentInning(line: BoardLine): number {
 /**
  * The innings shown in a box `width` wide, in its own units: the latest that
  * fit after the names and the three totals, from the first to `current`, at
- * most `LINE_INNINGS_SHAPED` and always at least one.
+ * most `max` (`LINE_INNINGS_SHAPED` unless the box is drawn wider than six
+ * innings' shape) and always at least one.
  */
-export function lineColumns(width: number, current: number): number[] {
+export function lineColumns(
+  width: number,
+  current: number,
+  max: number = LINE_INNINGS_SHAPED
+): number[] {
   const room =
     width -
     2 * LINE_BORDER -
@@ -64,7 +69,7 @@ export function lineColumns(width: number, current: number): number[] {
     3 * LINE_TOTAL_WIDTH
   // A box drawn at its own shape gives back its width a hair short.
   const fit = Math.min(
-    LINE_INNINGS_SHAPED,
+    max,
     Math.max(1, Math.floor(room / LINE_INNING_WIDTH + 1e-6))
   )
   const last = Math.max(1, current)

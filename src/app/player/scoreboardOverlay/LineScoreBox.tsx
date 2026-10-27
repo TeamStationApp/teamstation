@@ -15,6 +15,7 @@ import {
   LINE_ROW,
   LINE_SIDE,
   LINE_TOTAL_WIDTH,
+  lineBoxHeight,
   lineColumns,
   totalText
 } from './lineScoreLayout'
@@ -56,7 +57,14 @@ export function LineScoreBox(
   const line = props.line ?? NOTHING_YET
   const scale = rect.h / LINE_BOX_HEIGHT
   const width = rect.w / scale
-  const innings = lineColumns(width, currentInning(line))
+  // Shorter than six innings' shape at its width (one or two angles), the
+  // box shows every inning its width holds.
+  const compact = rect.h < lineBoxHeight(rect.w) - 0.5
+  const innings = lineColumns(
+    width,
+    currentInning(line),
+    compact ? Infinity : undefined
+  )
   const row = (
     label: string,
     cells: string[],
