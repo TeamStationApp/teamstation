@@ -242,6 +242,8 @@ export async function openChatFixture(
             first_name: key,
             last_name: 'Person',
             password_hash: null,
+            // An account is switched on as it settles; its address follows.
+            login_enabled: account,
             birth_year: personOptions.birth?.year ?? null,
             birth_month: personOptions.birth?.month ?? null
           })

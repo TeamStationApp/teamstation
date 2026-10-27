@@ -97,6 +97,7 @@ import { migration083PlayGeneration } from './083playGeneration'
 import { migration084GamePlayArchives } from './084gamePlayArchives'
 import { migration085Tess } from './085tess'
 import { migration086FieldSizes } from './086fieldSizes'
+import { migration087LoginOffOnly } from './087loginOffOnly'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -197,5 +198,6 @@ export const migrations: Migration[] = [
   migration083PlayGeneration,
   migration084GamePlayArchives,
   migration085Tess,
-  migration086FieldSizes
+  migration086FieldSizes,
+  migration087LoginOffOnly
 ]
