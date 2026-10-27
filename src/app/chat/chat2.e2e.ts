@@ -7842,20 +7842,26 @@ export class Scenarios {
    * Mount a history row below the reader without showing it: the
    * virtualized window mounts rows a screen beyond the visible band, so short
    * script scrolls (not a person's, so they consume nothing) stop as soon as
-   * the row exists, before it can reach the reading band.
+   * the row exists, before it can reach the reading band. The fixture
+   * conversation grows with every run, so the walk is bounded by the history's
+   * end (it stops moving) rather than by a short step count.
    */
   async webMountBelow(testId: string): Promise<void> {
     const ui = this.ui
     assert(!ui.native, 'Browser history window required')
     const proof: Json = { mountBelow: testId, steps: [] }
     this.observations.push(proof)
-    for (let step = 0; step < 400; step++) {
+    for (let step = 0; step < 2000; step++) {
       const value = await ui.dom(
         `const h=document.querySelector('[data-testid="chat-message-history"]');if(!h)throw Error('Public history required');
         const n=document.querySelector(${JSON.stringify('[data-testid="' + testId + '"]')});if(n){const b=n.getBoundingClientRect();return {mounted:true,offset:h.scrollTop,top:b.top}}
         const was=h.scrollTop;h.scrollTop=Math.min(Math.max(0,h.scrollHeight-h.clientHeight),was+Math.min(200,h.clientHeight/4));h.dispatchEvent(new Event('scroll'));return {mounted:false,moved:h.scrollTop!==was,offset:h.scrollTop}`
       )
-      ;(proof.steps as unknown[]).push(value)
+      // Keep the first and latest steps; the whole walk can be long.
+      const steps = proof.steps as unknown[]
+      steps.push(value)
+      if (steps.length > 40) steps.splice(10, 1)
+      proof.stepCount = step + 1
       if (value.mounted === true) {
         proof.outcome = 'mounted'
         return
