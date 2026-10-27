@@ -517,6 +517,9 @@ describe('user identity snapshot across real database schemas', function () {
       values (1, 'usr_1111111111111111', 'Babe Ruth', true, true),
       (2, 'usr_2222222222222222', 'Jackie Robinson', false, false),
       (3, 'usr_3333333333333333', 'Willie Mays', false, false)`)
+    // The node administrator signs in by an address, as every account does.
+    await pool.query(`insert into user_emails (id, user_id, email, is_primary, verified_at)
+      values ('uem_one', 1, 'babe@example.test', true, '2026-01-01')`)
     await pool.query(
       `insert into teams (id, name) values ('tem_one', 'Harbor'), ('tem_two', 'Valley')`
     )
@@ -567,12 +570,20 @@ describe('user identity snapshot across real database schemas', function () {
           allowMerged: true
         }).differences
       ).deep.equals([])
+      // The chat tables' bridge to text ids (068chatUserIdBridge, proved by
+      // its own tests) rewrites their user columns on purpose, so 068gumboIds
+      // is compared from after it.
+      await migrateUp(
+        pool,
+        migrations.filter(m => m.name === '068chatUserIdBridge')
+      )
+      const bridged = await capture()
       await migrateUp(
         pool,
         migrations.filter(m => m.name.startsWith('068'))
       )
       const separated = await capture()
-      expect(compareUserIds(rostered, separated).differences).deep.equals([])
+      expect(compareUserIds(bridged, separated).differences).deep.equals([])
       expect(separated.userColumns.gumbo_ids).deep.equals(['user_id'])
       expect(separated.tables.game_guest_details).not.equals(undefined)
       await migrateUp(
