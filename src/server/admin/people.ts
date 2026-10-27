@@ -417,7 +417,7 @@ async function moveAndClose(
     })
   }
 
-  await moveSignIns(db, closing, keeping)
+  await keepSignIns(db, closing, keeping)
   await moveFollows(db, closing, keeping)
   await keepTheFullerName(db, closing, keeping)
   // Keys never move between user ids: the closed row's sessions and chat
@@ -462,57 +462,33 @@ async function closedInto(
 }
 
 /**
- * The closing row's ways to sign in move to the survivor, so a row that
- * absorbs an account (a roster import's row, most often) can be signed in
- * to as that person.
+ * The closed row keeps its addresses and its password: signing in through
+ * either reaches the survivor, because sign-in follows the merge
+ * (`findUserByEmail` answers as the open row at the end of the chain), and
+ * undoing the merge gives the closed row back able to sign in as it was.
  *
- * Every address moves; the survivor's primary stays primary, and the moved
- * primary becomes it only when the survivor had none. The password moves
- * when the survivor has none of its own. `login_enabled` follows by trigger.
+ * A survivor that cannot sign in but absorbs a row that could (a roster
+ * import's row taking in the person's own account, most often) is switched
+ * on, so the person signs in to it.
  */
-async function moveSignIns(
+async function keepSignIns(
   db: Kysely<Database>,
   closing: string,
   keeping: string
 ): Promise<void> {
-  const primary = await db
-    .selectFrom('user_emails')
-    .select(['id'])
-    .where('user_id', '=', keeping)
-    .where('is_primary', '=', true)
-    .executeTakeFirst()
-  if (primary != null) {
-    await db
-      .updateTable('user_emails')
-      .set({ is_primary: false })
-      .where('user_id', '=', closing)
-      .execute()
-  }
-  await db
-    .updateTable('user_emails')
-    .set({ user_id: keeping })
-    .where('user_id', '=', closing)
-    .execute()
-
   const rows = await db
     .selectFrom('users')
-    .select(['id', 'password_hash'])
+    .select(['id', 'login_enabled'])
     .where('id', 'in', [closing, keeping])
     .execute()
   const from = rows.find(row => row.id === closing)
   const to = rows.find(row => row.id === keeping)
-  if (from?.password_hash != null && to != null && to.password_hash == null) {
+  if (from?.login_enabled === true && to?.login_enabled === false)
     await db
       .updateTable('users')
-      .set({ password_hash: from.password_hash, updated_at: new Date() })
+      .set({ login_enabled: true, updated_at: new Date() })
       .where('id', '=', keeping)
       .execute()
-    await db
-      .updateTable('users')
-      .set({ password_hash: null })
-      .where('id', '=', closing)
-      .execute()
-  }
 }
 
 /** The teams the closing row follows, followed by the survivor, once each. */
