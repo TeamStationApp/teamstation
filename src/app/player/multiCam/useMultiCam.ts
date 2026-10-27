@@ -59,6 +59,7 @@ import {
   heldAhead,
   isDry,
   isReady,
+  readyWhereItStands,
   START_GAP_SEC,
   strayed,
   type TileBuffer,
@@ -1315,11 +1316,31 @@ export function useMultiCam(
   const gate = useCallback(
     (instant: number, finished?: Map<string, boolean>): boolean => {
       const now = Date.now()
-      const waits = awaited(instant, finished).map(video => {
+      const awaiting = awaited(instant, finished)
+      const alone = awaiting.length === 1
+      const waits = awaiting.map(video => {
+        const element = elements.current.get(video.id)
         // One just moved holds nothing yet where it was sent.
-        const ready =
+        let ready =
           !placeHeld(video, instant) &&
-          isReady(bufferAt(video, elements.current.get(video.id), instant))
+          isReady(bufferAt(video, element, instant))
+        // A player that says it can play where it stands is not kept waiting
+        // for seconds it will never fetch: Safari loads little ahead of a
+        // paused video, so the grid's own measure, taken at its clock, can
+        // stay short for ever — a lone angle has nobody to be left out for.
+        const since = shortSince.current.get(video.id) ?? now
+        if (
+          !ready &&
+          element != null &&
+          readyWhereItStands({
+            waitedMs: now - since,
+            readyState: element.readyState,
+            aheadSec: bufferOf(element).aheadSec,
+            alone
+          })
+        ) {
+          ready = true
+        }
         if (ready) shortSince.current.delete(video.id)
         else if (!shortSince.current.has(video.id)) {
           shortSince.current.set(video.id, now)
@@ -1349,6 +1370,9 @@ export function useMultiCam(
         from == null || fromElement == null
           ? null
           : wallAt(from, fromElement.currentTime)
+      // Never further than that, even for a tile released on its player's
+      // word: right after a seek its picture still stands where the seek
+      // came from, and starting from there undid the seek.
       const startAt =
         there != null && Math.abs(there - instant) < 3000 ? there : instant
       if (startAt !== instant) {

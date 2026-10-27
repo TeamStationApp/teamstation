@@ -1014,6 +1014,49 @@ describe('useMultiCam buffering', function () {
     expect(tiles.A.paused).equals(false)
   })
 
+  it('plays a lone angle its player calls ready, though the gate measures it short at the clock for ever (the iPhone freeze)', async function () {
+    this.timeout(8000)
+    // Safari's state when it froze: paused at 306 s, six seconds loaded and
+    // no more, ready to play by its own word; the clock 3.5 s ahead of it.
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0)], order: ['A'], atMs: T0 + 309_500 },
+      { debug: true },
+      tiles => {
+        fill(tiles.A, [306, 312])
+        tiles.A.currentTime = 306
+      }
+    )
+    // Alone, it waits only for its player's word — not two seconds, not
+    // five seconds of buffer at the clock.
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
+  })
+
+  it('holds a grid of several angles for two seconds before trusting a player that stands ready', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid(
+      {
+        videos: [video('A', 0), video('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 309_500
+      },
+      {},
+      tiles => {
+        for (const tile of [tiles.A, tiles.B]) {
+          fill(tile, [306, 312])
+          tile.currentTime = 306
+        }
+      }
+    )
+    await ticks(1)
+    expect(mc().waiting).equals(true)
+    expect(tiles.A.paused).equals(true)
+    await ticks(3)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused).equals(false)
+  })
+
   it('sends a lone recording across a start hole wider than its player jumps, and plays it', async function () {
     this.timeout(5000)
     // Three seconds of nothing where it is to start, then the footage.

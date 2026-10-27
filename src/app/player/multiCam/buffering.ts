@@ -49,6 +49,42 @@ export const BEHIND_SEC = 20
  */
 export const LEAVE_OUT_MS = 10_000
 
+/** How long the gate waits for a tile before trusting its player's own word. */
+export const HOLD_LIMIT_MS = 2000
+
+/** What a tile released on its player's word must still hold where it stands. */
+export const STAND_AHEAD_SEC = 1
+
+/** `HAVE_FUTURE_DATA`: the player can play on from where it stands. */
+const CAN_PLAY = 3
+
+/**
+ * A tile the gate has waited on long enough that its player's own word
+ * decides: it can play from where it stands, with a little in hand there.
+ *
+ * The gate measures what a tile holds at the grid's clock and wants
+ * `START_AHEAD_SEC` of it. A paused player in Safari loads only a little
+ * ahead and then stops, so that measure could stay short for ever over a
+ * player saying, correctly, that it was ready — and a lone angle has no other
+ * to be left out for. That was the freeze behind "Waiting for the pictures".
+ */
+export function readyWhereItStands(tile: {
+  waitedMs: number
+  readyState: number
+  aheadSec: number | null
+  /**
+   * The only tile the gate waits for: with no other angle to keep in step,
+   * its player's word decides at once, as a lone video's would.
+   */
+  alone?: boolean
+}): boolean {
+  return (
+    tile.waitedMs >= (tile.alone === true ? 0 : HOLD_LIMIT_MS) &&
+    tile.readyState >= CAN_PLAY &&
+    (tile.aheadSec == null || tile.aheadSec >= STAND_AHEAD_SEC)
+  )
+}
+
 /**
  * What a phone tile's player is told up front (`VideoView.native.tsx`).
  *

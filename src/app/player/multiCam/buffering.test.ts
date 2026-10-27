@@ -11,6 +11,7 @@ import {
   isReady,
   LEAVE_OUT_MS,
   neededSec,
+  readyWhereItStands,
   RECORDED_START_GAP_SEC,
   START_AHEAD_SEC,
   START_GAP_SEC,
@@ -174,5 +175,22 @@ describe('what a player holds ahead', function () {
     // In footage, or before nothing at all, it stays.
     expect(acrossStartHole([[2000, 2045]], 2009)).equals(null)
     expect(acrossStartHole([], 2009)).equals(null)
+  })
+
+  it('trusts a player that can play where it stands, once the gate has waited long enough', function () {
+    const ready = { waitedMs: 2000, readyState: 4, aheadSec: 2.5 }
+    expect(readyWhereItStands(ready)).equals(true)
+    expect(readyWhereItStands({ ...ready, waitedMs: 1999 })).equals(false)
+    expect(readyWhereItStands({ ...ready, readyState: 2 })).equals(false)
+    expect(readyWhereItStands({ ...ready, aheadSec: 0.5 })).equals(false)
+    // A phone's player says nothing of its buffer; its word is its readiness.
+    expect(readyWhereItStands({ ...ready, aheadSec: null })).equals(true)
+    // The only angle: its player's word decides at once.
+    expect(readyWhereItStands({ ...ready, waitedMs: 0, alone: true })).equals(
+      true
+    )
+    expect(readyWhereItStands({ ...ready, waitedMs: 0, alone: false })).equals(
+      false
+    )
   })
 })
