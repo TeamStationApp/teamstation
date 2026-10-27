@@ -18,6 +18,7 @@ import { createDm } from './dms'
 import { appendLog, joinMembers, openGrantRequests } from './membershipLog'
 import {
   ChatReconciler,
+  distinctMarks,
   drainDirty,
   memberNow,
   reconcileConversation,
@@ -597,6 +598,64 @@ describe('the chat reconciler (U5)', function () {
     await sweep(db, fixture.now)
     const org = await conversation('leagueOrg', fixture.seed.leagueId)
     expect(await members(org.id)).deep.equals(['L'])
+  })
+
+  it('reads a scope marked many times while it was behind once, and leaves nothing queued', async function () {
+    await fixture.drain()
+    const league = {
+      scope_type: 'league' as const,
+      scope_id: fixture.seed.leagueId
+    }
+    const team = {
+      scope_type: 'team' as const,
+      scope_id: fixture.seed.teams.hawks
+    }
+    await db
+      .insertInto('chat_dirty')
+      .values([league, team, league, league, team])
+      .execute()
+    expect(await drainDirty(db, fixture.now)).equals(2)
+    expect(await db.selectFrom('chat_dirty').selectAll().execute()).deep.equals(
+      []
+    )
+    expect(
+      distinctMarks([league, team, league, { ...team }]).map(
+        mark => mark.scope_type
+      )
+    ).deep.equals(['league', 'team'])
+  })
+
+  it('puts back a scope marked twice once when a conversation fails', async function () {
+    const failing = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'transaction') {
+          return () => {
+            throw new Error('down')
+          }
+        }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const league = {
+      scope_type: 'league' as const,
+      scope_id: fixture.seed.leagueId
+    }
+    await db.insertInto('chat_dirty').values([league, league]).execute()
+    let threw = false
+    try {
+      await drainDirty(failing, fixture.now)
+    } catch {
+      threw = true
+    }
+    expect(threw).equals(true)
+    expect(
+      await db
+        .selectFrom('chat_dirty')
+        .select(['scope_type', 'scope_id'])
+        .execute()
+    ).deep.equals([league])
+    await fixture.drain()
   })
 
   it('puts the marks back when a conversation fails', async function () {
