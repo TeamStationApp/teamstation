@@ -12,7 +12,9 @@ import {
 import type { StoredGame } from '../../common/scoring/session'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
+import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf, contextParts } from '../scoring/replayContext'
+import { gameNamesDigest } from '../users/nameBook'
 import { type SpeechSettings, synthesize } from './speech'
 
 /**
@@ -58,8 +60,9 @@ export async function narrationsFor(
 /**
  * The game's timeline and every step's sentence, as it is stored now. They
  * are kept by what they read: a digest the database works out of the plays,
- * the at-bat in progress, both teams and the fence. So a sentence already
- * written reads no play, and a renamed team is named anew.
+ * the at-bat in progress, both teams, the fence and the names of the game's
+ * players (`gameNames`). So a sentence already written reads no play, and a
+ * renamed team or player is named anew.
  */
 async function narrated(
   db: Kysely<Database>,
@@ -84,7 +87,12 @@ async function narrated(
     .executeTakeFirstOrThrow()
   const currentPlay = (game.currentPlay ?? null) as CurrentPlay | null
   const parts = await contextParts(db, gameId, game)
-  const key = `${gameId}:${digestOf(plays, currentPlay, parts)}`
+  const key = `${gameId}:${digestOf(
+    plays,
+    currentPlay,
+    parts,
+    await gameNamesDigest(db, gameId)
+  )}`
   const cached = timelines.get(key)
   if (cached != null) {
     timelines.delete(key)
@@ -92,10 +100,11 @@ async function narrated(
     return cached
   }
   const rows = await readPlays(db, gameId)
-  const stored: StoredGame = {
+  // Spoken with the names the game's players have now.
+  const stored: StoredGame = await resolveScoringGame(db, {
     plays: rows.map(row => row.gumbo as GumboPlay),
     currentPlay
-  }
+  })
   const context = await contextOf(db, gameId, game, stored, parts)
   const timeline = context == null ? null : replayTimelineOf(stored, context)
   const made: Narrated = {

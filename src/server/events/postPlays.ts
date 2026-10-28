@@ -90,6 +90,13 @@ export interface PostOptions {
    * passes it; the server's own writes pass none and are not checked.
    */
   expectedGeneration?: number
+  /**
+   * The teams whose players' first and last names the answer
+   * carries (`ScoringReadOptions.halves`), asked of the locked game: the
+   * route answers its sender the teams whose lineups he may save. None when
+   * absent.
+   */
+  halves?: (trx: Trx, game: PostedGame) => Promise<readonly string[]>
 }
 
 /** The refusal of a post made against the game before its last reset. */
@@ -480,10 +487,14 @@ export async function postGamePlays(
     )
       await noteGameFigures(trx, gameId)
     else noteScopeChange(trx, { gameId })
-    const resolved = await resolveScoringGame(trx, {
-      plays: taggedStored.map(row => row.gumbo as GumboPlay),
-      currentPlay: taggedCurrent as CurrentPlay | null
-    })
+    const resolved = await resolveScoringGame(
+      trx,
+      {
+        plays: taggedStored.map(row => row.gumbo as GumboPlay),
+        currentPlay: taggedCurrent as CurrentPlay | null
+      },
+      { halves: (await options.halves?.(trx, game)) ?? [] }
+    )
     const sides = teamsOfRow(game)
     const answer: PostedPlays = {
       plays: taggedStored.map((row, index) => ({

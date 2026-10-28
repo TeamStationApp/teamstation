@@ -56,10 +56,9 @@ import {
 import { asGumboId } from '../../common/userId'
 import {
   canKeepSongs,
-  canScore,
   canSeeGame,
   canSeeTeam,
-  isHeadCoach,
+  lineupTeams,
   roleScopes,
   visibleScopes
 } from '../access'
@@ -273,11 +272,7 @@ export function lineupRoutes(
         const roles = await roleScopes(reader, actor.userId, actor.isAdmin)
         const teamId =
           body.side === 'home' ? game.home_team_id : game.away_team_id
-        if (
-          !isHeadCoach(roles, teamId) &&
-          !canScore(roles, game.home_team_id) &&
-          !canScore(roles, game.away_team_id)
-        )
+        if (!lineupTeams(roles, game).includes(teamId))
           throw forbidden(
             "Only the team's head coach or a scorekeeper may save its lineup"
           )

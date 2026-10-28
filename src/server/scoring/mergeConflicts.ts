@@ -31,7 +31,7 @@ function assertAffectedHistoryRecorded(
     if (document == null || storedRecordOf(document) != null) continue
     const ids = scoringIdsIn({
       plays: [],
-      currentPlay: document as CurrentPlay
+      currentPlay: document
     }).filter(id => affected.has(id))
     if (ids.length === 0) continue
     throw conflict(

@@ -3,7 +3,7 @@ import { Client } from 'pg'
 
 import { systemCancelled } from '../../common/gameApprovals'
 import type { GameChange } from '../../common/gameSocket'
-import type { CurrentPlay } from '../../common/gumboPlay'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { teamsOfRow } from '../../common/teamLists'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
@@ -249,6 +249,15 @@ export class GameFanout {
       )
         return undefined
       const plays = change.kind === 'plays' ? await readPlays(trx, gameId) : []
+      // Named from the accounts, as `GET /games/:gameId/events` answers
+      // them; the digest stays of the stored rows.
+      const named =
+        change.kind === 'plays'
+          ? await resolveScoringGame(trx, {
+              plays: plays.map(row => row.gumbo as GumboPlay),
+              currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
+            })
+          : undefined
       const head = {
         type: 'change' as const,
         gameId,
@@ -289,9 +298,9 @@ export class GameFanout {
                   ...head,
                   kind: 'plays',
                   data: {
-                    plays: plays.map(row => ({
+                    plays: plays.map((row, index) => ({
                       ...playJson(row),
-                      gumbo: playForWire(row.gumbo, teamsOfRow(game))
+                      gumbo: playForWire(named!.plays[index], teamsOfRow(game))
                     })),
                     // Folded once the lock is let go, below.
                     currentPlay: null,
@@ -309,7 +318,7 @@ export class GameFanout {
         // once the row is let go.
         fold:
           message.kind === 'plays'
-            ? await noticedAtBat(trx, game, plays.length > 0)
+            ? await pregameFold(trx, game.id, game, named!)
             : undefined,
         message,
         recipients: subscribers.filter((_, i) => seeing[i])
@@ -359,31 +368,4 @@ export class GameFanout {
       this.listen().catch(() => undefined)
     }, this.retryMs)
   }
-}
-
-/**
- * The at-bat a `plays` notice carries, as `GET /games/:gameId/events`
- * answers it: before the first pitch, the pregame lineups folded into a
- * current play (`pregameFold`). What it reads is read with `db`; the replay
- * it answers reads nothing.
- */
-async function noticedAtBat(
-  db: Kysely<Database>,
-  game: {
-    id: string
-    home_team_id: string
-    away_team_id: string
-    currentPlay: unknown
-    pregame: unknown
-  },
-  hasPlays: boolean
-): Promise<() => Promise<unknown>> {
-  const atBat = atBatOf(game, hasPlays)
-  if (game.currentPlay != null || hasPlays || atBat == null)
-    return async () => atBat
-  const resolved = await resolveScoringGame(db, {
-    plays: [],
-    currentPlay: atBat as CurrentPlay
-  })
-  return await pregameFold(db, game.id, game, resolved)
 }

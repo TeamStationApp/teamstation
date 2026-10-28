@@ -104,6 +104,12 @@ describe('the lineup routes (U11)', function () {
     home: { id: home, name: 'Hosts' }
   }
 
+  const displayOf = (user: { userId: number }): string => {
+    const at = players.indexOf(user as (typeof players)[number])
+    if (at < 0) return `User ${user.userId}`
+    return at < 9 ? `A${at + 1}` : `H${at - 8}`
+  }
+
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
     try {
@@ -126,7 +132,9 @@ describe('the lineup routes (U11)', function () {
         user => ({
           id: user.userId,
           legacyId: user.legacyId,
-          display_name: `User ${user.userId}`,
+          // A player under the name the game's setup gives him, as reads
+          // name him from his account.
+          display_name: displayOf(user),
           is_admin: user === admin,
           created_at: now,
           updated_at: now

@@ -12,6 +12,7 @@ import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import type { Database } from '../db/database'
 import { atBatInProgress } from '../events/atBatInProgress'
+import { resolveScoringGame } from './openRow'
 import { contextOf } from './replayContext'
 
 /**
@@ -94,10 +95,10 @@ export async function computeLineTimeline(
         .where('gameId', '=', gameId)
         .orderBy('atBatIndex')
         .execute()
-      const stored = {
+      const stored = await resolveScoringGame(trx, {
         plays: plays.map(row => row.gumbo as GumboPlay),
         currentPlay: game.currentPlay as CurrentPlay | null
-      }
+      })
       const context =
         stored.plays.length === 0 && stored.currentPlay == null
           ? null

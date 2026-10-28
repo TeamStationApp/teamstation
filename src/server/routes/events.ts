@@ -17,7 +17,7 @@ import {
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import { teamsOfRow } from '../../common/teamLists'
-import { canScore, roleScopes } from '../access'
+import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
 import { lockKeys } from '../db/advisoryLocks'
@@ -256,7 +256,14 @@ export function eventRoutes(
                     resultId: JSON.stringify(kept)
                   })
                 },
-            { expectedGeneration: body.generation }
+            {
+              expectedGeneration: body.generation,
+              halves: async (trx, game) =>
+                lineupTeams(
+                  await roleScopes(trx, actor.userId, actor.isAdmin),
+                  game
+                )
+            }
           )
           wrote = true
           return { status: 200, body: response }
@@ -272,7 +279,15 @@ export function eventRoutes(
             await db
               .transaction()
               .setIsolationLevel('repeatable read')
-              .execute(async trx => await storedGameRead(trx, gameId))
+              .execute(
+                async trx =>
+                  await storedGameRead(trx, gameId, async game =>
+                    lineupTeams(
+                      await roleScopes(trx, actor.userId, actor.isAdmin),
+                      game
+                    )
+                  )
+              )
           )
           return { status: 200, body: { ...current, ...kept } }
         }
@@ -302,7 +317,10 @@ export function eventRoutes(
         // this holds the game waits, and takes a revision newer than this.
         res.setHeader(REVISION_HEADER, await readSyncClock(trx))
         await reconcileEventTags(trx, gameId)
-        return await storedGameRead(trx, gameId)
+        // Players' halves for whoever may save their lineups.
+        return await storedGameRead(trx, gameId, async game =>
+          lineupTeams(await roleScopes(trx, actor.userId, actor.isAdmin), game)
+        )
       })
       // The pregame fold replays once the game row is let go.
       res.json(await folded(result))
@@ -446,7 +464,11 @@ interface StoredGameAnswer {
  */
 async function storedGameRead(
   db: Kysely<Database>,
-  gameId: string
+  gameId: string,
+  halves: (game: {
+    home_team_id: string
+    away_team_id: string
+  }) => Promise<readonly string[]>
 ): Promise<{
   answer: StoredGameAnswer
   fold: () => Promise<unknown>
@@ -468,10 +490,14 @@ async function storedGameRead(
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
   const current = atBatOf(game, stored.length > 0)
-  const resolved = await resolveScoringGame(db, {
-    plays: stored.map(row => row.gumbo as GumboPlay),
-    currentPlay: current as CurrentPlay | null
-  })
+  const resolved = await resolveScoringGame(
+    db,
+    {
+      plays: stored.map(row => row.gumbo as GumboPlay),
+      currentPlay: current as CurrentPlay | null
+    },
+    { halves: await halves(game) }
+  )
   const teams = teamsOfRow(game)
   const answer: StoredGameAnswer = {
     plays: stored.map((row, index) => ({

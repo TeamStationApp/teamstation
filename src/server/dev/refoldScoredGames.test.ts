@@ -565,8 +565,8 @@ describe('refolding the stored plays (U11)', function () {
       )!.details.runner = other
     })
     for (const [gameId, change] of [
-      [batter, 'play 1 batter Away 7 → Away 2'],
-      [runner, 'play 1 runner from 1B Away 7 → Away 1']
+      [batter, 'play 1 batter Player 6 → Player 1'],
+      [runner, 'play 1 runner from 1B Player 6 → Player 0']
     ]) {
       const before = await snapshot(gameId)
       const lines: string[] = []
@@ -659,7 +659,7 @@ describe('refolding the stored plays (U11)', function () {
     expect(await runRefold(db, ['--game', old], print)).equals(1)
     const skipped =
       `skipped ${old}: rebuilding would change who played: ` +
-      'play 15 batter Bench → Away 1'
+      'play 15 batter Bench → Player 0'
     expect(lines).deep.equals([
       skipped,
       '0 changed, 0 unchanged, 1 skipped (preview)',

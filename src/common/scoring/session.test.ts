@@ -22,6 +22,7 @@ import {
   type StoredGame
 } from './session'
 import { asGameState, type GameState, setupOf, type Side } from './state'
+import { namesIn, withNames } from './storedNames'
 
 /** A server in memory that records every post and can be made to fail. */
 class FakeStore implements EventStore {
@@ -221,6 +222,35 @@ describe('a scoring session', function () {
     expect(baseIds(again.session.state)).deep.equals([null, null, null])
     await again.session.flush()
     expect((await open(store)).session.state.liveData.linescore.outs).equals(0)
+  })
+
+  it('posts nothing when a player is renamed between its load and its save', async () => {
+    const { session, store } = await open()
+    for (const action of [strike, strike, strike])
+      expect(session.apply(action).problems).deep.equals([])
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    session.apply(ball)
+    await session.flush()
+    const posts = store.posts.length
+    const batter = store.plays.get(0)!.play.matchup!.batter!.id!
+    // Every read names the batter anew, as the server does after a rename.
+    const renamed = <T>(document: T): T => {
+      const names = namesIn(document)
+      return withNames(document, id =>
+        id === batter ? 'Ichiro S' : names.get(id)
+      )
+    }
+    for (const row of store.plays.values()) row.play = renamed(row.play)
+    store.current = renamed(store.current)
+    expect(await session.reload()).equals(true)
+    expect(session.state.gameData.players[batter].fullName).equals('Ichiro S')
+    await session.flush()
+    expect(store.posts).has.length(posts)
+    // The next pitch posts the at-bat it changes, and no play renamed.
+    session.apply(ball)
+    await session.flush()
+    expect(store.posts).has.length(posts + 1)
+    expect(store.posts.at(-1)!.plays).deep.equals([])
   })
 
   it('coalesces the real hit-by-pitch event and retains its tag on completion', async () => {

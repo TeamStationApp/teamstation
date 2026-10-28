@@ -148,7 +148,8 @@ describe('the game as a scoreboard source', function () {
       minted.map((made, i) => ({
         id: made.userId,
         legacyId: made.legacyId,
-        display_name: `Player ${i}`,
+        // The names the setup gives them, as a read names them from here.
+        display_name: i < 9 ? `Away ${i + 1}` : `Home ${i - 8}`,
         created_at: now,
         updated_at: now
       }))

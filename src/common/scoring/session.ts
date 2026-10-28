@@ -34,6 +34,7 @@ import {
   setupOf,
   type Side
 } from './state'
+import { withoutNames } from './storedNames'
 
 /**
  * A game being scored, and kept on the server as it is scored.
@@ -235,15 +236,24 @@ interface Displaced {
   consumed: number
 }
 
-/** A folded play as the server is sent it, written out once per play. */
+/**
+ * A folded play as the server stores it, written out once per play: in its
+ * stored form (`withoutNames`), so a play whose only change is a player's
+ * name is never written again.
+ */
 const writtenPlays = new WeakMap<GumboPlay, string>()
 function written(play: GumboPlay): string {
   let text = writtenPlays.get(play)
   if (text == null) {
-    text = JSON.stringify(play)
+    text = JSON.stringify(withoutNames(play))
     writtenPlays.set(play, text)
   }
   return text
+}
+
+/** The at-bat in progress as the server stores it, written out. */
+function writtenCurrent(current: CurrentPlay | null | undefined): string {
+  return JSON.stringify(current == null ? current : withoutNames(current))
 }
 
 export class ScoringSession {
@@ -379,7 +389,7 @@ export class ScoringSession {
     options: SessionOptions = {}
   ): ScoringSession {
     const session = new ScoringSession(store, gameId, game, options)
-    session.postedCurrent = JSON.stringify(session.picture().current)
+    session.postedCurrent = writtenCurrent(session.picture().current)
     return session
   }
 
@@ -446,9 +456,8 @@ export class ScoringSession {
         session.stored.add(play.about.atBatIndex)
     const picture = session.picture()
     for (const [index, play] of picture.plays)
-      if (session.stored.has(index))
-        session.posted.set(index, JSON.stringify(play))
-    session.postedCurrent = JSON.stringify(picture.current)
+      if (session.stored.has(index)) session.posted.set(index, written(play))
+    session.postedCurrent = writtenCurrent(picture.current)
     // A game read back only in part is shown and never written: saving it
     // would remove the plays that could not be read.
     if (replayed.problems.length > 0)
@@ -546,7 +555,7 @@ export class ScoringSession {
         .map(([index]) => index)
     )
     const currentAcknowledged =
-      this.postedCurrent === JSON.stringify(before.current)
+      this.postedCurrent === writtenCurrent(before.current)
     if (!this.tagIdentities.setTag(targetId, tag)) return false
     this.tagSnapshot++
     this.revision++
@@ -561,7 +570,7 @@ export class ScoringSession {
     for (const [index, play] of picture.plays)
       if (acknowledged.has(index)) this.posted.set(index, written(play))
     if (currentAcknowledged)
-      this.postedCurrent = JSON.stringify(picture.current)
+      this.postedCurrent = writtenCurrent(picture.current)
     this.notify()
     return true
   }
@@ -1549,7 +1558,7 @@ export class ScoringSession {
     const remove = [...this.stored]
       .filter(index => !picture.plays.has(index) && index !== reopened)
       .sort((a, b) => a - b)
-    const current = JSON.stringify(picture.current)
+    const current = writtenCurrent(picture.current)
     return {
       plays,
       remove,
@@ -1659,7 +1668,7 @@ export class ScoringSession {
         this.stored.delete(index)
       }
       if (change.currentPlay !== undefined)
-        this.postedCurrent = JSON.stringify(change.currentPlay)
+        this.postedCurrent = writtenCurrent(change.currentPlay)
       this.savedLog = covering
       this.savedTimes = coveringTimes
       this.savedPlaybackTimes = coveringPlaybackTimes
