@@ -46,7 +46,12 @@ const appSuites = [
   'src/app/scoring/rosterLive.test.tsx',
   'src/app/components/AddPersonGlyph.test.tsx',
   'src/app/hooks/useRosterCandidates.test.tsx',
-  'src/app/scoring/ExistingPlayerSheet.test.tsx'
+  'src/app/scoring/ExistingPlayerSheet.test.tsx',
+  'src/app/scoring/existingPlayer.test.tsx',
+  'src/app/scoring/PlayerEntrySheet.test.tsx',
+  'src/app/scoring/DefensiveRosterSheet.test.tsx',
+  'src/app/scoring/scoringSheets.test.tsx',
+  'src/app/screens/CoachGameScreen.test.tsx'
 ]
 
 /**

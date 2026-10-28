@@ -35,19 +35,23 @@ export function ExistingPlayerSheet({
   teamId,
   gameId,
   onChoose,
-  onClose
+  onClose,
+  children
 }: {
   client: TeamStationClient
   teamId: string
   gameId?: string
   onChoose: (candidate: RosterCandidate) => void
   onClose: () => void
+  /** A sheet opened over this one, such as Add to Roster for the choice. */
+  children?: React.ReactNode
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
   const surface = theme.scoringSurface
   const [query, setQuery] = useState('')
   const [fieldHeight, setFieldHeight] = useState(FIELD_HEIGHT)
   const list = useRosterCandidates({ client, teamId, gameId, query })
+  const covered = React.Children.toArray(children).length > 0
   const window = useWindowDimensions()
   const line = {
     color: surface.secondaryText,
@@ -169,19 +173,24 @@ export function ExistingPlayerSheet({
             style={{ flex: 1 }}
           />
         </View>
-        <View
-          onLayout={event => {
-            setFieldHeight(event.nativeEvent.layout.height)
-          }}
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
-        >
-          <ScoringPlayerSearchField
-            value={query}
-            onChangeText={setQuery}
-            disabled={list.offline}
-          />
-        </View>
+        {/* The sheet over this one is translucent: the field would show
+            through it. */}
+        {!covered && (
+          <View
+            onLayout={event => {
+              setFieldHeight(event.nativeEvent.layout.height)
+            }}
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
+          >
+            <ScoringPlayerSearchField
+              value={query}
+              onChangeText={setQuery}
+              disabled={list.offline}
+            />
+          </View>
+        )}
       </KeyboardAvoidingView>
+      {children}
     </ScoringSheet>
   )
 }

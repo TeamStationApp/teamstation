@@ -31,6 +31,8 @@ import {
   type FakeDictation,
   fakeDictation
 } from '../../test/dictationFakes'
+import { candidate } from '../../test/fakeCandidateClient'
+import { measureBoxes } from '../../test/measureBoxes'
 import { completeMotions } from '../../test/scoringHelpers'
 import { App } from '../App'
 import {
@@ -1036,6 +1038,69 @@ describe('Coach Game (U25)', function () {
       'saved and remounted'
     )
     expect(document.body.textContent).includes('Mookie B')
+  })
+
+  it("adds an existing player to the coach's roster and as a pool player", async () => {
+    const held = server()
+    const sent: unknown[] = []
+    const betts = {
+      ...roster('home')[0],
+      userId: userIdOfGumbo(301),
+      gumboId: 301,
+      shortName: 'Mookie B'
+    }
+    held.client.rosterCandidates = async ask => {
+      sent.push({ search: ask.teamId, game: ask.gameId })
+      return [candidate('Mookie Betts', { userId: betts.userId })]
+    }
+    held.client.addExistingRosterPlayer = async (teamId, body) => {
+      sent.push({ roster: teamId, body })
+      return { entry: betts, noticeId: 'req_1' }
+    }
+    held.client.addExistingGuest = async (gameId, side, body, teamId) => {
+      sent.push({ guest: { gameId, side, teamId }, body })
+      return { pendingRequestId: 'req_2' }
+    }
+    const restore = measureBoxes()
+    try {
+      await coach(held)
+      await click('Roster', 'tab')
+      await click('Add Existing Player')
+      await click('Choose Mookie B')
+      await click('Add to Roster')
+      expect(document.body.textContent).includes(
+        'Mookie B was added. Their guardians were notified.'
+      )
+      await click('Add Existing Player')
+      await click('Choose Mookie B')
+      await click('Add as Pool Player')
+      expect(document.body.textContent).includes(
+        "This needs a guardian's approval first."
+      )
+      expect(sent).deep.equals([
+        { search: 'home', game: 'g1' },
+        {
+          roster: 'home',
+          body: { userId: betts.userId, jersey: null, positions: [] }
+        },
+        { search: 'home', game: 'g1' },
+        {
+          guest: { gameId: 'g1', side: 'home', teamId: 'home' },
+          body: { userId: betts.userId, jersey: null, positions: [] }
+        }
+      ])
+      // Back out of Add to Roster, then the search.
+      for (let sheet = 0; sheet < 2; sheet++)
+        await act(async () => {
+          const cancels = document.querySelectorAll<HTMLElement>(
+            '[aria-label="Cancel"]'
+          )
+          cancels[cancels.length - 1].click()
+        })
+      expect(node('Choose Mookie B')).equals(null)
+    } finally {
+      restore()
+    }
   })
 
   it('edits rostered player settings from coaching and preserves pending lineup changes', async () => {

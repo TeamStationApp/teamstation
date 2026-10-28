@@ -3272,6 +3272,18 @@ function ScoringPanel(props: {
                     rosterPlayerBody(player)
                   )
                 }
+                client={props.client}
+                onAddExistingRosterPlayer={async (teamId, body) =>
+                  await props.client.addExistingRosterPlayer(teamId, body)
+                }
+                onAddExistingGuest={async (side, body) =>
+                  await props.client.addExistingGuest(
+                    state.session.gamePk,
+                    side,
+                    body,
+                    openedTeam(side, state.session.gameData.teams[side].id)
+                  )
+                }
                 canEditTeams={props.rosterRights}
                 rosterLoading={props.detailsLoading}
                 rosterError={props.detailsProblem}

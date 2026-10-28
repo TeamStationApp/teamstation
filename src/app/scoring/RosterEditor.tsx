@@ -15,7 +15,16 @@ import {
   View
 } from 'react-native'
 
-import type { RosterEntry } from '../../common/api'
+import type {
+  ExistingPlayerAnswer,
+  RosterCandidate,
+  RosterEntry,
+  TeamStationClient
+} from '../../common/api'
+import {
+  type ExistingRosterPlayer,
+  PLAYER_POSITIONS as STORED_POSITIONS
+} from '../../common/playerSettings'
 import {
   type ChosenRosterCommand,
   ROSTER_TAB,
@@ -37,18 +46,24 @@ import { useTheme } from '../theme/ThemeContext'
 import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
+import { ExistingPlayerSheet } from './ExistingPlayerSheet'
 import { GameRosterHeader } from './GameRosterHeader'
 import type { LineupQrResult } from './lineupQrImport'
 import { LineupShareSheet } from './LineupShareSheet'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
+  addPlayerDraft,
   addRosteredPlayer,
   draftOfLocalPlayer,
   editLocalPlayerDraft,
   type PlayerDraft
 } from './playerDraft'
-import { PlayerEntrySheet } from './PlayerEntrySheet'
+import {
+  type ExistingChoice,
+  type ExistingOutcome,
+  PlayerEntrySheet
+} from './PlayerEntrySheet'
 import type { QrScannerProps } from './qrScannerProps'
 import type { ChatTurn } from './RosterChat'
 import {
@@ -184,6 +199,9 @@ export function RosterEditor({
   canEditTeams,
   onCreatePlayer,
   onCreateGuest,
+  client,
+  onAddExistingRosterPlayer,
+  onAddExistingGuest,
   onCancel,
   onReload,
   onSave
@@ -269,6 +287,18 @@ export function RosterEditor({
    */
   onCreatePlayer?: (teamId: string, player: PlayerDraft) => Promise<RosterEntry>
   onCreateGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
+  /** Searches the players Add Existing Player offers; without it the row is off. */
+  client?: TeamStationClient
+  /** Add to Roster for an existing player, on a team the caller manages. */
+  onAddExistingRosterPlayer?: (
+    teamId: string,
+    body: ExistingRosterPlayer
+  ) => Promise<ExistingPlayerAnswer>
+  /** Add as Pool Player: this game only, on this side. */
+  onAddExistingGuest?: (
+    side: Side,
+    body: ExistingRosterPlayer
+  ) => Promise<ExistingPlayerAnswer>
   /**
    * Save Rosters, lit when the draft validates and has changed or is
    * `unaccepted`. A scorekeeper's screen applies the draft and closes the
@@ -324,14 +354,26 @@ export function RosterEditor({
   const [areaHeight, setAreaHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const [chosen, setChosen] = useState<RosterCandidate>()
   const [sharing, setSharing] = useState(false)
   // The line under the lists after an import, held with the draft and side
   // it describes, so the next change or a switch of team clears it.
+  /** The line an existing-player add leaves, until its draft lands. */
+  const addedNote = useRef<{ side: Side; text: string } | undefined>(undefined)
   const [importNote, setImportNote] = useState<{
     draft: ScoringSessionState
     side: Side
     text: string
   }>()
+  // The add's line names the draft it landed in, so the next change clears
+  // it as an import's does.
+  useEffect(() => {
+    const held = addedNote.current
+    if (held == null) return
+    addedNote.current = undefined
+    setImportNote({ draft, ...held })
+  }, [draft])
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
   const [nextBatter, setNextBatter] = useState<number | undefined>(
@@ -454,6 +496,56 @@ export function RosterEditor({
   const canEditLocal = rosterLoading !== true && state.readOnly !== true
   const canCreateRosterPlayer =
     canEditTeams == null || canEditTeams[draft.gameData.teams[side].id]
+  /**
+   * Puts an existing player the server took into the draft, with the
+   * candidate's short name and hands and the jersey and positions chosen,
+   * and says so under the list. A pending add changes nothing.
+   */
+  const joinExisting =
+    (
+      candidate: RosterCandidate,
+      send: (body: ExistingRosterPlayer) => Promise<ExistingPlayerAnswer>,
+      pool: boolean
+    ) =>
+    async (choice: ExistingChoice): Promise<ExistingOutcome> => {
+      const answer = await send({
+        userId: candidate.userId,
+        jersey: choice.jersey === '' ? null : choice.jersey,
+        positions: STORED_POSITIONS.filter(position =>
+          choice.positions.includes(position)
+        )
+      })
+      if ('pendingRequestId' in answer) return 'pending'
+      const { entry } = answer
+      const player: PlayerDraft = {
+        firstName: candidate.shortParts.first,
+        lastName: candidate.shortParts.last,
+        jersey: choice.jersey,
+        bats: candidate.bats ?? 'right',
+        throws: candidate.throws,
+        positions: choice.positions
+      }
+      const teamId = draft.gameData.teams[side].id
+      if (!pool)
+        setCreated(held => ({
+          ...held,
+          [teamId]: [...(held[teamId] ?? []), entry]
+        }))
+      // Onto the draft as it stands now, not as it was before the request:
+      // anything that changed meanwhile stays.
+      addedNote.current = {
+        side,
+        text:
+          answer.noticeId == null
+            ? `${candidate.shortName} was added.`
+            : `${candidate.shortName} was added. Their guardians were notified.`
+      }
+      edit(next => {
+        if (pool) addPlayerDraft(next, side, player, entry.gumboId!)
+        else addRosteredPlayer(next, side, entry, player)
+      })
+      return 'added'
+    }
   const addPlaceholders = async (count: number): Promise<void> => {
     if (onCreateGuest == null) throw new Error('Unable to create a guest')
     const next = copyState(draft)
@@ -731,6 +823,13 @@ export function RosterEditor({
           onCreatePlayer={() => {
             setAdding(true)
           }}
+          {...(client == null || onAddExistingGuest == null
+            ? {}
+            : {
+                onAddExisting: () => {
+                  setSearching(true)
+                }
+              })}
           {...(coach
             ? {}
             : {
@@ -951,6 +1050,52 @@ export function RosterEditor({
           </View>
         </RosterDragGroup>
       </View>
+      {searching && client != null && onAddExistingGuest != null && (
+        <ExistingPlayerSheet
+          client={client}
+          teamId={draft.gameData.teams[side].id}
+          gameId={draft.gamePk}
+          onChoose={setChosen}
+          onClose={() => {
+            setSearching(false)
+          }}
+        >
+          {chosen != null && (
+            <PlayerEntrySheet
+              key={chosen.userId}
+              existing={{
+                candidate: chosen,
+                ...(canCreateRosterPlayer && onAddExistingRosterPlayer != null
+                  ? {
+                      onAddToRoster: joinExisting(
+                        chosen,
+                        async body =>
+                          await onAddExistingRosterPlayer(
+                            draft.gameData.teams[side].id,
+                            body
+                          ),
+                        false
+                      )
+                    }
+                  : {}),
+                onAddAsPool: joinExisting(
+                  chosen,
+                  async body => await onAddExistingGuest(side, body),
+                  true
+                )
+              }}
+              onAddPlaceholders={addPlaceholders}
+              onCancel={() => {
+                setChosen(undefined)
+              }}
+              onClose={() => {
+                setChosen(undefined)
+                setSearching(false)
+              }}
+            />
+          )}
+        </ExistingPlayerSheet>
+      )}
       {adding && !canCreateRosterPlayer && (
         <PlaceholderPlayersSheet
           onClose={() => {
