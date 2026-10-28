@@ -47,15 +47,20 @@ import { migration048DropStatRollups } from './048dropStatRollups'
 import { migration049ExpandedStats } from './049expandedStats'
 import { migration050CreationHierarchy } from './050creationHierarchy'
 import { migration050OAuth } from './050oauth'
+import { migration050TeamFollows } from './050teamFollows'
 import { migration051EventTags } from './051eventTags'
+import { migration051GuardiansAndAccounts } from './051guardiansAndAccounts'
 import { migration051PersonalRequests } from './051personalRequests'
+import { migration052Chat } from './052chat'
 import { migration052SeasonGameRefinements } from './052seasonGameRefinements'
 import { migration052SignOutMergedAccounts } from './052signOutMergedAccounts'
+import { migration053ChatPreferences } from './053chatPreferences'
 import { migration053Follows } from './053follows'
 import { migration054AppOrigin } from './054appOrigin'
 import { migration054AssistantRole } from './054assistantRole'
 import { migration055GuardianRequests } from './055guardianRequests'
 import { migration056OneMemberKind } from './056oneMemberKind'
+import { migration057ChatMasterCompatibility } from './057chatMasterCompatibility'
 import { migration057EventInfo } from './057eventInfo'
 import { migration058EventDetails } from './058eventDetails'
 import { migration059AccountMail } from './059accountMail'
@@ -67,6 +72,7 @@ import { migration064MembershipRequests } from './064membershipRequests'
 import { migration065RadarReadings } from './065radarReadings'
 import { migration066GameGuests } from './066gameGuests'
 import { migration067GameUnroster } from './067gameUnroster'
+import { migration068ChatUserIdBridge } from './068chatUserIdBridge'
 import { migration068GumboIds } from './068gumboIds'
 import { migration069UserIds } from './069userIds'
 import { migration070PlayerGumboIds } from './070playerGumboIds'
@@ -77,6 +83,7 @@ import { migration073SyncClock } from './073syncClock'
 import { migration073UmpireManagement } from './073umpireManagement'
 import { migration074OptionalUmpires } from './074optionalUmpires'
 import { migration074SyncIdempotency } from './074syncIdempotency'
+import { migration075ChatCanonicalUserIds } from './075chatCanonicalUserIds'
 import { migration075UmpireTypes } from './075umpireTypes'
 import { migration076UmpireNotes } from './076umpireNotes'
 import { migration077AnalyticsEvents } from './077analyticsEvents'
@@ -90,6 +97,8 @@ import { migration083PlayGeneration } from './083playGeneration'
 import { migration084GamePlayArchives } from './084gamePlayArchives'
 import { migration085Tess } from './085tess'
 import { migration086FieldSizes } from './086fieldSizes'
+import { migration087LoginOffOnly } from './087loginOffOnly'
+import { migration088ChatDirtyQueue } from './088chatDirtyQueue'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -139,6 +148,10 @@ export const migrations: Migration[] = [
   migration047TeamStation,
   migration048DropStatRollups,
   migration049ExpandedStats,
+  migration050TeamFollows,
+  migration051GuardiansAndAccounts,
+  migration052Chat,
+  migration053ChatPreferences,
   migration050CreationHierarchy,
   migration050OAuth,
   migration051EventTags,
@@ -150,6 +163,7 @@ export const migrations: Migration[] = [
   migration054AssistantRole,
   migration055GuardianRequests,
   migration056OneMemberKind,
+  migration057ChatMasterCompatibility,
   migration057EventInfo,
   migration058EventDetails,
   migration059AccountMail,
@@ -161,6 +175,7 @@ export const migrations: Migration[] = [
   migration065RadarReadings,
   migration066GameGuests,
   migration067GameUnroster,
+  migration068ChatUserIdBridge,
   migration068GumboIds,
   migration069UserIds,
   migration070PlayerGumboIds,
@@ -171,6 +186,7 @@ export const migrations: Migration[] = [
   migration073UmpireManagement,
   migration074OptionalUmpires,
   migration074SyncIdempotency,
+  migration075ChatCanonicalUserIds,
   migration075UmpireTypes,
   migration076UmpireNotes,
   migration077Venues,
@@ -183,5 +199,7 @@ export const migrations: Migration[] = [
   migration083PlayGeneration,
   migration084GamePlayArchives,
   migration085Tess,
-  migration086FieldSizes
+  migration086FieldSizes,
+  migration087LoginOffOnly,
+  migration088ChatDirtyQueue
 ]

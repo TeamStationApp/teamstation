@@ -6,6 +6,7 @@ import type {
   GameSummary,
   PitchingRow,
   RosterEntry,
+  StaffEntry,
   StandingsRow,
   TeamStationClient,
   TeamSummary
@@ -13,6 +14,8 @@ import type {
 import { HttpError } from '../../common/errors'
 import { eventName } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
+import type { Role } from '../../common/roles'
+import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Badge,
   Card,
@@ -47,6 +50,7 @@ import {
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
+import { flagLabel } from '../components/roleLabels'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -128,6 +132,9 @@ export interface TeamScreenProps {
    * the entry is corrected rather than a new one added.
    */
   onTab?: (tab: string, correcting?: boolean) => void
+  /** This team's chats the person is in, each opening from the page. */
+  chats?: ChatLink[]
+  onOpenChat?: (chat: ChatLink) => void
 }
 
 type TabId = 'videos' | 'schedule' | 'team' | 'stats'
@@ -416,6 +423,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           {nameBelowControls && identityWords}
         </Card>
       </CardBand>
+
+      {props.chats != null && props.onOpenChat != null && (
+        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
+      )}
 
       <PillBand part={pinned.pillBand}>
         <PillTabs
@@ -1030,3 +1041,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.dangerColor
   }
 }))
+
+/**
+ * The line under a staff name: `Coach · Scorekeeper`. The flags read as the
+ * role switches name them; a function rather than a label table, which
+ * Tess's sitemap would read as the team's tabs.
+ */
+export function staffSubtitle(person: StaffEntry): string {
+  return person.roles.map(roleLabel).join(' · ')
+}
+
+function roleLabel(role: Role): string {
+  return role === 'admin' ? 'Admin' : flagLabel(role)
+}

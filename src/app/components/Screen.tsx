@@ -21,6 +21,8 @@ export interface ScreenProps {
   children: React.ReactNode
   /** Off for a screen that manages its own scrolling, such as the player. */
   scroll?: boolean
+  /** A self-scrolling overlay scene owns content clearances inside its frame. */
+  overlayContent?: boolean
   /**
    * Keep the margins and drop the reading-width cap.
    *
@@ -132,6 +134,16 @@ export function Screen(props: ScreenProps): React.ReactElement {
   const side = {
     left: Math.max(margin, insets.left),
     right: Math.max(margin, insets.right)
+  }
+
+  if (!scroll && props.overlayContent === true) {
+    return (
+      <View style={[styles.fill, contentStyle]} onLayout={onLayout}>
+        <ContentInsetContext.Provider value={side}>
+          {children}
+        </ContentInsetContext.Provider>
+      </View>
+    )
   }
 
   const inner = (

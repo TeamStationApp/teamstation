@@ -1,0 +1,3358 @@
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
+import {
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
+
+import { MAX_ATTACHMENTS } from '../../common/chatContent'
+import { Button, Icon, Screen } from '../components'
+import { GlassView } from '../components/GlassView'
+import { useHeaderHandoff } from '../components/headerSlot'
+import { useBreakpoint } from '../components/useBreakpoint'
+import { edgeMarginRem } from '../layout/margins'
+import { lstrings, sprintf } from '../locales/strings'
+import { useInsets } from '../platform/safeArea'
+import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import type { ChatFileOps } from './AttachmentView'
+import { ChatAttentionControl } from './ChatAttentionControl'
+import {
+  AttentionCancelled,
+  ChatHistoryCoordinator,
+  discoverAttentionHistory
+} from './chatAttentionHistory'
+import {
+  attentionBodyBelow,
+  attentionBodyViewed,
+  attentionMessages,
+  attentionReferences,
+  type ChatAttentionSession,
+  projectAttentionHistory,
+  recordAttentionPage,
+  revealAttentionEarlier,
+  revealAttentionTarget
+} from './chatAttentionModel'
+import { copyChatText } from './chatClipboard'
+import { attachmentProblem, sendAllowed } from './chatComposeModel'
+import { ChatConversationIdentity } from './ChatConversationIdentity'
+import { ChatDropTarget } from './ChatDropTarget'
+import * as platformFiles from './chatFiles'
+import type { PickedFile, PickSource } from './chatFileTypes'
+import {
+  type ChatHistoryHandle,
+  ChatHistoryList,
+  useChatHistoryKeyboard
+} from './ChatHistoryList'
+import { anchorAfterChromeChange } from './chatLayoutModel'
+import {
+  type ComposerChange,
+  type ComposerSelection,
+  insertMention,
+  mentionIds,
+  type MentionRequest,
+  mentionRequest,
+  type MentionToken,
+  reconcileMentions
+} from './chatMentionsModel'
+import { endsIncomingRun } from './chatMessageRuns'
+import type { MessageSource } from './chatMessageSource'
+import {
+  actionsFor,
+  approvalsIn,
+  type MessageAction,
+  typingNames
+} from './chatModel'
+import { getChatStyles } from './chatStyles'
+import { ChatViewport, useChatViewport } from './ChatViewport'
+import {
+  bindUserScroll,
+  isFinePointer,
+  isRestoringPopupFocus,
+  readDocumentActive,
+  readMessageScrollPosition,
+  watchReadDocumentActive
+} from './chatWebInteractions'
+import {
+  type ChatDraft,
+  ChatDraftOwner,
+  emptyChatDraft,
+  newChatWorkspaceState
+} from './chatWorkspaceModel'
+import { Composer } from './Composer'
+import { EmojiPicker } from './EmojiPicker'
+import { type MessageView, reactionKey } from './engine/apply'
+import type { ConversationView, GrantApproval } from './engine/engine'
+import { findOriginal, replyExcerpt } from './engine/reply'
+import { MentionPicker } from './MentionPicker'
+import { MessageBubble } from './MessageBubble'
+import { MessageMenu } from './MessageMenu'
+import { PinnedMessages } from './PinnedMessages'
+import { PinnedMessageSummary } from './PinnedMessageSummary'
+import type { ChatScreenEngine } from './screenEngine'
+
+/** What the screen needs of the platform's file twin. */
+export interface ConversationFiles extends ChatFileOps {
+  PICK_SOURCES: PickSource[]
+  pickFiles: (source: PickSource, remaining?: number) => Promise<PickedFile[]>
+}
+
+export interface ConversationScreenProps {
+  engine: ChatScreenEngine
+  conversationId: string
+  /** The signed-in person, who is never asked to approve their own reset. */
+  userId: string
+  /** Conversation information and member security, from the identity. */
+  onMembers: () => void
+  /** The chat's title once it is known, for the header. */
+  onTitle?: (title: string) => void
+  /** The platform's attachments; `chatFiles` by default. */
+  files?: ConversationFiles
+  /** Swipe a message right to reply; on phones by default. */
+  swipe?: boolean
+  embedded?: boolean
+  /** Wide workspaces keep their identity inside the conversation pane. */
+  paneHeader?: boolean
+  active?: boolean
+  readingSession?: number
+  draft?: ChatDraft
+  draftOwner?: ChatDraftOwner
+  onDraftChange?: (draft: ChatDraft) => void
+}
+
+/** How often a chat not open yet is tried again, and how many times. */
+export const OPEN_RETRY_MS = 2000
+export const OPEN_TRIES = 8
+
+/**
+ * How long an explicit jump's animated scroll may go without a scroll event
+ * before it counts as landed. A throttled Android stream need not report the
+ * final offset.
+ */
+const JUMP_LANDING_QUIET_MS = 400
+
+/** An explicit jump's animated scroll, from its start until it lands. */
+interface JumpLanding {
+  target: number
+  timer: ReturnType<typeof setTimeout> | undefined
+}
+
+function endJumpLanding(
+  landing: React.RefObject<JumpLanding | undefined>
+): void {
+  clearTimeout(landing.current?.timer)
+  landing.current = undefined
+}
+
+/** A notice in the stream: a safety number change, or where history ends. */
+type Notice =
+  | { kind: 'lost'; key: string }
+  | { kind: 'safety'; key: string; name: string | undefined }
+
+/**
+ * One chat. Messages in bubbles with who sent them and, on the person's
+ * own, who has read them; a typing line; banners for locked history, a
+ * chain break and an unverified membership record; a long-press menu
+ * (reply, react, edit, delete, and Delete for everyone for moderators);
+ * swipe-to-reply on phones; and the composer, which shows only where the
+ * person may post and is held off while history is locked.
+ */
+export function ConversationScreen(
+  props: ConversationScreenProps
+): React.ReactElement {
+  const { engine, conversationId, userId, onMembers, onTitle } = props
+  const files = props.files ?? platformFiles
+  const swipe = props.swipe ?? Platform.OS !== 'web'
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const shared = getChatStyles(theme)
+  const window = useWindowDimensions()
+  const bubbleWidth = Math.min(window.width * 0.7, theme.rem(22))
+  const insets = useInsets()
+  const breakpoint = useBreakpoint()
+  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
+  const [paneHeaderHeight, setPaneHeaderHeight] = useState(theme.rem(3.5))
+  const [composerHeight, setComposerHeight] = useState(theme.rem(3.25))
+  const [noticeHeight, setNoticeHeight] = useState(0)
+  const [pinHeight, setPinHeight] = useState(0)
+  const viewport = useChatViewport({
+    paneHeader: props.paneHeader === true ? paneHeaderHeight : 0,
+    composer: composerHeight,
+    pins: pinHeight
+  })
+  const readableTop = useRef(viewport.readableTop)
+  readableTop.current = viewport.readableTop
+  const contentTop = useRef(viewport.contentTop)
+  contentTop.current = viewport.contentTop
+  const focusComposer = useRef<(selection?: ComposerSelection) => void>(
+    () => {}
+  )
+  const registerComposerFocus = useCallback(
+    (focus: (selection?: ComposerSelection) => void): (() => void) => {
+      focusComposer.current = focus
+      return () => {
+        if (focusComposer.current === focus) focusComposer.current = () => {}
+      }
+    },
+    []
+  )
+  const identityPress = useRef(onMembers)
+
+  const [localDraftOwner] = useState(() => {
+    const state = newChatWorkspaceState()
+    state.drafts.set(conversationId, props.draft ?? emptyChatDraft())
+    return new ChatDraftOwner(state)
+  })
+  const draftOwner = props.draftOwner ?? localDraftOwner
+  const attentionSession = useRef<ChatAttentionSession | undefined>(
+    draftOwner.attention(conversationId)
+  )
+  const historyCoordinator = useRef(new ChatHistoryCoordinator())
+  const historyGeneration = useRef(0)
+  const readingVisit = useRef<object>({})
+  const foregroundHistory = useRef<
+    { conversationId: string; visit: object } | undefined
+  >(undefined)
+  const backgroundReading = useRef<
+    | {
+        anchor: { id: string; relativeY: number } | undefined
+        offset: number
+        following: boolean
+        generation: number
+      }
+    | undefined
+  >(undefined)
+  const [attentionRevision, setAttentionRevision] = useState(0)
+  const [attentionLoading, setAttentionLoading] = useState(false)
+  const [attentionFailed, setAttentionFailed] = useState(false)
+  const [attentionCount, setAttentionCount] = useState(0)
+  const attentionTargets = useRef<string[]>([])
+  const discovering = useRef(false)
+  const retryDiscovery = useRef(false)
+  const discoveryPaused = useRef(false)
+  const [composerOverlay, setComposerOverlay] = useState(false)
+  const bodyRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
+  const refreshAttention = useRef<(manual?: boolean) => void>(() => {})
+  const committed = useRef(0)
+  const publishView = (next: ConversationView | undefined): void => {
+    setView(
+      next == null
+        ? undefined
+        : projectAttentionHistory(next, attentionSession.current)
+    )
+  }
+  const [view, setView] = useState<ConversationView | undefined>(undefined)
+  useLayoutEffect(() => {
+    committed.current += 1
+  }, [view])
+  const latestView = useRef<ConversationView | undefined>(undefined)
+  latestView.current = view
+  const hasPins = (view?.pins?.length ?? 0) > 0
+  useEffect(() => {
+    if (!hasPins) {
+      setPinHeight(0)
+      setPinsOpen(false)
+    }
+  }, [hasPins])
+  const [failed, setFailed] = useState(false)
+  const [text, setText] = useState(props.draft?.text ?? '')
+  const textNow = useRef(text)
+  textNow.current = text
+  const [mentionTokens, setMentionTokens] = useState<
+    MentionToken[] | undefined
+  >(props.draft?.mentionTokens)
+  const mentionTokensNow = useRef(mentionTokens)
+  mentionTokensNow.current = mentionTokens
+  const [mentionChoosing, setMentionChoosing] = useState<MentionRequest>()
+  const [mentionError, setMentionError] = useState<string>()
+  const reportDraft = props.onDraftChange
+  const onDraftChange = useCallback(
+    (next: ChatDraft): void => {
+      const tokens = mentionTokensNow.current
+      reportDraft?.({
+        ...next,
+        ...(tokens == null ? {} : { mentionTokens: tokens })
+      })
+    },
+    [reportDraft]
+  )
+  useEffect(() => {
+    if (props.active === false || view?.composer !== 'enabled')
+      setMentionChoosing(undefined)
+  }, [conversationId, props.active, view?.composer])
+  const [replyTo, setReplyTo] = useState<MessageView | undefined>(
+    props.draft?.replyTo
+  )
+  const replyNow = useRef(replyTo)
+  replyNow.current = replyTo
+  const [editing, setEditing] = useState<MessageView | undefined>(
+    props.draft?.editing
+  )
+  const editingNow = useRef(editing)
+  editingNow.current = editing
+  const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
+  const [sending, setSending] = useState(() =>
+    draftOwner.isSending(conversationId)
+  )
+  const sendingNow = useRef(sending)
+  const preparingNow = useRef(0)
+  const [preparing, setPreparing] = useState(0)
+  const preparationGeneration = useRef(0)
+  const preparationQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const pickedNow = useRef(picked)
+  pickedNow.current = picked
+  useEffect(() => {
+    preparationGeneration.current += 1
+    preparingNow.current = 0
+    setPreparing(0)
+    preparationQueue.current = Promise.resolve()
+    return () => {
+      preparationGeneration.current += 1
+    }
+  }, [conversationId, props.active])
+  const [error, setError] = useState<string | undefined>(() =>
+    draftOwner.failed(conversationId) ? lstrings.chat_send_failed : undefined
+  )
+  const [reported, setReported] = useState(false)
+  const [menu, setMenu] = useState<MessageView | undefined>(undefined)
+  const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
+  const [menuSource, setMenuSource] = useState<MessageSource>()
+  useEffect(() => {
+    if (props.active === false) {
+      setMenu(undefined)
+      setMenuSource(undefined)
+    }
+  }, [props.active])
+  const [pinsOpen, setPinsOpen] = useState(false)
+  const [jumpRetry, setJumpRetry] = useState<{
+    id: string
+    attention: boolean
+  }>()
+  const [resolvingJump, setResolvingJump] = useState(false)
+  // A jump's progress and failure, and any other error, float over the
+  // history above the composer.
+  const notice = error != null || jumpRetry != null || resolvingJump
+  useEffect(() => {
+    setResolvingJump(false)
+    setJumpRetry(undefined)
+  }, [conversationId, props.active])
+  const [highlight, setHighlight] = useState<string | undefined>(undefined)
+  const jumpGeneration = useRef(0)
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+  // The rows a jump's animated scroll flies past are not read: attention
+  // waits until the scroll lands.
+  const jumpLanding = useRef<JumpLanding | undefined>(undefined)
+  const gestureGeneration = useRef(0)
+  const gestureOffset = useRef({ x: 0, y: 0 })
+  const nativeUserScroll = useRef<'drag' | 'momentum' | undefined>(undefined)
+  const nativeMomentumFromDrag = useRef(false)
+  const messagePositions = useRef(new Map<string, number>())
+  const messageRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
+  const measuringJump = useRef<number | undefined>(undefined)
+  const prepend = useRef<
+    | {
+        offset: number
+        content: number
+        conversationId: string
+        firstSeq: number | undefined
+        firstId: string | undefined
+        firstY: number | undefined
+        hasEarlier: boolean | undefined
+        exhausted: boolean
+        headerRemoved: boolean
+        checkingHeader: boolean
+        headerCheckDirty: boolean
+        capturingAnchor: boolean
+        positions: Map<string, number>
+        anchor: { id: string; relativeY: number } | undefined
+      }
+    | undefined
+  >(undefined)
+  const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
+  // Scenes with their own fields (mention search, emoji search) take the
+  // keyboard back, so Android resizes the window for them as it did before.
+  const keyboard = useChatHistoryKeyboard({
+    closedClearance: viewport.closedClearance,
+    keyboardOffset: viewport.keyboardOffset,
+    active:
+      props.active !== false && mentionChoosing == null && reacting == null
+  })
+  const { endPadding, managesEndInset } = keyboard
+  // Clearance the list keeps as a scroll inset instead of content padding.
+  const insetOutsideContent = useCallback(
+    (contentBottom: number): number =>
+      contentBottom - endPadding(contentBottom),
+    [endPadding]
+  )
+  const readRevision = useRef<number | undefined>(undefined)
+  const paneActive = useRef(props.active !== false)
+  paneActive.current = props.active !== false
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const [documentActive, setDocumentActive] = useState(readDocumentActive)
+  useEffect(() => watchReadDocumentActive(setDocumentActive), [])
+  const [approvals, setApprovals] = useState<GrantApproval[]>([])
+  const scroller = useRef<ChatHistoryHandle>(null)
+  // Rows above the virtualized history: banners and the earlier-page control.
+  const historyHeader = useRef(0)
+  // Rows kept mounted off screen: a jump's target while it is measured.
+  const [mountedTarget, setMountedTarget] = useState<string>()
+  // Where the list is, to keep it on the newest message while the person
+  // is there: a list read at its bottom follows what arrives, one scrolled
+  // up to older messages stays put.
+  const savedPosition =
+    props.draft?.hasScrollPosition === true ||
+    (props.draft?.scrollOffset ?? 0) > 0
+  const scrolled = useRef({
+    offset: props.draft?.scrollOffset ?? 0,
+    hasPosition: savedPosition,
+    followNewest:
+      props.draft?.followNewest === true ||
+      (Platform.OS === 'web' && !savedPosition),
+    anchor: props.draft?.scrollAnchor,
+    width: 0,
+    contentWidth: 0,
+    height: 0,
+    content: 0
+  })
+  // A reader saved partly under the top chrome remembers the clearance it
+  // was read under; one restored from a draft keeps that until the overlays
+  // have been measured again. Only such a reader could look newly covered.
+  const stampAnchor = (
+    anchor: ChatDraft['scrollAnchor']
+  ): ChatDraft['scrollAnchor'] =>
+    anchor == null ||
+    anchor.readableTop != null ||
+    anchor.relativeY + (anchor.bodyInset ?? 0) >= readableTop.current
+      ? anchor
+      : { ...anchor, readableTop: readableTop.current }
+  const unstampAnchor = (): void => {
+    const anchor = scrolled.current.anchor
+    if (anchor?.readableTop == null) return
+    const { readableTop: _saved, ...live } = anchor
+    scrolled.current.anchor = live
+  }
+  // Without pins, nothing measured later can cover the saved reader again.
+  const pinless = view != null && !hasPins
+  useEffect(() => {
+    if (pinless) unstampAnchor()
+  }, [pinless])
+  /** The draft as the screen holds it now, with what a caller just changed. */
+  const currentDraft = useCallback(
+    (changed: Partial<ChatDraft> = {}): ChatDraft => {
+      const { mentionTokens, ...draft } = {
+        text: textNow.current,
+        mentionTokens: mentionTokensNow.current,
+        replyTo: replyNow.current,
+        editing: editingNow.current,
+        picked: pickedNow.current,
+        scrollOffset: scrolled.current.offset,
+        hasScrollPosition: scrolled.current.hasPosition,
+        followNewest: scrolled.current.followNewest,
+        scrollAnchor: stampAnchor(scrolled.current.anchor),
+        ...changed
+      }
+      return { ...draft, ...(mentionTokens == null ? {} : { mentionTokens }) }
+    },
+    []
+  )
+  const awaitingWidthLayout = useRef(false)
+  const widthRevision = useRef(0)
+  // A reflowed row must not be clamped against the previous width's content.
+  const widthLayoutReady = (): boolean => {
+    if (Platform.OS !== 'web') return true
+    const viewport = scroller.current?.getNativeScrollRef()
+    const width =
+      viewport != null &&
+      'clientWidth' in viewport &&
+      typeof viewport.clientWidth === 'number' &&
+      Number.isFinite(viewport.clientWidth) &&
+      viewport.clientWidth > 0
+        ? viewport.clientWidth
+        : scrolled.current.width
+    return (
+      !awaitingWidthLayout.current &&
+      (width <= 0 ||
+        scrolled.current.contentWidth <= 0 ||
+        Math.abs(width - scrolled.current.contentWidth) <= 1)
+    )
+  }
+  useEffect(
+    () =>
+      draftOwner.attach(
+        conversationId,
+        () => currentDraft(),
+        () => {
+          if (!mounted.current) return
+          const next = draftOwner.draft(conversationId)
+          textNow.current = next.text
+          mentionTokensNow.current = next.mentionTokens
+          setMentionTokens(next.mentionTokens)
+          setMentionChoosing(undefined)
+          replyNow.current = next.replyTo
+          editingNow.current = next.editing
+          pickedNow.current = next.picked
+          setText(next.text)
+          setReplyTo(next.replyTo)
+          setEditing(next.editing)
+          setPicked(next.picked)
+          sendingNow.current = draftOwner.isSending(conversationId)
+          setSending(sendingNow.current)
+          setError(
+            draftOwner.failed(conversationId)
+              ? lstrings.chat_send_failed
+              : undefined
+          )
+        }
+      ),
+    [draftOwner, conversationId, currentDraft]
+  )
+  const restoreTarget = useRef<number | undefined>(
+    scrolled.current.hasPosition && !scrolled.current.followNewest
+      ? scrolled.current.offset
+      : undefined
+  )
+  const restoreAnchor = useRef(
+    scrolled.current.hasPosition && !scrolled.current.followNewest
+      ? scrolled.current.anchor
+      : undefined
+  )
+  const historyRestorations = useRef(0)
+  // Where the virtualized list first renders its window: the latest rows for a
+  // follower. A saved reader is restored by its row's measured place instead:
+  // an index chosen from the first view moves to another row when the opened
+  // view adds rows above it, and the list keeps scrolling to that index.
+  const initialScroll = useRef<'end' | undefined>(undefined)
+  const initialScrollChosen = useRef(false)
+  const restoringAnchor = useRef(false)
+  const restoreAnchorDirty = useRef(false)
+  const exhaustedPageRestorer = useRef<() => void>(() => {})
+  const atBottom = useRef(
+    !scrolled.current.hasPosition || scrolled.current.followNewest
+  )
+  // Initial content can arrive before the first scroll-to-end acknowledgement.
+  const initialFollow = useRef(Platform.OS === 'web' && !savedPosition)
+  const menuReading = useRef<
+    | {
+        offset: number
+        anchor: { id: string; relativeY: number } | undefined
+        top: number
+      }
+    | undefined
+  >(undefined)
+  const acknowledgeInitialFollow = (): boolean => {
+    if (!initialFollow.current || !widthLayoutReady()) return false
+    const current = latestView.current
+    const actual = readMessageScrollPosition(
+      scroller.current,
+      messageRefs.current
+    )
+    const geometry = actual?.geometry
+    const populated =
+      current != null &&
+      (current.messages.length > 0
+        ? actual?.anchor != null
+        : current.conversation.lastSeq === 0)
+    if (actual != null) scrolled.current.offset = actual.offset
+    if (
+      !populated ||
+      actual == null ||
+      geometry == null ||
+      actual.offset + geometry.height < geometry.content - 48
+    )
+      return false
+    initialFollow.current = false
+    scrolled.current.hasPosition = true
+    scrolled.current.followNewest = true
+    scrolled.current.anchor = actual.anchor
+    scrolled.current.height = geometry.height
+    scrolled.current.content = geometry.content
+    atBottom.current = true
+    refreshAttention.current()
+    return true
+  }
+  identityPress.current = () => {
+    if (!mounted.current || !paneActive.current) return
+    const physical =
+      widthLayoutReady() &&
+      !restoringAnchor.current &&
+      measuringJump.current == null &&
+      menuReading.current == null
+        ? readMessageScrollPosition(scroller.current, messageRefs.current)
+        : undefined
+    if (physical != null) {
+      scrolled.current.offset = physical.offset
+      scrolled.current.hasPosition = true
+      scrolled.current.anchor = physical.anchor
+      if (!scrolled.current.followNewest && !atBottom.current) {
+        // A deferred navigation can receive another layout before unmounting.
+        restoreTarget.current = physical.offset
+        restoreAnchor.current = physical.anchor
+      }
+    }
+    const leave = (): void => {
+      const next = currentDraft({
+        followNewest: scrolled.current.followNewest || atBottom.current
+      })
+      draftOwner.write(conversationId, next)
+      onDraftChange(next)
+      onMembers()
+    }
+    // A phone's content can move without a scroll event (the keyboard
+    // leaving moves it by the composer's change), which leaves the remembered
+    // reader where it was before. The row is measured where it is on screen
+    // now, so Back restores what the person last saw.
+    const anchor = scrolled.current.anchor
+    if (
+      Platform.OS !== 'web' &&
+      anchor != null &&
+      !restoringAnchor.current &&
+      measuringJump.current == null &&
+      menuReading.current == null &&
+      !scrolled.current.followNewest &&
+      !atBottom.current
+    ) {
+      const started = Date.now()
+      measurePosition(
+        anchor.id,
+        () => !mounted.current || Date.now() - started > 300,
+        true
+      )
+        .then(y => {
+          if (y != null && scrolled.current.anchor?.id === anchor.id)
+            scrolled.current.anchor = { ...anchor, relativeY: y }
+        })
+        .catch(() => undefined)
+        .finally(leave)
+      return
+    }
+    leave()
+  }
+  /**
+   * A row's top in scroll content, where the virtualized list places it.
+   * Mounted rows sit exactly there; an unmounted row's place is the list's
+   * estimate until its neighbours are measured.
+   */
+  const contentYOf = (id: string): number | undefined => {
+    const position = scroller.current?.state()?.positionByKey(id) ?? Number.NaN
+    return Number.isFinite(position)
+      ? contentTop.current + historyHeader.current + position
+      : undefined
+  }
+  const readingAnchor = useCallback(
+    (
+      positions: Map<string, number>
+    ): { id: string; relativeY: number } | undefined => {
+      const offset = scrolled.current.offset
+      const ordered = [...positions].sort((a, b) => a[1] - b[1])
+      const visible = ordered.find(
+        ([, y]) => y >= offset && y < offset + scrolled.current.height
+      )
+      const chosen = visible ?? ordered.filter(([, y]) => y <= offset).at(-1)
+      return chosen == null
+        ? undefined
+        : { id: chosen[0], relativeY: chosen[1] - offset }
+    },
+    []
+  )
+  const prepareFiles = (
+    work: (remaining: number) => Promise<PickedFile[]>,
+    mode: 'queue' | 'picker' = 'queue'
+  ): void => {
+    if (mode === 'picker' && preparingNow.current > 0) return
+    const current = latestView.current
+    if (
+      current?.composer !== 'enabled' ||
+      editing != null ||
+      sendingNow.current ||
+      props.active === false
+    ) {
+      setError(lstrings.chat_attachment_blocked)
+      return
+    }
+    const generation = preparationGeneration.current
+    preparingNow.current += 1
+    setPreparing(preparingNow.current)
+    setError(undefined)
+    // The system picker must open in its trusted activation turn. Drops
+    // still start in queue order with the current remaining capacity.
+    const started =
+      mode === 'picker'
+        ? new Promise<PickedFile[]>(resolve => {
+            resolve(work(MAX_ATTACHMENTS - pickedNow.current.length))
+          }).then(
+            chosen => ({ ok: true as const, chosen }),
+            (error: unknown) => ({ ok: false as const, error })
+          )
+        : undefined
+    preparationQueue.current = preparationQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (generation !== preparationGeneration.current) return
+        const outcome = started == null ? undefined : await started
+        if (outcome?.ok === false) throw outcome.error
+        const chosen =
+          outcome == null
+            ? await work(MAX_ATTACHMENTS - pickedNow.current.length)
+            : outcome.chosen
+        if (
+          generation !== preparationGeneration.current ||
+          latestView.current?.composer !== 'enabled'
+        )
+          return
+        const problem = attachmentProblem(
+          chosen.map(file => ({
+            fileName: file.fileName,
+            size: file.bytes.length
+          })),
+          MAX_ATTACHMENTS - pickedNow.current.length
+        )
+        if (problem != null) throw new Error(problem)
+        const next = [...pickedNow.current, ...chosen]
+        pickedNow.current = next
+        setPicked(next)
+      })
+      .catch((error: unknown) => {
+        if (generation === preparationGeneration.current)
+          setError(
+            error instanceof Error &&
+              (error.message === lstrings.chat_attachment_limit ||
+                error.message.includes('too large'))
+              ? error.message
+              : lstrings.chat_attachment_failed
+          )
+      })
+      .finally(() => {
+        if (generation === preparationGeneration.current) {
+          preparingNow.current -= 1
+          setPreparing(preparingNow.current)
+        }
+      })
+  }
+  const explicitRead = useCallback(() => {
+    const current = latestView.current
+    if (
+      current == null ||
+      attentionSession.current == null ||
+      props.active === false ||
+      !readDocumentActive() ||
+      menu != null ||
+      mentionChoosing != null ||
+      reacting != null ||
+      pinsOpen ||
+      isRestoringPopupFocus()
+    )
+      return
+    readRevision.current =
+      current.conversation.preferences?.manualUnreadRevision ?? 0
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+  }, [
+    engine,
+    conversationId,
+    props.active,
+    menu,
+    reacting,
+    pinsOpen,
+    mentionChoosing
+  ])
+  const hasView = view != null
+  const userScrolled = useCallback(() => {
+    if (!mounted.current || !paneActive.current) return
+    endJumpLanding(jumpLanding)
+    initialFollow.current = false
+    historyGeneration.current += 1
+    discoveryPaused.current = true
+    setAttentionLoading(false)
+    if (attentionSession.current?.complete === false) setAttentionFailed(true)
+    const generation = ++jumpGeneration.current
+    measuringJump.current = undefined
+    const visible = readMessageScrollPosition(
+      scroller.current,
+      messageRefs.current
+    )
+    let following = false
+    if (visible != null) {
+      scrolled.current.offset = visible.offset
+      if (visible.geometry != null) {
+        scrolled.current.height = visible.geometry.height
+        scrolled.current.content = visible.geometry.content
+        following =
+          visible.offset + visible.geometry.height >=
+          visible.geometry.content - 48
+        scrolled.current.followNewest = following
+      }
+    }
+    // Cancel the jump, not the older page's position compensation. The
+    // response still adds rows above the position the person now chose.
+    const pending = prepend.current
+    if (
+      pending != null &&
+      latestView.current?.messages[0]?.seq !== pending.firstSeq
+    )
+      // The page has landed and the person moved on: no late correction.
+      prepend.current = undefined
+    else if (
+      pending != null &&
+      latestView.current?.messages[0]?.seq === pending.firstSeq
+    ) {
+      pending.offset = scrolled.current.offset
+      pending.positions = new Map([
+        ...pending.positions,
+        ...messagePositions.current
+      ])
+      const anchor =
+        visible == null ? readingAnchor(pending.positions) : visible.anchor
+      pending.anchor = anchor
+      pending.capturingAnchor = false
+      if (visible == null && anchor != null) {
+        pending.capturingAnchor = true
+        const cancelled = (): boolean =>
+          generation !== jumpGeneration.current ||
+          prepend.current !== pending ||
+          !mounted.current ||
+          !paneActive.current
+        // A position-only web layout need not emit a row onLayout event.
+        // Capture the position the person chose from the mounted row.
+        measurePosition(anchor.id, cancelled, true)
+          .then(relativeY => {
+            if (cancelled()) return
+            pending.anchor =
+              relativeY == null ? undefined : { id: anchor.id, relativeY }
+          })
+          .catch(() => {
+            if (!cancelled()) pending.anchor = undefined
+          })
+          .finally(() => {
+            if (cancelled()) return
+            pending.capturingAnchor = false
+            exhaustedPageRestorer.current()
+          })
+      }
+    }
+    setResolvingJump(false)
+    if (measuringJump.current == null) setMountedTarget(undefined)
+    atBottom.current = following
+    restoreTarget.current = undefined
+    restoreAnchor.current = undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
+    scrolled.current.hasPosition = true
+    scrolled.current.anchor =
+      visible == null ? readingAnchor(messagePositions.current) : visible.anchor
+    onDraftChange?.(currentDraft())
+    explicitRead()
+    refreshAttention.current(true)
+  }, [onDraftChange, currentDraft, explicitRead, readingAnchor])
+  useEffect(
+    () =>
+      bindUserScroll(
+        scroller.current,
+        userScrolled,
+        offset => {
+          scrolled.current.offset = offset
+          userScrolled()
+        },
+        Platform.OS === 'web'
+          ? () => {
+              gestureGeneration.current += 1
+            }
+          : undefined
+      ),
+    [userScrolled, hasView]
+  )
+  useEffect(
+    () => () => {
+      historyGeneration.current += 1
+      jumpGeneration.current += 1
+      measuringJump.current = undefined
+      prepend.current = undefined
+      nativeUserScroll.current = undefined
+      nativeMomentumFromDrag.current = false
+      restoringAnchor.current = false
+      restoreAnchorDirty.current = false
+      clearTimeout(highlightTimer.current)
+      endJumpLanding(jumpLanding)
+    },
+    [conversationId, props.active]
+  )
+
+  const loadOlderPage = async (
+    cancelled: () => boolean = () => false
+  ): Promise<ConversationView> => {
+    const before = latestView.current
+    if (before == null) throw new Error('Conversation unavailable')
+    if (cancelled()) return before
+    const owner = { conversationId, visit: readingVisit.current }
+    const pending = {
+      offset: scrolled.current.offset,
+      content: scrolled.current.content,
+      conversationId,
+      firstSeq: before?.messages[0]?.seq,
+      firstId: before?.messages[0]?.id,
+      firstY:
+        before?.messages[0] == null
+          ? undefined
+          : messagePositions.current.get(before.messages[0].id),
+      hasEarlier: before?.hasEarlier,
+      exhausted: false,
+      headerRemoved: false,
+      checkingHeader: false,
+      headerCheckDirty: false,
+      capturingAnchor: false,
+      positions: new Map(messagePositions.current),
+      // The browser's mounted rows say where the reader is now; a row's
+      // recorded place can predate the list moving it.
+      anchor:
+        readMessageScrollPosition(scroller.current, messageRefs.current)
+          ?.anchor ?? readingAnchor(messagePositions.current)
+    }
+    prepend.current = pending
+    messagePositions.current.clear()
+    atBottom.current = false
+    try {
+      if (
+        pending.anchor != null &&
+        pending.firstId != null &&
+        pending.firstY == null
+      )
+        pending.firstY = await measurePosition(
+          pending.firstId,
+          () =>
+            prepend.current !== pending ||
+            !mounted.current ||
+            !paneActive.current
+        )
+      if (cancelled() || owner.visit !== readingVisit.current) {
+        if (prepend.current === pending) prepend.current = undefined
+        return before
+      }
+      foregroundHistory.current = owner
+      const raw = await engine.loadEarlier(conversationId)
+      const session = attentionSession.current
+      const liveOwner =
+        foregroundHistory.current === owner &&
+        owner.visit === readingVisit.current &&
+        mounted.current &&
+        paneActive.current
+      if (session != null && liveOwner) {
+        recordAttentionPage(session, raw)
+        revealAttentionEarlier(session, raw)
+      }
+      const next = projectAttentionHistory(raw, session)
+      if (liveOwner) publishView(raw)
+      // A cancelled jump must still preserve the reader when this response
+      // removes the paging header or changes existing row geometry.
+      const firstSeq = next.messages[0]?.seq
+      if (
+        firstSeq == null ||
+        (before?.messages[0] != null && firstSeq >= before.messages[0].seq)
+      ) {
+        // Edit/reaction-only pages can advance the raw cursor without new
+        // rows. Keep known geometry for a following page's reading anchor.
+        if (prepend.current === pending) {
+          const present = new Set(next.messages.map(message => message.id))
+          for (const [id, y] of pending.positions)
+            if (present.has(id) && !messagePositions.current.has(id))
+              messagePositions.current.set(id, y)
+          if (
+            before.hasEarlier &&
+            !next.hasEarlier &&
+            mounted.current &&
+            paneActive.current &&
+            latestView.current?.conversation.id === conversationId
+          ) {
+            // Keep ownership through delayed header layout, so a user scroll
+            // after page resolution can still replace the reading anchor.
+            pending.exhausted = true
+            restoreExhaustedPage()
+          } else prepend.current = undefined
+        }
+      }
+      return next
+    } catch (error) {
+      if (prepend.current === pending) prepend.current = undefined
+      if (owner.visit !== readingVisit.current) throw new AttentionCancelled()
+      throw error
+    } finally {
+      if (foregroundHistory.current === owner)
+        foregroundHistory.current = undefined
+    }
+  }
+  const restoreExhaustedPage = (): void => {
+    const pending = prepend.current
+    if (pending?.exhausted !== true) return
+    if (
+      pending.anchor == null ||
+      pending.firstId == null ||
+      pending.firstY == null
+    ) {
+      // Without a measured reading anchor there is nothing to compensate.
+      // Retire ownership so later layouts can capture a new reading anchor.
+      prepend.current = undefined
+      return
+    }
+    if (!pending.headerRemoved) {
+      if (pending.checkingHeader) {
+        pending.headerCheckDirty = true
+        return
+      }
+      pending.checkingHeader = true
+      pending.headerCheckDirty = false
+      const firstY = pending.firstY
+      const cancelled = (): boolean =>
+        prepend.current !== pending ||
+        !mounted.current ||
+        !paneActive.current ||
+        latestView.current?.conversation.id !== pending.conversationId
+      // Content can also grow below the reader. Only a measured move of the
+      // first row establishes that the paging header's layout has settled.
+      measurePosition(pending.firstId, cancelled)
+        .then(y => {
+          if (!cancelled() && y != null && y < firstY)
+            pending.headerRemoved = true
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          pending.checkingHeader = false
+          if (cancelled()) {
+            pending.headerCheckDirty = false
+            if (prepend.current === pending) prepend.current = undefined
+            return
+          }
+          if (pending.headerRemoved || pending.headerCheckDirty)
+            restoreExhaustedPage()
+        })
+      return
+    }
+    if (pending.capturingAnchor) return
+    prepend.current = undefined
+    if (
+      pending.anchor != null &&
+      mounted.current &&
+      paneActive.current &&
+      latestView.current?.conversation.id === pending.conversationId
+    ) {
+      restoreAnchor.current = pending.anchor
+      restoreReadingAnchor()
+    }
+  }
+  exhaustedPageRestorer.current = restoreExhaustedPage
+  const measurePosition = async (
+    id: string,
+    cancelled: () => boolean,
+    relativeToViewport = false,
+    body = false,
+    requireMount = false
+  ): Promise<number | undefined> => {
+    const deadline = Date.now() + 2000
+    while (!cancelled() && Date.now() < deadline) {
+      const row = (body ? bodyRefs : messageRefs).current.get(id)
+      // A row the window has unmounted is placed where the list lays it out.
+      // Only a mounted row can say where its body or the viewport is.
+      if (row == null && !requireMount && !relativeToViewport && !body) {
+        // contentYOf's placement, read from refs alone so the callbacks that
+        // measure through here keep their identity.
+        const placed =
+          scroller.current?.state()?.positionByKey(id) ?? Number.NaN
+        if (Number.isFinite(placed))
+          return contentTop.current + historyHeader.current + placed
+      }
+      const content = relativeToViewport
+        ? scroller.current?.getNativeScrollRef()
+        : scroller.current?.getInnerViewRef()
+      const y = await new Promise<number | undefined>(resolve => {
+        const timer = setTimeout(() => {
+          resolve(undefined)
+        }, 100)
+        if (row == null || content == null) {
+          clearTimeout(timer)
+          resolve(undefined)
+          return
+        }
+        if (relativeToViewport) {
+          let rowY: number | undefined
+          let viewportY: number | undefined
+          const finish = (): void => {
+            if (rowY == null || viewportY == null) return
+            clearTimeout(timer)
+            resolve(rowY - viewportY)
+          }
+          // Native measureLayout excludes the ScrollView content transform.
+          // Window measurements include the actual visible scroll position.
+          row.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0) rowY = top
+            finish()
+          })
+          content.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0) viewportY = top
+            finish()
+          })
+          return
+        }
+        if (Platform.OS !== 'web') {
+          // The same measure a row's placement records (rowPlaced): both tops
+          // in the window. A transform on the list's content (the keyboard-
+          // aware list's) then counts alike when a reader is saved and when
+          // it is restored; measureLayout leaves it out, which put a reopened
+          // reader that far from where it was left.
+          let rowTop: number | undefined
+          let contentTopInWindow: number | undefined
+          const finish = (): void => {
+            if (rowTop == null || contentTopInWindow == null) return
+            clearTimeout(timer)
+            resolve(rowTop - contentTopInWindow)
+          }
+          row.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0) rowTop = top
+            finish()
+          })
+          content.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0)
+              contentTopInWindow = top
+            finish()
+          })
+          return
+        }
+        row.measureLayout(
+          content,
+          (_x, top, width, height) => {
+            clearTimeout(timer)
+            resolve(
+              Number.isFinite(top) && width > 0 && height > 0 ? top : undefined
+            )
+          },
+          () => {
+            clearTimeout(timer)
+            resolve(body ? undefined : messagePositions.current.get(id))
+          }
+        )
+      })
+      if (cancelled()) return undefined
+      if (y != null) return y
+      await new Promise<void>(resolve => setTimeout(resolve, 25))
+    }
+    return undefined
+  }
+  const reachableOffset = (target: number): number => {
+    // RNW content-size notifications can lag a padding-only layout change.
+    const physical =
+      Platform.OS === 'web'
+        ? readMessageScrollPosition(scroller.current, new Map())
+        : undefined
+    const { content, height } = physical?.geometry ?? scrolled.current
+    return content > 0 && height > 0
+      ? Math.min(Math.max(0, target), Math.max(0, content - height))
+      : Math.max(0, target)
+  }
+  const rememberPosition = (
+    requestedOffset: number,
+    anchor = scrolled.current.anchor
+  ): number => {
+    const target = reachableOffset(requestedOffset)
+    if (anchor != null && target !== requestedOffset)
+      anchor = {
+        ...anchor,
+        relativeY: anchor.relativeY + requestedOffset - target
+      }
+    restoreTarget.current = target
+    scrolled.current.offset = target
+    scrolled.current.hasPosition = true
+    scrolled.current.followNewest = false
+    scrolled.current.anchor = anchor
+    restoreAnchor.current = anchor
+    onDraftChange?.(currentDraft())
+    return target
+  }
+  const recaptureLiveAnchor = (): void => {
+    const current = latestView.current
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      current?.conversation.id !== conversationId ||
+      !scrolled.current.hasPosition ||
+      menuReading.current != null ||
+      backgroundReading.current != null ||
+      !widthLayoutReady() ||
+      scrolled.current.followNewest ||
+      restoreTarget.current != null ||
+      restoreAnchor.current != null ||
+      prepend.current != null ||
+      measuringJump.current != null
+    )
+      return
+    const present = new Set(current.messages.map(message => message.id))
+    const physical =
+      Platform.OS === 'web'
+        ? readMessageScrollPosition(
+            scroller.current,
+            new Map([...messageRefs.current].filter(([id]) => present.has(id)))
+          )
+        : undefined
+    const next =
+      physical == null
+        ? readingAnchor(
+            new Map(
+              [...messagePositions.current].filter(([id]) => present.has(id))
+            )
+          )
+        : physical.anchor
+    if (physical != null) scrolled.current.offset = physical.offset
+    const previous = scrolled.current.anchor
+    if (
+      next == null ||
+      (next.id === previous?.id && next.relativeY === previous.relativeY)
+    )
+      return
+    scrolled.current.anchor = next
+    onDraftChange?.(currentDraft())
+  }
+  const restoreReadingAnchor = (): void => {
+    const anchor = restoreAnchor.current
+    if (
+      anchor == null ||
+      measuringJump.current != null ||
+      !widthLayoutReady() ||
+      !mounted.current ||
+      !paneActive.current
+    )
+      return
+    if (restoringAnchor.current) {
+      restoreAnchorDirty.current = true
+      return
+    }
+    const generation = jumpGeneration.current
+    const width = widthRevision.current
+    restoringAnchor.current = true
+    restoreAnchorDirty.current = false
+    const cancelled = (): boolean =>
+      !mounted.current ||
+      !paneActive.current ||
+      generation !== jumpGeneration.current ||
+      width !== widthRevision.current ||
+      !widthLayoutReady() ||
+      restoreAnchor.current !== anchor
+    measurePosition(anchor.id, cancelled)
+      .then(y => {
+        if (y == null || cancelled() || restoreAnchorDirty.current) return
+        const target = rememberPosition(
+          Math.max(0, y - anchor.relativeY),
+          anchor
+        )
+        scroller.current?.scrollTo({ y: target, animated: false })
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (generation === jumpGeneration.current) {
+          restoringAnchor.current = false
+          // A replacement anchor cancels this measurement, but still needs
+          // its own measurement after the old one retires.
+          if (restoreAnchorDirty.current) restoreReadingAnchor()
+        }
+      })
+  }
+  const waitForReading = async (): Promise<void> => {
+    const deadline = Date.now() + 2200
+    while (
+      prepend.current != null ||
+      restoringAnchor.current ||
+      historyRestorations.current > 0
+    ) {
+      if (!mounted.current || !paneActive.current)
+        throw new AttentionCancelled()
+      if (Date.now() >= deadline) throw new Error('History layout is not ready')
+      await new Promise<void>(resolve => setTimeout(resolve, 20))
+    }
+  }
+  const waitForCommit = async (previous: number): Promise<void> => {
+    const deadline = Date.now() + 2200
+    while (committed.current <= previous) {
+      if (!mounted.current || !paneActive.current)
+        throw new AttentionCancelled()
+      if (Date.now() >= deadline) throw new Error('History layout is not ready')
+      await new Promise<void>(resolve => setTimeout(resolve, 10))
+    }
+  }
+  /**
+   * The next older rows: the ones attention discovery already holds back,
+   * when there are any, or else a page. A search that compares the engine's
+   * own view between steps, as a jump's does, asks for a page every time:
+   * revealed rows do not change that view, so they would read as no progress.
+   */
+  const loadOlder = async (
+    cancelled: () => boolean = () => false,
+    page = false
+  ): Promise<ConversationView> => {
+    initialFollow.current = false
+    const visit = readingVisit.current
+    const stopped = (): boolean =>
+      cancelled() ||
+      visit !== readingVisit.current ||
+      !mounted.current ||
+      !paneActive.current
+    return await historyCoordinator.current.run(stopped, async () => {
+      await waitForReading()
+      if (stopped()) throw new AttentionCancelled()
+      const raw = engine.view(conversationId)
+      const session = attentionSession.current
+      if (raw == null) throw new Error('Conversation unavailable')
+      if (session != null && revealAttentionEarlier(session, raw)) {
+        const revision = committed.current
+        const anchor = scrolled.current.anchor
+        publishView(raw)
+        await waitForCommit(revision)
+        if (stopped()) throw new AttentionCancelled()
+        if (anchor != null) {
+          restoreAnchor.current = anchor
+          restoreReadingAnchor()
+        }
+        await waitForReading()
+        if (!page) return engine.view(conversationId) ?? raw
+        if (stopped()) throw new AttentionCancelled()
+      }
+      const next = await loadOlderPage(stopped)
+      if (visit !== readingVisit.current) throw new AttentionCancelled()
+      await waitForReading()
+      return next
+    })
+  }
+  const discoverPage = async (
+    cancelled: () => boolean
+  ): Promise<ConversationView> =>
+    await historyCoordinator.current.run(cancelled, async () => {
+      await waitForReading()
+      if (cancelled()) throw new AttentionCancelled()
+      const before = engine.view(conversationId)
+      if (before == null) throw new Error('Conversation unavailable')
+      const physical = readMessageScrollPosition(
+        scroller.current,
+        messageRefs.current
+      )
+      const anchor =
+        physical?.anchor ??
+        scrolled.current.anchor ??
+        readingAnchor(messagePositions.current)
+      const offset = physical?.offset ?? scrolled.current.offset
+      const held = {
+        anchor,
+        offset,
+        following:
+          initialFollow.current ||
+          scrolled.current.followNewest ||
+          atBottom.current,
+        generation: historyGeneration.current
+      }
+      backgroundReading.current = held
+      try {
+        const next = await engine.loadEarlier(conversationId)
+        const session = attentionSession.current
+        if (session != null) recordAttentionPage(session, next)
+        const revision = committed.current
+        publishView(next)
+        await waitForCommit(revision)
+        // A newer user position or follow intent owns the reader after cancellation.
+        const chosen = cancelled() ? scrolled.current.anchor : held.anchor
+        const following = cancelled()
+          ? scrolled.current.followNewest
+          : held.following
+        if (menuReading.current == null && !following && chosen != null) {
+          const y = await measurePosition(
+            chosen.id,
+            () => !mounted.current || !paneActive.current
+          )
+          if (y == null) throw new Error('History layout is not ready')
+          const currentAnchor = cancelled() ? scrolled.current.anchor : chosen
+          if (currentAnchor?.id === chosen.id) {
+            const target = rememberPosition(
+              Math.max(0, y - currentAnchor.relativeY),
+              currentAnchor
+            )
+            scroller.current?.scrollTo({ y: target, animated: false })
+          }
+        }
+        return next
+      } finally {
+        if (backgroundReading.current === held)
+          backgroundReading.current = undefined
+      }
+    })
+  /** Count the jump landed once its scroll stops reporting new offsets. */
+  const awaitJumpLanding = (): void => {
+    const landing = jumpLanding.current
+    if (landing == null) return
+    clearTimeout(landing.timer)
+    landing.timer = setTimeout(() => {
+      if (jumpLanding.current !== landing) return
+      jumpLanding.current = undefined
+      if (mounted.current) refreshAttention.current()
+    }, JUMP_LANDING_QUIET_MS)
+  }
+  const jumpTo = (id: string, attention = false): void => {
+    initialFollow.current = false
+    historyGeneration.current += 1
+    discoveryPaused.current = true
+    setAttentionLoading(false)
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      engine.view(conversationId) == null
+    )
+      return
+    setJumpRetry(undefined)
+    setResolvingJump(true)
+    endJumpLanding(jumpLanding)
+    nativeUserScroll.current = undefined
+    nativeMomentumFromDrag.current = false
+    restoreTarget.current = undefined
+    restoreAnchor.current = undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
+    const generation = ++jumpGeneration.current
+    measuringJump.current = generation
+    setPinsOpen(false)
+    setError(undefined)
+    // Explicit navigation owns the reader even if its target cannot be loaded.
+    scrolled.current.followNewest = false
+    atBottom.current = false
+    findOriginal(
+      {
+        view: engine.view.bind(engine),
+        loadEarlier: async () =>
+          await loadOlder(
+            () =>
+              generation !== jumpGeneration.current ||
+              !mounted.current ||
+              !paneActive.current,
+            true
+          )
+      },
+      conversationId,
+      id,
+      () => generation !== jumpGeneration.current || props.active === false
+    )
+      .then(async original => {
+        if (generation !== jumpGeneration.current) return
+        if (original?.status !== 'ok') {
+          measuringJump.current = undefined
+          setResolvingJump(false)
+          setJumpRetry({ id, attention })
+          setError(lstrings.chat_message_unavailable)
+          restoreReadingAnchor()
+          return
+        }
+        const session = attentionSession.current
+        if (session != null && original.seq < session.floor) {
+          revealAttentionTarget(session, original)
+          const revision = committed.current
+          publishView(engine.view(conversationId))
+          await waitForCommit(revision)
+        }
+        // Measure the mounted row relative to scroll content. Paging resolves
+        // before native/DOM layout, so wait for actual geometry, not a guessed delay.
+        // The virtualized window keeps the target mounted wherever it is.
+        prepend.current = undefined
+        if (mounted.current) setMountedTarget(id)
+        const cancelled = (): boolean =>
+          generation !== jumpGeneration.current ||
+          !mounted.current ||
+          !paneActive.current ||
+          engine.view(conversationId) == null
+        const y = await measurePosition(id, cancelled, false, attention, true)
+        if (cancelled()) {
+          if (measuringJump.current === generation)
+            measuringJump.current = undefined
+          return
+        }
+        const current = engine
+          .view(conversationId)
+          ?.messages.find(message => message.id === id)
+        if (y == null || current?.status !== 'ok')
+          throw new Error('Message unavailable')
+        const requested = Math.max(0, y - readableTop.current - theme.rem(0.5))
+        const rowY = attention
+          ? await measurePosition(id, cancelled, false, false, true)
+          : y
+        if (cancelled()) return
+        if (
+          rowY == null ||
+          engine
+            .view(conversationId)
+            ?.messages.find(message => message.id === id)?.status !== 'ok'
+        )
+          throw new Error('Message unavailable')
+        measuringJump.current = undefined
+        setResolvingJump(false)
+        const target = rememberPosition(requested, {
+          id,
+          relativeY: rowY - requested,
+          ...(attention ? { bodyInset: y - rowY } : {})
+        })
+        jumpLanding.current = { target, timer: undefined }
+        awaitJumpLanding()
+        scroller.current?.scrollTo({
+          y: target,
+          animated: true
+        })
+        setHighlight(id)
+        clearTimeout(highlightTimer.current)
+        highlightTimer.current = setTimeout(() => {
+          setHighlight(undefined)
+          setMountedTarget(current => (current === id ? undefined : current))
+        }, 1500)
+      })
+      .catch(() => {
+        if (generation === jumpGeneration.current) {
+          measuringJump.current = undefined
+          setMountedTarget(undefined)
+          setResolvingJump(false)
+          setJumpRetry({ id, attention })
+          setError(lstrings.chat_message_unavailable)
+          restoreReadingAnchor()
+        }
+      })
+  }
+
+  useEffect(() => {
+    const next = currentDraft({ text, mentionTokens, replyTo, editing, picked })
+    draftOwner.write(conversationId, next)
+    onDraftChange?.(next)
+  }, [
+    text,
+    mentionTokens,
+    replyTo,
+    editing,
+    picked,
+    currentDraft,
+    onDraftChange,
+    draftOwner,
+    conversationId
+  ])
+
+  const restoreForGeometry = useRef(restoreReadingAnchor)
+  restoreForGeometry.current = restoreReadingAnchor
+  const previousWindowWidth = useRef(window.width)
+  useLayoutEffect(() => {
+    if (previousWindowWidth.current === window.width) return
+    previousWindowWidth.current = window.width
+    if (Platform.OS !== 'web' || !mounted.current || !paneActive.current) return
+    awaitingWidthLayout.current = true
+    widthRevision.current += 1
+    if (restoringAnchor.current) restoreAnchorDirty.current = true
+    if (
+      menuReading.current == null &&
+      measuringJump.current == null &&
+      !scrolled.current.followNewest &&
+      !atBottom.current &&
+      scrolled.current.anchor != null
+    )
+      restoreAnchor.current = { ...scrolled.current.anchor }
+  }, [window.width])
+  useEffect(() => {
+    if (
+      menuReading.current == null ||
+      (menu != null &&
+        props.active !== false &&
+        view?.messages.some(message => message.id === menu.id) === true)
+    )
+      return
+    const held = menuReading.current
+    menuReading.current = undefined
+    restoreTarget.current = undefined
+    restoreAnchor.current = undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
+    const adjusted =
+      held.anchor == null
+        ? undefined
+        : {
+            ...held.anchor,
+            relativeY: anchorAfterChromeChange(
+              held.anchor.relativeY,
+              held.top,
+              readableTop.current,
+              theme.rem(0.5)
+            )
+          }
+    if (adjusted != null && adjusted.relativeY !== held.anchor?.relativeY) {
+      // Chrome that arrived during the lift only uncovers the row after exit.
+      restoreAnchor.current = adjusted
+      atBottom.current = false
+      restoreForGeometry.current()
+      return
+    }
+    // Dismissal resumes following only if the reader still occupies the end.
+    // Arrivals while the actions were open must remain below that reader.
+    scrolled.current.followNewest =
+      scrolled.current.offset + scrolled.current.height >=
+      scrolled.current.content - 48
+    atBottom.current = scrolled.current.followNewest
+  }, [menu, view?.messages, props.active, theme])
+  const previousClearances = useRef({
+    top: viewport.readableTop,
+    bottom: viewport.contentBottom
+  })
+  useEffect(() => {
+    const previous = previousClearances.current
+    previousClearances.current = {
+      top: viewport.readableTop,
+      bottom: viewport.contentBottom
+    }
+    // An end inset outside the scroll content (native) still ends the history.
+    if (scrolled.current.content > 0)
+      scrolled.current.content +=
+        insetOutsideContent(viewport.contentBottom) -
+        insetOutsideContent(previous.bottom)
+    if (
+      previous.top === viewport.readableTop &&
+      (previous.bottom === viewport.contentBottom || managesEndInset)
+    )
+      return
+    if (!mounted.current || !paneActive.current) return
+    if (!scrolled.current.hasPosition) {
+      // RNW observes only the content box, so this padding-only change never
+      // reaches onContentSizeChange. A cold web reader still owed its first end
+      // position (e.g. the pinned band measured after that scroll) follows here.
+      if (initialFollow.current && menuReading.current == null)
+        scroller.current?.scrollToEnd({ animated: false })
+      return
+    }
+    if (menuReading.current != null) {
+      restoreAnchor.current = menuReading.current.anchor
+      restoreForGeometry.current()
+      return
+    }
+    if (scrolled.current.followNewest || atBottom.current) {
+      scroller.current?.scrollToEnd({ animated: false })
+      return
+    }
+    const anchor = scrolled.current.anchor
+    if (anchor != null) {
+      // Chrome that already covered a reader saved under it (the pin band,
+      // measured again from zero after a reopen) does not newly cover it.
+      const coveredFrom = Math.max(
+        previous.top,
+        anchor.readableTop ?? previous.top
+      )
+      // Once measured back to that clearance, ordinary chrome rules resume.
+      const settled =
+        anchor.readableTop != null && viewport.readableTop >= anchor.readableTop
+      if (settled) unstampAnchor()
+      const { readableTop: _saved, ...live } = anchor
+      restoreAnchor.current = {
+        ...(settled ? live : anchor),
+        relativeY:
+          anchorAfterChromeChange(
+            anchor.relativeY + (anchor.bodyInset ?? 0),
+            coveredFrom,
+            viewport.readableTop,
+            theme.rem(0.5)
+          ) - (anchor.bodyInset ?? 0)
+      }
+      restoreForGeometry.current()
+    }
+  }, [
+    viewport.readableTop,
+    viewport.contentBottom,
+    theme,
+    managesEndInset,
+    insetOutsideContent
+  ])
+
+  // Open the chat, and keep its view current from the engine's events. A
+  // chat the list does not hold yet (a newcomer, a moment before the server
+  // has added them) is opened again as soon as the list brings it, and
+  // every few seconds until then.
+  useEffect(() => {
+    if (!mounted.current || !paneActive.current) return
+    const visit = {}
+    readingVisit.current = visit
+    restoreTarget.current =
+      scrolled.current.hasPosition && !scrolled.current.followNewest
+        ? scrolled.current.offset
+        : undefined
+    restoreAnchor.current =
+      scrolled.current.hasPosition && !scrolled.current.followNewest
+        ? scrolled.current.anchor
+        : undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
+    atBottom.current = restoreTarget.current == null
+    attentionSession.current = draftOwner.attention(conversationId)
+    discoveryPaused.current = false
+    setAttentionFailed(false)
+    let live = true
+    let opened = false
+    let opening = false
+    let tries = 0
+    setView(undefined)
+    setFailed(false)
+    const waiting = (): GrantApproval[] =>
+      approvalsIn(engine.approvals(), conversationId, userId)
+    setApprovals(waiting())
+    // Until it is open, the chat as the list last described it: its title,
+    // and whether this device holds its key (History is locked) or not.
+    const listed = (): void => {
+      const known = engine.view(conversationId)
+      if (known != null && live) {
+        readRevision.current ??=
+          known.conversation.preferences?.manualUnreadRevision ?? 0
+        publishView(known)
+      }
+    }
+    const tryOpen = (): void => {
+      if (opened || opening || !live) return
+      listed()
+      opening = true
+      tries += 1
+      engine
+        .open(conversationId)
+        .then(next => {
+          opened = true
+          if (live) {
+            attentionSession.current = draftOwner.beginAttention(
+              conversationId,
+              next
+            )
+            setAttentionRevision(value => value + 1)
+            publishView(next)
+            readRevision.current ??=
+              next.conversation.preferences?.manualUnreadRevision ?? 0
+            setFailed(false)
+          }
+        })
+        .catch(() => {
+          if (live && tries >= OPEN_TRIES) setFailed(true)
+        })
+        .finally(() => {
+          opening = false
+        })
+    }
+    const unsubscribe = engine.subscribe(event => {
+      if (!live) return
+      if (event.type === 'approvals') setApprovals(waiting())
+      if (
+        (event.type === 'conversation' &&
+          event.conversationId === conversationId) ||
+        event.type === 'conversations'
+      ) {
+        if (!opened) {
+          tryOpen()
+          return
+        }
+        const next = engine.view(conversationId)
+        if (next != null) {
+          const session = attentionSession.current
+          if (
+            foregroundHistory.current?.conversationId === conversationId &&
+            foregroundHistory.current.visit === readingVisit.current &&
+            session != null
+          ) {
+            // An explicit page may publish verified rows before its promise settles.
+            recordAttentionPage(session, next)
+            revealAttentionEarlier(session, next)
+          }
+          publishView(next)
+        } else {
+          draftOwner.forgetAttention(conversationId)
+          attentionSession.current = undefined
+          setView(undefined)
+          setFailed(true)
+          setMenu(undefined)
+        }
+      }
+    })
+    tryOpen()
+    const timer = setInterval(tryOpen, OPEN_RETRY_MS)
+    return () => {
+      live = false
+      if (readingVisit.current === visit) readingVisit.current = {}
+      if (foregroundHistory.current?.visit === visit)
+        foregroundHistory.current = undefined
+      clearInterval(timer)
+      unsubscribe()
+      engine.close(conversationId)
+    }
+  }, [engine, conversationId, userId, props.active, draftOwner])
+
+  const title = view?.conversation.title
+  useEffect(() => {
+    if (title != null && title !== '') onTitle?.(title)
+  }, [onTitle, title])
+  const headerConversation = view?.conversation
+  useHeaderHandoff(
+    useMemo(
+      () =>
+        headerConversation != null &&
+        props.active !== false &&
+        props.paneHeader !== true ? (
+          <ChatConversationIdentity
+            conversation={headerConversation}
+            onPress={() => {
+              identityPress.current()
+            }}
+          />
+        ) : null,
+      [headerConversation, props.active, props.paneHeader]
+    ),
+    props.active !== false && props.paneHeader !== true
+      ? Math.max(theme.rem(3), theme.rem(2.25) * window.fontScale)
+      : 0
+  )
+
+  // What is on the screen has been read.
+  const newest = view?.messages.at(-1)?.seq ?? 0
+  const unread = view?.conversation.unread ?? 0
+  const manualUnread = view?.conversation.preferences?.manualUnread === true
+  useEffect(() => {
+    if (
+      attentionSession.current == null ||
+      props.active === false ||
+      !documentActive ||
+      menu != null ||
+      mentionChoosing != null ||
+      pinsOpen ||
+      reacting != null
+    )
+      return
+    if (newest === 0 && unread === 0 && !manualUnread) return
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+  }, [
+    engine,
+    conversationId,
+    newest,
+    unread,
+    manualUnread,
+    props.active,
+    documentActive,
+    menu,
+    mentionChoosing,
+    pinsOpen,
+    reacting,
+    attentionRevision
+  ])
+  useEffect(() => {
+    readRevision.current = undefined
+    const current = engine.view(conversationId)
+    if (current == null) return
+    readRevision.current =
+      current.conversation.preferences?.manualUnreadRevision ?? 0
+    if (
+      attentionSession.current == null ||
+      !paneActive.current ||
+      !readDocumentActive()
+    )
+      return
+    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+  }, [props.readingSession, engine, conversationId])
+
+  const lastAttentionOffset = useRef(scrolled.current.offset)
+  const pendingManualPass = useRef({
+    offset: scrolled.current.offset,
+    past: false
+  })
+  const visibilityGeneration = useRef(0)
+  refreshAttention.current = (manual = false): void => {
+    const offset = scrolled.current.offset
+    const passed = manual && offset > lastAttentionOffset.current + 1
+    lastAttentionOffset.current = offset
+    const generation = ++visibilityGeneration.current
+    const session = attentionSession.current
+    const raw = engine.view(conversationId)
+    if (
+      session == null ||
+      raw == null ||
+      !session.complete ||
+      props.active === false ||
+      !documentActive ||
+      menuReading.current != null ||
+      menu != null ||
+      pinsOpen ||
+      mentionChoosing != null ||
+      reacting != null ||
+      composerOverlay ||
+      initialFollow.current ||
+      discovering.current ||
+      resolvingJump ||
+      jumpLanding.current != null
+    ) {
+      pendingManualPass.current = { offset, past: false }
+      return
+    }
+    if (pendingManualPass.current.offset !== offset)
+      pendingManualPass.current = { offset, past: passed }
+    else if (passed) pendingManualPass.current.past = true
+    // Capturing input and the bubbling ScrollView callback share one observation.
+    const manualPast = pendingManualPass.current.past
+    const targets = attentionMessages(raw, userId, session)
+    const measure = async (
+      node: React.ComponentRef<typeof View> | null | undefined
+    ): Promise<{ top: number; height: number } | undefined> =>
+      await new Promise(resolve => {
+        if (node == null) {
+          resolve(undefined)
+          return
+        }
+        const timer = setTimeout(() => {
+          resolve(undefined)
+        }, 150)
+        node.measureInWindow((_x, top, width, height) => {
+          clearTimeout(timer)
+          resolve(
+            Number.isFinite(top) && width > 0 && height > 0
+              ? { top, height }
+              : undefined
+          )
+        })
+      })
+    ;(async () => {
+      const frame = await measure(viewport.frame.current)
+      if (frame == null) return
+      const area = {
+        top: frame.top + viewport.readableTop,
+        bottom: frame.top + frame.height - viewport.contentBottom
+      }
+      const measured = await Promise.all(
+        targets.map(async target => ({
+          target,
+          body: await measure(bodyRefs.current.get(target.id))
+        }))
+      )
+      if (
+        generation !== visibilityGeneration.current ||
+        !mounted.current ||
+        !paneActive.current ||
+        session !== attentionSession.current ||
+        !session.complete ||
+        initialFollow.current ||
+        discovering.current ||
+        menuReading.current != null
+      )
+        return
+      const below: string[] = []
+      const readingBottom =
+        scrolled.current.offset + frame.height - viewport.contentBottom
+      for (const { target, body } of measured) {
+        // A row the virtualized window has not mounted is never viewed. One
+        // laid out below the reading band still waits there; cached rows
+        // before the visible history frontier are not laid out at all.
+        if (body == null) {
+          const y = contentYOf(target.id)
+          if (
+            y != null &&
+            y > readingBottom &&
+            !messageRefs.current.has(target.id)
+          )
+            below.push(target.id)
+          continue
+        }
+        const current = engine.view(conversationId)
+        if (
+          current == null ||
+          !attentionMessages(current, userId, session).some(
+            message => message.id === target.id
+          )
+        )
+          continue
+        if (attentionBodyViewed(body, area, manualPast))
+          session.seen.add(target.id)
+        else if (attentionBodyBelow(body, area)) below.push(target.id)
+      }
+      if (pendingManualPass.current.offset === offset)
+        pendingManualPass.current.past = false
+      attentionTargets.current = below
+      setAttentionCount(below.length)
+    })().catch(() => undefined)
+  }
+  useEffect(() => {
+    refreshAttention.current()
+    return () => {
+      visibilityGeneration.current += 1
+    }
+  }, [
+    view,
+    documentActive,
+    menu,
+    pinsOpen,
+    mentionChoosing,
+    reacting,
+    composerOverlay,
+    resolvingJump,
+    viewport.readableTop,
+    viewport.contentBottom,
+    attentionRevision
+  ])
+  const discoverPageNow = useRef(discoverPage)
+  discoverPageNow.current = discoverPage
+  useEffect(() => {
+    const session = attentionSession.current
+    const raw = engine.view(conversationId)
+    if (
+      session == null ||
+      raw == null ||
+      view == null ||
+      props.active === false ||
+      discovering.current
+    )
+      return
+    const needsPages =
+      raw.conversation.lastSeq > session.boundary &&
+      raw.hasEarlier &&
+      (raw.historyBefore == null || raw.historyBefore > session.boundary + 1)
+    const missing = attentionReferences(
+      raw,
+      userId,
+      session.boundary,
+      session.seen
+    ).some(id => !raw.messages.some(message => message.id === id))
+    if (!raw.unverified && !needsPages && (!missing || !raw.hasEarlier)) {
+      session.complete = true
+      setAttentionLoading(false)
+      setAttentionFailed(false)
+      refreshAttention.current()
+      return
+    }
+    session.complete = false
+    setAttentionCount(0)
+    if (discoveryPaused.current) {
+      setAttentionLoading(false)
+      setAttentionFailed(true)
+      return
+    }
+    const generation = ++historyGeneration.current
+    const cancelled = (): boolean =>
+      generation !== historyGeneration.current ||
+      !mounted.current ||
+      !paneActive.current ||
+      engine.view(conversationId) == null
+    discovering.current = true
+    setAttentionLoading(true)
+    setAttentionFailed(false)
+    // A batch that spent its page budget with the cursor moving is progress:
+    // the next batch starts once this one lets go, still loading.
+    let more = false
+    discoverAttentionHistory({
+      conversationId,
+      userId,
+      session,
+      view: engine.view.bind(engine),
+      loadEarlier: async () => await discoverPageNow.current(cancelled),
+      cancelled
+    })
+      .then(result => {
+        if (cancelled()) return
+        if (result === 'more') more = true
+        else session.complete = true
+      })
+      .catch((error: unknown) => {
+        if (!cancelled() && !(error instanceof AttentionCancelled)) {
+          discoveryPaused.current = true
+          setAttentionFailed(true)
+        }
+      })
+      .finally(() => {
+        discovering.current = false
+        if (mounted.current && paneActive.current) {
+          if (!more) setAttentionLoading(false)
+          refreshAttention.current()
+          if (more || retryDiscovery.current || cancelled()) {
+            retryDiscovery.current = false
+            setAttentionRevision(value => value + 1)
+          }
+        }
+      })
+  }, [view, engine, conversationId, userId, props.active, attentionRevision])
+  const run = useCallback(
+    (work: () => Promise<unknown>, failure = lstrings.chat_send_failed) => {
+      setError(undefined)
+      setReported(false)
+      work().catch((error: unknown) => {
+        if (!(error instanceof AttentionCancelled)) setError(failure)
+      })
+    },
+    []
+  )
+
+  if (view == null) initialScrollChosen.current = false
+  if (failed && view == null) {
+    return (
+      <Screen>
+        <Text style={shared.error}>{lstrings.chat_cannot_load}</Text>
+      </Screen>
+    )
+  }
+  if (view == null) {
+    return (
+      <Screen>
+        <Text style={shared.muted}>{lstrings.common_loading}</Text>
+      </Screen>
+    )
+  }
+
+  const send = (): void => {
+    const current = engine.view(conversationId)
+    if (current?.composer !== 'enabled') return
+    if (
+      !sendAllowed({
+        enabled: view.composer === 'enabled' && props.active !== false,
+        sending: draftOwner.isSending(conversationId),
+        preparing: preparingNow.current > 0,
+        text: textNow.current,
+        attachments: pickedNow.current
+      })
+    )
+      return
+    const submission = draftOwner.begin(conversationId)
+    if (submission == null) return
+    const submitted = submission.draft
+    const body = submitted.text.trim()
+    const mentions = mentionIds(
+      submitted.text,
+      submitted.mentionTokens,
+      current.members,
+      submitted.editing
+    )
+    const work = async (): Promise<unknown> => {
+      if (submitted.editing != null) {
+        if (mentions.length > 0)
+          await engine.edit(
+            conversationId,
+            submitted.editing.id,
+            body,
+            mentions
+          )
+        else await engine.edit(conversationId, submitted.editing.id, body)
+        return
+      }
+      const quote = {
+        ...(submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }),
+        ...(mentions.length === 0 ? {} : { mentions })
+      }
+      if (submitted.picked.length > 0) {
+        return await engine.attach(
+          conversationId,
+          submitted.picked,
+          body,
+          quote
+        )
+      }
+      return await engine.sendText(conversationId, body, quote)
+    }
+    const finish = (success: boolean): void => {
+      const next = draftOwner.finish(conversationId, submission, success)
+      // Standalone consumers retain their external draft callback; workspaces
+      // reconcile directly in their persistent owner, never the old screen.
+      if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
+    }
+    work().then(
+      () => {
+        finish(true)
+      },
+      () => {
+        finish(false)
+      }
+    )
+  }
+
+  const onText = (next: string, change?: ComposerChange): void => {
+    const before = textNow.current
+    // iOS can report the same text again once a send has cleared the draft;
+    // that is no edit, and must not close a chooser the at-sign just opened.
+    if (next === before) return
+    const reconciled = reconcileMentions(
+      before,
+      next,
+      mentionTokensNow.current,
+      change
+    )
+    const tokens =
+      mentionTokensNow.current == null && reconciled.length === 0
+        ? undefined
+        : reconciled
+    mentionTokensNow.current = tokens
+    setMentionTokens(tokens)
+    const choosing =
+      view.composer === 'enabled' &&
+      props.active !== false &&
+      engine.view(conversationId)?.composer === 'enabled'
+        ? mentionRequest(before, next, change)
+        : undefined
+    setMentionChoosing(choosing)
+    setMentionError(undefined)
+    textNow.current = next
+    draftOwner.write(conversationId, {
+      ...draftOwner.draft(conversationId),
+      text: next,
+      ...(tokens == null ? {} : { mentionTokens: tokens })
+    })
+    setText(next)
+    readRevision.current =
+      view.conversation.preferences?.manualUnreadRevision ?? 0
+    if (attentionSession.current != null && readDocumentActive())
+      engine
+        .markRead(conversationId, readRevision.current)
+        .catch(() => undefined)
+    if (next !== '' && view.composer === 'enabled') {
+      engine.typing(conversationId)
+    }
+  }
+
+  const chooseMention = (userId: string): void => {
+    const current = engine.view(conversationId)
+    const member = current?.members.find(member => member.userId === userId)
+    if (
+      props.active === false ||
+      current?.composer !== 'enabled' ||
+      member == null ||
+      mentionChoosing == null
+    ) {
+      setMentionChoosing(undefined)
+      return
+    }
+    const next = insertMention(
+      mentionChoosing,
+      textNow.current,
+      mentionTokensNow.current,
+      member
+    )
+    if (next == null) {
+      setMentionError(lstrings.chat_mention_too_long)
+      return
+    }
+    textNow.current = next.text
+    mentionTokensNow.current = next.tokens
+    setText(next.text)
+    setMentionTokens(next.tokens)
+    draftOwner.write(conversationId, {
+      ...draftOwner.draft(conversationId),
+      text: next.text,
+      mentionTokens: next.tokens
+    })
+    setMentionChoosing(undefined)
+    setMentionError(undefined)
+    focusComposer.current(next.selection)
+  }
+
+  const reply = (pressed: MessageView): void => {
+    const current = engine.view(conversationId)
+    const original = current?.messages.find(
+      message => message.id === pressed.id
+    )
+    if (
+      props.active === false ||
+      current?.conversation.id !== conversationId ||
+      original == null ||
+      !actionsFor(original, current).includes('reply')
+    )
+      return
+    editingNow.current = undefined
+    setEditing(undefined)
+    replyNow.current = original
+    setReplyTo(original)
+    // Keep trusted mobile-web activation and repeated Reply actions synchronous.
+    focusComposer.current()
+  }
+
+  const react = (message: MessageView, emoji: string, remove = false): void => {
+    const current = engine.view(conversationId)
+    const target = current?.messages.find(item => item.id === message.id)
+    if (
+      target == null ||
+      current == null ||
+      !actionsFor(target, current).includes('react')
+    )
+      return
+    run(async () => {
+      await engine.react(conversationId, target.id, emoji, remove)
+    })
+  }
+
+  const nameOf = (message: MessageView): string =>
+    message.mine
+      ? lstrings.chat_you
+      : (message.senderName ?? lstrings.chat_former_member)
+
+  // Where a notice falls among the messages: a safety number change by its
+  // time, and the end of what can be opened after the last lost message.
+  const notices = new Map<number, Notice[]>()
+  const addNotice = (index: number, notice: Notice): void => {
+    notices.set(index, [...(notices.get(index) ?? []), notice])
+  }
+  if (view.earlierLost) {
+    let lastLost = -1
+    view.messages.forEach((message, index) => {
+      if (message.status === 'lost') lastLost = index
+    })
+    addNotice(lastLost + 1, { kind: 'lost', key: 'lost' })
+  }
+  for (const change of view.safetyChanges) {
+    let index = view.messages.findIndex(
+      message => Date.parse(message.sentAt) > change.at
+    )
+    if (index === -1) index = view.messages.length
+    addNotice(index, {
+      kind: 'safety',
+      key: `safety-${change.seq}`,
+      name: change.name
+    })
+  }
+
+  const renderNotice = (notice: Notice): React.ReactElement => (
+    <View key={notice.key} style={styles.notice}>
+      <Text style={styles.noticeText}>
+        {notice.kind === 'lost'
+          ? lstrings.chat_earlier_lost
+          : sprintf(
+              lstrings.chat_safety_changed,
+              notice.name ?? lstrings.chat_former_member
+            )}
+      </Text>
+    </View>
+  )
+
+  const typing = typingNames(view.typing, lstrings.chat_someone)
+  const currentMenu =
+    menu == null || props.active === false
+      ? undefined
+      : view.messages.find(message => message.id === menu.id)
+  const selectedFor = (action: MessageAction): MessageView | undefined => {
+    const current = engine.view(conversationId)
+    const selected = current?.messages.find(message => message.id === menu?.id)
+    if (
+      props.active === false ||
+      current == null ||
+      selected == null ||
+      !actionsFor(selected, current).includes(action)
+    ) {
+      setError(lstrings.chat_message_unavailable)
+      setMenu(undefined)
+      return undefined
+    }
+    return selected
+  }
+
+  const rememberScroll = (
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+    userOwned = false
+  ): void => {
+    if (!mounted.current || !paneActive.current) return
+    // A queued programmatic acknowledgement cannot replace an active jump's reader.
+    // Actual native drag/momentum still records its position and cancels the jump.
+    if (!userOwned && measuringJump.current != null) return
+    const { contentOffset, layoutMeasurement } = event.nativeEvent
+    if (
+      restoreAnchor.current != null &&
+      (!widthLayoutReady() || restoringAnchor.current)
+    )
+      return
+    if (restoreTarget.current != null) {
+      if (!widthLayoutReady() || restoringAnchor.current) return
+      const actual = Math.max(0, contentOffset.y)
+      const target = reachableOffset(restoreTarget.current)
+      if (Math.abs(actual - target) <= 1) {
+        const anchor = scrolled.current.anchor
+        rememberPosition(
+          actual,
+          anchor == null
+            ? undefined
+            : {
+                id: anchor.id,
+                relativeY: anchor.relativeY + scrolled.current.offset - actual,
+                // The acknowledged restoration is still the saved reader.
+                ...(anchor.readableTop == null
+                  ? {}
+                  : { readableTop: anchor.readableTop })
+              }
+        )
+      }
+      return
+    }
+    const pending = prepend.current
+    const physical =
+      Platform.OS === 'web' &&
+      widthLayoutReady() &&
+      !restoringAnchor.current &&
+      menuReading.current == null &&
+      backgroundReading.current?.generation !== historyGeneration.current &&
+      pending == null &&
+      measuringJump.current == null
+        ? readMessageScrollPosition(scroller.current, messageRefs.current)
+        : undefined
+    scrolled.current.offset = physical?.offset ?? Math.max(0, contentOffset.y)
+    if (
+      pending != null &&
+      latestView.current?.messages[0]?.seq === pending.firstSeq &&
+      latestView.current?.hasEarlier === pending.hasEarlier &&
+      Math.abs(scrolled.current.content - pending.content) < 1
+    ) {
+      pending.offset = scrolled.current.offset
+      pending.anchor = readingAnchor(pending.positions)
+    }
+    if (initialFollow.current) {
+      scrolled.current.followNewest = true
+      atBottom.current = true
+      if (!acknowledgeInitialFollow()) return
+    }
+    scrolled.current.hasPosition = true
+    // Native scroll events can carry the temporary viewport geometry
+    // from a hidden pane or a keyboard transition. Keep the current
+    // onLayout height while still recording the actual scroll offset.
+    if (scrolled.current.height <= 0)
+      scrolled.current.height = layoutMeasurement.height
+    scrolled.current.followNewest =
+      scrolled.current.offset + scrolled.current.height >=
+      scrolled.current.content - 48
+    scrolled.current.anchor =
+      physical == null
+        ? readingAnchor(messagePositions.current)
+        : physical.anchor
+    onDraftChange?.(currentDraft())
+  }
+
+  const rememberNativeScroll = (
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+    end?: 'drag' | 'momentum'
+  ): void => {
+    if (!mounted.current || !paneActive.current) return
+    const input = nativeUserScroll.current
+    const owned =
+      Platform.OS !== 'web' && input != null && (end == null || end === input)
+    // An authoritative user offset must not be discarded as an outstanding
+    // programmatic restoration acknowledgement.
+    if (owned) restoreTarget.current = undefined
+    rememberScroll(event, owned)
+    const landing = jumpLanding.current
+    if (
+      landing != null &&
+      !owned &&
+      Math.abs(
+        Math.max(0, event.nativeEvent.contentOffset.y) - landing.target
+      ) > 1
+    )
+      awaitJumpLanding()
+    else endJumpLanding(jumpLanding)
+    if (owned) userScrolled()
+    else refreshAttention.current()
+    if (end != null && end === input) nativeUserScroll.current = undefined
+    if (end === 'momentum' && input !== 'drag')
+      nativeMomentumFromDrag.current = false
+  }
+
+  // A mounted row's layout, or the list moving it: measure where it is in the
+  // scroll content, as its own layout reported before virtualization.
+  const rowPlaced = (id: string, onlyMoved = false): void => {
+    if (!mounted.current || !paneActive.current) return
+    const row = messageRefs.current.get(id)
+    const content = scroller.current?.getInnerViewRef()
+    if (row == null || content == null) return
+    // Both tops in the window: their difference is the row's content offset
+    // whatever the scroll position, and neither restoration's measureLayout.
+    let rowTop: number | undefined
+    let contentTopInWindow: number | undefined
+    const finish = (): void => {
+      if (rowTop == null || contentTopInWindow == null) return
+      const y = rowTop - contentTopInWindow
+      if (
+        messageRefs.current.get(id) === row &&
+        (!onlyMoved || messagePositions.current.get(id) !== y)
+      )
+        rowPlacedAt(id, y)
+    }
+    row.measureInWindow((_x, top, width, height) => {
+      if (Number.isFinite(top) && width > 0 && height > 0) rowTop = top
+      finish()
+    })
+    content.measureInWindow((_x, top, width, height) => {
+      if (Number.isFinite(top) && width > 0 && height > 0)
+        contentTopInWindow = top
+      finish()
+    })
+  }
+  const rowPlacedAt = (id: string, y: number): void => {
+    if (!mounted.current || !paneActive.current) return
+    messagePositions.current.set(id, y)
+    if (
+      view.messages[0]?.seq === prepend.current?.firstSeq &&
+      view.hasEarlier === prepend.current?.hasEarlier
+    )
+      prepend.current?.positions.set(id, y)
+    if (id === prepend.current?.firstId) restoreExhaustedPage()
+    if (id === restoreAnchor.current?.id) restoreReadingAnchor()
+    else recaptureLiveAnchor()
+  }
+  // Positions move without a row's own layout when a row above changes size
+  // or the data changes. The reading anchor is chosen among mounted rows: the
+  // visible band and the rows around it are always mounted.
+  const syncPositions = (): void => {
+    if (!mounted.current || !paneActive.current) return
+    for (const id of [...messageRefs.current.keys()]) rowPlaced(id, true)
+  }
+  if (!initialScrollChosen.current) {
+    initialScrollChosen.current = true
+    initialScroll.current =
+      restoreAnchor.current == null && restoreTarget.current == null
+        ? 'end'
+        : undefined
+  }
+  // Rows that must stay mounted wherever the reader is: the selected
+  // message's source while its actions are open, and a jump's target.
+  const alwaysRender = [
+    ...(currentMenu == null ? [] : [currentMenu.id]),
+    ...(mountedTarget == null || mountedTarget === currentMenu?.id
+      ? []
+      : [mountedTarget])
+  ]
+  const historyHeaderVisible =
+    view.historyLocked ||
+    approvals.length > 0 ||
+    view.unverified ||
+    view.hasEarlier ||
+    (view.messages.length === 0 && !view.earlierLost)
+  const historyHeaderRow = (
+    <View
+      style={{
+        gap: theme.rem(theme.spaceSmRem),
+        paddingBottom:
+          historyHeaderVisible && view.messages.length > 0
+            ? theme.rem(theme.spaceSmRem)
+            : 0
+      }}
+      onLayout={event => {
+        historyHeader.current = event.nativeEvent.layout.height
+        syncPositions()
+      }}
+    >
+      {view.historyLocked && (
+        <View style={[shared.banner, shared.bannerWarning]}>
+          <Icon name="lock" color={theme.warningColor} />
+          <Text style={shared.bannerText}>{lstrings.chat_history_locked}</Text>
+        </View>
+      )}
+      {approvals.map(approval => (
+        <View key={approval.requestId} style={shared.banner}>
+          <Text style={shared.bannerText}>
+            {sprintf(
+              lstrings.chat_approval_request,
+              approval.name ?? lstrings.chat_former_member
+            )}
+          </Text>
+          <Button
+            label={lstrings.chat_review}
+            kind="secondary"
+            compact
+            onPress={() => {
+              identityPress.current()
+            }}
+          />
+        </View>
+      ))}
+      {view.unverified && (
+        <View style={[shared.banner, shared.bannerWarning]}>
+          <Text style={shared.bannerText}>{lstrings.chat_unverified}</Text>
+        </View>
+      )}
+      {view.hasEarlier && (
+        <Button
+          label={lstrings.chat_load_earlier}
+          kind="text"
+          onPress={() => {
+            atBottom.current = false
+            run(async () => {
+              historyGeneration.current += 1
+              discoveryPaused.current = true
+              setAttentionLoading(false)
+              await loadOlder()
+            })
+          }}
+        />
+      )}
+      {view.messages.length === 0 && !view.earlierLost && (
+        <Text style={[shared.muted, styles.empty]}>
+          {lstrings.chat_no_messages}
+        </Text>
+      )}
+    </View>
+  )
+  const historyFooterRow =
+    notices.get(view.messages.length) == null ? null : (
+      <View
+        style={{
+          gap: theme.rem(theme.spaceSmRem),
+          paddingTop: theme.rem(theme.spaceSmRem)
+        }}
+      >
+        {notices.get(view.messages.length)?.map(renderNotice)}
+      </View>
+    )
+  const keyOfMessage = (message: MessageView): string => message.id
+  // Everything a row reads besides its message: mounted rows re-render with it.
+  const rowContext = {
+    view,
+    notices,
+    highlight,
+    bubbleWidth,
+    swipe,
+    userId
+  }
+  const renderRow = (
+    message: MessageView,
+    index: number
+  ): React.ReactElement => (
+    <View
+      key={message.id}
+      testID={`chat-message-row-${message.id}`}
+      ref={node => {
+        if (node == null) messageRefs.current.delete(message.id)
+        else messageRefs.current.set(message.id, node)
+      }}
+      collapsable={false}
+      onLayout={event => {
+        scroller.current?.reportRowHeight(
+          message.id,
+          event.nativeEvent.layout.height
+        )
+        rowPlaced(message.id)
+      }}
+    >
+      {notices.get(index)?.map(renderNotice)}
+      <MessageBubble
+        bodyRef={node => {
+          if (node == null) bodyRefs.current.delete(message.id)
+          else bodyRefs.current.set(message.id, node)
+        }}
+        onBodyLayout={() => {
+          refreshAttention.current()
+        }}
+        message={message}
+        conversation={view.conversation}
+        members={view.members}
+        engine={engine}
+        files={files}
+        maxWidth={bubbleWidth}
+        swipe={swipe && view.composer === 'enabled'}
+        actions={actionsFor(message, view)}
+        pinned={view.pins?.some(pin => pin.messageId === message.id)}
+        userId={userId}
+        onJump={jumpTo}
+        highlighted={highlight === message.id}
+        gestureGeneration={gestureGeneration}
+        showSenderAvatar={endsIncomingRun(
+          view.messages,
+          index,
+          notices.has(index + 1)
+        )}
+        onLongPress={(pressed, anchor, source) => {
+          if (actionsFor(pressed, view).length > 0) {
+            initialFollow.current = false
+            const visible = readMessageScrollPosition(
+              scroller.current,
+              messageRefs.current
+            )
+            menuReading.current = {
+              offset: visible?.offset ?? scrolled.current.offset,
+              top: readableTop.current,
+              anchor: visible?.anchor ?? readingAnchor(messagePositions.current)
+            }
+            scrolled.current.offset = menuReading.current.offset
+            scrolled.current.anchor = menuReading.current.anchor
+            scrolled.current.hasPosition = true
+            scrolled.current.followNewest = false
+            atBottom.current = false
+            setMenu(pressed)
+            setMenuAnchor(anchor)
+            setMenuSource(source)
+          }
+        }}
+        onReact={pressed => {
+          setReacting(pressed)
+        }}
+        onReply={reply}
+        onToggleReaction={(pressed, emoji, mine) => {
+          react(pressed, emoji, mine)
+        }}
+      />
+    </View>
+  )
+  const content = (
+    <>
+      <ChatViewport viewport={viewport}>
+        {props.paneHeader === true && (
+          <GlassView
+            onLayout={event => {
+              setPaneHeaderHeight(event.nativeEvent.layout.height)
+            }}
+            style={{
+              position: 'absolute',
+              top: viewport.header,
+              left: 0,
+              right: 0,
+              zIndex: 3,
+              minHeight: Math.max(
+                theme.rem(3.5),
+                theme.rem(2.25) * window.fontScale + theme.rem(0.5)
+              ),
+              paddingHorizontal: margin,
+              paddingVertical: theme.rem(0.25),
+              borderBottomWidth: 1,
+              borderBottomColor: theme.glassBorderColor
+            }}
+          >
+            <ChatConversationIdentity
+              conversation={view.conversation}
+              onPress={() => {
+                identityPress.current()
+              }}
+            />
+          </GlassView>
+        )}
+        {hasPins && props.active !== false && (
+          <View
+            pointerEvents="box-none"
+            testID="chat-pinned-band"
+            onLayout={event => {
+              setPinHeight(event.nativeEvent.layout.height)
+            }}
+            style={{
+              position: 'absolute',
+              top:
+                viewport.header +
+                (props.paneHeader === true ? paneHeaderHeight : 0),
+              left: Math.max(margin, insets.left),
+              right: Math.max(margin, insets.right),
+              paddingVertical: theme.rem(0.25),
+              zIndex: 3
+            }}
+          >
+            <PinnedMessageSummary
+              pins={view.pins ?? []}
+              messages={view.messages}
+              onJump={jumpTo}
+              onOpenList={() => {
+                setPinsOpen(true)
+              }}
+            />
+          </View>
+        )}
+        <ChatHistoryList
+          testID="chat-message-history"
+          listRef={scroller}
+          data={view.messages}
+          keyOf={keyOfMessage}
+          renderItem={renderRow}
+          extraData={rowContext}
+          header={historyHeaderRow}
+          footer={historyFooterRow}
+          alwaysRender={alwaysRender}
+          initialScroll={initialScroll.current}
+          estimatedItemSize={theme.rem(4)}
+          // The history fills the window behind its overlays.
+          estimatedListSize={window}
+          drawDistance={theme.rem(24)}
+          onPositions={syncPositions}
+          keyboard={keyboard.listProps}
+          style={styles.fill}
+          contentContainerStyle={[
+            styles.messages,
+            {
+              paddingTop: viewport.contentTop,
+              paddingBottom: keyboard.endPadding(viewport.contentBottom),
+              paddingLeft: Math.max(margin, insets.left),
+              paddingRight: Math.max(margin, insets.right)
+            }
+          ]}
+          keyboardShouldPersistTaps="handled"
+          onScroll={event => {
+            const { x = 0, y } = event.nativeEvent.contentOffset
+            const previous = gestureOffset.current
+            // Web motion is observed before RNW throttles notifications. Native
+            // packets still cancel on actual motion or uncertain coordinates.
+            if (
+              Platform.OS !== 'web' &&
+              (!Number.isFinite(x) ||
+                !Number.isFinite(y) ||
+                x !== previous.x ||
+                y !== previous.y)
+            )
+              gestureGeneration.current += 1
+            gestureOffset.current = { x, y }
+            rememberNativeScroll(event)
+          }}
+          // A throttled Android stream need not send its last edge offset.
+          // End events carry the authoritative settled position.
+          onScrollEndDrag={event => {
+            rememberNativeScroll(event, 'drag')
+          }}
+          onMomentumScrollEnd={event => {
+            rememberNativeScroll(event, 'momentum')
+          }}
+          onMomentumScrollBegin={() => {
+            if (
+              Platform.OS !== 'web' &&
+              mounted.current &&
+              paneActive.current &&
+              nativeMomentumFromDrag.current &&
+              nativeUserScroll.current !== 'drag'
+            ) {
+              nativeUserScroll.current = 'momentum'
+              userScrolled()
+            }
+          }}
+          onScrollBeginDrag={() => {
+            gestureGeneration.current += 1
+            if (
+              Platform.OS !== 'web' &&
+              mounted.current &&
+              paneActive.current
+            ) {
+              nativeUserScroll.current = 'drag'
+              nativeMomentumFromDrag.current = true
+              userScrolled()
+            }
+          }}
+          onLayout={event => {
+            if (!mounted.current || !paneActive.current) return
+            if (scrolled.current.width !== event.nativeEvent.layout.width) {
+              widthRevision.current += 1
+              if (restoringAnchor.current) restoreAnchorDirty.current = true
+            }
+            scrolled.current.width = event.nativeEvent.layout.width
+            scrolled.current.height = event.nativeEvent.layout.height
+            awaitingWidthLayout.current = false
+            acknowledgeInitialFollow()
+            if (
+              restoreTarget.current != null &&
+              restoreAnchor.current == null &&
+              widthLayoutReady()
+            )
+              scroller.current?.scrollTo({
+                y: restoreTarget.current,
+                animated: false
+              })
+            restoreReadingAnchor()
+          }}
+          onContentSizeChange={(width, contentHeight) => {
+            if (!mounted.current || !paneActive.current) return
+            // The reader's extent includes the end clearance wherever the
+            // platform keeps it: content padding, or the scroll view's inset.
+            const height =
+              contentHeight + insetOutsideContent(viewport.contentBottom)
+            if (scrolled.current.contentWidth !== width) {
+              widthRevision.current += 1
+              if (restoringAnchor.current) restoreAnchorDirty.current = true
+            }
+            scrolled.current.contentWidth = width
+            acknowledgeInitialFollow()
+            const background = backgroundReading.current
+            if (background != null) {
+              scrolled.current.content = height
+              if (
+                (initialFollow.current ||
+                  scrolled.current.followNewest ||
+                  atBottom.current) &&
+                menuReading.current == null
+              )
+                scroller.current?.scrollToEnd({ animated: false })
+              return
+            }
+            if (prepend.current != null) {
+              const previous = prepend.current
+              const firstSeq = view.messages[0]?.seq
+              if (
+                firstSeq != null &&
+                (previous.firstSeq == null || firstSeq < previous.firstSeq)
+              ) {
+                prepend.current = undefined
+                scrolled.current.content = height
+                // The list holds the first visible row in the commit that
+                // added the page (the browser's list itself, a phone's scroll
+                // view natively), before this later notification; an offset
+                // from it would move that reader again. Only a reader with no
+                // row in view is placed by the content's growth.
+                if (previous.anchor == null || measuringJump.current != null) {
+                  const target = rememberPosition(
+                    Math.max(0, previous.offset + height - previous.content)
+                  )
+                  scroller.current?.scrollTo({ y: target, animated: false })
+                }
+                if (previous.anchor != null && measuringJump.current == null) {
+                  const anchor = previous.anchor
+                  const generation = jumpGeneration.current
+                  const cancelled = (): boolean =>
+                    generation !== jumpGeneration.current ||
+                    !mounted.current ||
+                    !paneActive.current ||
+                    engine.view(conversationId) == null
+                  historyRestorations.current += 1
+                  // Total height also includes quote/image changes below the
+                  // reader. Preserve the same existing row's viewport position.
+                  measurePosition(anchor.id, cancelled)
+                    .then(y => {
+                      if (y == null || cancelled()) return
+                      const measured = rememberPosition(
+                        Math.max(0, y - anchor.relativeY),
+                        anchor
+                      )
+                      scroller.current?.scrollTo({
+                        y: measured,
+                        animated: false
+                      })
+                    })
+                    .catch(() => undefined)
+                    .finally(() => {
+                      historyRestorations.current -= 1
+                    })
+                }
+                return
+              }
+              // An appended post or a layout pass is not an older page.
+              // Exclude its height from the eventual prepend compensation.
+              restoreExhaustedPage()
+              previous.content = height
+            }
+            const held = menuReading.current
+            if (held != null) {
+              scrolled.current.content = height
+              if (held.anchor != null) {
+                restoreAnchor.current = held.anchor
+                restoreReadingAnchor()
+              } else
+                scroller.current?.scrollTo({ y: held.offset, animated: false })
+              return
+            }
+            if (
+              restoreTarget.current != null ||
+              restoreAnchor.current != null
+            ) {
+              scrolled.current.content = height
+              if (
+                restoreTarget.current != null &&
+                restoreAnchor.current == null &&
+                widthLayoutReady()
+              )
+                scroller.current?.scrollTo({
+                  y: restoreTarget.current,
+                  animated: false
+                })
+              restoreReadingAnchor()
+              return
+            }
+            if (measuringJump.current != null) {
+              scrolled.current.content = height
+              return
+            }
+            const { offset, content } = scrolled.current
+            // At the bottom of what was there before it grew (or asked to
+            // go there by a send): follow it down.
+            const following =
+              initialFollow.current ||
+              atBottom.current ||
+              content === 0 ||
+              offset + scrolled.current.height >= content - 48
+            scrolled.current.content = height
+            atBottom.current = initialFollow.current && following
+            if (following) scroller.current?.scrollToEnd({ animated: false })
+            else recaptureLiveAnchor()
+          }}
+        />
+        <ChatAttentionControl
+          count={attentionCount}
+          loading={attentionLoading}
+          failed={attentionFailed}
+          disabled={resolvingJump}
+          bottom={viewport.contentBottom + (notice ? noticeHeight : 0)}
+          right={Math.max(margin, insets.right)}
+          onLatest={() => {
+            historyGeneration.current += 1
+            discoveryPaused.current = true
+            setAttentionLoading(false)
+            jumpGeneration.current += 1
+            measuringJump.current = undefined
+            setResolvingJump(false)
+            restoreTarget.current = undefined
+            restoreAnchor.current = undefined
+            atBottom.current = true
+            scrolled.current.followNewest = true
+            keyboard.scrollToEnd(scroller.current, true)
+          }}
+          onNext={() => {
+            const next = attentionTargets.current[0]
+            if (next != null && !resolvingJump) jumpTo(next, true)
+          }}
+          onRetry={() => {
+            discoveryPaused.current = false
+            retryDiscovery.current = discovering.current
+            setAttentionFailed(false)
+            setAttentionRevision(value => value + 1)
+          }}
+        />
+        {notice && (
+          // Floating above the composer band, not in it: the band's height is
+          // the history's bottom inset, and a notice must not move the reader.
+          <GlassView
+            testID="chat-history-notice"
+            radius={theme.rem(1.5)}
+            onLayout={event => {
+              setNoticeHeight(event.nativeEvent.layout.height)
+            }}
+            style={{
+              position: 'absolute',
+              left: Math.max(margin, insets.left),
+              right: Math.max(margin, insets.right),
+              bottom: viewport.contentBottom - theme.rem(0.5),
+              zIndex: 4,
+              gap: theme.rem(0.25),
+              paddingHorizontal: theme.rem(theme.spaceMdRem),
+              paddingVertical: theme.rem(theme.spaceXsRem),
+              borderWidth: 1,
+              borderColor: theme.glassBorderColor,
+              borderRadius: theme.rem(1.5)
+            }}
+          >
+            {error != null && <Text style={shared.error}>{error}</Text>}
+            {jumpRetry != null && !resolvingJump && (
+              <Button
+                testID="chat-history-jump-retry"
+                label={lstrings.common_retry}
+                kind="text"
+                onPress={() => {
+                  jumpTo(jumpRetry.id, jumpRetry.attention)
+                }}
+              />
+            )}
+            {resolvingJump && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: theme.rem(0.5)
+                }}
+              >
+                <Text style={shared.small} accessibilityLiveRegion="polite">
+                  {lstrings.common_loading}
+                </Text>
+                <Button
+                  testID="chat-history-jump-cancel"
+                  label={lstrings.chat_cancel}
+                  kind="text"
+                  textColor={theme.dangerColor}
+                  onPress={() => {
+                    jumpGeneration.current += 1
+                    measuringJump.current = undefined
+                    setMountedTarget(undefined)
+                    setResolvingJump(false)
+                    restoreReadingAnchor()
+                  }}
+                />
+              </View>
+            )}
+          </GlassView>
+        )}
+        <View
+          testID="chat-composer-band"
+          ref={keyboard.composerRef}
+          pointerEvents="box-none"
+          onLayout={event => {
+            setComposerHeight(event.nativeEvent.layout.height)
+            keyboard.onComposerLayout(event)
+          }}
+          style={{
+            position: 'absolute',
+            left: Math.max(margin, insets.left),
+            right: Math.max(margin, insets.right),
+            bottom: viewport.composerBottom,
+            zIndex: 4
+          }}
+        >
+          {typing.length > 0 && (
+            <Text style={shared.small} accessibilityLiveRegion="polite">
+              {typing.length === 1
+                ? sprintf(lstrings.chat_typing_one, typing[0])
+                : sprintf(lstrings.chat_typing_many, typing.join(', '))}
+            </Text>
+          )}
+          {reported && (
+            <Text style={shared.muted} accessibilityLiveRegion="polite">
+              {lstrings.chat_reported}
+            </Text>
+          )}
+          {view.composer === 'closed' ? (
+            <View style={shared.banner}>
+              <Text style={shared.bannerText}>
+                {lstrings.chat_closed_notice}
+              </Text>
+            </View>
+          ) : view.composer === 'readOnly' ? (
+            <View style={shared.banner}>
+              <Text style={shared.bannerText}>{lstrings.chat_read_only}</Text>
+            </View>
+          ) : (
+            <Composer
+              onOverlay={setComposerOverlay}
+              registerFocus={registerComposerFocus}
+              onRead={() => {
+                if (
+                  attentionSession.current == null ||
+                  props.active === false ||
+                  !readDocumentActive() ||
+                  isRestoringPopupFocus()
+                )
+                  return
+                readRevision.current =
+                  view.conversation.preferences?.manualUnreadRevision ?? 0
+                engine
+                  .markRead(conversationId, readRevision.current)
+                  .catch(() => undefined)
+              }}
+              text={text}
+              onText={onText}
+              enabled={view.composer === 'enabled' && props.active !== false}
+              sending={sending}
+              preparing={preparing > 0}
+              context={
+                editing != null
+                  ? { kind: 'edit' }
+                  : replyTo != null
+                    ? {
+                        kind: 'reply',
+                        name: nameOf(
+                          view.messages.find(
+                            message => message.id === replyTo.id
+                          ) ?? { ...replyTo, senderName: undefined }
+                        ),
+                        snippet: replyExcerpt(
+                          view.messages.find(
+                            message => message.id === replyTo.id
+                          )
+                        )
+                      }
+                    : undefined
+              }
+              onCancelContext={() => {
+                if (editing != null) {
+                  textNow.current = ''
+                  setText('')
+                  mentionTokensNow.current = undefined
+                  setMentionTokens(undefined)
+                }
+                setEditing(undefined)
+                replyNow.current = undefined
+                setReplyTo(undefined)
+              }}
+              attachments={picked}
+              onRemoveAttachment={index => {
+                const next = pickedNow.current.filter((_, at) => at !== index)
+                pickedNow.current = next
+                setPicked(next)
+              }}
+              sources={editing == null ? files.PICK_SOURCES : []}
+              onAttach={source => {
+                prepareFiles(
+                  async remaining => await files.pickFiles(source, remaining),
+                  'picker'
+                )
+              }}
+              onSend={send}
+            />
+          )}
+        </View>
+      </ChatViewport>
+      {mentionChoosing?.text === text &&
+        view.composer === 'enabled' &&
+        props.active !== false && (
+          <MentionPicker
+            members={view.members}
+            error={mentionError}
+            onSelect={chooseMention}
+            onClose={() => {
+              setMentionChoosing(undefined)
+              setMentionError(undefined)
+              focusComposer.current()
+            }}
+          />
+        )}
+      {currentMenu != null && (
+        <MessageMenu
+          message={currentMenu}
+          actions={actionsFor(currentMenu, view)}
+          desktop={isFinePointer() && menuAnchor != null}
+          anchor={menuAnchor}
+          source={menuSource}
+          selected={
+            <MessageBubble
+              message={currentMenu}
+              conversation={view.conversation}
+              members={view.members}
+              engine={engine}
+              files={files}
+              maxWidth={Math.min(
+                bubbleWidth,
+                menuSource?.bounds.width ?? bubbleWidth
+              )}
+              swipe={false}
+              selected
+              pictures={menuSource?.pictures?.()}
+              actions={[]}
+              userId={userId}
+              pinned={view.pins?.some(pin => pin.messageId === currentMenu.id)}
+              onLongPress={() => {}}
+              onReply={() => {}}
+              onToggleReaction={() => {}}
+            />
+          }
+          onClose={() => {
+            setMenu(undefined)
+            setMenuSource(undefined)
+          }}
+          onReply={() => {
+            const selected = selectedFor('reply')
+            if (selected == null) return
+            reply(selected)
+          }}
+          onReact={emoji => {
+            const selected = selectedFor('react')
+            if (selected == null) return
+            react(
+              selected,
+              emoji,
+              selected.reactions.some(
+                reaction =>
+                  reactionKey(reaction.emoji) === reactionKey(emoji) &&
+                  reaction.mine
+              )
+            )
+          }}
+          onMoreEmoji={() => {
+            const selected = selectedFor('react')
+            if (selected != null) setReacting(selected)
+          }}
+          onCopy={async () => {
+            const selected = selectedFor('copy')
+            if (selected == null) throw new Error('Message unavailable')
+            await copyChatText(selected.body)
+          }}
+          onPin={pinned => {
+            const selected = selectedFor(pinned ? 'pin' : 'unpin')
+            if (selected == null) return
+            run(async () => {
+              if (engine.pinMessage == null) throw new Error('Pins unavailable')
+              await engine.pinMessage(conversationId, selected.id, pinned)
+            }, lstrings.chat_pin_failed)
+          }}
+          onDelete={() => {
+            const selected = selectedFor('delete')
+            if (selected == null) return
+            run(async () => {
+              await engine.deleteMessage(conversationId, selected.id)
+            })
+          }}
+          onDeleteForEveryone={() => {
+            const selected = selectedFor('deleteForEveryone')
+            if (selected == null) return
+            run(async () => {
+              await engine.moderatorDelete(conversationId, selected.id)
+            })
+          }}
+        />
+      )}
+      {pinsOpen && hasPins && props.active !== false && (
+        <PinnedMessages
+          pins={view.pins ?? []}
+          messages={view.messages}
+          onJump={jumpTo}
+          onClose={() => {
+            setPinsOpen(false)
+          }}
+        />
+      )}
+      {reacting != null && (
+        <View style={styles.reactPicker}>
+          <EmojiPicker
+            onPick={emoji => {
+              react(reacting, emoji)
+              setReacting(undefined)
+            }}
+            onClose={() => {
+              setReacting(undefined)
+            }}
+          />
+        </View>
+      )}
+    </>
+  )
+  const pane =
+    props.embedded === true ? (
+      <View style={[styles.column, { flex: 1 }]}>{content}</View>
+    ) : (
+      <Screen overlayContent wide scroll={false} contentStyle={styles.column}>
+        {content}
+      </Screen>
+    )
+  return (
+    <ChatDropTarget
+      disabledReason={
+        view.composer !== 'enabled' || editing != null || sending
+          ? lstrings.chat_attachment_blocked
+          : undefined
+      }
+      onPrepare={prepareFiles}
+      onReject={setError}
+    >
+      {pane}
+    </ChatDropTarget>
+  )
+}
+
+const getStyles = cacheStyles((theme: Theme) => ({
+  // The full pane owns its measured content clearances.
+  column: {
+    flex: 1,
+    // Centred in a wide window, as every other chat screen is.
+    alignSelf: 'stretch',
+    minHeight: 0
+  },
+  fill: {
+    flex: 1,
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  messages: {
+    gap: theme.rem(theme.spaceSmRem),
+    paddingVertical: theme.rem(theme.spaceSmRem)
+  },
+  empty: {
+    textAlign: 'center',
+    paddingVertical: theme.rem(theme.spaceLgRem)
+  },
+  notice: {
+    alignSelf: 'center',
+    borderRadius: theme.rem(1),
+    backgroundColor: theme.containerBackgroundColor,
+    paddingHorizontal: theme.rem(0.75),
+    paddingVertical: theme.rem(0.25)
+  },
+  noticeText: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.8125),
+    color: theme.secondaryTextColor,
+    textAlign: 'center'
+  },
+  reactPicker: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0
+  }
+}))

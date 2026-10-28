@@ -3,6 +3,7 @@ import { type Kysely, sql, type Transaction } from 'kysely'
 import { conflict } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import { signOutEverywhere } from '../auth/sessions'
+import { mergeChats } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -416,7 +417,12 @@ async function moveAndClose(
     })
   }
 
+  await keepSignIns(db, closing, keeping)
+  await moveFollows(db, closing, keeping)
   await keepTheFullerName(db, closing, keeping)
+  // Keys never move between user ids: the closed row's sessions and chat
+  // devices are revoked, and the survivor takes its place in its open DMs.
+  await mergeChats(db, closing, keeping)
 
   await db
     .updateTable('users')
@@ -453,6 +459,70 @@ async function closedInto(
     seen.add(next)
     at = next
   }
+}
+
+/**
+ * The closed row keeps its addresses and its password: signing in through
+ * either reaches the survivor, because sign-in follows the merge
+ * (`findUserByEmail` answers as the open row at the end of the chain), and
+ * undoing the merge gives the closed row back able to sign in as it was.
+ *
+ * A survivor that cannot sign in but absorbs a row that could (a roster
+ * import's row taking in the person's own account, most often) is switched
+ * on, so the person signs in to it.
+ */
+async function keepSignIns(
+  db: Kysely<Database>,
+  closing: string,
+  keeping: string
+): Promise<void> {
+  const rows = await db
+    .selectFrom('users')
+    .select(['id', 'login_enabled'])
+    .where('id', 'in', [closing, keeping])
+    .execute()
+  const from = rows.find(row => row.id === closing)
+  const to = rows.find(row => row.id === keeping)
+  if (from?.login_enabled === true && to?.login_enabled === false)
+    await db
+      .updateTable('users')
+      .set({ login_enabled: true, updated_at: new Date() })
+      .where('id', '=', keeping)
+      .execute()
+}
+
+/** The teams the closing row follows, followed by the survivor, once each. */
+async function moveFollows(
+  db: Kysely<Database>,
+  closing: string,
+  keeping: string
+): Promise<void> {
+  const follows = await db
+    .selectFrom('follows')
+    .select(['group_id', 'created_at'])
+    .where('group_type', '=', 'team')
+    .where('user_id', '=', closing)
+    .execute()
+  if (follows.length === 0) return
+  await db
+    .insertInto('follows')
+    .values(
+      follows.map(follow => ({
+        user_id: keeping,
+        group_type: 'team' as const,
+        group_id: follow.group_id,
+        created_at: follow.created_at
+      }))
+    )
+    .onConflict(oc =>
+      oc.columns(['user_id', 'group_type', 'group_id']).doNothing()
+    )
+    .execute()
+  await db
+    .deleteFrom('follows')
+    .where('user_id', '=', closing)
+    .where('group_type', '=', 'team')
+    .execute()
 }
 
 /**

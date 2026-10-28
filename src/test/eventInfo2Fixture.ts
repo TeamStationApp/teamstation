@@ -26,6 +26,17 @@ export async function seedEventInfo2People(
       last_name: name.split(' ').slice(1).join(' '),
       login_enabled: true
     })
+    await f.h.db
+      .insertInto('user_emails')
+      .values({
+        id: `email_info2_${id}`,
+        user_id: userIdOfGumbo(id),
+        email: `event-info${id}@example.test`,
+        is_primary: true,
+        verified_at: new Date(),
+        source: 'manual'
+      })
+      .execute()
     f.h.tokens.set(
       id,
       (await createSession(f.h.db, userIdOfGumbo(id), 'event-info-fixture'))

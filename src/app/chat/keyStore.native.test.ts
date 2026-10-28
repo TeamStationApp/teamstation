@@ -1,0 +1,448 @@
+import Module from 'node:module'
+
+import { expect } from 'chai'
+import { before, describe, it } from 'mocha'
+
+import { newDeviceKeys } from '../../common/chatCrypto/keys'
+import { userIdOfGumbo } from '../../common/userId'
+import legacyRecord from '../../test/legacyChatKeyRecord.json'
+import {
+  type ChatKeysClient,
+  ensureEnrolled,
+  resetUnreadableChat
+} from './engine/links'
+import {
+  type ChatKeyStore,
+  newRecord,
+  recordFromJson,
+  recordToJson,
+  UnreadableKeyRecordError
+} from './keyRecord'
+
+/**
+ * U11: the phone's store, on a stand-in for `react-native-keychain` (whose
+ * real module needs React Native's native side). The stand-in is put where
+ * Node would load the package from, so the store's own import finds it.
+ */
+interface Saved {
+  username: string
+  password: string
+  options: Record<string, unknown> | undefined
+}
+
+const keychain = {
+  saved: new Map<string, Saved>(),
+  refuse: false,
+  /** A Keychain that will not answer (locked since boot, say). */
+  locked: false,
+  calls: [] as string[],
+  ACCESSIBLE: {
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY:
+      'AccessibleAfterFirstUnlockThisDeviceOnly'
+  },
+  async hasGenericPassword(options?: { service?: string }) {
+    keychain.calls.push('has')
+    return keychain.saved.has(options?.service ?? '')
+  },
+  async getGenericPassword(options?: { service?: string }) {
+    keychain.calls.push('get')
+    if (keychain.locked) throw new Error('User interaction is not allowed')
+    const found = keychain.saved.get(options?.service ?? '')
+    return found == null
+      ? false
+      : {
+          service: options?.service,
+          username: found.username,
+          password: found.password,
+          storage: 'keychain'
+        }
+  },
+  async setGenericPassword(
+    username: string,
+    password: string,
+    options?: { service?: string }
+  ) {
+    keychain.calls.push('set')
+    if (keychain.refuse) return false
+    keychain.saved.set(options?.service ?? '', { username, password, options })
+    return { service: options?.service ?? '', storage: 'keychain' }
+  },
+  async resetGenericPassword(options?: { service?: string }) {
+    keychain.calls.push('reset')
+    return keychain.saved.delete(options?.service ?? '')
+  }
+}
+
+describe('chat key store on the phone', function () {
+  let nativeKeyStore: (module: typeof keychain) => ChatKeyStore
+  let keyStore: ChatKeyStore
+  let KEY_SERVICE: string
+
+  before(async function () {
+    const path = require.resolve('react-native-keychain')
+    const stand = new Module(path)
+    stand.filename = path
+    stand.loaded = true
+    stand.exports = keychain
+    require.cache[path] = stand
+    const loaded = await import('./keyStore.native')
+    nativeKeyStore = loaded.nativeKeyStore as unknown as typeof nativeKeyStore
+    keyStore = loaded.keyStore
+    KEY_SERVICE = loaded.KEY_SERVICE
+  })
+
+  const sample = newRecord(userIdOfGumbo(5), 'cdv_phone', newDeviceKeys())
+
+  it('round-trips a record as one Keychain item, this device only', async function () {
+    keychain.saved.clear()
+    const store = nativeKeyStore(keychain)
+    expect(await store.load()).equals(undefined)
+    await store.save(sample)
+    const saved = keychain.saved.get(KEY_SERVICE)
+    expect(KEY_SERVICE).equals('app.teamstation.chat')
+    expect(saved?.password).equals(recordToJson(sample))
+    expect(saved?.options).deep.equals({
+      service: 'app.teamstation.chat',
+      accessible: 'AccessibleAfterFirstUnlockThisDeviceOnly'
+    })
+    const back = await store.load()
+    expect(back == null ? undefined : recordToJson(back)).equals(
+      recordToJson(sample)
+    )
+  })
+
+  it('says whether a record is kept, without changing anything', async function () {
+    keychain.saved.clear()
+    keychain.calls = []
+    expect(await keyStore.exists()).equals(false)
+    await keyStore.save(sample)
+    expect(await keyStore.exists()).equals(true)
+    await keyStore.wipe()
+    expect(await keyStore.exists()).equals(false)
+    expect(keychain.calls).deep.equals(['has', 'set', 'has', 'reset', 'has'])
+  })
+
+  it('wipes it', async function () {
+    keychain.saved.clear()
+    await keyStore.save(sample)
+    expect((await keyStore.load())?.deviceId).equals('cdv_phone')
+    await keyStore.wipe()
+    expect(keychain.saved.size).equals(0)
+    expect(await keyStore.load()).equals(undefined)
+  })
+
+  it('preserves malformed persisted key bytes and blocks automatic enrollment', async function () {
+    for (const key of ['AA', '*'.repeat(43)]) {
+      keychain.saved.clear()
+      const raw = structuredClone(legacyRecord)
+      raw.device.box.secretKey = key
+      keychain.saved.set(KEY_SERVICE, {
+        username: 'chat',
+        password: JSON.stringify(raw),
+        options: undefined
+      })
+      const before = structuredClone([...keychain.saved])
+      keychain.calls = []
+      const calls: string[] = []
+      const client = {
+        registerChatDevice: async () => {
+          calls.push('enroll')
+        }
+      } as unknown as ChatKeysClient
+      let failed: unknown
+      await ensureEnrolled({
+        client,
+        store: nativeKeyStore(keychain),
+        userId: userIdOfGumbo(42),
+        device: { name: 'Test Phone', platform: 'ios' }
+      }).catch((error: unknown) => {
+        failed = error
+      })
+      expect(failed).instanceOf(Error)
+      expect(calls).deep.equals([])
+      expect([...keychain.saved]).deep.equals(before)
+      expect(keychain.calls).deep.equals(['get'])
+    }
+  })
+
+  it('preserves an unknown record and blocks automatic enrollment', async function () {
+    keychain.saved.clear()
+    keychain.saved.set(KEY_SERVICE, {
+      username: 'chat',
+      password: '{"version":9}',
+      options: undefined
+    })
+    const before = keychain.saved.get(KEY_SERVICE)
+    keychain.calls = []
+    const calls: string[] = []
+    const client = {
+      registerChatDevice: async () => {
+        calls.push('enroll')
+      }
+    } as unknown as ChatKeysClient
+    let failed: unknown
+    await ensureEnrolled({
+      client,
+      store: keyStore,
+      userId: sample.userId,
+      device: { name: 'Test Device', platform: 'ios' }
+    }).catch((error: unknown) => {
+      failed = error
+    })
+    expect(String(failed)).contains('Unknown chat key record version')
+    expect((failed as UnreadableKeyRecordError).reason).equals('unknownVersion')
+    expect(calls).deep.equals([])
+    expect(keychain.calls).deep.equals(['get'])
+    expect(keychain.saved.get(KEY_SERVICE)).equals(before)
+    expect(await keyStore.exists()).equals(true)
+  })
+
+  it('calls a record it cannot parse unreadable, and a Keychain that will not answer no such thing', async function () {
+    keychain.saved.clear()
+    keychain.saved.set(KEY_SERVICE, {
+      username: 'chat',
+      password: '{"secret":"do-not-log"',
+      options: undefined
+    })
+    const before = keychain.saved.get(KEY_SERVICE)
+    const unreadable = await keyStore.load().catch((error: unknown) => error)
+    expect(unreadable).instanceOf(UnreadableKeyRecordError)
+    expect((unreadable as UnreadableKeyRecordError).reason).equals('invalid')
+    expect(String(unreadable)).not.contains('do-not-log')
+    expect(keychain.saved.get(KEY_SERVICE)).equals(before)
+    keychain.locked = true
+    try {
+      const locked = await keyStore.load().catch((error: unknown) => error)
+      expect(locked).instanceOf(Error)
+      expect(locked).not.instanceOf(UnreadableKeyRecordError)
+    } finally {
+      keychain.locked = false
+    }
+    expect(keychain.saved.get(KEY_SERVICE)).equals(before)
+  })
+
+  it('loads saved v1 keys, survives a refused save, then atomically writes v2 under the same service', async () => {
+    const text = JSON.stringify(legacyRecord)
+    keychain.saved.clear()
+    keychain.saved.set(KEY_SERVICE, {
+      username: 'chat',
+      password: text,
+      options: undefined
+    })
+    const record = await keyStore.load()
+    expect(record).deep.equals(recordFromJson(text))
+    expect(record?.userId).equals(userIdOfGumbo(42))
+    keychain.refuse = true
+    let failed: unknown
+    try {
+      await keyStore.save(record!)
+    } catch (error) {
+      failed = error
+    } finally {
+      keychain.refuse = false
+    }
+    expect(String(failed)).contains('could not be saved')
+    expect(keychain.saved.get(KEY_SERVICE)?.password).equals(text)
+    expect(await keyStore.load()).deep.equals(record)
+    await keyStore.save(record!)
+    expect(
+      JSON.parse(keychain.saved.get(KEY_SERVICE)!.password).version
+    ).equals(2)
+    expect(await keyStore.load()).deep.equals(record)
+  })
+
+  /**
+   * A keychain whose every call takes a while, noting when two run at
+   * once, the way a reset on Android runs beside a save.
+   */
+  function slowKeychain(): typeof keychain & {
+    overlaps: number
+    order: string[]
+  } {
+    let running = 0
+    const slow = {
+      ...keychain,
+      overlaps: 0,
+      order: [] as string[]
+    }
+    const wrap =
+      <A extends unknown[], R>(
+        name: string,
+        call: (...args: A) => Promise<R>
+      ) =>
+      async (...args: A): Promise<R> => {
+        running += 1
+        if (running > 1) slow.overlaps += 1
+        slow.order.push(`${name}:start`)
+        try {
+          await new Promise(resolve => setTimeout(resolve, 5))
+          return await call(...args)
+        } finally {
+          slow.order.push(`${name}:end`)
+          running -= 1
+        }
+      }
+    slow.getGenericPassword = wrap(
+      'get',
+      keychain.getGenericPassword.bind(keychain)
+    )
+    slow.hasGenericPassword = wrap(
+      'has',
+      keychain.hasGenericPassword.bind(keychain)
+    )
+    slow.setGenericPassword = wrap(
+      'set',
+      keychain.setGenericPassword.bind(keychain)
+    )
+    slow.resetGenericPassword = wrap(
+      'reset',
+      keychain.resetGenericPassword.bind(keychain)
+    )
+    return slow
+  }
+
+  it('makes one keychain call at a time, in the order they were asked', async function () {
+    keychain.saved.clear()
+    const slow = slowKeychain()
+    const store = nativeKeyStore(slow)
+    const other = newRecord(userIdOfGumbo(6), 'cdv_next', newDeviceKeys())
+    // One user's sign-out wipe, and the next user's enrolment, at once.
+    const [, , loaded, kept] = await Promise.all([
+      store.save(sample),
+      store.wipe(),
+      store.load(),
+      store.exists(),
+      store.save(other)
+    ])
+    expect(slow.overlaps).equals(0)
+    expect(slow.order).deep.equals([
+      'set:start',
+      'set:end',
+      'reset:start',
+      'reset:end',
+      'get:start',
+      'get:end',
+      'has:start',
+      'has:end',
+      'set:start',
+      'set:end'
+    ])
+    expect(loaded).equals(undefined)
+    expect(kept).equals(false)
+    expect((await store.load())?.deviceId).equals('cdv_next')
+  })
+
+  it('goes on with the next call after one fails', async function () {
+    keychain.saved.clear()
+    const slow = slowKeychain()
+    let refusals = 2
+    const set = slow.setGenericPassword.bind(slow)
+    slow.setGenericPassword = async (...args) => {
+      if (refusals-- > 0) throw new Error('Keystore unavailable')
+      return await set(...args)
+    }
+    const store = nativeKeyStore(slow)
+    const first = store.save(sample).catch((error: unknown) => error)
+    const second = store.save(sample).catch((error: unknown) => error)
+    const third = store.save(sample)
+    expect(String(await first)).contains('Keystore unavailable')
+    expect(String(await second)).contains('Keystore unavailable')
+    await third
+    expect((await store.load())?.deviceId).equals('cdv_phone')
+    expect(slow.overlaps).equals(0)
+  })
+
+  /** The rejection `react-native-keychain` gives for a Keystore failure. */
+  function cryptoFailed(message: string): Error {
+    const error = new Error(message) as Error & { code: string }
+    error.name = 'com.oblador.keychain.exceptions.CryptoFailedException'
+    error.code = 'E_CRYPTO_FAILED'
+    return error
+  }
+
+  it('calls a record its Keystore key does not open unreadable, and lets the person reset it', async function () {
+    keychain.saved.clear()
+    keychain.saved.set(KEY_SERVICE, {
+      username: 'chat',
+      password: recordToJson(sample),
+      options: undefined
+    })
+    const store = nativeKeyStore({
+      ...keychain,
+      getGenericPassword: async () => {
+        if (!keychain.saved.has(KEY_SERVICE)) return false
+        throw cryptoFailed(
+          'Decryption failed: Authentication tag verification failed. ' +
+            'This usually indicates that the encrypted data was modified, ' +
+            'corrupted, or is being decrypted with the wrong key.'
+        )
+      }
+    })
+    const unreadable = await store.load().catch((error: unknown) => error)
+    expect(unreadable).instanceOf(UnreadableKeyRecordError)
+    expect((unreadable as UnreadableKeyRecordError).reason).equals(
+      'undecryptable'
+    )
+    expect(keychain.saved.has(KEY_SERVICE)).equals(true)
+    // Only by name, as some builds report it.
+    const named = new Error(
+      'com.oblador.keychain.exceptions.CryptoFailedException: Decryption failed'
+    )
+    const byName = await nativeKeyStore({
+      ...keychain,
+      getGenericPassword: async () => {
+        throw named
+      }
+    })
+      .load()
+      .catch((error: unknown) => error)
+    expect(byName).instanceOf(UnreadableKeyRecordError)
+
+    // Reset chat on this device: the device is revoked, the record wiped.
+    const revoked: string[] = []
+    await resetUnreadableChat({
+      client: {
+        myChatKeys: async () => ({ deviceId: 'cdv_phone' }),
+        revokeChatDevice: async (deviceId: string) => {
+          revoked.push(deviceId)
+        }
+      } as unknown as ChatKeysClient,
+      store
+    })
+    expect(revoked).deep.equals(['cdv_phone'])
+    expect(keychain.saved.has(KEY_SERVICE)).equals(false)
+    expect(await store.load()).equals(undefined)
+  })
+
+  it('passes on any other Keystore failure as it is', async function () {
+    keychain.saved.clear()
+    for (const failure of [
+      cryptoFailed('Wrapped error: User not authenticated'),
+      Object.assign(new Error('Decryption failed'), {
+        code: 'E_KEYSTORE_ACCESS_ERROR'
+      })
+    ]) {
+      const store = nativeKeyStore({
+        ...keychain,
+        getGenericPassword: async () => {
+          throw failure
+        }
+      })
+      const failed = await store.load().catch((error: unknown) => error)
+      expect(failed).equals(failure)
+    }
+  })
+
+  it('fails loudly when the Keychain will not keep it', async function () {
+    keychain.refuse = true
+    try {
+      let failed: unknown
+      await keyStore.save(sample).catch((error: unknown) => {
+        failed = error
+      })
+      expect(String(failed)).contains('could not be saved')
+    } finally {
+      keychain.refuse = false
+    }
+  })
+})

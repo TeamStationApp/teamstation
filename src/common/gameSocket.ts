@@ -1,7 +1,15 @@
-import { asObject, asOptional, asString, type Cleaner } from 'cleaners'
+import {
+  asEither,
+  asNumber,
+  asObject,
+  asOptional,
+  asString,
+  type Cleaner
+} from 'cleaners'
 
 import type { TeamLineups } from './api'
 import { asLiteral } from './asLiteral'
+import { asUserId } from './userId'
 import type { WalkUpSong } from './walkUpSong'
 
 /**
@@ -13,6 +21,13 @@ import type { WalkUpSong } from './walkUpSong'
  * nudge with the new data attached, and after a reconnect the screen is sent
  * `resync` and reads the game again over REST, because whatever changed while
  * the socket was down was never sent.
+ *
+ * The same socket carries chat. A signed-in socket hears, without
+ * subscribing, a `chat` hint for each conversation its person is in whenever
+ * something in it changes, a `chatUser` hint when their own devices or links
+ * do, and `chatTyping` when another member types. Nothing of a message
+ * travels here: the hint says only what changed, and the app fetches it. A
+ * `resync` means hints may have been missed: read every conversation again.
  */
 
 /** What a `change` is about. */
@@ -73,7 +88,12 @@ export type GameChange = {
  * down or out of connections), not the request: asking again may work.
  */
 export type GameSocketErrorCode =
-  'notFound' | 'malformed' | 'tooMany' | 'internal'
+  | 'notFound'
+  | 'malformed'
+  | 'tooMany'
+  | 'internal'
+  /** A member who may not post (an Announcements reader) typed. */
+  | 'forbidden'
 
 /** What a subscriber hears. */
 export type GameSocketEvent =
@@ -130,6 +150,44 @@ export type ScreenScopeEvent =
 
 export type ScreenScopeListener = (event: ScreenScopeEvent) => void
 
+/** What changed in a conversation: as `chat_changes` names it. */
+export type ChatHintKind = 'message' | 'members' | 'epoch' | 'grant' | 'read'
+
+/** What changed about the person's own chat keys. */
+export type ChatUserHintKind = 'link' | 'devices' | 'preferences'
+
+/** A chat frame the server sends. */
+export type ChatSocketFrame =
+  | {
+      type: 'chat'
+      conversationId: string
+      kind: ChatHintKind
+      /** A new message's, or a moved read cursor's. */
+      seq?: number
+      /** When the server sent it. */
+      at: string
+    }
+  | { type: 'chatUser'; kind: ChatUserHintKind }
+  | { type: 'chatTyping'; conversationId: string; userId: string }
+  /** Hints may have been missed: read every conversation again. */
+  | { type: 'resync' }
+
+/** What a chat listener hears. */
+export type ChatSocketEvent =
+  | ChatSocketFrame
+  /** The server refused a typing hint. */
+  | {
+      type: 'error'
+      conversationId: string
+      code: GameSocketErrorCode
+      message: string
+    }
+
+export type ChatSocketListener = (event: ChatSocketEvent) => void
+
+/** A socket sends at most one typing hint this often. */
+export const TYPING_INTERVAL_MS = 3000
+
 /** A frame the client sends. */
 export type GameSocketRequest =
   | { type: 'subscribe' | 'unsubscribe'; gameId: string; id: string }
@@ -145,6 +203,8 @@ export type GameSocketRequest =
       id: string
     }
   | { type: 'ping'; id: string }
+  /** The person is typing in a conversation they may post in. */
+  | { type: 'typing'; conversationId: string; id: string }
 
 /** A screen scope's frames from the server. */
 export type ScreenScopeReply =
@@ -162,14 +222,18 @@ export type ScreenScopeReply =
 /** A frame the server sends. */
 export type GameSocketReply =
   | GameChange
+  | ChatSocketFrame
   | { type: 'subscribed'; gameId: string; id: string }
   | { type: 'unsubscribed'; gameId: string; id: string }
   | ScreenScopeReply
   | { type: 'pong'; id: string }
+  /** A typing hint was passed on. */
+  | { type: 'typed'; conversationId: string; id: string }
   | {
       type: 'error'
       id?: string
       gameId?: string
+      conversationId?: string
       code: GameSocketErrorCode
       message: string
     }
@@ -241,14 +305,49 @@ const asErrorReply = asObject({
   type: asLiteral('error'),
   id: asOptional(asString),
   gameId: asOptional(asString),
+  conversationId: asOptional(asString),
   code: asLiteral(
     'notFound',
     'malformed',
     'tooMany',
-    'internal'
+    'internal',
+    'forbidden'
   ) as Cleaner<GameSocketErrorCode>,
   message: asString
 })
+
+const asChatFrame: Cleaner<ChatSocketFrame> = asEither(
+  asObject({
+    type: asLiteral('chat'),
+    conversationId: asString,
+    kind: asLiteral(
+      'message',
+      'members',
+      'epoch',
+      'grant',
+      'read'
+    ) as Cleaner<ChatHintKind>,
+    seq: asOptional(asNumber),
+    at: asString
+  }),
+  asObject({
+    type: asLiteral('chatUser'),
+    kind: asLiteral(
+      'link',
+      'devices',
+      'preferences'
+    ) as Cleaner<ChatUserHintKind>
+  }),
+  asObject({
+    type: asLiteral('chatTyping'),
+    conversationId: asString,
+    userId: asUserId
+  }),
+  asObject({ type: asLiteral('resync') })
+)
+
+/** The chat frames' types, which the chat listeners hear. */
+const CHAT_FRAMES = new Set(['chat', 'chatUser', 'chatTyping', 'resync'])
 
 const asChangeHead = asObject({
   type: asLiteral('change'),
@@ -304,13 +403,17 @@ export interface GameSocketOptions {
   pageHref?: string
   setTimer?: (run: () => void, ms: number) => unknown
   clearTimer?: (timer: unknown) => void
+  /** In milliseconds, for the typing interval. */
+  now?: () => number
 }
 
 /**
  * One socket for the whole app, shared by every screen that wants a game's
- * changes. It connects when the first game is subscribed, reconnects after
- * 1, 2, 4 and 8 seconds and then every 15, and after each reconnect
- * subscribes every game again and tells its listeners to `resync`.
+ * changes and by chat. It connects when the first game is subscribed or the
+ * first chat listener is added, and stays open while either is left; when
+ * the last goes, it closes until the next. It reconnects after 1, 2, 4 and 8
+ * seconds and then every 15, and after each reconnect subscribes every game
+ * again and tells every game and chat listener to `resync`.
  *
  * A subscribe the server refuses as `internal` (its own failure) is asked
  * again on the same timings, for as long as the game is still wanted and the
@@ -334,6 +437,12 @@ export class GameSocket {
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (timer: unknown) => void
   private readonly listeners = new Map<string, Set<GameSocketListener>>()
+  private readonly chatListeners = new Set<ChatSocketListener>()
+  private readonly now: () => number
+  /** Which conversation each outstanding typing hint was for, by its id. */
+  private readonly typing = new Map<string, string>()
+  /** When the last typing hint went, or -Infinity. */
+  private typedAt = Number.NEGATIVE_INFINITY
   private readonly statusListeners = new Set<(connected: boolean) => void>()
   /** Which game each outstanding subscribe was for, by its id. */
   private readonly requests = new Map<string, string>()
@@ -370,6 +479,7 @@ export class GameSocket {
       (timer => {
         globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>)
       })
+    this.now = options.now ?? (() => Date.now())
   }
 
   /**
@@ -421,6 +531,7 @@ export class GameSocket {
       this.listeners.delete(gameId)
       this.stopRetry(gameId)
       if (this.open) this.request('unsubscribe', gameId)
+      this.closeIfIdle()
     }
   }
 
@@ -448,6 +559,7 @@ export class GameSocket {
       if (this.screen !== held) return
       this.screen = undefined
       if (this.open && held.id != null) this.sendScope('unsubscribe', held)
+      this.closeIfIdle()
     }
   }
 
@@ -460,7 +572,8 @@ export class GameSocket {
     const held = this.screen
     if (held?.id != null && this.open) this.sendScope('unsubscribe', held)
     this.stopScope()
-    if (this.listeners.size === 0) this.hangUp()
+    if (this.listeners.size === 0 && this.chatListeners.size === 0)
+      this.hangUp()
   }
 
   /**
@@ -473,7 +586,47 @@ export class GameSocket {
     this.scopeStopped = false
     this.hangUp()
     this.attempt = 0
-    if (this.screen != null || this.listeners.size > 0) this.connect()
+    if (
+      this.screen != null ||
+      this.listeners.size > 0 ||
+      this.chatListeners.size > 0
+    )
+      this.connect()
+  }
+
+  /**
+   * Hears every chat hint for the signed-in person. The first listener (or
+   * game) opens the socket; it stays open until the last of both goes.
+   */
+  onChat(listener: ChatSocketListener): () => void {
+    if (this.closed) throw new Error('This game socket is closed')
+    if (this.socket == null && this.timer == null) this.endpoint()
+    this.chatListeners.add(listener)
+    if (this.socket == null && this.timer == null) this.connect()
+    let listening = true
+    return () => {
+      if (!listening) return
+      listening = false
+      this.chatListeners.delete(listener)
+      this.closeIfIdle()
+    }
+  }
+
+  /**
+   * Tells the conversation's other members the person is typing. Sent only
+   * while connected and at most once every `TYPING_INTERVAL_MS`, as the
+   * server allows; true when it went.
+   */
+  sendTyping(conversationId: string): boolean {
+    if (!this.open || this.socket == null) return false
+    const now = this.now()
+    if (now - this.typedAt < TYPING_INTERVAL_MS) return false
+    this.typedAt = now
+    const id = `c${this.nextId++}`
+    this.typing.set(id, conversationId)
+    const frame: GameSocketRequest = { type: 'typing', conversationId, id }
+    this.socket.send(JSON.stringify(frame))
+    return true
   }
 
   /** Closes the socket for good. */
@@ -487,12 +640,45 @@ export class GameSocket {
     this.socket = undefined
     this.listeners.clear()
     this.screen = undefined
+    this.chatListeners.clear()
+    this.typing.clear()
     if (socket != null) {
       socket.onopen = null
       socket.onmessage = null
       socket.onclose = null
       socket.onerror = null
       socket.close(1000, 'closed')
+    }
+    this.setOpen(false)
+  }
+
+  /**
+   * With no game and no chat listener left, the socket closes (or stops
+   * waiting to reconnect) until somebody listens again. Nothing was missed
+   * by nobody, so the next connection starts afresh.
+   */
+  private closeIfIdle(): void {
+    if (
+      (!this.scopeStopped && this.screen != null) ||
+      this.listeners.size > 0 ||
+      this.chatListeners.size > 0
+    )
+      return
+    if (this.timer != null) this.clearTimer(this.timer)
+    this.timer = undefined
+    this.stopRetries()
+    this.requests.clear()
+    this.typing.clear()
+    this.interrupted = false
+    this.attempt = 0
+    const socket = this.socket
+    this.socket = undefined
+    if (socket != null) {
+      socket.onopen = null
+      socket.onmessage = null
+      socket.onclose = null
+      socket.onerror = null
+      socket.close(1000, 'idle')
     }
     this.setOpen(false)
   }
@@ -521,6 +707,7 @@ export class GameSocket {
       this.attempt = 0
       this.requests.clear()
       this.scopeRequests.clear()
+      this.typing.clear()
       this.setOpen(true)
       for (const gameId of this.listeners.keys())
         this.request('subscribe', gameId)
@@ -529,6 +716,7 @@ export class GameSocket {
       if (this.interrupted) {
         for (const gameId of [...this.listeners.keys()])
           this.emit(gameId, { type: 'resync', gameId })
+        this.emitChat({ type: 'resync' })
       }
     }
     socket.onmessage = event => {
@@ -554,7 +742,12 @@ export class GameSocket {
       this.stopScope()
     this.detach(socket)
     if (this.closed) return
-    if (this.scopeStopped && this.listeners.size === 0) return
+    if (
+      this.scopeStopped &&
+      this.listeners.size === 0 &&
+      this.chatListeners.size === 0
+    )
+      return
     const delay =
       RECONNECT_DELAYS_MS[
         Math.min(this.attempt, RECONNECT_DELAYS_MS.length - 1)
@@ -653,6 +846,21 @@ export class GameSocket {
     } catch {
       return
     }
+    if (CHAT_FRAMES.has(head.type)) {
+      let frame: ChatSocketFrame
+      try {
+        frame = asChatFrame(raw)
+      } catch {
+        return
+      }
+      if (frame.type === 'chat' && frame.seq === undefined) delete frame.seq
+      this.emitChat(frame)
+      if (head.type !== 'resync') return
+    }
+    if (head.type === 'typed') {
+      if (head.id != null) this.typing.delete(head.id)
+      return
+    }
     // A screen scope's own frames, before anything a game listener hears.
     if (head.id != null && this.scopeRequests.has(head.id)) {
       this.scopeAnswered(head.id, raw)
@@ -694,6 +902,20 @@ export class GameSocket {
     try {
       error = asErrorReply(raw)
     } catch {
+      return
+    }
+    // A refused typing hint is chat's, never every game's.
+    const typedIn =
+      error.conversationId ??
+      (error.id == null ? undefined : this.typing.get(error.id))
+    if (typedIn != null) {
+      if (error.id != null) this.typing.delete(error.id)
+      this.emitChat({
+        type: 'error',
+        conversationId: typedIn,
+        code: error.code,
+        message: error.message
+      })
       return
     }
     const gameId =
@@ -785,6 +1007,10 @@ export class GameSocket {
 
   private stopRetries(): void {
     for (const gameId of [...this.retries.keys()]) this.stopRetry(gameId)
+  }
+
+  private emitChat(event: ChatSocketEvent): void {
+    for (const listener of [...this.chatListeners]) listener(event)
   }
 
   private emit(gameId: string, event: GameSocketEvent): void {

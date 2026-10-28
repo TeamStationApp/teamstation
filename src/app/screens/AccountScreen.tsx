@@ -7,6 +7,9 @@ import {
   type ClientPasswordCosts,
   newPasswordRequirements
 } from '../../common/passwordProtocol'
+import { leaveChat } from '../chat/engine/links'
+import type { ChatKeyStore } from '../chat/keyRecord'
+import { keyStore } from '../chat/keyStore'
 import {
   Button,
   Card,
@@ -15,6 +18,7 @@ import {
   HeroCard,
   Icon,
   ListCard,
+  ListRow,
   PictureSheet,
   Screen,
   SectionHeader,
@@ -35,9 +39,21 @@ import { DeleteAccountSheet } from './DeleteAccountSheet'
 
 export interface AccountScreenProps {
   session: Session
+  /**
+   * The signed-in client. Signing out first removes this device from chat
+   * and wipes its chat keys.
+   */
   client: TeamStationClient
   onAccountChanged?: (user: SessionUser) => void
+  /** This device's chat key store; the platform's own by default. */
+  chatStore?: ChatKeyStore
+  /** Opens Chat devices. */
+  onChatDevices?: () => void
+  /** Opens the reported chat messages; shown to site administrators only. */
+  onChatReports?: () => void
   onSignOut: () => void
+  /** The shell may ask about unsent offline work before ending the session. */
+  onSignOutRequest?: () => void
   /** The account was deleted, or its session ended mid-delete; leave without asking the server. */
   onAccountDeleted?: () => void
   onNodeAdministration?: () => void
@@ -51,7 +67,10 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const {
     session,
     client,
+    onChatDevices,
+    onChatReports,
     onSignOut,
+    onSignOutRequest,
     onAccountDeleted = onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
@@ -60,6 +79,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const chatStore = props.chatStore ?? keyStore
   const [walkUp, setWalkUp] = useWalkUpPreferences()
   const [appleMusicSetup, setAppleMusicSetup] = useState(false)
   // Mounted once opened, so it can slide away; never on a visit without it.
@@ -202,6 +222,23 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       setCode('')
       setNotice({ section: 'email', message: `A code was sent to ${address}` })
     })
+  }
+  const [signingOut, setSigningOut] = useState(false)
+
+  /**
+   * This device leaves chat before the session ends: the server revokes it
+   * (which ends the session too) and its keys are wiped, so whoever signs in
+   * on it next reads nothing of this person's chats.
+   */
+  const signOut = (): void => {
+    if (onSignOutRequest != null) {
+      onSignOutRequest()
+      return
+    }
+    setSigningOut(true)
+    leaveChat({ client, store: chatStore })
+      .finally(onSignOut)
+      .catch(() => undefined)
   }
 
   return (
@@ -614,6 +651,30 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           Saving…
         </Text>
       )}
+
+      {onChatDevices != null && (
+        <View style={styles.section}>
+          <SectionHeader title={lstrings.account_chat} />
+          <ListCard>
+            <ListRow
+              title={lstrings.account_chat_devices}
+              subtitle={lstrings.account_chat_devices_detail}
+              emblemIcon="settings"
+              onPress={onChatDevices}
+            />
+            {onChatReports != null && user.isAdmin && (
+              <>
+                <ListRow
+                  title={lstrings.chat_reports_title}
+                  subtitle={lstrings.account_chat_reports_detail}
+                  emblemIcon="star"
+                  onPress={onChatReports}
+                />
+              </>
+            )}
+          </ListCard>
+        </View>
+      )}
       {Platform.OS === 'ios' && (
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_walkup} />
@@ -666,11 +727,11 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         </View>
       )}
       <DangerText
-        label="Sign out"
+        label={lstrings.account_sign_out}
         bold
-        disabled={busy !== ''}
+        disabled={busy !== '' || signingOut}
         style={styles.centered}
-        onPress={onSignOut}
+        onPress={signOut}
       />
       {user.isAdmin && onNodeAdministration != null && (
         <Button

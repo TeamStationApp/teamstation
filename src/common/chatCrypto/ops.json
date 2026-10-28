@@ -1,0 +1,287 @@
+{
+  "comment": "The chat crypto core's operations. crates/chat-crypto/src/ops.rs and src/common/chatCrypto/coreOps.ts are written from this list, and a test on each side checks its table against it. Arguments and results are length-prefixed byte fields; numbers are 8-byte big-endian; strings are UTF-8.",
+  "ops": [
+    { "id": 1, "name": "sha256", "args": ["data"], "results": ["digest"] },
+    {
+      "id": 2,
+      "name": "randomBytes",
+      "args": ["length:u64"],
+      "results": ["bytes"]
+    },
+    {
+      "id": 3,
+      "name": "newBoxKeyPair",
+      "args": [],
+      "results": ["secretKey", "publicKey"]
+    },
+    {
+      "id": 4,
+      "name": "newSigningKeyPair",
+      "args": [],
+      "results": ["secretKey", "publicKey"]
+    },
+    {
+      "id": 5,
+      "name": "boxPublicKey",
+      "args": ["secretKey"],
+      "results": ["publicKey"]
+    },
+    {
+      "id": 6,
+      "name": "signingPublicKey",
+      "args": ["secretKey"],
+      "results": ["publicKey"]
+    },
+    {
+      "id": 7,
+      "name": "sign",
+      "args": ["message", "secretKey"],
+      "results": ["signature"]
+    },
+    {
+      "id": 8,
+      "name": "verify",
+      "args": ["signature", "message", "publicKey"],
+      "results": ["valid:bool"]
+    },
+    {
+      "id": 9,
+      "name": "deriveKeyPair",
+      "args": ["ikm"],
+      "results": ["secretKey", "publicKey"]
+    },
+    {
+      "id": 10,
+      "name": "hpkeSeal",
+      "args": ["purpose", "publicKey", "aad", "plaintext", "ephemeralIkm?"],
+      "results": ["box"]
+    },
+    {
+      "id": 11,
+      "name": "hpkeOpen",
+      "args": ["purpose", "secretKey", "aad", "box"],
+      "results": ["plaintext"]
+    },
+    {
+      "id": 12,
+      "name": "hpkeVectorSequence",
+      "args": [
+        "recipientPublicKey",
+        "recipientSecretKey",
+        "info",
+        "ephemeralIkm",
+        "aad",
+        "plaintext",
+        "exporterContext",
+        "exportLength:u64"
+      ],
+      "results": [
+        "enc",
+        "key",
+        "baseNonce",
+        "exporterSecret",
+        "ciphertext",
+        "opened",
+        "exported"
+      ]
+    },
+    {
+      "id": 13,
+      "name": "messageKey",
+      "args": ["epochKey", "conversationId", "messageId"],
+      "results": ["key"]
+    },
+    {
+      "id": 14,
+      "name": "sealMessage",
+      "args": [
+        "conversationId",
+        "epoch:u64",
+        "messageId",
+        "senderUserId:identity",
+        "kind",
+        "epochKey",
+        "plaintext",
+        "identitySecretKey",
+        "nonce?"
+      ],
+      "results": ["nonce", "ciphertext", "signature"]
+    },
+    {
+      "id": 15,
+      "name": "verifyMessage",
+      "args": [
+        "conversationId",
+        "epoch:u64",
+        "messageId",
+        "senderUserId:identity",
+        "kind",
+        "nonce",
+        "ciphertext",
+        "signature",
+        "identityPublicKey"
+      ],
+      "results": ["valid:bool"]
+    },
+    {
+      "id": 16,
+      "name": "openWithMessageKey",
+      "args": [
+        "conversationId",
+        "epoch:u64",
+        "messageId",
+        "senderUserId:identity",
+        "kind",
+        "messageKey",
+        "nonce",
+        "ciphertext"
+      ],
+      "results": ["plaintext"]
+    },
+    {
+      "id": 17,
+      "name": "bucketSize",
+      "args": ["length:u64"],
+      "results": ["size:u64"]
+    },
+    {
+      "id": 18,
+      "name": "blobLength",
+      "args": ["size:u64"],
+      "results": ["length:u64"]
+    },
+    {
+      "id": 19,
+      "name": "chunkNonce",
+      "args": ["prefix", "counter:u64", "last:bool"],
+      "results": ["nonce"]
+    },
+    {
+      "id": 20,
+      "name": "sealAttachmentPart",
+      "args": [
+        "key",
+        "prefix",
+        "size:u64",
+        "firstChunk:u64",
+        "chunks:u64",
+        "plaintext",
+        "digestState"
+      ],
+      "results": ["sealed", "digestState"]
+    },
+    {
+      "id": 21,
+      "name": "openAttachmentPart",
+      "args": [
+        "key",
+        "prefix",
+        "firstChunk:u64",
+        "last:bool",
+        "sealed",
+        "digestState"
+      ],
+      "results": ["padded", "contentEnd:u64", "digestState"]
+    },
+    {
+      "id": 22,
+      "name": "sealPreviousEpochKey",
+      "args": [
+        "conversationId",
+        "epoch:u64",
+        "epochKey",
+        "previousEpochKey",
+        "nonce?"
+      ],
+      "results": ["box"]
+    },
+    {
+      "id": 23,
+      "name": "openPreviousEpochKey",
+      "args": ["conversationId", "epoch:u64", "epochKey", "previousKeyBox"],
+      "results": ["previousEpochKey"]
+    },
+    {
+      "id": 24,
+      "name": "epochSignedBytes",
+      "args": ["conversationId", "epoch:u64", "previousKeyBox"],
+      "results": ["bytes"]
+    },
+    {
+      "id": 25,
+      "name": "sealPreviousPukKeys",
+      "args": [
+        "userId:identity",
+        "identityId",
+        "generation:u64",
+        "privateKey",
+        "plaintext",
+        "nonce?"
+      ],
+      "results": ["box"]
+    },
+    {
+      "id": 26,
+      "name": "openPreviousPukKeys",
+      "args": [
+        "userId:identity",
+        "identityId",
+        "generation:u64",
+        "privateKey",
+        "previousKeysBox"
+      ],
+      "results": ["plaintext"]
+    },
+    {
+      "id": 27,
+      "name": "logRowHash",
+      "args": [
+        "prevHash",
+        "conversationId",
+        "seq:u64",
+        "event",
+        "userId:identity",
+        "actorUserId:nullableIdentity",
+        "reason",
+        "at:u64"
+      ],
+      "results": ["hash"]
+    },
+    {
+      "id": 28,
+      "name": "safetyHalf",
+      "args": ["identityKey", "userId:identity"],
+      "results": ["digits"]
+    },
+    {
+      "id": 29,
+      "name": "linkCode",
+      "args": ["newDevicePublicKey", "linkId"],
+      "results": ["digits"]
+    },
+    { "id": 30, "name": "newMessageId", "args": [], "results": ["id"] },
+    { "id": 31, "name": "newIdentityId", "args": [], "results": ["id"] },
+    {
+      "id": 32,
+      "name": "sha256Update",
+      "args": ["state", "data"],
+      "results": ["state"]
+    },
+    {
+      "id": 33,
+      "name": "sha256Finish",
+      "args": ["state"],
+      "results": ["digest"]
+    }
+  ],
+  "refusals": [
+    "malformed",
+    "unknownOp",
+    "notAuthentic",
+    "smallOrder",
+    "truncated",
+    "digestMismatch",
+    "noPaddingMarker",
+    "tooLarge"
+  ]
+}

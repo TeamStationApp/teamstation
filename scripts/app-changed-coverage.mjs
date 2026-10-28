@@ -115,6 +115,15 @@ const check = spawnSync(
     // Tess's client shapes, which every importer takes as `import type`.
     '--exclude',
     'src/app/tess/tessTypes.ts',
+    // TurboModule specs: codegen reads them, and loading one needs React
+    // Native's native side, which no test here has.
+    '--exclude',
+    'src/app/**/Native*.ts',
+    // Types only: nothing of them is left to run.
+    '--exclude',
+    'src/app/chat/chatVideoProps.ts',
+    '--exclude',
+    'src/app/chat/screenEngine.ts',
     'src/app'
   ],
   { stdio: 'inherit' }

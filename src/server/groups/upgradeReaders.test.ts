@@ -42,6 +42,18 @@ describe('upgraded ownership reads and current competition projections', functio
           login_enabled: true
         })
         .execute()
+      // An account, so one that signs in by an address.
+      await h.db
+        .insertInto('user_emails')
+        .values({
+          id: 'email_demo_upgrade_staff',
+          user_id: '103',
+          email: 'trout@example.com',
+          is_primary: true,
+          verified_at: new Date(),
+          source: 'manual'
+        })
+        .execute()
       h.tokens.set(
         103,
         (await createSession(h.db, '103', 'demo-upgrade')).token

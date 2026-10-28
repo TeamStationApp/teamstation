@@ -15,6 +15,8 @@ export interface ThemeGradientPoint {
 }
 
 export interface Theme {
+  chatAttentionBackgroundColor: string
+  chatAttentionTextColor: string
   /** Scales a size against the device, so 1 rem is one comfortable line. */
   rem: (size: number) => number
   isDark: boolean

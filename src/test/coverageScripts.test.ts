@@ -87,7 +87,8 @@ function check(
   const calls: string[][] = []
   const run = (file: string, args: string[]): string => {
     calls.push([file, ...args])
-    if (args[0] === 'rev-parse') return `${TOP}\n`
+    if (args[0] === 'rev-parse')
+      return args.includes('--verify') ? `${BASE}\n` : `${TOP}\n`
     if (args[0] === 'merge-base') return `${BASE}\n`
     if (args.includes('--name-only')) return added.join('\n')
     return diff
@@ -97,6 +98,246 @@ function check(
 }
 
 describe('the changed-line check', function () {
+  for (const format of ['counts', 'coverage'])
+    it(`counts executable lines rather than an erased multiline TypeScript return annotation (${format})`, function () {
+      const top = mkdtempSync(join(tmpdir(), 'changed-line-types-'))
+      const source = [
+        'export function value():',
+        '  | {',
+        '      offset: number',
+        '      anchor: { id: string } | undefined',
+        '    }',
+        '  | undefined {',
+        '  return undefined',
+        '}'
+      ].join('\n')
+      writeFileSync(join(top, 'subject.ts'), source)
+      const counts = join(top, 'counts.json')
+      writeFileSync(
+        counts,
+        JSON.stringify(
+          format === 'counts'
+            ? {
+                'subject.ts': {
+                  1: 1,
+                  2: 0,
+                  3: 0,
+                  4: 0,
+                  5: 0,
+                  6: 1,
+                  7: 1,
+                  8: 1
+                }
+              }
+            : {
+                'subject.ts': {
+                  statementMap: {
+                    entry: { start: { line: 1 }, end: { line: 1 } },
+                    erased: { start: { line: 2 }, end: { line: 5 } },
+                    body: { start: { line: 6 }, end: { line: 8 } }
+                  },
+                  s: { entry: 1, erased: 0, body: 1 }
+                }
+              }
+        )
+      )
+      const log: string[] = []
+      const result = main(
+        [
+          '--base',
+          'fixture',
+          `--${format}`,
+          counts,
+          '--min',
+          '95',
+          '--ext',
+          '.ts',
+          '.'
+        ],
+        {
+          cwd: top,
+          run: (_command: string, args: string[]) => {
+            if (args[0] === 'rev-parse')
+              return args.includes('--verify') ? BASE : top
+            if (args.includes('--name-only')) return 'subject.ts'
+            return diffOf({ 'subject.ts': 8 })
+          },
+          log: (line: string) => {
+            log.push(line)
+          }
+        }
+      )
+      expect(result, log.join('\n')).equals(0)
+      expect(log).includes('Changed executable line coverage: 4/4 (100.00%)')
+    })
+
+  it('retains a missing coverage record even when the actual source contains only types', function () {
+    const top = mkdtempSync(join(tmpdir(), 'changed-line-missing-type-'))
+    writeFileSync(
+      join(top, 'subject.ts'),
+      'export interface Shape { value: number }'
+    )
+    const counts = join(top, 'counts.json')
+    writeFileSync(counts, '{}')
+    const log: string[] = []
+    const result = main(['--counts', counts, '--ext', '.ts', '.'], {
+      cwd: top,
+      run: (_command: string, args: string[]) => {
+        if (args[0] === 'rev-parse' || args[0] === 'merge-base')
+          return args[0] === 'rev-parse' ? top : BASE
+        if (args.includes('--name-only')) return 'subject.ts'
+        return diffOf({ 'subject.ts': 1 })
+      },
+      log: (line: string) => {
+        log.push(line)
+      }
+    })
+    expect(result).equals(1)
+    expect(log).includes('  subject.ts: no coverage record')
+  })
+
+  it('does not conceal a source read error as an erased line', function () {
+    const top = mkdtempSync(join(tmpdir(), 'changed-line-source-error-'))
+    mkdirSync(join(top, 'subject.ts'))
+    const counts = join(top, 'counts.json')
+    writeFileSync(counts, JSON.stringify({ 'subject.ts': { 1: 0 } }))
+    expect(() =>
+      main(['--counts', counts, '--ext', '.ts', '.'], {
+        cwd: top,
+        run: (_command: string, args: string[]) => {
+          if (args[0] === 'rev-parse' || args[0] === 'merge-base')
+            return args[0] === 'rev-parse' ? top : BASE
+          if (args.includes('--name-only')) return 'subject.ts'
+          return diffOf({ 'subject.ts': 1 })
+        },
+        log: () => undefined
+      })
+    ).throws(/EISDIR/)
+  })
+
+  it('enforces an explicit unit or combined minimum per file and overall', function () {
+    const files = { 'src/a.ts': 100, 'src/b.ts': 20 }
+    const counts = countsOf(files, { 'src/b.ts': 2 })
+    const args = ['--counts', counts, '--ext', '.ts', 'src']
+    expect(check([...args, '--min', '90'], diffOf(files)).code).equals(0)
+    const stricter = check([...args, '--min', '95'], diffOf(files))
+    expect(stricter.code).equals(1)
+    expect(stricter.log).includes(
+      '  src/b.ts: changed lines under 95% on their own'
+    )
+    // The existing aggregate-only default remains compatible for other callers.
+    expect(check(args, diffOf(files)).code).equals(0)
+    expect(
+      check([...args, '--min', '95'], diffOf(files), ['src/b.ts']).log
+    ).includes('  src/b.ts: a new file under 95% on its own')
+    const good = countsOf(files, { 'src/b.ts': 1 })
+    expect(
+      check(
+        ['--counts', good, '--min', '95', '--ext', '.ts', 'src'],
+        diffOf(files)
+      ).code
+    ).equals(0)
+  })
+  it('checks all measured lines of a new file, not only a partial hunk', function () {
+    const counts = countsOf({ 'src/new.ts': 20 }, { 'src/new.ts': 2 })
+    const result = check(
+      ['--counts', counts, '--min', '95', '--ext', '.ts', 'src'],
+      linesDiffOf({ 'src/new.ts': [20] }),
+      ['src/new.ts']
+    )
+    expect(result.code).equals(1)
+    expect(result.log).includes('  src/new.ts: a new file under 95% on its own')
+  })
+  it('writes the actual changed-line report and refuses a missing preserved ref', function () {
+    const report = join(
+      mkdtempSync(join(tmpdir(), 'changed-line-report-')),
+      'report.json'
+    )
+    const files = { 'src/server/a.ts': 10 }
+    const result = check(
+      [
+        '--base',
+        'preserved',
+        '--report',
+        report,
+        '--counts',
+        countsOf(files),
+        '--ext',
+        '.ts',
+        'src/server'
+      ],
+      diffOf(files)
+    )
+    expect(result.code).equals(0)
+    expect(JSON.parse(readFileSync(report, 'utf8'))).includes({
+      pass: true,
+      percent: 100
+    })
+    expect(() =>
+      main(
+        [
+          '--base',
+          'missing',
+          '--counts',
+          countsOf(files),
+          '--ext',
+          '.ts',
+          'src/server'
+        ],
+        {
+          cwd: TOP,
+          log: () => {},
+          run: (_file: string, args: string[]) => {
+            if (args.includes('--verify'))
+              throw new Error('Invalid preserved ref')
+            return TOP
+          }
+        }
+      )
+    ).throws('Invalid preserved ref')
+  })
+  it('uses an explicit preserved base without consulting or diffing primary history', function () {
+    const files = { 'src/server/a.ts': 10 }
+    const result = check(
+      [
+        '--base',
+        'preserved-base',
+        '--counts',
+        countsOf(files),
+        '--ext',
+        '.ts',
+        'src/server'
+      ],
+      diffOf(files),
+      ['src/server/a.ts']
+    )
+    expect(result.code).equals(0)
+    expect(result.calls).deep.includes([
+      'git',
+      'rev-parse',
+      '--verify',
+      'preserved-base^{commit}'
+    ])
+    expect(result.calls.some(call => call.includes('merge-base'))).equals(false)
+    expect(
+      result.calls.find(call => call.includes('--unified=0'))!.at(-1)
+    ).equals(BASE)
+    expect(
+      check(
+        [
+          '--base',
+          'preserved-base',
+          '--counts',
+          countsOf(files, { 'src/server/a.ts': 2 }),
+          '--ext',
+          '.ts',
+          'src/server'
+        ],
+        diffOf(files),
+        ['src/server/a.ts']
+      ).code
+    ).equals(1)
+  })
   it('fails on an empty diff unless --allow-empty, and diffs from the merge base', function () {
     const counts = countsOf({})
     const empty = check(['--counts', counts, '--ext', '.ts', 'src/server'], '')
@@ -343,7 +584,16 @@ describe('the changed-line check', function () {
       ['--jacoco', 'x', '--ext', '.kt', 'src'],
       ['--counts', 'x', '--source-root', 'y', '--ext', '.ts', 'src'],
       ['--jacoco', 'x', '--counts', 'y', '--source-root', 'z', '--ext', '.kt'],
-      ['--jacoco', 'x', '--ext', '.kt', '--source-root']
+      ['--jacoco', 'x', '--ext', '.kt', '--source-root'],
+      ...['', '-1', '101', 'NaN', 'Infinity', '--ext'].map(value => [
+        '--counts',
+        'x',
+        '--ext',
+        '.ts',
+        '--min',
+        value
+      ]),
+      ['--counts', 'x', '--ext', '.ts', '--min']
     ]) {
       const run = check(argv, '')
       expect(run.code, argv.join(' ')).equals(2)

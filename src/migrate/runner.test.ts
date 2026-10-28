@@ -2,9 +2,11 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from './migrations'
 import { BASELINE, migrateDown, migrateUp } from './runner'
-import { testDatabaseUrl } from './testDatabase'
+import { schemaSnapshot } from './schemaSnapshot'
+import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
 /**
  * Runs the real migrations against a scratch database, so the SQL itself is
@@ -60,7 +62,7 @@ describe('migrations', function () {
 
   it('applies every migration, then reports them as already applied', async function () {
     const first = await migrateUp(pool, migrations)
-    expect(first.applied).deep.equals(migrations.map(item => item.name))
+    expect(first.applied).deep.equals(migrations.map(item => item.name).sort())
     expect(first.alreadyApplied).deep.equals([])
 
     const second = await migrateUp(pool, migrations)
@@ -110,29 +112,73 @@ describe('migrations', function () {
   })
 
   it('refuses reverse identity migrations without changing the applied schema', async () => {
-    // Migrations added after the identity cutover reverse on their own; the
-    // cutover's are what refuse.
+    // Later migrations reverse on their own; the latest identity cutover refuses.
+    // By name, the order the runner applies and reverses them in.
     const later = migrations
-      .filter(migration => migration.name > '071deletedAccounts')
+      .filter(migration => migration.name > '075chatCanonicalUserIds')
       .map(migration => migration.name)
+      .sort()
     await migrateDown(pool, migrations, later.length)
     const before = (
       await pool.query('select name from schema_migrations order by name')
     ).rows
+    const schema = await schemaSnapshot(pool)
     let failure: unknown
     try {
       await migrateDown(pool, migrations, migrations.length)
     } catch (error) {
       failure = error
     }
-    expect(String(failure)).matches(/Restore the (?:verified )?pre-cutover/)
+    expect(String(failure)).contains('Restore the matching pre-cutover')
     expect(
       (await pool.query('select name from schema_migrations order by name'))
         .rows
     ).deep.equals(before)
+    expect(await schemaSnapshot(pool)).deep.equals(schema)
     expect((await migrateUp(pool, migrations)).applied).deep.equals(later)
   })
 })
+
+for (const cutover of ['069userIds', '071deletedAccounts']) {
+  describe(`reverse at the ${cutover} identity boundary`, function () {
+    this.timeout(60000)
+    it('refuses through the runner without changing its schema or ledger', async () => {
+      const name = `teamstation_cutover_${cutover.toLowerCase()}_${process.pid}_${Date.now()}`
+      const admin = new Pool({ connectionString: adminUrl, max: 1 })
+      let pool: Pool | undefined
+      try {
+        await admin.query(`create database "${name}"`)
+        pool = new Pool({
+          connectionString: adminUrl.replace(/\/[^/]*$/, `/${name}`),
+          max: 1
+        })
+        const history = migrations.filter(
+          migration => migration.name <= cutover
+        )
+        await migrateUp(pool, history)
+        const schema = await schemaSnapshot(pool)
+        const ledger = (
+          await pool.query('select name from schema_migrations order by name')
+        ).rows
+        const failure = await migrateDown(pool, history, 1).then(
+          () => undefined,
+          (error: unknown) => error
+        )
+        expect(String(failure)).matches(/Restore the (?:verified )?pre-cutover/)
+        expect(await schemaSnapshot(pool)).deep.equals(schema)
+        expect(
+          (await pool.query('select name from schema_migrations order by name'))
+            .rows
+        ).deep.equals(ledger)
+        expect((await migrateUp(pool, history)).applied).deep.equals([])
+      } finally {
+        await pool?.end()
+        await dropScratchDatabase(admin, name)
+        await admin.end()
+      }
+    })
+  })
+}
 
 describe('reversible migration history before persistent guest identities', function () {
   this.timeout(60000)
@@ -164,7 +210,7 @@ describe('reversible migration history before persistent guest identities', func
       'schema_migrations'
     ])
     expect((await migrateUp(pool, history)).applied).deep.equals(
-      history.map(m => m.name)
+      history.map(m => m.name).sort()
     )
     const down = await migrateDown(
       pool,
@@ -255,3 +301,107 @@ describe('the baseline', function () {
     expect(result.applied).deep.equals(['031scoring'])
   })
 })
+
+// The original fork histories and the already-deployed combined chat history
+// must all upgrade without renaming an applied migration.
+for (const history of ['oauth', 'chat', 'deployed'] as const) {
+  describe(`upgrade from the ${history} migration history`, function () {
+    this.timeout(60000)
+    const name = `teamstation_upgrade_${history}_${Date.now()}_${process.pid}`
+    let admin: Pool
+    let pool: Pool
+
+    before(async function () {
+      admin = new Pool({ connectionString: adminUrl })
+      await admin.query(`create database ${name}`)
+      pool = new Pool({
+        connectionString: adminUrl.replace(/\/[^/]*$/, `/${name}`)
+      })
+    })
+
+    after(async function () {
+      if (pool != null) await pool.end()
+      if (admin != null) {
+        await admin.query(`drop database if exists ${name}`)
+        await admin.end()
+      }
+    })
+
+    it('applies only the missing migrations and preserves existing users', async function () {
+      const prior = migrations.filter(migration => {
+        if (history === 'deployed')
+          return migration.name <= '057chatMasterCompatibility'
+        if (history === 'oauth') return migration.name <= '050oauth'
+        return (
+          migration.name < '050' ||
+          ['050teamFollows', '051guardiansAndAccounts', '052chat'].includes(
+            migration.name
+          )
+        )
+      })
+      await migrateUp(pool, prior)
+      await pool.query(
+        'insert into users (id, "legacyId", display_name) values (1001, $1, $2)',
+        ['upgrade-fixture', 'Upgrade fixture']
+      )
+      const result = await migrateUp(pool, migrations)
+      const priorNames = prior.map(migration => migration.name).sort()
+      expect(result.applied).deep.equals(
+        migrations
+          .map(migration => migration.name)
+          .filter(name => !priorNames.includes(name))
+          .sort()
+      )
+      if (history === 'deployed')
+        expect(result.applied).deep.equals([
+          '057eventInfo',
+          '058eventDetails',
+          '059accountMail',
+          '060scoreboardLog',
+          '061videoWallTimeline',
+          '062phoneStreams',
+          '063gameStarted',
+          '064membershipRequests',
+          '065radarReadings',
+          '066gameGuests',
+          '067gameUnroster',
+          '068chatUserIdBridge',
+          '068gumboIds',
+          '069userIds',
+          '070playerGumboIds',
+          '071deletedAccounts',
+          '072narrationAudio',
+          '072seasonDates',
+          '073syncClock',
+          '073umpireManagement',
+          '074optionalUmpires',
+          '074syncIdempotency',
+          '075chatCanonicalUserIds',
+          '075umpireTypes',
+          '076umpireNotes',
+          '077analyticsEvents',
+          '077venues',
+          '078gameFields',
+          '079seasonScheduling',
+          '080schedulePreviews',
+          '081teamKeyedAvailability',
+          '082gamePregame',
+          '083playGeneration',
+          '084gamePlayArchives',
+          '085tess',
+          '086fieldSizes',
+          '087loginOffOnly',
+          '088chatDirtyQueue'
+        ])
+      expect(result.alreadyApplied).deep.equals(priorNames)
+      const { rows } = await pool.query(
+        'select id, display_name from users where id = $1',
+        [userIdOfGumbo(1001)]
+      )
+      expect(rows).deep.equals([
+        { id: userIdOfGumbo(1001), display_name: 'Upgrade fixture' }
+      ])
+      expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    })
+  })
+}

@@ -97,6 +97,7 @@ function settingsClient(
   answer?: (settings: PlayerSettings) => RosterEntry | Error
 ): TeamStationClient {
   return {
+    guardians: async () => [],
     roster: async () => {
       if (roster instanceof Error) throw roster
       return roster
@@ -487,5 +488,142 @@ describe('a player’s settings form', function () {
     }
     expect(changesOf(jordan, draft)).deep.equals({ jersey: null })
     expect(changesOf({ ...jordan, jersey: null }, draft)).deep.equals({})
+  })
+
+  it('sets, steps and clears the birth month, keeping a refusal on the screen', async function () {
+    const sent: Array<{ year: number; month: number } | null> = []
+    let refuse: Error | undefined
+    const client = Object.assign(settingsClient([jordan], []), {
+      player: async () => ({
+        userId: userIdOfGumbo(7),
+        name: 'Jordan P',
+        bats: 'right',
+        throws: null,
+        birthMonth: '2014-03'
+      }),
+      setBirthMonth: async (
+        _userId: string,
+        birth: { year: number; month: number } | null
+      ) => {
+        sent.push(birth)
+        if (refuse != null) throw refuse
+        return birth == null
+          ? null
+          : `${birth.year}-${String(birth.month).padStart(2, '0')}`
+      }
+    }) as unknown as TeamStationClient
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await act(async () => {
+      await delay(10)
+    })
+    expect(text()).includes('Born March 2014')
+    expect(checked('Month March')).equals(true)
+    expect(
+      labelled('Save birth month').getAttribute('aria-disabled'),
+      'nothing changed yet'
+    ).equals('true')
+
+    await press('Month May')
+    await press('One year later')
+    await press('One year later')
+    await press('One year earlier')
+    expect(labelled('Year 2015').textContent).equals('2015')
+    await press('Save birth month')
+    expect(sent).deep.equals([{ year: 2015, month: 5 }])
+    expect(text()).includes('Birth month saved.')
+    expect(text()).includes('Born May 2015')
+
+    refuse = new Error('Only a guardian can change this')
+    await press('Month June')
+    await press('Save birth month')
+    expect(text()).includes('Only a guardian can change this')
+    refuse = new Error('')
+    await press('Save birth month')
+    expect(text()).includes('Cannot save')
+
+    refuse = undefined
+    await press('Clear birth month')
+    expect(sent.at(-1)).equals(null)
+    expect(text()).includes('Birth month cleared.')
+    expect(text()).includes('Not set')
+  })
+
+  it('lists the player’s guardians and family, and opens the way to change them', async function () {
+    const client = Object.assign(settingsClient([jordan], []), {
+      guardians: async () => [
+        {
+          userId: userIdOfGumbo(20),
+          name: 'Pat P',
+          email: 'pat@example.test',
+          kind: 'guardian'
+        },
+        {
+          userId: userIdOfGumbo(21),
+          name: 'Sam P',
+          email: null,
+          kind: 'family'
+        }
+      ]
+    }) as unknown as TeamStationClient
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await act(async () => {
+      await delay(10)
+    })
+    expect(text()).includes('Pat P')
+    expect(text()).includes('Guardian · pat@example.test')
+    expect(text()).includes('Sam P')
+    await press('Change guardians and family')
+    expect(text()).includes('Guardians and family of Jordan P')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[role="button"][aria-label="Done"]')!
+        .click()
+      await delay(10)
+    })
+    expect(text()).not.includes('Guardians and family of Jordan P')
+  })
+
+  it('says when the guardians cannot be loaded, and when there are none', async function () {
+    await render(
+      <PlayerSettingsTab
+        client={Object.assign(settingsClient([jordan], []), {
+          guardians: async () => {
+            throw new Error('offline')
+          }
+        })}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await act(async () => {
+      await delay(10)
+    })
+    expect(text()).includes('Cannot load the guardians.')
+    await act(async () => {
+      root?.unmount()
+    })
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], [])}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await act(async () => {
+      await delay(10)
+    })
+    expect(text()).includes('Nobody is linked yet.')
   })
 })

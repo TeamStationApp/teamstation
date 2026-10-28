@@ -29,8 +29,12 @@ export interface AppHeaderProps {
    * carried and never both at once.
    */
   handoff?: React.ReactNode
+  /** An opt-in two-line identity can grow with accessibility text size. */
+  contentHeight?: number
   /** The three destinations, on a wide window. */
   nav?: React.ReactNode
+  /** An opt-in minimum for a scene's trailing controls, including scaled labels. */
+  navMinWidth?: number
   /** The signed-in person, drawn at the right and opening their account. */
   account?: {
     name: string
@@ -96,7 +100,8 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           styles.header,
           wide && styles.headerWide,
           {
-            height: theme.rem(3) + insets.top,
+            height:
+              Math.max(theme.rem(3), props.contentHeight ?? 0) + insets.top,
             paddingTop: insets.top,
             paddingLeft: Math.max(margin, insets.left),
             paddingRight: Math.max(margin, insets.right)
@@ -159,7 +164,15 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           )}
         </View>
 
-        <View style={[styles.side, styles.sideEnd]}>
+        <View
+          style={[
+            styles.side,
+            styles.sideEnd,
+            props.navMinWidth != null && {
+              minWidth: Math.max(theme.rem(3), props.navMinWidth)
+            }
+          ]}
+        >
           {nav}
           {props.tess != null && (
             <Pressable

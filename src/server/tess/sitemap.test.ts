@@ -9,6 +9,7 @@ import { after, before, describe, it } from 'mocha'
 import { parseRoute, type Route, routePath } from '../../app/navigation/routes'
 import { runSitemapCli, SITEMAP_FILE } from './sitemapCli'
 import {
+  DEV_ONLY_ROUTES,
   generateSitemap,
   ROUND_TRIP_SAMPLES,
   type Sitemap,
@@ -93,9 +94,47 @@ describe('Tess sitemap', function () {
     // Every member has a case in routePath's exhaustive switch.
     const writer = source(ROUTES_FILE).split('export function routePath')[1]
     const cases = [...writer.matchAll(/case '(\w+)':/g)].map(match => match[1])
+    expect(cases).includes.members([...DEV_ONLY_ROUTES])
     expect(sitemap.routes.map(route => route.name)).deep.equals(
-      [...new Set(cases)].sort()
+      [...new Set(cases)].filter(name => !DEV_ONLY_ROUTES.has(name)).sort()
     )
+  })
+
+  it('leaves out the chat bench, which only a development build has', function () {
+    expect(sitemap.routes.map(route => route.name)).not.include('chatBench')
+    // Without a bench its address is home's, so it could never round-trip.
+    expect(routePath({ name: 'chatBench' })).equals('/')
+  })
+
+  it('opens each chat screen at its own address', function () {
+    expect(
+      Object.fromEntries(
+        [
+          'chat',
+          'chatDevices',
+          'chatInfo',
+          'chatLink',
+          'chatMembers',
+          'chatNew',
+          'chatReports',
+          'conversation'
+        ].map(name => [name, routeOf(sitemap, name).path])
+      )
+    ).deep.equals({
+      chat: '/chat',
+      chatDevices: '/chat/devices',
+      chatInfo: '/chat/:conversationId/info',
+      chatLink: '/chat/link',
+      chatMembers: '/chat/:conversationId/members',
+      chatNew: '/chat/new',
+      chatReports: '/admin/chat/reports',
+      conversation: '/chat/:conversationId'
+    })
+    const conversation = concrete(routeOf(sitemap, 'conversation').path)
+    expect(parseRoute(conversation.path, conversation.search)).deep.equals({
+      name: 'conversation',
+      conversationId: 'abc123'
+    })
   })
 
   it('writes each required parameter as :name, never encoded', function () {

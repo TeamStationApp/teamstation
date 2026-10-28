@@ -1,0 +1,153 @@
+import { expect } from 'chai'
+import { describe, it } from 'mocha'
+
+import { newDeviceKeys, newPukKey } from '../../common/chatCrypto/keys'
+import { userIdOfGumbo } from '../../common/userId'
+import {
+  b64,
+  epochKeyOf,
+  latestPuk,
+  newRecord,
+  pinIdentity,
+  recordFromJson,
+  recordToJson,
+  unb64,
+  withEpochKey
+} from './keyRecord'
+
+/** U11: the record both key stores keep. */
+describe('chat key record', function () {
+  const device = newDeviceKeys()
+
+  it('round-trips every field through JSON, bytes as base64url', function () {
+    const identity = newDeviceKeys().sign
+    const record = withEpochKey(
+      {
+        ...newRecord(userIdOfGumbo(42), 'cdv_one', device),
+        identity: { id: 'cid_abcdefghijklmnop', keys: identity },
+        puks: [
+          { generation: 2, keys: newPukKey() },
+          { generation: 1, keys: newPukKey() }
+        ],
+        pendingLinkId: 'clk_x',
+        pins: { [userIdOfGumbo(7)]: b64(new Uint8Array(32).fill(1)) },
+        previousPins: { [userIdOfGumbo(7)]: b64(new Uint8Array(32).fill(2)) },
+        logs: {
+          cnv_1: {
+            seq: 4,
+            hash: b64(new Uint8Array(32).fill(3)),
+            members: [userIdOfGumbo(7), userIdOfGumbo(42)],
+            resets: [{ userId: userIdOfGumbo(7), seq: 3, at: 1000 }],
+            broken: false
+          }
+        }
+      },
+      'cnv_1',
+      3,
+      new Uint8Array(32).fill(4)
+    )
+    const text = recordToJson(record)
+    expect(text).not.contains('"secretKey":{')
+    const back = recordFromJson(text)
+    expect(back.userId).equals(userIdOfGumbo(42))
+    expect(back.deviceId).equals('cdv_one')
+    expect(b64(back.device.box.secretKey)).equals(b64(device.box.secretKey))
+    expect(b64(back.device.sign.publicKey)).equals(b64(device.sign.publicKey))
+    expect(back.identity?.id).equals('cid_abcdefghijklmnop')
+    expect(b64(back.identity!.keys.secretKey)).equals(b64(identity.secretKey))
+    // Oldest first, whatever order they were written in.
+    expect(back.puks.map(puk => puk.generation)).deep.equals([1, 2])
+    expect(back.pendingLinkId).equals('clk_x')
+    expect(back.pins).deep.equals({
+      [userIdOfGumbo(7)]: b64(new Uint8Array(32).fill(1))
+    })
+    expect(back.previousPins).deep.equals({
+      [userIdOfGumbo(7)]: b64(new Uint8Array(32).fill(2))
+    })
+    expect(back.logs).deep.equals(record.logs)
+    expect([...epochKeyOf(back, 'cnv_1', 3)!]).deep.equals(Array(32).fill(4))
+  })
+
+  it('keeps a new device’s record with nothing of the user’s', function () {
+    const back = recordFromJson(
+      recordToJson(newRecord(userIdOfGumbo(1), 'cdv_new', device))
+    )
+    expect(back.identity).equals(undefined)
+    expect(back.puks).deep.equals([])
+    expect(back.pendingLinkId).equals(undefined)
+    expect(back.pins).deep.equals({})
+    expect(back.epochKeys).deep.equals({})
+    expect(back.previousPins).deep.equals({})
+    expect(back.logs).deep.equals({})
+    expect(latestPuk(back)).equals(undefined)
+  })
+
+  it('reads a record written before pins changed or logs were kept', function () {
+    const { previousPins, logs, ...older } = JSON.parse(
+      recordToJson(newRecord(userIdOfGumbo(1), 'cdv_old', device))
+    )
+    expect(previousPins).deep.equals({})
+    expect(logs).deep.equals({})
+    const back = recordFromJson(
+      JSON.stringify({
+        ...older,
+        logs: {
+          cnv_a: {
+            seq: 1,
+            hash: b64(new Uint8Array(32)),
+            members: [userIdOfGumbo(1)],
+            broken: true
+          }
+        }
+      })
+    )
+    expect(back.previousPins).deep.equals({})
+    expect(back.logs.cnv_a.resets).deep.equals([])
+    expect(recordFromJson(JSON.stringify(older)).logs).deep.equals({})
+  })
+
+  it('refuses what it did not write', function () {
+    expect(() => recordFromJson('not json')).throws()
+    expect(() => recordFromJson('{"version":2}')).throws()
+    expect(() =>
+      recordFromJson(
+        JSON.stringify({
+          ...JSON.parse(recordToJson(newRecord(userIdOfGumbo(1), 'c', device))),
+          userId: 'x'
+        })
+      )
+    ).throws()
+  })
+
+  it('pins an identity on first sight and reports a change', function () {
+    const first = Uint8Array.of(9, 9)
+    const start = newRecord(userIdOfGumbo(1), 'cdv', device)
+    const pinned = pinIdentity(start, userIdOfGumbo(5), first)
+    expect(pinned.seen).equals('new')
+    expect(pinned.record.pins).deep.equals({ [userIdOfGumbo(5)]: b64(first) })
+    expect(start.pins).deep.equals({})
+    const again = pinIdentity(pinned.record, userIdOfGumbo(5), first)
+    expect(again.seen).equals('same')
+    expect(again.record).equals(pinned.record)
+    const changed = pinIdentity(
+      pinned.record,
+      userIdOfGumbo(5),
+      Uint8Array.of(1)
+    )
+    expect(changed.seen).equals('changed')
+    expect(changed.record.pins[userIdOfGumbo(5)]).equals(b64(Uint8Array.of(1)))
+    expect(changed.record.previousPins[userIdOfGumbo(5)]).equals(b64(first))
+  })
+
+  it('caches epoch keys per conversation and epoch', function () {
+    const start = newRecord(userIdOfGumbo(1), 'cdv', device)
+    const one = withEpochKey(start, 'cnv_a', 1, Uint8Array.of(1))
+    const two = withEpochKey(one, 'cnv_a', 2, Uint8Array.of(2))
+    expect(epochKeyOf(two, 'cnv_a', 1)).deep.equals(Uint8Array.of(1))
+    expect(epochKeyOf(two, 'cnv_a', 2)).deep.equals(Uint8Array.of(2))
+    expect(epochKeyOf(two, 'cnv_a', 3)).equals(undefined)
+    expect(epochKeyOf(two, 'cnv_b', 1)).equals(undefined)
+    expect(start.epochKeys).deep.equals({})
+    expect(unb64(two.epochKeys.cnv_a['2'])).deep.equals(Uint8Array.of(2))
+  })
+})

@@ -34,7 +34,8 @@ describe('Search navigation', () => {
         'Home',
         'Videos',
         'Schedule',
-        'Search'
+        'Search',
+        'Chat'
       ])
       expect(host.querySelectorAll('[role="button"]')).length(0)
       await act(async () => {

@@ -318,6 +318,28 @@ describe('Pinned multi-app deployment orchestration', () => {
     )
     assert.equal(invalid.status, 1)
   })
+  it('reports the fixed validation reason and exact failing build stage', async () => {
+    const logs: string[] = []
+    const invalid: Builder = async context => {
+      context.reportStage?.('sentry.source-map')
+      throw new Error('Sentry upload failed: no bundle or source map')
+    }
+    assert.equal(
+      await run(
+        parse('ios'),
+        { ios: invalid },
+        new AbortController().signal,
+        line => logs.push(line)
+      ),
+      1
+    )
+    assert(
+      logs.includes(
+        'ios build failure reason (sentry.source-map): Sentry upload failed: no bundle or source map'
+      )
+    )
+    assert(logs.includes('ios build failed; no package was published'))
+  })
   it('pins all platforms, retains verified retry files and publishes successes after partial failure', async () => {
     writeFileSync(path.join(source, 'package.json'), '{"version":"9.8.7"}')
     const logs: string[] = []
@@ -333,6 +355,7 @@ describe('Pinned multi-app deployment orchestration', () => {
       commits.push(context.commit)
       numbers.push(context.buildNumber)
       assert.equal(context.version, '9.8.7')
+      context.reportStage?.('android.verify')
       throw new DeploymentToolError(
         'Deployment tool failed',
         '/private/fixture/gradlew',
@@ -360,6 +383,11 @@ describe('Pinned multi-app deployment orchestration', () => {
       '  | DEPLOY_STORE_PASSWORD=[redacted]',
       'ios uploaded'
     ])
+    assert(
+      logs.includes(
+        'android build failure reason (android.verify): Deployment tool failed'
+      )
+    )
     assert.equal(
       readFileSync(path.join(source, 'package.json'), 'utf8'),
       '{"version":"9.8.7"}'

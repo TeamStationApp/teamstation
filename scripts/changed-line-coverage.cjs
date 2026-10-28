@@ -30,6 +30,51 @@ function istanbulCounts(entry) {
   return lines
 }
 
+// Source maps can spread a runtime statement across an erased annotation.
+// Remove only complete source lines proven to belong to TypeScript types;
+// mixed lines, parse failures and all original runtime counts stay intact.
+function withoutTypeOnlyLines(path, source, counts) {
+  if (!/\.[cm]?tsx?$/.test(path)) return counts
+  const ts = require('typescript')
+  const parsed = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    path.endsWith('tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  )
+  if (parsed.parseDiagnostics.length !== 0) return counts
+  const ranges = []
+  const visit = node => {
+    // A class's `extends` expression executes even though TypeScript exposes
+    // its enclosing ExpressionWithTypeArguments as a type node.
+    if (
+      (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
+      ts.isInterfaceDeclaration(node) ||
+      ts.isTypeAliasDeclaration(node)
+    ) {
+      ranges.push([node.getStart(parsed), node.end])
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(parsed)
+  const starts = parsed.getLineStarts()
+  const filtered = { ...counts }
+  for (const number of Object.keys(counts)) {
+    const index = Number(number) - 1
+    if (index < 0 || index >= starts.length) continue
+    const line = source.slice(starts[index], starts[index + 1] ?? source.length)
+    const first = line.search(/\S/)
+    if (first < 0) continue
+    const start = starts[index] + first
+    const end = starts[index] + line.trimEnd().length
+    if (ranges.some(([from, to]) => from <= start && end <= to))
+      delete filtered[number]
+  }
+  return filtered
+}
+
 // `xcrun xccov view --archive --json --file <path> <xcresult>` output, as
 // { path: { line: count } } over the executable lines.
 function xccovCounts(json) {
@@ -102,12 +147,13 @@ function lineReportFromCounts(
   changes,
   counts,
   executable,
-  { newFiles = [], newFileMin = 90, min = 90 } = {}
+  { newFiles = [], newFileMin = 90, min = 90, perFileMin } = {}
 ) {
   const added = new Set(newFiles)
   const files = {}
   const missing = []
   const newFileReport = {}
+  const shortFiles = []
   let total = 0
   let covered = 0
   for (const [path, changed] of Object.entries(changes)) {
@@ -127,10 +173,19 @@ function lineReportFromCounts(
       } else files[path].uncovered.push(line)
     }
     if (added.has(path)) {
-      const own = files[path].covered.length + files[path].uncovered.length
+      const own = Object.values(lines)
       newFileReport[path] =
-        own === 0 ? 100 : (100 * files[path].covered.length) / own
+        own.length === 0
+          ? 100
+          : (100 * own.filter(count => count > 0).length) / own.length
     }
+    const ownChanged = files[path].covered.length + files[path].uncovered.length
+    if (
+      perFileMin != null &&
+      ownChanged > 0 &&
+      (100 * files[path].covered.length) / ownChanged < perFileMin
+    )
+      shortFiles.push(path)
   }
   const percent = total === 0 ? 100 : (100 * covered) / total
   const shortNewFiles = Object.entries(newFileReport)
@@ -144,7 +199,12 @@ function lineReportFromCounts(
     files,
     newFiles: newFileReport,
     shortNewFiles,
-    pass: missing.length === 0 && percent >= min && shortNewFiles.length === 0
+    shortFiles,
+    pass:
+      missing.length === 0 &&
+      percent >= min &&
+      shortNewFiles.length === 0 &&
+      shortFiles.length === 0
   }
 }
 
@@ -163,5 +223,6 @@ module.exports = {
   lineReport,
   lineReportFromCounts,
   resolveSpecs,
+  withoutTypeOnlyLines,
   xccovCounts
 }

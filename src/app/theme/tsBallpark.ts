@@ -79,6 +79,8 @@ const rem = (size: number): number => size * 16
 
 export const tsBallpark: Theme = {
   scoringSurface,
+  chatAttentionBackgroundColor: '#0065D1',
+  chatAttentionTextColor: '#FFFFFF',
   rem,
   isDark: false,
 

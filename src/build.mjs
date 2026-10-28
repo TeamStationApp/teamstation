@@ -5,7 +5,15 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import buildInfoTools from '../scripts/build-info.cjs'
+import { buildWasm, findCargo } from '../scripts/chatCryptoBuild.mjs'
 import { webSettings } from '../scripts/web-build-settings.mjs'
+import {
+  cspFor,
+  integrityOf,
+  originsFor,
+  withCsp,
+  withIntegrity
+} from './buildCsp.mjs'
 
 /**
  * Everything below is written relative to the repository root, and this is
@@ -62,6 +70,38 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
 }
 
 /**
+ * The page's Content-Security-Policy (`buildCsp.mjs`), written into every
+ * build: the API and its socket from `TS_API_BASE_URL` when that is absolute,
+ * and the media origins the deploy names in `TS_MEDIA_ORIGINS`
+ * (space-separated; `src/deploy/mediaOrigins.mjs` prints them).
+ */
+const policy = cspFor(
+  originsFor(apiBaseUrl, process.env.TS_MEDIA_ORIGINS ?? '')
+)
+
+/**
+ * Where the build is written. `dist/` always, except for the tests of the
+ * build itself, which must not replace a served bundle.
+ */
+const out = process.env.TS_WEB_OUT_DIR ?? 'dist'
+
+/**
+ * Chat's crypto core, as the WebAssembly module every browser loads
+ * (`crates/chat-crypto`, built by `scripts/chatCryptoBuild.mjs`). It is
+ * copied beside the bundle under a name with its hash in it, as the bundle
+ * is (plain `chat-crypto.wasm` under `--serve`), and the bundle is told where
+ * it is and what its sha384 must be: `core.web.ts` fetches it with that
+ * integrity and refuses anything else. Under `--serve` a change to the crate
+ * needs a restart, since the watch follows the bundle only.
+ */
+const found = findCargo()
+if (found.error != null) throw new Error(found.error)
+const wasmBytes = await readFile(buildWasm(found))
+const wasmFile = serve
+  ? 'chat-crypto.wasm'
+  : `chat-crypto-${createHash('sha256').update(wasmBytes).digest('hex').slice(0, 16)}.wasm`
+
+/**
  * Reanimated's worklets, and nothing else.
  *
  * Reanimated compiles the functions that run on the animation thread with a
@@ -108,8 +148,8 @@ const options = {
   // deployed and never asked for the script at all. A name that changes when
   // the bytes change makes a stale copy impossible rather than unlikely.
   ...(serve
-    ? { outfile: 'dist/app.js' }
-    : { outdir: 'dist', entryNames: 'app-[hash]' }),
+    ? { outfile: `${out}/app.js` }
+    : { outdir: out, entryNames: 'app-[hash]' }),
   bundle: true,
   format: 'iife',
   target: ['es2021'],
@@ -132,6 +172,8 @@ const options = {
     ),
     __DEV__: serve ? 'true' : 'false',
     TS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    TS_CHAT_WASM_URL: JSON.stringify(`/${wasmFile}`),
+    TS_CHAT_WASM_INTEGRITY: JSON.stringify(integrityOf(wasmBytes)),
     TS_PASSWORD_WORKER_URL: JSON.stringify(
       '/' + workerFile.replace(/^dist\//, '')
     ),
@@ -150,8 +192,11 @@ const options = {
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
 }
 
-await mkdir('dist', { recursive: true })
-const template = await readFile('src/app/web/index.html', 'utf8')
+await mkdir(out, { recursive: true })
+const template = withCsp(
+  await readFile('src/app/web/index.html', 'utf8'),
+  policy
+)
 const mark = await readFile('src/app/assets/teamStationMark.svg', 'utf8')
 const viewBox = /viewBox="([^"]+)"/.exec(mark)
 if (viewBox == null) throw new Error('TeamStation mark has no viewBox')
@@ -159,18 +204,18 @@ const artwork = /<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/.exec(mark)
 if (artwork == null) throw new Error('TeamStation mark has no SVG artwork')
 // An inset mark on the light app canvas, with an iOS-style rounded outline.
 await writeFile(
-  'dist/favicon.svg',
+  `${out}/favicon.svg`,
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <title>TeamStation</title>
   <rect width="256" height="256" rx="56" fill="#F5F7F1"/>
   <svg x="24" y="24" width="208" height="208" viewBox="${viewBox[1]}">${artwork[1]}</svg>
 </svg>\n`
 )
-await copyFile('src/app/web/favicon.ico', 'dist/favicon.ico')
-await copyFile('src/app/web/favicon.png', 'dist/favicon.png')
+await copyFile('src/app/web/favicon.ico', `${out}/favicon.ico`)
+await copyFile('src/app/web/favicon.png', `${out}/favicon.png`)
 // The privacy policy is a plain page, readable without loading the app; the
 // stores link to https://web.teamstation.app/privacy.html.
-await copyFile('src/app/web/privacy.html', 'dist/privacy.html')
+await copyFile('src/app/web/privacy.html', `${out}/privacy.html`)
 // The text fonts the phones carry, so the web draws the very same faces
 // (`index.html` declares them); never a system font. In production each is
 // renamed `<Family>-<Style>-<hash>.ttf`, its content's hash as the bundle's
@@ -179,8 +224,8 @@ await copyFile('src/app/web/privacy.html', 'dist/privacy.html')
 // leave its text blank for a round trip on a weak connection. Only
 // `index.html` is rewritten to the new names (`withFonts`); a new page naming
 // a font must go through it too, or it names a file production does not have.
-await rm('dist/fonts', { recursive: true, force: true })
-await mkdir('dist/fonts', { recursive: true })
+await rm(`${out}/fonts`, { recursive: true, force: true })
+await mkdir(`${out}/fonts`, { recursive: true })
 /** Each font's path in `index.html`, and the path it is served at. */
 const fontPaths = []
 for (const family of ['SpaceGrotesk', 'Inter', 'Quicksand'])
@@ -192,22 +237,35 @@ for (const family of ['SpaceGrotesk', 'Inter', 'Quicksand'])
           .update(await readFile(source))
           .digest('hex')
           .slice(0, 12)}.ttf`
-    await copyFile(source, `dist/fonts/${name}`)
+    await copyFile(source, `${out}/fonts/${name}`)
     fontPaths.push([`/fonts/${family}-${style}.ttf`, `/fonts/${name}`])
   }
 /** The page with each font named as it is served. */
 const withFonts = page =>
   fontPaths.reduce((text, [from, to]) => text.replaceAll(from, to), page)
 
+/** Keep the web AudioWorklet at the bundle origin. */
+await copyFile('src/app/scoring/pcm16kWorklet.js', `${out}/pcm16kWorklet.js`)
+
+// Earlier deploys' modules, then this one's, so exactly one is left.
+for (const name of await readdirSafe(out)) {
+  if (/^chat-crypto-[0-9a-f]+\.wasm$/.test(name) && name !== wasmFile) {
+    await rm(`${out}/${name}`)
+  }
+}
+await writeFile(`${out}/${wasmFile}`, wasmBytes)
+
 if (serve) {
-  await writeFile('dist/index.html', template)
+  // No integrity here: the watch rebuilds `app.js` after this page is
+  // written, and a hash of the first build would refuse every later one.
+  await writeFile(`${out}/index.html`, template)
   const ctx = await context(options)
   await ctx.watch()
   // Without the fallback every address but `/` answers 404 on a reload, which
   // is every address the app hands out.
   const { hosts, port } = await ctx.serve({
-    servedir: 'dist',
-    fallback: 'dist/index.html',
+    servedir: out,
+    fallback: `${out}/index.html`,
     // Overridable because two worktrees are often being served at once, and
     // the second one silently failing to bind is a confusing way to spend ten
     // minutes. `TS_API_BASE_URL` moves the API port to match.
@@ -217,8 +275,8 @@ if (serve) {
   console.log(`talking to ${apiBaseUrl}`)
 } else {
   // Old hashed bundles would otherwise pile up, one per deploy, for ever.
-  for (const name of await readdirSafe('dist')) {
-    if (/^app-[A-Z0-9]+\.js(\.map)?$/i.test(name)) await rm(`dist/${name}`)
+  for (const name of await readdirSafe(out)) {
+    if (/^app-[A-Z0-9]+\.js(\.map)?$/i.test(name)) await rm(`${out}/${name}`)
   }
 
   const result = await build({ ...options, metafile: true })
@@ -226,16 +284,21 @@ if (serve) {
     name => name.endsWith('.js') && !name.endsWith('.map')
   )
   if (script == null) throw new Error('esbuild produced no script')
-  const file = script.replace(/^dist\//, '')
+  const file = path.basename(script)
 
   // The page names the bundle, so the page must not be cached even briefly —
   // that is what its `no-cache` header is for. It is small and it is the
   // only thing that has to be fetched to learn the current bundle's name.
+  // The script tag carries the bundle's hash too (Subresource Integrity).
   await writeFile(
-    'dist/index.html',
-    withFonts(template.replace('src="/app.js"', `src="/${file}"`))
+    `${out}/index.html`,
+    withFonts(
+      withIntegrity(template.replace('src="/app.js"', `src="/${file}"`), {
+        [`/${file}`]: await readFile(`${out}/${file}`)
+      })
+    )
   )
-  console.log(`built dist/${file}`)
+  console.log(`built ${out}/${file}`)
 }
 
 /** `readdir`, treating a missing directory as empty. */

@@ -11,6 +11,7 @@ const {
   lineReport,
   lineReportFromCounts,
   resolveSpecs,
+  withoutTypeOnlyLines,
   xccovCounts
 } = require('../../scripts/changed-line-coverage.cjs')
 
@@ -39,6 +40,106 @@ describe('changed executable line coverage gate', function () {
     expect(report).includes({ covered: 2, total: 2, percent: 100, pass: true })
     coverage['a.ts'].s.a = 0
     expect(lineReport(changes, coverage, () => false).pass).equals(false)
+  })
+})
+
+describe('compiler-proven erased TypeScript coverage lines', () => {
+  const counts = (source: string): Record<number, number> =>
+    Object.fromEntries(
+      source.split('\n').map((_line, index) => [index + 1, index % 2])
+    )
+
+  it('removes covered and uncovered interface/alias lines without mutating the original counters', () => {
+    const source = [
+      'export interface Shape {',
+      '  value: number',
+      '}',
+      'type Alias = Shape',
+      'export const value = 1'
+    ].join('\n')
+    const original = counts(source)
+    expect(withoutTypeOnlyLines('source.ts', source, original)).deep.equals({
+      5: 0
+    })
+    expect(original).deep.equals({ 1: 0, 2: 1, 3: 0, 4: 1, 5: 0 })
+  })
+
+  it('retains mixed type/runtime lines and an actual uncovered return', () => {
+    const source = [
+      'type Alias = number; export const value: Alias = 1',
+      'export function get():',
+      '  | {',
+      '      value: number',
+      '    }',
+      '  | undefined {',
+      '  return undefined',
+      '}'
+    ].join('\n')
+    const original = Object.fromEntries(
+      source.split('\n').map((_line, index) => [index + 1, index === 6 ? 0 : 1])
+    )
+    const actual = withoutTypeOnlyLines('source.ts', source, original)
+    expect(actual).deep.equals({ 1: 1, 2: 1, 6: 1, 7: 0, 8: 1 })
+    const report = lineReportFromCounts(
+      { 'source.ts': new Set([1, 2, 3, 4, 5, 6, 7, 8]) },
+      { 'source.ts': actual },
+      () => true,
+      { min: 95, perFileMin: 95 }
+    )
+    expect(report.pass).equals(false)
+    expect(report.files['source.ts'].uncovered).deep.equals([7])
+  })
+
+  it('keeps executable class base expressions, enums and namespaces', () => {
+    const source = [
+      'class Child extends',
+      '  factory(',
+      '    { ready: true }',
+      '  ) {}',
+      'enum State {',
+      '  Ready = makeValue()',
+      '}',
+      'namespace Values {',
+      '  export const value = makeValue()',
+      '}'
+    ].join('\n')
+    expect(
+      withoutTypeOnlyLines('source.ts', source, counts(source))
+    ).deep.equals(counts(source))
+  })
+
+  it('parses TSX without hiding JSX or a mixed annotation and initializer', () => {
+    const source = [
+      'type Props = { text: string }',
+      'const element: Props = { text: "retained" }',
+      'export const view = <div>{element.text}</div>'
+    ].join('\n')
+    expect(
+      withoutTypeOnlyLines('source.tsx', source, counts(source))
+    ).deep.equals({ 2: 1, 3: 0 })
+  })
+
+  it('keeps all counters when syntax is invalid or source is not TypeScript', () => {
+    expect(
+      withoutTypeOnlyLines('source.ts', 'type Broken = {', { 1: 0 })
+    ).deep.equals({ 1: 0 })
+    expect(
+      withoutTypeOnlyLines('source.js', 'type Shape = number', { 1: 0 })
+    ).deep.equals({ 1: 0 })
+  })
+
+  it('does not remove counters outside the source or on an ambiguous blank line', () => {
+    const source = 'type Shape = {\n\n  value: number\n}'
+    expect(
+      withoutTypeOnlyLines('source.ts', source, {
+        0: 0,
+        1: 1,
+        2: 0,
+        3: 1,
+        4: 1,
+        9: 0
+      })
+    ).deep.equals({ 0: 0, 2: 0, 9: 0 })
   })
 })
 
