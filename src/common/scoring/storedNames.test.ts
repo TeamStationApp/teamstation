@@ -33,7 +33,8 @@ import {
   storedForm,
   structuredCredit,
   withNames,
-  withoutNames
+  withoutNames,
+  withStructuredCredits
 } from './storedNames'
 
 type Json = Record<string, unknown>
@@ -952,6 +953,97 @@ describe('stored and named forms of a game document', function () {
       const odd = { eventType: 'run', creditUserId: 3 }
       expect(structuredCredit(odd)).equals(odd)
       expect(structuredCredit('text')).equals('text')
+    })
+
+    it('names a fielder by the id the credit itself gives him there, and drops what it cannot word again', function () {
+      const sent = {
+        ...outside(
+          'Ground out: Jordan P (SS) to Casey B (1B)',
+          'Jordan P',
+          'SS'
+        ),
+        // The sender's own assists: Casey at first by his id, a name at
+        // another position, and things that are not assists.
+        assists: [
+          { name: 'Casey B', position: '2B', creditUserId: 8 },
+          { name: 'Casey B', position: '1B', creditUserId: 9 },
+          { name: 'Casey B', position: '1B' },
+          'odd'
+        ]
+      }
+      expect(structuredCredit(sent, { idOf })).deep.include({
+        assists: [{ creditUserId: 9, position: '1B' }],
+        assistWord: 'to'
+      })
+      // A label it cannot word again keeps none of the sender's structure.
+      const unread = structuredCredit(
+        {
+          ...sent,
+          label: 'Ground out: J. P (SS) to Casey B (1B)',
+          suffix: ' sliding',
+          assistWord: 'to'
+        },
+        { idOf }
+      ) as Json
+      expect(unread).not.have.property('assists')
+      expect(unread).not.have.property('suffix')
+      expect(unread).not.have.property('assistWord')
+      expect(unread.head).equals('Ground out')
+    })
+  })
+
+  describe('withStructuredCredits', function () {
+    const play = (credits: unknown): Json => ({
+      about: { atBatIndex: 0 },
+      result: { eventType: 'field_out' },
+      matchup: {
+        batter: { id: 2, fullName: 'Casey B' },
+        pitcher: { id: 7, fullName: 'Jordan P' }
+      },
+      ...(credits === undefined ? {} : { credits })
+    })
+
+    it('structures each credit, keeping its label and its name', function () {
+      const sent = {
+        eventType: 'field_out',
+        label: 'Ground out: Jordan P (P) to Casey B (1B)',
+        teamId: 'home',
+        creditUserId: 7,
+        credit: { name: 'Jordan P', role: 'fielder', position: 'P' }
+      }
+      const stored = withStructuredCredits(play([sent, 'odd']))
+      expect(stored.credits).deep.equals([
+        {
+          ...sent,
+          head: 'Ground out',
+          assists: [{ creditUserId: 2, position: '1B' }],
+          assistWord: 'to'
+        },
+        'odd'
+      ])
+    })
+
+    it('leaves an engine credit and a play with no credits as they are', function () {
+      const engine = {
+        eventType: 'single',
+        label: 'Single: Casey B',
+        teamId: 'away',
+        creditUserId: 2,
+        credit: { name: 'Casey B', role: 'batter', position: null },
+        head: 'Single',
+        assists: [],
+        assistWord: 'from'
+      }
+      expect(withStructuredCredits(play([engine])).credits).deep.equals([
+        engine
+      ])
+      const bare = play(undefined)
+      expect(withStructuredCredits(bare)).equals(bare)
+      expect(withStructuredCredits('text')).equals('text')
+      // A credit with neither label nor person keeps having neither.
+      expect(
+        withStructuredCredits(play([{ eventType: 'run', head: 'Run' }])).credits
+      ).deep.equals([{ eventType: 'run', head: 'Run' }])
     })
   })
 

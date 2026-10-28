@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import { withPreviousTagIdentities } from '../../common/eventTags'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import { withStructuredCredits } from '../../common/scoring/storedNames'
 import type { Database } from '../db/database'
 import { requestGameStats } from '../statsBuilder/request'
 
@@ -95,14 +96,18 @@ function withKeptCredits(gumbo: GumboPlay, previous: unknown): GumboPlay {
  * are dropped from a play an outside scorer sent (`external`): they are that
  * service's words, and TeamStation shows a play in its own reading of the
  * type and credits, written when it is shown. A `manual` or `teamstation`
- * play keeps them, because they are a person's or TeamStation's own words,
- * and the document is otherwise stored as it was sent.
+ * play keeps them, because they are a person's or TeamStation's own words.
+ *
+ * Each credit is stored with its structure (`withStructuredCredits`): the
+ * head, suffix and assists its label is worded from, read from the label of
+ * a credit sent with only one, its label and name kept beside them. The
+ * document is otherwise stored as it was sent.
  */
 export function storedGumbo(
   gumbo: GumboPlay,
   source: PlaySource
 ): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...gumbo }
+  const next: Record<string, unknown> = withStructuredCredits({ ...gumbo })
   delete next.source
   if (source !== 'external') return next
   const { description, ...result } = gumbo.result

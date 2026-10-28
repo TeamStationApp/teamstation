@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
+import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -18,7 +18,8 @@ import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
-import { makeDatabase } from '../db/database'
+import { makePool } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
@@ -71,11 +72,24 @@ const eve = mintUserId(
     id === bee.userId ||
     id === dee.userId
 )
+const fay = mintUserId(
+  id =>
+    id === admin.userId ||
+    id === ada.userId ||
+    id === bea.userId ||
+    id === cal.userId ||
+    id === bee.userId ||
+    id === dee.userId ||
+    id === eve.userId
+)
 
 /** When both recordings start. Every play is some minutes after it. */
 const RECORDING = new Date('2026-05-02T18:00:00.000Z')
 const minutesIn = (minutes: number, start = RECORDING): string =>
   new Date(start.getTime() + minutes * 60_000).toISOString()
+
+/** The game whose highlights are worded from their credits' structure. */
+const NAMED = new Date('2026-07-04T18:00:00.000Z')
 
 /** Dee Gordon's three games, for the season, team and year filters. */
 const DEE_AWAY = new Date('2026-05-09T18:00:00.000Z')
@@ -99,6 +113,12 @@ describe('the highlight routes', function () {
   const season = makeId('season')
   const replacedLive = makeId('video')
   const shownLive = makeId('video')
+  const namedGame = { gameId: makeId('game'), videoId: makeId('video') }
+  /** Every statement the routes send, for counting the names queries. */
+  const queries: string[] = []
+  const namesQueries = (): number =>
+    queries.filter(sql => sql.includes('from "gumbo_ids" inner join "users"'))
+      .length
   const deeGames = {
     away: { gameId: makeId('game'), videoId: makeId('video') },
     season: { gameId: makeId('game'), videoId: makeId('video') },
@@ -122,7 +142,13 @@ describe('the highlight routes', function () {
     } finally {
       await pool.end()
     }
-    db = makeDatabase(scratchUrl)
+    attachInt8Parser()
+    db = new Kysely<Database>({
+      dialect: new PostgresDialect({ pool: makePool(scratchUrl) }),
+      log: event => {
+        if (event.level === 'query') queries.push(event.query.sql)
+      }
+    })
     await seed(db)
 
     // No file and no Space, so warming stills after an answer finds nothing
@@ -357,6 +383,121 @@ describe('the highlight routes', function () {
     expect(answer.body.droppedCount).equals(0)
   })
 
+  describe('worded from the credits’ structure and the accounts', function () {
+    const rename = async (first: string, last: string): Promise<void> => {
+      await db!
+        .updateTable('users')
+        .set({
+          display_name: `${first} ${last}`,
+          first_name: first,
+          last_name: last
+        })
+        .where('id', '=', userIdOfGumbo(fay.userId))
+        .execute()
+    }
+    const videoAnswer = async (): Promise<
+      Array<{ title: string; description: string }>
+    > => {
+      queries.length = 0
+      const answer = await get(`/videos/${namedGame.videoId}/highlights`)
+      expect(answer.status).equals(200)
+      // Every name of the answer in one query.
+      expect(namesQueries()).equals(1)
+      return answer.body.highlights.map(
+        (highlight: { title: string; description: string }) => ({
+          title: highlight.title,
+          description: highlight.description
+        })
+      )
+    }
+    const playerAnswer = async (): Promise<
+      Array<{ eventId: string; title: string; outcome: string }>
+    > => {
+      queries.length = 0
+      const answer = await get(
+        `/players/${userIdOfGumbo(fay.userId)}/highlights`
+      )
+      expect(answer.status).equals(200)
+      expect(namesQueries()).equals(1)
+      return answer.body.highlights.map(
+        (highlight: { eventId: string; title: string; outcome: string }) => ({
+          eventId: highlight.eventId,
+          title: highlight.title,
+          outcome: highlight.outcome
+        })
+      )
+    }
+
+    after(async () => {
+      await rename('Fernando', 'Tatis')
+    })
+
+    it("words a video's titles and descriptions, naming each person once", async function () {
+      expect(await videoAnswer()).deep.equals([
+        {
+          title: 'Home run: Fernando T',
+          description:
+            'Top 1st: Fernando T hits a home run. Fernando T scores. 0–0'
+        },
+        {
+          title: 'Out at 1st: Fernando T (1B) from Adam L (SS)',
+          description:
+            'Top 1st: Out at 1st, Fernando T (1B) from Adam L (SS). 0–0'
+        },
+        {
+          title: 'Single: Kyle Tucker',
+          description: 'Top 1st: Kyle Tucker singles. Kyle Tucker scores. 0–0'
+        }
+      ])
+    })
+
+    it("words a player's titles and outcomes", async function () {
+      expect(await playerAnswer()).deep.equals([
+        {
+          eventId: 'evt_named_out',
+          title: 'Out at 1st: Fernando T (1B) from Adam L (SS)',
+          outcome: 'Out at 1st'
+        },
+        {
+          eventId: 'evt_named_hr',
+          title: 'Home run: Fernando T',
+          outcome: 'Home run'
+        }
+      ])
+    })
+
+    it('reads a rename on the next answer, with nothing stored rewritten', async function () {
+      const stored = async (): Promise<unknown[]> =>
+        (
+          await db!
+            .selectFrom('events')
+            .select(['id', 'gumbo'])
+            .where('gameId', '=', namedGame.gameId)
+            .orderBy('id')
+            .execute()
+        ).map(row => row.gumbo)
+      const before = await stored()
+      await rename('Manny', 'Machado')
+      expect(
+        (await videoAnswer()).map(highlight => highlight.title)
+      ).deep.equals([
+        'Home run: Manny M',
+        'Out at 1st: Manny M (1B) from Adam L (SS)',
+        'Single: Kyle Tucker'
+      ])
+      expect((await videoAnswer())[0].description).equals(
+        'Top 1st: Manny M hits a home run. Manny M scores. 0–0'
+      )
+      expect(
+        (await playerAnswer()).map(highlight => highlight.title)
+      ).deep.equals([
+        'Out at 1st: Manny M (1B) from Adam L (SS)',
+        'Home run: Manny M'
+      ])
+      expect(await stored()).deep.equals(before)
+    })
+  })
+
   /**
    * Adam is credited on three plays, Brett on one under a row merged into
    * him, and Cal on none; and an older game holds a play from before credits.
@@ -372,7 +513,8 @@ describe('the highlight routes', function () {
         { made: cal, name: 'Cal Ripken', isAdmin: false },
         { made: bee, name: 'Brett B', isAdmin: false },
         { made: dee, name: 'Dee Gordon', isAdmin: false },
-        { made: eve, name: 'Evan Longoria', isAdmin: false }
+        { made: eve, name: 'Evan Longoria', isAdmin: false },
+        { made: fay, name: 'Fernando Tatis', isAdmin: false }
       ].map(person => ({
         id: person.made.userId,
         legacyId: person.made.legacyId,
@@ -429,7 +571,8 @@ describe('the highlight routes', function () {
       { gameId: oldGame, videoId: oldVideo, start: RECORDING },
       { ...deeGames.away, start: DEE_AWAY },
       { ...deeGames.season, start: DEE_SEASON, seasonId: season },
-      { ...deeGames.lastYear, start: DEE_LAST_YEAR, awayTeamId: other }
+      { ...deeGames.lastYear, start: DEE_LAST_YEAR, awayTeamId: other },
+      { ...namedGame, start: NAMED }
     ]
     for (const game of games) {
       await db
@@ -501,7 +644,27 @@ describe('the highlight routes', function () {
       label: `Single: ${name}`,
       teamId,
       creditUserId,
-      credit: { name, role: 'batter', position: null }
+      credit: { name, role: 'batter', position: null },
+      head: 'Single'
+    })
+    // As the engine stores them: the structure each label is worded from.
+    const structured = (
+      eventType: string,
+      head: string,
+      creditUserId: number | null,
+      more: Record<string, unknown> = {}
+    ): Record<string, unknown> => ({
+      eventType,
+      head,
+      teamId: away,
+      creditUserId,
+      credit: {
+        role: eventType === 'run' ? 'runner' : 'batter',
+        position: null
+      },
+      assists: [],
+      assistWord: 'from',
+      ...more
     })
     const plays: Array<{
       id: string
@@ -573,7 +736,48 @@ describe('the highlight routes', function () {
         credits: [credit('Adam L', ada.userId)]
       },
       // Stored before credits existed: no `credits` key at all.
-      { id: 'evt_old', gameId: oldGame, atBatIndex: 0, minutes: 15 }
+      { id: 'evt_old', gameId: oldGame, atBatIndex: 0, minutes: 15 },
+      // Fernando homers and scores, makes an out at first from Adam, and a
+      // typed opponent singles and scores.
+      {
+        id: 'evt_named_hr',
+        gameId: namedGame.gameId,
+        atBatIndex: 0,
+        minutes: 10,
+        start: NAMED,
+        credits: [
+          structured('home_run', 'Home run', fay.userId),
+          structured('run', 'Run', fay.userId)
+        ]
+      },
+      {
+        id: 'evt_named_out',
+        gameId: namedGame.gameId,
+        atBatIndex: 1,
+        minutes: 20,
+        start: NAMED,
+        credits: [
+          structured('field_out', 'Out at 1st', fay.userId, {
+            credit: { role: 'fielder', position: '1B' },
+            assists: [{ creditUserId: ada.userId, position: 'SS' }]
+          })
+        ]
+      },
+      {
+        id: 'evt_named_typed',
+        gameId: namedGame.gameId,
+        atBatIndex: 2,
+        minutes: 30,
+        start: NAMED,
+        credits: [
+          structured('single', 'Single', null, {
+            credit: { name: 'Kyle Tucker', role: 'batter', position: null }
+          }),
+          structured('run', 'Run', null, {
+            credit: { name: 'Kyle Tucker', role: 'runner', position: null }
+          })
+        ]
+      }
     ]
     for (const play of plays) {
       await db

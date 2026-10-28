@@ -4,7 +4,14 @@ import { Pool } from 'pg'
 
 import { userIdOfGumbo } from '../common/userId'
 import { migrations } from './migrations'
-import { BASELINE, migrateDown, migrateUp } from './runner'
+import {
+  BASELINE,
+  migrateDown,
+  migrateUp,
+  type Migration,
+  rewriteJson,
+  STEP_BATCH
+} from './runner'
 import { schemaSnapshot } from './schemaSnapshot'
 import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
@@ -393,7 +400,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '087loginOffOnly',
           '088chatDirtyQueue',
           '089userApiKeys',
-          '090plateAppearances'
+          '090plateAppearances',
+          '091structuredCredits'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
@@ -407,3 +415,135 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
     })
   })
 }
+
+describe("a migration's step", function () {
+  this.timeout(60000)
+  const name = `teamstation_steps_${process.pid}_${Date.now()}`
+  let admin: Pool
+  let pool: Pool
+
+  before(async function () {
+    admin = new Pool({ connectionString: testDatabaseUrl })
+    await admin.query(`create database ${name}`)
+    pool = new Pool({
+      connectionString: testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
+    })
+  })
+
+  after(async function () {
+    await pool?.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${name}`)
+      await admin.end()
+    }
+  })
+
+  it("runs after up's SQL, in its transaction", async function () {
+    let seen: { table: string | null; same: boolean } | undefined
+    const probe: Migration = {
+      name: '001probe',
+      up: `create table probe (id text primary key, doc jsonb);
+        insert into probe values ('xid', to_jsonb(txid_current()::text));`,
+      down: 'drop table probe;',
+      steps: async client => {
+        const { rows } = await client.query<{
+          table: string | null
+          same: boolean
+        }>(
+          `select to_regclass('probe')::text as table,
+             (select doc #>> '{}' from probe where id = 'xid')
+               = txid_current()::text as same`
+        )
+        seen = rows[0]
+      }
+    }
+    expect((await migrateUp(pool, [probe])).applied).deep.equals(['001probe'])
+    expect(seen).deep.equals({ table: 'probe', same: true })
+    expect(await migrateDown(pool, [probe], 1)).deep.equals(['001probe'])
+  })
+
+  it("rolls back up's SQL when its step throws", async function () {
+    const doomed: Migration = {
+      name: '002doomed',
+      up: 'create table doomed (id text primary key);',
+      down: 'drop table doomed;',
+      steps: async client => {
+        await client.query(`insert into doomed values ('one')`)
+        throw new Error('boom')
+      }
+    }
+    const refused = await migrateUp(pool, [doomed]).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(refused)
+      .instanceOf(Error)
+      .property('message')
+      .equals('Migration 002doomed failed: boom')
+    const { rows } = await pool.query<{ table: string | null }>(
+      "select to_regclass('doomed')::text as table"
+    )
+    expect(rows[0].table).equals(null)
+    const recorded = await pool.query(
+      `select 1 from schema_migrations where name = '002doomed'`
+    )
+    expect(recorded.rowCount).equals(0)
+  })
+
+  it('rewrites a JSON column in keyset batches, writing only the rows it changes', async function () {
+    await pool.query(`
+      create table pages (id text primary key, doc jsonb);
+      create table page_writes (id text);
+      create function page_written() returns trigger language plpgsql as $fn$
+      begin
+        insert into page_writes values (new.id);
+        return new;
+      end
+      $fn$;
+      create trigger page_written after update on pages
+        for each row execute function page_written();
+      insert into pages
+        select lpad(n::text, 5, '0'), jsonb_build_object('n', n, 'keep', n % 3 = 0)
+        from generate_series(1, ${STEP_BATCH * 2 + 1}) as n;
+      insert into pages values ('zzzzz', null);`)
+    const client = await pool.connect()
+    try {
+      const written = await rewriteJson(
+        client,
+        { table: 'pages', column: 'doc', where: 'doc is not null' },
+        doc => {
+          const page = doc as { n: number; keep: boolean }
+          // A copy with its keys in another order is the same JSON.
+          if (page.keep) return { keep: page.keep, n: page.n }
+          return { ...page, doubled: page.n * 2 }
+        }
+      )
+      const changed = Math.ceil(((STEP_BATCH * 2 + 1) * 2) / 3)
+      expect(written).equals(changed)
+      // A null row is read only without the condition, and a change that
+      // answers nothing writes JSON null over it: no change.
+      expect(
+        await rewriteJson(
+          client,
+          { table: 'pages', column: 'doc' },
+          (doc): unknown => (doc === null ? undefined : doc)
+        )
+      ).equals(0)
+    } finally {
+      client.release()
+    }
+    const writes = await pool.query<{ count: string }>(
+      'select count(*) from page_writes'
+    )
+    expect(Number(writes.rows[0].count)).equals(
+      Math.ceil(((STEP_BATCH * 2 + 1) * 2) / 3)
+    )
+    const sample = await pool.query<{ doc: unknown }>(
+      `select doc from pages where id in ('00002', '00003') order by id`
+    )
+    expect(sample.rows.map(row => row.doc)).deep.equals([
+      { n: 2, keep: false, doubled: 4 },
+      { n: 3, keep: true }
+    ])
+  })
+})

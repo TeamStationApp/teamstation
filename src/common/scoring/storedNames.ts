@@ -495,10 +495,11 @@ function restOf(
  * before credits had structure) is read from it: the head is the label up to
  * the first `: `, the subject and his position are matched against the
  * credit's own name and position, a fielders' chain after them becomes its
- * assists (each given the id `names.idOf` finds for his name, or kept by
- * name), and the words between that are no name in the play become the
- * suffix. A label the structure cannot word again exactly keeps its head and
- * the credited person only.
+ * assists (each given the id the credit's own `assists` give him at that
+ * position, or the one `names.idOf` finds for his name, or kept by name),
+ * and the words between that are no name in the play become the suffix. A
+ * label the structure cannot word again exactly keeps its head and the
+ * credited person only.
  */
 export function structuredCredit(
   credit: unknown,
@@ -513,7 +514,14 @@ export function structuredCredit(
   const position = typeof person?.position === 'string' ? person.position : null
   const split = label.indexOf(': ')
   const head = split < 0 ? label : label.slice(0, split)
-  const plain: Json = { ...credit, head }
+  // Whatever structure the sender attached is read again from the label.
+  const {
+    assists: sentAssists,
+    assistWord: _assistWord,
+    suffix: _suffix,
+    ...rest
+  } = credit
+  const plain: Json = { ...rest, head }
   const read: ReadLabel | undefined =
     split < 0 ? { suffix: '' } : restOf(label.slice(split + 2), name, position)
   if (read == null) return unnamedCredit(plain)
@@ -524,8 +532,21 @@ export function structuredCredit(
   const said = new Map<number, string>()
   if (typeof credit.creditUserId === 'number')
     said.set(credit.creditUserId, name)
+  // The fielders the credit itself names by id come first.
+  const sent = Array.isArray(sentAssists) ? sentAssists : []
+  const sentId = (assist: Assist): number | undefined => {
+    for (const one of sent)
+      if (
+        object(one) &&
+        one.name === assist.name &&
+        one.position === assist.position &&
+        typeof one.creditUserId === 'number'
+      )
+        return one.creditUserId
+    return undefined
+  }
   const assists = read.assists?.map(assist => {
-    const id = names.idOf?.(assist.name, assist.position)
+    const id = sentId(assist) ?? names.idOf?.(assist.name, assist.position)
     if (id == null)
       return {
         creditUserId: null,
@@ -1151,6 +1172,45 @@ function fieldersOf(play: Json): Map<string, number> {
   return found
 }
 
+/**
+ * What a play's credits are read against: the id of each name in it (a
+ * fielder by his name and position first), and every name it holds.
+ */
+function creditNamesOf(play: Json): CreditNames {
+  const names = namesIn(play)
+  const ids = new Map<string, number | null>()
+  for (const [id, name] of names)
+    ids.set(name, ids.has(name) && ids.get(name) !== id ? null : id)
+  const fielders = fieldersOf(play)
+  return {
+    idOf: (name, position) =>
+      fielders.get(`${name}\u0000${position}`) ?? ids.get(name) ?? undefined,
+    names: [...names.values()]
+  }
+}
+
+/**
+ * A play with each credit given its structure (`structuredCredit`, read
+ * against the play's own names), its `label` and its person's name kept
+ * beside it.
+ */
+export function withStructuredCredits<T>(play: T): T {
+  if (!object(play) || !Array.isArray(play.credits)) return play
+  const names = creditNamesOf(play)
+  return {
+    ...play,
+    credits: play.credits.map(credit => {
+      const structured = structuredCredit(credit, names)
+      if (!object(credit) || !object(structured)) return structured
+      return {
+        ...structured,
+        ...('label' in credit ? { label: credit.label } : {}),
+        ...('credit' in credit ? { credit: credit.credit } : {})
+      }
+    })
+  }
+}
+
 /** The stored form of a document, and what making it found. */
 export interface StoredForm<T = unknown> {
   document: T
@@ -1197,11 +1257,7 @@ export function storedForm<T>(
       })
     )
   }
-  const names = namesIn(play)
-  const ids = new Map<string, number | null>()
-  for (const [id, name] of names)
-    ids.set(name, ids.has(name) && ids.get(name) !== id ? null : id)
-  const fielders = fieldersOf(play)
+  const credits = creditNamesOf(play)
   const stripped = recordWithoutNames(play.teamStation)
   const out = changed(
     play,
@@ -1239,15 +1295,7 @@ export function storedForm<T>(
         case 'offense':
           return object(value) ? changed(value, BASE_REFS, unnamedRef) : value
         case 'credits':
-          return mapped(value, credit =>
-            structuredCredit(credit, {
-              idOf: (name, position) =>
-                fielders.get(`${name}\u0000${position}`) ??
-                ids.get(name) ??
-                undefined,
-              names: names.values()
-            })
-          )
+          return mapped(value, credit => structuredCredit(credit, credits))
         default:
           return stripped.record
       }

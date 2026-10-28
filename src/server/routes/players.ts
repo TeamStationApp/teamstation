@@ -54,6 +54,7 @@ import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
 import { refuseDeleted } from '../users/deleted'
 import { gumboIdOf } from '../users/insertUser'
+import { gameNames } from '../users/nameBook'
 
 /**
  * One person: their picture, their name, how they bat and throw, and the teams
@@ -403,6 +404,12 @@ export function playerRoutes(
 
       const settings = await highlightSettings(db)
       const standings = await teamStandings(db)
+      // One book for the games of the page, each game's players named over
+      // its own players, as the game's own highlights name them.
+      const books = await gameNames(
+        db,
+        usable.map(row => row.gameId)
+      )
       const names = await teamNames(
         db,
         page.flatMap(row => [row.homeTeamId, row.awayTeamId])
@@ -441,7 +448,11 @@ export function playerRoutes(
         // above: the program file first.
         for (const video of videos.filter(item => item.gameId === row.gameId)) {
           const computed = withDropped(
-            [highlightEvent(row, credits)],
+            [
+              highlightEvent(row, credits, id =>
+                books.get(row.gameId)?.nameOf(id)
+              )
+            ],
             {
               startAt: video.startAt == null ? null : new Date(video.startAt),
               syncOffsetSec: video.syncOffsetSec,

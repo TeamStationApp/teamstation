@@ -20,6 +20,22 @@ describe('what is stored of a posted play', function () {
     expect(stored).not.to.have.property('source')
   })
 
+  it('stores each credit with its structure, keeping its label and name', function () {
+    const credit = {
+      eventType: 'strikeout',
+      label: 'Strikeout: Max Fried pitching',
+      teamId: 'home',
+      creditUserId: 4,
+      credit: { name: 'Max Fried', role: 'pitcher', position: null }
+    }
+    for (const source of ['external', 'manual', 'teamstation'] as const) {
+      const stored = storedGumbo({ ...play, credits: [credit] }, source)
+      expect(stored.credits, source).deep.equals([
+        { ...credit, head: 'Strikeout', suffix: ' pitching' }
+      ])
+    }
+  })
+
   it('keeps the Gumbo descriptions of a play TeamStation wrote itself', function () {
     const stored = storedGumbo(play, 'teamstation')
     expect(stored.result).deep.equals(play.result)

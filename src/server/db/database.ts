@@ -493,6 +493,23 @@ export interface EventCreditsTable {
   name: string
   role: string | null
   position: string | null
+  /** The label's first words, `Ground out`. */
+  head: string
+  /** Words after the person and position, ` pitching`. */
+  suffix: string | null
+  /** The fielders who assisted: `{ gumboId, position, name? }` each. */
+  assists: ColumnType<CreditAssistRow[], CreditAssistRow[] | undefined, never>
+  /** How the assists are joined: `from A, B` or `to A to B`. */
+  assistWord: 'from' | 'to' | null
+  /** The typed name of a credited person with no id. */
+  typedName: string | null
+}
+
+/** A fielder who assisted on a credit, as `"eventCredits".assists` holds him. */
+export interface CreditAssistRow {
+  gumboId: number | null
+  position: string | null
+  name?: string
 }
 
 export interface GumboIdsTable {

@@ -12,14 +12,14 @@ import { type GumboEventType, normalizeEventType } from './gumboEventTypes'
  *
  * So this takes the same outcome and says only what was done. It works from
  * the engine's own label rather than inventing a second vocabulary: the head
- * of the label — everything before the colon — is the outcome, which is why
- * `Caught stealing 2nd` and `Out at 3rd` come through with the base intact
- * without this file knowing what a base is.
+ * of the label — everything before the colon, stored as the credit's `head` —
+ * is the outcome, which is why `Caught stealing 2nd` and `Out at 3rd` come
+ * through with the base intact without this file knowing what a base is.
  */
 export interface CreditedOutcomeLike {
   eventType: string
-  /** `Single: Jordan P`. */
-  label: string
+  /** The label's first words: `Single` of `Single: Jordan P`. */
+  head: string
   credit: { role: string } | null
 }
 
@@ -140,11 +140,6 @@ export function outcomeName(outcome: CreditedOutcomeLike): string {
     BY_CREDIT[eventType]
   if (known != null) return known
 
-  return headOf(outcome.label)
-}
-
-/** `Ground out: Jordan P (SS) to Casey B (1B)` → `Ground out`. */
-function headOf(label: string): string {
-  const head = label.split(':')[0].trim()
+  const head = outcome.head.trim()
   return head === '' ? 'Play' : head
 }

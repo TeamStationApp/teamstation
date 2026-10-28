@@ -1,10 +1,18 @@
-import type { Pool } from 'pg'
+import { isDeepStrictEqual } from 'node:util'
+
+import type { Pool, PoolClient } from 'pg'
 
 export interface Migration {
   /** Sorts the migrations, and identifies an applied one. Never rename it. */
   name: string
   up: string
   down: string
+  /**
+   * Run after `up`'s SQL, in the same transaction, on its connection: a
+   * backfill written in the same TypeScript the write path runs. A step that
+   * throws rolls back `up` with it.
+   */
+  steps?: (client: PoolClient) => Promise<void>
 }
 
 export interface MigrationResult {
@@ -113,6 +121,7 @@ export async function migrateUp(
     try {
       await client.query('begin')
       await client.query(migration.up)
+      if (migration.steps != null) await migration.steps(client)
       await client.query('insert into schema_migrations (name) values ($1)', [
         migration.name
       ])
@@ -167,6 +176,55 @@ export async function migrateDown(
     }
   }
   return rolledBack
+}
+
+/** How many rows a step reads at a time. */
+export const STEP_BATCH = 500
+
+/** A JSON column a step rewrites, and the rows of its table it reads. */
+export interface JsonColumn {
+  /** A table with a text `id` primary key. */
+  table: string
+  /** The column, quoted where it needs to be (`"currentPlay"`). */
+  column: string
+  /** A condition on the rows to read, beside the keyset. */
+  where?: string
+}
+
+/**
+ * Rewrites one JSON column of a table through `change`, for a migration's
+ * step: the rows are read in keyset batches of `STEP_BATCH` by id, and only
+ * a row whose JSON `change` alters is written back, so a trigger on the
+ * column fires for exactly those. Answers how many rows were written.
+ */
+export async function rewriteJson(
+  client: PoolClient,
+  target: JsonColumn,
+  change: (value: unknown) => unknown
+): Promise<number> {
+  const where = target.where == null ? '' : ` and (${target.where})`
+  let after: string | null = null
+  let written = 0
+  for (;;) {
+    const { rows }: { rows: Array<{ id: string; value: unknown }> } =
+      await client.query(
+        `select id, ${target.column} as value from ${target.table}
+         where ($1::text is null or id > $1)${where}
+         order by id limit ${STEP_BATCH}`,
+        [after]
+      )
+    for (const row of rows) {
+      const text = JSON.stringify(change(row.value) ?? null)
+      if (isDeepStrictEqual(JSON.parse(text), row.value)) continue
+      await client.query(
+        `update ${target.table} set ${target.column} = $2::jsonb where id = $1`,
+        [row.id, text]
+      )
+      written++
+    }
+    if (rows.length < STEP_BATCH) return written
+    after = rows[rows.length - 1].id
+  }
 }
 
 const byName = (a: Migration, b: Migration): number =>

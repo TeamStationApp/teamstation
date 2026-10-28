@@ -1405,4 +1405,132 @@ describe('a player, and who may change their name', function () {
     })
     expect(blank.status).equals(400)
   })
+
+  it("words a player's highlights from his account, and a rename on the next read", async function () {
+    const gameId = makeId('game')
+    const videoId = makeId('video')
+    const start = new Date('2026-05-02T18:00:00.000Z')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: teamId,
+        away_team_id: otherTeamId,
+        start_at: start,
+        status: 'final'
+      })
+      .execute()
+    await db
+      .insertInto('videos')
+      .values({
+        id: videoId,
+        game_id: gameId,
+        kind: 'program',
+        title: 'Badgers vs Legends',
+        storage: 'spaces',
+        status: 'ready',
+        start_at: start,
+        duration_sec: 7200
+      })
+      .execute()
+    const playAt = new Date(start.getTime() + 10 * 60_000).toISOString()
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId,
+        startTime: playAt,
+        battingTeamId: otherTeamId,
+        gumbo: {
+          about: {
+            atBatIndex: 0,
+            inning: 2,
+            halfInning: 'top',
+            isScoringPlay: false,
+            startTime: playAt
+          },
+          result: { eventType: 'field_out', awayScore: 0, homeScore: 0 },
+          credits: [
+            {
+              eventType: 'field_out',
+              head: 'Ground out',
+              teamId,
+              creditUserId: childId,
+              credit: { role: 'fielder', position: 'SS' },
+              assists: [
+                { creditUserId: null, position: '1B', name: 'Kyle Tucker' }
+              ],
+              assistWord: 'to'
+            }
+          ]
+        }
+      })
+      .execute()
+    const read = async (): Promise<{
+      player: { title: string; outcome: string }
+      video: { title: string; description: string }
+    }> => {
+      const player = await get(
+        `/players/${userIdOfGumbo(childId)}/highlights`,
+        siteAdminId
+      )
+      const video = await get(`/videos/${videoId}/highlights`, siteAdminId)
+      expect(player.status).equals(200)
+      expect(video.status).equals(200)
+      const first = (body: unknown): Record<string, string> =>
+        (body as { highlights: Array<Record<string, string>> }).highlights[0]
+      return {
+        player: {
+          title: first(player.body).title,
+          outcome: first(player.body).outcome
+        },
+        video: {
+          title: first(video.body).title,
+          description: first(video.body).description
+        }
+      }
+    }
+    const rename = async (
+      firstName: string,
+      lastName: string
+    ): Promise<void> => {
+      const answer = await put(settingsOf(teamId, childId), teamCoachId, {
+        name: { firstName, lastName }
+      })
+      expect(answer.status).equals(200)
+    }
+    const kept = await db
+      .selectFrom('users')
+      .select(['first_name', 'last_name'])
+      .where('id', '=', userIdOfGumbo(childId))
+      .executeTakeFirstOrThrow()
+    try {
+      await rename('Jose', 'Altuve')
+      expect(await read()).deep.equals({
+        player: {
+          title: 'Ground out: Jose A (SS) to Kyle Tucker (1B)',
+          outcome: 'Ground out'
+        },
+        video: {
+          title: 'Ground out: Jose A (SS) to Kyle Tucker (1B)',
+          description:
+            'Top 2nd: Ground out, Jose A (SS) to Kyle Tucker (1B). 0–0'
+        }
+      })
+      await rename('Mookie', 'Betts')
+      expect(await read()).deep.equals({
+        player: {
+          title: 'Ground out: Mookie B (SS) to Kyle Tucker (1B)',
+          outcome: 'Ground out'
+        },
+        video: {
+          title: 'Ground out: Mookie B (SS) to Kyle Tucker (1B)',
+          description:
+            'Top 2nd: Ground out, Mookie B (SS) to Kyle Tucker (1B). 0–0'
+        }
+      })
+    } finally {
+      await rename(kept.first_name ?? 'Jordan', kept.last_name ?? 'Pacheco')
+    }
+  })
 })

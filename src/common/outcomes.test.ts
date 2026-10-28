@@ -10,14 +10,14 @@ describe('what a player did, on their own page', function () {
     expect(
       outcomeName({
         eventType: 'single',
-        label: 'Single: Jordan P',
+        head: 'Single',
         credit: credit('batter')
       })
     ).equals('Single')
     expect(
       outcomeName({
         eventType: 'home_run',
-        label: 'Home run: Hunter P',
+        head: 'Home run',
         credit: credit('batter')
       })
     ).equals('Home run')
@@ -27,7 +27,7 @@ describe('what a player did, on their own page', function () {
     expect(
       outcomeName({
         eventType: 'run',
-        label: 'Run: Hunter P',
+        head: 'Run',
         credit: credit('runner')
       })
     ).equals('Run scored')
@@ -39,40 +39,40 @@ describe('what a player did, on their own page', function () {
     expect(
       outcomeName({
         eventType: 'strikeout',
-        label: 'Strikeout: Ava M pitching',
+        head: 'Strikeout',
         credit: credit('pitcher')
       })
     ).equals('Strikeout pitching')
     expect(
       outcomeName({
         eventType: 'strikeout',
-        label: 'Dropped 3rd: Mia R (C)',
+        head: 'Dropped 3rd',
         credit: credit('fielder')
       })
     ).equals('Dropped third strike')
   })
 
   // The head of the engine's own label, so a base or a kind of out comes
-  // through without this file knowing what either is.
+  // through without this file knowing what either is, nor whose names follow.
   it('keeps what the fielding play was, without the chain of names', function () {
     expect(
       outcomeName({
         eventType: 'field_out',
-        label: 'Ground out: Jordan P (SS) to Casey B (1B)',
+        head: 'Ground out',
         credit: credit('fielder')
       })
     ).equals('Ground out')
     expect(
       outcomeName({
         eventType: 'field_out',
-        label: 'Out at 3rd: Mia R (C) to Sam O (3B)',
+        head: 'Out at 3rd',
         credit: credit('fielder')
       })
     ).equals('Out at 3rd')
     expect(
       outcomeName({
         eventType: 'caught_stealing',
-        label: 'Caught stealing 2nd: Mia R (C)',
+        head: 'Caught stealing 2nd',
         credit: credit('fielder')
       })
     ).equals('Caught stealing 2nd')
@@ -80,7 +80,7 @@ describe('what a player did, on their own page', function () {
 
   it('never falls through to a raw event type', function () {
     expect(
-      outcomeName({ eventType: 'something_new', label: '', credit: null })
+      outcomeName({ eventType: 'something_new', head: '', credit: null })
     ).equals('Play')
   })
 })
@@ -93,7 +93,7 @@ describe('outcome names by event type', function () {
     for (const eventType of GUMBO_EVENT_TYPES) {
       const name = outcomeName({
         eventType,
-        label: 'Head: Someone',
+        head: 'Head',
         credit: credit('batter')
       })
       const expected = eventType.startsWith('strike')
@@ -107,13 +107,13 @@ describe('outcome names by event type', function () {
     expect(
       outcomeName({
         eventType: 'strikeout_double_play',
-        label: '',
+        head: '',
         credit: credit('pitcher')
       })
     ).equals('Strikeout pitching')
-    expect(
-      outcomeName({ eventType: 'run', label: 'Run: Hunter P', credit: null })
-    ).equals('Run scored')
+    expect(outcomeName({ eventType: 'run', head: 'Run', credit: null })).equals(
+      'Run scored'
+    )
   })
 
   it('reads a legacy code as the one it is stored as', function () {
@@ -123,13 +123,13 @@ describe('outcome names by event type', function () {
       ['placed_runner', 'runner_placed']
     ]) {
       const named = (eventType: string): string =>
-        outcomeName({ eventType, label: 'Head: Someone', credit: null })
+        outcomeName({ eventType, head: 'Head', credit: null })
       expect(named(legacy), legacy).equals(named(listed))
     }
     expect(
       outcomeName({
         eventType: 'strikeout_triple_play',
-        label: '',
+        head: '',
         credit: credit('pitcher')
       })
     ).equals('Strikeout pitching')
