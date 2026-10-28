@@ -65,7 +65,7 @@ async function type(label: string, value: string): Promise<void> {
 
 const checked = (label: string): boolean =>
   (labelled(label).getAttribute('aria-checked') ??
-    labelled(label).getAttribute('aria-pressed')) === 'true'
+    labelled(label).getAttribute('aria-selected')) === 'true'
 const saveDisabled = (): boolean =>
   labelled('Save').getAttribute('aria-disabled') === 'true'
 const text = (): string => document.body.textContent ?? ''
@@ -329,11 +329,24 @@ describe('a player’s settings form', function () {
       />
     )
     expect((labelled('Jersey number') as HTMLInputElement).value).equals('4')
-    expect(checked('CF')).equals(true)
-    expect(checked('SS')).equals(false)
-    // How they bat and throw is the player's, not the team's: not here.
-    expect(document.querySelector('[aria-label="Bats Right"]')).equals(null)
-    expect(document.querySelector('[aria-label="Throws Right"]')).equals(null)
+    expect(checked('Player position CF')).equals(true)
+    expect(checked('Player position SS')).equals(false)
+    // How they bat and throw shows beside them, saved with the rest.
+    expect(checked('Bats Right')).equals(true)
+    expect(checked('Throws Right')).equals(true)
+    // Two columns: the fields, then the field of positions.
+    const form = document.querySelector('[data-testid="Player form"]')!
+    expect(form.children).has.length(2)
+    expect(
+      form.children[0].querySelector('[aria-label="Jersey number"]')
+    ).not.equals(null)
+    expect(
+      form.children[1].querySelector('[data-testid="Position field"]')
+    ).not.equals(null)
+    // EH is a game's alone.
+    expect(document.querySelector('[aria-label="Player position EH"]')).equals(
+      null
+    )
     expect(saveDisabled()).equals(true)
   })
 
@@ -351,15 +364,15 @@ describe('a player’s settings form', function () {
       />
     )
     // A change undone is no change.
-    await press('SS')
+    await press('Player position SS')
     expect(saveDisabled()).equals(false)
-    await press('SS')
+    await press('Player position SS')
     expect(saveDisabled()).equals(true)
 
     await type('Jersey number', '12')
-    await press('SS')
-    await press('2B')
-    await press('CF')
+    await press('Player position SS')
+    await press('Player position 2B')
+    await press('Player position CF')
     expect(saveDisabled()).equals(false)
     await press('Save')
     expect(saves).deep.equals([
@@ -372,11 +385,11 @@ describe('a player’s settings form', function () {
     expect(saved).has.length(1)
     expect(text()).includes('Saved.')
     expect(saveDisabled()).equals(true)
-    expect(checked('SS')).equals(true)
+    expect(checked('Player position SS')).equals(true)
     expect((labelled('Jersey number') as HTMLInputElement).value).equals('12')
 
     // The next change clears the note.
-    await press('P')
+    await press('Player position P')
     expect(text()).not.includes('Saved.')
   })
 
@@ -393,7 +406,9 @@ describe('a player’s settings form', function () {
       />
     )
     expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
-    expect(document.querySelector('[aria-label="CF"]')).equals(null)
+    expect(document.querySelector('[aria-label="Player position CF"]')).equals(
+      null
+    )
     expect(checked('Bats Right')).equals(true)
     expect(checked('Throws Right')).equals(false)
     expect(saveDisabled()).equals(true)
@@ -444,17 +459,62 @@ describe('a player’s settings form', function () {
         client={settingsClient(
           [jordan],
           saves,
-          () => new Error('jersey: A jersey number is at most 3 characters')
+          () => new Error('That jersey number is taken on this team')
         )}
         teamId="t1"
         userId={userIdOfGumbo(7)}
       />
     )
+    // Too long a jersey never leaves the form.
     await type('Jersey number', '1234')
+    expect(text()).includes('A jersey number is at most 3 characters.')
+    expect(saveDisabled()).equals(true)
+    await type('Jersey number', '12')
     await press('Save')
-    expect(text()).includes('A jersey number is at most 3 characters')
-    expect((labelled('Jersey number') as HTMLInputElement).value).equals('1234')
+    expect(text()).includes('That jersey number is taken on this team')
+    expect((labelled('Jersey number') as HTMLInputElement).value).equals('12')
     expect(saveDisabled()).equals(false)
+  })
+
+  it('saves other changes beside a stored jersey the form would not take', async function () {
+    const saves: Saved[] = []
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([{ ...jordan, jersey: '7A' }], saves)}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await press('Bats Left')
+    expect(saveDisabled()).equals(false)
+    await press('Save')
+    expect(saves).deep.equals([
+      { teamId: 't1', userId: userIdOfGumbo(7), settings: { bats: 'left' } }
+    ])
+    // Edited, it is held to the rule.
+    await type('Jersey number', '7B')
+    expect(text()).includes('Use digits for the jersey number.')
+    expect(saveDisabled()).equals(true)
+  })
+
+  it('changes a throw alone on a team, and sends only throws', async function () {
+    const saves: Saved[] = []
+    await render(
+      <PlayerSettingsTab
+        client={settingsClient([jordan], saves)}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await press('Throws Left')
+    await press('Save')
+    expect(saves).deep.equals([
+      {
+        teamId: 't1',
+        userId: userIdOfGumbo(7),
+        settings: { throws: 'left' }
+      }
+    ])
   })
 
   it('says why when there is nothing to edit', async function () {

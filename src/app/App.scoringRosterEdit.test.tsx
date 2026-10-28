@@ -856,9 +856,8 @@ describe('actual App scoring player Settings return', function () {
       document.dispatchEvent(
         new window.KeyboardEvent('keydown', { key: 'b', bubbles: true })
       )
-      // Settings beside a team edits the jersey and positions; how a player
-      // bats and throws is edited away from a team.
-      await press('SS')
+      // Settings beside a team edits the jersey, positions and hands.
+      await press('Player position SS')
       await press('Save')
       expect(JSON.stringify(fixture.stored())).equals(scoring)
       await press('Back')

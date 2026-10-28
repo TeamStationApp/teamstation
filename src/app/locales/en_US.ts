@@ -296,6 +296,7 @@ export const enUs = {
   player_settings_cannot_load: 'Cannot load this player\u2019s settings.',
   player_settings_cannot_save: 'Cannot save these settings.',
   player_settings_not_on_team: 'This player is not on this team\u2019s roster.',
+  player_form_positions: 'Select player positions',
   player_birth: 'Birth month',
   player_birth_detail:
     'The month and year only, never the day. A birthday counts from the first of the month after.',
