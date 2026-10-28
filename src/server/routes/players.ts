@@ -388,7 +388,16 @@ export function playerRoutes(
                 'in',
                 usable.map(row => row.gameId)
               )
+              // The videos the game page shows, as its own list has them: a
+              // recording replaced by another is hidden, and a highlight
+              // named on it would open on a video that page never offers.
+              .where('hidden', '=', false)
               .where(isRealVideo)
+              // The program file first, which is the one a game is watched
+              // on. Not `kind` alone: alphabetically, `live` comes first.
+              .orderBy(eb =>
+                eb.case().when('kind', '=', 'program').then(0).else(1).end()
+              )
               .orderBy('kind')
               .execute()
 
@@ -428,8 +437,8 @@ export function playerRoutes(
         )
         if (mine.length === 0) continue
 
-        // The video that was running when the play happened. The program
-        // recording first, which is the one a game is normally watched on.
+        // The video that was running when the play happened, in the order
+        // above: the program file first.
         for (const video of videos.filter(item => item.gameId === row.gameId)) {
           const computed = withDropped(
             [highlightEvent(row, credits)],

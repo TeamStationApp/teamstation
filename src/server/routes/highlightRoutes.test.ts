@@ -97,6 +97,8 @@ describe('the highlight routes', function () {
   const oldVideo = makeId('video')
   const other = makeId('team')
   const season = makeId('season')
+  const replacedLive = makeId('video')
+  const shownLive = makeId('video')
   const deeGames = {
     away: { gameId: makeId('game'), videoId: makeId('video') },
     season: { gameId: makeId('game'), videoId: makeId('video') },
@@ -197,6 +199,35 @@ describe('the highlight routes', function () {
     )
     expect(eventIdsOf(second.body)).deep.equals(['evt_ada1'])
     expect(second.body.nextBefore).equals(null)
+  })
+
+  it("times a player's plays on the program file a game is watched on, never on a hidden recording it replaced", async function () {
+    const answer = await get(`/players/${userIdOfGumbo(dee.userId)}/highlights`)
+    expect(answer.status).equals(200)
+    const byEvent = new Map(
+      (
+        answer.body.highlights as Array<{
+          eventId: string
+          videoId: string
+          startOffsetSec: number
+        }>
+      ).map(highlight => [highlight.eventId, highlight])
+    )
+    // Replaced and hidden: the game page never shows it, so a highlight
+    // named on it could never open there.
+    expect(byEvent.get('evt_dee_away')?.videoId).equals(deeGames.away.videoId)
+    // Shown beside the program file, still not the one chosen.
+    expect(byEvent.get('evt_dee_season')?.videoId).equals(
+      deeGames.season.videoId
+    )
+    // Timed on the program file, as the game page's own list times it.
+    const own = await get(`/videos/${deeGames.away.videoId}/highlights`)
+    const listed = (
+      own.body.highlights as Array<{ eventId: string; startOffsetSec: number }>
+    ).find(highlight => highlight.eventId === 'evt_dee_away')
+    expect(byEvent.get('evt_dee_away')?.startOffsetSec).equals(
+      listed?.startOffsetSec
+    )
   })
 
   it('finds a player credited under a row merged into them', async function () {
@@ -426,6 +457,40 @@ describe('the highlight routes', function () {
         })
         .execute()
     }
+    // Dee's away game was streamed live, and the stream's recording was
+    // then replaced by the program file and hidden. Its own clock started
+    // half a minute sooner, so a play timed on it would be wrong on the
+    // program file.
+    await db
+      .insertInto('videos')
+      .values({
+        id: replacedLive,
+        game_id: deeGames.away.gameId,
+        kind: 'live',
+        title: 'Home vs Away — Primary',
+        storage: 'spaces',
+        status: 'ready',
+        start_at: new Date(DEE_AWAY.getTime() - 30_000),
+        duration_sec: 7200,
+        hidden: true,
+        replaced_by: deeGames.away.videoId
+      })
+      .execute()
+    // Dee's season game has a live recording that is still shown, beside
+    // its program file: the program file is the one a game is watched on.
+    await db
+      .insertInto('videos')
+      .values({
+        id: shownLive,
+        game_id: deeGames.season.gameId,
+        kind: 'live',
+        title: 'Home vs Away — Primary',
+        storage: 'spaces',
+        status: 'ready',
+        start_at: new Date(DEE_SEASON.getTime() - 30_000),
+        duration_sec: 7200
+      })
+      .execute()
 
     const credit = (
       name: string,
