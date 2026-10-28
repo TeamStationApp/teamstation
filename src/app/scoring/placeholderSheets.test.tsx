@@ -67,6 +67,10 @@ describe('placeholder count sheet and platform adapters', function () {
         onSave={() => undefined}
       />
     )
+    const label = node('Create Player').firstChild as HTMLElement
+    expect(label.textContent).equals('Create Player')
+    expect(label.style.fontSize).equals('16px')
+    expect(getComputedStyle(label).whiteSpace).equals('nowrap')
     await click('Create Player')
     expect(document.activeElement).not.equals(node('First Name'))
     await click('Create Placeholder Player')
@@ -187,7 +191,7 @@ describe('placeholder count sheet and platform adapters', function () {
         />
       )
       const open = async (): Promise<void> => {
-        await click(managesTeam ? 'Create Player' : 'Create Game Guests')
+        await click(managesTeam ? 'Create Player' : 'Create Placeholder Player')
         if (managesTeam) await click('Create Placeholder Player')
       }
       await open()
@@ -239,7 +243,7 @@ describe('placeholder count sheet and platform adapters', function () {
     await click('Cancel')
     expect(closes).equals(1)
   })
-  it('offers only game guests when the scorekeeper cannot manage the selected team roster', async function () {
+  it('offers only placeholder players, on two lines, when the scorekeeper cannot manage the selected team roster', async function () {
     const state = initialScoringState(scoringSession(gameFixture))
     const create = guestCreator()
     let rosterRequests = 0
@@ -264,7 +268,15 @@ describe('placeholder count sheet and platform adapters', function () {
       />
     )
     expect(node('Create Player')).equals(null)
-    await click('Create Game Guests')
+    expect(document.body.textContent).not.contains('Create Game Guests')
+    const label = node('Create Placeholder Player').firstChild as HTMLElement
+    expect(label.textContent).equals('Create Placeholder\nPlayer')
+    expect(label.style.fontSize).equals('13px')
+    expect(label.style.textAlign).equals('center')
+    // The web cannot shrink to fit, so it wraps whole lines with no clamp.
+    expect(getComputedStyle(label).whiteSpace).not.equals('nowrap')
+    expect(label.style.webkitLineClamp).equals('')
+    await click('Create Placeholder Player')
     expect(node('First Name')).equals(null)
     await act(async () => {
       const cancels = document.querySelectorAll<HTMLElement>(
@@ -273,7 +285,7 @@ describe('placeholder count sheet and platform adapters', function () {
       cancels[cancels.length - 1].click()
     })
     expect(node('Number of placeholder players')).equals(null)
-    await click('Create Game Guests')
+    await click('Create Placeholder Player')
     await click('Player count 2')
     await click('Create')
     await click('Save Rosters')

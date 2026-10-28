@@ -137,9 +137,11 @@ export interface RosterEditorDraft {
  * than the web), which wrapped "1. #27 Trey H" after "Trey" in a column
  * 159 points wide; the phone shrinks the line to fit instead, down to three
  * quarters. The web keeps its wrap, as a browser cannot shrink to fit.
+ * The footer's Create Placeholder Player asks for its two lines the same way.
  */
 export const rosterNameProps = (
-  os: string
+  os: string,
+  lines = 1
 ): {
   numberOfLines?: number
   adjustsFontSizeToFit?: boolean
@@ -147,7 +149,11 @@ export const rosterNameProps = (
 } =>
   os === 'web'
     ? {}
-    : { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.75 }
+    : {
+        numberOfLines: lines,
+        adjustsFontSizeToFit: true,
+        minimumFontScale: 0.75
+      }
 /** The complete field takes priority when a wrapping error leaves less list room. */
 export function defenseRosterMinimum(
   areaHeight: number,
@@ -449,9 +455,10 @@ export function RosterEditor({
   const canEditLocal = rosterLoading !== true && state.readOnly !== true
   const canCreateRosterPlayer =
     canEditTeams == null || canEditTeams[draft.gameData.teams[side].id]
-  const creationLabel = canCreateRosterPlayer
-    ? 'Create Player'
-    : 'Create Game Guests'
+  // The footer action's accessible name, and the text shown for it.
+  const [creationLabel, creationText] = canCreateRosterPlayer
+    ? ['Create Player', 'Create Player']
+    : ['Create Placeholder Player', 'Create Placeholder\nPlayer']
   const addPlaceholders = async (count: number): Promise<void> => {
     if (onCreateGuest == null) throw new Error('Unable to create a guest')
     const next = copyState(draft)
@@ -1041,16 +1048,25 @@ export function RosterEditor({
                 paddingHorizontal: 0
               }}
             >
-              {/* The sheet's green text action, as Create Placeholder Player. */}
+              {/* The sheet's green text action, as Create Placeholder Player.
+                  For a team the scorekeeper cannot manage, the longer label
+                  takes two smaller lines, as one line at 16 points is cut off
+                  in this half of the bar; a phone shrinks them to fit and the
+                  web wraps rather than drop "Player". */}
               <Text
-                numberOfLines={1}
+                {...(canCreateRosterPlayer
+                  ? { numberOfLines: 1 }
+                  : rosterNameProps(Platform.OS, 2))}
                 style={{
                   color: theme.successColor,
                   fontFamily: theme.semiBoldTextFont,
-                  fontSize: 16
+                  fontSize: canCreateRosterPlayer ? 16 : 13,
+                  ...(canCreateRosterPlayer
+                    ? {}
+                    : { lineHeight: 16, textAlign: 'center' })
                 }}
               >
-                {creationLabel}
+                {creationText}
               </Text>
             </Pressable>
           </View>

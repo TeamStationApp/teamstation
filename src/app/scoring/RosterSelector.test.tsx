@@ -38,6 +38,12 @@ describe('roster selector', function () {
         adjustsFontSizeToFit: true,
         minimumFontScale: 0.75
       })
+    expect(rosterNameProps('web', 2)).deep.equals({})
+    expect(rosterNameProps('ios', 2)).deep.equals({
+      numberOfLines: 2,
+      adjustsFontSizeToFit: true,
+      minimumFontScale: 0.75
+    })
   })
 
   it('sizes the thumb from the measured pill, not a percentage a phone misreads', function () {
