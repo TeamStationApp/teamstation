@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -218,6 +219,18 @@ function drive(
 describe("the videos page's picture and the full-screen player (U12)", function () {
   this.timeout(15_000)
 
+  // A highlight opens the full-screen player in the app only: these tests
+  // run in a browser build, so the app's cases say they are the app.
+  let platformWas: typeof Platform.OS | null = null
+  const asApp = (): void => {
+    platformWas ??= Platform.OS
+    Platform.OS = 'ios'
+  }
+  afterEach(function () {
+    if (platformWas != null) Platform.OS = platformWas
+    platformWas = null
+  })
+
   it('has no controls, and a tap opens the player on it alone, at its moment', async function () {
     const view = await page([videoOf('v1', START, 2), videoOf('v2', START)])
     const video = inline()
@@ -351,7 +364,112 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
   })
 
-  it('opens the player at a highlight, with the picture moved there too', async function () {
+  it('in a browser, plays a highlight in the picture, with its sound, without opening the player', async function () {
+    const view = await page([videoOf('v1', START)], {}, { highlight: true })
+    const video = inline()
+    const { played } = drive(video, 0)
+    // Silent until something turns the sound on, as the page starts it.
+    expect(video.muted).equals(true)
+    const highlight = document.querySelector<HTMLElement>(
+      '[aria-label="Play highlight: Selected single"]'
+    )!
+    await act(async () => {
+      highlight.click()
+    })
+    expect(view.changes.filter(change => change.from != null)).length(0)
+    expect(video.currentTime).equals(120)
+    expect(played()).greaterThan(0)
+    // Heard, as the full-screen player it replaces was, from the tap itself.
+    expect(video.muted).equals(false)
+  })
+
+  it('in a browser, plays a highlight chosen on another page with its sound, or silent if the browser refuses it', async function () {
+    // Its start (0 s takes the page's plain autoplay rather than a link's
+    // jump), and how the first `play()` with sound is answered.
+    for (const [at, answer] of [
+      [120, null],
+      [120, 'NotAllowedError'],
+      [120, 'AbortError'],
+      [0, 'NotAllowedError']
+    ] as const) {
+      const label = `${at} s, ${answer ?? 'allowed'}`
+      await page([videoOf('v1', START)], {
+        initialVideoId: 'v1',
+        startAtSec: at,
+        autoPlay: true,
+        highlightUntil: at + 8
+      })
+      const video = inline()
+      drive(video, 0)
+      let tries = 0
+      video.play = async () => {
+        tries += 1
+        if (answer != null && !video.muted) {
+          const error = new Error('not played')
+          error.name = answer
+          throw error
+        }
+      }
+      expect(video.muted, `${label}: heard from the start`).equals(false)
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(video.currentTime, label).equals(at)
+      // Refused with its sound, it plays silent rather than not at all. An
+      // interrupted play is no refusal: the sound stays, and it is not
+      // played again behind whatever interrupted it.
+      const refused = answer === 'NotAllowedError'
+      expect(video.muted, label).equals(refused)
+      expect(tries, label).equals(refused ? 2 : 1)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('in a browser, keeps to a highlight chosen before a linked moment has loaded', async function () {
+    await page(
+      [videoOf('v1', START)],
+      { startAtSec: 30, autoPlay: true },
+      { highlight: true }
+    )
+    const video = inline()
+    drive(video, 0)
+    const highlight = document.querySelector<HTMLElement>(
+      '[aria-label="Play highlight: Selected single"]'
+    )!
+    await act(async () => {
+      highlight.click()
+    })
+    expect(video.currentTime).equals(120)
+    // The link's moment, still waiting for the metadata, gives way to it.
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    expect(video.currentTime).equals(120)
+  })
+
+  it('in a browser, plays a highlight chosen on another page in the picture, and drops it', async function () {
+    const view = await page([videoOf('v1', START)], {
+      initialVideoId: 'v1',
+      startAtSec: 120,
+      autoPlay: true,
+      highlightUntil: 128
+    })
+    // The picture starts at the highlight and plays, once it can.
+    const video = inline()
+    const { played } = drive(video, 0)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    expect(video.currentTime).equals(120)
+    expect(played()).greaterThan(0)
+    expect(view.changes.filter(change => change.from != null)).length(0)
+    expect(view.changes).deep.includes({ highlightUntil: null })
+  })
+
+  it('in the app, opens the player at a highlight, with the picture moved there too', async function () {
+    asApp()
     const view = await page([videoOf('v1', START)], {}, { highlight: true })
     const video = inline()
     drive(video, 0)
@@ -374,7 +492,8 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(video.currentTime).equals(120)
   })
 
-  it('opens a highlight only on the video it was chosen on', async function () {
+  it('in the app, opens a highlight only on the video it was chosen on', async function () {
+    asApp()
     // v1, the highlight's, never becomes playable; v2 does at once.
     const view = await page(
       [videoOf('v1', START), videoOf('v2', START)],
@@ -407,7 +526,8 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(view.changes).deep.includes({ highlightUntil: null })
   })
 
-  it('keeps a highlight waiting through a video the page chose itself', async function () {
+  it('in the app, keeps a highlight waiting through a video the page chose itself', async function () {
+    asApp()
     // A copy of the game that does not list the highlight's recording yet:
     // the page paints the one it has.
     const view = await page([videoOf('v2', START)], {
@@ -420,7 +540,8 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(view.changes).not.deep.includes({ highlightUntil: null })
   })
 
-  it('opens a highlight chosen on another page straight into the player, once', async function () {
+  it('in the app, opens a highlight chosen on another page straight into the player, once', async function () {
+    asApp()
     const view = await page([videoOf('v1', START)], {
       initialVideoId: 'v1',
       startAtSec: 120,

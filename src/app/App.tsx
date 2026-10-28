@@ -284,9 +284,10 @@ type Pushed =
        */
       from?: PlayerFrom
       /**
-       * A highlight chosen on another page, opened in the player at once and
-       * stopped here, in `videoId`'s seconds. Never written to the address,
-       * and taken off by the open.
+       * A highlight chosen on another page, ending here in `videoId`'s
+       * seconds: in the app, opened in the full-screen player at once and
+       * stopped here; in a browser, played in the picture. Never written to the
+       * address, and taken off once it is done with.
        */
       highlightUntil?: number
     }

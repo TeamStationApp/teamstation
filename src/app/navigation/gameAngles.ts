@@ -24,9 +24,11 @@ export interface GameAngles {
   at?: number
   from?: PlayerFrom
   /**
-   * A highlight chosen somewhere else — a player's page — to open in the
-   * player at once, stopping here (seconds into `at`'s video). Never written
-   * to the address, and taken off the frame by the open it causes.
+   * A highlight chosen somewhere else — a player's page — ending here
+   * (seconds into `at`'s video): in the app, opened in the full-screen player
+   * at once and stopped here; in a browser, played in the picture from `at`.
+   * Never written to the address, and taken off the frame once it is done
+   * with.
    */
   highlightUntil?: number
 }
@@ -42,7 +44,10 @@ export interface AnglesChange {
   zoom?: string | null
   at?: number | null
   from?: PlayerFrom | null
-  /** Only ever `null`: the highlight has been opened. */
+  /**
+   * Only ever `null`: the highlight is done with — opened in the app, or left to
+   * the picture in a browser.
+   */
   highlightUntil?: null
 }
 
