@@ -2140,14 +2140,17 @@ export class Chat2UI {
         ['-s', this.deviceId, 'pull', apkPath, pulled],
         { stdio: 'pipe', timeout: 20000 }
       )
+      const installedSha256 = digest(pulled)
+      // The hash is the proof; the copy (an APK per run) is not kept.
+      rmSync(pulled)
       assert(
-        digest(pulled) === this.binding.binding.sha256,
+        installedSha256 === this.binding.binding.sha256,
         'Installed Android APK differs from final source build'
       )
       this.steps.push({
         name: 'Installed Android build/source binding',
         outcome: 'passed',
-        installedArtifactSha256: digest(pulled)
+        installedArtifactSha256: installedSha256
       })
     }
   }
