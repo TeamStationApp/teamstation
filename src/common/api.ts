@@ -1070,6 +1070,12 @@ const asPitchingRates = asObject({
 export const asBattingRow = asObject({
   /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
   userId: asNullable(asUserId),
+  /**
+   * Whether the line opens its player's page for this viewer: false for a
+   * withdrawn line, and for a pool player the viewer could not already see.
+   * Absent from older servers and from team tables, which is true.
+   */
+  openable: asOptional(asBoolean, true),
   /** First name, last initial. Never the whole name. */
   shortName: asOptional(asString),
   teamId: asNullable(asString),
@@ -1101,7 +1107,9 @@ export const asBattingRow = asObject({
    * This player's average for the season so far, up to and including this
    * game — not the afternoon's. Null where they have no at-bats to average.
    */
-  seasonAvg: asOptional(asNullable(asNumber), null)
+  seasonAvg: asOptional(asNullable(asNumber), null),
+  /** A withdrawn line's: the gumbo id of the batter it stands in for. */
+  standsFor: asOptional(asNullable(asNumber), null)
 })
 export type BattingRow = ReturnType<typeof asBattingRow>
 
@@ -1117,6 +1125,12 @@ export type BattingRow = ReturnType<typeof asBattingRow>
 export const asPitchingRow = asObject({
   /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
   userId: asNullable(asUserId),
+  /**
+   * Whether the line opens its player's page for this viewer: false for a
+   * withdrawn line, and for a pool player the viewer could not already see.
+   * Absent from older servers and from team tables, which is true.
+   */
+  openable: asOptional(asBoolean, true),
   shortName: asOptional(asString),
   teamId: asNullable(asString),
   /** `5.2`, the way it is always written. */

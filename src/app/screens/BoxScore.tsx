@@ -67,6 +67,8 @@ export interface LineupBatter {
   /** Null for a player the scorer made up, who has no user. */
   userId: string | null
   shortName: string
+  /** Their id in the game, which a withdrawn line names when it is theirs. */
+  gumboId?: number | null
 }
 
 /**
@@ -211,16 +213,31 @@ export function battingOrder(
 ): BattingLine[] {
   if (lineup == null) return [...rows]
   const batted = rows.filter(row => row.pa > 0)
-  const inOrder = (row: BattingRow): boolean =>
-    lineup.some(batter => batter.userId === row.userId)
-  const waiting = lineup.flatMap(batter =>
-    batted.some(row => row.userId === batter.userId)
-      ? []
-      : [
-          rows.find(row => row.userId === batter.userId) ??
-            emptyLine(batter, teamId)
-        ]
+  // A withdrawn line names the batter it stands in for, whom the order may
+  // still name, with an account (a pool player left in a game under way)
+  // or none: in his place the order shows the line, never his name.
+  const standIn = new Map(
+    rows.flatMap(row =>
+      row.standsFor == null ? [] : [[row.standsFor, row] as const]
+    )
   )
+  const inOrder = (row: BattingRow): boolean =>
+    (row.userId != null &&
+      lineup.some(batter => batter.userId === row.userId)) ||
+    (row.standsFor != null &&
+      lineup.some(batter => batter.gumboId === row.standsFor))
+  const waiting = lineup.flatMap(batter => {
+    const line =
+      batter.gumboId == null ? undefined : standIn.get(batter.gumboId)
+    // One who batted is already above; one yet to bat waits in his slot.
+    if (line != null) return line.pa > 0 ? [] : [line]
+    if (batter.userId == null) return [emptyLine(batter, teamId)]
+    if (batted.some(row => row.userId === batter.userId)) return []
+    return [
+      rows.find(row => row.userId === batter.userId) ??
+        emptyLine(batter, teamId)
+    ]
+  })
   return [
     ...batted,
     ...waiting,
@@ -232,6 +249,8 @@ export function battingOrder(
 function emptyLine(batter: LineupBatter, teamId: string | null): BattingLine {
   return {
     userId: batter.userId,
+    // Only a line that names somebody opens anything.
+    openable: batter.userId != null,
     shortName: batter.shortName,
     teamId,
     g: 0,
@@ -261,7 +280,8 @@ function emptyLine(batter: LineupBatter, teamId: string | null): BattingLine {
       ops: undefined,
       sbPct: undefined
     },
-    seasonAvg: null
+    seasonAvg: null,
+    standsFor: null
   }
 }
 
@@ -475,7 +495,7 @@ function BattingTable(props: {
               widths={widths}
               theme={theme}
               onPress={
-                onOpenPlayer == null || userId == null
+                onOpenPlayer == null || userId == null || !line.openable
                   ? undefined
                   : () => {
                       onOpenPlayer(userId, line.shortName ?? '')
@@ -541,7 +561,7 @@ function PitchingTable(props: {
               widths={widths}
               theme={theme}
               onPress={
-                onOpenPlayer == null || userId == null
+                onOpenPlayer == null || userId == null || !line.openable
                   ? undefined
                   : () => {
                       onOpenPlayer(userId, line.shortName ?? '')

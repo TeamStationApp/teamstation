@@ -6,10 +6,14 @@ import { shortNames } from '../../common/names'
 import { seasonStandings } from '../../common/seasonStandings'
 import { inningsPitched } from '../../common/statExtras'
 import { asUserId } from '../../common/userId'
-import { guardsPerson, visibleScopes } from '../access'
+import { guardsPerson, openablePeople, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
-import { publicUserId, withdrawnGames } from '../games/withdrawn'
+import {
+  isWithdrawnKey,
+  publicUserId,
+  withdrawnGames
+} from '../games/withdrawn'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
@@ -238,6 +242,12 @@ export function statsRoutes(
         .executeTakeFirst()
       if (season == null) throw notFound()
       const rows = await statRows(db, { seasonId, visibleGames: scopes })
+      const opens = await openablePeople(
+        db,
+        scopes,
+        actor.userId,
+        rows.map(row => row.userId).filter(id => !isWithdrawnKey(id))
+      )
       const names = shortNames(
         rows.map(row => ({
           id: row.userId,
@@ -251,12 +261,14 @@ export function statsRoutes(
         batting: battingLines(rows).map(line => ({
           ...line,
           userId: publicUserId(line.userId),
+          openable: opens.has(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         })),
         pitching: pitchingLines(rows).map(line => ({
           ...line,
           userId: publicUserId(line.userId),
+          openable: opens.has(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           ip: inningsPitched(line.outs),
           rates: pitchingRates(line)

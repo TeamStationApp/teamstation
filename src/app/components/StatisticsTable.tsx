@@ -6,7 +6,7 @@ import { useTheme } from '../theme/ThemeContext'
 import { FrozenNameTable } from './FrozenNameTable'
 
 export function StatisticsTable<
-  T extends { userId: string | null; shortName?: string }
+  T extends { userId: string | null; shortName?: string; openable?: boolean }
 >({
   rows,
   columns,
@@ -25,9 +25,10 @@ export function StatisticsTable<
       columns={columns}
       rowKey={row => row.userId ?? `withdrawn ${rows.indexOf(row)}`}
       name={row => {
-        // A withdrawn line stands for nobody, so there is no page to open.
+        // A withdrawn line stands for nobody, and a pool player's page may be
+        // one this viewer cannot open: no tap target for either.
         const { userId } = row
-        const opens = onOpen != null && userId != null
+        const opens = onOpen != null && userId != null && row.openable !== false
         return (
           <Pressable
             accessibilityRole={opens ? 'button' : undefined}

@@ -885,6 +885,13 @@ export interface PlayerTeam {
    * of a team.
    */
   current: boolean
+  /**
+   * True when every stat line that makes this a team of theirs is from a game
+   * they played as a pool player, an existing player added for that game
+   * only: such a team counts for their stats, and gives nobody their page.
+   * Absent otherwise.
+   */
+  viaPool?: true
 }
 
 /**
@@ -951,7 +958,22 @@ export async function teamsOf(
       'teams.logo_path as logoPath',
       'seasons.id as seasonId',
       'seasons.name as seasonName',
-      'seasons.year as seasonYear'
+      'seasons.year as seasonYear',
+      eb =>
+        eb
+          .exists(
+            eb
+              .selectFrom('game_guest_details')
+              .select('game_guest_details.game_id')
+              .whereRef(
+                'game_guest_details.game_id',
+                '=',
+                'game_player_stats.game_id'
+              )
+              .where('game_guest_details.user_id', 'in', userIds)
+              .where('game_guest_details.pool', '=', true)
+          )
+          .as('pool')
     ])
     .distinct()
     .where('gumbo_ids.user_id', 'in', userIds)
@@ -994,9 +1016,20 @@ export async function teamsOf(
 
   const playing = new Set(await teamsPlayedOnNow(db, userIds))
   const byKey = new Map<string, PlayerTeam>()
+  // A team is theirs through a pool game alone only while every line for it
+  // is one, and no membership makes it theirs.
+  const poolOnly = new Map<string, boolean>()
+  for (const row of fromPlays) {
+    const key = `${row.teamId} ${row.seasonId ?? ''}`
+    poolOnly.set(key, (poolOnly.get(key) ?? true) && row.pool === true)
+  }
+  const poolTeam = (teamId: string, key: string): boolean =>
+    !fromMemberships.some(row => row.teamId === teamId) &&
+    poolOnly.get(key) === true
   for (const row of [...fromPlays, ...fromMemberships]) {
     const place = places.get(row.teamId)
-    byKey.set(`${row.teamId} ${row.seasonId ?? ''}`, {
+    const key = `${row.teamId} ${row.seasonId ?? ''}`
+    byKey.set(key, {
       teamId: row.teamId,
       teamName: row.teamName,
       logoPath: row.logoPath,
@@ -1005,7 +1038,8 @@ export async function teamsOf(
       seasonYear: row.seasonYear,
       jersey: place?.jersey ?? null,
       positions: place?.positions ?? [],
-      current: playing.has(row.teamId)
+      current: playing.has(row.teamId),
+      ...(poolTeam(row.teamId, key) ? { viaPool: true as const } : {})
     })
   }
 

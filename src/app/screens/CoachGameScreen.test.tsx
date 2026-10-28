@@ -1591,12 +1591,14 @@ describe('a coach’s lineup save', function () {
     ])
     expect(orders.away![0]).deep.equals({
       userId: userIdOfGumbo(1101),
-      shortName: 'Owl 1'
+      shortName: 'Owl 1',
+      gumboId: 101
     })
     expect(orders.home).has.length(10)
     expect(orders.home![9]).deep.equals({
       userId: null,
-      shortName: 'Made Up'
+      shortName: 'Made Up',
+      gumboId: made
     })
     // One side's alone.
     expect(Object.keys(battingOrders(draft, ['home']))).deep.equals(['home'])

@@ -802,6 +802,9 @@ describe('adds made with a notice', function () {
     expect(
       box.body.batting.map((row: any) => [row.shortName, row.userId])
     ).deep.equals([[falconsLabel, null]])
+    // The line names the batter it stands in for in this game, and no other
+    // line names anybody that way.
+    expect(box.body.batting[0].standsFor).equals(gumbo['Freddie Freeman'])
 
     // His own record leaves the Falcons games out, for anybody asking.
     const own = await statRows(db!, { userId: ids['Freddie Freeman'] })

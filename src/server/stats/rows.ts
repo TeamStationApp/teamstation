@@ -67,6 +67,8 @@ export interface StatRowWithGame extends StatRow {
   firstName: string | null
   lastName: string | null
   displayName: string
+  /** The game's id for the person whose line it is. */
+  gumboId: number
 }
 
 export async function statRows(
@@ -84,6 +86,7 @@ export async function statRows(
     .select([
       'game_player_stats.extra as extra',
       'game_player_stats.game_id as gameId',
+      'game_player_stats.gumbo_id as gumboId',
       'gumbo_ids.user_id as userId',
       'game_player_stats.team_id as teamId',
       'game_player_stats.pa as pa',

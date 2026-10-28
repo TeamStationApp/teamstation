@@ -5578,7 +5578,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`built` when the lines match the plays, `incomplete` when a ' +
             'required Gumbo field is missing (with `detail` naming the play ' +
             'and field), or `failed` after a build threw. A game with no ' +
-            'lines yet has empty `batting` and `pitching`. Anybody signed in ' +
+            'lines yet has empty `batting` and `pitching`. A withdrawn ' +
+            "batting line (a rejected add's part in the game, `userId` null " +
+            'under a placeholder name) has `standsFor`, the gumbo id of the ' +
+            'batter it stands in for in this game, so a batting order that ' +
+            'still names him shows the line instead; every other line has ' +
+            '`standsFor` null. Anybody signed in ' +
             'who is a member of neither team is answered 403 `membersOnly`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],

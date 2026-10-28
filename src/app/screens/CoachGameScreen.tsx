@@ -166,7 +166,8 @@ export function battingOrders(
               {
                 userId:
                   accounts.find(row => row.gumboId === id)?.userId ?? null,
-                shortName: player.fullName
+                shortName: player.fullName,
+                gumboId: id
               }
             ]
       })

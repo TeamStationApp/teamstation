@@ -29,17 +29,19 @@ const buttons = (): string[] =>
   )
 
 describe('a season’s statistics table', function () {
-  it('opens a player from their name, and gives a withdrawn line nothing to open', async function () {
+  it('opens a player from their name, and gives a withdrawn or unopenable line nothing to open', async function () {
     interface Row {
       userId: string | null
       shortName?: string
       h: number
+      openable?: boolean
     }
     const opened: Array<string | null> = []
     const rows: Row[] = [
       { userId: 'usr_betts', shortName: 'Mookie B', h: 2 },
       { userId: null, shortName: 'RFlcns A', h: 1 },
-      { userId: null, shortName: 'RFlcns A', h: 3 }
+      { userId: null, shortName: 'RFlcns A', h: 3 },
+      { userId: 'usr_pool', shortName: 'Freddie F', h: 1, openable: false }
     ]
     const host = await mount(
       <StatisticsTable
