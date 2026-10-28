@@ -99,7 +99,9 @@ const tsSuites = [
   // Fixes M9: the field on a game's Info tab, and directions to its point.
   'src/common/eventInfo.test.ts',
   'src/app/platform/eventDirections.test.ts',
-  'src/app/platform/eventDirections.web.test.ts'
+  'src/app/platform/eventDirections.web.test.ts',
+  // Preview calendar M3: filters, field labels and the weeks.
+  'src/app/screens/schedulePreviewCalendar.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
