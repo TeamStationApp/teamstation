@@ -248,6 +248,10 @@ describe('the phone outbox', function () {
         body: {}
       }
     )
+    // An existing player is added by id after a search: never queued.
+    expect(
+      queuedCallOf('POST', '/teams/t1/roster-players', { userId: 'usr_one' })
+    ).equals(undefined)
     const live = { mode: 'live' }
     expect(chainOf(queuedCallOf('POST', '/games/g1/events', live)!)).equals(
       'game:g1'

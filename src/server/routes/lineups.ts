@@ -30,8 +30,8 @@ import {
 } from '../../common/gumboPlay'
 import { shortNames } from '../../common/names'
 import {
-  asNewRosterPlayer,
-  asPlayerSettingsName
+  asPlayerSettingsName,
+  asRosterPlayerBody
 } from '../../common/playerSettings'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
 import { addPlayer } from '../../common/scoring/lineup'
@@ -83,7 +83,11 @@ import {
   type TeamSideLineups
 } from '../events/teamLineups'
 import { fenceDistanceFor, gameHasPlays } from '../games/fenceDistance'
-import { createGuestPlayer, renameGuestPlayer } from '../games/guestPlayers'
+import {
+  addExistingGuest,
+  createGuestPlayer,
+  renameGuestPlayer
+} from '../games/guestPlayers'
 import { gameAvailability } from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
 import { cleanBody } from '../jsonBody'
@@ -194,14 +198,42 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const side = cleanBody(asLiteral('away', 'home'), req.body?.side)
-      const player = cleanBody(asNewRosterPlayer, req.body)
+      const asked = cleanBody(
+        (raw: unknown) => asRosterPlayerBody(raw, ['side', 'teamId']),
+        req.body
+      )
       const teamId =
         req.body?.teamId == null
           ? undefined
           : cleanBody(asString, req.body.teamId)
+      if ('existing' in asked) {
+        // An existing player for this game only: at once with a notice to
+        // their side, or, after one was rejected, as a request they accept.
+        const added = await addExistingGuest(
+          db,
+          actor,
+          gameId,
+          side,
+          asked.existing,
+          teamId
+        )
+        if (added.kind === 'pending') {
+          res.status(202).json({ pending: { requestId: added.requestId } })
+          return
+        }
+        res.status(201).json({
+          ...added.entry,
+          ...(added.requestId == null
+            ? {}
+            : { notice: { requestId: added.requestId } })
+        })
+        return
+      }
       res
         .status(201)
-        .json(await createGuestPlayer(db, actor, gameId, side, player, teamId))
+        .json(
+          await createGuestPlayer(db, actor, gameId, side, asked.player, teamId)
+        )
     })
   )
 

@@ -6,9 +6,9 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import {
-  asNewRosterPlayer,
   asPersonSettings,
-  asPlayerSettings
+  asPlayerSettings,
+  asRosterPlayerBody
 } from '../../common/playerSettings'
 import { asUserId } from '../../common/userId'
 import {
@@ -51,6 +51,10 @@ import { mayKeepBirthMonth } from '../people/guardians'
 import { gumboIdsOfUsers } from '../scoring/gumboIds'
 import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
+import {
+  addExistingRosterPlayer,
+  type ExistingAdd
+} from '../teams/addExistingPlayer'
 import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
 import { refuseDeleted } from '../users/deleted'
@@ -555,8 +559,61 @@ export function playerRoutes(
         .executeTakeFirst()
       if (team == null) throw notFound()
 
-      const player = cleanBody(asNewRosterPlayer, req.body)
+      const asked = cleanBody(asRosterPlayerBody, req.body)
       const call = idempotentCallOf(req, actor.userId)
+      if ('existing' in asked) {
+        // An existing player, by their user id. The entry carries only the
+        // short name: a roster manager who added them reads more on the
+        // roster, as for any player of theirs.
+        const existingEntry = async (result: ExistingAdd): Promise<Answer> => {
+          if (result.kind === 'pending')
+            return {
+              status: 202,
+              body: { pending: { requestId: result.requestId } }
+            }
+          const roster = await teamRoster(db, media.space, teamId)
+          const entry = roster.find(row => row.userId === result.userId)
+          if (entry == null) throw notFound()
+          return result.kind === 'unchanged'
+            ? { status: 200, body: entry }
+            : {
+                status: 201,
+                body: {
+                  ...entry,
+                  ...(result.requestId == null
+                    ? {}
+                    : { notice: { requestId: result.requestId } })
+                }
+              }
+        }
+        const answer = await answerOnce(db, call, {
+          write: async claim => {
+            const result = await addExistingRosterPlayer(
+              db,
+              actor,
+              teamId,
+              asked.existing,
+              claim == null
+                ? undefined
+                : async (trx, made) => {
+                    await claim(trx, { resultId: existingResultId(made) })
+                  }
+            )
+            if (result.kind !== 'unchanged')
+              setAudit(res.locals, {
+                entityType: 'rosterPlayer',
+                entityId: result.userId,
+                after: { teamId, ...asked.existing, kind: result.kind }
+              })
+            return await existingEntry(result)
+          },
+          rebuild: async held =>
+            await existingEntry(existingResultOf(held.resultId!))
+        })
+        res.status(answer.status).json(answer.body)
+        return
+      }
+      const player = asked.player
       // The entry as a roster manager reads it, after the player committed.
       const entryOf = async (userId: string): Promise<Answer> => {
         const roster = await teamRoster(db, media.space, teamId, true)
@@ -980,5 +1037,23 @@ function userIdParam(value: string | string[] | undefined): string {
     return asUserId(pathParam(value))
   } catch {
     throw badRequest('Expected a canonical user id')
+  }
+}
+
+/** An existing-player add as an idempotency claim keeps it. */
+function existingResultId(result: ExistingAdd): string {
+  return result.kind === 'pending'
+    ? `pending ${result.userId} ${result.requestId}`
+    : `${result.kind} ${result.userId} ${result.kind === 'added' ? (result.requestId ?? '') : ''}`
+}
+
+function existingResultOf(held: string): ExistingAdd {
+  const [kind, userId, requestId] = held.split(' ')
+  if (kind === 'pending') return { kind, userId, requestId }
+  if (kind === 'unchanged') return { kind, userId }
+  return {
+    kind: 'added',
+    userId,
+    requestId: requestId === '' ? null : requestId
   }
 }

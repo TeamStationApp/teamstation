@@ -2,10 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  asExistingRosterPlayer,
   asJersey,
   asNewRosterPlayer,
   asPlayerPositions,
   asPlayerSettings,
+  asRosterPlayerBody,
   PLAYER_POSITIONS
 } from './playerSettings'
 
@@ -132,5 +134,55 @@ describe('a player’s settings', function () {
         throws: 'right'
       })
     ).throws('positions:')
+  })
+})
+
+describe('a player who already exists, by id', function () {
+  it('takes only a jersey and positions beside the id, and the keys the route reads', function () {
+    expect(asExistingRosterPlayer({ userId: 'usr_a' })).deep.equals({
+      userId: 'usr_a',
+      jersey: null,
+      positions: []
+    })
+    expect(
+      asExistingRosterPlayer(
+        { userId: 'usr_a', jersey: ' 50 ', positions: ['RF'], side: 'home' },
+        ['side', 'teamId']
+      )
+    ).deep.equals({ userId: 'usr_a', jersey: '50', positions: ['RF'] })
+    for (const key of [
+      'firstName',
+      'lastName',
+      'bats',
+      'throws',
+      'externalId',
+      'side'
+    ])
+      expect(() =>
+        asExistingRosterPlayer({ userId: 'usr_a', [key]: 'x' })
+      ).throws(`${key} is not allowed with userId`)
+    expect(() => asExistingRosterPlayer({ userId: '' })).throws('userId')
+    expect(() => asExistingRosterPlayer({ userId: 7 })).throws('userId')
+    expect(() => asExistingRosterPlayer(null)).throws('Expected an object')
+    expect(() =>
+      asExistingRosterPlayer({ userId: 'usr_a', jersey: '1234' })
+    ).throws()
+  })
+
+  it('reads a roster body as an existing player when it names one, and as a new one otherwise', function () {
+    expect(asRosterPlayerBody({ userId: 'usr_a' })).deep.equals({
+      existing: { userId: 'usr_a', jersey: null, positions: [] }
+    })
+    const player = {
+      firstName: 'Max',
+      lastName: 'Muncy',
+      jersey: '13',
+      positions: ['3B'],
+      bats: 'left',
+      throws: 'right'
+    }
+    expect(asRosterPlayerBody(player)).deep.equals({
+      player: asNewRosterPlayer(player)
+    })
   })
 })

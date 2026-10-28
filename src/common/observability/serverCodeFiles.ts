@@ -339,6 +339,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/statsBuilder/supervisor.js',
   'server/stopWorker.js',
   'server/teams/addAdults.js',
+  'server/teams/addExistingPlayer.js',
   'server/teams/addPlayers.js',
   'server/teams/createTeam.js',
   'server/teams/followMerges.js',

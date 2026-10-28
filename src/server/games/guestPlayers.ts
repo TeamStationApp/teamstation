@@ -1,25 +1,66 @@
-import type { Kysely } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 
 import type { RosterEntry } from '../../common/api'
 import { conflict, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
-import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
-import type { NewRosterPlayer } from '../../common/playerSettings'
-import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
-import { awaitingResult } from '../../common/scoring/rules'
+import { shortParts } from '../../common/names'
+import type {
+  ExistingRosterPlayer,
+  NewRosterPlayer
+} from '../../common/playerSettings'
 import type { Side } from '../../common/scoring/state'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { canManageRoster, canScore, lineupTeams, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { atomic } from '../db/atomic'
-import type { Database } from '../db/database'
-import { readPlays } from '../events/postPlays'
-import { resolveScoringGame } from '../scoring/openRow'
-import { contextOf } from '../scoring/replayContext'
+import type { Database, GamesTable } from '../db/database'
+import { type Clock, realClock } from '../groups/requests'
 import { noteScopeChange } from '../socket/syncRevision'
+import {
+  addByPolicy,
+  candidatePerson,
+  teamName
+} from '../teams/addExistingPlayer'
 import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId, insertUser } from '../users/insertUser'
+import { guestAlreadyInGame, guestGameOpen } from './guestChecks'
+
+/**
+ * What every guest write checks, with the game row held: the side holds the
+ * team the caller means, they may add to it (a roster manager of that team,
+ * or a scorekeeper of either team), the game is neither over nor between a
+ * pitch and its result. Answers the game and the side's team.
+ */
+async function guestGate(
+  trx: Transaction<Database>,
+  actor: Actor,
+  gameId: string,
+  side: Side,
+  expectedTeamId?: string
+): Promise<{ game: Selectable<GamesTable>; teamId: string }> {
+  const game = await trx
+    .selectFrom('games')
+    .selectAll()
+    .where('id', '=', gameId)
+    .forUpdate()
+    .executeTakeFirst()
+  if (game == null) throw notFound()
+  const roles = await roleScopes(trx, actor.userId, actor.isAdmin)
+  const teamId = side === 'home' ? game.home_team_id : game.away_team_id
+  if (expectedTeamId != null && expectedTeamId !== teamId)
+    throw conflict("This game's teams changed. Open it again.")
+  if (
+    !canManageRoster(roles, teamId) &&
+    !canScore(roles, game.home_team_id) &&
+    !canScore(roles, game.away_team_id)
+  )
+    throw forbidden(
+      'Only a roster manager or game scorekeeper may create a guest'
+    )
+  await guestGameOpen(trx, game)
+  return { game, teamId }
+}
 
 /** The game row serializes guest creation against lineup and play writes. */
 export async function createGuestPlayer(
@@ -33,48 +74,7 @@ export async function createGuestPlayer(
 ): Promise<RosterEntry> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
-    const game = await trx
-      .selectFrom('games')
-      .selectAll()
-      .where('id', '=', gameId)
-      .forUpdate()
-      .executeTakeFirst()
-    if (game == null) throw notFound()
-    const roles = await roleScopes(trx, actor.userId, actor.isAdmin)
-    const teamId = side === 'home' ? game.home_team_id : game.away_team_id
-    if (expectedTeamId != null && expectedTeamId !== teamId)
-      throw conflict("This game's teams changed. Open it again.")
-    if (
-      !canManageRoster(roles, teamId) &&
-      !canScore(roles, game.home_team_id) &&
-      !canScore(roles, game.away_team_id)
-    )
-      throw forbidden(
-        'Only a roster manager or game scorekeeper may create a guest'
-      )
-    if (game.status === 'final' || game.status === 'cancelled')
-      throw conflict('This game cannot accept players')
-    const stored = await resolveScoringGame(
-      trx,
-      {
-        plays: (await readPlays(trx, gameId)).map(
-          row => row.gumbo as GumboPlay
-        ),
-        currentPlay: game.currentPlay as CurrentPlay | null
-      },
-      { gameId }
-    )
-    const context = await contextOf(trx, gameId, game, stored)
-    if (context != null) {
-      const replay = replayPlays(stored, context)
-      if (replay.problems.length > 0 || awaitingResult(replay.state))
-        throw conflict('Finish the current play before creating a player')
-    } else if (
-      game.currentPlay != null &&
-      storedRecordOf(game.currentPlay) == null
-    ) {
-      throw conflict('The stored game cannot be read')
-    }
+    const { game } = await guestGate(trx, actor, gameId, side, expectedTeamId)
     const fullName = [player.firstName, player.lastName]
       .filter(Boolean)
       .join(' ')
@@ -147,7 +147,8 @@ export interface GuestRenamed {
  * Corrects the name of a game-only player: his account is renamed (first,
  * last and display name), so every read of every game names him anew, and
  * no stored play changes. Only a guest of this game (`games.guests`) whose
- * account cannot sign in may be renamed here, by a caller who may save the
+ * account cannot sign in, and who is no pool player (an existing player
+ * added for this game), may be renamed here, by a caller who may save the
  * lineup of the guest's side (`lineupTeams`: that team's head coach, or a
  * scorekeeper of the game). Anybody else is refused 403; somebody who is no
  * guest of this game, a merged account and a deleted one are 404, as nobody.
@@ -201,6 +202,16 @@ export async function renameGuestPlayer(
       )
     if (guest.loginEnabled)
       throw forbidden('This player signs in and keeps his own name')
+    const details = await trx
+      .selectFrom('game_guest_details')
+      .select(['jersey', 'positions', 'pool'])
+      .where('game_id', '=', gameId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst()
+    // A pool player is somebody who already exists, added for this game
+    // only: their name is their own, not this game's to correct.
+    if (details?.pool === true)
+      throw forbidden('A pool player keeps their own name')
     const displayName = [name.firstName, name.lastName]
       .filter(Boolean)
       .join(' ')
@@ -219,12 +230,6 @@ export async function renameGuestPlayer(
         })
         .where('id', '=', userId)
         .execute()
-    const details = await trx
-      .selectFrom('game_guest_details')
-      .select(['jersey', 'positions'])
-      .where('game_id', '=', gameId)
-      .where('user_id', '=', userId)
-      .executeTakeFirst()
     if (changed) noteScopeChange(trx, { gameId })
     return {
       changed,
@@ -242,6 +247,93 @@ export async function renameGuestPlayer(
         positions: details?.positions ?? [],
         bats: guest.bats,
         throws: guest.throws,
+        isPlayer: true,
+        role: 'player',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null,
+        avatarUrl: null,
+        walkUpSong: null
+      }
+    }
+  })
+}
+
+/** What an existing player's guest add answers. */
+export type ExistingGuest =
+  | { kind: 'added'; entry: RosterEntry; requestId: string | null }
+  | { kind: 'pending'; requestId: string }
+
+/**
+ * Adds a player who already exists to one side of one game as a pool player,
+ * for `POST /games/:gameId/guest-players` with `{ userId }`: through the same
+ * checks as a new guest, and by the notice policy. Anybody already in the
+ * game, on either team's roster or as a guest of either side, is refused.
+ */
+export async function addExistingGuest(
+  db: Kysely<Database>,
+  actor: Actor,
+  gameId: string,
+  side: Side,
+  body: ExistingRosterPlayer,
+  expectedTeamId?: string,
+  clock: Clock = realClock
+): Promise<ExistingGuest> {
+  return await atomic(db, async trx => {
+    await lockPlayerEdits(trx)
+    const { game, teamId } = await guestGate(
+      trx,
+      actor,
+      gameId,
+      side,
+      expectedTeamId
+    )
+    const person = await candidatePerson(trx, body.userId)
+    await guestAlreadyInGame(trx, game, person.userIds)
+    const result = await addByPolicy(
+      trx,
+      actor,
+      {
+        kind: 'playerAdd',
+        mode: 'pool',
+        userId: person.userId,
+        teamId,
+        gameId,
+        side,
+        jersey: body.jersey,
+        positions: body.positions,
+        teamName: await teamName(trx, teamId)
+      },
+      clock
+    )
+    if (result.kind === 'pending')
+      return { kind: 'pending', requestId: result.requestId }
+    const user = await trx
+      .selectFrom('users')
+      .select(['bats', 'throws'])
+      .where('id', '=', person.userId)
+      .executeTakeFirstOrThrow()
+    const gumboId = await ensureGumboId(trx, person.userId)
+    const parts = shortParts(
+      { id: person.userId, displayName: person.shortName },
+      person.shortName
+    )
+    return {
+      kind: 'added',
+      requestId: result.requestId,
+      entry: {
+        userId: person.userId,
+        gumboId,
+        shortName: person.shortName,
+        nameDetails: {
+          firstName: parts.first,
+          lastName: parts.last,
+          displayName: person.shortName
+        },
+        jersey: body.jersey,
+        positions: body.positions,
+        bats: user.bats,
+        throws: user.throws,
         isPlayer: true,
         role: 'player',
         section: 'player',

@@ -2867,4 +2867,134 @@ describe('who is signed in, with no signal', function () {
       expect(thrown, String(status)).property('code', code)
     }
   })
+
+  it('adds an existing player by id to a roster or a game, and reads a notice or a pending request', async () => {
+    const entry = mintedRosterEntry(
+      {
+        firstName: 'Mookie',
+        lastName: 'Betts',
+        jersey: '50',
+        positions: ['RF'],
+        bats: 'right',
+        throws: 'right'
+      },
+      700002
+    )
+    const added = stubFetch(201, { ...entry, notice: { requestId: 'inv_one' } })
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: added.fetch
+    })
+    const answer = await client.addExistingRosterPlayer('tem 1', {
+      userId: 'usr_a',
+      jersey: '50',
+      positions: ['RF']
+    })
+    expect('entry' in answer && answer.noticeId).equals('inv_one')
+    expect(added.calls[0].url).equals('/api/v1/teams/tem%201/roster-players')
+    expect(JSON.parse(added.calls[0].body!)).deep.equals({
+      userId: 'usr_a',
+      jersey: '50',
+      positions: ['RF']
+    })
+    const plain = stubFetch(200, entry)
+    const kept = await new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: plain.fetch
+    }).addExistingRosterPlayer('t', {
+      userId: 'usr_a',
+      jersey: null,
+      positions: []
+    })
+    expect('entry' in kept && kept.noticeId).equals(null)
+    const asked = stubFetch(202, { pending: { requestId: 'inv_two' } })
+    expect(
+      await new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: asked.fetch
+      }).addExistingGuest(
+        'game 1',
+        'home',
+        { userId: 'usr_a', jersey: null, positions: [] },
+        'tem 1'
+      )
+    ).deep.equals({ pendingRequestId: 'inv_two' })
+    expect(JSON.parse(asked.calls[0].body!)).deep.equals({
+      side: 'home',
+      teamId: 'tem 1',
+      userId: 'usr_a',
+      jersey: null,
+      positions: []
+    })
+    const bare = stubFetch(202, { pending: { requestId: 'inv_three' } })
+    await new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: bare.fetch
+    }).addExistingGuest('g', 'away', {
+      userId: 'usr_a',
+      jersey: null,
+      positions: []
+    })
+    expect(JSON.parse(bare.calls[0].body!).teamId).equals(undefined)
+  })
+
+  it('asks for roster candidates on the users collection, and a cancelled one is not offline', async () => {
+    const row = {
+      userId: 'usr_a',
+      gumboId: 1,
+      externalIds: [],
+      shortName: 'Mookie B',
+      shortParts: { first: 'Mookie', last: 'B' },
+      avatarUrl: null,
+      bats: 'right',
+      throws: null,
+      teams: [{ teamId: 'tem_owls', name: 'Ridgeview Owls' }],
+      tier: 'mine',
+      cursor: 'abc'
+    }
+    const stub = stubFetch(200, [row])
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stub.fetch
+    })
+    expect(
+      await client.rosterCandidates({
+        teamId: 'tem 1',
+        gameId: 'gam 1',
+        q: 'mo be',
+        after: 'abc',
+        limit: 30
+      })
+    ).deep.equals([row])
+    expect(stub.calls[0].url).equals(
+      '/api/v1/users?forTeam=tem+1&forGame=gam+1&q=mo+be&after=abc&limit=30'
+    )
+    await client.rosterCandidates({ teamId: 't', q: '' })
+    expect(stub.calls[1].url).equals('/api/v1/users?forTeam=t')
+    const wrong = stubFetch(200, [{ ...row, tier: 'nearby' }])
+    let refused: unknown
+    await new TeamStationClient({ baseUrl: '/api/v1', fetch: wrong.fetch })
+      .rosterCandidates({ teamId: 't' })
+      .catch((error: unknown) => {
+        refused = error
+      })
+    expect(refused).not.equals(undefined)
+
+    const controller = new AbortController()
+    controller.abort()
+    const aborting = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async () => {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+    })
+    let aborted: unknown
+    await aborting
+      .rosterCandidates({ teamId: 't', signal: controller.signal })
+      .catch((error: unknown) => {
+        aborted = error
+      })
+    expect((aborted as Error).name).equals('AbortError')
+    expect(aborting.offline).equals(false)
+  })
 })

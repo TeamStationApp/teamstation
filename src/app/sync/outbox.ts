@@ -125,7 +125,10 @@ export function queuedCallOf(
   if (method !== 'POST') return undefined
   const roster = ROSTER_PATH.exec(path)
   const teamId = roster == null ? undefined : decoded(roster[1])
-  if (teamId != null) return { kind: 'roster', teamId, path, body }
+  // A player who already exists is added by id, after a search that needs
+  // the server: only a player made on the phone waits in the queue.
+  const existing = body != null && typeof body === 'object' && 'userId' in body
+  if (teamId != null && !existing) return { kind: 'roster', teamId, path, body }
   const lineups = LINEUPS_PATH.exec(path)
   const lineupsGame = lineups == null ? undefined : decoded(lineups[1])
   if (lineupsGame != null)

@@ -4883,7 +4883,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             'game team creates a guest with no ' +
             'login, email or team membership. The returned identity is appended ' +
             'to that side of GameDetail.guests before the client adds the player ' +
-            'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation.',
+            'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation. ' +
+            'With `{ side, userId, jersey?, positions?, teamId? }` instead, an existing player ' +
+            '(one `GET /users?forTeam=` lists) joins this side for this game only, as a pool ' +
+            'player: 201 with their entry and `notice.requestId` when their side was told, or ' +
+            '202 `{ pending: { requestId } }` when their side must accept first. Any other key ' +
+            'beside `userId` is 400; a player already on either team or a guest of either side is 409.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -6328,6 +6333,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'and `throws` are the player\u2019s own and are marked set by ' +
             'hand, so a roster import does not overwrite them. The person ' +
             'can be merged later because they are a real user. Audited. ' +
+            'With `{ userId, jersey?, positions? }` instead, an existing player joins the ' +
+            'team: 201 with their entry (short name only) and `notice.requestId` when their ' +
+            'side was told, 200 when they already play for it, or 202 `{ pending: { requestId } }` ' +
+            'when their side must accept first. Any other key beside `userId` is 400. ' +
             "Answers with the player's authorized roster entry, including " +
             'the whole name, as GET /teams/{teamId}/roster lists it for a ' +
             'roster manager.',
