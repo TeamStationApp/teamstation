@@ -33,6 +33,7 @@ const event = (over: Partial<HighlightEvent> = {}): HighlightEvent => ({
   id: 'evt_1',
   atBatIndex: 1,
   startTime: new Date(videoStart.getTime() + 600_000),
+  endTime: null,
   eventType: 'single',
   inning: null,
   halfInning: null,
@@ -171,6 +172,19 @@ describe('highlights', function () {
     expect(shifted[0].playOffsetSec).equals(587)
   })
 
+  it('seeks from the tap that ended the at-bat, not the one that began it', function () {
+    // A TeamStation-scored lineout: the at-bat began at the previous play's
+    // tap, ten minutes in, and the scorekeeper tapped the out 118 s later.
+    const lineout = event({
+      eventType: 'field_out',
+      startTime: new Date(videoStart.getTime() + 600_000),
+      endTime: new Date(videoStart.getTime() + 718_000)
+    })
+    const [highlight] = computeHighlights([lineout], video, settings)
+    expect(highlight.playOffsetSec).equals(710)
+    expect(highlight.startOffsetSec).equals(680)
+  })
+
   it('never seeks before the start of the video', function () {
     // A play 10 s in would want to start 38 s before the recording began.
     const early = event({
@@ -274,6 +288,7 @@ describe('what a highlight is called, and whether it is shown at all', function 
   const at = (sec: number): Date => new Date(videoStart.getTime() + sec * 1000)
   const base = {
     atBatIndex: 1,
+    endTime: null,
     eventType: 'single',
     inning: null,
     halfInning: null,

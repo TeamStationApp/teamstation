@@ -34,8 +34,14 @@ export interface HighlightEvent {
   tag?: string | null
   id: string
   atBatIndex: number
-  /** The scorekeeper's tap time. The play itself happened before this. */
+  /**
+   * When the play began. For a play imported from GameChanger this is close
+   * to the play itself; for one scored in TeamStation it is the previous
+   * play's tap, the start of the at-bat.
+   */
   startTime: Date | null
+  /** The scorekeeper's tap time. The play itself happened before this. */
+  endTime: Date | null
   eventType: string | null
   /** For the sentence TeamStation writes about the play. */
   inning: number | null
@@ -65,6 +71,7 @@ export const HIGHLIGHT_EVENT_COLUMNS = [
   'events.id',
   'events.atBatIndex',
   'events.startTime',
+  'events.endTime',
   'events.eventType',
   'events.inning',
   'events.halfInning',
@@ -82,6 +89,7 @@ type HighlightEventRow = Pick<
   | 'id'
   | 'atBatIndex'
   | 'startTime'
+  | 'endTime'
   | 'eventType'
   | 'inning'
   | 'halfInning'
@@ -103,6 +111,7 @@ export function highlightEvent(
     id: row.id,
     atBatIndex: row.atBatIndex,
     startTime: row.startTime == null ? null : new Date(row.startTime),
+    endTime: row.endTime == null ? null : new Date(row.endTime),
     eventType: row.eventType,
     inning: row.inning,
     halfInning: row.halfInning,
@@ -163,8 +172,9 @@ export interface Highlight {
  *
  * The timing, in order:
  *
- * 1. The stored time is when the scorekeeper **tapped**, which is `lagSec`
- *    after the play. Subtract the lag to find the play.
+ * 1. The end time, or the start time when there is none, is when the
+ *    scorekeeper **tapped**, which is `lagSec` after the play. Subtract the
+ *    lag to find the play.
  * 2. `timeNudgeSec` corrects one play whose tap was plainly wrong. It is a
  *    per-play correction, not a second lead setting.
  * 3. Back up by the lead for that event type, so the viewer sees the wind-up
@@ -203,7 +213,8 @@ export function withDropped(
   const highlights: Highlight[] = []
   for (const event of events) {
     if (event.hidden) continue
-    if (event.startTime == null) continue
+    const tappedAt = event.endTime ?? event.startTime
+    if (tappedAt == null) continue
     // A fielding error is nobody's highlight: not the fielder's, and not the
     // batter's either, who reached on somebody else's mistake. A person who
     // gave the play a title of their own has said otherwise, and that stands.
@@ -211,7 +222,7 @@ export function withDropped(
       continue
     }
 
-    const tapMs = event.startTime.getTime() + event.timeNudgeSec * 1000
+    const tapMs = tappedAt.getTime() + event.timeNudgeSec * 1000
     const playMs = tapMs - settings.lagSec * 1000
     const lead = leadFor(event.eventType, settings)
     const startMs = playMs - lead * 1000
