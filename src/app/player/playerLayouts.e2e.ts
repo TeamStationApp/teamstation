@@ -454,11 +454,14 @@ describe('player layouts in a browser', function () {
           `(() => document.querySelectorAll('[role="slider"], [aria-valuenow]').length)()`
         )) as number
         expect(bar, 'U has a bar').greaterThan(0)
-        // On its own media time, a drag scrubs it as it does any other.
+        // On its own media time, a drag along the bottom row scrubs it as it
+        // does any other.
         const [from] = await tiles()
-        await page.mouse.move(402 * 0.5, 874 * 0.12)
+        const [only] = (await gridState(session)).tiles
+        const row = only.y + only.h * 0.9
+        await page.mouse.move(402 * 0.5, row)
         await page.mouse.down()
-        await page.mouse.move(402 * 0.75, 874 * 0.12, { steps: 8 })
+        await page.mouse.move(402 * 0.75, row, { steps: 8 })
         await page.mouse.up()
         await page.waitForFunction(
           `(() => { const v = ${GRID_VIDEOS}[0]; return !v.seeking && v.readyState >= 2 })()`,
@@ -471,10 +474,27 @@ describe('player layouts in a browser', function () {
         session,
         `web-one-angle-${game === S ? 'scored' : 'nostart'}-after.png`
       )
+      // The card comes back as the player was: the scored game closed
+      // playing, the other paused first.
+      const playing = game === S
+      if (!playing) await page.keyboard.press('k')
+      const closedAt = Date.now()
       const last = await closePlayer()
       const back = await settled()
-      expect(back.t, `${game.id} back at the player's time`).closeTo(last, 0.5)
-      expect(back.paused, `${game.id} paused`).equals(true)
+      expect(
+        back.paused,
+        `${game.id} ${playing ? 'playing' : 'paused'}`
+      ).equals(!playing)
+      if (playing)
+        expect(back.t, `${game.id} on from the player's time`).within(
+          last - 0.5,
+          last + (Date.now() - closedAt) / 1000 + 0.5
+        )
+      else
+        expect(back.t, `${game.id} back at the player's time`).closeTo(
+          last,
+          0.5
+        )
     }
 
     // A highlight opens the player at its own time.
@@ -568,6 +588,12 @@ describe('player layouts in a browser', function () {
           `(() => ${GRID_VIDEOS}.every(v => !v.seeking && v.readyState >= 2))()`,
           { timeout: 30_000 }
         )
+        // Past the hold that fills every tile at a place outside what they
+        // had buffered: the tiles are playing in this test.
+        await page.waitForFunction(
+          `(() => ${GRID_VIDEOS}.every(v => !v.paused))()`,
+          { timeout: 30_000 }
+        )
         return await times()
       }
 
@@ -583,57 +609,74 @@ describe('player layouts in a browser', function () {
           `${what}: no ${label}`
         ).equals(null)
 
-      // A sideways drag from the middle, a quarter of the width.
+      // A drag along the bottom row of the block of videos: the playhead goes
+      // where the finger is on the drawn line, with nothing but the line up.
       const span = Number(
         await page.evaluate(
           `document.querySelector('[aria-label="Position in the game"]').getAttribute('aria-valuemax')`
         )
       )
-      const track = Number(
-        await page.evaluate(
-          `document.querySelector('[aria-label="Position in the game"]').getBoundingClientRect().width`
-        )
-      )
+      const line = (await page.evaluate(
+        `(() => { const r = document.querySelector('[aria-label="Position in the game"]').getBoundingClientRect(); return { x: r.left, w: r.width } })()`
+      )) as { x: number; w: number }
       // Past the grid's opening hold, which on a loaded bench can still be
       // holding the tiles here: the drag is to leave them playing.
       await page.waitForFunction(
         `(() => ${GRID_VIDEOS}.every(v => !v.paused))()`,
         { timeout: 30_000 }
       )
+      const block = (await gridState(session)).tiles
+      const blockTop = Math.min(...block.map(rect => rect.y))
+      const blockBottom = Math.max(...block.map(rect => rect.y + rect.h))
+      const row = blockBottom - (blockBottom - blockTop) * 0.08
       const before = await settle()
-      const y = height * (touch ? 0.12 : 0.3)
-      const dx = width * 0.25
-      await down(width * 0.5, y)
-      await move(width * 0.5 + dx, y)
+      await down(line.x + line.w * 0.5, row)
+      await move(line.x + line.w * 0.75, row)
+      // The bar fades in.
+      await pause(300)
       const barUp = (await page.evaluate(
         `getComputedStyle(document.querySelector('[aria-label="Position in the game"]').closest('div[aria-hidden]')).opacity`
       )) as string
+      const closeUp = (await page.evaluate(
+        `getComputedStyle(document.querySelector('[aria-label="${lstrings.angles_close}"]').parentElement).opacity`
+      )) as string
       await up()
       const after = await settle()
-      const expected = (span * dx * 0.25) / track
       expect(Number(barUp), `${what}: the bar shows`).greaterThan(0)
+      expect(Number(closeUp), `${what}: and nothing else`).equals(0)
+      const landed = Number(
+        await page.evaluate(
+          `document.querySelector('[aria-label="Position in the game"]').getAttribute('aria-valuenow')`
+        )
+      )
+      expect(landed, `${what}: lands three quarters along`).closeTo(
+        span * 0.75,
+        Math.max(2, span * 0.02)
+      )
+      const moved = after[0].t - before[0].t
       after.forEach((tile, index) => {
         expect(
           tile.t - before[index].t,
-          `${what}: tile ${index} sought`
-        ).closeTo(expected, Math.max(1, expected * 0.02))
+          `${what}: tile ${index} sought with the others`
+        ).closeTo(moved, 1.5)
         expect(tile.paused, `${what}: play state kept`).equals(
           before[index].paused
         )
       })
 
-      // From the edge, nothing.
-      await down(width * 0.05, y)
-      await move(width * 0.05 + dx, y)
+      // Sideways across the pictures above the bottom row, nothing.
+      const y = blockTop + (blockBottom - blockTop) * 0.5
+      await down(line.x + line.w * 0.4, y)
+      await move(line.x + line.w * 0.8, y)
       await up()
-      const edge = await settle()
-      expect(edge[0].t, `${what}: an edge drag does nothing`).closeTo(
+      const still = await settle()
+      expect(still[0].t, `${what}: a drag above the line does nothing`).closeTo(
         after[0].t,
-        0.3
+        1.5
       )
 
       // Held still on the middle right: a crawl, shown until it is let go.
-      await down(width * 0.9, height * 0.5)
+      await down(width * 0.9, blockTop + (blockBottom - blockTop) * 0.45)
       await pause(600)
       expect(await slowShown(), `${what}: slow motion shows`).equals(true)
       await up()

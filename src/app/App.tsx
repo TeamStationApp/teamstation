@@ -260,6 +260,12 @@ type Pushed =
        * `t` instead.
        */
       from?: PlayerFrom
+      /**
+       * A highlight chosen on another page, opened in the player at once and
+       * stopped here, in `videoId`'s seconds. Never written to the address,
+       * and taken off by the open.
+       */
+      highlightUntil?: number
     }
   | { name: 'account' }
   /**
@@ -2478,14 +2484,15 @@ function Shell(props: AppProps): React.ReactElement {
             })
           )
         }}
-        onOpenMoment={(gameId, videoId, atSec, title) => {
+        onOpenMoment={(gameId, videoId, atSec, title, untilSec) => {
           push({
             name: 'game',
             gameId,
             title,
             videoId,
             at: atSec,
-            autoPlay: true
+            autoPlay: true,
+            ...(untilSec == null ? {} : { highlightUntil: untilSec })
           })
         }}
         onRemovedFromTeam={(teamId, name, notice) => {
@@ -2774,6 +2781,7 @@ function Shell(props: AppProps): React.ReactElement {
         angles={top.angles}
         audioId={top.audio}
         from={top.from}
+        highlightUntil={top.highlightUntil}
         onAngles={next => {
           inPlace.current = !anglesOpenPage(next)
           setStacks(current => {

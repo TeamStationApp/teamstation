@@ -40,6 +40,17 @@ describe('NativeVideoHandle', function () {
     expect(handle.paused).equals(false)
   })
 
+  it('says it is seeking from the seek it asks for until the player lands it', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const { ref } = fakePlayer()
+    handle.attach(ref)
+    expect(handle.seeking).equals(false)
+    handle.currentTime = 40
+    expect(handle.seeking).equals(true)
+    handle.handleSeek(seeked(40))
+    expect(handle.seeking).equals(false)
+  })
+
   it('leaves a paused video paused after a seek', function () {
     const handle = new NativeVideoHandle(() => undefined)
     const { ref, calls } = fakePlayer()

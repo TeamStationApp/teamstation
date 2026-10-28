@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { type LayoutChangeEvent, StyleSheet, View } from 'react-native'
 
 import type { BoardStep, TeamStationClient } from '../../../common/api'
@@ -26,6 +26,8 @@ export interface ScoreboardOverlayProps {
   place: (natural: Size) => Rect | null
   /** Its natural size, each time it is measured. */
   onNaturalSize?: (natural: Size) => void
+  /** Where it is drawn, each time that changes; null while it is not. */
+  onRect?: (rect: Rect | null) => void
 }
 
 /**
@@ -45,7 +47,7 @@ export interface ScoreboardOverlayProps {
 export function ScoreboardOverlay(
   props: ScoreboardOverlayProps
 ): React.ReactElement | null {
-  const { step, place, onNaturalSize } = props
+  const { step, place, onNaturalSize, onRect } = props
   const [natural, setNatural] = useState<Size | null>(null)
   const measured = useCallback(
     (event: LayoutChangeEvent) => {
@@ -60,9 +62,18 @@ export function ScoreboardOverlay(
     },
     [onNaturalSize]
   )
+  const rect = step == null || natural == null ? null : place(natural)
+  // Said after the render that drew it there, and only when it moved.
+  const told = useRef<string | null>(null)
+  const key = rect == null ? 'none' : `${rect.x},${rect.y},${rect.w},${rect.h}`
+  useEffect(() => {
+    if (told.current === key) return
+    told.current = key
+    onRect?.(rect)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, onRect])
   if (step == null) return null
 
-  const rect = natural == null ? null : place(natural)
   const scale = natural == null || rect == null ? 1 : rect.h / natural.height
   const shown = natural != null && rect != null
   return (
@@ -118,6 +129,11 @@ export interface PictureScoreboardProps {
   videoRef: React.RefObject<VideoHandle | null>
   /** Told the video's wall timeline each time it changes, for the player. */
   onTimeline?: (timeline: WallTimeline | null) => void
+  /**
+   * Told where the board is drawn, in the picture's view, each time that
+   * changes, or null while none is: the card's controls keep clear of it.
+   */
+  onPlaced?: (rect: Rect | null) => void
 }
 
 /**
@@ -167,6 +183,7 @@ export function PictureScoreboard(
     if (frame != null && stepsInFrame(board.steps, frame.fromMs, frame.toMs))
       framed = step ?? zeroedStep(board.steps, frame.fromMs)
   }
+  const { onPlaced } = props
   const shown = keptBoard({
     client,
     gameId,
@@ -176,6 +193,11 @@ export function PictureScoreboard(
     steps: board.steps,
     wallMs: wallNow()
   })
+  const none = shown == null || overlay == null
+  // Nothing drawn: no board to keep clear of. Drawn, the overlay says where.
+  useEffect(() => {
+    if (none) onPlaced?.(null)
+  }, [none, onPlaced])
   if (shown == null || overlay == null) return null
   return (
     <ScoreboardOverlay
@@ -183,6 +205,7 @@ export function PictureScoreboard(
       place={natural =>
         singleBoardRect({ picture, placement: overlay.single, natural })
       }
+      onRect={onPlaced}
     />
   )
 }

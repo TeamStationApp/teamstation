@@ -122,6 +122,12 @@ export interface GamePlaybackReturn {
   autoPlay: boolean
 }
 
+/**
+ * The longest the picture is covered on its way back from full screen: past
+ * the resume's own wait for a mapping, and then the seek.
+ */
+const UNCOVER_MS = 6000
+
 /** How far past the seekable end a resume may still be sought to. */
 const SEEKABLE_SLACK_SEC = 0.25
 
@@ -201,9 +207,17 @@ export interface GameScreenProps {
      * the player opens on that moment. `null` clears it, on the way out.
      */
     from?: PlayerFrom | null
+    /** `null`: the highlight `highlightUntil` asked for has been opened. */
+    highlightUntil?: null
   }) => void
   /** Where the open player was opened from (`onAngles`'s `from`). */
   from?: PlayerFrom
+  /**
+   * A highlight chosen on another page: once `initialVideoId` can play, the
+   * player opens on it at `startAtSec`, playing, and stops here, in that
+   * video's seconds — as a highlight chosen on this page does.
+   */
+  highlightUntil?: number
   /** Opens one of the two teams, from its name or its mark on the card. */
   onOpenTeam?: (team: TeamSummary) => void
   /** Opens one player, from their line in the box score. */
@@ -1031,6 +1045,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * screen owns it.
    */
   const viewerWants = useRef(false)
+  /** The card plays silent until its own sound square turns it on. */
+  const [cardSound, setCardSound] = useState(false)
+  /**
+   * The card is on its way back from the full-screen player, to the moment
+   * it left: covered until it lands there.
+   */
+  const [backFromGrid, setBackFromGrid] = useState(false)
   const suspended = useRef(false)
   suspended.current = showAngles
   /**
@@ -1106,6 +1127,50 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       element.removeEventListener('pause', onPause)
     }
   }, [playerNode])
+
+  // Uncovered once the picture is at that moment: the resume sets its time
+  // and the player draws the frame there a moment later, when it says the
+  // seek is done.
+  useEffect(() => {
+    if (!backFromGrid || resumeAt != null) return
+    const element = playerNode
+    const uncover = (): void => {
+      setBackFromGrid(false)
+    }
+    // Gone already, or never on its way: nothing to wait for. A browser's
+    // player says when its seek is done and over, and the event for it may
+    // have come before this listened.
+    if (
+      element == null ||
+      element.readyState < HAVE_METADATA ||
+      (element as { seeking?: boolean }).seeking === false
+    ) {
+      uncover()
+      return
+    }
+    // The phone's player can also land a seek through its progress, with no
+    // `seeked`: its next time, with no seek in flight, says so.
+    const landed = (): void => {
+      if ((element as { seeking?: boolean }).seeking === false) uncover()
+    }
+    element.addEventListener('seeked', uncover)
+    element.addEventListener('timeupdate', landed)
+    return () => {
+      element.removeEventListener('seeked', uncover)
+      element.removeEventListener('timeupdate', landed)
+    }
+  }, [backFromGrid, resumeAt, playerNode])
+  // And never longer than this from the close, whatever the resume does: one
+  // that cannot land must not leave the card black.
+  useEffect(() => {
+    if (!backFromGrid) return
+    const timer = setTimeout(() => {
+      setBackFromGrid(false)
+    }, UNCOVER_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [backFromGrid])
 
   useEffect(() => {
     const element = playerNode
@@ -1305,6 +1370,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const switchAngle = (next: VideoSummary): void => {
     const player = playerRef.current
     const current = video
+    // The viewer has chosen another camera: a highlight still waiting to open
+    // is not for it, nor for its own camera once they come back to it.
+    if (props.highlightUntil != null && next.id !== current?.id)
+      onAngles?.({ highlightUntil: null })
     if (player == null || current == null || next.id === current.id) {
       setVideo(next)
       // Public previews have no player, but their selected camera still belongs
@@ -1344,16 +1413,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * videos page's picture has no controls of its own, and a tap on it is
    * what watching it means.
    */
-  const openPlayer = (sec: number): void => {
+  const openPlayer = (sec: number, untilSec?: number): void => {
     if (video == null) return
+    // Its wall times by its own mapping, which knows where a stream's gaps
+    // and discontinuities are, as its start time does not.
+    const mapping = inlineMapping(video)
     onAngles?.({
       angles: [video.id],
       audio: video.id,
       zoom: null,
       at: null,
-      // Its wall time by its own mapping, which knows where a stream's gaps
-      // and discontinuities are, as its start time does not.
-      from: { videoId: video.id, sec, wallMs: inlineMapping(video).wallAt(sec) }
+      from: {
+        videoId: video.id,
+        sec,
+        wallMs: mapping.wallAt(sec),
+        ...(untilSec == null
+          ? {}
+          : { untilSec, untilWallMs: mapping.wallAt(untilSec) })
+      },
+      highlightUntil: null
     })
   }
 
@@ -1374,8 +1452,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // Watched in the player, from the play on — when it can play here at
     // all, as the picture's own tap: otherwise the player opens on a picture
     // that can only say it cannot.
-    if (playback?.url != null && playable) openPlayer(highlight.startOffsetSec)
+    if (playback?.url != null && playable)
+      openPlayer(highlight.startOffsetSec, highlight.endOffsetSec)
   }
+
+  // A highlight chosen on another page opens here straight into the player,
+  // once its video can play: the same open as one chosen in the list.
+  // Its end is in the seconds of the video it was chosen on, which is the
+  // address's video as the page opened: another camera chosen before it can
+  // play is another recording, and the highlight is not opened on it (and is
+  // dropped, in `switchAngle`). A video the page itself paints first, from a
+  // copy of the game that does not list it yet, only waits.
+  const highlightUntil = props.highlightUntil
+  const highlightVideo = useRef<string | undefined>(undefined)
+  if (highlightUntil == null) highlightVideo.current = undefined
+  else highlightVideo.current ??= initialVideoId
+  useEffect(() => {
+    if (highlightUntil == null || video == null || showAngles) return
+    if (video.id !== highlightVideo.current) return
+    if (playback?.url == null || !playable) return
+    openPlayer(startAtSec ?? 0, highlightUntil)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightUntil, video?.id, playback?.url, playable, showAngles])
 
   // The chosen play's full account clears itself a minute and a half after the
   // moment it seeks to — measured in **played** time, not wall clock. A timer
@@ -1730,10 +1828,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ) : (
         <PlayerSurface
           videoRef={playerRef}
+          player={playerNode}
+          muted={!cardSound}
+          onMutedChange={next => {
+            setCardSound(!next)
+          }}
           width={layout.videoWidth}
           height={layout.videoHeight}
           active={!showAngles}
           scoreboard={pictureBoard}
+          playable={playback?.url != null && playable}
           onOpen={
             playback?.url == null || !playable
               ? undefined
@@ -1762,16 +1866,29 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               <Text style={styles.message}>{lstrings.video_not_supported}</Text>
             </View>
           ) : (
-            // No controls of its own: a tap opens the full-screen player,
-            // which has them, and its sound. This one always plays silent, so
-            // it leaves the phone's audio session to whatever was playing.
-            <VideoView
-              source={playback.url}
-              onHandle={takePlayer}
-              controls={false}
-              muted
-              live={freshStatus === 'live'}
-            />
+            // No controls of its own: the card's press grid is its controls.
+            // Silent until its sound square says otherwise, so it leaves the
+            // phone's audio session to whatever was playing.
+            <>
+              <VideoView
+                source={playback.url}
+                onHandle={takePlayer}
+                controls={false}
+                muted={!cardSound}
+                live={freshStatus === 'live'}
+              />
+              {/* Black while the full-screen player is up, its source
+                  detached, and on its way back to where that player left it:
+                  the frame it had before, or the recording's first, is not
+                  that moment — and a sheet pulled down shows this card. */}
+              {backFromGrid || showAngles ? (
+                <View
+                  testID="gameVideoLanding"
+                  style={styles.landing}
+                  pointerEvents="none"
+                />
+              ) : null}
+            </>
           )}
         </PlayerSurface>
       )}
@@ -1967,6 +2084,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     from == null || fromVideo == null
       ? null
       : (from.wallMs ?? wallAt(placedAlone([fromVideo])[0], from.sec))
+  /**
+   * Where a highlight opened in the player stops: its end's wall time by the
+   * mapping its start was taken by, or, where that could not say, as far
+   * past the start as the highlight runs.
+   */
+  const endAtMs =
+    from?.untilSec == null
+      ? null
+      : (from.untilWallMs ??
+        (fromMs == null ? null : fromMs + (from.untilSec - from.sec) * 1000))
 
   const multiCam = showAngles ? (
     <MultiCamView
@@ -1980,6 +2107,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // shared the pictures with the taps that play, pause and skip, and
       // fought them. An address that still names one is ignored.
       zoomedId={null}
+      endAtMs={endAtMs}
       atMs={
         fromMs ??
         (takeWindow != null && startAtSec != null && startAtSec > 0
@@ -1999,35 +2127,41 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           zoom: next.zoomedId
         })
       }}
-      onGone={atWallMs => {
+      onGone={(atWallMs, playing) => {
         // However it went — the browser's Back takes the angles off the
         // address without a close — the picture goes back to the moment the
-        // player had reached, paused, as it does from the ✕.
-        // The ✕ has already written its own, exact, resume for this close.
+        // player had reached, playing or paused as it was, as it does from
+        // the ✕. The ✕ has already written its own, exact, resume for this
+        // close.
         const closed = closedByX.current
         closedByX.current = false
         if (closed || atWallMs == null || video == null) return
-        viewerWants.current = false
-        const back = { videoId: video.id, wallMs: atWallMs, playing: false }
+        viewerWants.current = playing
+        setBackFromGrid(true)
+        const back = { videoId: video.id, wallMs: atWallMs, playing }
         // Into the ref as well: the grid goes in the same commit as the
         // picture's source is attached again, which reads it before the
         // state has rendered.
         resumeAtRef.current = back
         setResumeAt(back)
       }}
-      onClose={atWallMs => {
+      onClose={(atWallMs, playing) => {
         // The videos page's picture goes back to the moment the player had
-        // reached, paused, and nothing that recovers a stalled player is to
-        // start it again.
-        viewerWants.current = false
+        // reached, playing if it was playing and paused if it was paused;
+        // what recovers a stalled player follows the same wish.
+        viewerWants.current = playing
         closedByX.current = true
+        // Covered only while a resume is on its way, which needs a moment
+        // to go back to.
+        if (atWallMs != null || resumeAtRef.current != null)
+          setBackFromGrid(true)
         if (video != null)
           setResumeAt(current =>
             atWallMs != null
-              ? { videoId: video.id, wallMs: atWallMs, playing: false }
+              ? { videoId: video.id, wallMs: atWallMs, playing }
               : current == null
                 ? undefined
-                : { ...current, playing: false }
+                : { ...current, playing }
           )
         onAngles?.({
           angles: [],
@@ -2488,6 +2622,15 @@ const getStyles = cacheStyles((theme: Theme) =>
       maxWidth: theme.rem(22),
       padding: theme.rem(0.75),
       textAlign: 'center'
+    },
+    /** Over the picture while it is on its way back from full screen. */
+    landing: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: '#000000'
     },
     /**
      * What stands in the picture's place — loading, gone, or not playable

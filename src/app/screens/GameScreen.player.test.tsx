@@ -84,6 +84,8 @@ async function page(
     timeline?: Array<[number, number]>
     /** Each video's own wall timeline, by id. */
     timelines?: Record<string, Array<[number, number]>>
+    /** Each video's playback, when not at once. */
+    playback?: (videoId: string) => Promise<Playback>
   } = {}
 ): Promise<Page> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
@@ -106,6 +108,7 @@ async function page(
                 title: 'Selected single',
                 startOffsetSec: 120,
                 playOffsetSec: 123,
+                endOffsetSec: 128,
                 eventType: 'single',
                 isScoringPlay: true,
                 stillUrl: '',
@@ -118,7 +121,7 @@ async function page(
   client.gameScheduling = async () => {
     throw new Error('not a scheduler')
   }
-  client.playback = async videoId => playable(videoId)
+  client.playback = options.playback ?? (async videoId => playable(videoId))
   client.wallTimeline = async videoId => {
     const anchors = options.timelines?.[videoId] ?? options.timeline
     if (anchors == null) throw new Error('no timeline')
@@ -237,8 +240,34 @@ describe("the videos page's picture and the full-screen player (U12)", function 
         videoId: 'v1',
         sec: 41.5,
         wallMs: Date.parse(START) + 39_500
-      }
+      },
+      highlightUntil: null
     })
+  })
+
+  it('keeps the picture silent until its own sound square, and heard after (U15)', async function () {
+    await page([videoOf('v1', START)])
+    expect(inline().muted).equals(true)
+    const zones = document.querySelector('[data-testid="gameVideoZones"]')!
+    const tap = async (x: number, y: number): Promise<void> => {
+      for (const type of ['mousedown', 'mouseup'])
+        await act(async () => {
+          zones.dispatchEvent(
+            new window.MouseEvent(type, {
+              bubbles: true,
+              clientX: x,
+              clientY: y,
+              button: 0,
+              buttons: type === 'mouseup' ? 0 : 1
+            })
+          )
+        })
+    }
+    // The top-left square, near its corner.
+    await tap(3, 3)
+    expect(inline().muted).equals(false)
+    await tap(3, 3)
+    expect(inline().muted).equals(true)
   })
 
   it('plays the picture silent, the player with its sound, and the picture silent again once it closes', async function () {
@@ -267,6 +296,33 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
     expect(document.querySelectorAll('video')).length(1)
     expect(inline().muted).equals(true)
+  })
+
+  it('uncovers the picture a few seconds on even when its resume cannot land', async function () {
+    this.timeout(12_000)
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from: { videoId: 'v1', sec: 40 }
+    })
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+    const landing = (): Element | null =>
+      document.querySelector('[data-testid="gameVideoLanding"]')
+    // The picture never says it has loaded, nor that a seek is done.
+    expect(landing()).not.equals(null)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 6200))
+    })
+    expect(landing()).equals(null)
   })
 
   it('opens at the wall time the picture’s own timeline gives, across a 34 s discontinuity (M8)', async function () {
@@ -305,49 +361,160 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     await act(async () => {
       highlight.click()
     })
-    expect(view.changes.at(-1)?.from).deep.include({ videoId: 'v1', sec: 120 })
+    expect(view.changes.at(-1)?.from).deep.include({
+      videoId: 'v1',
+      sec: 120,
+      untilSec: 128
+    })
+    // The end's wall time on the start's own mapping: eight seconds on.
+    const from = view.changes.at(-1)!.from!
+    expect(from.untilWallMs! - from.wallMs!).equals(8000)
+    expect(view.changes.at(-1)?.highlightUntil).equals(null)
     expect(view.changes.at(-1)?.angles).deep.equals(['v1'])
     expect(video.currentTime).equals(120)
   })
 
-  it('puts the picture back at the moment the player reached, paused', async function () {
-    // Two seconds of sync offset: the player opens on the picture's own wall
-    // time, and the way back converts it through the same offset.
-    const from = { videoId: 'v1', sec: 40 }
-    const view = await page([videoOf('v1', START, 2)], {
-      angles: ['v1'],
-      audioId: 'v1',
-      from
-    })
-    const video = inline()
-    const { played } = drive(video, 40)
-    const close = document.querySelector<HTMLElement>(
-      `[aria-label="${lstrings.angles_close}"]`
-    )!
+  it('opens a highlight only on the video it was chosen on', async function () {
+    // v1, the highlight's, never becomes playable; v2 does at once.
+    const view = await page(
+      [videoOf('v1', START), videoOf('v2', START)],
+      {
+        initialVideoId: 'v1',
+        startAtSec: 120,
+        autoPlay: true,
+        highlightUntil: 128
+      },
+      {
+        playback: async videoId =>
+          videoId === 'v1'
+            ? await new Promise<Playback>(() => undefined)
+            : playable(videoId)
+      }
+    )
+    expect(view.changes.filter(change => change.from != null)).length(0)
+    // Another camera, chosen before the highlight could open: not opened on it.
+    const tab = document.querySelectorAll<HTMLElement>(
+      '[aria-label="Camera angles"] [role="tab"]'
+    )[1]
     await act(async () => {
-      close.click()
-    })
-    expect(view.changes.at(-1)).deep.equals({
-      angles: [],
-      audio: null,
-      zoom: null,
-      at: null,
-      from: null
-    })
-    video.currentTime = 0
-    await view.rerender({
-      angles: undefined,
-      audioId: undefined,
-      from: undefined
+      tab.click()
     })
     await act(async () => {
-      video.dispatchEvent(new window.Event('loadedmetadata'))
+      await new Promise(resolve => setTimeout(resolve, 30))
     })
-    await waitToLand()
-    expect(video.currentTime).closeTo(40, 0.001)
-    expect(video.paused).equals(true)
-    expect(played()).equals(0)
+    expect(view.changes.filter(change => change.from != null)).length(0)
+    // And the highlight is dropped, so it does not wait for a way back to v1.
+    expect(view.changes).deep.includes({ highlightUntil: null })
   })
+
+  it('keeps a highlight waiting through a video the page chose itself', async function () {
+    // A copy of the game that does not list the highlight's recording yet:
+    // the page paints the one it has.
+    const view = await page([videoOf('v2', START)], {
+      initialVideoId: 'v1',
+      startAtSec: 120,
+      autoPlay: true,
+      highlightUntil: 128
+    })
+    expect(view.changes.filter(change => change.from != null)).length(0)
+    expect(view.changes).not.deep.includes({ highlightUntil: null })
+  })
+
+  it('opens a highlight chosen on another page straight into the player, once', async function () {
+    const view = await page([videoOf('v1', START)], {
+      initialVideoId: 'v1',
+      startAtSec: 120,
+      autoPlay: true,
+      highlightUntil: 128
+    })
+    const opens = view.changes.filter(change => change.from != null)
+    expect(opens).length(1)
+    expect(opens[0].from).deep.include({
+      videoId: 'v1',
+      sec: 120,
+      untilSec: 128
+    })
+    expect(opens[0].highlightUntil).equals(null)
+    // Drawn again with the highlight taken off, as the shell does: nothing
+    // more opens.
+    await view.rerender({ highlightUntil: undefined })
+    expect(view.changes.filter(change => change.from != null)).length(1)
+  })
+
+  for (const playing of [true, false])
+    it(`puts the picture back at the moment the player reached, ${playing ? 'playing' : 'paused'} as the player was`, async function () {
+      // Two seconds of sync offset: the player opens on the picture's own
+      // wall time, and the way back converts it through the same offset.
+      const from = { videoId: 'v1', sec: 40 }
+      const view = await page([videoOf('v1', START, 2)], {
+        angles: ['v1'],
+        audioId: 'v1',
+        from
+      })
+      const video = inline()
+      const { played } = drive(video, 40)
+      if (!playing)
+        // The grid's own pause, from its keyboard.
+        await act(async () => {
+          window.dispatchEvent(
+            new window.KeyboardEvent('keydown', { key: 'k', bubbles: true })
+          )
+        })
+      const close = document.querySelector<HTMLElement>(
+        `[aria-label="${lstrings.angles_close}"]`
+      )!
+      await act(async () => {
+        close.click()
+      })
+      expect(view.changes.at(-1)).deep.equals({
+        angles: [],
+        audio: null,
+        zoom: null,
+        at: null,
+        from: null
+      })
+      video.currentTime = 0
+      await view.rerender({
+        angles: undefined,
+        audioId: undefined,
+        from: undefined
+      })
+      // Covered while it is on its way back: frame 0 is not that moment.
+      const landing = (): Element | null =>
+        document.querySelector('[data-testid="gameVideoLanding"]')
+      expect(landing()).not.equals(null)
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      // Loaded, as a player is once it has said so, and seeking to the
+      // resume's moment until it says the seek is done.
+      Object.defineProperty(video, 'readyState', {
+        configurable: true,
+        value: 1
+      })
+      let seeking = true
+      Object.defineProperty(video, 'seeking', {
+        configurable: true,
+        get: () => seeking
+      })
+      await waitToLand()
+      // Until the player has drawn the frame there, which it says: with a
+      // `seeked`, or as the phone's can, with its next time and no seek in
+      // flight.
+      expect(landing()).not.equals(null)
+      await act(async () => {
+        video.dispatchEvent(new window.Event('timeupdate'))
+      })
+      expect(landing(), 'a time with the seek still in flight').not.equals(null)
+      await act(async () => {
+        seeking = false
+        video.dispatchEvent(new window.Event(playing ? 'seeked' : 'timeupdate'))
+      })
+      expect(landing()).equals(null)
+      expect(video.currentTime).closeTo(40, 0.001)
+      expect(video.paused).equals(!playing)
+      expect(played() > 0).equals(playing)
+    })
 
   it('keeps the ✕’s own moment, not one the grid reaches as it goes', async function () {
     const from = { videoId: 'v1', sec: 40 }
@@ -383,7 +550,7 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(video.currentTime).closeTo(40, 0.001)
   })
 
-  it('puts the picture back at the player’s moment, paused, when Back takes the player away', async function () {
+  it('puts the picture back at the player’s moment, playing as the player was, when Back takes the player away', async function () {
     const from = { videoId: 'v1', sec: 40 }
     const view = await page([videoOf('v1', START)], {
       angles: ['v1'],
@@ -403,8 +570,8 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
     await waitToLand()
     expect(video.currentTime).closeTo(40, 0.001)
-    expect(video.paused).equals(true)
-    expect(played()).equals(0)
+    expect(video.paused).equals(false)
+    expect(played()).greaterThan(0)
   })
 
   it('lands at once when the timeline has answered with no anchors and the stream with no dates', async function () {

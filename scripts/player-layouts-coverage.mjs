@@ -60,7 +60,14 @@ const tsSuites = [
   'src/server/routes/lineScore.test.ts',
   'src/app/navigation/gameAngles.test.ts',
   'src/server/live/timestampJump.test.ts',
-  'src/server/live/splitter.test.ts'
+  'src/server/live/splitter.test.ts',
+  // Where a highlight stops (mobile video sheet, M1).
+  'src/common/nodeSettings.test.ts',
+  'src/server/highlights.test.ts',
+  'src/server/nodeSettings.test.ts',
+  'src/server/routes/highlightRoutes.test.ts',
+  // The phone's icon font, with the event card's full-screen icon (M5).
+  'src/app/components/iconFont.test.ts'
 ]
 
 /**
@@ -73,11 +80,12 @@ const appSuites = [
   'src/app/App.player.test.tsx',
   // The home screen's cards, which play a live game as a live viewer.
   'src/app/components/VideoPoster.test.tsx',
-  'src/app/navigation/stepBackNative.test.ts',
+  'src/app/navigation/stepBackNative.test.tsx',
   'src/app/screens/GameScreen.player.test.tsx',
   'src/app/screens/HomeScreen.recentGame.test.tsx',
   'src/app/screens/HomeScreen.test.tsx',
-  'src/app/screens/gameLivePlayback.test.tsx'
+  'src/app/screens/gameLivePlayback.test.tsx',
+  'src/app/screens/NodeSettingsCard.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE
