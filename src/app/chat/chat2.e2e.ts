@@ -983,7 +983,10 @@ assert all(math.isfinite(n) for n in [v['width'],v['height'],*c.values()])
 assert v['width']>0 and v['height']>0 and c['width']>0 and c['height']>0
 assert c['x']>=0 and c['y']>=0 and c['x']+c['width']<=v['width'] and c['y']+c['height']<=v['height']
 sx=a.width/v['width']; sy=a.height/v['height']
-assert sx>=1 and abs(sx-sy)<0.000001 and abs(sx-round(sx))<0.000001, 'Actual uniform native raster scale required'
+# A whole-number scale, within one raster pixel per axis: an iPhone 15's raw
+# frame is 1178 px wide for its 393-point (3x) screen.
+k=round(sy)
+assert k>=1 and abs(a.width-v['width']*k)<=1 and abs(a.height-v['height']*k)<=1, 'Actual uniform native raster scale required'
 aa=a.convert('RGBA'); bb=b.convert('RGBA')
 diff=ImageChops.difference(aa,bb)
 boxes=[band.getbbox() for band in diff.split()]
@@ -1087,7 +1090,15 @@ export async function observeComposerCaptureReady(
         AbortSignal.timeout(remaining())
       )
     try {
-      const args = { ...selector, timeout: Math.min(120, remaining()) }
+      // The native drivers match an id as a pattern, so chat-composer also
+      // finds chat-composer-band: the lookup is anchored, the check is exact.
+      const args = {
+        ...selector,
+        ...(ui.native && typeof selector.id === 'string'
+          ? { id: exactText(selector.id) }
+          : {}),
+        timeout: Math.min(120, remaining())
+      }
       const options = { signal: AbortSignal.timeout(remaining()) }
       const found = (await device.assertVisible(args, options)).element
       if (ui.surface === 'android') {
@@ -1123,7 +1134,14 @@ export async function observeComposerCaptureReady(
       if (ui.surface === 'ios' && found != null) {
         if (typeof selector.id === 'string')
           assert(
-            found.id === selector.id,
+            found.id === selector.id ||
+              // A phone's driver answers with its own element UUID, not the
+              // accessibility identifier: there the anchored lookup above is
+              // the identity.
+              (ui.physical &&
+                /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i.test(
+                  found.id ?? ''
+                )),
             'Exact positive iOS composer identity required'
           )
         if (typeof selector.text === 'string')
@@ -8820,6 +8838,14 @@ export class Scenarios {
       'reduced-transparency'
     ]) {
       await this.check('E12 ' + variant + ' changed-state sweep', async () => {
+        // Android's launch after a Settings recipe restarts the app on its
+        // Home tab, and each variant first measures the composer; the sweep
+        // anchors the reader itself.
+        if (
+          ui.surface === 'android' &&
+          !(await ui.visible({ id: exactText('chat-composer') }, 2000))
+        )
+          await this.openGroup()
         await ui.variant(variant, async () => {
           await this.openGroup()
           await this.anchor()

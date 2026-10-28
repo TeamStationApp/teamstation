@@ -985,6 +985,13 @@ describe('chat native capture readiness transport', function () {
         height: 800
       })
     ).throws('Actual uniform native raster scale')
+    // An iPhone 15's raw frame is one pixel short of 3x its points.
+    expect(
+      compareFrames(composerPng([caret()]), composerPng([caret()]), undefined, {
+        width: 400.4,
+        height: 800
+      }).accepted
+    ).equals(true)
   })
   function spotlight(mode: string): { ui: Chat2UI; shots: () => number } {
     let reads = 0
@@ -5769,6 +5776,8 @@ describe('chat native adapter compatibility', function () {
           surface,
           runDir: '/tmp/synthetic-variant',
           present: async () => {},
+          // The chat stays open between variants: no Android reopening.
+          visible: async () => true,
           shot: async () => {},
           variant: async (name: string, work: () => Promise<void>) => {
             current = name
