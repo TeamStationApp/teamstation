@@ -180,6 +180,34 @@ describe('pill label clearance', () => {
         })
         expect(selected).equals('people')
       })
+  it('small tabs keep shell clearance in 44-point targets that reach the midpoint', async () => {
+    let selected = ''
+    const container = await render(
+      <PillTabs
+        size="small"
+        stacked
+        selected="all"
+        tabs={[
+          { id: 'all', label: 'All seasons' },
+          { id: 'spring', label: 'Spring Regular' }
+        ]}
+        onSelect={id => {
+          selected = id
+        }}
+      />
+    )
+    const tabs = [...container.querySelectorAll<HTMLElement>('[role="tab"]')]
+    for (const tab of tabs) {
+      expect(parseFloat(getComputedStyle(tab).minHeight)).equals(44)
+      expect(getComputedStyle(tab).paddingLeft).equals('4px')
+      expect(getComputedStyle(tab).paddingRight).equals('4px')
+      clearsArcs(tab.firstElementChild!)
+    }
+    await act(async () => {
+      tabs[1].click()
+    })
+    expect(selected).equals('spring')
+  })
   it('count and header action pills have clear labels and 48-point action targets', async () => {
     let presses = 0
     const container = await render(

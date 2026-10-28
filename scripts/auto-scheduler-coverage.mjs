@@ -133,7 +133,10 @@ const appSuites = [
   // Fixes M6: any registry field for a run, through the picker's field mode.
   'src/app/screens/FieldPickerScene.test.tsx',
   // Fixes M9: the native directions to a field's point.
-  'src/app/platform/eventDirections.native.test.tsx'
+  'src/app/platform/eventDirections.native.test.tsx',
+  // Preview calendar M2: the small, stacked filter pills.
+  'src/app/components/PillTabs.test.tsx',
+  'src/app/components/pillGeometry.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE
