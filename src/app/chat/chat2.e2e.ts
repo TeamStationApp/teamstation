@@ -2625,7 +2625,9 @@ export class Scenarios {
   async nativeAnchorReady(
     target: Chat2Message,
     earlier = false,
-    parentSignal = this.ui.deadline
+    parentSignal = this.ui.deadline,
+    // Set on the one retry after a scroll to top carried the reader past it.
+    recovered = false
   ): Promise<PublicNode[]> {
     const ui = this.ui
     assert(ui.native, 'Native anchor geometry required')
@@ -2928,7 +2930,32 @@ export class Scenarios {
         await ui.device.tapOnPoint(point, { signal: signal() })
         for (let reads = 0; reads < 5; reads++) {
           await new Promise(resolve => setTimeout(resolve, 1000))
-          const next = await read()
+          let next: Awaited<ReturnType<typeof read>>
+          try {
+            next = await read()
+          } catch (error) {
+            // A short history's start can lie just past the target: the touch
+            // carries the reader beyond it, and the rendered window lets it
+            // go. It is found again among the loaded rows (from the start
+            // toward the latest) and framed from there, once.
+            if (
+              earlier ||
+              recovered ||
+              (await this.conversationNodes(signal())).some(matchesTarget)
+            )
+              throw error
+            proof.statusBarPassedTarget = statusBar.length + 1
+            assert(
+              await this.nativeLoadedTarget(target, signal(), 'older'),
+              'A target the scroll to top passed must be found again'
+            )
+            return await this.nativeAnchorReady(
+              target,
+              earlier,
+              parentSignal,
+              true
+            )
+          }
           if (next == null) return handoff()
           const resting = Math.abs(next.box.y - current.box.y) < 1
           current = next

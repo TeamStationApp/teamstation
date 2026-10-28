@@ -5196,7 +5196,28 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
-  it('pastes on Android through the field menu, and keeps backspace and recording calls unchanged', async () => {
+  it('waits out an Android system window that breaks the hierarchy read, and only that', async () => {
+    const actual = ui([], 'android')
+    let reads = 0
+    actual.device.hierarchy = async () => {
+      reads += 1
+      if (reads === 1)
+        throw Error(
+          "unknown error: Cannot set AccessibilityNodeInfo's field 'mSealed' to 'true' (DEVICE_ERROR)"
+        )
+      return { nodes: [] }
+    }
+    await actual.androidSystemWindowsSettled()
+    expect(reads).equals(2)
+    expect(actual.steps.at(-1)).deep.includes({ attempts: 2 })
+    actual.device.hierarchy = async () => {
+      throw Error('Public hierarchy disconnected')
+    }
+    expect(
+      String(await captureFailure(actual.androidSystemWindowsSettled()))
+    ).contains('Public hierarchy disconnected')
+  })
+  it('pastes on Android with the system paste key, and keeps backspace and recording calls unchanged', async () => {
     const actual = ui([], 'android')
     const calls: unknown[] = []
     actual.device.setClipboard = async args => {
@@ -5214,6 +5235,9 @@ describe('chat native adapter compatibility', function () {
     actual.device.pressKey = async args => {
       calls.push(['key', args])
     }
+    actual.androidKey = async (code: number) => {
+      calls.push(['androidKey', code])
+    }
     actual.device.startRecording = async args => {
       calls.push(['start', args])
     }
@@ -5228,8 +5252,10 @@ describe('chat native adapter compatibility', function () {
     })
     expect(calls).deep.equals([
       ['set', { text: 'sentinel' }],
-      ['long', { id: 'chat-composer', duration: 600 }],
-      ['tap', { text: '^Paste$' }],
+      // Android 16's driver cannot read the floating Paste menu: the focused
+      // composer takes the system paste key.
+      ['tap', { id: 'chat-composer' }],
+      ['androidKey', 279],
       ['key', { key: 'BACKSPACE' }],
       ['start', { path: 'movie.mp4' }],
       'work',
@@ -14008,6 +14034,49 @@ describe('phone reach of a far native anchor', function () {
       String(await captureFailure(m.scenario.nativeAnchorReady(far)))
     ).contains('System scroll to top must bring the far target nearer')
   })
+  it('finds the target again when the scroll to top carries a short history past it', async function () {
+    const m = reader(true)
+    let state: 'far' | 'passed' | 'found' = 'far'
+    m.scenario.ui.device.tapOnPoint = async point => {
+      m.taps.push({ x: Number(point.x), y: Number(point.y) })
+      if (state === 'far') state = 'passed'
+    }
+    const nodes = m.scenario.ui.device.hierarchy.bind(m.scenario.ui.device)
+    m.scenario.ui.device.hierarchy = async () => {
+      const tree = (await nodes()) as {
+        nodes: Array<{ identifier?: string; rect: { y: number } }>
+      }
+      // Past the target the window unmounts it; the sweep brings it back.
+      if (state === 'passed')
+        tree.nodes = tree.nodes.filter(
+          node => node.identifier !== 'chat-bubble-' + far.id
+        )
+      if (state === 'found')
+        for (const node of tree.nodes)
+          if (node.identifier === 'chat-bubble-' + far.id) node.rect.y = 300
+      return tree
+    }
+    const sought: string[] = []
+    Object.assign(m.scenario, {
+      nativeLoadedTarget: async (
+        target: Chat2Message,
+        _signal: AbortSignal,
+        first: string
+      ) => {
+        sought.push(target.id + ':' + first)
+        state = 'found'
+        return true
+      }
+    })
+    await m.scenario.nativeAnchorReady(far)
+    expect(sought).deep.equals([far.id + ':older'])
+    const proofs = m.scenario.observations.filter(
+      row => row.nativeAnchor === far.id
+    )
+    expect(proofs[0].statusBarPassedTarget).equals(1)
+    expect(proofs.at(-1)!.outcome).equals('passed')
+  })
+
   it('keeps the simulator on its measured flicks', async function () {
     const m = reader(false)
     await m.scenario.nativeAnchorReady(far)

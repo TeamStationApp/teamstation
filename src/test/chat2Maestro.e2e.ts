@@ -1687,6 +1687,8 @@ function lockTree(path: string): void {
 }
 
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+/** android.view.KeyEvent.KEYCODE_PASTE */
+const ANDROID_KEYCODE_PASTE = 279
 /** The Android RPC backend can return JPEG even when its API promises PNG. */
 export function saveCapture(bytes: Uint8Array, destination: string): Args {
   const raw = Buffer.from(bytes)
@@ -2715,14 +2717,79 @@ export class Chat2UI {
       return
     }
     if (this.surface === 'android') {
-      // The driver cannot read Android's clipboard from the background, so
-      // paste through the field's own menu, as a person does.
-      await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
-      await this.device.tapOn({ text: exactText('Paste') })
+      // The driver cannot read Android's clipboard from the background, and
+      // on Android 16 its hierarchy read fails while the field's floating
+      // text menu is open (AccessibilityNodeInfo mSealed), so Paste in that
+      // menu cannot be found. The system paste key pastes the clipboard into
+      // the focused field, as a keyboard's paste does; the caller still
+      // proves the pasted text.
+      await this.device.tapOn({ id: 'chat-composer' })
+      await this.androidKey(ANDROID_KEYCODE_PASTE)
+      // The paste answers with a system toast ("pasted from your clipboard")
+      // and the clipboard overlay, and the driver's hierarchy read fails
+      // while such a window is up: wait them out, then close the overlay.
+      await this.androidSystemWindowsSettled()
+      await this.closeAndroidClipboardOverlay()
+      // The pasted text reaches the field a moment after the key (the paste
+      // toast is already up while the composer still reads empty); the
+      // caller then proves the text itself.
+      await until(
+        async () => ((await this.draft()) !== '' ? true : undefined),
+        'Android pasted text in the composer',
+        10000
+      ).catch(() => undefined)
       return
     }
     await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
     await this.iosMenuAction('Paste')
+  }
+
+  /**
+   * On Android 16 the driver's hierarchy read fails (AccessibilityNodeInfo
+   * mSealed) while a transient system window such as a toast is up. Read
+   * until one succeeds, ten seconds at most; any other failure is real.
+   */
+  async androidSystemWindowsSettled(): Promise<void> {
+    assert(this.surface === 'android', 'Android system windows require Android')
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.device.hierarchy({ signal: this.deadline })
+        this.steps.push({
+          name: 'Android system windows settled',
+          outcome: 'passed',
+          attempts: attempt
+        })
+        return
+      } catch (error) {
+        if (!String(error).includes('mSealed') || attempt >= 10) throw error
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+  }
+
+  /** One Android key event through adb, for keys the driver has no name for. */
+  async androidKey(code: number): Promise<void> {
+    assert(this.surface === 'android', 'Android key event requires Android')
+    const args = [
+      '-s',
+      this.deviceId,
+      'shell',
+      'input',
+      'keyevent',
+      String(code)
+    ]
+    const result = spawnSync(process.env.CHAT2_ADB ?? 'adb', args, {
+      encoding: 'utf8',
+      timeout: 15000
+    })
+    this.steps.push({
+      name: 'Android key event',
+      outcome: result.status === 0 ? 'passed' : 'failed',
+      args,
+      exitCode: result.status,
+      transportError: result.error?.message
+    })
+    assert.equal(result.status, 0, 'Android key event required: ' + code)
   }
 
   async restoreClipboard(): Promise<void> {
