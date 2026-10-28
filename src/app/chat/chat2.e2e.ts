@@ -54,7 +54,7 @@ import {
   saveCapture,
   until
 } from '../../test/chat2Maestro.e2e'
-import type { MessageView } from './engine/apply'
+import { type MessageView, reactionKey } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
@@ -6513,9 +6513,10 @@ export class Scenarios {
             ),
             'Actual quick-reaction target must be verified before toggle'
           )
+          // The app groups 👍 and 👍️ as one reaction (reactionKey).
           const present = before.reactions.some(
             reaction =>
-              reaction.emoji === expectedEmoji &&
+              reactionKey(reaction.emoji) === reactionKey(expectedEmoji) &&
               reaction.userIds.includes(this.viewerId)
           )
           expectedReactionPresent = !present
@@ -6552,9 +6553,11 @@ export class Scenarios {
             const target = view.messages.find(
               m => m.id === this.f.messages.target.id && m.status === 'ok'
             )
+            // The picker's 👍️ joins a 👍 group shown in its first form.
             return target?.reactions.some(
               r =>
-                r.emoji === expectedEmoji && r.userIds.includes(this.viewerId)
+                reactionKey(r.emoji) === reactionKey(expectedEmoji) &&
+                r.userIds.includes(this.viewerId)
             ) === expectedReactionPresent
               ? true
               : undefined

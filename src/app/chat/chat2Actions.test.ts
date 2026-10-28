@@ -1711,7 +1711,8 @@ describe('chat native adapter compatibility', function () {
                 post(
                   reads >= 3
                     ? {
-                        emoji: fault === 'wrong-glyph' ? '👍' : glyph,
+                        // 👍 is the picker 👍️'s own group (reactionKey); a wrong glyph is another emoji.
+                        emoji: fault === 'wrong-glyph' ? '👎' : glyph,
                         userIds: [
                           fault === 'wrong-viewer' ? userIdOfGumbo(8) : viewerId
                         ]
@@ -5138,7 +5139,7 @@ describe('chat native adapter compatibility', function () {
     ])
     expect(await nonempty.draft()).equals('Actual\nsecond line')
   })
-  it('keeps the Android draft on copyTextFrom and reads public text passively', async () => {
+  it('falls back to copyTextFrom for an Android draft the hierarchy does not show, and reads public text passively', async () => {
     const actual = ui([], 'android')
     actual.device.copyTextFrom = async () => ({
       data: 'Android draft',
@@ -5147,6 +5148,21 @@ describe('chat native adapter compatibility', function () {
     actual.nodes = async () => [{ id: 'item', text: 'Android item' }]
     expect(await actual.draft()).equals('Android draft')
     expect(await actual.publicText('item')).equals('Android item')
+  })
+  it('reads an Android draft passively, leaving the device clipboard alone', async () => {
+    const actual = ui([], 'android')
+    let copies = 0
+    actual.device.copyTextFrom = async () => {
+      copies += 1
+      return { data: 'clobbered' }
+    }
+    actual.nodes = async () => [
+      { id: 'chat-composer', text: 'Practice update: bring water.' }
+    ]
+    expect(await actual.draft()).equals('Practice update: bring water.')
+    actual.nodes = async () => [{ id: 'chat-composer', text: 'Message' }]
+    expect(await actual.draft(), 'Its hint is no draft').equals('')
+    expect(copies, 'No clipboard write').equals(0)
   })
   it('requires the actual observed OS menu item before tapping Copy', async () => {
     const actual = ui([
@@ -12402,18 +12418,19 @@ describe('E5 exact touch quick-reaction toggle', () => {
       expectedAfterPresent: true
     })
   })
-  it('does not normalize a viewer VS16 glyph into the raw quick glyph', async () => {
+  it("counts a viewer's picker 👍️ as the quick 👍, so the quick tap removes it", async () => {
     const result = await run({
       before: [{ emoji: '👍️', userIds: [viewer] }],
-      after: [
-        { emoji: '👍️', userIds: [viewer] },
-        { emoji: '👍', userIds: [viewer] }
-      ]
+      after: []
     })
     expect(result.error).equals(undefined)
+    expect(result.observations[0].actualQuickReactionToggle).deep.includes({
+      beforePresent: true,
+      expectedAfterPresent: false
+    })
   })
   for (const after of [
-    [{ emoji: '👍️', userIds: [viewer] }],
+    [{ emoji: '👎', userIds: [viewer] }],
     [{ emoji: '👍', userIds: [other] }]
   ])
     it('rejects a different raw glyph or another reacting viewer after addition', async () => {

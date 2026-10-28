@@ -5083,6 +5083,24 @@ export class Chat2UI {
         'Native composer value is empty, placeholder, or ambiguous; an explicit empty-UI proof is required'
       )
     }
+    // copyTextFrom writes the device clipboard, so a draft read between an
+    // app's Copy and the paste replaced the copied text with the draft (E5
+    // pasted an empty field). The field's text is read from the passive
+    // hierarchy when it is there; copyTextFrom is only the fallback.
+    // Just after the app's restart the composer can still be mounting: look
+    // for it for a few seconds before falling back.
+    let passive: PublicNode[] = []
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 1000))
+      passive = (await this.nodes()).filter(
+        node => node.id === 'chat-composer' && typeof node.text === 'string'
+      )
+      if (passive.length > 0) break
+    }
+    if (passive.length === 1)
+      return passive[0].text === ANDROID_COMPOSER_PLACEHOLDER
+        ? ''
+        : passive[0].text!
     const value = await this.device.copyTextFrom({ id: 'chat-composer' })
     await this.closeAndroidClipboardOverlay()
     // An empty field's text is its placeholder (its hint), which is no draft.
