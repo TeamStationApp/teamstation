@@ -4607,7 +4607,9 @@ export class Scenarios {
 
   async dismiss(): Promise<void> {
     const ui = this.ui
-    if (ui.native && ui.surface === 'ios') {
+    // Android's Back closes an open keyboard first and leaves the spotlight
+    // open, so a phone's spotlight is closed through its own backdrop.
+    if (ui.native) {
       const nodes = await ui.nodes()
       const scenes = nodes.filter(node => node.id === 'chat-message-spotlight')
       if (scenes.length !== 0) {
@@ -4643,8 +4645,17 @@ export class Scenarios {
             ? scene.y + scene.height
             : Math.min(scene.y + scene.height, measured(keyboards[0]).y)
         // iOS reports no status bar element, and a touch on it is the
-        // system's scroll to top, not the app's backdrop.
-        const safeTop = ui.surface === 'ios' ? Math.max(frameTop, 60) : frameTop
+        // system's scroll to top, not the app's backdrop; Android's status
+        // bar (its own window) is no backdrop either.
+        const androidBar = nodes.find(
+          node => node.id === 'com.android.systemui:id/status_bar'
+        )?.bounds
+        const safeTop =
+          ui.surface === 'ios'
+            ? Math.max(frameTop, 60)
+            : androidBar == null
+              ? frameTop
+              : Math.max(frameTop, androidBar.y + androidBar.height)
         const frame = { ...scene, y: safeTop, height: frameBottom - safeTop }
         // The controls container lets touches through its empty space, so
         // only the reactions, the preview and the actions block the backdrop.
@@ -4710,6 +4721,14 @@ export class Scenarios {
             )
           )
         choices.sort((a, b) => b.width * b.height - a.width * a.height)
+        // Android's keyboard is no node of the app's hierarchy, and it covers
+        // the backdrop below the controls: there the backdrop above them goes
+        // first.
+        if (ui.surface === 'android')
+          choices.sort(
+            (a, b) =>
+              Number(b.y + b.height <= top) - Number(a.y + a.height <= top)
+          )
         const clear = need(
           choices[0],
           'Measured exposed spotlight backdrop required'

@@ -9731,7 +9731,8 @@ describe('native scenario navigation and mention handoff', function () {
 describe('iOS spotlight backdrop dismissal', () => {
   function model(
     top: number,
-    fault = ''
+    fault = '',
+    surface: 'ios' | 'android' = fault === 'android' ? 'android' : 'ios'
   ): {
     scenario: Scenarios
     calls: string[]
@@ -9834,7 +9835,7 @@ describe('iOS spotlight backdrop dismissal', () => {
     }
     const ui = Object.assign(Object.create(Chat2UI.prototype), {
       native: true,
-      surface: fault === 'android' ? 'android' : 'ios',
+      surface,
       deadline: AbortSignal.timeout(10000),
       device: {
         hierarchy: async () => ({
@@ -9934,10 +9935,27 @@ describe('iOS spotlight backdrop dismissal', () => {
     await m.scenario.dismiss()
     expect(m.calls).deep.equals(['Cancel'])
   })
-  it('retains Android Back without an iOS backdrop tap', async () => {
-    const m = model(0, 'android')
+  it('retains Android Back when no spotlight is open', async () => {
+    const m = model(0, 'generic', 'android')
     await m.scenario.dismiss()
     expect(m.calls).deep.equals(['Back'])
+  })
+  it('closes an Android spotlight through the backdrop above it, where no keyboard is', async () => {
+    // More backdrop below the controls than above: on Android that is where
+    // the keyboard is, and Back would only close the keyboard.
+    const m = model(122.66666412353516, '', 'android')
+    const taps: Array<{ x: number; y: number }> = []
+    const point = m.scenario.ui.device.tapOnPoint.bind(m.scenario.ui.device)
+    m.scenario.ui.device.tapOnPoint = async (args, options) => {
+      taps.push(args as { x: number; y: number })
+      await point(args, options)
+    }
+    await m.scenario.dismiss()
+    await m.scenario.ui.absent('chat-message-spotlight')
+    expect(m.calls).not.includes('Back')
+    expect(taps).has.length(1)
+    expect(taps[0].y).at.most(122.66666412353516)
+    expect(m.actions).deep.equals([])
   })
 })
 
