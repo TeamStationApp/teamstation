@@ -380,6 +380,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/users/insertUser.js',
   'server/users/mintUserId.js',
   'server/users/nameBook.js',
+  'server/users/rosterCandidates.js',
   'server/users/survivors.js',
   'server/venues/fieldWarnings.js',
   'server/venues/occupancy.js',

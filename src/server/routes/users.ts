@@ -16,6 +16,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withRevision } from '../socket/syncRevision'
+import { candidateQueryOf, rosterCandidates } from '../users/rosterCandidates'
 import { teamsOf } from './players'
 import { externalIdsAsked } from './seasons'
 
@@ -44,6 +45,9 @@ export interface UserMatch {
  * `guardedBy=me` asks instead for the players the asker is a guardian of
  * (`guardedPlayers`), by short name: what Home lists as "Your Players". Only
  * `me` is accepted, and never beside `externalId`.
+ *
+ * `forTeam=<teamId>`, with `forGame`, `q`, `limit` and `after`, asks for the
+ * players a roster manager may add to that team (`rosterCandidates`).
  */
 export function userRoutes(
   db: Kysely<Database>,
@@ -57,6 +61,11 @@ export function userRoutes(
     withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      if (req.query.forTeam !== undefined) {
+        const ask = candidateQueryOf(req.query)
+        res.json(await rosterCandidates(db, actor, ask, space))
+        return
+      }
       const guardedBy = req.query.guardedBy
       if (guardedBy !== undefined) {
         if (guardedBy !== 'me') throw badRequest('guardedBy must be me')

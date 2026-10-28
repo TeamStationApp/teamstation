@@ -38,6 +38,21 @@ export function shortName(person: NamedPerson): string {
 }
 
 /**
+ * A short name split where it was built: the first name, and what was kept of
+ * the last. `Jordan Pa` → `Jordan`, `Pa`. The add-to-roster form shows the two
+ * halves in its two name fields without ever holding the whole name.
+ */
+export function shortParts(
+  person: NamedPerson,
+  short: string
+): { first: string; last: string } {
+  const { first } = halves(person)
+  if (first !== '' && short.startsWith(first))
+    return { first, last: short.slice(first.length).trim() }
+  return { first: '', last: short }
+}
+
+/**
  * `Jordan`, `Pujols` → `Jordan Pujols`: both halves as stored, or the display name
  * for somebody imported before there were halves.
  */

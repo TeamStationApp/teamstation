@@ -6056,7 +6056,23 @@ export function openApiDocument(version: string): OpenApiDocument {
             'administrator instead receives account identity and node/suspension ' +
             'state, filtered by query (name or verified email, at most 120 ' +
             'characters). This view requires no externalId and does not alter ' +
-            'the default identity-lookup response.',
+            'the default identity-lookup response. ' +
+            'With `forTeam` instead, the answer is the players a roster ' +
+            'manager of that team (or, with `forGame`, a scorekeeper of either ' +
+            'team in that game) may add to it: every live player, and every ' +
+            'full account (switched on, with an email) though it plays for ' +
+            'no team, nearest first by `tier` (`mine`: a team you are on or ' +
+            "hold a role on, or a person you guard; `season`: a team in the game's " +
+            "season, or any season the team is in; `league`: a team in the team's " +
+            'league; `other`: everyone else, a full account that plays for no ' +
+            'team among them, listed only once `q` holds three characters). ' +
+            'Players already on the team, and with `forGame` ' +
+            'anybody already in that game, are left out. Each row adds ' +
+            '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
+            'in a season ending today or later), `tier` and `cursor`, and ' +
+            'nothing else about the person. `forTeam` beside `externalId` or ' +
+            '`guardedBy` is 400. A team or game you cannot see is 404; one you ' +
+            'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -6093,6 +6109,40 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', minLength: 1 },
               description: 'Restrict external IDs to this source system'
+            },
+            {
+              name: 'forTeam',
+              in: 'query',
+              schema: { type: 'string', minLength: 1 },
+              description:
+                'Players who may be added to this team. Omitted: the other ways of asking.'
+            },
+            {
+              name: 'forGame',
+              in: 'query',
+              schema: { type: 'string', minLength: 1 },
+              description:
+                'With forTeam: a game the team plays in. Its season ranks players, and anybody already in it is left out.'
+            },
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', maxLength: 100, default: '' },
+              description:
+                'With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
+              description: 'With forTeam: rows per page.'
+            },
+            {
+              name: 'after',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'With forTeam: the cursor of the last row of the previous page.'
             },
             {
               name: 'guardedBy',
