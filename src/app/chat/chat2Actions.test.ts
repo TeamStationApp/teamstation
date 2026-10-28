@@ -11151,6 +11151,52 @@ describe('native pinned jump settlement', function () {
       }
     )
 
+  it('goes on to native history when a single pin jumped without opening a list', async () => {
+    const m = model('missing-pin')
+    const taps: Array<PublicNode['bounds']> = []
+    Object.assign(m.scenario.ui, {
+      // Only the summary's own first line, while its pinned post loads.
+      nodes: async () => [
+        { id: 'chat-pinned-summary', text: 'Pinned messages: 1' },
+        { text: 'Pinned messages' }
+      ],
+      tapObserved: async (node: PublicNode) => {
+        taps.push(node.bounds)
+      }
+    })
+    await m.scenario.anchor(target)
+    expect(taps, 'Nothing to close').deep.equals([])
+    expect(m.events.slice(-3)).deep.equals(['history', 'frame', 'present'])
+    expect(m.scenario.observations).deep.includes({
+      nativePinListClosed: 'no list open'
+    })
+  })
+
+  it('closes a phone pin list through the backdrop above its card, not the keyboard below', async () => {
+    const m = model('missing-pin')
+    const taps: Array<PublicNode['bounds']> = []
+    Object.assign(m.scenario.ui, {
+      // The card sits above an open keyboard: more backdrop below it than above.
+      nodes: async () => [
+        { text: 'Cancel', bounds: { x: 0, y: 0, width: 1170, height: 2532 } },
+        {
+          text: 'Pinned messages',
+          bounds: { x: 50, y: 900, width: 1070, height: 700 }
+        },
+        { id: 'chat-pin-msg-other' }
+      ],
+      tapObserved: async (node: PublicNode) => {
+        taps.push(node.bounds)
+      },
+      absent: async (id: string) => {
+        m.events.push('absent:' + id)
+      }
+    })
+    await m.scenario.anchor(target)
+    expect(taps).deep.equals([{ x: 0, y: 0, width: 1170, height: 892 }])
+    expect(m.events).includes('absent:chat-pin-msg-other')
+  })
+
   for (const mode of ['no-summary', 'missing-pin'])
     it(
       'retains ordinary native history fallback without a selected pin: ' +

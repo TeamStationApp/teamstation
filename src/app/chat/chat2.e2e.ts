@@ -2457,6 +2457,16 @@ export class Scenarios {
     const ui = this.ui
     type Box = NonNullable<PublicNode['bounds']>
     const nodes = await ui.nodes()
+    // A single pin's summary jumps without opening a list, and its own first
+    // line reads "Pinned messages" until its post loads: with no list row
+    // and no backdrop there is no list to close.
+    if (
+      !nodes.some(n => n.id?.startsWith('chat-pin-') === true) &&
+      !nodes.some(n => n.text === 'Cancel')
+    ) {
+      this.observations.push({ nativePinListClosed: 'no list open' })
+      return
+    }
     const largest = (text: string): Box =>
       need(
         nodes
@@ -2473,9 +2483,10 @@ export class Scenarios {
       y: list.y + list.height + 8,
       height: frame.y + frame.height - (list.y + list.height + 8)
     }
-    const clear = [above, below]
-      .filter(b => b.height >= 44)
-      .sort((a, b) => b.height - a.height)[0]
+    // A phone's list sits above its keyboard, which covers the backdrop
+    // below the card (a tap there types a key and the list stays open), so
+    // the backdrop above the card is tapped whenever it is exposed.
+    const clear = [above, below].find(b => b.height >= 44)
     const row = need(
       nodes.find(n => n.id?.startsWith('chat-pin-') === true)?.id,
       'Actual pinned list row required'
