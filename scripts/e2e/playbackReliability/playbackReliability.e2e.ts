@@ -683,14 +683,29 @@ describe('playback reliability on a phone', function () {
     }))
 
   /**
-   * The bottom third of the grid is its controls' own zone: a tap there calls
-   * the bar up and never seeks or pauses. 85 % down stays above a phone
-   * browser's own bar.
+   * The press grid lies on the block of videos: from the top of the topmost
+   * angle to the bottom of the bottommost. `row` is its row, 0 to 3, and the
+   * point is that row's middle, across the screen's middle.
+   */
+  const gridRow = async (row: number): Promise<string> => {
+    const rects = (await tileRegions()).map(region => region.rect)
+    const top = Math.min(...rects.map(rect => rect.y))
+    const bottom = Math.max(...rects.map(rect => rect.y + rect.h))
+    const y = top + ((row + 0.5) * (bottom - top)) / 4
+    return `${Math.round(screenWidth / 2)},${Math.round(y)}`
+  }
+
+  /**
+   * The bottom row of the grid is the scrub line's: a tap there calls the
+   * line up — on its own — and seeks to where it lands on it.
    */
   const callBar = async (): Promise<void> => {
-    await device!.tapOn({
-      point: `${Math.round(screenWidth / 2)},${Math.round(screenHeight * 0.85)}`
-    })
+    await device!.tapOn({ point: await gridRow(3) })
+  }
+
+  /** A top-centre square calls the controls above the line up, the ✕ among them, and does nothing else. */
+  const callControls = async (): Promise<void> => {
+    await device!.tapOn({ point: await gridRow(0) })
   }
 
   const showBar = async (): Promise<Found> => {
@@ -1048,11 +1063,26 @@ describe('playback reliability on a phone', function () {
       // takes longer than that, so each drag follows its tap at once.
       const bar = await showBar()
       const track = bar.rect
+      /**
+       * Each tile above the scrub line: the line is drawn on the bottom of
+       * the pictures, and its moving playhead and clock are not the
+       * picture moving.
+       */
+      const pictureAboveBar = async (): Promise<
+        Awaited<ReturnType<typeof tileRegions>>
+      > =>
+        (await tileRegions()).map(region => ({
+          ...region,
+          rect: {
+            ...region.rect,
+            h: Math.max(
+              1,
+              Math.min(region.rect.h, track.y - track.h - region.rect.y)
+            )
+          }
+        }))
       const firstNodes = await tree()
       let from = knobFraction(firstNodes, track) ?? 0
-      // Let the bar hide again: a tap on its zone while it shows puts it away,
-      // and the first drag would then land on a bar that is not there.
-      await pause(3500)
       const total = findExact(firstNodes, /^\d+(:\d\d){1,2}$/)
         .filter(node => node.rect.x >= track.x + track.w - 1)
         .map(node => clockSeconds(node.text) ?? 0)[0]
@@ -1065,9 +1095,10 @@ describe('playback reliability on a phone', function () {
       for (const [index, target] of SCRUBS.entries()) {
         await watch(
           `${count}: scrub ${index + 1} to ${Math.round(target * 100)} %`,
-          tileRegions,
+          pictureAboveBar,
+          // A drag along the bottom row is the scrub, wherever the line is
+          // showing: the bar is drawn on that row.
           async () => {
-            await callBar()
             await device!.swipe(
               dragAlong(track, from, target, {
                 width: screenWidth,
@@ -1084,7 +1115,7 @@ describe('playback reliability on a phone', function () {
         )
         from = target
       }
-      await showBar()
+      await callControls()
       await tapNode(await waitFor('Close'))
       expectAllPassed()
     })

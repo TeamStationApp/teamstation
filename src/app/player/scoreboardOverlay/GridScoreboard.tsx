@@ -4,14 +4,14 @@ import { StyleSheet, View } from 'react-native'
 import type { BoardStep, LineScoreStep } from '../../../common/api'
 import type { ScoreboardOverlay as OverlaySettings } from '../../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../../common/scoreboard'
-import { aspectOf, MAX_TILES, type Rect } from '../multiCam/layout'
+import { aspectOf, MAX_TILES } from '../multiCam/layout'
 import type { PlayerLayout } from '../multiCam/playerLayout'
 import type { MultiCam, MultiCamProps } from '../multiCam/useMultiCam'
 import { fromAnchors, type WallMapping } from '../wallMapping'
 import { stepsInFrame, zeroedStep } from './boardAt'
 import { keptBoard } from './keptBoard'
 import { LineScoreBox } from './LineScoreBox'
-import { type Size, tileNameTop } from './overlayLayout'
+import type { Size } from './overlayLayout'
 import { ScoreboardOverlay } from './ScoreboardOverlay'
 import { useBoardTimeline } from './useBoardTimeline'
 import { useLineScore } from './useLineScore'
@@ -64,20 +64,6 @@ export interface GridBoard {
    * null without anchors, undefined until the timeline has been fetched.
    */
   mappingOf: (videoId: string) => WallMapping | null | undefined
-  /**
-   * Where a tile's name goes, in its own coordinates, while the board is
-   * drawn over that tile (sideways), so it sits just below the full board;
-   * undefined to leave it where every tile has it. The board is over the
-   * top-left angle of four by the landscape setting, or over an angle that
-   * fills the box (zoomed, or the only one) by the single setting.
-   */
-  nameTop: (
-    index: number,
-    rect: Rect | undefined,
-    zoomed: number | null,
-    /** The safe area the board is kept in, as `GridScoreboard` is given it. */
-    safe?: Rect
-  ) => number | undefined
 }
 
 /**
@@ -91,8 +77,7 @@ export interface GridBoard {
  * handed back through `follow`.
  */
 export function useGridBoard(
-  props: Pick<MultiCamProps, 'client' | 'gameId' | 'order' | 'videos'>,
-  landscape: boolean
+  props: Pick<MultiCamProps, 'client' | 'gameId' | 'order' | 'videos'>
 ): GridBoard {
   const angles = useMemo(
     () =>
@@ -235,19 +220,6 @@ export function useGridBoard(
       return timeline.anchors.length === 0
         ? null
         : fromAnchors(timeline.anchors)
-    },
-    nameTop: (index, rect, zoomed, safe) => {
-      if (!landscape || !hasBoard || settings == null || rect == null)
-        return undefined
-      // As `GridScoreboard` places the board.
-      const filling = zoomed ?? (count === 1 ? 0 : null)
-      if (filling != null)
-        return index === filling
-          ? tileNameTop(rect, settings.single, safe, natural)
-          : undefined
-      return count >= 4 && index === 0
-        ? tileNameTop(rect, settings.landscape, safe, natural)
-        : undefined
     }
   }
 }

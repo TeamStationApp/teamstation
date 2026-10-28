@@ -17,9 +17,8 @@ afterEach(async function () {
 })
 
 describe("the phone's bar (U33b)", function () {
-  it('has no buttons, says how wide its track is, and scrubs on a drag along it', async function () {
-    const widths: number[] = []
-    const scrubs: Array<[number, boolean]> = []
+  it('has no buttons, takes no touch, and says where its track is in the press layer', async function () {
+    const rects: Array<{ x: number; w: number }> = []
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -30,10 +29,9 @@ describe("the phone's bar (U33b)", function () {
             window={{ fromMs: 0, toMs: 100_000 }}
             atMs={25_000}
             angles={[]}
-            onScrub={(ms, final) => scrubs.push([ms, final === true])}
-            onTrackWidth={px => widths.push(px)}
-            onInteract={() => undefined}
+            onTrackRect={rect => rects.push({ x: rect.x, w: rect.w })}
             visible
+            frame={{ left: 30, width: 400, bottom: 90 }}
           />
         </ThemeProvider>
       )
@@ -55,36 +53,25 @@ describe("the phone's bar (U33b)", function () {
     const layout = (
       track as unknown as {
         __reactLayoutHandler: (event: {
-          nativeEvent: { layout: { width: number; height: number } }
+          nativeEvent: {
+            layout: { x: number; y: number; width: number; height: number }
+          }
         }) => void
       }
     ).__reactLayoutHandler
     await act(async () => {
-      layout({ nativeEvent: { layout: { width: 200, height: 48 } } })
-    })
-    expect(widths).deep.equals([200])
-
-    const mouse = async (type: string, x: number): Promise<void> => {
-      await act(async () => {
-        track.dispatchEvent(
-          new window.MouseEvent(type, {
-            bubbles: true,
-            clientX: x,
-            clientY: 10,
-            button: 0,
-            buttons: type === 'mouseup' ? 0 : 1
-          })
-        )
+      layout({
+        nativeEvent: { layout: { x: 60, y: 8, width: 200, height: 24 } }
       })
-    }
-    await mouse('mousedown', 50)
-    await mouse('mousemove', 150)
-    await mouse('mouseup', 150)
-    // The finger lifting lands where it lifts.
-    expect(scrubs).deep.equals([
-      [25_000, false],
-      [75_000, false],
-      [75_000, true]
-    ])
+    })
+    // The frame's left plus the track's own place in the bar.
+    expect(rects).deep.equals([{ x: 90, w: 200 }])
+
+    // The press grid's bottom row, under the bar, is the scrub: the bar
+    // takes no touch.
+    let node: HTMLElement | null = track
+    while (node != null && getComputedStyle(node).pointerEvents !== 'none')
+      node = node.parentElement
+    expect(node, 'the bar takes no touch').not.equals(null)
   })
 })

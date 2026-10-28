@@ -24,7 +24,6 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import { tileRects } from './multiCam/layout'
 import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView } from './MultiCamView'
-import { tileNameTop } from './scoreboardOverlay/overlayLayout'
 
 let root: Root | undefined
 
@@ -105,6 +104,9 @@ async function grid(options: {
   atMs?: number
   /** The pane beside Tess's chat, which the grid covers instead of the window. */
   frame?: PaneFrame
+  /** A highlight's end, and what is told when it is reached. */
+  endAtMs?: number
+  onEndReached?: () => void
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -169,6 +171,10 @@ async function grid(options: {
           audioId={options.audioId ?? 'b'}
           zoomedId={options.zoomedId ?? null}
           atMs={options.atMs}
+          endAtMs={options.endAtMs}
+          onEndReached={() => {
+            options.onEndReached?.()
+          }}
           onChange={() => undefined}
           onClose={() => undefined}
           onGone={atWallMs => options.onGone?.(atWallMs)}
@@ -203,15 +209,13 @@ const tiles = (): HTMLElement[] =>
 
 const px = (value: string): number => Number.parseFloat(value)
 
-/** The box a tile's name sits in. */
-function nameOf(tile: HTMLElement): HTMLElement {
-  const text = [...tile.querySelectorAll<HTMLElement>('div')].find(
+/** Whether a tile draws its angle's name: it no longer does. */
+function nameShown(tile: HTMLElement): boolean {
+  return [...tile.querySelectorAll<HTMLElement>('div')].some(
     node =>
       node.childElementCount === 0 &&
       (node.textContent ?? '').includes('Angle ')
   )
-  if (text?.parentElement == null) throw new Error('A tile with no name')
-  return text.parentElement
 }
 
 /** Sets the position each tile's player reports. */
@@ -266,7 +270,7 @@ describe("the grid beside Tess's chat", function () {
     await grid({ width: 1280, height: 900, playable: true })
     const named = [...document.querySelectorAll('[role="img"][aria-label]')]
       .map(node => node.getAttribute('aria-label'))
-      .filter(label => label?.endsWith(' angle'))
+      .filter(label => label?.endsWith(' angle') === true)
     expect(named.length).equals(tiles().length)
     expect(named.length).greaterThan(0)
     for (const label of named) expect(label).match(/^\S.* angle$/)
@@ -291,24 +295,43 @@ describe("the grid beside Tess's chat", function () {
     }
   })
 
-  it("calls the bar up from a mouse over the bottom third of the pane, not the window's", async function () {
+  it('lays the press grid, the way out and the bar on the block of videos inside the pane', async function () {
     this.timeout(15000)
-    // The pane from 100 to 700: its bottom third starts at 500, the 768
-    // window's at 512.
-    await grid({
-      width: 1280,
-      height: 768,
-      playable: true,
-      frame: { x: 400, y: 100, width: 880, height: 600 }
-    })
-    const hidden = (): boolean =>
+    const frame = { x: 400, y: 100, width: 880, height: 600 }
+    await grid({ width: 1280, height: 768, playable: true, frame })
+    // The block, in the pane's coordinates, as the tiles are laid out.
+    const rects = tiles().map(tile => ({
+      x: px(tile.style.left),
+      y: px(tile.style.top),
+      w: px(tile.style.width),
+      h: px(tile.style.height)
+    }))
+    const top = Math.min(...rects.map(r => r.y))
+    const bottom = Math.max(...rects.map(r => r.y + r.h))
+    const left = Math.min(...rects.map(r => r.x))
+    const right = Math.max(...rects.map(r => r.x + r.w))
+    const bar = document.querySelector<HTMLElement>('div[style*="z-index: 5"]')!
+    expect(px(bar.style.left)).closeTo(left, 1)
+    expect(px(bar.style.width)).closeTo(right - left, 1)
+    expect(frame.height - px(bar.style.bottom)).closeTo(bottom, 1)
+
+    const barHidden = (): boolean =>
       document.querySelector('div[aria-hidden="true"][inert]') != null
+    const exitShown = (): boolean =>
+      document
+        .querySelector('[aria-label="Close"]')
+        ?.closest('[style*="opacity: 1"]') != null
     await settle(3300)
-    expect(hidden(), 'the bar hides by itself').equals(true)
-    const hover = async (clientY: number): Promise<void> => {
+    expect(barHidden(), 'the bar hides by itself').equals(true)
+    const hover = async (
+      clientX: number,
+      clientY: number,
+      buttons = 0
+    ): Promise<void> => {
       const event = new window.MouseEvent('pointermove', {
-        clientX: 800,
+        clientX,
         clientY,
+        buttons,
         bubbles: true
       })
       Object.defineProperty(event, 'pointerType', { value: 'mouse' })
@@ -316,10 +339,40 @@ describe("the grid beside Tess's chat", function () {
         document.dispatchEvent(event)
       })
     }
-    await hover(450)
-    expect(hidden(), 'above the third').equals(true)
-    await hover(505)
-    expect(hidden(), 'in the pane’s bottom third').equals(false)
+    // Over the block's middle, in the window: the controls, not the bar.
+    const midX = frame.x + (left + right) / 2
+    await hover(midX, frame.y + (top + bottom) / 2)
+    expect(barHidden(), 'above the bottom row').equals(true)
+    expect(exitShown(), 'the controls above it').equals(true)
+    // Over its bottom row: the bar, and the controls put away at once.
+    await hover(midX, frame.y + bottom - (bottom - top) * 0.1)
+    expect(barHidden(), 'over the bottom row').equals(false)
+    expect(exitShown(), 'the controls, put away').equals(false)
+    // And back up: the controls, the bar put away.
+    await hover(midX, frame.y + (top + bottom) / 2)
+    expect(exitShown(), 'the controls again').equals(true)
+    expect(barHidden(), 'the bar, put away').equals(true)
+    // Off the block — Tess's chat, left of the pane — nothing changes.
+    await hover(frame.x - 100, frame.y + (top + bottom) / 2)
+    expect(exitShown(), 'still the controls').equals(true)
+    await hover(frame.x - 100, frame.y + bottom - (bottom - top) * 0.1)
+    expect(barHidden(), 'the bar still put away').equals(true)
+    // A mouse with its button down is dragging, not hovering: the bottom row
+    // under it brings no bar up.
+    await hover(midX, frame.y + bottom - (bottom - top) * 0.1, 1)
+    expect(barHidden(), 'a drag over the bottom row').equals(true)
+    expect(exitShown(), 'the controls, left up').equals(true)
+    // With the keyboard in the bar, a mouse over the squares leaves it up:
+    // hidden, it is inert, and the focus would go with it.
+    await hover(midX, frame.y + bottom - (bottom - top) * 0.1)
+    const slider = document.querySelector<HTMLElement>('[role="slider"]')!
+    await act(async () => {
+      slider.focus()
+    })
+    expect(document.activeElement).equals(slider)
+    await hover(midX, frame.y + (top + bottom) / 2)
+    expect(barHidden(), 'the bar, kept up for the keyboard').equals(false)
+    expect(document.activeElement).equals(slider)
   })
 
   it('covers the window as before with no frame', async function () {
@@ -341,6 +394,36 @@ describe("the grid beside Tess's chat", function () {
 
 describe('the grid coming and going', function () {
   afterEach(unmount)
+
+  it("stops at a highlight's end and stays up (U12)", async function () {
+    let ends = 0
+    const paused: string[] = []
+    await grid({
+      width: 1280,
+      height: 720,
+      gameId: 'g1',
+      playable: true,
+      // The heard angle, b, 20 s in is 110 s on the wall by its own timeline.
+      endAtMs: OVERLAY_T0 + 115_000,
+      onEndReached: () => {
+        ends += 1
+      }
+    })
+    for (const video of document.querySelectorAll('video'))
+      video.pause = () => {
+        paused.push(video.src)
+      }
+    playAt(20)
+    playingIs(true)
+    await settle(400)
+    expect(ends).equals(0)
+    playAt(26)
+    await settle(400)
+    expect(ends).equals(1)
+    expect(paused.length).greaterThan(0)
+    // The website's full screen is the browser's to leave: still up.
+    expect(tiles().length).greaterThan(0)
+  })
 
   it("says the picture's own moment as it goes, not the clock's", async function () {
     const gone: Array<number | null> = []
@@ -472,8 +555,8 @@ describe('the board over the grid (C3)', function () {
     expect(placed).length(4)
     placed.forEach((tile, index) => {
       expect(px(tile.style.top)).closeTo(expected[index].y, 0.01)
-      // Clear of the board in its band, every name stays at its tile's top.
-      expect(nameOf(tile).style.top).equals('')
+      // No angle's name over its picture, nor over the board.
+      expect(nameShown(tile)).equals(false)
     })
   })
 
@@ -496,18 +579,15 @@ describe('the board over the grid (C3)', function () {
     expect(px(drawn[0].style.left)).closeTo(0.01 * corner.w, 0.01)
     // The tiles are where they always were.
     expect(px(tiles()[0].style.top)).closeTo(corner.y, 0.01)
-    // The top-left angle's name, and its sound marker, are below the board;
-    // every other angle's is where it always was.
-    const name = nameOf(tiles()[0])
-    expect(px(name.style.top)).closeTo(
-      tileNameTop(corner, { x: 0.01, y: 0.01, height: 0.15 }),
-      0.01
-    )
-    expect(px(name.style.top)).greaterThan(
-      px(drawn[0].style.top) + px(drawn[0].style.height)
-    )
-    for (const tile of tiles().slice(1))
-      expect(nameOf(tile).style.top).equals('')
+    // No angle's name is drawn to sit over the board, nor its sound marker.
+    for (const tile of tiles()) expect(nameShown(tile)).equals(false)
+    // Which angle is heard is on its tile for the end-to-end suite: one.
+    const labelled = [...document.querySelectorAll<HTMLElement>('[data-heard]')]
+    expect(labelled).length(tiles().length)
+    expect(
+      labelled.filter(tile => tile.getAttribute('data-heard') === 'true')
+    ).length(1)
+    expect(document.body.textContent).not.includes('🔊')
   })
 
   it('puts its notice on the angles below the band, not over the board', async function () {
@@ -840,11 +920,8 @@ describe('the board over the grid (C3)', function () {
     expect(px(board.style.left)).closeTo(picture.x + 0.1 * picture.w, 0.01)
     expect(px(board.style.top)).closeTo(picture.y + 0.2 * picture.h, 0.01)
     expect(px(board.style.height)).closeTo(0.3 * picture.h, 0.01)
-    // Its name, and its sound marker, just below the board.
-    expect(px(nameOf(tiles()[0]).style.top)).closeTo(
-      tileNameTop(picture, { x: 0.1, y: 0.2, height: 0.3 }),
-      0.01
-    )
+    // No name over the picture.
+    expect(nameShown(tiles()[0])).equals(false)
   })
 
   it('puts the board on a zoomed angle where the single-camera setting puts it, two or three across', async function () {
@@ -883,16 +960,8 @@ describe('the board over the grid (C3)', function () {
         0.01
       )
       expect(px(board.style.height), ids.join()).closeTo(0.3 * picture.h, 0.01)
-      // The zoomed angle's name goes just below the board; the others'
-      // stay where they always are, the top-left one's included.
-      tiles().forEach((tile, index) => {
-        if (index === 1)
-          expect(px(nameOf(tile).style.top), ids.join()).closeTo(
-            tileNameTop(picture, { x: 0.1, y: 0.2, height: 0.3 }),
-            0.01
-          )
-        else expect(nameOf(tile).style.top, ids.join()).equals('')
-      })
+      for (const tile of tiles())
+        expect(nameShown(tile), ids.join()).equals(false)
       await unmount()
     }
   })
@@ -932,9 +1001,9 @@ describe('the board over the grid (C3)', function () {
       expect(px(tiles()[0].style.top)).closeTo(expected[0].y, 0.01)
       await unmount()
     }
-    // Sideways with no board, the top-left angle's name stays at the top.
+    // Sideways with no board, no name either.
     await grid({ width: 1280, height: 720, gameId: 'g1', steps: [] })
     expect(overlays()).length(0)
-    expect(nameOf(tiles()[0]).style.top).equals('')
+    expect(nameShown(tiles()[0])).equals(false)
   })
 })

@@ -182,21 +182,6 @@ export function edgeToEdge(
   return { safe, top: landscape ? 0 : safe.y + band }
 }
 
-/**
- * How far into a tile the safe area starts: what a label at the tile's top
- * left must come in by to be clear of a notch, the island or a corner.
- */
-export function clearOf(
-  rect: Rect | undefined,
-  safe: Rect
-): { left: number; top: number } {
-  if (rect == null) return { left: 0, top: 0 }
-  return {
-    left: Math.max(0, safe.x - rect.x),
-    top: Math.max(0, safe.y - rect.y)
-  }
-}
-
 /** The angles' shared shape: the first one whose size is known, else 16:9. */
 export function aspectOf(
   videos: ReadonlyArray<{ width?: number | null; height?: number | null }>

@@ -97,6 +97,9 @@ export interface ReadoutVerdict {
   reasons: string[]
 }
 
+/** How old the readout can be when read. */
+export const STALE_MS = 1000
+
 /**
  * Judges a play window from readout snapshots. A tile froze when its `at`
  * stood still for longer than `freezeMs`; the grid stuttered when two reads
@@ -105,9 +108,22 @@ export interface ReadoutVerdict {
  * pauses inside a play window, so a paused tile is no excuse.
  */
 export function judgeReadout(
-  snapshots: Readout[],
+  window: Readout[],
   rules: ReadoutRules = READOUT_RULES
 ): ReadoutVerdict {
+  // The readout is up to a second old when read: reads in the window's first
+  // second that still find the grid held are the landing it had not caught up
+  // with yet — a scrub's old place, which would read as playing backwards —
+  // and not playback. A hold that lasts past that second is still judged.
+  const staleUntil = (window[0]?.atMs ?? 0) + STALE_MS
+  let lead = 0
+  while (
+    lead < window.length - 2 &&
+    window[lead].clock?.held === true &&
+    window[lead].atMs < staleUntil
+  )
+    lead += 1
+  const snapshots = window.slice(lead)
   const reasons: string[] = []
   const names = [...new Set(snapshots.flatMap(s => s.tiles.map(t => t.name)))]
   const rates: Record<string, number | null> = {}

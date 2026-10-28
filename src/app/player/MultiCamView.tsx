@@ -1,4 +1,11 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { createPortal } from 'react-dom'
 import { Text, View } from 'react-native'
 
@@ -11,12 +18,7 @@ import { attachHls } from './attachHls'
 import { playerDebug } from './debugFlag'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import type { ParkReason } from './multiCam/align'
-import {
-  ExitButton,
-  exitClearance,
-  exitSize,
-  exitTopClear
-} from './multiCam/barParts'
+import { ExitButton, exitClearance, gridControls } from './multiCam/barParts'
 import { useFullScreen } from './multiCam/fullScreen'
 import { edgeToEdge, type Rect } from './multiCam/layout'
 import {
@@ -34,6 +36,7 @@ import {
 import { MultiCamBar } from './MultiCamBar'
 import { playableHere } from './playable'
 import type { PlayIntent } from './playIntent'
+import { zoneAt, zoneGroup } from './pressGrid'
 import {
   GridScoreboard,
   useGridBoard
@@ -41,6 +44,7 @@ import {
 import type { Size } from './scoreboardOverlay/overlayLayout'
 import { useScreenInsets } from './useScreenInsets'
 import type { WallMapping } from './wallMapping'
+import { ZoneIcons } from './ZoneIcons'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -103,7 +107,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 
   // The game's board and box score, at the wall time of the master tile's
   // frame, and the angles around them (`playerLayout`).
-  const board = useGridBoard(props, landscape)
+  const board = useGridBoard(props)
   // Under the rounded corners and the camera while the grid is up: the
   // pictures run to the edges, and the board, the box and the controls keep
   // to what the hardware leaves.
@@ -124,25 +128,58 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
     })
   const layout = layoutFor(board.natural)
-  // The way out, in the top right, or under the board where it reaches there.
-  const exitTop = exitTopClear(
-    {
-      x: width - insets.right - theme.rem(theme.spaceSmRem) - exitSize(theme),
-      y: insets.top + theme.rem(theme.spaceSmRem),
-      w: exitSize(theme),
-      h: exitSize(theme)
-    },
-    [layout.board, layout.box],
-    theme.rem(theme.spaceSmRem)
-  )
-  const mc = useMultiCam(props, {
+  // The controls go on the block of videos, kept inside the safe area: the
+  // press grid over it (`pressGrid.ts`), the icons and the way out at its
+  // top, the scrub line on its bottom. In the pane's coordinates, as the
+  // tiles are.
+  const { block, gap, icons, exitTop, blockRight } = gridControls(
+    theme,
+    layout,
+    safe,
     width,
-    height,
-    debug,
-    rects: layout.tiles,
-    fallbackMapping: board.mappingOf
-  })
+    zoomedIndex
+  )
+  /**
+   * A pointer's place in the pane: the tiles, the block and the press grid
+   * are laid out in it, and beside Tess's chat it does not start at the
+   * window's corner.
+   */
+  const frameLeft = frame?.x ?? 0
+  const frameTop = frame?.y ?? 0
+  const paneX = (clientX: number): number => clientX - frameLeft
+  const paneY = (clientY: number): number => clientY - frameTop
+  const close = (): void => {
+    onClose(mc.wallNow() ?? mc.atWallMs, mc.playing)
+  }
+  /** The grid's own toggle, for a highlight's end, which the hook calls. */
+  const pauseRef = useRef<() => void>(() => undefined)
+  const mc = useMultiCam(
+    {
+      ...props,
+      // A highlight's end stops the pictures there, and leaves the view up:
+      // the website's full screen is the browser's to leave.
+      onEndReached: () => {
+        props.onEndReached?.()
+        pauseRef.current()
+      }
+    },
+    {
+      width,
+      height,
+      debug,
+      block,
+      icons,
+      onCorner: () => {
+        close()
+      },
+      rects: layout.tiles,
+      fallbackMapping: board.mappingOf
+    }
+  )
   board.follow(mc)
+  pauseRef.current = () => {
+    if (mc.playing) mc.toggle()
+  }
   const {
     askAgain,
     attaching,
@@ -151,9 +188,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     pressMove,
     pressEnd,
     pressCancel,
-    setTrackWidth,
-    scrub,
+    setTrackRect,
     showBar,
+    showControls,
+    hideBar,
+    hideControls,
     moveTile,
     dropTile,
     takeElement,
@@ -161,24 +200,59 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     barAngles
   } = mc
 
-  // A mouse over the bottom third calls the bar up, as a tap there does. A
-  // mouse only: a finger's `pointermove` is a drag, and belongs to the tiles.
-  const frameTop = frame?.y
-  const frameHeight = frame?.height
+  // The track says where it is in the window; the press grid works in the
+  // pane. Kept, so the bar measures again only when it moves.
+  const takeTrackRect = useCallback(
+    (rect: Rect): void => {
+      setTrackRect({ ...rect, x: rect.x - frameLeft, y: rect.y - frameTop })
+    },
+    [setTrackRect, frameLeft, frameTop]
+  )
+
+  // A mouse over the press grid calls up its group, as a tap there does: the
+  // scrub line over the bottom row, the controls above it. A mouse only: a
+  // finger's `pointermove` is a drag, and belongs to the tiles.
+  // The same reading of a point as a press makes: an icon moved into
+  // another square, while it shows, is its own.
+  const barRoot = useRef<HTMLDivElement | null>(null)
+  const hoverRef = useRef({ block, icons, shown: mc.controlsShown })
+  hoverRef.current = { block, icons, shown: mc.controlsShown }
   useEffect(() => {
     const hover = (event: PointerEvent): void => {
-      if (event.pointerType !== 'mouse') return
-      const bottomThird =
-        frameTop == null || frameHeight == null
-          ? (window.innerHeight * 2) / 3
-          : frameTop + (frameHeight * 2) / 3
-      if (event.clientY >= bottomThird) showBar()
+      // A mouse with a button held is dragging: the press's, not a hover.
+      if (event.pointerType !== 'mouse' || event.buttons !== 0) return
+      const held = hoverRef.current
+      const x = event.clientX - frameLeft
+      const y = event.clientY - frameTop
+      // Only over the block of videos: a mouse over Tess's chat beside the
+      // pane, or the page around it, is not over a square.
+      const { block: over } = held
+      if (
+        x < over.x ||
+        x > over.x + over.w ||
+        y < over.y ||
+        y > over.y + over.h
+      )
+        return
+      const zone = zoneAt(x, y, over, held.shown ? held.icons : null)
+      // One group at a time, as a tap shows them: moving from the squares
+      // onto the bottom row puts the controls away, and back again the line.
+      // Not while the keyboard is in the bar: hidden, it is inert, and the
+      // focus would go with it.
+      const typing = barRoot.current?.contains(document.activeElement) === true
+      if (zoneGroup(zone) === 'scrub') {
+        showBar()
+        if (!typing) hideControls()
+      } else {
+        showControls()
+        if (!typing) hideBar()
+      }
     }
     document.addEventListener('pointermove', hover)
     return () => {
       document.removeEventListener('pointermove', hover)
     }
-  }, [showBar, frameTop, frameHeight])
+  }, [showBar, showControls, hideBar, hideControls, frameLeft, frameTop])
 
   /**
    * The keyboard calls the bar up too, and Tab takes the focus into it.
@@ -191,7 +265,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    * only keeps it up. The keys the view answers show it as well, so a seek
    * from the keyboard shows where it went.
    */
-  const barRoot = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const keys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
     const down = (event: KeyboardEvent): void => {
@@ -199,7 +272,9 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       const bar = barRoot.current
       if (bar == null) return
       if (event.key === 'Tab') {
+        // Both groups: the ✕ is reached by the keyboard as well.
         showBar()
+        showControls()
         if (bar.contains(document.activeElement)) return
         event.preventDefault()
         const backwards = event.shiftKey
@@ -220,7 +295,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     return () => {
       window.removeEventListener('keydown', down, true)
     }
-  }, [showBar])
+  }, [showBar, showControls])
 
   // Black around the view as well as under it. Safari keeps the page out of
   // the notch and the home indicator when a phone is held sideways, and
@@ -314,7 +389,12 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         onPointerDown={event => {
           if (otherButton(event)) return
           if (
-            !pressStart(event.pointerId, event.clientX, event.clientY, null)
+            !pressStart(
+              event.pointerId,
+              paneX(event.clientX),
+              paneY(event.clientY),
+              null
+            )
           ) {
             return
           }
@@ -323,10 +403,10 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         // The same press as on a tile: a drag scrubs, a hold crawls, a tap is
         // its square's.
         onPointerMove={event => {
-          pressMove(event.pointerId, event.clientX, event.clientY)
+          pressMove(event.pointerId, paneX(event.clientX), paneY(event.clientY))
         }}
         onPointerUp={event => {
-          pressEnd(event.pointerId, event.clientX, event.clientY)
+          pressEnd(event.pointerId, paneX(event.clientX), paneY(event.clientY))
         }}
         onPointerCancel={event => {
           pressCancel(event.pointerId)
@@ -343,7 +423,12 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           // Silent throughout a crawl, whichever angle is heard: the sound
           // follows the moment, and a crawl across two recordings would
           // otherwise switch one on at a quarter speed.
-          muted={mc.slow !== 0 || video.id !== mc.heardId || mc.soundBlocked}
+          muted={
+            mc.slow !== 0 ||
+            video.id !== mc.heardId ||
+            mc.soundBlocked ||
+            mc.soundOff
+          }
           onAttaching={attaching}
           onAttached={attached}
           wantsToPlay={() => mc.intents.current.get(video.id) === true}
@@ -367,11 +452,16 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           }}
           touchAction={touchAction}
           heard={video.id === mc.heardId}
-          nameTop={board.nameTop(index, mc.rects[index], mc.zoomed)}
           armed={mc.armedTile === index}
-          onPressStart={(pointerId, x, y) => pressStart(pointerId, x, y, index)}
-          onPressMove={pressMove}
-          onPressEnd={pressEnd}
+          onPressStart={(pointerId, x, y) =>
+            pressStart(pointerId, paneX(x), paneY(y), index)
+          }
+          onPressMove={(pointerId, x, y) => {
+            pressMove(pointerId, paneX(x), paneY(y))
+          }}
+          onPressEnd={(pointerId, x, y) =>
+            pressEnd(pointerId, paneX(x), paneY(y))
+          }
           onPressCancel={pressCancel}
           onMove={(x, y) => {
             moveTile(index, x, y)
@@ -384,24 +474,33 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 
       <GridScoreboard board={board} layout={layoutFor} />
 
-      <SeekFlashView flash={mc.flash} />
-      {/* Top right, clear of the finger holding the crawl on the right, and
-          stepped left of the way out while that shows. */}
+      <View
+        style={[
+          styles.flashBox,
+          { left: block.x, top: block.y, width: block.w, height: block.h }
+        ]}
+        pointerEvents="none"
+      >
+        <SeekFlashView flash={mc.flash} />
+      </View>
+      <ZoneIcons
+        icons={icons}
+        visible={mc.controlsShown}
+        playing={mc.playing}
+        soundOff={mc.soundOff}
+      />
+      {/* Top right of the block, clear of the finger holding the crawl on
+          the right, and stepped left of the way out while that shows. */}
       <SlowMoBadge
         rate={mc.slow}
-        right={
-          mc.controlsShown
-            ? insets.right + exitClearance(theme) + theme.rem(theme.spaceSmRem)
-            : undefined
-        }
+        top={block.y + gap}
+        right={blockRight + gap + (mc.controlsShown ? exitClearance(theme) : 0)}
       />
       <ExitButton
         visible={mc.controlsShown}
-        onPress={() => {
-          onClose(mc.wallNow())
-        }}
-        top={exitTop - theme.rem(theme.spaceSmRem)}
-        right={insets.right}
+        onPress={close}
+        top={exitTop - gap}
+        right={blockRight}
       />
 
       {/* One at a time, most specific first: they share a place on the screen
@@ -448,13 +547,16 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           window={mc.take}
           atMs={mc.atWallMs}
           angles={barAngles(mc.take)}
-          onScrub={scrub}
-          onTrackWidth={setTrackWidth}
+          onTrackRect={takeTrackRect}
           onInteract={showBar}
-          visible={mc.barShown}
+          visible={mc.scrubShown}
           rootRef={barRoot}
-          panPage={swipeToHide}
           insets={insets}
+          frame={{
+            left: block.x,
+            width: block.w,
+            bottom: height - (block.y + block.h)
+          }}
         />
       ) : null}
     </View>,
@@ -510,8 +612,6 @@ function Tile(props: {
   touchAction: 'none' | 'pan-y'
   /** True while this is the one being heard. */
   heard: boolean
-  /** Where its name goes, below the grid's board; at the top otherwise. */
-  nameTop?: number
   /** The view's press has picked this tile up, to be carried. */
   armed: boolean
   /**
@@ -536,8 +636,7 @@ function Tile(props: {
     unplaceable,
     waiting,
     takeRef,
-    heard,
-    nameTop
+    heard
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -698,7 +797,9 @@ function Tile(props: {
               : 'loading'))
   return (
     <View
-      dataSet={{ tileState }}
+      // Which angle is heard, for the end-to-end suite, now that no name
+      // chip on the picture says so.
+      dataSet={{ tileState, heard: heard ? 'true' : 'false' }}
       // A picture, named for its angle, to assistive technology — and to the
       // end-to-end suite, which finds each tile's place on the glass by it.
       role="img"
@@ -748,14 +849,6 @@ function Tile(props: {
       {props.armed ? (
         <View style={styles.tileArmed} pointerEvents="none" />
       ) : null}
-      <View
-        style={[styles.tileName, nameTop == null ? null : { top: nameTop }]}
-        pointerEvents="none"
-      >
-        <Text style={styles.tileNameText} numberOfLines={1}>
-          {heard ? `🔊 ${name}` : name}
-        </Text>
-      </View>
       {parked != null ||
       unsupported ||
       unavailable ||
@@ -802,16 +895,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     transitionDuration: '200ms',
     transitionTimingFunction: 'ease'
   }),
-  tileName: {
-    position: 'absolute',
-    top: theme.rem(theme.spaceXsRem),
-    left: theme.rem(theme.spaceSmRem),
-    maxWidth: '80%',
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.125),
-    borderRadius: theme.rem(1),
-    backgroundColor: 'rgba(0, 0, 0, 0.45)'
-  },
   tileArmed: {
     position: 'absolute',
     top: 0,
@@ -820,13 +903,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0,
     borderWidth: 3,
     borderColor: theme.activeColor
-  },
-  tileNameText: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowRadius: 4
   },
   tileParked: {
     position: 'absolute',
@@ -860,6 +936,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: '#9cff9c',
     fontFamily: 'monospace',
     fontSize: theme.rem(0.6875)
+  },
+  flashBox: {
+    position: 'absolute',
+    zIndex: 6
   },
   notice: {
     position: 'absolute',

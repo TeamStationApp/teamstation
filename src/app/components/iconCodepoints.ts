@@ -33,6 +33,7 @@ export const iconCodepoints: Record<IconName, number> = {
   content_copy: 0xe14d,
   forward_10: 0xe056,
   replay_10: 0xe059,
+  fullscreen: 0xe5d0,
   music_note: 0xe3a1,
   description: 0xe873,
   stop: 0xe047,

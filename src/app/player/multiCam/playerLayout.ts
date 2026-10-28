@@ -405,3 +405,64 @@ export function topOfAngles(layout: PlayerLayout): number {
     ? 0
     : Math.min(...layout.tiles.map(tile => tile.y))
 }
+
+/**
+ * The block of videos the full-screen controls are placed on, whatever the
+ * count: from the top of the topmost video to the bottom of the bottommost,
+ * as wide as the widest row of them, from that row's left edge.
+ *
+ * A row is the videos that share a top. Three angles sideways with the board
+ * in the top-left quadrant are one video above two: the block is the bottom
+ * pair's width. Three without a board are two above one: the top pair's.
+ * Upright, a stack is one column, the same width every row. A zoomed angle
+ * is the one video on screen: the others stay laid out behind it. Null with
+ * none.
+ */
+export function videoBlock(
+  tiles: Rect[],
+  zoomed: number | null = null
+): Rect | null {
+  if (zoomed != null && tiles[zoomed] != null) return tiles[zoomed]
+  const shown = tiles.filter(tile => tile.w > 0 && tile.h > 0)
+  if (shown.length === 0) return null
+  const rows = new Map<number, { left: number; right: number }>()
+  for (const tile of shown) {
+    // The same top to the nearest pixel: layouts are worked out in floats.
+    const key = Math.round(tile.y)
+    const row = rows.get(key)
+    rows.set(key, {
+      left: Math.min(row?.left ?? Infinity, tile.x),
+      right: Math.max(row?.right ?? -Infinity, tile.x + tile.w)
+    })
+  }
+  let widest = { left: 0, right: 0 }
+  for (const row of rows.values())
+    if (row.right - row.left > widest.right - widest.left) widest = row
+  const top = Math.min(...shown.map(tile => tile.y))
+  const bottom = Math.max(...shown.map(tile => tile.y + tile.h))
+  return {
+    x: widest.left,
+    y: top,
+    w: widest.right - widest.left,
+    h: bottom - top
+  }
+}
+
+/**
+ * The block with each edge brought inside the safe area where it runs past
+ * it, and only there: a control under the notch or the home indicator comes
+ * in just enough to be seen and pressed, and never out to an edge the videos
+ * do not reach.
+ */
+export function controlBlock(block: Rect, safe: Rect): Rect {
+  const left = Math.max(block.x, safe.x)
+  const top = Math.max(block.y, safe.y)
+  const right = Math.min(block.x + block.w, safe.x + safe.w)
+  const bottom = Math.min(block.y + block.h, safe.y + safe.h)
+  return {
+    x: left,
+    y: top,
+    w: Math.max(0, right - left),
+    h: Math.max(0, bottom - top)
+  }
+}

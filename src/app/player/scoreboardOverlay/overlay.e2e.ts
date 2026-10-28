@@ -10,6 +10,7 @@ import { serverConfig } from '../../../server/serverConfig'
 import { tileRects } from '../multiCam/layout'
 import { boardAt } from './boardAt'
 import {
+  angleTiles,
   api,
   APP,
   broadcast,
@@ -23,7 +24,7 @@ import {
   iso,
   LONG_AWAY,
   markerGeometry,
-  nameChips,
+  nameTexts,
   onThisMachine,
   overrides,
   type Page,
@@ -787,35 +788,27 @@ describe('E8: the board over the web players, at the frame’s wall time', funct
   })
 
   /**
-   * Every angle's name shows, clear of the board, the heard one's with its
-   * 🔊; and the heard one, the programme, is the top-left angle.
+   * No angle's name is drawn over its picture, where it sat over the board;
+   * each angle is still labelled, for assistive technology and this suite;
+   * and the heard one, the programme, is the top-left angle, the only one
+   * heard.
    */
   async function namesShow(page: Page, label: string): Promise<void> {
-    const chips = await nameChips(page, [
-      'E8 programme',
-      'E8 angle',
-      'E8 unstamped',
-      'E8 stamped'
-    ])
-    const { tiles } = await gridState(page)
-    const [corner] = [...tiles].sort((a, b) =>
-      a.y === b.y ? a.x - b.x : a.y - b.y
+    const titles = ['E8 programme', 'E8 angle', 'E8 unstamped', 'E8 stamped']
+    const drawn = await nameTexts(page, titles)
+    const tiles = await angleTiles(page, titles)
+    const placed = tiles.filter(tile => tile != null)
+    const [corner] = [...placed].sort((a, b) =>
+      Math.abs(a.y - b.y) < 1 ? a.x - b.x : a.y - b.y
     )
-    const inCorner = chips.filter(
-      chip =>
-        corner != null &&
-        chip.x + chip.w / 2 >= corner.x &&
-        chip.x + chip.w / 2 <= corner.x + corner.w &&
-        chip.y + chip.h / 2 >= corner.y &&
-        chip.y + chip.h / 2 <= corner.y + corner.h
-    )
+    const heard = placed.filter(tile => tile.heard)
     check(
-      chips.length === 4 &&
-        chips.every(chip => !chip.covered) &&
-        chips.filter(chip => chip.text.startsWith('🔊')).length === 1 &&
-        inCorner.length === 1 &&
-        inCorner[0].text === '🔊 E8 programme',
-      `${label}: every angle's name shows clear of the board, the top-left one heard (${chips.map(chip => `${chip.text} at ${chip.x.toFixed(0)},${chip.y.toFixed(0)}${chip.covered ? ' COVERED' : ''}`).join(', ')})`
+      drawn.length === 0 &&
+        placed.length === titles.length &&
+        corner?.title === 'E8 programme' &&
+        heard.length === 1 &&
+        heard[0].title === 'E8 programme',
+      `${label}: no angle's name drawn (${drawn.join(', ')}), every angle labelled (${placed.length}/${titles.length}), the top-left one the programme and the only one heard (${corner?.title ?? '-'}; heard ${heard.map(tile => tile.title).join(', ')})`
     )
   }
 

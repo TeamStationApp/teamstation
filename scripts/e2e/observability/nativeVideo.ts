@@ -34,7 +34,8 @@ export async function nativeVideo(
   })
   await m.tapOn({ text: 'Watch full screen', timeout: 15000 })
   await pause(20000)
-  // The shipped center tap toggles playback; the bottom third shows controls.
+  // The shipped center tap toggles playback; the bottom row shows the scrub
+  // line.
   await m.tapOn({ id: 'grid-touches' })
   await pause(5000)
   await m.tapOn({ id: 'grid-touches' })
@@ -46,7 +47,23 @@ export async function nativeVideo(
     await m.launchApp({ appId: 'app.teamstation.app', stopApp: false })
   else await m.tapOn({ text: 'TeamStation' })
   await pause(5000)
-  await m.tapOn({ point: '50%,85%' })
+  // The press grid lies on the video: its bottom row is the scrub line, its
+  // top-centre squares call the controls above it up, the ✕ among them.
+  const findAngles = (node: any): any[] => [
+    ...(String(node.text ?? node.accessibilityText ?? '').endsWith(' angle')
+      ? [node.bounds]
+      : []),
+    ...(node.children ?? []).flatMap(findAngles)
+  ]
+  const gridRow = async (row: number): Promise<string> => {
+    const rects = findAngles(await m.hierarchy())
+    assert(rects.length > 0, 'Full-screen angle required')
+    const top = Math.min(...rects.map((rect: any) => rect.y))
+    const bottom = Math.max(...rects.map((rect: any) => rect.y + rect.height))
+    const x = rects[0].x + rects[0].width / 2
+    return `${Math.round(x)},${Math.round(top + ((row + 0.5) * (bottom - top)) / 4)}`
+  }
+  await m.tapOn({ point: await gridRow(3) })
   const findTrack = (node: any): any =>
     node.text === 'Position in the game' || node.type === 'SeekBar'
       ? node
@@ -57,7 +74,7 @@ export async function nativeVideo(
     point: `${Math.round(track.x + track.width * 0.9)},${Math.round(track.y + track.height / 2)}`
   })
   await pause(8000)
-  await m.tapOn({ point: '50%,85%' })
+  await m.tapOn({ point: await gridRow(0) })
   await m.tapOn({ text: '^Close$' })
   let rows: any[] = []
   for (let i = 0; i < 20; i++) {

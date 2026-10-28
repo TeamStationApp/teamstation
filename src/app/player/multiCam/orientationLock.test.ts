@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { orientationLock } from './orientationLock'
+import { gridRotation, orientationLock } from './orientationLock'
 
 describe('turning the multi-camera view with the phone', function () {
   const recorder = (): {
@@ -83,5 +83,21 @@ describe('turning the multi-camera view with the phone', function () {
     // Without `followSensor`, settings still turns, on the rotation lock.
     older.followSensor()
     expect(calls).deep.equals(['allow'])
+  })
+})
+
+describe('turning the full-screen sheet with the phone', function () {
+  it('lets the app turn while it is up, and stands it upright after, on iOS as on Android', function () {
+    const calls: string[] = []
+    const rotation = gridRotation({
+      allowRotation: () => calls.push('allow'),
+      lockPortrait: () => calls.push('portrait')
+    })
+    rotation.allow()
+    rotation.restore()
+    expect(calls).deep.equals(['allow', 'portrait'])
+    // A build without the module: nothing, and no throw.
+    gridRotation(undefined).allow()
+    gridRotation(null).restore()
   })
 })

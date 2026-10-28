@@ -2,7 +2,6 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
-  clearOf,
   dragSlots,
   dropTarget,
   edgeToEdge,
@@ -233,29 +232,6 @@ describe('the grid on a phone, edge to edge', function () {
     // down past the home indicator to the bottom edge, at their own shape.
     expect(round(rects[3].y + rects[3].h)).equals(844)
     expect(round(rects[0].w / rects[0].h)).equals(round(16 / 9))
-  })
-})
-
-describe('a tile’s name, clear of the hardware', function () {
-  const SAFE = { x: 47, y: 47, w: 700, h: 300 }
-
-  it('comes in only as far as the safe area starts inside the tile', function () {
-    expect(clearOf({ x: 0, y: 0, w: 400, h: 225 }, SAFE)).deep.equals({
-      left: 47,
-      top: 47
-    })
-    expect(clearOf({ x: 20, y: 100, w: 400, h: 225 }, SAFE)).deep.equals({
-      left: 27,
-      top: 0
-    })
-  })
-
-  it('stays where it is in a tile already clear, or with no tile', function () {
-    expect(clearOf({ x: 75, y: 60, w: 400, h: 225 }, SAFE)).deep.equals({
-      left: 0,
-      top: 0
-    })
-    expect(clearOf(undefined, SAFE)).deep.equals({ left: 0, top: 0 })
   })
 })
 

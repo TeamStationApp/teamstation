@@ -40,12 +40,15 @@ const FLASH_ICONS = {
 /** The white of every glyph: nearly opaque, so it reads over any picture. */
 const GLYPH = 'rgba(255, 255, 255, 0.9)'
 
-/** Where each one is drawn: the third of the picture that was tapped. */
-const FLASH_LEFT = {
-  back: '0%',
-  play: '33.333%',
-  pause: '33.333%',
-  forward: '66.667%'
+/**
+ * Where each one is drawn, on the press grid's middle rows: the left column
+ * for back, the middle two for play and pause, the right column for on.
+ */
+const FLASH_AREA = {
+  back: { left: '0%', width: '25%' },
+  play: { left: '25%', width: '50%' },
+  pause: { left: '25%', width: '50%' },
+  forward: { left: '75%', width: '25%' }
 } as const
 
 /** How long the arrow takes to fade away. */
@@ -59,8 +62,8 @@ export const FLASH_MS = 1000
  * accident and did something nobody can name. So the jump says what it was:
  * clockwise for forwards, anticlockwise for back, with the ten in the middle.
  * A tap that plays or pauses shows the play or the pause it caused, in the
- * middle. A white glyph in a grey translucent circle, in the third of the
- * picture that was tapped, fading out over a second.
+ * middle. A white glyph in a grey translucent circle, in the squares of the
+ * press grid that were tapped, fading out over a second.
  */
 export function SeekFlashView(props: {
   flash: SeekFlash | null
@@ -89,7 +92,7 @@ export function SeekFlashView(props: {
   return (
     <View
       pointerEvents="none"
-      style={[styles.flashThird, { left: FLASH_LEFT[flash.direction] }]}
+      style={[styles.flashArea, FLASH_AREA[flash.direction]]}
     >
       <Animated.View style={[styles.flashCircle, { opacity }]}>
         {/* Play and pause are drawn, not set: the icon font is the outlined
@@ -142,11 +145,10 @@ export function SlowMoBadge(props: {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  flashThird: {
+  flashArea: {
     position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: '33.333%',
+    top: '25%',
+    bottom: '25%',
     // Above the pictures and the gesture layer both, which stack explicitly
     // on the multi-camera view.
     zIndex: 6,

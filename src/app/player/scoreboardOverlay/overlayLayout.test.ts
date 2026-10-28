@@ -12,7 +12,6 @@ import {
   placedBoardRect,
   singleBoardRect,
   tileBoardRect,
-  tileNameTop,
   widthAt
 } from './overlayLayout'
 
@@ -176,11 +175,6 @@ describe('the board over the landscape grid (U34)', function () {
     near(board.x, landscape.x * corner.w)
     near(board.y, landscape.y * corner.h)
     near(board.h, landscape.height * corner.h)
-    // Its name goes just below the full board.
-    near(
-      tileNameTop(corner, landscape),
-      landscape.y * corner.h + landscape.height * corner.h + BOARD_INSET / 2
-    )
   })
 
   it('with four angles, is narrowed to fit the angle', function () {
@@ -211,26 +205,6 @@ describe('the board kept clear of the hardware', function () {
   // The same phone sideways: the island's 47 points at either side.
   const SIDEWAYS = { x: 47, y: 0, w: 750, h: 369 }
 
-  it('takes a tile’s name down below the board where it moves the board', function () {
-    // Sideways with a 20-point inset at the top, over a tile at the top edge:
-    // the board moves to 28, and the name sits just below its full height.
-    const safe = { x: 47, y: 20, w: 750, h: 349 }
-    const tile = { x: 100, y: 0, w: 320, h: 180 }
-    const placement = { x: 0.01, y: 0.01, height: 0.25 }
-    const moved = keptClear(
-      { x: tile.x + 3.2, y: tile.y + 1.8, w: 100, h: 45 },
-      safe
-    )
-    near(moved.y, 20 + BOARD_INSET)
-    near(
-      tileNameTop(tile, placement, safe),
-      moved.y - tile.y + 0.25 * 180 + BOARD_INSET / 2
-    )
-    // A tile already clear keeps its name where it was.
-    const lower = { ...tile, y: 40 }
-    near(tileNameTop(lower, placement, safe), tileNameTop(lower, placement))
-  })
-
   it('narrows a board it moves to stay inside the area it was placed in', function () {
     // A board fitted to its angle's right edge, moved in from a notch at
     // the left: it would end past the angle, so it is narrowed to its edge.
@@ -244,21 +218,6 @@ describe('the board kept clear of the hardware', function () {
     // Clear of the hardware already, it is left exactly as it was.
     const clear = { x: 60, y: 2, w: 300, h: 120 }
     expect(keptClear(clear, safe, area)).deep.equals(clear)
-  })
-
-  it('puts the name under the full board as it is fitted and kept clear', function () {
-    const tile = { x: 0, y: 0, w: 400, h: 225 }
-    const safe = { x: 47, y: 0, w: 750, h: 369 }
-    // A tall setting: the full board is narrowed to the angle, and moved in.
-    const placement = { x: 0.01, y: 0.01, height: 0.72 }
-    const full = placedBoardRect(tile, placement, {
-      width: SHORT.width,
-      height: FULL_BOARD_HEIGHT
-    })!
-    const kept = keptClear(full, safe, tile)
-    const top = tileNameTop(tile, placement, safe, SHORT)
-    near(top, kept.y + kept.h + BOARD_INSET / 2)
-    expect(top).lessThan(placement.y * tile.h + placement.height * tile.h)
   })
 
   it('stays exactly where it was put when it is clear', function () {

@@ -23,7 +23,7 @@ import { tileRects } from './multiCam/layout'
 import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView as BrowserGrid } from './MultiCamView'
 import { MultiCamView as PhoneGrid } from './MultiCamView.native'
-import { tileBoardRect, tileNameTop } from './scoreboardOverlay/overlayLayout'
+import { tileBoardRect } from './scoreboardOverlay/overlayLayout'
 
 /**
  * The phone's grid, bundled for the browser: its own file, drawn with React
@@ -177,19 +177,12 @@ function tileBoxes(): Array<{ x: number; y: number; w: number; h: number }> {
   })
 }
 
-/** The box each tile's name sits in, by the player the tile holds. */
-function names(): HTMLElement[] {
-  return [...document.querySelectorAll('video')].map(video => {
-    let node = video.parentElement
-    while (node?.style.top === '') node = node.parentElement
-    const text = [...(node?.querySelectorAll<HTMLElement>('div') ?? [])].find(
-      one =>
-        one.childElementCount === 0 &&
-        (one.textContent ?? '').includes('Angle ')
-    )
-    if (text?.parentElement == null) throw new Error('A tile with no name')
-    return text.parentElement
-  })
+/** Whether any tile draws its angle's name: none does. */
+function namesShown(): boolean {
+  return [...document.querySelectorAll<HTMLElement>('div')].some(
+    one =>
+      one.childElementCount === 0 && (one.textContent ?? '').includes('Angle ')
+  )
 }
 
 /** The board, where it is placed, and where its clip is. */
@@ -262,14 +255,9 @@ describe('the board over the phone’s grid (C5)', function () {
     expect(board.h).closeTo(expected.h, 0.01)
     expect(board.h).closeTo(0.15 * corner.h, 0.01)
     expect(tileBoxes()[0].y).closeTo(corner.y, 0.01)
-    // The top-left angle's name is below the board, as in a browser; every
-    // other angle's is where it always was.
-    const [first, ...rest] = names()
-    expect(px(first.style.top)).closeTo(tileNameTop(corner, landscape), 0.01)
-    expect(px(first.style.top)).greaterThan(board.y + board.h)
-    const tops = new Set(rest.map(name => name.style.top))
-    expect(tops.size).equals(1)
-    expect(px(rest[0].style.top)).lessThan(px(first.style.top))
+    // No angle's name, over the board or anywhere, nor its sound marker.
+    expect(namesShown()).equals(false)
+    expect(document.body.textContent).not.includes('🔊')
   })
 
   it('has no band and no board without a game, or for a game with no steps', async function () {
@@ -414,12 +402,41 @@ describe('leaving either grid says where it had got to (U12)', function () {
       await act(async () => {
         exit.click()
       })
+      // The phone's sheet slides away first, then says.
+      if (name === 'phone') await settle(400)
       expect(closed).deep.equals([at])
-      // The phone's Back button, which its full-screen sheet is told of.
+      // The phone's Back button, which its full-screen sheet is told of: on a
+      // sheet of its own, as one closed by the ✕ is gone.
       if (name === 'phone') {
-        // The sheet hears it once its fade-in has ended, which the test DOM
+        await unmount()
+        const again = document.createElement('div')
+        document.body.appendChild(again)
+        root = createRoot(again)
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <Grid
+                client={client}
+                gameId="g1"
+                videos={IDS.map(angle)}
+                order={['a']}
+                audioId="a"
+                zoomedId={null}
+                atMs={at}
+                onChange={() => undefined}
+                onClose={atWallMs => {
+                  closed.push(atWallMs)
+                }}
+              />
+            </ThemeProvider>
+          )
+        })
+        await settle()
+        // The sheet hears it once its slide-in has ended, which the test DOM
         // does not run: the end is sent to the sheet's own element.
-        let sheet: Element = exit
+        let sheet: Element = document.querySelector(
+          `[aria-label="${lstrings.angles_close}"]`
+        )!
         while (sheet.parentElement?.parentElement !== document.body)
           sheet = sheet.parentElement!
         await act(async () => {
@@ -432,10 +449,164 @@ describe('leaving either grid says where it had got to (U12)', function () {
             new window.KeyboardEvent('keyup', { key: 'Escape' })
           )
         })
+        await settle(400)
         expect(closed).deep.equals([at, at])
       }
     })
   }
+})
+
+describe("the phone's full screen is a sheet that a downward swipe closes (U9)", function () {
+  afterEach(unmount)
+
+  async function sheet(endAtMs?: number): Promise<{
+    closed: Array<number | null>
+    playing: boolean[]
+    layer: Element
+    drag: (from: [number, number], to: [number, number]) => Promise<void>
+    mouse: (
+      type: string,
+      x: number,
+      y: number,
+      buttons: number
+    ) => Promise<void>
+  }> {
+    await windowSize(402, 874)
+    const server = overlayServer()
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server.fetch
+    })
+    client.playback = async () => await new Promise(() => undefined)
+    const closed: Array<number | null> = []
+    const playing: boolean[] = []
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <PhoneGrid
+            client={client}
+            gameId="g1"
+            videos={IDS.map(angle)}
+            order={['a', 'b']}
+            audioId="a"
+            zoomedId={null}
+            atMs={OVERLAY_T0 + 120_000}
+            endAtMs={endAtMs}
+            onChange={() => undefined}
+            onClose={(atWallMs, wasPlaying) => {
+              closed.push(atWallMs)
+              playing.push(wasPlaying)
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    await settle()
+    const layer = document.querySelector('[data-testid="grid-touches"]')!
+    const mouse = async (
+      type: string,
+      x: number,
+      y: number,
+      buttons: number
+    ): Promise<void> => {
+      await act(async () => {
+        layer.dispatchEvent(
+          new window.MouseEvent(type, {
+            bubbles: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+            buttons
+          })
+        )
+      })
+    }
+    const drag = async (
+      from: [number, number],
+      to: [number, number]
+    ): Promise<void> => {
+      await mouse('mousedown', from[0], from[1], 1)
+      const steps = 6
+      for (let step = 1; step <= steps; step++) {
+        await mouse(
+          'mousemove',
+          from[0] + ((to[0] - from[0]) * step) / steps,
+          from[1] + ((to[1] - from[1]) * step) / steps,
+          1
+        )
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 40))
+        })
+      }
+      await mouse('mouseup', to[0], to[1], 0)
+    }
+    return { closed, playing, layer, drag, mouse }
+  }
+
+  it('has a grabber in the top inset that is not one of the controls', async function () {
+    await sheet()
+    const grabber = document.querySelector<HTMLElement>(
+      '[data-testid="sheet-grabber"]'
+    )!
+    expect(grabber.getAttribute('aria-label')).equals(
+      lstrings.angles_swipe_to_close
+    )
+    // At the very top, centred: with no inset here, over the pictures' top
+    // edge; under a status bar or a notch, in the band above them.
+    expect(px(grabber.style.top)).at.most(6)
+    expect(px(grabber.style.left)).equals(402 / 2 - 18)
+    // The sheet's own, outside the layer the video controls are drawn in.
+    const exit = document.querySelector(
+      `[aria-label="${lstrings.angles_close}"]`
+    )!
+    expect(grabber.contains(exit)).equals(false)
+    expect(grabber.parentElement!.contains(exit)).equals(true)
+  })
+
+  it('closes on a pull a quarter of the screen down, from the pictures', async function () {
+    this.timeout(8000)
+    const { closed, drag } = await sheet()
+    await drag([200, 300], [205, 600])
+    await settle(400)
+    expect(closed).length(1)
+  })
+
+  it("slides away at a highlight's end, saying it stopped there", async function () {
+    this.timeout(8000)
+    // An end the grid has already reached.
+    const { closed, playing } = await sheet(OVERLAY_T0 + 119_000)
+    await settle(600)
+    expect(closed).length(1)
+    expect(playing).deep.equals([false])
+  })
+
+  it('springs back on a short slow pull, and stays up', async function () {
+    this.timeout(8000)
+    const { closed, drag } = await sheet()
+    await drag([200, 300], [200, 360])
+    await settle(400)
+    expect(closed).deep.equals([])
+  })
+
+  it('keeps a scrub already under way from being taken for a swipe', async function () {
+    this.timeout(8000)
+    const { closed, mouse } = await sheet()
+    const boxes = tileBoxes()
+    const bottom = Math.max(...boxes.map(box => box.y + box.h))
+    const top = Math.min(...boxes.map(box => box.y))
+    const row = bottom - (bottom - top) * 0.1
+    // Sideways first, on the bottom row: a scrub, which keeps its finger
+    // when it then goes down.
+    await mouse('mousedown', 100, row, 1)
+    for (const x of [130, 160, 200]) await mouse('mousemove', x, row, 1)
+    for (const y of [row + 100, row + 300]) await mouse('mousemove', 200, y, 1)
+    await mouse('mouseup', 200, row + 300, 0)
+    await settle(400)
+    expect(closed).deep.equals([])
+  })
 })
 
 describe('a press on either grid: a tap, a scrub, a hold that picks a tile up (U14)', function () {
@@ -547,21 +718,31 @@ describe('a press on either grid: a tap, a scrub, a hold that picks a tile up (U
       })
       expect(playhead()).equals(120)
 
-      // A tap on the middle right of the black around the tiles skips on.
-      const right = [width * 0.9, height * 0.5] as const
-      await press(margin, 'down', ...right)
-      await press(margin, 'up', ...right)
+      // The press grid is on the block of videos: the stack, top to bottom.
+      const top = Math.min(...tiles.map(tile => tile.y))
+      const bottom = Math.max(...tiles.map(tile => tile.y + tile.height))
+      const middle = (top + bottom) / 2
+      // A tap on its middle right skips on.
+      await press(margin, 'down', width * 0.9, middle)
+      await press(margin, 'up', width * 0.9, middle)
       expect(playhead()).equals(130)
 
-      // A sideways drag from the middle scrubs, at a quarter of the track,
-      // which is the window's width until the bar has said otherwise.
-      const y = height * 0.3
-      await press(margin, 'down', width * 0.5, y)
-      await press(margin, 'move', width * 0.5 + width * 0.25, y)
+      // A sideways drag across the middle moves nothing.
+      await press(margin, 'down', width * 0.5, middle)
+      await press(margin, 'move', width * 0.75, middle)
       await wait(50)
-      await press(margin, 'up', width * 0.5 + width * 0.25, y)
-      // A ten-minute take: a quarter of a quarter of it.
-      expect(playhead()).closeTo(130 + 600 * 0.25 * 0.25, 1)
+      await press(margin, 'up', width * 0.75, middle)
+      expect(playhead()).equals(130)
+
+      // On the bottom row it scrubs, to where the finger is along the line —
+      // the block's width until the bar has said where its track is.
+      const row = bottom - (bottom - top) * 0.1
+      await press(margin, 'down', width * 0.5, row)
+      await press(margin, 'move', width * 0.75, row)
+      await wait(50)
+      await press(margin, 'up', width * 0.75, row)
+      // Three quarters of a ten-minute take.
+      expect(playhead()).closeTo(600 * 0.75, 1)
 
       // Held still on the first tile for half a second, it is picked up, and
       // dropped on the second it swaps with it.

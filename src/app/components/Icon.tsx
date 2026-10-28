@@ -40,6 +40,7 @@ export type IconName =
   | 'content_copy'
   | 'forward_10'
   | 'replay_10'
+  | 'fullscreen'
   | 'music_note'
   | 'description'
   | 'stop'

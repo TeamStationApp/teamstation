@@ -138,39 +138,6 @@ export function tileBoardRect(
 const EDGE_SLACK = 1e-6
 
 /**
- * Where the top-left angle's name goes in the four-angle landscape grid
- * while the board is over that angle, in the angle's own coordinates: just
- * below the full board, so the board never hides which angle it is. Given
- * the board's `natural` size, the full board is placed and fitted to the
- * angle as it is drawn, and with a `safe` area kept clear of the hardware
- * (`keptClear`), and the name goes under the rect that results.
- */
-export function tileNameTop(
-  tile: Rect,
-  placement: BoardPlacement,
-  safe?: Rect,
-  natural?: Size
-): number {
-  const full =
-    natural == null
-      ? null
-      : placedBoardRect(tile, placement, {
-          width: natural.width,
-          height: FULL_BOARD_HEIGHT
-        })
-  if (full == null) {
-    // Unmeasured: the full board's top, moved down clear as `keptClear`
-    // moves it.
-    const top = tile.y + placement.y * tile.h
-    const kept =
-      safe != null && top < safe.y - EDGE_SLACK ? safe.y + BOARD_INSET : top
-    return kept - tile.y + placement.height * tile.h + BOARD_INSET / 2
-  }
-  const kept = safe == null ? full : keptClear(full, safe, tile)
-  return kept.y + kept.h - tile.y + BOARD_INSET / 2
-}
-
-/**
  * The landscape grid of two angles: the board centred in the space the grid
  * leaves above them, as tall as that space allows less the insets.
  */

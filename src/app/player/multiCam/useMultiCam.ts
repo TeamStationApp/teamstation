@@ -9,9 +9,15 @@ import {
 
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
-import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
+import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { PlayIntent } from '../playIntent'
+import {
+  type GridZone,
+  type PlacedIcon,
+  scrubFraction,
+  zoneAt
+} from '../pressGrid'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
 import { HAVE_CURRENT_DATA, HAVE_METADATA, seekableEndOf } from '../videoHandle'
@@ -25,12 +31,9 @@ import {
 } from '../wallClock'
 import { MAPPING_WAIT_MS, type WallMapping } from '../wallMapping'
 import {
-  type AngleZone,
-  angleZoneFor,
+  beyondSlop,
   gestureAction,
   HOLD_MS,
-  SCRUB_EDGE_FRACTION,
-  SCRUB_RATE,
   STEP_SECONDS,
   STILL_FRACTION
 } from '../zones'
@@ -98,6 +101,14 @@ export interface MultiCamProps {
   zoomedId: string | null
   /** Where to open, as an instant. */
   atMs?: number
+  /**
+   * Where a highlight stops, as an instant: `onEndReached` is called once
+   * when the pictures get there, or when every recording has ended before
+   * it. A seek the viewer makes past it lets it go. None for a game opened
+   * without a highlight, which never stops on this.
+   */
+  endAtMs?: number | null
+  onEndReached?: () => void
   onChange: (next: {
     order?: string[]
     audioId?: string | null
@@ -110,12 +121,13 @@ export interface MultiCamProps {
    * angles off the address — with where its pictures were then, or the
    * clock's reading where none was playing.
    */
-  onGone?: (atWallMs: number | null) => void
+  onGone?: (atWallMs: number | null, playing: boolean) => void
   /**
    * The viewer left, with the wall time the grid had got to, for the videos
-   * page's player to pick up at; null before any tile has placed it.
+   * page's player to pick up at; null before any tile has placed it. And
+   * whether the grid was playing, for that player to carry on as it was.
    */
-  onClose: (atWallMs: number | null) => void
+  onClose: (atWallMs: number | null, playing: boolean) => void
   /**
    * Whether the server still lists a video as live, for a tile whose live
    * playlist was closed under it (`PlayIntent.isLive`).
@@ -136,6 +148,21 @@ export interface MultiCamOptions {
    * (`tileRects`).
    */
   rects?: Rect[]
+  /**
+   * The box the press grid is laid on (`pressGrid.ts`): the block of videos,
+   * kept inside the safe area (`controlBlock`). The whole box without it.
+   */
+  block?: Rect
+  /**
+   * Where the controls group's icons are drawn (`placeIcons`): a press on
+   * one while they show runs it, wherever it was moved to.
+   */
+  icons?: PlacedIcon[]
+  /**
+   * A tap on the grid's top-right square while the controls are showing: the
+   * way out. With them hidden, the same tap only shows them.
+   */
+  onCorner?: () => void
   /**
    * Called just before the tiles stand aside for a dragged one, so a phone
    * can animate the change it is about to draw.
@@ -178,20 +205,6 @@ const SEEKABLE_SLACK_SEC = 0.25
 /** How long the bar stays up after the last touch of it. */
 const BAR_HIDE_MS = 3000
 
-/**
- * How far a finger may slip, in pixels, and still have made a tap.
- *
- * Every touch tap carries a pixel or two, so a press that moved less than
- * this is the ordinary tap rather than the odd one; one that moved further is
- * a drag, on a tile or on the black around them alike.
- */
-export const TAP_SLOP_PX = 8
-
-/** Whether a finger has moved this far from where it came down. */
-export function beyondSlop(dx: number, dy: number): boolean {
-  return Math.abs(dx) >= TAP_SLOP_PX || Math.abs(dy) >= TAP_SLOP_PX
-}
-
 export interface TileState {
   parked: ParkReason | null
   stalledSince: number | null
@@ -210,8 +223,8 @@ const freshTile = (): TileState => ({
  *
  * - `pending`: down, and not yet anything; lifted under the tap slop it is a
  *   tap.
- * - `scrub`: it went sideways from the middle before `HOLD_MS`, and moves the
- *   playhead.
+ * - `scrub`: it came down on the bottom row and went sideways, and moves the
+ *   playhead to where the finger is on the scrub line.
  * - `held`: it rested on the middle-right square, and crawls until lifted.
  * - `reorder`: it rested on a tile of several, and carries the tile.
  * - `dead`: anything else; its lift does nothing.
@@ -224,8 +237,8 @@ interface Press {
   y0: number
   /** The tile it came down on, or null on the black around them. */
   tile: number | null
-  /** The take's clock when it came down, which a scrub moves from. */
-  startWall: number | null
+  /** The square of the press grid it came down in. */
+  zone: GridZone
   mode: PressMode
   /** Running while it may still become a hold. */
   timer: ReturnType<typeof setTimeout> | null
@@ -295,12 +308,15 @@ export interface MultiCam {
   /** The crawl's rate, or 0. */
   slow: number
   flash: SeekFlash | null
-  barShown: boolean
+  /** The scrub line, the bottom row's group, shown on its own. */
+  scrubShown: boolean
   /**
-   * Whether any control is up — the bar, or the flash of a tap — which is
-   * when the way out shows too.
+   * The controls above the scrub line, which show together: the sound, the
+   * way out, ten seconds back, play or pause, ten seconds on.
    */
   controlsShown: boolean
+  /** The sound is off, by the top-left square. */
+  soundOff: boolean
   drag: TileDrag | null
   /** What the view wants each tile to be doing, for the source's recovery. */
   intents: { current: Map<string, boolean> }
@@ -319,10 +335,19 @@ export interface MultiCam {
    * a tap — is always sought (`scrubSeeks`).
    */
   scrub: (wallMs: number, final?: boolean) => void
+  /** Shows the scrub line for three seconds. */
   showBar: () => void
+  /** Shows the controls above it for three seconds. */
+  showControls: () => void
+  /**
+   * Puts one group away at once, for a mouse that has moved onto the other:
+   * the two never show together from a hover.
+   */
+  hideBar: () => void
+  hideControls: () => void
   beginSlow: () => boolean
   endSlow: () => void
-  runZone: (zone: AngleZone) => void
+  runZone: (zone: GridZone) => void
   /**
    * A finger, or the mouse, has come down at a point of the window, on a
    * tile or (null) the black around them. False when it is to be ignored,
@@ -339,10 +364,19 @@ export interface MultiCam {
   /** It has come up there; answers what it had become, or null if ignored. */
   pressEnd: (pointerId: number, x: number, y: number) => PressMode | null
   pressCancel: (pointerId: number) => void
+  /**
+   * Whether this finger's press may be given up — still only waiting to
+   * become something, or already nothing — to a downward swipe that closes
+   * the phone's sheet. A scrub, a crawl or a carried tile keeps its finger.
+   */
+  pressYields: (pointerId: number) => boolean
   /** The tile a press has picked up, to be carried; null for none. */
   armedTile: number | null
-  /** The bar's track width, which a scrub is measured against. */
-  setTrackWidth: (px: number) => void
+  /**
+   * Where the scrub line is drawn, in the press layer's coordinates: a press
+   * on the bottom row lands where the finger is on it.
+   */
+  setTrackRect: (rect: Rect | null) => void
   moveTile: (index: number, x: number, y: number) => void
   dropTile: (index: number, x: number, y: number) => void
   /** The angles as the bar draws them: a name and a stretch of the take. */
@@ -386,6 +420,11 @@ export function useMultiCam(
     liveRetryDelay = livePlaybackRetryDelay,
     fallbackMapping
   } = options
+  const block = options.block ?? { x: 0, y: 0, w: width, h: height }
+  const iconsRef = useRef(options.icons ?? null)
+  iconsRef.current = options.icons ?? null
+  const onCornerRef = useRef(options.onCorner)
+  onCornerRef.current = options.onCorner
   /** Each tile's own mapping, from its player; null when it has none. */
   const tileMappings = useRef(new Map<string, WallMapping | null>())
   const fallbackRef = useRef(fallbackMapping)
@@ -473,6 +512,18 @@ export function useMultiCam(
 
   const [readout, setReadout] = useState<string[]>([])
   const [ended, setEnded] = useState(false)
+
+  /** A highlight's end, and the one already reached or passed, if any. */
+  const endAtRef = useRef(props.endAtMs ?? null)
+  endAtRef.current = props.endAtMs ?? null
+  /**
+   * The highlight has ended, or the viewer has gone past its end: it does
+   * not end again, however its instant is worked out afresh, until the grid
+   * is given no highlight.
+   */
+  const endPassed = useRef(false)
+  const onEndRef = useRef(props.onEndReached)
+  onEndRef.current = props.onEndReached
   /** Every camera that covers this moment is stuck. */
   const [waiting, setWaiting] = useState(false)
   /**
@@ -928,7 +979,10 @@ export function useMultiCam(
   // it still reads the picture's own moment rather than the clock's.
   useLayoutEffect(() => {
     return () => {
-      onGoneRef.current?.(gameNowRef.current('') ?? atWallRef.current)
+      onGoneRef.current?.(
+        gameNowRef.current('') ?? atWallRef.current,
+        playingRef.current
+      )
     }
   }, [])
 
@@ -1788,6 +1842,18 @@ export function useMultiCam(
   livePointRef.current = livePointMs
 
   /**
+   * A seek the viewer settled on: past a highlight's end, they have taken
+   * over, and it no longer ends. Not a drag's passing moves, which may cross
+   * the end on their way somewhere before it.
+   */
+  const settledAt = (wallMs: number): void => {
+    if (endAtRef.current != null && wallMs >= endAtRef.current)
+      endPassed.current = true
+  }
+  const settledAtRef = useRef(settledAt)
+  settledAtRef.current = settledAt
+
+  /**
    * A seek the viewer asked for: every tile, at once, to one instant.
    *
    * A step within what the tiles already hold plays straight on. One beyond
@@ -1841,6 +1907,7 @@ export function useMultiCam(
   const scrub = useCallback(
     (wallMs: number, final = true): void => {
       if (final) {
+        settledAtRef.current(wallMs)
         scrubber.end(wallMs)
         return
       }
@@ -1953,7 +2020,11 @@ export function useMultiCam(
     slowFrame.current = 0
     crawlRate.current = 0
     setSlow(0)
-    setRateAll(1, id => id !== heardId)
+    // Heard again after the crawl only if the sound is on and not held.
+    setRateAll(
+      1,
+      id => id !== heardId || soundOffRef.current || soundBlockedRef.current
+    )
     if (atWallRef.current != null) alignTo(atWallRef.current)
   }, [alignTo, heardId, setRateAll])
 
@@ -1972,79 +2043,71 @@ export function useMultiCam(
       // From where the pictures are, as a crawl begins: the clock was last
       // set up to a second ago, and a skip from it landed short by that much.
       const from = gameNowRef.current('') ?? atWallRef.current
+      settledAtRef.current(from + deltaSec * 1000)
       goTo(from + deltaSec * 1000)
     },
     [goTo]
   )
 
   /**
-   * The bar, which gets out of the way.
-   *
-   * Up when the take first has a clock to show, and for three seconds after anything touches it
-   * or a tap lands in the bottom third of the screen; gone otherwise, so the
-   * pictures have the whole screen.
+   * The two groups of controls, which get out of the way: the scrub line, and
+   * everything above it. Each is up for three seconds after whatever called
+   * it — a press in its squares, a hover, the bar being touched — and gone
+   * otherwise, so the pictures have the whole screen. Both are up when the
+   * take first has a clock to show.
    */
-  const [barShown, setBarShown] = useState(true)
-  const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** When the three seconds were last started again. */
-  const barShownAt = useRef(0)
-  const showBar = useCallback((): void => {
-    // A mouse over the bottom third or the bar lands here on every move, many
-    // times a second, and a quarter of a second makes no difference to a
-    // three-second timer that is already running.
-    const now = Date.now()
-    if (barTimer.current != null && now - barShownAt.current < 250) return
-    barShownAt.current = now
-    setBarShown(true)
-    if (barTimer.current != null) clearTimeout(barTimer.current)
-    barTimer.current = setTimeout(() => {
-      barTimer.current = null
-      setBarShown(false)
-    }, BAR_HIDE_MS)
-  }, [])
-  useEffect(() => {
-    return () => {
-      if (barTimer.current != null) clearTimeout(barTimer.current)
-    }
-  }, [])
+  const bar = useAutoHide(BAR_HIDE_MS)
+  const controls = useAutoHide(BAR_HIDE_MS)
+  const barShown = bar.shown
+  const controlsShown = controls.shown
+  const controlsShownRef = controls.shownRef
+  const showBar = bar.show
+  const hideBar = bar.hide
+  const showControls = controls.show
+  /** While the scrub line is in use nothing else shows. */
+  const hideControls = controls.hide
 
   const [flash, flashFor] = useFlash()
-  /**
-   * The flash is on screen: from a tap until it has faded. The flash itself
-   * stays set once drawn — it is the last one, kept so the next counts on
-   * from it — so the way out cannot follow it, and follows this.
-   */
-  const [flashing, setFlashing] = useState(false)
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showFlash = (direction: SeekFlash['direction']): void => {
-    flashFor(direction)
-    setFlashing(true)
-    if (flashTimer.current != null) clearTimeout(flashTimer.current)
-    flashTimer.current = setTimeout(() => {
-      flashTimer.current = null
-      setFlashing(false)
-    }, FLASH_MS)
-  }
-  useEffect(() => {
-    return () => {
-      if (flashTimer.current != null) clearTimeout(flashTimer.current)
-    }
-  }, [])
 
-  /** What a tap in one of the nine squares does. */
-  const runZone = (zone: AngleZone): void => {
-    if (zone === 'controls') {
+  /** The sound, off and on again by the top-left square. */
+  const [soundOff, setSoundOff] = useState(false)
+  const soundOffRef = useRef(false)
+  soundOffRef.current = soundOff
+
+  /** What a tap in one of the squares above the scrub line does. */
+  const runZone = (zone: GridZone): void => {
+    if (zone === 'scrub') {
       showBar()
+      hideControls()
       return
     }
+    // The way out only once it can be seen: hidden, the tap shows it.
+    if (zone === 'corner') {
+      if (controlsShownRef.current) onCornerRef.current?.()
+      else showControls()
+      return
+    }
+    showControls()
+    if (zone === 'audio') {
+      const off = !soundOffRef.current
+      // Inside the touch, the one moment iOS lets the sound back on:
+      // unmuted any later, a playing video is paused instead.
+      const heard = heardId == null ? null : elements.current.get(heardId)
+      if (heard != null && slow === 0 && !soundBlockedRef.current)
+        heard.muted = off
+      soundOffRef.current = off
+      setSoundOff(off)
+      return
+    }
+    if (zone === 'reveal') return
     if (zone === 'seekBack' || zone === 'seekForward') {
       const back = zone === 'seekBack'
       skip(back ? -STEP_SECONDS : STEP_SECONDS)
-      showFlash(back ? 'back' : 'forward')
+      flashFor(back ? 'back' : 'forward')
       return
     }
     toggle()
-    showFlash(playing ? 'pause' : 'play')
+    flashFor(playing ? 'pause' : 'play')
   }
   const runZoneRef = useRef(runZone)
   runZoneRef.current = runZone
@@ -2052,19 +2115,25 @@ export function useMultiCam(
   /**
    * One finger on the screen, from down to up.
    *
-   * The squares are worked out against the whole screen — the view is fixed
-   * to the window, so a pointer's client position is already in it — and not
+   * The squares are worked out against the block of videos (`block`), not
    * against whichever tile the finger happens to be on.
    */
   const press = useRef<Press | null>(null)
 
   /** The tile a press is carrying, for the views to draw it picked up. */
   const [armedTile, setArmedTile] = useState<number | null>(null)
-  /** The bar's track, in px; the window's width until it has said. */
-  const trackWidth = useRef<number | null>(null)
-  const setTrackWidth = useCallback((px: number): void => {
-    trackWidth.current = px > 0 ? px : null
+  /** Where the scrub line is drawn; the block's width until the bar says. */
+  const trackRect = useRef<Rect | null>(null)
+  const setTrackRect = useCallback((rect: Rect | null): void => {
+    trackRect.current = rect != null && rect.w > 0 ? rect : null
   }, [])
+  /** The take's clock where a point of the scrub row falls on the line. */
+  const scrubWallAt = (x: number): number | null => {
+    const window = takeRef.current
+    if (window == null) return null
+    const at = scrubFraction(x, trackRect.current ?? block)
+    return window.fromMs + at * (window.toMs - window.fromMs)
+  }
 
   /** Stops a press's timer and any scrub frame it has waiting. */
   const settlePress = (state: Press): void => {
@@ -2095,8 +2164,11 @@ export function useMultiCam(
       return false
     }
     if (current != null) {
-      // A scrub given up where it had got to.
-      if (current.scrubTo != null) goTo(current.scrubTo)
+      // A scrub given up where it had got to, and settled on there.
+      if (current.scrubTo != null) {
+        goTo(current.scrubTo)
+        settledAtRef.current(current.scrubTo)
+      }
       settlePress(current)
     }
     setArmedTile(null)
@@ -2105,26 +2177,29 @@ export function useMultiCam(
       x0: x,
       y0: y,
       tile,
-      // From where the pictures are, as a skip or a crawl begins: the clock's
-      // last reading is up to a second behind, and a scrub from it stepped
-      // every tile back before it moved them.
-      startWall: gameNowRef.current('') ?? atWallRef.current,
+      zone: zoneAt(
+        x,
+        y,
+        block,
+        controlsShownRef.current ? iconsRef.current : null
+      ),
       mode: 'pending',
       timer: null,
       travelled: false,
       scrubTo: null,
       frame: 0
     }
-    // Still for `HOLD_MS`: a crawl on the +10 s square (`gestureAction`), a
-    // tile picked up anywhere else when there are others to swap it with.
-    // Otherwise it stays a press whose lift, still under the slop, is a tap.
+    // Still for `HOLD_MS`: a crawl on the +10 s squares (`gestureAction`),
+    // a tile picked up anywhere above the scrub line when there are others to
+    // swap it with. Otherwise it stays a press whose lift, still under the
+    // slop, is a tap.
     state.timer = setTimeout(() => {
       state.timer = null
       if (press.current !== state || state.mode !== 'pending') return
-      const zone = angleZoneFor(state.x0, state.y0, width, height)
+      if (state.zone === 'scrub') return
       if (
-        zone !== 'controls' &&
-        gestureAction(zone, 'hold') === 'slowForward'
+        state.zone === 'seekForward' &&
+        gestureAction(state.zone, 'hold') === 'slowForward'
       ) {
         // Held only if this press started the crawl. One already running —
         // an arrow key held down — belongs to its key, and lifting this
@@ -2146,10 +2221,10 @@ export function useMultiCam(
     press.current?.pointerId === pointerId ? press.current : null
 
   /**
-   * The finger has moved. Before `HOLD_MS`, a move of `STILL_FRACTION` of the
-   * width is a drag: sideways from the middle it scrubs, otherwise it is
-   * nothing. A scrub moves the playhead at `SCRUB_RATE` of the bar's own rate,
-   * once a frame, and leaves playing or paused as it was.
+   * The finger has moved. On the bottom row a sideways move past the tap slop
+   * is a scrub: the playhead follows the finger along the scrub line, once a
+   * frame, and nothing but the line shows while it does. Anywhere else a
+   * move of `STILL_FRACTION` of the width is a drag, which does nothing.
    */
   const pressMove = (pointerId: number, x: number, y: number): void => {
     const state = pressOf(pointerId)
@@ -2158,34 +2233,22 @@ export function useMultiCam(
     const dy = y - state.y0
     if (beyondSlop(dx, dy)) state.travelled = true
     if (state.mode === 'pending') {
-      if (Math.hypot(dx, dy) < STILL_FRACTION * width) return
-      // Its timer runs until `HOLD_MS`; a press still past that scrubs no more.
-      const early = state.timer != null
-      settlePress(state)
-      const fromMiddle =
-        state.x0 >= SCRUB_EDGE_FRACTION * width &&
-        state.x0 <= (1 - SCRUB_EDGE_FRACTION) * width
-      state.mode =
-        early &&
-        fromMiddle &&
-        Math.abs(dx) > Math.abs(dy) &&
-        state.startWall != null
-          ? 'scrub'
-          : 'dead'
+      if (state.zone === 'scrub') {
+        if (!beyondSlop(dx, dy)) return
+        settlePress(state)
+        state.mode = Math.abs(dx) > Math.abs(dy) ? 'scrub' : 'dead'
+      } else {
+        if (Math.hypot(dx, dy) < STILL_FRACTION * width) return
+        settlePress(state)
+        state.mode = 'dead'
+      }
     }
-    if (state.mode !== 'scrub' || state.startWall == null) return
-    const take = takeRef.current
-    const span = take == null ? 0 : take.toMs - take.fromMs
-    const track = trackWidth.current ?? width
-    if (take == null || track <= 0) return
-    state.scrubTo = Math.min(
-      take.toMs,
-      Math.max(
-        take.fromMs,
-        state.startWall + ((dx * span) / track) * SCRUB_RATE
-      )
-    )
+    if (state.mode !== 'scrub') return
+    const to = scrubWallAt(x)
+    if (to == null) return
+    state.scrubTo = to
     showBar()
+    hideControls()
     if (state.frame !== 0) return
     state.frame = requestAnimationFrame(() => {
       state.frame = 0
@@ -2206,9 +2269,10 @@ export function useMultiCam(
     if (state == null) return null
     // Inside the touch, which is the one moment iOS lets the sound back on:
     // unmuted any other time, a playing video is paused instead.
-    if (soundBlockedRef.current) {
+    const unblocked = soundBlockedRef.current
+    if (unblocked) {
       const heard = heardId == null ? null : elements.current.get(heardId)
-      if (heard != null) heard.muted = false
+      if (heard != null && !soundOffRef.current) heard.muted = false
       soundBlockedRef.current = false
       setSoundBlocked(false)
     }
@@ -2218,7 +2282,16 @@ export function useMultiCam(
     if (state.mode === 'held') endSlow()
     if (state.mode === 'scrub' && state.scrubTo != null) scrub(state.scrubTo)
     if (state.mode === 'pending' && !state.travelled) {
-      runZoneRef.current(angleZoneFor(x, y, width, height))
+      // A tap on the scrub row seeks to where it landed on the line.
+      if (state.zone === 'scrub') {
+        const to = scrubWallAt(x)
+        if (to != null) scrub(to)
+      }
+      // A tap on the sound that only gave back the sound the browser held
+      // has done what it was for: it does not turn it straight off again.
+      if (state.zone === 'audio' && unblocked && !soundOffRef.current)
+        showControls()
+      else runZoneRef.current(state.zone)
     }
     return state.mode
   }
@@ -2230,6 +2303,8 @@ export function useMultiCam(
     settlePress(state)
     setArmedTile(null)
     if (state.mode === 'held') endSlow()
+    // A scrub taken away mid-drag stays where it had got to, as one let go.
+    if (state.mode === 'scrub' && state.scrubTo != null) scrub(state.scrubTo)
   }
 
   useEffect(() => {
@@ -2284,13 +2359,44 @@ export function useMultiCam(
   const take = windowOf(chosen, liveEnd)
   takeRef.current = take
 
+  // A highlight's end, looked for as often as a tile running dry is.
+  const endAtMs = props.endAtMs ?? null
+  useEffect(() => {
+    if (endAtMs == null) {
+      endPassed.current = false
+      return
+    }
+    let timer: ReturnType<typeof setInterval> | undefined
+    const look = (): void => {
+      if (endPassed.current) {
+        clearInterval(timer)
+        return
+      }
+      // A drag is the viewer's, not the play's: where it lets go decides
+      // (`settledAt`), and what it passes on the way is not an end.
+      if (press.current?.mode === 'scrub') return
+      const now = gameNowRef.current('') ?? atWallRef.current
+      if (!ended && (now == null || now < endAtMs)) return
+      endPassed.current = true
+      clearInterval(timer)
+      onEndRef.current?.()
+    }
+    look()
+    if (!endPassed.current) timer = setInterval(look, DRY_CHECK_MS)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [endAtMs, ended])
+
   // The three seconds start when there is a bar to see, not when the view
   // mounts: four sources take longer than that to open, and a bar that hid
   // before it was ever drawn left the view with no sign it had one.
   const barReady = take != null && atWallMs != null
   useEffect(() => {
-    if (barReady) showBar()
-  }, [barReady, showBar])
+    if (!barReady) return
+    showBar()
+    showControls()
+  }, [barReady, showBar, showControls])
 
   const [drag, setDrag] = useState<TileDrag | null>(null)
   const { columns } = gridShape(width, height, rects.length)
@@ -2368,8 +2474,9 @@ export function useMultiCam(
     take,
     slow,
     flash,
-    barShown,
-    controlsShown: barShown || flashing,
+    scrubShown: barShown,
+    controlsShown,
+    soundOff,
     drag,
     intents,
     takeElement,
@@ -2381,6 +2488,9 @@ export function useMultiCam(
     goTo,
     scrub,
     showBar,
+    showControls,
+    hideBar,
+    hideControls,
     beginSlow,
     endSlow,
     runZone,
@@ -2389,8 +2499,12 @@ export function useMultiCam(
     pressMove,
     pressEnd,
     pressCancel,
+    pressYields: (pointerId: number): boolean => {
+      const mode = pressOf(pointerId)?.mode
+      return mode == null || mode === 'pending' || mode === 'dead'
+    },
     armedTile,
-    setTrackWidth,
+    setTrackRect,
     moveTile,
     dropTile,
     barAngles: (window: Window) =>
@@ -2509,4 +2623,52 @@ function bufferAt(
 export function startOf(video: VideoSummary, takeFromMs: number): number {
   const parsed = Date.parse(video.startAt ?? '')
   return Number.isNaN(parsed) ? takeFromMs : parsed
+}
+
+/**
+ * Something that shows for `ms` after whatever last called it, then hides:
+ * one of the grid's two groups of controls. Up to begin with.
+ */
+export function useAutoHide(ms: number): {
+  shown: boolean
+  /** Whether it is up now, for a press that reads it between renders. */
+  shownRef: { current: boolean }
+  show: () => void
+  hide: () => void
+} {
+  const [shown, setShown] = useState(true)
+  const shownRef = useRef(true)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** When the timer was last started again. */
+  const shownAt = useRef(0)
+  const set = (next: boolean): void => {
+    shownRef.current = next
+    setShown(next)
+  }
+  const show = useCallback((): void => {
+    // A mouse over the grid lands here on every move, many times a second,
+    // and a quarter of a second makes no difference to a timer of seconds
+    // that is already running.
+    const now = Date.now()
+    if (timer.current != null && now - shownAt.current < 250) return
+    shownAt.current = now
+    set(true)
+    if (timer.current != null) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      set(false)
+    }, ms)
+  }, [ms])
+  const hide = useCallback((): void => {
+    if (timer.current != null) clearTimeout(timer.current)
+    timer.current = null
+    set(false)
+  }, [])
+  useEffect(
+    () => () => {
+      if (timer.current != null) clearTimeout(timer.current)
+    },
+    []
+  )
+  return { shown, shownRef, show, hide }
 }

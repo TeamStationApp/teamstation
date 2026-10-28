@@ -3,7 +3,8 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { ThemeProvider, useTheme } from '../../theme/ThemeContext'
+import { defaultScoreboardSettings } from '../../../common/nodeSettings'
+import { getTheme, ThemeProvider, useTheme } from '../../theme/ThemeContext'
 import { MultiCamBar } from '../MultiCamBar'
 import {
   clock,
@@ -11,8 +12,10 @@ import {
   exitClearance,
   exitTopClear,
   fractionOf,
+  gridControls,
   TrackStrips
 } from './barParts'
+import { playerLayout } from './playerLayout'
 
 let root: Root | undefined
 let host: HTMLElement | undefined
@@ -132,9 +135,7 @@ describe('the multi-camera bar’s parts', function () {
               window={{ fromMs: 0, toMs: 60_000 }}
               atMs={30_000}
               angles={[]}
-              onScrub={() => undefined}
-              onTrackWidth={px => widths.push(px)}
-              onInteract={() => undefined}
+              onTrackRect={rect => widths.push(rect.w)}
               visible
             />
           </ThemeProvider>
@@ -187,112 +188,29 @@ describe('the multi-camera bar’s parts', function () {
     expect(clearance).greaterThan(40)
   })
 
-  describe('the track while the page wants a swipe up', function () {
-    /** The bar's track, 200 px wide from the left edge, and a way to touch it. */
-    async function track(panPage: boolean): Promise<{
-      slider: HTMLElement
-      /** Each seek asked for, and whether it was the finger lifting. */
-      scrubs: Array<[number, boolean]>
-      touch: (type: string, x: number, y: number) => Promise<void>
-    }> {
-      const scrubs: Array<[number, boolean]> = []
-      host = document.createElement('div')
-      document.body.appendChild(host)
-      root = createRoot(host)
-      await act(async () => {
-        root?.render(
-          <ThemeProvider>
-            <MultiCamBar
-              window={{ fromMs: 0, toMs: 100_000 }}
-              atMs={0}
-              angles={[]}
-              onScrub={(ms, final) => scrubs.push([ms, final === true])}
-              onInteract={() => undefined}
-              visible
-              panPage={panPage}
-            />
-          </ThemeProvider>
-        )
-      })
-      const slider = host.querySelector<HTMLElement>('[role="slider"]')
-      if (slider == null) throw new Error('no track')
-      const box = new window.DOMRect(0, 0, 200, 72)
-      slider.getBoundingClientRect = () => box
-      const touch = async (
-        type: string,
-        x: number,
-        y: number
-      ): Promise<void> => {
-        const event = new window.MouseEvent(type, {
-          bubbles: true,
-          clientX: x,
-          clientY: y
-        })
-        Object.defineProperty(event, 'pointerId', { value: 7 })
-        await act(async () => {
-          slider.dispatchEvent(event)
-        })
-      }
-      return { slider, scrubs, touch }
-    }
-
-    it('lets a vertical drag through to the page and scrubs nothing', async function () {
-      const { slider, scrubs, touch } = await track(true)
-      expect(slider.style.touchAction).equals('pan-y')
-      await touch('pointerdown', 100, 40)
-      expect(scrubs).deep.equals([])
-      // Mostly upwards: the browser's to scroll, and it cancels the pointer.
-      await touch('pointermove', 104, 10)
-      await touch('pointercancel', 104, 10)
-      await touch('pointerup', 104, 10)
-      expect(scrubs).deep.equals([])
+  it('sits on the block it is given, and takes no pointer', async function () {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <MultiCamBar
+            window={{ fromMs: 0, toMs: 100_000 }}
+            atMs={0}
+            angles={[]}
+            visible
+            frame={{ left: 40, width: 600, bottom: 120 }}
+          />
+        </ThemeProvider>
+      )
     })
-
-    it('scrubs on a sideways drag, lands where it lifts, and seeks on a tap', async function () {
-      const { scrubs, touch } = await track(true)
-      await touch('pointerdown', 100, 40)
-      await touch('pointermove', 150, 42)
-      await touch('pointermove', 160, 42)
-      await touch('pointerup', 160, 42)
-      expect(scrubs).deep.equals([
-        [75_000, false],
-        [80_000, false],
-        [80_000, true]
-      ])
-      await touch('pointerdown', 50, 40)
-      await touch('pointerup', 51, 40)
-      expect(scrubs.at(-1)).deep.equals([25_500, true])
-    })
-
-    it('otherwise keeps every drag, scrubbing from the first touch', async function () {
-      const { slider, scrubs, touch } = await track(false)
-      expect(slider.style.touchAction).equals('none')
-      await touch('pointerdown', 100, 40)
-      await touch('pointermove', 102, 10)
-      await touch('pointerup', 102, 10)
-      expect(scrubs).deep.equals([
-        [50_000, false],
-        [51_000, false],
-        [51_000, true]
-      ])
-    })
-
-    it('lands where a scrub the browser cancels last was', async function () {
-      const { scrubs, touch } = await track(false)
-      await touch('pointerdown', 20, 40)
-      await touch('pointermove', 150, 40)
-      await touch('pointercancel', 150, 40)
-      expect(scrubs.at(-1)).deep.equals([75_000, true])
-    })
-
-    it('lands where the finger lifts, past its last move', async function () {
-      // A quick drag's last move can be well short of where it lifts.
-      const { scrubs, touch } = await track(false)
-      await touch('pointerdown', 20, 40)
-      await touch('pointermove', 60, 40)
-      await touch('pointerup', 180, 40)
-      expect(scrubs.at(-1)).deep.equals([90_000, true])
-    })
+    const bar = host.firstElementChild as HTMLElement
+    expect(bar.style.left).equals('40px')
+    expect(bar.style.width).equals('600px')
+    expect(bar.style.bottom).equals('120px')
+    // A press on the track is the press grid's, under it: nothing here.
+    expect(bar.style.pointerEvents).equals('none')
   })
 })
 
@@ -311,5 +229,69 @@ describe('the way out, clear of the board (exitTopClear)', function () {
     // The box is under the board: the ✕ goes under both, whatever the order.
     const box = { x: 8, y: 125, w: 386, h: 60 }
     expect(exitTopClear(spot, [box, board], 8)).equals(193)
+  })
+})
+
+describe('the full-screen controls (gridControls)', function () {
+  it('put the sound in the top-left corner, level with the ✕, over the board', function () {
+    const theme = getTheme()
+    const safe = { x: 59, y: 0, w: 874 - 2 * 59, h: 402 - 21 }
+    const layout = playerLayout({
+      screen: { width: 874, height: 402 },
+      safe,
+      count: 1,
+      aspect: 16 / 9,
+      landscape: true,
+      settings: {
+        show: true,
+        single: defaultScoreboardSettings.single,
+        landscape: defaultScoreboardSettings.landscape,
+        portraitHeight: defaultScoreboardSettings.portraitHeight
+      },
+      board: { width: 607, height: 247 },
+      line: true
+    })
+    const { block, icons } = gridControls(theme, layout, safe, 874, null)
+    const sound = icons.find(icon => icon.zone === 'audio')!
+    const exit = icons.find(icon => icon.zone === 'corner')!
+    expect(sound.y).closeTo(exit.y, 0.01)
+    expect(sound.x - block.x).closeTo(block.x + block.w - exit.x, 0.01)
+    // The board is over that corner of the picture: the sound is over it.
+    expect(layout.board).not.equals(null)
+    expect(sound.y).lessThan(layout.board!.y + layout.board!.h)
+  })
+
+  it('keep the sound level with the ✕ when the board pushes the ✕ down', function () {
+    const theme = getTheme()
+    const safe = { x: 59, y: 0, w: 874 - 2 * 59, h: 402 - 21 }
+    const layout = playerLayout({
+      screen: { width: 874, height: 402 },
+      safe,
+      count: 1,
+      aspect: 16 / 9,
+      landscape: true,
+      settings: null,
+      board: null,
+      line: false
+    })
+    const open = gridControls(theme, layout, safe, 874, null)
+    // A board in the block's top-right corner, where the ✕ would be.
+    const board = {
+      x: open.block.x + open.block.w - 300,
+      y: open.block.y,
+      w: 300,
+      h: 90
+    }
+    const { icons, exitTop } = gridControls(
+      theme,
+      { ...layout, board },
+      safe,
+      874,
+      null
+    )
+    expect(exitTop).greaterThan(board.y + board.h)
+    const sound = icons.find(icon => icon.zone === 'audio')!
+    const exit = icons.find(icon => icon.zone === 'corner')!
+    expect(sound.y).closeTo(exit.y, 0.01)
   })
 })

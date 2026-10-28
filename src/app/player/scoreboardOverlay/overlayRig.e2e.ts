@@ -574,35 +574,48 @@ export async function gridState(page: Page): Promise<{
 }
 
 /**
- * The name on each angle of the grid, which outside the page's own root is
- * the grid's, and whether the board covers any of it: the name says which
- * angle a tile is, and its 🔊 which one is heard.
+ * Any of these angles' names drawn as text on the grid, outside the page's
+ * own root. The grid draws none now: a suite checks this finds nothing.
  */
-export async function nameChips(
+export async function nameTexts(
+  page: Page,
+  titles: string[]
+): Promise<string[]> {
+  return await probe(
+    page,
+    `const titles = ${JSON.stringify(titles)}
+    return [...document.querySelectorAll('div')]
+      .filter(node => node.closest('#root') == null && node.childElementCount === 0 && titles.includes((node.textContent ?? '').replace(/^🔊 /, '')))
+      .map(node => node.textContent)`
+  )
+}
+
+/**
+ * Each of these angles' tiles, found by its `<title> angle` label, where it
+ * is, and whether it is the one the grid hears (`data-heard`). Null for an
+ * angle with no labelled tile.
+ */
+export async function angleTiles(
   page: Page,
   titles: string[]
 ): Promise<
   Array<{
-    text: string
+    title: string
     x: number
     y: number
     w: number
     h: number
-    covered: boolean
-  }>
+    heard: boolean
+  } | null>
 > {
   return await probe(
     page,
     `${RECTS}
-    const titles = ${JSON.stringify(titles)}
-    const meets = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
-    return [...document.querySelectorAll('div')]
-      .filter(node => node.closest('#root') == null && node.childElementCount === 0 && titles.includes((node.textContent ?? '').replace(/^🔊 /, '')))
-      .map(node => {
-        const chip = box(node.parentElement)
-        return { text: node.textContent, ...chip, covered: boards.some(board => meets(chip, box(board))) }
-      })
-      .filter(chip => chip.w > 0 && chip.h > 0)`
+    return ${JSON.stringify(titles)}.map(title => {
+      const tile = document.querySelector('[aria-label="' + title + ' angle"]')
+      if (tile == null) return null
+      return { title, ...box(tile), heard: tile.getAttribute('data-heard') === 'true' }
+    })`
   )
 }
 
