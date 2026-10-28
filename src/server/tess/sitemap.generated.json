@@ -563,6 +563,8 @@
         "Four-angle portrait",
         "Radar matching",
         "Match recorded speeds to the scorekeeper’s pitch entry.",
+        "Replay",
+        "How long the 3D replay holds each pitch before the next.",
         "Highlights",
         "Where each highlight starts in the video, in seconds.",
         "Rewind length",

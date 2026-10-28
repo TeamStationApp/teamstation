@@ -53,6 +53,7 @@ import {
   type ReplayEvent,
   type ReplayMode,
   replayReducer,
+  SLOT_MS,
   startReplay
 } from './replayMachine'
 import { ReplayPlayCard, type ReplayPlayCardProps } from './ReplayPlayCard'
@@ -80,7 +81,7 @@ export interface ReplayClient extends NarrationClient {
   game: (gameId: string) => Promise<GameDetail>
   gameEvents: (gameId: string) => Promise<StoredGame>
   /** Says, among other things, whether the server has an announcer. */
-  health: () => Promise<{ narration?: boolean }>
+  health: () => Promise<{ narration?: boolean; replayPitchSec?: number }>
 }
 
 export interface GameReplayScreenProps {
@@ -199,17 +200,22 @@ export function GameReplayScreen(
     timeline: ReplayTimeline
     mode: ReplayMode
     narration: boolean
+    pitchSlotMs: number
     context: SessionContext
   } | null>(null)
   useEffect(() => {
     let live = true
-    // A server that cannot say has no announcer to offer.
-    const narration = client.health().then(
-      health => health.narration === true,
-      () => false
+    // A server that cannot say has no announcer to offer, and plays each
+    // pitch at the default delay.
+    const health = client.health().then(
+      answer => ({
+        announcer: answer.narration === true,
+        pitchSlotMs: (answer.replayPitchSec ?? SLOT_MS.pitch / 1000) * 1000
+      }),
+      () => ({ announcer: false, pitchSlotMs: SLOT_MS.pitch })
     )
-    Promise.all([client.game(gameId), client.gameEvents(gameId), narration])
-      .then(([game, stored, announcer]) => {
+    Promise.all([client.game(gameId), client.gameEvents(gameId), health])
+      .then(([game, stored, { announcer, pitchSlotMs }]) => {
         if (!live) return
         const context = replayContextOf(game, stored)
         if (!isReplayable(game, game.replayable) || context == null) {
@@ -221,6 +227,7 @@ export function GameReplayScreen(
           timeline: replayTimelineOf(stored, context),
           mode: game.status === 'inProgress' ? 'live' : 'replay',
           narration: announcer,
+          pitchSlotMs,
           context
         })
       })
@@ -259,11 +266,18 @@ function ReplayView(props: {
   timeline: ReplayTimeline
   mode: ReplayMode
   narration: boolean
+  /** The node's pitch delay, for whatever plays at replay pace. */
+  pitchSlotMs: number
   onExit: () => void
   clock: () => number
 }): React.ReactElement {
   const [state, dispatch] = useReducer(replayReducer, undefined, () =>
-    startReplay(props.mode, props.timeline, props.game.status === 'final')
+    startReplay(
+      props.mode,
+      props.timeline,
+      props.game.status === 'final',
+      props.pitchSlotMs
+    )
   )
   const { clock } = props
   useEffect(() => {

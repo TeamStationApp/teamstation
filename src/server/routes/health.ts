@@ -1,8 +1,10 @@
 import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
+import { defaultReplaySettings } from '../../common/nodeSettings'
 import type { Database } from '../db/database'
 import { withAsync } from '../middleware/withErrors'
+import { replayPitchSec } from '../nodeSettings'
 
 export interface HealthBody {
   status: 'ok' | 'degraded'
@@ -19,6 +21,8 @@ export interface HealthBody {
   narration: boolean
   /** Whether Tess, the assistant, has a key. Never the key. */
   tess: boolean
+  /** How long a replay holds each pitch, in seconds: the node's setting. */
+  replayPitchSec: number
 }
 
 /**
@@ -52,6 +56,12 @@ export function healthRoutes(
         console.error('health: database unreachable', error)
       }
 
+      // Read only once the database answered, and never failing: an outage
+      // answers as it always has.
+      const pitchSec =
+        database === 'ok'
+          ? await replayPitchSec(db)
+          : defaultReplaySettings.pitchSec
       const body: HealthBody = {
         status: database === 'ok' ? 'ok' : 'degraded',
         version,
@@ -62,7 +72,8 @@ export function healthRoutes(
         dictation: options.dictation ?? false,
         dictationModels: [...(options.dictationModels ?? [])],
         narration: options.narration ?? false,
-        tess: options.tess ?? false
+        tess: options.tess ?? false,
+        replayPitchSec: pitchSec
       }
       res.status(database === 'ok' ? 200 : 503).json(body)
     })

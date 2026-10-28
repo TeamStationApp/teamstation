@@ -172,6 +172,17 @@ describe('api client for Tess', () => {
     }
   })
 
+  it('reads the replay pitch delay from health, and an older server without it as 5', function () {
+    const health = {
+      status: 'ok',
+      version: '1.2.3',
+      database: 'ok',
+      migrations: 81
+    }
+    expect(asHealth({ ...health, replayPitchSec: 7 }).replayPitchSec).equals(7)
+    expect(asHealth(health).replayPitchSec).equals(5)
+  })
+
   it('reads tess from health, and an older server without it as not true', function () {
     const health = {
       status: 'ok',

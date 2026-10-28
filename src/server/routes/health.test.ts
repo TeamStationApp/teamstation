@@ -10,6 +10,7 @@ import { Pool } from 'pg'
 import { TeamStationClient } from '../../common/api'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { type Database, makeDatabase } from '../db/database'
+import { forgetScoreboardSettings } from '../nodeSettings'
 import { asServerConfig, tessSettings } from '../serverConfig'
 import { healthRoutes } from './health'
 
@@ -115,6 +116,37 @@ describe('health', function () {
     expect(health.tess === true).equals(false)
   })
 
+  it('reports the replay pitch delay: 5 when it cannot be read, the stored seconds when it can', async () => {
+    const logged: unknown[] = []
+    const error = console.error
+    console.error = (...args: unknown[]) => {
+      logged.push(args[0])
+    }
+    try {
+      forgetScoreboardSettings()
+      // This database has no settings table: the read fails, quietly.
+      const client = await serve({})
+      const response = await fetch(`${client.baseUrl}/health`)
+      expect(response.status).equals(200)
+      expect(await response.json()).deep.include({ replayPitchSec: 5 })
+      expect(logged).deep.equals([])
+      const pool = new Pool({
+        connectionString: testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
+      })
+      await pool.query(`create table system_settings (
+        key text primary key, value jsonb not null,
+        updated_at timestamptz not null default now(), updated_by text)`)
+      await pool.query(
+        `insert into system_settings (key, value) values ('replay.pitchSec', '7')`
+      )
+      await pool.end()
+      forgetScoreboardSettings()
+      expect((await client.health()).replayPitchSec).equals(7)
+    } finally {
+      console.error = error
+    }
+  })
+
   it('still reports the flag when the database is unreachable', async () => {
     const away = makeDatabase('postgres://127.0.0.1:1/absent')
     const logged: unknown[] = []
@@ -130,7 +162,8 @@ describe('health', function () {
         status: 'degraded',
         database: 'unreachable',
         migrations: 0,
-        tess: true
+        tess: true,
+        replayPitchSec: 5
       })
       expect(logged).deep.equals(['health: database unreachable'])
     } finally {

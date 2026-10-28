@@ -49,6 +49,8 @@ interface Fiber {
 /** What the fake server says about its announcer, and what it was asked. */
 const announcer = {
   health: true as boolean | 'fails',
+  /** The node's replay pitch delay health reports, or none (an older server). */
+  pitchSec: undefined as number | undefined,
   audio: 'ok' as 'ok' | 'fails',
   asked: [] as string[],
   /** The steps whose sentences the page played, in order. */
@@ -64,7 +66,12 @@ function fakeClient(
     gameEvents: events,
     health: async () => {
       if (announcer.health === 'fails') throw new Error('offline')
-      return { narration: announcer.health }
+      return {
+        narration: announcer.health,
+        ...(announcer.pitchSec == null
+          ? {}
+          : { replayPitchSec: announcer.pitchSec })
+      }
     },
     narrationAudio: async (_gameId, step) => {
       announcer.asked.push(step.key)
@@ -292,6 +299,7 @@ describe('the replay screen', function () {
   this.timeout(30000)
 
   beforeEach(function () {
+    announcer.pitchSec = undefined
     announcer.health = true
     announcer.audio = 'ok'
     announcer.asked = []
@@ -364,6 +372,35 @@ describe('the replay screen', function () {
     expect(field().view).equals('home')
     await press('Exit')
     expect(shown.exits).equals(1)
+  })
+
+  /** The first pitch shows at 2200; the next comes when its slot ends. */
+  const holds = async (pitchMs: number): Promise<void> => {
+    resize(402, 874)
+    await show(gameOf(), finalGame())
+    await showCatcher()
+    await firstPitch()
+    const first = card()
+    now = 2200 + pitchMs - 400
+    await wait(250)
+    expect(card(), `still the first pitch before ${pitchMs} ms`).equals(first)
+    now = 2200 + pitchMs + 400
+    await wait(250)
+    expect(card(), `the next step after ${pitchMs} ms`).not.equals(first)
+  }
+
+  it('holds each pitch for the node’s pitch delay', async function () {
+    announcer.pitchSec = 7
+    await holds(7000)
+  })
+
+  it('holds each pitch five seconds for a server that does not say', async function () {
+    await holds(5000)
+  })
+
+  it('holds each pitch five seconds when health cannot be read', async function () {
+    announcer.health = 'fails'
+    await holds(5000)
   })
 
   it('plays the first pitch on the clock, and holds on pause', async function () {
