@@ -322,6 +322,7 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
           name: 'Demo Regular',
           timezone: 'UTC',
           gameMinutes: 90,
+          startsOn: '2027-03-01',
           participants: ['tem_a', 'tem_b'],
           exhibitionTeams: []
         }

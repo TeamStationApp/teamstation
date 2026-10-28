@@ -238,6 +238,12 @@ export const asSchedulePreview = asObject({
       name: asString,
       timezone: asString,
       gameMinutes: asNumber,
+      /**
+       * The season's first day, `YYYY-MM-DD`. Optional, so an answer from a
+       * server that does not send it yet still reads; the weeks then count
+       * from the first game.
+       */
+      startsOn: asOptional(asString),
       participants: asArray(asString),
       exhibitionTeams: asArray(asString)
     })

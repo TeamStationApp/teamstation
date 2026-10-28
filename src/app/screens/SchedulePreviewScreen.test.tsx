@@ -129,6 +129,7 @@ function previewOf(overrides: Partial<SchedulePreview> = {}): SchedulePreview {
         // The season's stored zone, which no time is read in.
         timezone: 'UTC',
         gameMinutes: 90,
+        startsOn: '2027-03-01',
         participants: ['tem_hawks', 'tem_owls', 'tem_foxes'],
         exhibitionTeams: ['tem_otters']
       }
