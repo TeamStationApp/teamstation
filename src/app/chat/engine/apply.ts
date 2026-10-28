@@ -106,11 +106,23 @@ function remove(post: MessageView, by: 'author' | 'moderator'): void {
   post.attachments = []
 }
 
+/**
+ * The quick bar's 👍 and the full picker's 👍️ differ only by the emoji
+ * presentation selector (U+FE0F), which draws them alike; they are one
+ * reaction. The first form seen is the one shown.
+ */
+export function reactionKey(emoji: string): string {
+  return emoji.replaceAll('\uFE0F', '')
+}
+
 /** The posts, oldest first, with everything aimed at them applied. */
 export function foldMessages(input: FoldInput): MessageView[] {
   const envelopes = [...input.envelopes].sort((a, b) => a.seq - b.seq)
   const posts = new Map<string, MessageView>()
-  const reactions = new Map<string, Map<string, Set<string>>>()
+  const reactions = new Map<
+    string,
+    Map<string, { emoji: string; who: Set<string> }>
+  >()
   for (const envelope of envelopes) {
     if (envelope.kind !== 'post') continue
     const opened = input.opened.get(envelope.id)
@@ -182,13 +194,14 @@ export function foldMessages(input: FoldInput): MessageView[] {
         byEmoji = new Map()
         reactions.set(content.targetId, byEmoji)
       }
-      let who = byEmoji.get(content.emoji)
-      if (who == null) {
-        who = new Set()
-        byEmoji.set(content.emoji, who)
+      const key = reactionKey(content.emoji)
+      let group = byEmoji.get(key)
+      if (group == null) {
+        group = { emoji: content.emoji, who: new Set() }
+        byEmoji.set(key, group)
       }
-      if (content.remove) who.delete(envelope.senderUserId)
-      else who.add(envelope.senderUserId)
+      if (content.remove) group.who.delete(envelope.senderUserId)
+      else group.who.add(envelope.senderUserId)
     }
   }
 
@@ -196,7 +209,7 @@ export function foldMessages(input: FoldInput): MessageView[] {
   for (const post of views) {
     if (post.status === 'removed') continue
     if (post.quote != null) post.quote = resolveQuote(post.quote, posts)
-    for (const [emoji, who] of reactions.get(post.id) ?? []) {
+    for (const { emoji, who } of reactions.get(post.id)?.values() ?? []) {
       if (who.size === 0) continue
       post.reactions.push({
         emoji,

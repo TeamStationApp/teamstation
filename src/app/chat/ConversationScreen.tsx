@@ -90,7 +90,7 @@ import {
 } from './chatWorkspaceModel'
 import { Composer } from './Composer'
 import { EmojiPicker } from './EmojiPicker'
-import type { MessageView } from './engine/apply'
+import { type MessageView, reactionKey } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
 import { findOriginal, replyExcerpt } from './engine/reply'
 import { MentionPicker } from './MentionPicker'
@@ -3229,7 +3229,9 @@ export function ConversationScreen(
               selected,
               emoji,
               selected.reactions.some(
-                reaction => reaction.emoji === emoji && reaction.mine
+                reaction =>
+                  reactionKey(reaction.emoji) === reactionKey(emoji) &&
+                  reaction.mine
               )
             )
           }}

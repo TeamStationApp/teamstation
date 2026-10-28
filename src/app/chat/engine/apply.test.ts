@@ -137,6 +137,36 @@ describe('chat engine fold', function () {
     ])
   })
 
+  it('counts the quick bar 👍 and the picker 👍️ as one reaction', function () {
+    const [post] = fold([
+      [envelope(1, userIdOfGumbo(1), 'post'), text('hi')],
+      [
+        envelope(2, userIdOfGumbo(2), 'reaction'),
+        { type: 'reaction', targetId: id(1), emoji: '👍', remove: false }
+      ],
+      [
+        envelope(3, userIdOfGumbo(3), 'reaction'),
+        { type: 'reaction', targetId: id(1), emoji: '👍\uFE0F', remove: false }
+      ],
+      [
+        envelope(4, userIdOfGumbo(1), 'reaction'),
+        { type: 'reaction', targetId: id(1), emoji: '👍\uFE0F', remove: false }
+      ],
+      // Removed through the chip, whose form is the first one seen.
+      [
+        envelope(5, userIdOfGumbo(1), 'reaction'),
+        { type: 'reaction', targetId: id(1), emoji: '👍', remove: true }
+      ]
+    ])
+    expect(post.reactions).deep.equals([
+      {
+        emoji: '👍',
+        userIds: [userIdOfGumbo(2), userIdOfGumbo(3)],
+        mine: false
+      }
+    ])
+  })
+
   it('removes a post its author deletes, and shows a moderator’s removal', function () {
     const views = fold([
       [
