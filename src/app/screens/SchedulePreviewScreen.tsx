@@ -1,5 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Text,
+  View
+} from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { FairnessRow, PlannedGame } from '../../common/autoScheduler/types'
@@ -18,21 +24,50 @@ import {
 import { type FieldSize, fieldSizeLabel } from '../../common/venues'
 import {
   Button,
+  CardBand,
+  HandoffView,
   ListCard,
+  PillBand,
   PillTabs,
+  PinnedContent,
+  PinnedSpacer,
   Screen,
-  SectionHeader
+  SectionHeader,
+  useHeaderHandoff,
+  usePinnedHandoff,
+  usePinnedTabs
 } from '../components'
 import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
-import { DangerText } from '../components/DangerText'
 import { CalendarPicker, TimePicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
+import { useConfirmedAction } from '../components/useConfirmedAction'
 import { clockLabel, WEEKDAYS } from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  ALL_GAMES,
+  type CalendarWeek,
+  calendarWeeks,
+  dayHeader,
+  fieldLabels,
+  filteredGames,
+  normalizeFilter,
+  type PreviewFilter,
+  sameFilter,
+  weekAnchor,
+  weekTitle
+} from './schedulePreviewCalendar'
 
-type View3 = 'season' | 'team' | 'field'
+type Tab = 'schedule' | 'fairness'
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'fairness', label: 'Fairness' }
+]
+
+/** The id of each filter row's first pill, which stands for all of them. */
+const ALL = '*'
 
 const STATE_LABELS: Record<PublishedState, string> = {
   scheduled: 'Scheduled',
@@ -47,6 +82,30 @@ function plural(count: number, one: string, many = `${one}s`): string {
 }
 
 /**
+ * When a game's field is in another zone than the viewer's, its start
+ * there and that zone: "5:30 PM EDT at the field", with the weekday when
+ * the field's day is another. Empty in the viewer's own zone.
+ */
+function atTheField(
+  startAt: string,
+  fieldZone: string | undefined,
+  viewer: string
+): string {
+  const zone =
+    fieldZone == null ? '' : foreignZoneName(startAt, fieldZone, viewer)
+  if (zone === '' || fieldZone == null) return ''
+  const sameDay =
+    gameCalendarDay(startAt, fieldZone) === gameCalendarDay(startAt, viewer)
+  const there = new Intl.DateTimeFormat('en', {
+    timeZone: fieldZone,
+    ...(sameDay ? {} : { weekday: 'short' as const }),
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(new Date(startAt))
+  return `${there} ${zone} at the field`
+}
+
+/**
  * A game's time in the viewer's zone. When its field is in another zone,
  * the label also names that zone, with the start there, the time the game
  * was placed in: "Monday, March 1, 2:30 PM – 4:00 PM · 5:30 PM EST at the
@@ -58,19 +117,27 @@ export function gameTimeLabel(
   viewer: string = viewerTimezone()
 ): string {
   const range = eventLocalRange(game.startAt, game.endAt, viewer)
-  const zone =
-    fieldZone == null ? '' : foreignZoneName(game.startAt, fieldZone, viewer)
-  if (zone === '' || fieldZone == null) return range
-  const sameDay =
-    gameCalendarDay(game.startAt, fieldZone) ===
-    gameCalendarDay(game.startAt, viewer)
-  const there = new Intl.DateTimeFormat('en', {
-    timeZone: fieldZone,
-    ...(sameDay ? {} : { weekday: 'short' as const }),
+  const there = atTheField(game.startAt, fieldZone, viewer)
+  return there === '' ? range : `${range} · ${there}`
+}
+
+/**
+ * A game box's time, under its day's header: the start in the viewer's
+ * zone, and the field's own start and zone when it is in another, as
+ * `gameTimeLabel` names them: "2:30 PM · 5:30 PM EDT at the field".
+ */
+export function boxTimeLabel(
+  game: { startAt: string },
+  fieldZone: string | undefined,
+  viewer: string = viewerTimezone()
+): string {
+  const start = new Intl.DateTimeFormat('en', {
+    timeZone: viewer,
     hour: 'numeric',
     minute: '2-digit'
   }).format(new Date(game.startAt))
-  return `${range} · ${there} ${zone} at the field`
+  const there = atTheField(game.startAt, fieldZone, viewer)
+  return there === '' ? start : `${start} · ${there}`
 }
 
 /** A team's fairness line, said plainly. */
@@ -93,9 +160,13 @@ export function fairnessLine(row: FairnessRow): string {
 
 /**
  * A preview of a league's schedule: up to three options, each with its
- * games by season, team or field, its fairness summary, what it couldn't
- * meet and why it trails the recommended one. Games can be rejected and
- * added, the option recalculated, and published.
+ * games week by week, filtered by season, team and field, its fairness by
+ * season, what it couldn't meet and why it trails the recommended one.
+ * Games can be rejected and added, the option recalculated, and published.
+ *
+ * The title and Recalculate scroll away under the header, the title handing
+ * up into it; the tabs and the filter rows stay pinned under it, with
+ * everything else scrolling beneath them.
  */
 export function SchedulePreviewScreen({
   client,
@@ -117,9 +188,38 @@ export function SchedulePreviewScreen({
   const [busy, setBusy] = useState(false)
   const [revision, setRevision] = useState(0)
   const [option, setOption] = useState(0)
-  const [view, setView] = useState<View3>('season')
+  const [tab, setTab] = useState<Tab>('schedule')
+  const [chosen, setChosen] = useState<PreviewFilter>(ALL_GAMES)
+  const [fairnessSeason, setFairnessSeason] = useState<string>()
   const [adding, setAdding] = useState(false)
+  // The calendar's pane width. In a sideways scroller nothing caps a
+  // column, so the calendar is given the pane's width, or the seven
+  // narrowest columns' when that is wider, and its columns share it.
+  const [paneWidth, setPaneWidth] = useState(0)
   const begin = useLatestRequest()
+  const confirmation = useConfirmedAction(client, previewId)
+  const published = preview?.status === 'published'
+  const title = published ? 'Published schedule' : 'Schedule preview'
+  const head = usePinnedHandoff()
+  const progress = head.handoff.progress
+  useHeaderHandoff(
+    useMemo(
+      () => (
+        <HandoffView progress={progress} style={styles.headerHandoff}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {title}
+          </Text>
+        </HandoffView>
+      ),
+      [progress, styles.headerHandoff, styles.headerTitle, title]
+    )
+  )
+  const { pinned, selectTab } = usePinnedTabs({
+    head,
+    ready: preview != null,
+    tab,
+    anchorOnRow: false
+  })
   useEffect(() => {
     const current = begin()
     setError('')
@@ -134,6 +234,53 @@ export function SchedulePreviewScreen({
       }
     )
   }, [client, previewId, revision, begin])
+  // The option's games, the filter as it can be drawn with its rows, and
+  // the weeks: worked out again only when the preview, the option or the
+  // chosen filter changes, not on every notice, sheet or layout.
+  const games = useMemo<PlannedGame[]>(() => {
+    const shown = preview?.options[option]
+    return preview == null || shown == null
+      ? []
+      : editedGames(shown, preview.edits, option)
+  }, [preview, option])
+  const view = useMemo(() => {
+    if (preview == null) return undefined
+    // What is drawn and applied: the filter put back to all of a row whose
+    // choice the season, the option or a reject no longer offers.
+    const { filter, choices } = normalizeFilter(chosen, preview, games)
+    const zone = viewerTimezone()
+    const shown = filteredGames(games, filter)
+    const weeks = calendarWeeks(shown, {
+      firstDay: weekAnchor(preview, games, filter.seasonId, zone),
+      zone
+    })
+    // Each drawn game's two times, worked out once rather than per render.
+    const fieldZones = new Map(
+      preview.fields.map(field => [field.id, field.timezone])
+    )
+    const times = new Map(
+      shown.map(game => {
+        const fieldZone = fieldZones.get(game.fieldId)
+        return [
+          game.key,
+          {
+            box: boxTimeLabel(game, fieldZone, zone),
+            full: gameTimeLabel(game, fieldZone, zone)
+          }
+        ]
+      })
+    )
+    return {
+      filter,
+      choices,
+      weeks,
+      times,
+      labels: fieldLabels(preview.fields)
+    }
+  }, [preview, games, chosen])
+  // A choice put back to all stays put back: the field whose last game was
+  // rejected does not come back chosen when a game returns to it.
+  if (view != null && !sameFilter(view.filter, chosen)) setChosen(view.filter)
   const run = useCallback(async (work: () => Promise<void>): Promise<void> => {
     setBusy(true)
     setError('')
@@ -150,7 +297,7 @@ export function SchedulePreviewScreen({
       setBusy(false)
     }
   }, [])
-  if (preview == null)
+  if (preview == null || view == null)
     return (
       <Screen>
         <View style={styles.page}>
@@ -176,69 +323,160 @@ export function SchedulePreviewScreen({
   const teamName = (id: string): string => names.get(id) ?? 'A team'
   const fields = new Map(preview.fields.map(field => [field.id, field]))
   const seasons = new Map(preview.seasons.map(season => [season.id, season]))
-  const published = preview.status === 'published'
   const open = preview.status === 'open'
-  const chosen = preview.options[option]
-  const games: PlannedGame[] =
-    chosen == null
-      ? []
-      : editedGames(
-          chosen,
-          {
-            ...preview.edits,
-            addedGames: preview.edits.addedGames
-          },
-          option
-        )
+  const shownOption = preview.options[option]
+  const { filter, choices, weeks, times } = view
   const states = new Map(preview.published.map(game => [game.gameKey, game]))
+  // The viewed option's rejected games, still to be placed again.
   const rejectedHere =
     open && preview.edits.option === option
       ? preview.edits.rejectedGameKeys.length
       : 0
-  const groups: Array<{ id: string; title: string; games: PlannedGame[] }> =
-    view === 'season'
-      ? preview.seasons.map(season => ({
-          id: season.id,
-          title: season.name,
-          games: games.filter(game => game.seasonId === season.id)
-        }))
-      : view === 'field'
-        ? preview.fields.map(field => ({
-            id: field.id,
-            title: `${field.name}, ${field.venueName}`,
-            games: games.filter(game => game.fieldId === field.id)
-          }))
-        : preview.teams
-            .map(team => ({
-              id: team.id,
-              title: team.name,
-              games: games.filter(
-                game =>
-                  game.homeTeamId === team.id || game.awayTeamId === team.id
-              )
-            }))
-            .filter(group => group.games.length > 0)
-  const reject = (key: string): void => {
+  const edited =
+    preview.edits.option === option &&
+    preview.edits.rejectedGameKeys.length + preview.edits.addedGames.length > 0
+  // Only an open preview can be recalculated; a published one lists a
+  // rejected game for rescheduling instead.
+  const canRecalculate = open && edited && !busy
+  const fairnessSeasonId = seasons.has(fairnessSeason ?? '')
+    ? fairnessSeason
+    : preview.seasons[0]?.id
+  const choose = (next: Tab): void => {
+    selectTab(next)
+    setTab(next)
+  }
+  const recalculate = (): void => {
     run(async () => {
-      setPreview(
-        await client.editSchedulePreview(preview.id, {
-          option,
-          rejectedGameKeys: [key]
-        })
-      )
-      setNotice(
-        published
-          ? 'Game rejected. It is listed for rescheduling.'
-          : 'Game rejected.'
-      )
+      const next = await client.buildSchedulePreview(leagueId, {
+        mode: 'partial',
+        fromPreviewId: preview.id,
+        option
+      })
+      onOpenPreview(next.id)
     }).catch(() => undefined)
   }
-  return (
-    <Screen>
-      <View style={styles.page}>
-        <Text accessibilityRole="header" style={styles.title}>
-          {published ? 'Published schedule' : 'Schedule preview'}
+  const confirmReject = (game: PlannedGame): void => {
+    const field = fields.get(game.fieldId)
+    const matchup = `${teamName(game.awayTeamId)} at ${teamName(game.homeTeamId)}`
+    confirmation.open({
+      title: 'Reject this game?',
+      detail: `${matchup}, ${gameTimeLabel(game, field?.timezone)}${field == null ? '' : `, ${field.name}, ${field.venueName}`}. ${published ? 'It is listed for rescheduling.' : 'Recalculate places it again; everything else stays.'}`,
+      label: 'Reject',
+      sheetLabel: 'Reject this game',
+      dismissLabel: 'Keep this game',
+      run: async current => {
+        const next = await client.editSchedulePreview(preview.id, {
+          option,
+          rejectedGameKeys: [game.key]
+        })
+        if (!current()) return
+        setPreview(next)
+        setError('')
+        setNotice(
+          published
+            ? 'Game rejected. It is listed for rescheduling.'
+            : 'Game rejected.'
+        )
+      }
+    })
+  }
+  const box = (game: PlannedGame): React.ReactElement => {
+    const field = fields.get(game.fieldId)
+    const state = states.get(game.key)?.state
+    const canReject =
+      open || (published && (state === 'scheduled' || state === 'awaiting'))
+    const matchup = `${teamName(game.awayTeamId)} at ${teamName(game.homeTeamId)}`
+    const time = times.get(game.key)
+    return (
+      <View style={styles.box} testID="preview-game">
+        <View style={styles.boxTop}>
+          <Text style={styles.boxTime}>{time?.box}</Text>
+          {game.exhibition && (
+            <View style={styles.exhibition} accessibilityLabel="Exhibition">
+              <Text style={styles.exhibitionText}>EXH</Text>
+            </View>
+          )}
+        </View>
+        {/* Wrapped, never cut: two fields at one park differ at the end. */}
+        <Text style={styles.boxDetail}>
+          {field == null ? '' : view.labels.get(field.id)}
+          {field == null ? '' : ` · ${fieldSizeLabel(game.size)}`}
         </Text>
+        <Text style={styles.boxTeam} numberOfLines={2}>
+          Home: {teamName(game.homeTeamId)}
+        </Text>
+        <Text style={styles.boxTeam} numberOfLines={2}>
+          Away: {teamName(game.awayTeamId)}
+        </Text>
+        {state != null && (
+          <Text style={styles.boxDetail}>{STATE_LABELS[state]}</Text>
+        )}
+        {/*
+          Last, so it is drawn over the box: a 44-point target in the box's
+          top right corner, wholly inside it, whatever lies beneath.
+        */}
+        {canReject && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Reject ${matchup}, ${time?.full}`}
+            // Not while a publish, recalculation or added game is on its
+            // way, whose answer would land after this one.
+            disabled={busy}
+            style={({ pressed }) => [
+              styles.reject,
+              pressed && styles.rejectPressed,
+              busy && styles.rejectBusy
+            ]}
+            onPress={() => {
+              confirmReject(game)
+            }}
+          >
+            <Text style={styles.rejectGlyph}>✕</Text>
+          </Pressable>
+        )}
+      </View>
+    )
+  }
+  const week = (shown: CalendarWeek): React.ReactElement => (
+    <View key={shown.number} style={styles.week} testID="preview-week">
+      <Text style={styles.weekTitle}>{weekTitle(shown)}</Text>
+      <View style={styles.weekRow}>
+        {shown.days.map(day => (
+          <View key={day} style={styles.cell}>
+            <Text style={styles.dayHeader}>{dayHeader(day)}</Text>
+          </View>
+        ))}
+      </View>
+      {shown.rows.map((row, index) => (
+        <View key={index} style={styles.weekRow}>
+          {row.map((game, day) => (
+            <View key={day} style={styles.cell}>
+              {game == null ? <View style={styles.emptyBox} /> : box(game)}
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  )
+  const seasonPills = (all: boolean): Array<{ id: string; label: string }> => [
+    ...(all ? [{ id: ALL, label: 'All seasons' }] : []),
+    ...preview.seasons.map(season => ({ id: season.id, label: season.name }))
+  ]
+  return (
+    <Screen {...pinned.screen} wide>
+      <CardBand part={pinned.cardBand}>
+        <View style={styles.titleRow}>
+          <Text accessibilityRole="header" style={styles.title}>
+            {title}
+          </Text>
+          <Button
+            label="Recalculate"
+            kind="secondary"
+            compact
+            disabled={!canRecalculate}
+            onPress={recalculate}
+          />
+        </View>
         <Text style={styles.meta}>
           {preview.mode === 'partial'
             ? 'Some teams placed again'
@@ -255,218 +493,226 @@ export function SchedulePreviewScreen({
             This preview was replaced by a newer one.
           </Text>
         )}
-        {error !== '' && (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
-          </Text>
-        )}
-        {notice !== '' && (
-          <Text accessibilityLiveRegion="polite" style={styles.notice}>
-            {notice}
-          </Text>
-        )}
-        {preview.blocking != null ? (
-          <View style={styles.warnings} testID="preview-blocking">
-            <Text style={styles.warning}>
-              No schedule fits: {preview.blocking}.
-            </Text>
-          </View>
-        ) : (
-          <>
-            {!published && preview.options.length > 1 && (
+      </CardBand>
+
+      <PillBand part={pinned.pillBand}>
+        <View testID="previewPinnedRows">
+          <PillTabs
+            accessibilityLabel="Preview sections"
+            tabs={TABS}
+            selected={tab}
+            onSelect={choose}
+            size="compact"
+          />
+          <View style={styles.filterStack}>
+            {tab === 'schedule' ? (
+              <>
+                <PillTabs
+                  accessibilityLabel="Seasons"
+                  size="small"
+                  stacked
+                  tabs={seasonPills(true)}
+                  selected={filter.seasonId ?? ALL}
+                  onSelect={id => {
+                    setChosen({ ...filter, seasonId: id === ALL ? null : id })
+                  }}
+                />
+                <PillTabs
+                  accessibilityLabel="Teams"
+                  size="small"
+                  stacked
+                  tabs={[{ id: ALL, label: 'All teams' }, ...choices.teams]}
+                  selected={filter.teamId ?? ALL}
+                  onSelect={id => {
+                    setChosen({ ...filter, teamId: id === ALL ? null : id })
+                  }}
+                />
+                <PillTabs
+                  accessibilityLabel="Fields"
+                  size="small"
+                  stacked
+                  tabs={[{ id: ALL, label: 'All fields' }, ...choices.fields]}
+                  selected={filter.fieldId ?? ALL}
+                  onSelect={id => {
+                    setChosen({ ...filter, fieldId: id === ALL ? null : id })
+                  }}
+                />
+              </>
+            ) : (
               <PillTabs
-                accessibilityLabel="Options"
-                tabs={preview.options.map((_, index) => ({
-                  id: String(index),
-                  label:
-                    index === 0
-                      ? 'Option 1 · Recommended'
-                      : `Option ${index + 1}`
-                }))}
-                selected={String(option)}
-                onSelect={id => {
-                  setOption(Number(id))
-                }}
+                accessibilityLabel="Fairness seasons"
+                size="small"
+                stacked
+                tabs={seasonPills(false)}
+                selected={fairnessSeasonId ?? ''}
+                onSelect={setFairnessSeason}
               />
             )}
-            <PillTabs
-              accessibilityLabel="Group games"
-              size="compact"
-              tabs={[
-                { id: 'season', label: 'By season' },
-                { id: 'team', label: 'By team' },
-                { id: 'field', label: 'By field' }
-              ]}
-              selected={view}
-              onSelect={id => {
-                setView(id)
-              }}
-            />
-            {chosen != null && chosen.reasons.length > 0 && (
-              <View style={styles.section} testID="preview-reasons">
-                <SectionHeader title="Why not Option 1" />
-                {chosen.reasons.map(reason => (
-                  <Text key={reason} style={styles.body}>
-                    {reason}
-                  </Text>
-                ))}
-              </View>
-            )}
-            {chosen != null && chosen.unmet.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader title="What couldn’t be met" />
-                <View style={styles.warnings} testID="preview-unmet">
-                  {chosen.unmet.map(unmet => (
-                    <View key={unmet.message} style={styles.section}>
-                      <Text style={styles.warning}>
-                        {seasons.get(unmet.seasonId)?.name ?? 'A season'}:{' '}
-                        {unmet.message}.
-                      </Text>
-                      <Text style={styles.warningDetail}>
-                        Why: {unmet.cause}.
-                      </Text>
-                    </View>
+          </View>
+        </View>
+      </PillBand>
+
+      <PinnedContent key={tab} part={pinned.content}>
+        <View style={styles.page}>
+          {error !== '' && (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {error}
+            </Text>
+          )}
+          {notice !== '' && (
+            <Text accessibilityLiveRegion="polite" style={styles.notice}>
+              {notice}
+            </Text>
+          )}
+          {preview.blocking != null ? (
+            <View style={styles.warnings} testID="preview-blocking">
+              <Text style={styles.warning}>
+                No schedule fits: {preview.blocking}.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {!published && preview.options.length > 1 && (
+                <PillTabs
+                  accessibilityLabel="Options"
+                  tabs={preview.options.map((_, index) => ({
+                    id: String(index),
+                    label:
+                      index === 0
+                        ? 'Option 1 · Recommended'
+                        : `Option ${index + 1}`
+                  }))}
+                  selected={String(option)}
+                  onSelect={id => {
+                    setOption(Number(id))
+                  }}
+                />
+              )}
+              {shownOption != null && shownOption.reasons.length > 0 && (
+                <View style={styles.section} testID="preview-reasons">
+                  <SectionHeader title="Why not Option 1" />
+                  {shownOption.reasons.map(reason => (
+                    <Text key={reason} style={styles.body}>
+                      {reason}
+                    </Text>
                   ))}
                 </View>
-              </View>
-            )}
-            {chosen != null && (
-              <>
-                <SectionHeader
-                  title="Fairness"
-                  note={String(chosen.fairness.length)}
-                />
-                <ListCard>
-                  {chosen.fairness.map(row => (
+              )}
+              {shownOption != null && shownOption.unmet.length > 0 && (
+                <View style={styles.section}>
+                  <SectionHeader title="What couldn’t be met" />
+                  <View style={styles.warnings} testID="preview-unmet">
+                    {shownOption.unmet.map(unmet => (
+                      <View key={unmet.message} style={styles.section}>
+                        <Text style={styles.warning}>
+                          {seasons.get(unmet.seasonId)?.name ?? 'A season'}:{' '}
+                          {unmet.message}.
+                        </Text>
+                        <Text style={styles.warningDetail}>
+                          Why: {unmet.cause}.
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+              {tab === 'schedule' ? (
+                weeks.length === 0 ? (
+                  <Text style={styles.meta}>No games match these filters.</Text>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    onLayout={event => {
+                      setPaneWidth(event.nativeEvent.layout.width)
+                    }}
+                  >
                     <View
-                      key={`${row.seasonId}:${row.teamId}`}
-                      style={styles.row}
-                      accessibilityLabel={`${teamName(row.teamId)}: ${fairnessLine(row)}`}
+                      style={[
+                        styles.calendar,
+                        {
+                          width: Math.max(
+                            paneWidth,
+                            theme.rem(7 * COLUMN_REM + 6 * COLUMN_GAP_REM)
+                          )
+                        }
+                      ]}
                     >
-                      <Text style={styles.rowTitle}>
-                        {teamName(row.teamId)}
-                      </Text>
-                      <Text style={styles.rowDetail}>{fairnessLine(row)}</Text>
+                      {weeks.map(week)}
                     </View>
-                  ))}
-                </ListCard>
-              </>
-            )}
-            {groups.map(group => (
-              <View key={group.id} style={styles.section}>
-                <SectionHeader
-                  title={group.title}
-                  note={plural(group.games.length, 'game')}
-                />
-                {group.games.length > 0 && (
+                  </ScrollView>
+                )
+              ) : (
+                shownOption != null && (
                   <ListCard>
-                    {group.games.map(game => {
-                      const field = fields.get(game.fieldId)
-                      const state = states.get(game.key)?.state
-                      const matchup = `${teamName(game.awayTeamId)} at ${teamName(game.homeTeamId)}`
-                      const canReject =
-                        open ||
-                        (published &&
-                          (state === 'scheduled' || state === 'awaiting'))
-                      return (
-                        <View key={game.key} style={styles.gameRow}>
-                          <View style={styles.gameText}>
-                            <Text style={styles.rowTitle}>
-                              {matchup}
-                              {game.exhibition ? ' · Exhibition' : ''}
-                            </Text>
-                            <Text style={styles.rowDetail}>
-                              {gameTimeLabel(game, field?.timezone)}
-                            </Text>
-                            <Text style={styles.rowDetail}>
-                              {field == null
-                                ? ''
-                                : `${field.name}, ${field.venueName} · ${fieldSizeLabel(game.size)}`}
-                              {state == null ? '' : ` · ${STATE_LABELS[state]}`}
-                            </Text>
-                          </View>
-                          {canReject && (
-                            <View style={styles.rejectCell}>
-                              <DangerText
-                                label="Reject"
-                                accessibilityLabel={`Reject ${matchup}, ${gameTimeLabel(game, field?.timezone)}`}
-                                onPress={() => {
-                                  reject(game.key)
-                                }}
-                              />
-                            </View>
-                          )}
+                    {shownOption.fairness
+                      .filter(row => row.seasonId === fairnessSeasonId)
+                      .map(row => (
+                        <View
+                          key={`${row.seasonId}:${row.teamId}`}
+                          style={styles.row}
+                          accessibilityLabel={`${teamName(row.teamId)}: ${fairnessLine(row)}`}
+                        >
+                          <Text style={styles.rowTitle}>
+                            {teamName(row.teamId)}
+                          </Text>
+                          <Text style={styles.rowDetail}>
+                            {fairnessLine(row)}
+                          </Text>
                         </View>
-                      )
-                    })}
+                      ))}
                   </ListCard>
-                )}
-              </View>
-            ))}
-            {rejectedHere > 0 && (
-              <>
+                )
+              )}
+              {tab === 'schedule' && (open || published) && (
+                <Button
+                  label="Add game"
+                  kind="secondary"
+                  disabled={busy}
+                  onPress={() => {
+                    setAdding(true)
+                  }}
+                />
+              )}
+              {rejectedHere > 0 && (
                 <Text style={styles.meta}>
                   {plural(rejectedHere, 'game')} rejected. Recalculate to place
                   them again; everything else stays.
                 </Text>
+              )}
+              {open && shownOption != null && (
                 <Button
-                  label="Recalculate"
-                  kind="secondary"
+                  label={busy ? 'Publishing…' : 'Publish this option'}
                   disabled={busy}
                   onPress={() => {
                     run(async () => {
-                      const next = await client.buildSchedulePreview(leagueId, {
-                        mode: 'partial',
-                        fromPreviewId: preview.id,
+                      const result = await client.publishSchedulePreview(
+                        preview.id,
                         option
-                      })
-                      onOpenPreview(next.id)
+                      )
+                      setPreview(result.preview)
+                      setNotice(
+                        [
+                          `${plural(result.scheduled, 'game')} scheduled`,
+                          result.awaiting > 0
+                            ? `${plural(result.awaiting, 'game')} waiting for a team’s approval`
+                            : '',
+                          result.removed > 0
+                            ? `${plural(result.removed, 'game')} replaced`
+                            : ''
+                        ]
+                          .filter(part => part !== '')
+                          .join(', ') + '.'
+                      )
                     }).catch(() => undefined)
                   }}
                 />
-              </>
-            )}
-            {(open || published) && (
-              <Button
-                label="Add game"
-                kind="secondary"
-                disabled={busy}
-                onPress={() => {
-                  setAdding(true)
-                }}
-              />
-            )}
-            {open && chosen != null && (
-              <Button
-                label={busy ? 'Publishing…' : 'Publish this option'}
-                disabled={busy}
-                onPress={() => {
-                  run(async () => {
-                    const result = await client.publishSchedulePreview(
-                      preview.id,
-                      option
-                    )
-                    setPreview(result.preview)
-                    setNotice(
-                      [
-                        `${plural(result.scheduled, 'game')} scheduled`,
-                        result.awaiting > 0
-                          ? `${plural(result.awaiting, 'game')} waiting for a team’s approval`
-                          : '',
-                        result.removed > 0
-                          ? `${plural(result.removed, 'game')} replaced`
-                          : ''
-                      ]
-                        .filter(part => part !== '')
-                        .join(', ') + '.'
-                    )
-                  }).catch(() => undefined)
-                }}
-              />
-            )}
-          </>
-        )}
-      </View>
+              )}
+            </>
+          )}
+        </View>
+      </PinnedContent>
+      <PinnedSpacer part={pinned.spacer} />
+      {confirmation.sheet}
       {adding && (
         <AddGameSheet
           preview={preview}
@@ -710,10 +956,30 @@ function AddGameSheet({
   )
 }
 
+/** The narrowest a day's column gets before the weeks scroll sideways. */
+const COLUMN_REM = 6.75
+const COLUMN_GAP_REM = 0.375
+
 const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
   section: { gap: theme.rem(0.5) },
+  headerHandoff: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const
+  },
+  headerTitle: {
+    color: theme.headerTextColor,
+    fontFamily: theme.boldTextFont,
+    fontSize: theme.rem(1.125),
+    fontWeight: '700' as const
+  },
+  titleRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: theme.rem(0.75)
+  },
   title: {
+    flex: 1,
     fontFamily: theme.primaryTextFont,
     fontSize: theme.rem(1.75),
     color: theme.primaryTextColor
@@ -737,6 +1003,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
     color: theme.primaryTextColor
+  },
+  // The small rows' targets reach 6 above the first pill and below the
+  // last, so those targets are 44 tall too.
+  filterStack: {
+    paddingVertical: theme.rem(0.375)
   },
   // Solid yellow with dark text in every theme, like the early warnings.
   warnings: {
@@ -770,23 +1041,103 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.8125),
     color: theme.secondaryTextColor
   },
-  gameRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    minHeight: theme.rem(3.5)
+  // Every week scrolls sideways together on a phone; on a wide pane the
+  // seven columns share its whole width.
+  calendar: {
+    gap: theme.rem(1.25)
   },
-  gameText: {
+  week: { gap: theme.rem(COLUMN_GAP_REM) },
+  weekTitle: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.9375),
+    color: theme.primaryTextColor
+  },
+  weekRow: {
+    flexDirection: 'row' as const,
+    gap: theme.rem(COLUMN_GAP_REM)
+  },
+  cell: {
     flex: 1,
-    paddingHorizontal: theme.rem(1),
-    paddingVertical: theme.rem(0.5),
+    flexBasis: 0,
+    minWidth: 0
+  },
+  dayHeader: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.6875),
+    color: theme.secondaryTextColor,
+    textAlign: 'center' as const
+  },
+  emptyBox: {
+    flex: 1,
+    minHeight: theme.rem(5),
+    borderRadius: theme.rem(0.5),
+    borderWidth: 1,
+    borderStyle: 'dashed' as const,
+    borderColor: theme.defaultBorderColor
+  },
+  box: {
+    flex: 1,
+    borderRadius: theme.rem(0.5),
+    backgroundColor: theme.cardBackgroundColor,
+    borderWidth: 1,
+    borderColor: theme.defaultBorderColor,
+    padding: theme.rem(0.5),
     gap: theme.rem(0.125)
   },
-  rejectCell: {
-    alignSelf: 'stretch' as const,
-    justifyContent: 'center' as const,
-    paddingHorizontal: theme.rem(1),
-    borderLeftWidth: 1,
-    borderLeftColor: theme.defaultBorderColor
+  // Room on the right for the ✕ drawn over the box's corner.
+  boxTop: {
+    flexDirection: 'row' as const,
+    alignItems: 'flex-start' as const,
+    gap: theme.rem(0.25),
+    paddingRight: theme.rem(1.5)
+  },
+  boxTime: {
+    flex: 1,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.8125),
+    color: theme.primaryTextColor
+  },
+  boxDetail: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.75),
+    color: theme.secondaryTextColor
+  },
+  boxTeam: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.75),
+    color: theme.primaryTextColor
+  },
+  // Black with white letters in every theme, so it reads as a tag.
+  exhibition: {
+    backgroundColor: '#000000',
+    borderRadius: theme.radiusPill,
+    paddingHorizontal: theme.rem(0.375),
+    paddingVertical: theme.rem(0.0625)
+  },
+  exhibitionText: {
+    fontFamily: theme.boldTextFont,
+    fontSize: theme.rem(0.625),
+    fontWeight: '700' as const,
+    color: '#FFFFFF'
+  },
+  // A 44-point target around a small glyph, reaching into the box's padding
+  // so it does not push the box taller.
+  reject: {
+    position: 'absolute' as const,
+    top: 0,
+    right: 0,
+    width: theme.rem(2.75),
+    height: theme.rem(2.75),
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const
+  },
+  rejectPressed: { opacity: 0.6 },
+  rejectBusy: { opacity: 0.4 },
+  rejectGlyph: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1.25),
+    lineHeight: theme.rem(1.25),
+    color: theme.dangerColor
   },
   formRow: {
     flexDirection: 'row' as const,

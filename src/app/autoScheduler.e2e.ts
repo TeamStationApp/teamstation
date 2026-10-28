@@ -1,4 +1,4 @@
-// The Season Auto-Scheduler's end-to-end scenarios, E0 to E10, against the
+// The Season Auto-Scheduler's end-to-end scenarios, E0 to E11, against the
 // web app in a maestro-d web device (headless Chromium at a phone's size).
 //
 //   socket npm run build.web
@@ -54,7 +54,12 @@ interface Run {
   support: string
   /** What the scenarios so far made: the venue, its first field, a preview. */
   state: { venueId?: string; fieldId?: string; previewId?: string }
-  session: (device: string, user: number) => Promise<BrowserSession>
+  /** A signed-in browser, at a phone's size unless `size` says otherwise. */
+  session: (
+    device: string,
+    user: number,
+    size?: { width: number; height: number }
+  ) => Promise<BrowserSession>
   visit: (b: BrowserSession, path: string) => Promise<void>
   pass: (id: string, description: string) => Promise<void>
 }
@@ -699,6 +704,17 @@ async function clickLabel(b: BrowserSession, label: string): Promise<void> {
   }, selector)
 }
 
+/** Clicks the last element with exactly this accessible label. */
+async function clickLastLabel(b: BrowserSession, label: string): Promise<void> {
+  trace(`click last label ${label}`)
+  const selector = `[aria-label="${label}"]`
+  await b.page.waitForSelector(selector, { timeout: 15000 })
+  await b.page.evaluate((wanted: string) => {
+    const matches = document.querySelectorAll(wanted)
+    ;(matches[matches.length - 1] as HTMLElement).click()
+  }, selector)
+}
+
 /** Picks a wall time, "HH:MM", in the open time picker. */
 async function pickTime(b: BrowserSession, time: string): Promise<void> {
   const hour = Number(time.slice(0, 2))
@@ -769,6 +785,111 @@ async function setNumber(
     { timeout: 15000 },
     input
   )
+}
+
+/** The page's text as a reader sees it. */
+async function pageText(b: BrowserSession): Promise<string> {
+  return await b.page.evaluate(() => document.body.innerText)
+}
+
+/** Whether the preview's Recalculate is drawn greyed out. */
+async function recalculateDisabled(b: BrowserSession): Promise<boolean> {
+  await contains(b.page, 'Recalculate')
+  return await b.page.evaluate(() =>
+    [...document.querySelectorAll('[role="button"]')].some(
+      node =>
+        node.textContent === 'Recalculate' &&
+        node.getAttribute('aria-disabled') === 'true'
+    )
+  )
+}
+
+/** The text of each game box the preview's calendar draws. */
+async function boxTexts(b: BrowserSession): Promise<string[]> {
+  return await b.page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="preview-game"]')].map(
+      box => (box as HTMLElement).innerText
+    )
+  )
+}
+
+/** Scrolls the page under the pointer by `dy` and lets it settle. */
+async function wheel(b: BrowserSession, dy: number): Promise<void> {
+  const size = b.page.viewport()
+  await b.page.mouse.move(
+    (size === null ? 402 : size.width) / 2,
+    (size === null ? 874 : size.height) * 0.7
+  )
+  await b.page.mouse.wheel({ deltaY: dy })
+  await new Promise(resolve => setTimeout(resolve, 900))
+}
+
+/**
+ * Where the preview's pinned rows are: the band's top, each strip's top,
+ * the header's bottom, Recalculate's bottom and how far the title has
+ * handed up into the header (0 hidden to 1 shown).
+ */
+async function pinnedLayout(b: BrowserSession): Promise<{
+  band: number
+  rows: number[]
+  headerBottom: number
+  recalculateBottom: number
+  titleInHeader: number
+}> {
+  return await b.page.evaluate(() => {
+    const band = document.querySelector('[data-testid="previewPinnedRows"]')!
+    const slot = document.getElementById('headerHandoff')!
+    let header: HTMLElement | null = slot
+    while (
+      header !== null &&
+      header.getBoundingClientRect().width < window.innerWidth * 0.9
+    )
+      header = header.parentElement
+    let shown = 1
+    for (
+      let node: HTMLElement | null = slot;
+      node !== null;
+      node = node.parentElement
+    )
+      shown *= Number(getComputedStyle(node).opacity)
+    const recalculate = [...document.querySelectorAll('[role="button"]')].find(
+      node => node.textContent === 'Recalculate'
+    )!
+    return {
+      band: band.getBoundingClientRect().top,
+      rows: [...band.querySelectorAll('[role="tablist"]')].map(
+        row => row.getBoundingClientRect().top
+      ),
+      headerBottom: header === null ? 0 : header.getBoundingClientRect().bottom,
+      recalculateBottom: recalculate.getBoundingClientRect().bottom,
+      titleInHeader: slot.textContent === '' ? 0 : shown
+    }
+  })
+}
+
+/**
+ * Scrolls the element whose own text is this to just under the preview's
+ * pinned rows: to the top, then back by the rows' bottom edge and 8px.
+ */
+async function scrollUnderPinnedRows(
+  b: BrowserSession,
+  text: string
+): Promise<void> {
+  await b.page.evaluate((wanted: string) => {
+    const found = [...document.querySelectorAll('div, span')].find(
+      node => node.childElementCount === 0 && node.textContent === wanted
+    )
+    const rows = document.querySelector('[data-testid="previewPinnedRows"]')
+    if (found === undefined || rows === null) return
+    found.scrollIntoView({ block: 'start' })
+    const back = rows.getBoundingClientRect().bottom + 8
+    let scroller = found.parentElement
+    while (scroller !== null && scroller.scrollHeight <= scroller.clientHeight)
+      scroller = scroller.parentElement
+    if (scroller !== null) scroller.scrollTop -= back
+    else window.scrollBy(0, -back)
+  }, text)
+  await new Promise(resolve => setTimeout(resolve, 700))
 }
 
 /**
@@ -1084,20 +1205,123 @@ async function e7(run: Run): Promise<void> {
             held.start_at.getTime() < Date.parse(game.endAt)
         ).equals(false)
   await contains(admin.page, 'Option 1 · Recommended')
-  await contains(admin.page, 'FAIRNESS')
-  await admin.page.evaluate(() => {
-    window.scrollTo(0, 0)
+  // The title row's Recalculate is drawn, greyed out until an edit; the
+  // three filter rows and the weeks, with their day headers and EXH tags.
+  expect(await recalculateDisabled(admin)).equals(true)
+  for (const all of ['All seasons', 'All teams', 'All fields'])
+    await contains(admin.page, all)
+  await contains(admin.page, 'EXH')
+  const weekTitles = await admin.page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="preview-week"]')].map(
+      week => (week.firstElementChild as HTMLElement).innerText
+    )
+  )
+  expect(weekTitles.length).greaterThan(0)
+  for (const title of weekTitles)
+    expect(title).matches(/^Week \d+ · [A-Z][a-z]{2} \d+ – [A-Z][a-z]{2} \d+$/)
+  expect(await pageText(admin)).matches(
+    /(Mon|Tue|Wed|Thu|Fri|Sat|Sun) · [A-Z][a-z]{2} · \d\d/
+  )
+  const games = (await boxTexts(admin)).length
+  expect(games).equals(best.games.length)
+  // On a phone each day's column is its narrowest, 6.75rem, whatever its
+  // boxes hold, and the weeks scroll sideways.
+  const columns = await admin.page.evaluate(() =>
+    [
+      ...(
+        document.querySelector('[data-testid="preview-week"]')!
+          .children[1] as HTMLElement
+      ).children
+    ].map(cell => Math.round(cell.getBoundingClientRect().width))
+  )
+  expect(columns).deep.equals(Array(7).fill(108))
+  await wheel(admin, -5000)
+  await capture(admin.m, artifacts, 'preview-phone-after.png')
+  // A team's pill leaves only its games; the field's keeps them.
+  const team = await admin.page.evaluate(
+    () =>
+      (
+        document.querySelectorAll(
+          '[aria-label="Teams"] [role="tab"]'
+        )[1] as HTMLElement
+      ).innerText
+  )
+  await tapText(admin, team, '[role="tab"]')
+  const teamGames = await boxTexts(admin)
+  expect(teamGames.length).within(1, games - 1)
+  for (const box of teamGames) expect(box).includes(team)
+  const field = await admin.page.evaluate(
+    () =>
+      (
+        document.querySelectorAll(
+          '[aria-label="Fields"] [role="tab"]'
+        )[1] as HTMLElement
+      ).innerText
+  )
+  expect(field).equals('xmpl Prk/Field 1')
+  await tapText(admin, field, '[role="tab"]')
+  expect((await boxTexts(admin)).length).equals(teamGames.length)
+  await tapText(admin, 'All teams', '[role="tab"]')
+  await tapText(admin, 'All fields', '[role="tab"]')
+  // Scrolled, the title is in the header, Recalculate has gone with its
+  // row, and the tabs and filter rows stay pinned under the header.
+  await wheel(admin, 300)
+  const once = await pinnedLayout(admin)
+  await wheel(admin, 300)
+  const twice = await pinnedLayout(admin)
+  expect(twice.band).closeTo(twice.headerBottom, 1)
+  expect(twice.rows.length).equals(4)
+  twice.rows.forEach((top, index) => {
+    expect(top).closeTo(once.rows[index], 1)
   })
-  await capture(admin.m, artifacts, 'preview-option-1.png')
+  expect(twice.recalculateBottom).lessThan(twice.headerBottom + 1)
+  expect(twice.titleInHeader).greaterThan(0.9)
+  await capture(admin.m, artifacts, 'preview-phone-scrolled.png')
+  await wheel(admin, -5000)
+  await tapText(admin, 'Fairness', '[role="tab"]')
+  await contains(admin.page, 'regular-season games')
+  await capture(admin.m, artifacts, 'preview-fairness.png')
+  await tapText(admin, 'Schedule', '[role="tab"]')
   if (stored.options.length > 1) {
     expect(stored.options[1].reasons.length).greaterThan(0)
     await tapText(admin, 'Option 2', '[role="tab"], [role="button"]')
     await contains(admin.page, stored.options[1].reasons[0])
     await capture(admin.m, artifacts, 'preview-option-2.png')
   }
+  // At 1280 wide the seven columns fill the pane without scrolling sideways.
+  const desktop = await run.session('autoScheduler-e7-desktop', 101, {
+    width: 1280,
+    height: 800
+  })
+  await run.visit(
+    desktop,
+    `/groups/league/${fx.f.leagueA}/scheduler/previews/${previewId}`
+  )
+  await contains(desktop.page, 'All seasons')
+  const fits = await desktop.page.evaluate(() => {
+    const week = document.querySelector('[data-testid="preview-week"]')
+    if (week === null) return null
+    let scroller = week.parentElement
+    while (
+      scroller !== null &&
+      getComputedStyle(scroller).overflowX !== 'auto' &&
+      getComputedStyle(scroller).overflowX !== 'scroll'
+    )
+      scroller = scroller.parentElement
+    return {
+      right: week.getBoundingClientRect().right,
+      width: window.innerWidth,
+      sideways:
+        scroller === null ? 0 : scroller.scrollWidth - scroller.clientWidth
+    }
+  })
+  expect(fits).not.equals(null)
+  expect(fits!.right).lessThan(fits!.width)
+  expect(fits!.sideways).at.most(1)
+  await capture(desktop.m, artifacts, 'preview-desktop-after.png')
   await run.pass(
     'E7',
-    `Work around: ${stored.options.length} options, Option 1 recommended; every participant 4 regular and 1 exhibition, the exhibition teams 4 and 3; no option overlaps the fixed games`
+    `Work around: ${stored.options.length} options, Option 1 recommended; every participant 4 regular and 1 exhibition, the exhibition teams 4 and 3; no option overlaps the fixed games; ${weekTitles.length} weeks of ${games} games with day headers and EXH tags; ${team}'s pill leaves its ${teamGames.length} games; the tabs and three filter rows stay pinned while the title hands off and Recalculate scrolls away; the week fills 1280px without scrolling sideways`
   )
 }
 
@@ -1252,7 +1476,10 @@ async function e9(run: Run): Promise<void> {
     return node === null ? '' : String(node.getAttribute('aria-label'))
   })
   await tapLabel(admin, rejectLabel)
+  await contains(admin.page, 'Reject this game?')
+  await tapLast(admin, 'Reject')
   await contains(admin.page, 'Game rejected.')
+  expect(await recalculateDisabled(admin)).equals(false)
   await tapText(admin, 'Add game')
   const names = new Map(
     (
@@ -1263,10 +1490,12 @@ async function e9(run: Run): Promise<void> {
         .execute()
     ).map(team => [team.id, team.name])
   )
+  // The sheet's team rows share their labels with the Teams filter pills
+  // behind it; the sheet's are the last on the page.
   await tapLabel(admin, 'Home: Choose')
-  await tapLabel(admin, names.get(rejected.homeTeamId)!)
+  await clickLastLabel(admin, names.get(rejected.homeTeamId)!)
   await tapLabel(admin, 'Away: Choose')
-  await tapLabel(admin, names.get(rejected.awayTeamId)!)
+  await clickLastLabel(admin, names.get(rejected.awayTeamId)!)
   await tapLabel(admin, 'Field: Choose')
   await tapLabel(admin, 'Field 1, Example Park')
   await tapLabel(admin, 'Size: Choose')
@@ -1427,8 +1656,8 @@ async function e10(run: Run): Promise<void> {
   expect(counts.size).equals(1)
   trace('E10 await contains')
   await contains(admin.page, unmet.message)
-  trace('E10 await scrollToText')
-  await scrollToText(admin, 'WHAT COULDN’T BE MET', 'start')
+  trace('E10 await scrollUnderPinnedRows')
+  await scrollUnderPinnedRows(admin, 'WHAT COULDN’T BE MET')
   trace('E10 await capture')
   await capture(admin.m, artifacts, 'preview-capacity.png')
   trace('E10 await api')
@@ -1544,6 +1773,68 @@ async function e10(run: Run): Promise<void> {
   )
 }
 
+/**
+ * E11: on a fresh open preview, a box's ✕ asks first: Cancel keeps the
+ * game, Reject removes it and enables Recalculate, which opens the
+ * recalculated preview with the game placed again.
+ */
+async function e11(run: Run): Promise<void> {
+  const { fx, artifacts } = run
+  const built = await api<{
+    id: string
+    options: Array<{ games: Array<{ key: string }> }>
+  }>(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
+    mode: 'full',
+    existing: 'workAround'
+  })
+  const count = built.options[0].games.length
+  expect(count).greaterThan(1)
+  const admin = await run.session('autoScheduler-e11', 101)
+  await run.visit(
+    admin,
+    `/groups/league/${fx.f.leagueA}/scheduler/previews/${built.id}`
+  )
+  await contains(admin.page, 'Publish this option')
+  expect(await recalculateDisabled(admin)).equals(true)
+  expect((await boxTexts(admin)).length).equals(count)
+  const rejectLabel = await admin.page.evaluate(() => {
+    const node = document.querySelector('[aria-label^="Reject "]')
+    return node === null ? '' : String(node.getAttribute('aria-label'))
+  })
+  // Cancel keeps the game, and nothing is edited.
+  await tapLabel(admin, rejectLabel)
+  await contains(admin.page, 'Reject this game?')
+  await tapLast(admin, 'Cancel')
+  await absent(admin.page, 'Reject this game?')
+  expect((await boxTexts(admin)).length).equals(count)
+  expect(await recalculateDisabled(admin)).equals(true)
+  // Reject removes it, and Recalculate can run.
+  await tapLabel(admin, rejectLabel)
+  await contains(admin.page, 'Recalculate places it again')
+  await capture(admin.m, artifacts, 'reject-confirm.png')
+  await tapLast(admin, 'Reject')
+  await contains(admin.page, 'Game rejected.')
+  expect((await boxTexts(admin)).length).equals(count - 1)
+  expect(await recalculateDisabled(admin)).equals(false)
+  await wheel(admin, -5000)
+  await capture(admin.m, artifacts, 'recalculate-enabled.png')
+  await tapText(admin, 'Recalculate')
+  const path = await at(
+    admin,
+    new RegExp(`/scheduler/previews/(?!${built.id}$)[^/]+$`)
+  )
+  const recalculated = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1))
+  await contains(admin.page, 'Publish this option')
+  expect(await recalculateDisabled(admin)).equals(true)
+  const again = await storedPreview(run, recalculated)
+  expect(again.options[0].games.length).equals(count)
+  expect((await boxTexts(admin)).length).equals(count)
+  await run.pass(
+    'E11',
+    `a box's ✕ asks first; Cancel kept all ${count} games with Recalculate greyed out; Reject left ${count - 1} and enabled Recalculate, which opened ${recalculated} with ${count} games and Recalculate greyed out again`
+  )
+}
+
 const SCENARIOS: Record<string, (run: Run) => Promise<void>> = {
   E0: e0,
   E1: e1,
@@ -1555,7 +1846,8 @@ const SCENARIOS: Record<string, (run: Run) => Promise<void>> = {
   E7: e7,
   E8: e8,
   E9: e9,
-  E10: e10
+  E10: e10,
+  E11: e11
 }
 
 async function main(): Promise<void> {
@@ -1566,9 +1858,9 @@ async function main(): Promise<void> {
     : undefined
   if (only != null && SCENARIOS[only] == null)
     throw new Error(`No scenario ${only}`)
-  // `--only E10 --alone` runs E10's own steps on seeded state, to debug them.
+  // `--only E11 --alone` runs E11's own steps on seeded state, to debug them.
   const fullPass =
-    only == null || (only === 'E10' && !process.argv.includes('--alone'))
+    only == null || (only === 'E11' && !process.argv.includes('--alone'))
   // Browser profiles and the served copy of the app are working files, kept
   // out of the artifacts directory.
   const support = resolve('coverage/autoScheduler/support')
@@ -1587,7 +1879,7 @@ async function main(): Promise<void> {
   })
   const daemon = await maestro(process.env.MAESTRO_D ?? 'seasonAutoScheduler')
   const sessions: BrowserSession[] = []
-  const signedIn = new Map<number, BrowserSession>()
+  const signedIn = new Map<string, BrowserSession>()
   const lines = 'scenarios.log'
   await writeFile(
     join(artifacts, lines),
@@ -1605,15 +1897,23 @@ async function main(): Promise<void> {
     pass: async (id, description) => {
       await log(artifacts, lines, `${id} PASS: ${description}`)
     },
-    session: async (device, user) => {
-      // One signed-in browser per person for the whole run: sign-in codes
-      // are rate limited per address, and a full pass signs in often.
-      const held = signedIn.get(user)
+    session: async (device, user, size) => {
+      // One signed-in browser per person and size for the whole run:
+      // sign-in codes are rate limited per address, and a full pass signs
+      // in often.
+      const key = size == null ? `${user}` : `${user}@${size.width}`
+      const held = signedIn.get(key)
       if (held != null) return held
-      const b = await browserSession(daemon, device, WIDTH, HEIGHT, support)
+      const b = await browserSession(
+        daemon,
+        device,
+        size?.width ?? WIDTH,
+        size?.height ?? HEIGHT,
+        support
+      )
       await interceptGoogleMaps(b.page)
       sessions.push(b)
-      signedIn.set(user, b)
+      signedIn.set(key, b)
       const email = EMAILS[user] ?? `fixture${user}@example.com`
       await visit(b, '/sign-in')
       await fill(b.m, 'E-mail address', email)
@@ -1631,7 +1931,7 @@ async function main(): Promise<void> {
     }
   }
   try {
-    // The full pass, E10, runs E1 to E10 on one fixture; E0's before
+    // The full pass, E11, runs E1 to E11 on one fixture; E0's before
     // shots are taken on the base branch.
     for (const [id, scenario] of Object.entries(SCENARIOS))
       if (fullPass ? id !== 'E0' : only === id) await scenario(run)
