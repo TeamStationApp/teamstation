@@ -14,8 +14,12 @@ import {
   battingOrderSaid,
   defensiveSubstitutionSaid,
   fieldingChanges,
+  type LineupSaid,
   ordinal,
-  pinchSaid
+  pinchSaid,
+  type SaidName,
+  saidNames,
+  type SaidPlayer
 } from './lineup'
 import { PARK } from './park'
 import { trajectoryOf } from './rules'
@@ -27,7 +31,9 @@ import {
   type PlayerRef,
   type PlayEvent,
   type Point,
+  type Position,
   POSITIONS,
+  type RunnerCredit,
   type Side,
   type SideLineup,
   withoutUndefined
@@ -298,6 +304,16 @@ function person(state: GameState, setup: GameSetup, ref: PlayerRef): Person {
   return player?.id == null ? { fullName } : { id: player.id, fullName }
 }
 
+/** A player as a sentence's `said` names him: his id, or his name alone. */
+function saidOf(who: Person): SaidPlayer {
+  return who.id ?? { name: who.fullName }
+}
+
+/** The names the game gives the players a sentence names by id. */
+function gameNames(state: GameState, setup: GameSetup): SaidName {
+  return saidNames(id => playerOf(state, setup, id)?.fullName)
+}
+
 /**
  * The play's runners as Gumbo writes them, one entry per engine movement in
  * the order the engine made them.
@@ -429,12 +445,47 @@ function entriesOf(play: GamePlay, event: PlayEvent): Runner[] {
   )
 }
 
+/** Who an action's sentence names first, and as what. */
+export type ActionRole = 'pitcher' | 'catcher' | 'batter' | 'runner'
+
+/**
+ * What an action's sentence is made from: its event type and who it names
+ * first. The runners it moved are the play's own, those whose entry names
+ * the event (`ActionMove`).
+ */
+export interface ActionSaid {
+  kind: 'action'
+  eventType: string
+  lead?: { player: SaidPlayer; role: ActionRole }
+}
+
+/** What a described event's sentence is made from, kept beside it. */
+export type EventSaid = LineupSaid | ActionSaid
+
+/**
+ * A runner an action moved, as its sentence tells it: who, and his bases as
+ * numbers, the plate 0 and home 4.
+ */
+export interface ActionMove {
+  player: SaidPlayer
+  start: number
+  end: number
+  isOut: boolean
+  scored: boolean
+}
+
+function samePlayer(a: SaidPlayer, b: SaidPlayer): boolean {
+  return typeof a === 'number'
+    ? a === b
+    : typeof b !== 'number' && a.name === b.name
+}
+
 /** What happened to a runner, after his name: `to 2nd`, `scores`, `out at 3rd`. */
-function fate(runner: Runner): string {
-  const { start, end, isOut } = runner.movement
+function fate(move: ActionMove): string {
+  const { start, end, isOut } = move
   if (isOut)
     return `out at ${end <= 1 ? '1st' : end >= 4 ? 'home' : ordinal(end)}`
-  if (scoredRunner(runner)) return 'scores'
+  if (move.scored) return 'scores'
   // A run taken back, or a runner the play did not move.
   return end >= 4 || end === start
     ? `stays at ${ordinal(start)}`
@@ -442,69 +493,111 @@ function fate(runner: Runner): string {
 }
 
 /**
- * Who an action names first: the pitcher of a balk or a wild pitch, the
- * batter of an award, or the runner who acted, with the player the clause
- * already speaks for. The pitcher is the one on the mound at the event, not
- * the matchup's, which a later change in the plate appearance replaces: a
- * runner's action carries him, and a balk is his own event.
+ * An action in a sentence: who did it, then where each runner it moved went,
+ * `Wild pitch by Joe P. Chase T to 3rd. Kyle M to 2nd.` A runner's own action
+ * names him first, `Chase T steals second.` The lead is the pitcher of a balk
+ * or a wild pitch, the catcher of a passed ball, the batter of an award, or
+ * the runner who acted; the moves are the runners the action moved, in order.
  */
-function leadOf(
-  name: (ref: PlayerRef) => string,
-  play: GamePlay,
-  event: PlayEvent,
+export function actionSentence(
+  name: SaidName,
   eventType: string,
-  entries: Runner[]
-): { credit: DescribedCredit; player: number | null } | null {
-  const credit = (
-    who: string,
-    role: string,
-    label: string
-  ): DescribedCredit => ({
-    eventType,
-    label,
-    credit: { name: who, role, position: null }
-  })
+  lead: ActionSaid['lead'],
+  moves: readonly ActionMove[]
+): string {
   const title = eventTypeName(eventType)
-  if (PITCHER_ACTIONS.has(eventType))
-    return {
-      credit: credit(name(event.pitcher ?? event.player), 'pitcher', title),
-      player: null
-    }
-  if (eventType === 'passed_ball')
-    return {
-      credit:
-        event.catcher == null
-          ? { eventType, label: title, credit: null }
-          : credit(name(event.catcher), 'catcher', title),
-      player: null
-    }
-  if (BATTER_ACTIONS.has(eventType)) {
-    const batter = name(play.matchup.batter)
-    return {
-      credit: credit(batter, 'batter', `${title}: ${batter}`),
-      player: play.matchup.batter.id
+  const credits: DescribedCredit[] = []
+  const credit = (who: string, role: string, label: string): void => {
+    credits.push({
+      eventType,
+      label,
+      credit: { name: who, role, position: null }
+    })
+  }
+  // The player the lead clause already speaks for.
+  let spoken: SaidPlayer | undefined
+  if (lead == null) {
+    if (eventType === 'passed_ball')
+      credits.push({ eventType, label: title, credit: null })
+  } else {
+    const who = name(lead.player)
+    if (lead.role === 'pitcher' || lead.role === 'catcher')
+      credit(who, lead.role, title)
+    else if (lead.role === 'batter') {
+      credit(who, 'batter', `${title}: ${who}`)
+      spoken = lead.player
+    } else {
+      const runner = moves.find(move => samePlayer(move.player, lead.player))
+      // A steal or an out names the base itself; anything else says where to.
+      const said =
+        runner == null || eventType.startsWith('stolen_base') || runner.isOut
+      credit(
+        who,
+        'runner',
+        `${title}: ${said ? who : `${who} ${fate(runner)}`}`
+      )
+      spoken = lead.player
     }
   }
-  const runner = entries.at(0)
-  if (runner == null) return null
-  const who = name(runner.details.runner)
-  // A steal or an out names the base itself; anything else says where to.
-  const said = eventType.startsWith('stolen_base') || runner.movement.isOut
+  for (const move of moves)
+    if (
+      (spoken == null || !samePlayer(move.player, spoken)) &&
+      (move.isOut || move.end !== move.start)
+    )
+      credits.push({
+        eventType: 'other_advance',
+        label: `${name(move.player)} ${fate(move)}`,
+        credit: null
+      })
+  return describePlay({ eventType, credits })
+}
+
+/** An engine runner as an action's sentence tells him. */
+function moveOf(
+  state: GameState,
+  setup: GameSetup,
+  runner: Runner
+): ActionMove {
   return {
-    credit: credit(
-      who,
-      'runner',
-      `${title}: ${said ? who : `${who} ${fate(runner)}`}`
-    ),
-    player: runner.details.runner.id
+    player: saidOf(person(state, setup, runner.details.runner)),
+    start: runner.movement.start,
+    end: runner.movement.end,
+    isOut: runner.movement.isOut,
+    scored: scoredRunner(runner)
   }
 }
 
 /**
- * An action in a sentence: who did it, then where each runner it moved went,
- * `Wild pitch by Joe P. Chase T to 3rd. Kyle M to 2nd.` A runner's own action
- * names him first, `Chase T steals second.`
+ * Who an action names first: the pitcher of a balk or a wild pitch, the
+ * batter of an award, or the runner who acted. The pitcher is the one on the
+ * mound at the event, not the matchup's, which a later change in the plate
+ * appearance replaces: a runner's action carries him, and a balk is his own
+ * event.
  */
+function leadOf(
+  state: GameState,
+  setup: GameSetup,
+  play: GamePlay,
+  event: PlayEvent,
+  eventType: string,
+  entries: Runner[]
+): ActionSaid['lead'] {
+  const who = (ref: PlayerRef): SaidPlayer => saidOf(person(state, setup, ref))
+  if (PITCHER_ACTIONS.has(eventType))
+    return { player: who(event.pitcher ?? event.player), role: 'pitcher' }
+  if (eventType === 'passed_ball')
+    return event.catcher == null
+      ? undefined
+      : { player: who(event.catcher), role: 'catcher' }
+  if (BATTER_ACTIONS.has(eventType))
+    return { player: who(play.matchup.batter), role: 'batter' }
+  const runner = entries.at(0)
+  return runner == null
+    ? undefined
+    : { player: who(runner.details.runner), role: 'runner' }
+}
+
+/** An action's sentence, and what it is made from. */
 function actionDescription(
   state: GameState,
   setup: GameSetup,
@@ -512,21 +605,17 @@ function actionDescription(
   event: PlayEvent,
   eventType: string,
   entries: Runner[]
-): string {
-  const name = (ref: PlayerRef): string => person(state, setup, ref).fullName
-  const lead = leadOf(name, play, event, eventType, entries)
-  const credits: DescribedCredit[] = lead == null ? [] : [lead.credit]
-  for (const runner of entries)
-    if (
-      runner.details.runner.id !== lead?.player &&
-      (runner.movement.isOut || runner.movement.end !== runner.movement.start)
-    )
-      credits.push({
-        eventType: 'other_advance',
-        label: `${name(runner.details.runner)} ${fate(runner)}`,
-        credit: null
-      })
-  return describePlay({ eventType, credits })
+): { description: string; said: ActionSaid } {
+  const lead = leadOf(state, setup, play, event, eventType, entries)
+  return {
+    description: actionSentence(
+      gameNames(state, setup),
+      eventType,
+      lead,
+      entries.map(runner => moveOf(state, setup, runner))
+    ),
+    said: withoutUndefined({ kind: 'action' as const, eventType, lead })
+  }
 }
 
 // ---- Hit data ----
@@ -713,6 +802,14 @@ function actionDocument(
     eventType === 'balk' ||
     (eventType !== 'runner_placed' &&
       made.some(runner => runner.details.byAction === true))
+  const { description, said } = actionDescription(
+    state,
+    setup,
+    play,
+    event,
+    eventType,
+    made
+  )
   return {
     index: event.index,
     isPitch: false,
@@ -720,14 +817,7 @@ function actionDocument(
     ...(isBaseRunningPlay ? { isBaseRunningPlay } : {}),
     type: 'action',
     details: {
-      description: actionDescription(
-        state,
-        setup,
-        play,
-        event,
-        eventType,
-        made
-      ),
+      description,
       event: eventName(eventType, play),
       eventType,
       awayScore: score.away,
@@ -736,6 +826,7 @@ function actionDocument(
       isOut: made.some(runner => runner.movement.isOut),
       hasReview: false
     },
+    said,
     count: { ...event.count },
     player: person(state, setup, event.player),
     startTime: null,
@@ -975,11 +1066,7 @@ function announce(
     isPitch: false,
     type: 'action',
     details: {
-      description: pinchSaid(
-        running,
-        named(id).fullName,
-        replaced == null ? undefined : named(replaced).fullName
-      ),
+      description: pinchSaid(gameNames(state, setup), running, id, replaced),
       code: 'offensive_substitution'
     },
     isSubstitution: true,
@@ -1074,14 +1161,15 @@ function fielded(
   }
   if (fresh && position != null) {
     const holder = event.replacedPlayer
+    const who = (ref: PlayerRef): SaidPlayer =>
+      saidOf(person(state, setup, ref))
     return withoutUndefined({
       ...event,
       details: {
         description: defensiveSubstitutionSaid(
-          playerOf(state, setup, id)?.fullName ?? event.player.fullName,
-          holder == null
-            ? undefined
-            : (playerOf(state, setup, holder.id)?.fullName ?? holder.fullName),
+          gameNames(state, setup),
+          who(event.player),
+          holder == null ? undefined : who(holder),
           position
         ),
         code: 'defensive_substitution'
@@ -1123,12 +1211,14 @@ function reordered(
     details: {
       ...event.details,
       description: battingOrderSaid(
+        gameNames(state, setup),
         moved.map(({ player, bats }) => ({
-          name: playerOf(state, setup, player.id)?.fullName ?? player.fullName,
+          player: saidOf(person(state, setup, player)),
           bats
         }))
       )
     },
+    moved,
     player: moved[0].player
   }
 }
@@ -1150,7 +1240,7 @@ function takingTheField(
   at: number,
   play: GamePlay,
   cast: Cast
-): PlayEvent[] | null {
+): StoredEvent[] | null {
   if (at === 0) return null
   const last = plays[at - 1]
   if (last.about.halfInning === play.about.halfInning) return null
@@ -1200,6 +1290,7 @@ function takingTheField(
       position: change.position,
       battingOrder: change.battingOrder,
       replacedPlayer: change.replacedPlayer,
+      pinch: change.pinch,
       count: { balls: 0, strikes: 0, outs: 0 },
       player: change.player
     })
@@ -1219,12 +1310,19 @@ function takingTheField(
  * comes first; in a play a waiting man bats in, his announcement follows;
  * and a waiting man placed on base is announced just after he is placed.
  */
+/**
+ * An engine event as a stored play writes it. A defensive substitution at the
+ * break also says whether the man it replaced came in to hit or to run, which
+ * its sentence names and the engine's events do not carry.
+ */
+type StoredEvent = PlayEvent & { pinch?: 'PH' | 'PR' }
+
 interface StoredEvents {
   /**
    * Written first: the net change the side in the field announces, and the
    * waiting man coming to bat.
    */
-  carried: PlayEvent[]
+  carried: StoredEvent[]
   kept: PlayEvent[]
   /** Announcements written just after the kept event at an engine index. */
   after: Map<number, PlayEvent[]>
@@ -1415,7 +1513,7 @@ const ORDERED_SUBSTITUTIONS: ReadonlySet<string> = new Set([
  * appears (`Cast`).
  */
 function substitutionDocument(
-  event: PlayEvent,
+  event: StoredEvent,
   who: (ref: PlayerRef) => Person,
   score: Score
 ): Record<string, unknown> {
@@ -1438,6 +1536,7 @@ function substitutionDocument(
       isOut: false,
       hasReview: false
     },
+    said: substitutionSaid(event, who),
     count: { ...event.count },
     player: who(event.player),
     position: position == null ? undefined : { ...position },
@@ -1449,6 +1548,58 @@ function substitutionDocument(
     startTime: null,
     endTime: null
   })
+}
+
+/**
+ * What a lineup change's sentence is made from, read from the event the
+ * sentence was worded for: the players it names, and the position and place
+ * it names. The men a pitching change and a defensive substitution replace
+ * are named here only, as the feed writes no `replacedPlayer` on them.
+ */
+function substitutionSaid(
+  event: StoredEvent,
+  who: (ref: PlayerRef) => Person
+): LineupSaid | undefined {
+  const player = saidOf(who(event.player))
+  const replaced =
+    event.replacedPlayer == null ? undefined : saidOf(who(event.replacedPlayer))
+  const position = event.position as Position
+  switch (event.details.code) {
+    case 'pitching_substitution':
+      return withoutUndefined({ kind: 'pitching' as const, player, replaced })
+    case 'defensive_substitution':
+      return withoutUndefined({
+        kind: 'defensive' as const,
+        player,
+        replaced,
+        position,
+        pinch: event.pinch
+      })
+    case 'offensive_substitution':
+      return withoutUndefined({
+        kind: 'pinch' as const,
+        player,
+        replaced,
+        running: event.position === 'PR'
+      })
+    case 'defensive_switch':
+      return withoutUndefined({
+        kind: 'switch' as const,
+        player,
+        position,
+        fromPosition: event.details.fromPosition as Position | undefined
+      })
+    case 'ts_batting_order':
+      return {
+        kind: 'order',
+        moved: (event.moved ?? []).map(({ player, bats }) => ({
+          player: saidOf(who(player)),
+          bats
+        }))
+      }
+    default:
+      return undefined
+  }
 }
 
 /**
@@ -1476,6 +1627,14 @@ function courtesyRunnerDocument(
       isOut: false,
       hasReview: false
     },
+    said:
+      event.replacedPlayer == null
+        ? undefined
+        : {
+            kind: 'courtesy',
+            player: saidOf(who(event.player)),
+            replaced: saidOf(who(event.replacedPlayer))
+          },
     count: { ...event.count },
     player: who(event.player),
     replacedPlayer:
@@ -1491,12 +1650,27 @@ function sideOf(state: GameState, teamId: string | undefined): Side {
   return teamId === state.gameData.teams.home.id ? 'home' : 'away'
 }
 
+/** A fielder who assisted on an out, by id, or by name for one with none. */
+interface CreditAssist {
+  creditUserId: number | null
+  position: string
+  name?: string
+}
+
+/**
+ * A highlight's credit. Its label is worded from the rest: the head, the
+ * person credited and his position, then the fielders who assisted, `from`
+ * each in turn (`creditLabel` in `storedNames.ts`).
+ */
 interface HighlightCredit {
   eventType: string
   label: string
   teamId: Side
   creditUserId: number | null
   credit: { name: string; role: string; position: string | null }
+  head: string
+  assists: CreditAssist[]
+  assistWord: 'from'
 }
 
 /**
@@ -1589,16 +1763,32 @@ function highlightCredits(
     head: string,
     role: string,
     position: string | null = null,
-    detail = ''
+    assisted: RunnerCredit[] = []
   ): void => {
     const player = playerOf(state, setup, ref.id)
     const name = player?.fullName ?? ref.fullName
+    const detail =
+      assisted.length === 0
+        ? ''
+        : ` from ${assisted.map(c => `${c.player.fullName} (${c.position})`).join(', ')}`
     credits.push({
       eventType,
       label: `${head}: ${name}${position == null ? '' : ` (${position})`}${detail}`,
       teamId: sideOf(state, player?.teamId),
       creditUserId: player?.id ?? null,
-      credit: { name, role, position }
+      credit: { name, role, position },
+      head,
+      assists: assisted.map(c => {
+        const id = playerOf(state, setup, c.player.id)?.id ?? null
+        return id == null
+          ? {
+              creditUserId: null,
+              position: c.position,
+              name: c.player.fullName
+            }
+          : { creditUserId: id, position: c.position }
+      }),
+      assistWord: 'from'
     })
   }
   if (HIGHLIGHT_CREDITED.batter.has(type))
@@ -1610,9 +1800,7 @@ function highlightCredits(
       if (runner.movement.isOut) {
         const putout = runner.credits.find(c => c.credit === 'f_putout')
         if (putout == null) continue
-        const assists = runner.credits
-          .filter(c => c.credit === 'f_assist')
-          .map(c => `${c.player.fullName} (${c.position})`)
+        const assists = runner.credits.filter(c => c.credit === 'f_assist')
         add(
           putout.player,
           type,
@@ -1621,7 +1809,7 @@ function highlightCredits(
             : `Out at ${runner.movement.end === 4 ? 'home' : ordinal(runner.movement.end)}`,
           'fielder',
           putout.position,
-          assists.length === 0 ? '' : ` from ${assists.join(', ')}`
+          assists
         )
       }
   for (const runner of play.runners) {

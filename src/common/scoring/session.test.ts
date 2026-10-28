@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
+import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
 import { HttpError } from '../errors'
 import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
@@ -40,6 +41,9 @@ class FakeStore implements EventStore {
 
   async save(_gameId: string, change: SaveChange): Promise<StoredGame> {
     this.posts.push(JSON.parse(JSON.stringify(change)) as SaveChange)
+    // Every document a session posts names itself back from its stored form.
+    for (const play of change.plays) expectNamesRoundTrip(play)
+    expectNamesRoundTrip(change.currentPlay, 'current play')
     if (this.gate != null) await this.gate
     if (this.fail != null) throw this.fail
     for (const index of change.remove) this.plays.delete(index)

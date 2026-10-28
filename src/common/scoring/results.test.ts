@@ -145,7 +145,10 @@ describe('the result types MLB writes (U15)', function () {
         label: 'Out at 2nd: Player 4 (2B) from Player 5 (SS)',
         teamId: 'home',
         creditUserId: 13,
-        credit: { name: 'Player 4', role: 'fielder', position: '2B' }
+        credit: { name: 'Player 4', role: 'fielder', position: '2B' },
+        head: 'Out at 2nd',
+        assists: [{ creditUserId: 14, position: 'SS' }],
+        assistWord: 'from'
       }
     ])
   })
