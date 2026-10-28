@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
 import type { FSWatcher } from 'fs'
 import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
+import type { Server } from 'net'
 
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
@@ -110,10 +111,15 @@ interface NmsBroadcast {
   flvGopCache?: { clear: () => void } | null
   rtmpGopCache?: { clear: () => void } | null
 }
+/** One of node-media-server's own listening sockets. */
+type NmsListener = Pick<
+  Server,
+  'once' | 'off' | 'close' | 'listening' | 'address'
+>
 interface NmsInstance {
   on: (event: string, listener: (session: NmsSession) => void) => void
   run: () => void
-  stop?: () => void
+  rtmpServer?: { tcpServer?: NmsListener; tlsServer?: NmsListener }
 }
 type NmsCtor = new (config: Record<string, unknown>) => NmsInstance
 
@@ -436,6 +442,19 @@ const entries = new Map<string, LiveEntry>()
 let config: IngestConfig | undefined
 let nmsInstance: NmsInstance | undefined
 let pollTimer: NodeJS.Timeout | undefined
+/**
+ * node-media-server keeps its event listeners on a module-wide emitter, not
+ * on the instance: what a start adds outlives the instance, and a second start
+ * in one process would hear every publish twice. A stop takes them off again.
+ */
+let publishEmitter:
+  | { off: (event: string, listener: (session: NmsSession) => void) => void }
+  | undefined
+/**
+ * How the RTMP listener's bind went: `undefined` until it has said, then
+ * `true`, or the error it failed with. Replaced on every start.
+ */
+let bound: Promise<true | Error> | undefined
 
 /**
  * A publish path segment we are willing to look up.
@@ -2314,12 +2333,44 @@ export function startIngest(): boolean {
 
   nmsInstance.on('postPublish', publishArrived)
   nmsInstance.on('donePublish', publishGone)
+  publishEmitter = (
+    require('node-media-server/src/core/context.js') as {
+      eventEmitter: NonNullable<typeof publishEmitter>
+    }
+  ).eventEmitter
+
+  // node-media-server listens without an `error` listener of its own, so a
+  // port somebody else holds would be an uncaught exception. Held here, it is
+  // the answer `ingestBound` gives instead.
+  const listener = nmsInstance.rtmpServer?.tcpServer
+  bound =
+    listener == null
+      ? Promise.resolve(new Error('no RTMP listener was created'))
+      : new Promise(resolve => {
+          const onListening = (): void => {
+            listener.off('error', onError)
+            resolve(true)
+          }
+          const onError = (error: Error): void => {
+            listener.off('listening', onListening)
+            log(
+              `live ingest failed to bind ${bindHost}:${port}: ${String(error)}`
+            )
+            resolve(error)
+          }
+          listener.once('listening', onListening)
+          listener.once('error', onError)
+        })
 
   try {
     nmsInstance.run()
   } catch (error) {
     log(`live ingest failed to start: ${String(error)}`)
+    publishEmitter.off('postPublish', publishArrived)
+    publishEmitter.off('donePublish', publishGone)
+    publishEmitter = undefined
     nmsInstance = undefined
+    bound = undefined
     return false
   }
 
@@ -2327,6 +2378,39 @@ export function startIngest(): boolean {
   pollTimer.unref?.()
   log(`live ingest on rtmp://${bindHost}:${port}/${app}/{key}`)
   return true
+}
+
+/**
+ * Whether this process's own RTMP listener is accepting.
+ *
+ * Its own: a TCP connect to the port would be answered by whoever holds it,
+ * which is exactly the case — a leftover server, another seat — that has to
+ * read as not listening.
+ */
+export function rtmpBound(): boolean {
+  return nmsInstance?.rtmpServer?.tcpServer?.listening === true
+}
+
+/**
+ * Waits for the RTMP listener's bind: `true` once it is listening, `false` if
+ * it failed, if it has not said within `timeoutMs`, or if nothing was started.
+ */
+export async function ingestBound(timeoutMs: number): Promise<boolean> {
+  const pending = bound
+  if (pending == null || nmsInstance == null) return false
+  if (rtmpBound()) return true
+  let timer: NodeJS.Timeout | undefined
+  const late = new Promise<false>(resolve => {
+    timer = setTimeout(() => {
+      resolve(false)
+    }, timeoutMs)
+  })
+  try {
+    const outcome = await Promise.race([pending, late])
+    return outcome === true && rtmpBound()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -2354,12 +2438,22 @@ export function stopIngest(): void {
     releaseOutputs(entry, 'shutdown', false)
   }
   entries.clear()
-  try {
-    nmsInstance?.stop?.()
-  } catch {
-    // Going away anyway.
+  // node-media-server has no `stop`: its sockets stay bound until they are
+  // closed here, and a stopped ingest that still held the port would refuse
+  // the next one.
+  for (const listener of [
+    nmsInstance?.rtmpServer?.tcpServer,
+    nmsInstance?.rtmpServer?.tlsServer
+  ]) {
+    if (listener?.listening === true) {
+      listener.close(() => undefined)
+    }
   }
+  publishEmitter?.off('postPublish', publishArrived)
+  publishEmitter?.off('donePublish', publishGone)
+  publishEmitter = undefined
   nmsInstance = undefined
+  bound = undefined
 }
 
 /**

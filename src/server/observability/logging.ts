@@ -30,7 +30,7 @@ interface LogSink {
 export function createServerLog(options: {
   dsn: string
   directory: string
-  role: 'server' | 'stats'
+  role: 'server' | 'stats' | 'ingest'
   version?: string
   send?: (message: unknown) => void
   request?: typeof fetch

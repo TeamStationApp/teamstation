@@ -11,6 +11,7 @@ import {
   writeFileSync
 } from 'fs'
 import { afterEach, beforeEach, describe, it } from 'mocha'
+import { createServer, type Server, Socket } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -39,6 +40,7 @@ import {
   continuationFromCapture,
   forcePublishForTest,
   hideKey,
+  ingestBound,
   isPublishableKey,
   keyFromSession,
   type LiveEvent,
@@ -49,10 +51,12 @@ import {
   reopenPlaylist,
   resetForTest,
   restartDelay,
+  rtmpBound,
   setLive,
   settleLastSegment,
   SPLIT_EARLY_SEC,
   splitSeconds,
+  startIngest,
   statusFor,
   stopIngest,
   type TestSession,
@@ -2608,5 +2612,127 @@ describe('a live publish that jumps (U19)', function () {
     expect(cuts()).equals(cutsBefore)
     expect(made.broadcastMessage).equals(wrapped)
     expect(started('hls')).length(2)
+  })
+})
+
+/** A port nobody is listening on, picked by asking for one and letting go. */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve))
+  const address = probe.address()
+  await new Promise<void>(resolve =>
+    probe.close(() => {
+      resolve()
+    })
+  )
+  if (address == null || typeof address !== 'object') throw new Error('no port')
+  return address.port
+}
+
+async function accepts(port: number): Promise<boolean> {
+  return await new Promise(resolve => {
+    const socket = new Socket()
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.once('error', () => {
+      resolve(false)
+    })
+    socket.connect(port, '127.0.0.1')
+  })
+}
+
+describe('the RTMP listener this process holds', function () {
+  this.timeout(20000)
+  let lines: string[] = []
+  let holder: Server | undefined
+
+  async function configure(port: number): Promise<void> {
+    lines = []
+    configureIngest({
+      ffmpegPath: '/does/not/matter',
+      bindHost: '127.0.0.1',
+      port,
+      app: 'live',
+      segmentSeconds: 4,
+      log: line => lines.push(line),
+      onEvent: () => undefined
+    })
+  }
+
+  afterEach(async function () {
+    stopIngest()
+    if (holder != null) {
+      const closing = holder
+      holder = undefined
+      await new Promise<void>(resolve =>
+        closing.close(() => {
+          resolve()
+        })
+      )
+    }
+  })
+
+  it('says it is bound once it listens, and lets go of the port when stopped', async function () {
+    const port = await freePort()
+    await configure(port)
+    expect(startIngest()).equals(true)
+    expect(await ingestBound(5000)).equals(true)
+    expect(rtmpBound()).equals(true)
+    expect(await accepts(port)).equals(true)
+
+    stopIngest()
+    expect(rtmpBound()).equals(false)
+    expect(await ingestBound(50)).equals(false)
+    expect(await accepts(port)).equals(false)
+  })
+
+  it('says it is not bound when somebody else holds the port', async function () {
+    const port = await freePort()
+    holder = createServer()
+    await new Promise<void>(resolve =>
+      holder!.listen(port, '127.0.0.1', resolve)
+    )
+    await configure(port)
+    // An unhandled `error` on node-media-server's socket would be thrown out
+    // of the event loop and fail this test as an uncaught exception.
+    expect(startIngest()).equals(true)
+    expect(await ingestBound(5000)).equals(false)
+    expect(rtmpBound()).equals(false)
+    expect(
+      lines.some(line =>
+        /failed to bind 127\.0\.0\.1:\d+: .*EADDRINUSE/.test(line)
+      )
+    ).equals(true)
+    // The port answers — but it is the other process answering.
+    expect(await accepts(port)).equals(true)
+  })
+
+  it('takes its publish listeners off node-media-server again when stopped', async function () {
+    const emitter = (
+      require('node-media-server/src/core/context.js') as {
+        eventEmitter: { listenerCount: (event: string) => number }
+      }
+    ).eventEmitter
+    const before = ['postPublish', 'donePublish'].map(e =>
+      emitter.listenerCount(e)
+    )
+    for (let i = 0; i < 2; i++) {
+      await configure(await freePort())
+      expect(startIngest()).equals(true)
+      expect(emitter.listenerCount('postPublish')).equals(before[0] + 1)
+      expect(await ingestBound(5000)).equals(true)
+      stopIngest()
+    }
+    expect(
+      ['postPublish', 'donePublish'].map(e => emitter.listenerCount(e))
+    ).deep.equals(before)
+  })
+
+  it('is not bound with nothing started', async function () {
+    stopIngest()
+    expect(rtmpBound()).equals(false)
+    expect(await ingestBound(50)).equals(false)
   })
 })

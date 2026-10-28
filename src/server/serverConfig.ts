@@ -356,7 +356,15 @@ export const asServerConfig = asObject({
        * ffmpeg and looks to an operator like a stream that stopped for no
        * reason. Refusing to start costs a sentence, which is cheaper.
        */
-      freeDiskFloorGb: asOptional(asNumber, 10)
+      freeDiskFloorGb: asOptional(asNumber, 10),
+      /**
+       * Where the ingest process answers `GET /health`, on 127.0.0.1 only.
+       *
+       * Absent, it is `listenPort + 1000`: every deployment already has a
+       * `listenPort` of its own, so every ingest gets a health port of its
+       * own with nothing to set. 0 picks a free one, for tests.
+       */
+      healthPort: asOptional(asNumber)
     }),
     {
       enabled: true,
@@ -364,13 +372,17 @@ export const asServerConfig = asObject({
       port: 1936,
       app: 'live',
       segmentSeconds: 4,
-      freeDiskFloorGb: 10
+      freeDiskFloorGb: 10,
+      healthPort: undefined
     }
   )
 })
 export type ServerConfig = ReturnType<typeof asServerConfig>
 export type SmtpSettings = ServerConfig['smtp']
-export type LiveSettings = ServerConfig['live']
+/** `healthPort` is the ingest process's alone, and may be left out. */
+export type LiveSettings = Omit<ServerConfig['live'], 'healthPort'> & {
+  healthPort?: number
+}
 
 function loadServerConfig(): ServerConfig {
   try {

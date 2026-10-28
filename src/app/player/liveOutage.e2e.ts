@@ -32,7 +32,8 @@ import { signInTestAccount } from '../../test/passwordFixtures'
  *     npx mocha -r sucrase/register --extension ts --timeout 1800000 \
  *     src/app/player/liveOutage.e2e.ts
  *
- * Needs the API on this machine with live ingest and a `sessionSecret`, its
+ * Needs the API (`npm start`) and the live ingest (`npm run start.ingest`) on
+ * this machine, with a `sessionSecret`, its
  * media served locally (`serveMediaLocally`), the fake Space when recordings
  * go there (`npm run fake-space`), and the web app built against the API. It
  * makes its own administrator and game, with a password it draws and never

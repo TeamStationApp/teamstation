@@ -87,6 +87,7 @@ the tsconfigs are here, and `src/` is the source they build.
 npm install
 npm run migrate      # create or update the schema
 npm start            # API on 127.0.0.1:9100
+npm run start.ingest # live RTMP ingest on live.port
 npm run start.web    # the app on 127.0.0.1:8080, rebuilt as you save
 npm test
 npm run lint
@@ -167,11 +168,44 @@ split can also send it onward to further RTMP destinations, also `-c copy`.
 
 Three things are worth knowing before changing any of it:
 
-- **The ingest runs in exactly one process** — the cluster primary, or the
-  single process when `clusterWorkers` is 1. It binds a port and holds the
-  ffmpeg children, and a second copy would fight the first for both. The API
-  never calls it: an endpoint writes the `live_streams` row and the controller
-  acts on it within the second.
+- **The ingest is a process of its own.** Two processes run from the same
+  build, read the same `serverConfig.json`, the same database and the same
+  `mediaDir`, and never share a restart:
+
+  | Process | Start | Owns |
+  | --- | --- | --- |
+  | The API | `npm start` (`src/server/index.ts`) | HTTP, sockets, the stats builder; writes `live_streams` rows and mints playback and publish URLs |
+  | The ingest | `npm run start.ingest` (`src/server/ingest/main.ts`) | the RTMP port and the ffmpeg children writing each game's HLS |
+
+  The API never calls the ingest: an endpoint writes the `live_streams` row
+  and the ingest's controller acts on it within the second. So an API that
+  crashes or is restarted for a deploy leaves every publisher connected and
+  every recording growing; viewers lose the picture until the API answers
+  again, and the playlist then has the gap in it. Locally, start both, in
+  either order.
+
+  The ingest starts nothing until it holds the RTMP port. Then — and only on
+  its own cold start — it sets leftover `publishing` rows to `idle`, since the
+  ffmpeg children of the previous ingest died with it. It answers
+  `GET /health` on `127.0.0.1` alone, at `live.healthPort` or
+  `listenPort + 1000`: `200 {"ingest":true}` while its RTMP listener is up,
+  `503` while it is not.
+
+  **One ingest per deployment.** A publish and every reconnect of its key
+  land on the one ingest, whose ffmpeg is the only writer of that video's
+  directory (`append_list`, numbering read back by `playlistContinuation`).
+  A second ingest accepting the key would be a second writer on the playlist,
+  and a balancer spraying reconnects cannot see the key inside the RTMP
+  connect. More than one ingest machine needs a key pinned to one owner for
+  the life of a publish; that is a later change. The API is the tier that can
+  sit behind an ordinary balancer.
+
+  **Restarting the ingest drops every game,** so an app deploy never does it.
+  It is a separate action that runs only when
+  `node lib/server/live/ingestQuiet.js` exits 0 (no row `publishing`; 1 when
+  one is, 2 when the database cannot be read). A migration that changes a
+  column the ingest reads stays additive until the ingest has been started
+  on the new build.
 - **A video's `kind` is `live` for ever**, including long after the stream has
   finished and become an ordinary recording. `status` is what moves: `live`,
   then `processing`, then `ready`.

@@ -35,8 +35,9 @@
  * for a live box score following a game as it is scored.
  *
  * `--quick` records shorter (S scores three innings), for a smoke run.
- * The API, the database and the ingest must be on this machine; the server
- * reads `serverConfig.json` from the working directory.
+ * The API (`npm start`), the database and the live ingest
+ * (`npm run start.ingest`) must be on this machine; both processes read
+ * `serverConfig.json` from the working directory.
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'

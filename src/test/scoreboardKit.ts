@@ -103,7 +103,7 @@ export async function dropPrefix(prefix: string): Promise<void> {
 /** A database of its own, migrated, and how to drop it. */
 export async function scratchDatabase(
   label: string
-): Promise<{ db: Kysely<Database>; drop: () => Promise<void> }> {
+): Promise<{ db: Kysely<Database>; url: string; drop: () => Promise<void> }> {
   const name = `teamstation_${label}_${process.pid}_${Date.now()}_${randomBytes(4).toString('hex')}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
   await admin.query(`create database ${name}`)
@@ -114,6 +114,7 @@ export async function scratchDatabase(
   const db = makeDatabase(url)
   return {
     db,
+    url,
     drop: async () => {
       await db.destroy()
       await admin.query(`drop database if exists ${name} with (force)`)
