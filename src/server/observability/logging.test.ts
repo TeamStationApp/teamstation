@@ -53,6 +53,32 @@ describe('server operational logging', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+  it('keeps the ingest process queue apart from the server queue', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'server-logs-'))
+    const offline = async (): Promise<Response> => {
+      throw Error('offline')
+    }
+    try {
+      for (const role of ['server', 'ingest'] as const) {
+        const log = createServerLog({
+          directory,
+          dsn: 'https://public@logs.example.test/1',
+          role,
+          writeToken: 'fixture-write-token'.repeat(3),
+          request: offline
+        })
+        log.emit('service_started')
+        await log.close()
+      }
+      for (const file of ['server.json', 'ingest.json']) {
+        expect(
+          JSON.parse(await readFile(join(directory, file), 'utf8'))
+        ).length(1)
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   it('recovers the primary queue and routes worker events through the same privacy boundary', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'server-logs-'))
     const sent: string[] = []

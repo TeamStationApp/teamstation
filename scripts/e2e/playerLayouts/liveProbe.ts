@@ -1,6 +1,7 @@
 /**
  * What the live multi-angle work is judged by, printed as `$`-lines and what
- * came back, for the proving logs.
+ * came back, for the proving logs. Needs the live ingest on this machine
+ * (`npm run start.ingest`) beside the API.
  *
  *   node -r sucrase/register scripts/e2e/playerLayouts/liveProbe.ts \
  *     [--before] [--playlists] [--jump <seconds>] [--stall <seconds>] \

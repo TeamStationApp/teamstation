@@ -29,11 +29,6 @@ import {
   sendSignInCode
 } from './email/sendMail'
 import { jsonBody } from './jsonBody'
-import {
-  type LiveControllerOptions,
-  startLiveController,
-  stopLiveController
-} from './live/controller'
 import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
 import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
@@ -228,29 +223,6 @@ async function sendInvite(
   )
 }
 
-/**
- * The live ingest runs in exactly one process.
- *
- * It binds an RTMP port and holds the ffmpeg children writing a game's HLS, so
- * a second copy would fight the first for both. Clustered, that process is the
- * primary, which listens for nothing else; unclustered, it is the one process
- * there is. Every API worker reaches a stream by writing its row — see
- * `server/live/controller.ts`.
- */
-function liveControllerOptions(
-  db: ReturnType<typeof makeDatabase>
-): LiveControllerOptions {
-  return {
-    db,
-    live: serverConfig.live,
-    ffmpegPath: serverConfig.ffmpegPath,
-    mediaRoot: serverConfig.mediaDir,
-    workDir: serverConfig.workDir,
-    sessionSecret: serverConfig.sessionSecret,
-    space: serverConfig.space
-  }
-}
-
 function liveRouteOptions(): LiveRouteOptions {
   return {
     live: serverConfig.live,
@@ -260,19 +232,6 @@ function liveRouteOptions(): LiveRouteOptions {
     // it is the same fact the playback URLs are built from.
     host: primaryHost
   }
-}
-
-function startLive(db: ReturnType<typeof makeDatabase>): void {
-  if (!serverConfig.live.enabled) {
-    console.log('live ingest is switched off (live.enabled is false)')
-    return
-  }
-  if (serverConfig.sessionSecret === '') {
-    console.error('live ingest disabled: sessionSecret is not set')
-    return
-  }
-  const started = startLiveController(liveControllerOptions(db))
-  if (!started) console.error('live ingest did not start')
 }
 
 /**
@@ -366,11 +325,10 @@ function startKeySweep(db: ReturnType<typeof makeDatabase>): void {
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
-  const liveDb = makeDatabase(serverConfig.databaseUrl)
-  startLive(liveDb)
-  reopenInterrupted(liveDb)
-  startPurge(liveDb)
-  startKeySweep(liveDb)
+  const primaryDb = makeDatabase(serverConfig.databaseUrl)
+  reopenInterrupted(primaryDb)
+  startPurge(primaryDb)
+  startKeySweep(primaryDb)
   const builder = startStatsBuilder({
     enabled: serverConfig.statsBuilder,
     supervise: () =>
@@ -430,7 +388,6 @@ function runPrimary(workerCount: number): void {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
-    stopLiveController()
     builder.stop(signal).catch((error: unknown) => {
       console.error('stats builder: stop failed', error)
     })
@@ -742,12 +699,12 @@ function runWorker(): void {
     }
   ])
 
-  // Unclustered — one process, which is both the API and the ingest.
+  // Unclustered — one process, which is the whole API. Live ingest is a
+  // process of its own, `ingest/main.ts`.
   let builder: StatsBuilderHandle = {
     stop: async () => undefined
   }
   if (cluster.isPrimary) {
-    startLive(db)
     reopenInterrupted(db)
     startPurge(db)
     builder = startStatsBuilder({
@@ -772,7 +729,6 @@ function runWorker(): void {
     if (closing) return
     closing = true
     dictation?.close()
-    stopLiveController()
     unbindUpgrades()
     // Before the server: an upgraded socket is not one of its connections,
     // so closing the server would leave every scoreboard socket open.

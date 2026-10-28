@@ -57,8 +57,8 @@ import {
  *     npx mocha -r sucrase/register --extension ts --timeout 900000 \
  *     src/app/player/scoreboardOverlay/overlay.e2e.ts
  *
- * Needs the API on this machine with live ingest (`npm start`, with a
- * `sessionSecret`), the fake Space when recordings go there
+ * Needs the API and the live ingest on this machine (`npm start` and
+ * `npm run start.ingest`, with a `sessionSecret`), the fake Space when recordings go there
  * (`npm run fake-space`), and the web app built against the API
  * (`npm run start.web`). It makes its own administrator (`npm run seed`) and
  * two games (`npm run scoring-game`), G with scoring and H with none, with

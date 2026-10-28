@@ -8,8 +8,9 @@
 //     [--api http://127.0.0.1:9140/api/v1] [--app http://127.0.0.1:8090] \
 //     [--duration 180] [--outage 60:20] [--keep]
 //
-// Needs the API with live ingest on this machine (`npm start`, with a
-// `sessionSecret`, which stream keys are sealed with), and the web app built
+// Needs the API and the live ingest on this machine (`npm start` and
+// `npm run start.ingest`, with a `sessionSecret`, which stream keys are
+// sealed with), and the web app built
 // against it (`npm run start.web`). Its database (`databaseUrl` in
 // serverConfig.json) must be on this machine too.
 //

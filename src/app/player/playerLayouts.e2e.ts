@@ -98,7 +98,8 @@ const near = (
  *     npx mocha -r sucrase/register --extension ts --timeout 900000 \
  *     src/app/player/playerLayouts.e2e.ts
  *
- * Needs the API (`npm start`), the production web build served with it
+ * Needs the API (`npm start`) and, for the live games, the live ingest
+ * (`npm run start.ingest`), the production web build served with it
  * (`npm run build.web`, `scripts/e2e/playerLayouts/serveDist.mjs`) and the
  * fixture (`scripts/e2e/playerLayouts/fixture.ts`).
  */

@@ -35,6 +35,7 @@ import {
   clearLive,
   clearLiveSettled,
   configureIngest,
+  ingestBound,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
   type LiveSpec,
@@ -149,6 +150,8 @@ let sweepTimer: NodeJS.Timeout | undefined
 let options: LiveControllerOptions | undefined
 /** The sync still running, so a slow one is never overlapped by the next tick. */
 let syncing: Promise<void> | undefined
+/** The local-copy sweep still running, for a stop to wait on. */
+let sweeping: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
@@ -166,7 +169,22 @@ export function liveVideoDir(mediaRoot: string, videoId: string): string {
   return join(mediaRoot, 'work', 'videos', videoId)
 }
 
-export function startLiveController(next: LiveControllerOptions): boolean {
+/** How long a start waits for the RTMP port before it gives up. */
+const BIND_TIMEOUT_MS = 10_000
+
+/**
+ * Starts the ingest and the loop that keeps it in step with the database.
+ *
+ * Nothing is touched until this process holds the RTMP port. A port somebody
+ * else holds — a leftover server, another seat — means somebody else's
+ * streams: resetting their rows, syncing beside them or sweeping their copies
+ * would break games this process has never seen, and under a service manager
+ * that retries a failed start it would do so every few seconds.
+ */
+export async function startLiveController(
+  next: LiveControllerOptions,
+  bindTimeoutMs: number = BIND_TIMEOUT_MS
+): Promise<boolean> {
   options = next
   const log =
     next.log ??
@@ -189,15 +207,31 @@ export function startLiveController(next: LiveControllerOptions): boolean {
     }
   })
 
+  // Taken before the port opens: a publisher that connects the moment it
+  // does stamps its row's `last_published_at` after this, and that row is
+  // its own, not a leftover. Only a publish writes that column; the API
+  // writes `updated_at` on rows nobody is publishing to.
+  const startedAt = new Date()
   if (!startIngest()) return false
+  if (!(await ingestBound(bindTimeoutMs))) {
+    log(`live ingest did not bind ${next.live.bindHost}:${next.live.port}`)
+    stopIngest()
+    return false
+  }
 
   // Nothing can still be publishing to a process that has only just started.
   // A row left saying so is from the last one — a deploy, a crash — and would
   // otherwise sit there claiming a stream this ingest has never seen.
-  next.db
+  await next.db
     .updateTable('live_streams')
     .set({ state: 'idle', updated_at: new Date() })
     .where('state', '=', 'publishing')
+    .where(eb =>
+      eb.or([
+        eb('last_published_at', 'is', null),
+        eb('last_published_at', '<', startedAt)
+      ])
+    )
     .execute()
     .catch((error: unknown) => {
       log(`live: ${String(error)}`)
@@ -211,16 +245,47 @@ export function startLiveController(next: LiveControllerOptions): boolean {
   // Once on the way up as well as on the timer: a machine that was off for a
   // day comes back with a day's worth of copies to let go of, and waiting five
   // minutes to start is five minutes of disk nobody needed.
-  sweepLocalCopies().catch((error: unknown) => {
-    log(`live: ${String(error)}`)
-  })
-  sweepTimer = setInterval(() => {
-    sweepLocalCopies().catch((error: unknown) => {
-      log(`live: ${String(error)}`)
-    })
-  }, SWEEP_INTERVAL_MS)
+  const sweep = (): void => {
+    // One at a time, like the sync: a sweep uploading a whole game over a
+    // slow link outlives the tick, and a second beside it would work the
+    // same rows — and be one the drain could not see.
+    if (sweeping != null) return
+    sweeping = sweepLocalCopies()
+      .catch((error: unknown) => {
+        log(`live: ${String(error)}`)
+      })
+      .finally(() => {
+        sweeping = undefined
+      })
+  }
+  sweep()
+  sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS)
   sweepTimer.unref?.()
   return true
+}
+
+/**
+ * Waits for what the controller already set going — each key's queued work,
+ * a sync and a sweep in flight — so a stop does not close the database under
+ * a write. Call after `stopLiveController`, which stops anything new from
+ * starting.
+ */
+export async function drainLiveController(): Promise<void> {
+  // Again until nothing is left: what is being waited on can queue more — a
+  // finish from a sync or a sweep, an event from a writer that has just
+  // exited.
+  const inHand = (): Array<Promise<void>> =>
+    [syncing, sweeping, ...work.values()].filter(
+      (p): p is Promise<void> => p != null
+    )
+  for (let pending = inHand(); pending.length > 0; pending = inHand()) {
+    await Promise.all(pending)
+  }
+}
+
+/** Test seam: whether the sync or the sweep is on its timer. */
+export function liveTimersRunningForTest(): boolean {
+  return timer != null || sweepTimer != null
 }
 
 /**
@@ -385,10 +450,25 @@ export function stopLiveController(): void {
  */
 function queue(key: string, task: () => Promise<void>): void {
   const previous = work.get(key) ?? Promise.resolve()
-  const next = previous.then(task).catch((error: unknown) => {
-    console.error(`live: ${String(error)}`)
-  })
+  const next: Promise<void> = previous
+    .then(task)
+    .catch((error: unknown) => {
+      console.error(`live: ${String(error)}`)
+    })
+    .finally(() => {
+      // The ingest lives across deploys now, for weeks: a key whose work is
+      // done is let go rather than kept for ever.
+      if (work.get(key) === next) work.delete(key)
+    })
   work.set(key, next)
+}
+
+/** Test seam: one key's work, queued as the controller queues it. */
+export function queueLiveWorkForTest(
+  key: string,
+  task: () => Promise<void>
+): void {
+  queue(key, task)
 }
 
 /** Test seam: settles whatever the events set going. */
