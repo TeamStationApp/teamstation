@@ -11,6 +11,8 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { candidate } from '../test/fakeCandidateClient'
+import { measureBoxes } from '../test/measureBoxes'
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { App, stackFor } from './App'
 
@@ -227,25 +229,22 @@ describe('team settings browser history', () => {
 })
 
 describe("team settings' Create Player", () => {
-  it('sits on team settings at its own address', () => {
+  it('sits on team settings at its own address, as Add Player does', () => {
     const teamReturn = { id: 'alias', address: 'team' as const, tab: 'roster' }
-    const route = {
-      name: 'teamCreatePlayer' as const,
-      kind: 'team' as const,
-      id: 'canonical',
-      teamReturn
+    for (const name of ['teamCreatePlayer', 'teamAddPlayer'] as const) {
+      const route = { name, kind: 'team' as const, id: 'canonical', teamReturn }
+      const stack = stackFor(route).home!
+      expect(stack.at(-1)).deep.equals(route)
+      expect(stack.at(-2)).deep.equals({
+        name: 'groupSettings',
+        kind: 'team',
+        id: 'canonical',
+        teamReturn
+      })
     }
-    const stack = stackFor(route).home!
-    expect(stack.at(-1)).deep.equals(route)
-    expect(stack.at(-2)).deep.equals({
-      name: 'groupSettings',
-      kind: 'team',
-      id: 'canonical',
-      teamReturn
-    })
   })
 
-  it('opens for a scorekeeper from Team management, creates, and returns with the toast', async () => {
+  it('opens Create Player and Add Player for a scorekeeper from Team management, and returns with the toast', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
     const detail = asGroupDetail({
@@ -268,6 +267,31 @@ describe("team settings' Create Player", () => {
       canManageRoster: true
     })
     const created: unknown[] = []
+    const added: unknown[] = []
+    // Nothing answers the app's other requests here, which would leave the
+    // client offline; the search is answered.
+    Object.defineProperty(proto, 'offline', {
+      configurable: true,
+      get: () => false,
+      set: () => undefined
+    })
+    proto.rosterCandidates = async () => [
+      candidate('Corbin Burnes', { userId: 'usr_burnes' })
+    ]
+    proto.addExistingRosterPlayer = async (teamId, body) => {
+      added.push({ teamId, userId: body.userId })
+      return {
+        entry: mintedRosterEntry({
+          firstName: 'Corbin',
+          lastName: 'Burnes',
+          jersey: null,
+          bats: 'right',
+          throws: 'right',
+          positions: []
+        }),
+        noticeId: null
+      }
+    }
     proto.whoAmI = async () =>
       asSessionUser({
         id: userIdOfGumbo(1),
@@ -305,6 +329,7 @@ describe("team settings' Create Player", () => {
       await settle()
     }
     window.history.replaceState(null, '', '/groups/team/canonical/settings')
+    const restoreRects = measureBoxes()
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
@@ -332,11 +357,28 @@ describe("team settings' Create Player", () => {
       expect(created).has.length(1)
       expect(window.location.pathname).equals('/groups/team/canonical/settings')
       expect(document.body.textContent).includes('Created Walker')
+
+      // Add Player slides up over team settings, and Add to Roster returns.
+      await press('Add Player')
+      expect(window.location.pathname).equals(
+        '/groups/team/canonical/settings/add-player'
+      )
+      await press('Choose Corbin B')
+      await press('Add to Roster')
+      expect(added).deep.equals([{ teamId: 'canonical', userId: 'usr_burnes' }])
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      expect(document.body.textContent).includes('Added Corbin B to the roster')
+      // Cancel changes nothing.
+      await press('Add Player')
+      await press('Cancel')
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      expect(added).has.length(1)
     } finally {
       await act(async () => {
         root.unmount()
       })
       host.remove()
+      restoreRects()
       Object.defineProperties(proto, originals)
       window.history.replaceState(null, '', '/')
     }

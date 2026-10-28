@@ -31,6 +31,22 @@ describe('addresses', function () {
       expect(roundTrip(route)).deep.equals(route)
     }
   })
+  it("writes and reads a team's Add Player, which no season or league has", () => {
+    const route: Route = {
+      name: 'teamAddPlayer',
+      kind: 'team',
+      id: 'tem 1',
+      teamReturn: { id: 'alias', address: 'group', tab: 'roster' }
+    }
+    expect(routePath(route).split('?')[0]).equals(
+      '/groups/team/tem%201/settings/add-player'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    for (const kind of ['season', 'league'] as const)
+      expect(
+        parseRoute(`/groups/${kind}/g1/settings/add-player`, '')
+      ).deep.include({ name: 'groupSettings', kind, id: 'g1' })
+  })
   it("writes and reads a team's Create Player, which no season or league has", () => {
     const route: Route = {
       name: 'teamCreatePlayer',

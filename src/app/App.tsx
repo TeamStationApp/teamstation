@@ -125,6 +125,7 @@ import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { AddPlayerScene } from './screens/AddPlayerScene'
 import { AutoSchedulerScreen } from './screens/AutoSchedulerScreen'
 import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
@@ -2339,6 +2340,17 @@ function Shell(props: AppProps): React.ReactElement {
           if (!another) pop()
         }}
       />
+    ) : top.name === 'teamAddPlayer' ? (
+      <AddPlayerScene
+        key={`teamAddPlayer:${top.id}`}
+        client={client}
+        teamId={top.id}
+        onAdded={message => {
+          setSuccessNotice({ id: Date.now(), message })
+          pop()
+        }}
+        onCancel={pop}
+      />
     ) : top.name === 'autoScheduler' ? (
       <AutoSchedulerScreen
         key={top.leagueId}
@@ -2594,6 +2606,14 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onInvites={group => {
           push({ name: 'groupInvites', ...group, teamReturn: top.teamReturn })
+        }}
+        onAddPlayer={teamId => {
+          push({
+            name: 'teamAddPlayer',
+            kind: 'team',
+            id: teamId,
+            teamReturn: top.teamReturn
+          })
         }}
         onCreatePlayer={teamId => {
           push({
@@ -3706,7 +3726,8 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     route.name === 'groupLocation' ||
     route.name === 'groupAddPeople' ||
     route.name === 'groupInvites' ||
-    route.name === 'teamCreatePlayer'
+    route.name === 'teamCreatePlayer' ||
+    route.name === 'teamAddPlayer'
   ) {
     const settings = {
       name: 'groupSettings' as const,

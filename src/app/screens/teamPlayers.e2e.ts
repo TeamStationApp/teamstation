@@ -259,4 +259,67 @@ describe("a team's players in the app theme", function () {
     expect(named('Max M')).to.include({ jersey: '13' })
     expect(named('Max M').positions).deep.equals(['3B'])
   })
+
+  it('W10 adds Burnes from Add Player with #39 at P, his name and hands greyed', async function () {
+    const falcons = fixture.teams.falcons.id
+    const token = await openAs(
+      fixture.emails.coach,
+      `/groups/team/${falcons}/settings`
+    )
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+    await browser.tapOn({ text: 'Add Player', timeout: 15000 })
+    await browser.assertVisible({
+      css: label('Search players'),
+      timeout: 15000
+    })
+    await tap('Search players')
+    await browser.inputText({ text: 'burn' })
+    await browser.assertVisible({
+      css: label('Choose Corbin B'),
+      timeout: 15000
+    })
+    await shot('web-add-player-search')
+    await tap('Choose Corbin B')
+    await browser.assertVisible({ css: label('Add to Roster'), timeout: 15000 })
+    expect(
+      await probe<[boolean, boolean, boolean]>(
+        `[document.querySelector('[aria-label="First name"]').readOnly, document.querySelector('[aria-label="Throws Right"]') != null && document.querySelector('[aria-label="Throws Left"]') == null, document.querySelector('[aria-label="Add as Pool Player"]') == null]`
+      )
+    ).deep.equals([true, true, true])
+    await shot('web-add-player-form')
+    await tap('Jersey number')
+    await browser.inputText({ text: '39' })
+    await tap('Player position P')
+    await tap('Add to Roster')
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 15000 })
+    expect(await probe<string>('document.body.innerText')).includes(
+      'Added Corbin B to the roster'
+    )
+    const burnes = (await roster(token, falcons)).find(
+      entry => entry.userId === fixture.players['Corbin Burnes']
+    )
+    expect(burnes).to.include({ jersey: '39', shortName: 'Corbin B' })
+    expect(burnes.positions).deep.equals(['P'])
+  })
+
+  it('W12 says searching needs a connection when the server cannot be reached', async function () {
+    const falcons = fixture.teams.falcons.id
+    await openAs(fixture.emails.coach, `/groups/team/${falcons}/settings`)
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+    await browser.blockNetwork({
+      patterns: [`*${new URL(API).host}/*`]
+    })
+    try {
+      await browser.tapOn({ text: 'Add Player', timeout: 15000 })
+      await browser.assertVisible({
+        text: 'Searching needs a connection.',
+        timeout: 30000
+      })
+      await shot('web-add-player-offline')
+    } finally {
+      await browser.blockNetwork({
+        patterns: ['*fonts.googleapis.com*', '*fonts.gstatic.com*']
+      })
+    }
+  })
 })

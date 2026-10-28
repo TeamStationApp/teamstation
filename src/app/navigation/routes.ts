@@ -52,6 +52,8 @@ export type CreationRoute =
   | ({ name: 'groupInvites'; kind: GroupKind; id: string } & SettingsContext)
   /** Team settings' Create Player. */
   | ({ name: 'teamCreatePlayer'; kind: 'team'; id: string } & SettingsContext)
+  /** Team settings' Add Player: an existing player onto the roster. */
+  | ({ name: 'teamAddPlayer'; kind: 'team'; id: string } & SettingsContext)
   | ({
       name: 'groupLocation'
       kind: 'team' | 'league'
@@ -120,6 +122,7 @@ export function isCreationRoute(route: {
     'groupAddPeople',
     'groupInvites',
     'teamCreatePlayer',
+    'teamAddPlayer',
     'createGroup',
     'groupLink',
     'notifications',
@@ -438,6 +441,8 @@ export function parseRoute(path: string, search = ''): Route {
           return { name: 'groupInvites', kind: id, id: groupId, ...context }
         if (parts[4] === 'create-player' && id === 'team')
           return { name: 'teamCreatePlayer', kind: id, id: groupId, ...context }
+        if (parts[4] === 'add-player' && id === 'team')
+          return { name: 'teamAddPlayer', kind: id, id: groupId, ...context }
         if (parts[4] === 'location' && id !== 'season')
           return { name: 'groupLocation', kind: id, id: groupId, ...context }
         if (parts[4] === 'time-frame' && id === 'season')
@@ -775,6 +780,8 @@ export function routePath(route: Route): string {
       return settingsChildPath(route, 'invites')
     case 'teamCreatePlayer':
       return settingsChildPath(route, 'create-player')
+    case 'teamAddPlayer':
+      return settingsChildPath(route, 'add-player')
     case 'groupLocation':
       return settingsChildPath(route, 'location')
     case 'seasonTimeFrame':

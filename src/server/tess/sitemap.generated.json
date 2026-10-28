@@ -1015,6 +1015,27 @@
       "settings": []
     },
     {
+      "name": "teamAddPlayer",
+      "path": "/groups/team/:id/settings/add-player",
+      "title": "Team add player",
+      "tabs": [],
+      "settings": [
+        "Retry",
+        "Cancel",
+        "This needs a guardian's approval first. We sent the request.",
+        "Add to Roster",
+        "Left",
+        "Right",
+        "Switch",
+        "First name",
+        "Last name",
+        "Jersey number",
+        "Throws",
+        "Bats",
+        "Select player positions"
+      ]
+    },
+    {
       "name": "teamCreatePlayer",
       "path": "/groups/team/:id/settings/create-player",
       "title": "Team create player",
