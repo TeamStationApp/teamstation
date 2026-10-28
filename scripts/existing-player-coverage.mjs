@@ -44,7 +44,9 @@ const appSuites = [
   'src/app/scoring/RosterEditor.coach.test.tsx',
   'src/app/scoring/RosterSelector.test.tsx',
   'src/app/scoring/rosterLive.test.tsx',
-  'src/app/components/AddPersonGlyph.test.tsx'
+  'src/app/components/AddPersonGlyph.test.tsx',
+  'src/app/hooks/useRosterCandidates.test.tsx',
+  'src/app/scoring/ExistingPlayerSheet.test.tsx'
 ]
 
 /**

@@ -16,6 +16,7 @@ import {
   ScrollView,
   StatusBar,
   Text,
+  useWindowDimensions,
   View
 } from 'react-native'
 import {
@@ -175,8 +176,9 @@ function SheetContent({
   title,
   headerless = false,
   textCancel = true,
-  fullScreen = false,
-  tall = false,
+  fullScreen: fullScreenAsked = false,
+  tall: tallAsked = false,
+  maxWidth,
   height,
   appearance = 'scoring',
   done = false,
@@ -186,6 +188,7 @@ function SheetContent({
   onShow,
   onBackdropPress,
   onClose,
+  keyboardVerticalOffset,
   children
 }: {
   visible?: boolean
@@ -198,6 +201,11 @@ function SheetContent({
   fullScreen?: boolean
   /** The whole height of the screen, still a sheet over the game. */
   tall?: boolean
+  /**
+   * The widest the sheet grows, centred. A full-screen sheet on a window
+   * wider than this is a tall sheet of this width over the game instead.
+   */
+  maxWidth?: number
   /** Fixed sheet height; its content gets the remaining space below the header. */
   height?: number
   appearance?: 'scoring'
@@ -211,9 +219,19 @@ function SheetContent({
   onShow?: () => void
   onBackdropPress?: () => void
   onClose: () => void
+  /**
+   * How far the keyboard's top is from where the sheet pads for it: a
+   * negative offset lets content that floats at the bottom sit on it.
+   */
+  keyboardVerticalOffset?: number
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
+  const window = useWindowDimensions()
+  const narrowed =
+    fullScreenAsked && maxWidth != null && window.width > maxWidth
+  const fullScreen = fullScreenAsked && !narrowed
+  const tall = tallAsked || narrowed
   const scoring = appearance === 'scoring'
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
@@ -280,6 +298,7 @@ function SheetContent({
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={keyboardVerticalOffset}
           style={
             Platform.OS === 'web'
               ? { height: '100dvh', width: '100%' }
@@ -321,6 +340,9 @@ function SheetContent({
               accessibilityViewIsModal
               style={{
                 transform: [{ translateY: pulled }],
+                ...(maxWidth == null
+                  ? {}
+                  : { width: '100%', maxWidth, alignSelf: 'center' }),
                 maxHeight: fullScreen || tall ? undefined : '92%',
                 flex: fullScreen || tall ? 1 : undefined,
                 height,

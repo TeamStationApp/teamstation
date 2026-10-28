@@ -46,6 +46,30 @@ scene and returns the choice. `TeamSelectorScene` and the time zone picker
 are the examples. Such a picker is
 never a list expanding inside a card on the screen beneath.
 
+### A search field floats at the bottom
+
+A search field sits at the bottom of its screen, not the top, so it is under
+the thumb and right above the keyboard it opens.
+
+- It floats over the content at the bottom of the screen, clear of the home
+  indicator (the safe-area inset plus 12 points), full width less the
+  screen's side margins, on the theme's raised surface with a hairline border
+  and a soft shadow. The list scrolls beneath it, with bottom padding equal to
+  the field's height so the last row can be read.
+- Tapped, it takes focus with the cursor showing and rises with the keyboard
+  to sit directly above it (`KeyboardAvoidingView`: `padding` on iOS,
+  `height` on Android, as `TessChat` does). Dismissing the keyboard returns
+  it to the bottom.
+- It has a leading `search` icon, placeholder text naming what it searches
+  ("Search players"), and a clear button while it holds text.
+- The scene's title and red Cancel stay at the top.
+- Typing asks the server once it pauses for half a second
+  (`useDebouncedValue`), never on every keystroke.
+
+`ScoringPlayerSearchField` (scoring colours, in `ExistingPlayerSheet`) is the
+example. A screen with a search field at the top moves to this the next time
+it is changed.
+
 ## Cards and collections
 
 Use the Home team row (`ListRow`) for group identities: a fixed-size logo or
@@ -118,7 +142,6 @@ horizontal padding is at least half the explicit shell height. Derive the
 padding from that height, and check the longest label. A label that would
 truncate gets smaller type, a shorter label or its own row; its padding and
 touch target stay large enough. Dense tab strips reduce gaps and scroll.
-
 
 - **One filled button per form.** The primary action (Save, Create) is the
   only filled button.
