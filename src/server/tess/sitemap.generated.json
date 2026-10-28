@@ -1015,6 +1015,25 @@
       "settings": []
     },
     {
+      "name": "teamCreatePlayer",
+      "path": "/groups/team/:id/settings/create-player",
+      "title": "Team create player",
+      "tabs": [],
+      "settings": [
+        "Create Player",
+        "Create Player and Add Another",
+        "Left",
+        "Right",
+        "Switch",
+        "First name",
+        "Last name",
+        "Jersey number",
+        "Throws",
+        "Bats",
+        "Select player positions"
+      ]
+    },
+    {
       "name": "umpireLevels",
       "path": "/groups/league/:id/umpire-levels",
       "title": "Umpire levels",

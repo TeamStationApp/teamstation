@@ -50,6 +50,8 @@ export type CreationRoute =
   | UmpireScheduleRoute
   | ({ name: 'groupAddPeople'; kind: GroupKind; id: string } & SettingsContext)
   | ({ name: 'groupInvites'; kind: GroupKind; id: string } & SettingsContext)
+  /** Team settings' Create Player. */
+  | ({ name: 'teamCreatePlayer'; kind: 'team'; id: string } & SettingsContext)
   | ({
       name: 'groupLocation'
       kind: 'team' | 'league'
@@ -117,6 +119,7 @@ export function isCreationRoute(route: {
     'seasonTimeFrame',
     'groupAddPeople',
     'groupInvites',
+    'teamCreatePlayer',
     'createGroup',
     'groupLink',
     'notifications',
@@ -433,6 +436,8 @@ export function parseRoute(path: string, search = ''): Route {
           return { name: 'groupAddPeople', kind: id, id: groupId, ...context }
         if (parts[4] === 'invites')
           return { name: 'groupInvites', kind: id, id: groupId, ...context }
+        if (parts[4] === 'create-player' && id === 'team')
+          return { name: 'teamCreatePlayer', kind: id, id: groupId, ...context }
         if (parts[4] === 'location' && id !== 'season')
           return { name: 'groupLocation', kind: id, id: groupId, ...context }
         if (parts[4] === 'time-frame' && id === 'season')
@@ -768,6 +773,8 @@ export function routePath(route: Route): string {
       return settingsChildPath(route, 'people')
     case 'groupInvites':
       return settingsChildPath(route, 'invites')
+    case 'teamCreatePlayer':
+      return settingsChildPath(route, 'create-player')
     case 'groupLocation':
       return settingsChildPath(route, 'location')
     case 'seasonTimeFrame':

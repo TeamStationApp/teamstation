@@ -40,7 +40,9 @@ export function GroupSettingsScreen({
   onAddPeople,
   onInvites,
   onPromote,
-  onUmpires
+  onUmpires,
+  onAddPlayer,
+  onCreatePlayer
 }: {
   client: TeamStationClient
   groupRef: GroupRef
@@ -53,6 +55,8 @@ export function GroupSettingsScreen({
   onInvites?: (ref: GroupRef) => void
   onUmpires?: (screen: UmpireSettingsDestination) => void
   onPromote?: ManagementCardProps['onPromote']
+  onAddPlayer?: ManagementCardProps['onAddPlayer']
+  onCreatePlayer?: ManagementCardProps['onCreatePlayer']
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const { kind, id } = groupRef
@@ -159,9 +163,19 @@ export function GroupSettingsScreen({
         {detail == null ? (
           <Text style={styles.hint}>Loading…</Text>
         ) : !detail.canManage ? (
-          <Text style={styles.hint}>
-            Only a current administrator can change these settings.
-          </Text>
+          <>
+            {/* A roster manager who is not an administrator adds and
+                creates the team's players, and nothing else here. */}
+            <ManagementCard
+              detail={detail}
+              disabled={busy}
+              onAddPlayer={onAddPlayer}
+              onCreatePlayer={onCreatePlayer}
+            />
+            <Text style={styles.hint}>
+              Only a current administrator can change these settings.
+            </Text>
+          </>
         ) : (
           <>
             <HeroCard
@@ -265,6 +279,8 @@ export function GroupSettingsScreen({
               onPromote={onPromote}
               onAddPeople={onAddPeople}
               onInvites={onInvites}
+              onAddPlayer={onAddPlayer}
+              onCreatePlayer={onCreatePlayer}
             />
             {!detail.group.external && (
               <InvitationsWaiting

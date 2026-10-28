@@ -117,6 +117,11 @@ export const asGroupDetail = asObject({
    * Whether this viewer reads the group's people list with its photos: its
    * members and role holders. A season's and league's People tab is theirs.
    */
-  canSeePeople: asOptional(asBoolean)
+  canSeePeople: asOptional(asBoolean),
+  /**
+   * An administrator, coach, assistant or scorekeeper of this team: they add
+   * and create its players. False on every season and league.
+   */
+  canManageRoster: asOptional(asBoolean, false)
 })
 export type GroupDetail = ReturnType<typeof asGroupDetail>

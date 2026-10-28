@@ -55,7 +55,10 @@ const appSuites = [
   'src/app/components/PlayerForm.test.tsx',
   'src/app/components/PositionFieldPicker.test.tsx',
   'src/app/screens/PlayerSettingsTab.test.tsx',
-  'src/app/screens/PlayerScreen.test.tsx'
+  'src/app/screens/PlayerScreen.test.tsx',
+  'src/app/screens/GroupSettingsScreen.test.tsx',
+  'src/app/screens/CreatePlayerScreen.test.tsx',
+  'src/app/screens/TeamPage.test.tsx'
 ]
 
 /**

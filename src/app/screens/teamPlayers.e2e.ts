@@ -177,4 +177,86 @@ describe("a team's players in the app theme", function () {
     expect(after.positions).deep.equals(before.positions)
     expect(after.shortName).equals(before.shortName)
   })
+
+  /** The titles of Team management's rows, in order. */
+  const managementRows = async (): Promise<string[]> =>
+    await probe<string[]>(
+      `['Add Person to Team', 'Create Invite Link', 'Add Player', 'Create Player'].filter(title => document.body.innerText.split('\\n').some(line => line.trim() === title))`
+    )
+
+  it('W8 shows the coach all four Team management rows, and the scorekeeper only the player rows', async function () {
+    const falcons = fixture.teams.falcons.id
+    await openAs(fixture.emails.coach, `/groups/team/${falcons}/settings`)
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+    expect(await managementRows()).deep.equals([
+      'Add Person to Team',
+      'Create Invite Link',
+      'Add Player',
+      'Create Player'
+    ])
+    await shot('web-team-management-coach')
+    await openAs(fixture.emails.scorer, `/groups/team/${falcons}/settings`)
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+    expect(await managementRows()).deep.equals(['Add Player', 'Create Player'])
+    expect(await probe<string>('document.body.innerText')).includes(
+      'Only a current administrator can change these settings.'
+    )
+    await shot('web-team-management-scorekeeper')
+  })
+
+  it('W9 creates Buehler, then Muncy, from Create Player and Create Player and Add Another', async function () {
+    const falcons = fixture.teams.falcons.id
+    const token = await openAs(
+      fixture.emails.coach,
+      `/groups/team/${falcons}/settings`
+    )
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+    await browser.tapOn({ text: 'Create Player', timeout: 15000 })
+    await browser.assertVisible({
+      css: '[data-testid="Player form"]',
+      timeout: 15000
+    })
+    await shot('web-create-player')
+    const fill = async (label: string, value: string): Promise<void> => {
+      await tap(label)
+      await browser.inputText({ text: value })
+    }
+    await fill('First name', 'Walker')
+    await fill('Last name', 'Buehler')
+    await fill('Jersey number', '21')
+    await tap('Throws Right')
+    await tap('Bats Right')
+    await tap('Player position P')
+    await tap('Create Player and Add Another')
+    await browser.assertVisible({
+      text: '.*Created Walker Buehler.*',
+      timeout: 15000
+    })
+    // The form starts again, at First name.
+    expect(
+      await probe<[string, string | null]>(
+        `[document.querySelector('[aria-label="First name"]').value, document.activeElement && document.activeElement.getAttribute('aria-label')]`
+      )
+    ).deep.equals(['', 'First name'])
+    await browser.inputText({ text: 'Max' })
+    await fill('Last name', 'Muncy')
+    await fill('Jersey number', '13')
+    await tap('Player position 3B')
+    await tap('Create Player')
+    await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 15000 })
+    expect(await probe<string>('document.body.innerText')).includes(
+      'Created Max Muncy'
+    )
+    const players = await roster(token, falcons)
+    const named = (name: string): any =>
+      players.find(entry => entry.shortName === name)
+    expect(named('Walker B')).to.include({
+      jersey: '21',
+      throws: 'right',
+      bats: 'right'
+    })
+    expect(named('Walker B').positions).deep.equals(['P'])
+    expect(named('Max M')).to.include({ jersey: '13' })
+    expect(named('Max M').positions).deep.equals(['3B'])
+  })
 })

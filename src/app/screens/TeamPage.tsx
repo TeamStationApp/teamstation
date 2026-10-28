@@ -127,7 +127,7 @@ export function TeamPage({
           : undefined
       }
       onManage={
-        detail.canManage && onSettings != null
+        (detail.canManage || detail.canManageRoster) && onSettings != null
           ? () => {
               onSettings(group.id)
             }

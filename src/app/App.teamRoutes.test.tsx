@@ -11,6 +11,7 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { App, stackFor } from './App'
 
 describe('team route frames', () => {
@@ -219,6 +220,123 @@ describe('team settings browser history', () => {
         }
       }
     } finally {
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  }).timeout(15000)
+})
+
+describe("team settings' Create Player", () => {
+  it('sits on team settings at its own address', () => {
+    const teamReturn = { id: 'alias', address: 'team' as const, tab: 'roster' }
+    const route = {
+      name: 'teamCreatePlayer' as const,
+      kind: 'team' as const,
+      id: 'canonical',
+      teamReturn
+    }
+    const stack = stackFor(route).home!
+    expect(stack.at(-1)).deep.equals(route)
+    expect(stack.at(-2)).deep.equals({
+      name: 'groupSettings',
+      kind: 'team',
+      id: 'canonical',
+      teamReturn
+    })
+  })
+
+  it('opens for a scorekeeper from Team management, creates, and returns with the toast', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const detail = asGroupDetail({
+      nonMemberView: false,
+      group: {
+        kind: 'team',
+        id: 'canonical',
+        name: 'Ridgeview Falcons',
+        imageUrl: null,
+        locality: null
+      },
+      parents: [],
+      children: [],
+      participatingSeasons: [],
+      competingTeams: [],
+      games: [],
+      staff: [],
+      canViewPrivate: true,
+      canManage: false,
+      canManageRoster: true
+    })
+    const created: unknown[] = []
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Scorer',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({
+      teams: { canonical: ['scorekeeper'] },
+      guardianOf: []
+    })
+    proto.hasNotifications = async () => false
+    proto.group = async () => detail
+    proto.gameProposals = async () => []
+    proto.createRosterPlayer = async (teamId, body) => {
+      created.push({ teamId, body })
+      return mintedRosterEntry(body)
+    }
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    const press = async (label: string): Promise<void> => {
+      // A screen beneath stays drawn: a button named exactly so comes first.
+      const buttons = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ]
+      const button =
+        buttons.find(node => node.getAttribute('aria-label') === label) ??
+        buttons.find(node => (node.textContent ?? '').startsWith(label))
+      expect(button, label).not.equals(undefined)
+      await act(async () => {
+        button!.click()
+      })
+      await settle()
+    }
+    window.history.replaceState(null, '', '/groups/team/canonical/settings')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      expect(document.body.textContent).includes('Only a current administrator')
+      await press('Create Player')
+      expect(window.location.pathname).equals(
+        '/groups/team/canonical/settings/create-player'
+      )
+      const input = document.querySelector<HTMLInputElement>(
+        '[aria-label="First name"]'
+      )!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, 'Walker')
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      await press('Create Player')
+      expect(created).has.length(1)
+      expect(window.location.pathname).equals('/groups/team/canonical/settings')
+      expect(document.body.textContent).includes('Created Walker')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
       Object.defineProperties(proto, originals)
       window.history.replaceState(null, '', '/')
     }
