@@ -186,6 +186,9 @@ describe('the highlight routes', function () {
     expect(first.body.withoutVideo).equals(0)
     expect(first.body.highlights[0].videoId).equals(creditedVideo)
     expect(first.body.highlights[0].outcome).is.a('string')
+    // Stops the node's 5 s past the play, wherever it starts.
+    for (const highlight of first.body.highlights)
+      expect(highlight.endOffsetSec).equals(highlight.playOffsetSec + 5)
 
     const second = await get(
       `/players/${userIdOfGumbo(ada.userId)}/highlights?limit=2&before=${encodeURIComponent(
@@ -312,6 +315,8 @@ describe('the highlight routes', function () {
       'evt_ada3'
     ])
     expect(answer.body.withheld).equals(null)
+    for (const highlight of answer.body.highlights)
+      expect(highlight.endOffsetSec).equals(highlight.playOffsetSec + 5)
   })
 
   it('keeps the highlights of a game whose plays nobody has credited yet', async function () {

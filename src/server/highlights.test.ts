@@ -18,7 +18,8 @@ const settings: HighlightSettings = {
   lagSec: 8,
   leadSec: 30,
   leadSecByEventType: { strikeout: 10 },
-  mergeWithinSec: 5
+  mergeWithinSec: 5,
+  tailSec: 5
 }
 
 const videoStart = new Date('2026-05-01T18:00:00.000Z')
@@ -47,6 +48,32 @@ const event = (over: Partial<HighlightEvent> = {}): HighlightEvent => ({
 })
 
 describe('highlights', function () {
+  it('stops each highlight tailSec past the play, and no later than the recording', () => {
+    // Tapped 600 s in, so the play is at 592 s and the start 30 s before it.
+    const [one] = computeHighlights([event()], video, settings)
+    expect(one.playOffsetSec).equals(592)
+    expect(one.startOffsetSec).equals(562)
+    expect(one.endOffsetSec).equals(597)
+    const [onPlay] = computeHighlights([event()], video, {
+      ...settings,
+      tailSec: 0
+    })
+    expect(onPlay.endOffsetSec).equals(592)
+    expect(onPlay.startOffsetSec).equals(562)
+    const [short] = computeHighlights(
+      [event()],
+      { ...video, durationSec: 594 },
+      settings
+    )
+    expect(short.endOffsetSec).equals(594)
+    const [open] = computeHighlights(
+      [event()],
+      { ...video, durationSec: null, syncOffsetSec: 1.25 },
+      settings
+    )
+    expect(open.endOffsetSec).equals(598.3)
+  })
+
   it('keeps a structured completed-play tag separate from the description and timings', () => {
     const plain = computeHighlights([event()], video, settings)[0]
     const tagged = computeHighlights(

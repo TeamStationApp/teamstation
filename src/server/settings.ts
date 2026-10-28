@@ -73,6 +73,10 @@ export async function highlightSettings(
     mergeWithinSec: numberOr(
       byKey.get('highlights.mergeWithinSec'),
       defaultHighlightSettings.mergeWithinSec
+    ),
+    tailSec: numberOr(
+      byKey.get('highlights.tailSec'),
+      defaultHighlightSettings.tailSec
     )
   }
 

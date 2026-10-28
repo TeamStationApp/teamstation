@@ -4,6 +4,8 @@ import { describe, it } from 'mocha'
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
 import {
+  asHighlight,
+  asPlayerHighlight,
   asSaveLineupsBody,
   asStandingsRow,
   type SaveLineupsBody,
@@ -1733,6 +1735,43 @@ describe('api client', function () {
     }).discoverGroups('team')
     expect(plain.seasonNames).equals(undefined)
     expect(plain.staffNames).equals(undefined)
+  })
+})
+
+describe('a highlight’s end', function () {
+  const highlight = {
+    eventId: 'evt_1',
+    atBatIndex: 1,
+    title: 'Single: Mookie B',
+    startOffsetSec: 562,
+    playOffsetSec: 592,
+    eventType: 'single',
+    isScoringPlay: false,
+    stillUrl: 'https://example.test/still.jpg'
+  }
+  const player = {
+    eventId: 'evt_1',
+    gameId: 'game_1',
+    videoId: 'video_1',
+    teamId: null,
+    teamName: null,
+    outcome: 'Single',
+    title: 'Single: Mookie B',
+    playAt: '2026-05-01T18:09:52.000Z',
+    startOffsetSec: 562,
+    playOffsetSec: 592,
+    stillUrl: 'https://example.test/still.jpg'
+  }
+
+  it('is read where the server sends it, and absent from an older server', function () {
+    expect(
+      asHighlight({ ...highlight, endOffsetSec: 597 }).endOffsetSec
+    ).equals(597)
+    expect(asHighlight(highlight).endOffsetSec).equals(undefined)
+    expect(
+      asPlayerHighlight({ ...player, endOffsetSec: 597 }).endOffsetSec
+    ).equals(597)
+    expect(asPlayerHighlight(player).endOffsetSec).equals(undefined)
   })
 })
 

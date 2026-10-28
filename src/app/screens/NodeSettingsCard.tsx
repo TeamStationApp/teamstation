@@ -83,6 +83,7 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
       ...h,
       lagSec: nearest(SECONDS, h.lagSec),
       leadSec: nearest(SECONDS, h.leadSec),
+      tailSec: nearest(SECONDS, h.tailSec),
       // Only the play types the card has a row for; any other a node holds
       // is not shown here, and Save keeps it exactly as stored.
       leadSecByEventType: Object.fromEntries(
@@ -422,7 +423,7 @@ export function NodeSettingsCard({
       <View style={styles.section}>
         <SectionHeader title="Highlights" />
         <Text style={styles.hint}>
-          Where each highlight starts in the video, in seconds.
+          Where each highlight starts and stops in the video, in seconds.
         </Text>
         <ListCard>
           {wheelRow(
@@ -448,6 +449,16 @@ export function NodeSettingsCard({
             {playTypeRows}
           </ListCard>
         </View>
+        <ListCard>
+          {wheelRow(
+            'Play past the event',
+            'Play past the event',
+            SECONDS,
+            seconds,
+            highlights.tailSec,
+            option => setHighlights({ tailSec: option })
+          )}
+        </ListCard>
       </View>
       {problem != null && (
         <Text accessibilityRole="alert" style={styles.error}>
