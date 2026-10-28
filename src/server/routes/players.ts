@@ -32,6 +32,7 @@ import {
 } from '../db/syncIdempotency'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
+import { withdrawnGames } from '../games/withdrawn'
 import { guardianInviteAs } from '../groups/requests'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
@@ -286,6 +287,8 @@ export function playerRoutes(
       // done something worth watching.
       const creditsByEvent = await creditsForPlayer(db, person.userId)
       const creditedIds = await gumboIdsOfUsers(db, person.userIds)
+      // Games their part in was withdrawn from are not on their record.
+      const withdrawn = await withdrawnGames(db, person.userIds)
       // A team filter is the team they played for, as on their stats: a play
       // whose credit names another team of theirs is that team's, even in a
       // game against this one. A credit with no team leaves it to the game.
@@ -324,6 +327,9 @@ export function playerRoutes(
         .where('events.id', 'in', eventIds)
         .where('events.hidden', '=', false)
         .where('events.startTime', 'is not', null)
+        .$if(withdrawn.length > 0, query =>
+          query.where('events.gameId', 'not in', withdrawn)
+        )
       if (before != null) {
         query = query.where('events.startTime', '<', before)
       }
@@ -893,6 +899,22 @@ export async function teamsOf(
     .distinct()
     .where('gumbo_ids.user_id', 'in', userIds)
     .where('teams.merged_into', 'is', null)
+    // A game their part in was withdrawn from makes nobody's team theirs.
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('game_withdrawn_players')
+            .select('game_withdrawn_players.game_id')
+            .whereRef(
+              'game_withdrawn_players.game_id',
+              '=',
+              'game_player_stats.game_id'
+            )
+            .where('game_withdrawn_players.user_id', 'in', userIds)
+        )
+      )
+    )
     .execute()
 
   // Their place on each team. One person can be on a team under two rows

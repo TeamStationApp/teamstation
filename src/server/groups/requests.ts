@@ -23,7 +23,7 @@ import {
   teamsPlayedOnNow,
   visibleScopes
 } from '../access'
-import { type OnePerson, onePerson } from '../admin/people'
+import { lockPlayerEdits, type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -34,6 +34,7 @@ import { seasonGameConsent } from '../schedule/seasonGameConsent'
 import { noteScopeChange } from '../socket/syncRevision'
 import { authorizePersonChange } from './adminGuard'
 import { checkGuardianLimits, isGuardianRequest } from './guardianLimits'
+import { decidePlayerAdd } from './noticePolicy'
 import { applyParents, previewParents } from './relationships'
 import {
   canAdminister,
@@ -1236,6 +1237,15 @@ export async function decideRelationshipRequest(
   clock: Clock = realClock
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
+    // A player add writes rosters, guests and lineups: like every roster
+    // writer it holds the player-edit lock before it reads who anybody is,
+    // and before the request's own locks. A request's kind never changes.
+    const kind = await trx
+      .selectFrom('group_requests')
+      .select('kind')
+      .where('id', '=', id)
+      .executeTakeFirst()
+    if (kind?.kind === 'playerAdd') await lockPlayerEdits(trx)
     await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
     const fresh = await currentActor(trx, actor)
     const request = await trx
@@ -1245,6 +1255,10 @@ export async function decideRelationshipRequest(
       .forUpdate()
       .executeTakeFirst()
     if (request == null) throw notFound()
+    // An add made with a notice is decided by its own rules: rejecting it
+    // undoes it, within its 90 days.
+    if (request.kind === 'playerAdd')
+      return await decidePlayerAdd(trx, fresh, request, decision, clock)
     const sides = await trx
       .selectFrom('group_request_sides')
       .selectAll()

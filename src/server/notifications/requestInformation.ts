@@ -3,12 +3,12 @@ import { type Kysely, sql } from 'kysely'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { shortName } from '../../common/names'
-import type { RequestTerms } from '../../common/notifications'
+import type { PlayerAddTerms, RequestTerms } from '../../common/notifications'
 import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
 import { isGuardianRequest } from '../groups/guardianLimits'
 import type { StoredRequest } from '../groups/requests'
-import { userNames } from '../users/nameBook'
+import { shortNamesOf, userNames } from '../users/nameBook'
 
 /**
  * The group names and season time zones a request's text read when it was
@@ -170,6 +170,13 @@ async function scheduleDetails(
 interface RequestMetadata {
   senderGroupName?: string
   frozen?: Partial<FrozenNames>
+  /**
+   * A player add told to a coach standing in for a player with no guardian,
+   * which its words say.
+   */
+  standIn?: boolean
+  /** A player add made at once with a notice, rather than asked. */
+  madeAtOnce?: boolean
 }
 
 /**
@@ -196,11 +203,121 @@ export async function titleAndDescription(
       ? senders
       : await userNames(db, [request.sender_id])
   ).get(request.sender_id)
+  const named = sender == null || sender === '' ? 'An administrator' : sender
+  // Not an invitation, so not among `RequestTerms`.
+  if ((request.terms as { kind?: string }).kind === 'playerAdd')
+    return playerAddWords(
+      request.terms as PlayerAddTerms,
+      named,
+      await shortNamesOf(db, [(request.terms as PlayerAddTerms).userId]),
+      metadata,
+      await gameDay(db, request.terms as PlayerAddTerms)
+    )
   return await rendered(db, request, {
-    sender: sender == null || sender === '' ? 'An administrator' : sender,
+    sender: named,
     organization: metadata?.senderGroupName ?? 'their organization',
     lookups: frozenLookups(db, metadata?.frozen)
   })
+}
+
+/** `Oct 30`, the game's own day where it is played. */
+function shortDate(at: Date, timeZone: string): string {
+  const options = { month: 'short', day: 'numeric' } as const
+  try {
+    return at.toLocaleDateString('en-US', { ...options, timeZone })
+  } catch {
+    // A zone the runtime does not know: the day in UTC.
+    return at.toLocaleDateString('en-US', { ...options, timeZone: 'UTC' })
+  }
+}
+
+/** The day of a pool add's game, `Oct 30`, or null when it has none. */
+async function gameDay(
+  db: Kysely<Database>,
+  terms: PlayerAddTerms
+): Promise<string | null> {
+  if (terms.mode !== 'pool' || terms.gameId == null) return null
+  const game = await db
+    .selectFrom('games')
+    .select(['start_at', 'timezone'])
+    .where('id', '=', terms.gameId)
+    .executeTakeFirst()
+  return game?.start_at == null ? null : shortDate(game.start_at, game.timezone)
+}
+
+/**
+ * A player add's words, the player named as they are now. An add made with a
+ * notice says only what stays true for as long as the card is kept; whether
+ * a Reject still holds is the card's own line.
+ */
+function playerAddWords(
+  terms: PlayerAddTerms,
+  sender: string,
+  players: ReadonlyMap<string, string>,
+  metadata: RequestMetadata | undefined,
+  day: string | null
+): { title: string; description: string } {
+  const short = players.get(terms.userId) ?? ''
+  const where =
+    terms.mode !== 'pool'
+      ? terms.teamName
+      : day == null
+        ? `${terms.teamName} for one game`
+        : `${terms.teamName} for the game on ${day}`
+  const because =
+    metadata?.standIn === true
+      ? ` You're receiving this because ${short} has no guardian on TeamStation.`
+      : ''
+  return metadata?.madeAtOnce === true
+    ? {
+        title: `${sender} added ${short} to ${where}`,
+        description: `${short} was added ${terms.mode === 'pool' ? 'to play for' : 'to the roster of'} ${terms.teamName}.${because}`
+      }
+    : {
+        title: `${sender} asks to add ${short} to ${where}`,
+        description: `${short} joins ${terms.teamName} only if you accept.${because}`
+      }
+}
+
+/** Who took a player off a roster they were added to. */
+export type PlayerRemover = 'self' | 'guardian' | 'coach'
+
+/** What a `playerAddRejected` notice keeps: ids and counts, no person's name. */
+export interface PlayerRemovedMetadata {
+  teamId: string
+  /** The player taken off. */
+  userId: string
+  teamName: string
+  mode: PlayerAddTerms['mode']
+  /** Games already played that now read a placeholder for them. */
+  games: number
+  remover: PlayerRemover
+}
+
+const REMOVED_BY: Record<PlayerRemover, string> = {
+  self: 'They removed themselves',
+  guardian: 'A guardian removed',
+  coach: 'A coach of another of their teams removed'
+}
+
+/**
+ * The words of the notice a team's roster managers get when a player's side
+ * rejected an add, `short` the player's short name as it is now.
+ */
+export function playerRemovedWords(
+  metadata: PlayerRemovedMetadata,
+  short: string
+): { title: string; description: string } {
+  const where =
+    metadata.mode === 'pool' ? `${metadata.teamName}'s game` : metadata.teamName
+  const { games } = metadata
+  return {
+    title: `${REMOVED_BY[metadata.remover]} ${short} from ${where}`,
+    description:
+      games === 0
+        ? `${short} is no longer on it.`
+        : `${short} is no longer on it. ${games === 1 ? 'One game' : `${games} games`} already played now ${games === 1 ? 'reads' : 'read'} a placeholder in their place.`
+  }
 }
 
 /** A request's words, with its sender named and its groups and zones looked up. */

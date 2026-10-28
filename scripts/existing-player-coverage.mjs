@@ -31,7 +31,14 @@ import ts from 'typescript'
 import { webSettings } from './web-build-settings.mjs'
 
 /** The app suites, each bundled alone. Each milestone appends its own. */
-const appSuites = []
+const appSuites = [
+  'src/app/screens/NotificationsScreen.test.tsx',
+  'src/app/screens/BoxScore.test.tsx',
+  'src/app/components/StatisticsTable.test.tsx',
+  'src/app/screens/expandedStats.test.tsx',
+  'src/app/screens/SeasonScreen.test.tsx',
+  'src/app/App.teamRoutes.test.tsx'
+]
 
 /**
  * The server suites: every one, or for a milestone's quicker gate the ones

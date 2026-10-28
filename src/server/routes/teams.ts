@@ -38,6 +38,7 @@ import { resolvedFenceDistance } from '../games/fenceDistance'
 import { gameIsLive } from '../games/gameLive'
 import { gameAvailability } from '../games/rosterAvailability'
 import { hasScoringEventsSql } from '../games/scoringActivity'
+import { publicUserId } from '../games/withdrawn'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -892,6 +893,7 @@ export function teamRoutes(
         res.json(
           pitchingLines(rows).map(line => ({
             ...line,
+            userId: publicUserId(line.userId),
             shortName: names.get(line.userId) ?? 'Unknown',
             ip: inningsPitched(line.outs),
             rates: pitchingRates(line)
@@ -902,6 +904,7 @@ export function teamRoutes(
       res.json(
         battingLines(rows).map(line => ({
           ...line,
+          userId: publicUserId(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         }))
@@ -953,6 +956,7 @@ export function teamRoutes(
         await pitchingOrder(db, gameId, pitchingLines(rows))
       ).map(line => ({
         ...line,
+        userId: publicUserId(line.userId),
         shortName: names.get(line.userId) ?? 'Unknown',
         ip: inningsPitched(line.outs),
         rates: pitchingRates(line)
@@ -962,6 +966,7 @@ export function teamRoutes(
       res.json({
         batting: lines.map(line => ({
           ...line,
+          userId: publicUserId(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line),
           seasonAvg: seasonAvg.get(line.userId) ?? null

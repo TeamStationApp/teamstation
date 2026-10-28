@@ -82,6 +82,33 @@ export type RequestTerms =
   | GuardianTerms
 
 /**
+ * A roster manager putting a player who already exists onto their team
+ * (`roster`) or into one game for one side (`pool`). Applied at once and told
+ * to the player's guardians, who may reject it; after a rejection the same
+ * team's next add of that player waits for their approval instead. Not an
+ * invitation, so not among `RequestTerms`: only the notice code reads it.
+ */
+export interface PlayerAddTerms {
+  kind: 'playerAdd'
+  mode: 'roster' | 'pool'
+  userId: string
+  teamId: string
+  gameId?: string
+  side?: 'away' | 'home'
+  jersey: string | null
+  positions: string[]
+  /** Whether the add made the membership, so a rejection removes it whole. */
+  createdMembership?: boolean
+  /** The jersey and positions a membership held before the add, to restore. */
+  previous?: { jersey: string | null; positions: string[] }
+  /**
+   * The team's name as it stood when the add was made, for the notices. The
+   * player's name is never kept: a notice reads it from `users`.
+   */
+  teamName: string
+}
+
+/**
  * The guardian is an account, with the address it was invited by when it was
  * invited by one, or an address no account has verified yet, bound to the
  * account that accepts.
@@ -137,9 +164,16 @@ const cleanNotification = asObject({
     'declined',
     'expired',
     'cancelled',
-    'superseded'
+    'superseded',
+    'applied'
   ),
   canAct: asBoolean,
+  /**
+   * On a change made at once that you may still reject (`status` `applied`):
+   * true until `rejectUntil`. Absent from older servers, which is false.
+   */
+  canReject: asOptional(asBoolean, false),
+  rejectUntil: asOptional(asEither(asNull, asString), null),
   canWithdraw: asBoolean,
   canResend: asBoolean,
   viewed: asBoolean,
@@ -171,6 +205,8 @@ const cleanNotification = asObject({
 type Cleaned = ReturnType<typeof cleanNotification>
 export type Notification = Omit<
   Cleaned,
+  | 'canReject'
+  | 'rejectUntil'
   | 'leave'
   | 'gameId'
   | 'liveStreamId'
@@ -179,6 +215,8 @@ export type Notification = Omit<
   | 'seasonId'
   | 'teamId'
 > & {
+  canReject?: boolean
+  rejectUntil?: string | null
   leave?: Cleaned['leave']
   gameId?: string
   liveStreamId?: string

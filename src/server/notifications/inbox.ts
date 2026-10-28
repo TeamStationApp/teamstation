@@ -11,6 +11,7 @@ import type { Role } from '../../common/roles'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
+import { supersededPlayerAdd } from '../groups/noticePolicy'
 import {
   approvesSide,
   type Clock,
@@ -21,8 +22,25 @@ import {
 } from '../groups/requests'
 import { canScheduleFor, currentActor } from '../groups/rights'
 import { heldAt } from '../invites/grants'
-import { userNames } from '../users/nameBook'
-import { grantInformation, titleAndDescription } from './requestInformation'
+import { shortNamesOf, userNames } from '../users/nameBook'
+import {
+  grantInformation,
+  type PlayerRemovedMetadata,
+  playerRemovedWords,
+  titleAndDescription
+} from './requestInformation'
+
+/**
+ * A row as the inbox works with it: the notification, and whether it is
+ * news (Pending, and the bell) on top of whatever its fields say. The flag
+ * travels with the row, and leaves it before it is sent.
+ */
+type Listed = Notification & { news: boolean }
+
+/** The notification as it is sent: without the inbox's own flag. */
+function sent({ news: _news, ...row }: Listed): Notification {
+  return row
+}
 
 /** The words a page of notices reads of other rows, read once for the page. */
 interface PageNames {
@@ -30,6 +48,8 @@ interface PageNames {
   people: ReadonlyMap<string, string>
   /** Each group a grant names, by `kind:id` (`groupNames`). */
   groups: ReadonlyMap<string, string>
+  /** The short name of each player a removal notice names, by user id. */
+  players: ReadonlyMap<string, string>
 }
 
 /** A notice of information, worded for this person. */
@@ -38,7 +58,7 @@ async function informationFor(
   actor: Actor,
   event: Selectable<NotificationEventsTable>,
   names: PageNames
-): Promise<Notification | null> {
+): Promise<Listed | null> {
   if (
     event.source_type === 'groupRequest' ||
     !event.recorded_recipients.includes(actor.userId)
@@ -92,11 +112,27 @@ async function informationFor(
     metadata.leagueName != null
   )
     description = `${actorName(names.people, event.actor_id)} decided ${metadata.leagueName}'s ${metadata.claimKind}.`
+  // A player taken off a roster is named as they are now.
+  if (event.source_type === PLAYER_ADD_REJECTED) {
+    const removed = event.metadata as PlayerRemovedMetadata
+    const said = playerRemovedWords(
+      removed,
+      names.players.get(removed.userId) ?? ''
+    )
+    title = said.title
+    description = said.description
+  }
   // A reminder waits on its owner until they dismiss it or the upload lands,
   // which settles it the same way.
   const reminder = event.source_type === RECORDING_UPLOAD
   const waiting = reminder && receipt?.dismissed_at == null
-  return {
+  // A player taken off a roster by their side is news to its managers until
+  // they dismiss it; there is nothing to do but read it.
+  const removal =
+    event.source_type === PLAYER_ADD_REJECTED && receipt?.dismissed_at == null
+  const row: Listed = {
+    // A removal waits until dismissed, with nothing to do but read it.
+    news: removal,
     id: event.id,
     requestId: event.id,
     type: event.source_type,
@@ -108,6 +144,8 @@ async function informationFor(
     canAct: waiting,
     canWithdraw: false,
     canResend: false,
+    canReject: false,
+    rejectUntil: null,
     viewed: receipt != null,
     leave,
     ...(reminder
@@ -121,12 +159,14 @@ async function informationFor(
         )
       : {})
   }
+  return row
 }
 
 /**
  * What a page of notices names, in one read of `users` and one of each kind
  * of group: the actor of every grant and of every claim a person decided,
- * the sender of every request, and the group of every grant.
+ * the sender of every request, and the group of every grant; and in one more
+ * read of `users`, the player of every removal notice.
  */
 async function pageNames(
   db: Kysely<Database>,
@@ -147,7 +187,15 @@ async function pageNames(
     const scope = (event.metadata as { scope?: GroupRef } | null)?.scope
     return event.source_type === 'grant' && scope != null ? [scope] : []
   })
-  return { people, groups: await groupNames(db, scopes) }
+  const players = await shortNamesOf(
+    db,
+    events.flatMap(event =>
+      event.source_type === PLAYER_ADD_REJECTED
+        ? [(event.metadata as PlayerRemovedMetadata).userId]
+        : []
+    )
+  )
+  return { people, groups: await groupNames(db, scopes), players }
 }
 
 /**
@@ -208,9 +256,12 @@ function compareRows(
  * the bell. A grant or a scheduling notice is accepted when it is recorded,
  * so it is History from the start.
  */
-function isNews(row: Notification): boolean {
-  return row.canAct
+function isNews(row: Listed): boolean {
+  return row.canAct || row.news
 }
+
+/** The notice a team's roster managers get when a player's side rejected an add. */
+export const PLAYER_ADD_REJECTED = 'playerAddRejected'
 
 /**
  * A request as this person's notification, or null when it is not theirs.
@@ -222,7 +273,7 @@ export async function notificationFor(
   request: StoredRequest,
   clock: Clock = realClock,
   senders?: ReadonlyMap<string, string>
-): Promise<Notification | null> {
+): Promise<Listed | null> {
   const fresh = await currentActor(db, actor)
   const sides = await db
     .selectFrom('group_request_sides')
@@ -268,7 +319,7 @@ export async function notificationFor(
       ? null
       : await db
           .selectFrom('notification_receipts')
-          .select('event_id')
+          .select(['event_id', 'dismissed_at'])
           .where('event_id', '=', event.id)
           .where('user_id', '=', fresh.userId)
           .executeTakeFirst()
@@ -280,6 +331,7 @@ export async function notificationFor(
     request.sender_id === fresh.userId
   )
     return {
+      news: false,
       id: event?.id ?? request.id,
       requestId: request.id,
       type: request.kind,
@@ -292,6 +344,8 @@ export async function notificationFor(
       canAct: false,
       canWithdraw: true,
       canResend: false,
+      canReject: false,
+      rejectUntil: null,
       viewed: receipt != null,
       leave: null
     }
@@ -302,7 +356,18 @@ export async function notificationFor(
       receipt != null)
   if (!eligible && !senderAdmin && !historical) return null
   const display = await titleAndDescription(db, request, senders)
-  return {
+  // A change already made, which its approver may reject for 90 days, until
+  // a later add of the same person replaces it.
+  const notice = request.kind === 'playerAdd' && status === 'applied'
+  const canReject =
+    notice &&
+    eligible &&
+    request.expires_at.getTime() > clock.now().getTime() &&
+    !(await supersededPlayerAdd(db, request))
+  const row: Listed = {
+    // An applied add its approver may still reject, until they dismiss it:
+    // news like a request waiting on them, without anything to accept.
+    news: canReject && receipt?.dismissed_at == null,
     id: event?.id ?? request.id,
     requestId: request.id,
     type: request.kind,
@@ -318,10 +383,17 @@ export async function notificationFor(
       status !== 'accepted' &&
       senderAdmin &&
       request.kind !== 'guardian' &&
-      request.kind !== 'membership',
+      request.kind !== 'membership' &&
+      // A player add is made or asked once; a refused one is asked again by
+      // adding the player again.
+      request.kind !== 'playerAdd',
     viewed: receipt != null,
-    leave: null
+    leave: null,
+    // Every item carries both, as the published shape has them.
+    canReject,
+    rejectUntil: notice ? request.expires_at.toISOString() : null
   }
+  return row
 }
 
 /**
@@ -534,7 +606,7 @@ export async function inbox(
     .$if(options.history !== true, query =>
       query.where(eb =>
         eb.and([
-          eb('source_type', '=', RECORDING_UPLOAD),
+          eb('source_type', 'in', [RECORDING_UPLOAD, PLAYER_ADD_REJECTED]),
           eb.not(
             eb.exists(
               eb
@@ -557,7 +629,7 @@ export async function inbox(
     )
     .execute()
   const names = await pageNames(db, information, found)
-  const projected: Notification[] = []
+  const projected: Listed[] = []
   for (const request of found) {
     const row = await notificationFor(db, fresh, request, clock, names.people)
     if (row != null) projected.push(row)
@@ -575,7 +647,7 @@ export async function inbox(
   const hasPending = projected.some(isNews)
   let visible = projected.filter(row =>
     options.history === true
-      ? row.status !== 'pending'
+      ? row.status !== 'pending' && !isNews(row)
       : options.sent === true
         ? row.canWithdraw
         : isNews(row)
@@ -607,7 +679,7 @@ export async function inbox(
   const page = visible.slice(0, limit)
   const last = page.at(-1)
   return {
-    items: page,
+    items: page.map(sent),
     hasPending,
     nextCursor:
       visible.length > limit && last != null
@@ -642,11 +714,11 @@ export async function notificationDetail(
       await pageNames(db, [event])
     )
     if (information == null) throw notFound()
-    return information
+    return sent(information)
   }
   const row = await notificationFor(db, actor, request, clock)
   if (row == null) throw notFound()
-  return row
+  return sent(row)
 }
 
 export async function markViewed(

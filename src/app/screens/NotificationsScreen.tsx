@@ -313,6 +313,66 @@ export function NotificationsScreen({
                 />
               </View>
             </Card>
+          ) : mode === 'pending' && item.type === 'playerAddRejected' ? (
+            // A player taken off the team by their side: read, and dismissed.
+            <Card key={item.requestId} style={styles.card}>
+              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+              <Text style={styles.name}>{item.title}</Text>
+              <Text style={styles.hint}>{item.description}</Text>
+              <View style={styles.tabs}>
+                <Button
+                  compact
+                  kind="secondary"
+                  label="Dismiss"
+                  accessibilityLabel={`Dismiss ${item.title}`}
+                  busy={dismissing === item.requestId}
+                  disabled={dismissing != null}
+                  onPress={() => {
+                    dismiss(item).catch(() => undefined)
+                  }}
+                />
+              </View>
+            </Card>
+          ) : mode !== 'sent' && item.canReject === true ? (
+            // A change already made, which may be rejected for its 90 days:
+            // Reject undoes it, Dismiss only moves it to History.
+            <Card key={item.requestId} style={styles.card}>
+              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+              <Text style={styles.name}>{item.title}</Text>
+              <Text style={styles.hint}>{item.description}</Text>
+              <Text style={styles.status}>{statusLine(item, mode)}</Text>
+              <View style={styles.tabs}>
+                <Button
+                  compact
+                  label="Reject"
+                  accessibilityLabel={`Reject ${item.title}`}
+                  testID="notification-reject"
+                  color={theme.dangerColor}
+                  textColor={theme.buttonTextColor}
+                  busy={
+                    deciding?.id === item.requestId &&
+                    deciding.action === 'decline'
+                  }
+                  disabled={deciding != null}
+                  onPress={() => {
+                    decide(item, 'decline').catch(() => undefined)
+                  }}
+                />
+                {mode === 'pending' && (
+                  <Button
+                    compact
+                    kind="secondary"
+                    label="Dismiss"
+                    accessibilityLabel={`Dismiss ${item.title}`}
+                    busy={dismissing === item.requestId}
+                    disabled={dismissing != null}
+                    onPress={() => {
+                      dismiss(item).catch(() => undefined)
+                    }}
+                  />
+                )}
+              </View>
+            </Card>
           ) : mode === 'pending' && item.canAct ? (
             // Decided here, on the card: the list stays on Notifications.
             <Card key={item.requestId} style={styles.card}>
@@ -400,6 +460,10 @@ function statusLine(
 ): string {
   if (item.type === 'grant') return item.viewed ? 'Added' : 'New'
   if (isReminder(item)) return 'Reminder'
+  if (item.status === 'applied')
+    return item.canReject === true && item.rejectUntil != null
+      ? `You can reject this until ${inviteDate(item.rejectUntil)}.`
+      : `Added on ${inviteDate(item.sentAt)}.`
   if (item.status === 'pending')
     return mode === 'sent' ? 'Awaiting approval' : 'Needs your approval'
   return item.status[0].toUpperCase() + item.status.slice(1)

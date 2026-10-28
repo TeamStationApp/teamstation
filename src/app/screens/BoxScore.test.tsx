@@ -280,6 +280,20 @@ describe('the box score', function () {
     expect(text).not.includes('Batting — Hawks')
     expect(text).not.includes('No individual lines')
   })
+  it('shows a withdrawn line under its placeholder name, with nobody behind it', async function () {
+    this.timeout(10000)
+    const withdrawn = asPitchingRow({
+      ...BLAIR,
+      userId: null,
+      gumboId: null,
+      shortName: 'RFlcns A'
+    })
+    expect(withdrawn.userId).equals(null)
+    const container = await boxScore([BLAIR, withdrawn])
+    const text = container.textContent ?? ''
+    expect(text).includes('RFlcns A')
+    expect(text).includes('Blair')
+  })
   it('preserves batting appearance order for both sides and player links', async function () {
     this.timeout(10000)
     const rows = ['away', 'home'].flatMap((teamId, side) =>
@@ -517,6 +531,30 @@ describe('the box score module (U24)', function () {
       host!.querySelector<HTMLElement>('[aria-label="Dana E"]')!.click()
     })
     expect(opened).deep.equals([userIdOfGumbo(5)])
+  })
+
+  it('opens a pitcher from their line, and a withdrawn pitcher from none', async function () {
+    const opened: string[] = []
+    await moduleBoxScore({
+      game: gameFixture,
+      box: {
+        batting: [],
+        pitching: [
+          BLAIR,
+          asPitchingRow({ ...BLAIR, userId: null, shortName: 'RFlcns A' })
+        ],
+        stats: undefined
+      },
+      first: 'away',
+      onOpenPlayer: userId => {
+        opened.push(userId)
+      }
+    })
+    expect(host!.querySelector('[aria-label="RFlcns A"]')).equals(null)
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[aria-label="Blair"]')!.click()
+    })
+    expect(opened).deep.equals([BLAIR.userId])
   })
 
   it('draws a coach an empty line score before the game, over a word that it has not started', async function () {

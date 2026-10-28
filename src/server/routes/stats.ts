@@ -9,6 +9,7 @@ import { asUserId } from '../../common/userId'
 import { guardsPerson, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
+import { publicUserId, withdrawnGames } from '../games/withdrawn'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
@@ -249,11 +250,13 @@ export function statsRoutes(
         seasonId,
         batting: battingLines(rows).map(line => ({
           ...line,
+          userId: publicUserId(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         })),
         pitching: pitchingLines(rows).map(line => ({
           ...line,
+          userId: publicUserId(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           ip: inningsPitched(line.outs),
           rates: pitchingRates(line)
@@ -278,6 +281,8 @@ export function statsRoutes(
       const ownPlays =
         person.userIds.includes(actor.userId) ||
         (await guardsPerson(db, scopes, actor.userId, person))
+      // Games their part in was withdrawn from are not on their record.
+      const withdrawn = await withdrawnGames(db, person.userIds)
 
       let query = db
         .selectFrom('event_players')
@@ -300,6 +305,9 @@ export function statsRoutes(
         ])
         .where('gumbo_ids.user_id', 'in', person.userIds)
         .where('events.hidden', '=', false)
+        .$if(withdrawn.length > 0, query =>
+          query.where('events.gameId', 'not in', withdrawn)
+        )
 
       const seasonId = req.query.seasonId
       if (typeof seasonId === 'string' && seasonId !== '') {

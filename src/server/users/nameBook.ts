@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 
-import { shortNames } from '../../common/names'
+import { shortName, shortNames } from '../../common/names'
 import type { NameOf } from '../../common/scoring/storedNames'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
@@ -433,6 +433,33 @@ export async function userNames(
     .where('id', 'in', [...new Set(survivors.values())])
     .execute()
   const names = new Map(rows.map(row => [row.id, row.display_name]))
+  return new Map(
+    wanted.map(id => [id, names.get(survivors.get(id)!) ?? ''] as const)
+  )
+}
+
+/**
+ * Each user's short name (`Jordan P`), merged accounts read as their
+ * survivor: the name a notice gives the player it is about.
+ */
+export async function shortNamesOf(
+  db: Db,
+  userIds: Iterable<string>
+): Promise<Map<string, string>> {
+  const wanted = [...new Set(userIds)]
+  if (wanted.length === 0) return new Map()
+  const survivors = await survivorsOf(db, wanted)
+  const rows = await db
+    .selectFrom('users')
+    .select([
+      'id',
+      'first_name as firstName',
+      'last_name as lastName',
+      'display_name as displayName'
+    ])
+    .where('id', 'in', [...new Set(survivors.values())])
+    .execute()
+  const names = new Map(rows.map(row => [row.id, shortName(row)]))
   return new Map(
     wanted.map(id => [id, names.get(survivors.get(id)!) ?? ''] as const)
   )

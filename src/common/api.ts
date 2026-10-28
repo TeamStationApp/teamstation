@@ -1067,7 +1067,8 @@ const asPitchingRates = asObject({
 })
 
 export const asBattingRow = asObject({
-  userId: asUserId,
+  /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
+  userId: asNullable(asUserId),
   /** First name, last initial. Never the whole name. */
   shortName: asOptional(asString),
   teamId: asNullable(asString),
@@ -1113,7 +1114,8 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  * neither sets one.
  */
 export const asPitchingRow = asObject({
-  userId: asUserId,
+  /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
+  userId: asNullable(asUserId),
   shortName: asOptional(asString),
   teamId: asNullable(asString),
   /** `5.2`, the way it is always written. */

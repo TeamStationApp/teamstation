@@ -1,7 +1,13 @@
 import type { Kysely } from 'kysely'
 
 import type { UnrosterBody } from '../../common/api'
-import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  HttpError,
+  notFound
+} from '../../common/errors'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -125,59 +131,129 @@ export async function setRostered(
       })
       .where('id', '=', gameId)
       .execute()
-    if (context != null) {
-      let failure: Error | undefined
-      const session = await ScoringSession.open(
-        {
-          load: async () => stored,
-          save: async (_id, change) => {
-            try {
-              const posted = await postGamePlays(
-                trx,
-                gameId,
-                asPostEventsBody({
-                  ...change,
-                  mode: 'live',
-                  source: { system: 'teamstation' }
-                })
-              )
-              return {
-                plays: posted.plays.map(row => row.gumbo as GumboPlay),
-                currentPlay: posted.currentPlay as CurrentPlay | null
-              }
-            } catch (error) {
-              failure =
-                error instanceof Error ? error : new Error(String(error))
-              throw failure
-            }
-          }
-        },
+    if (context != null)
+      await applyAvailability(
+        trx,
         gameId,
+        stored,
         context,
-        {
-          requireCurrentSetup: true,
-          setTimer: () => null,
-          clearTimer: () => undefined
-        }
-      )
-      if (session.problem != null || awaitingResult(session.state))
-        throw conflict('Finish the current play first')
-      const setup = reconcileRoster(
-        setupOf(session.state),
-        context.teams,
-        availability.roster,
-        availability.guestPlayers,
+        availability,
         unrostered
       )
-      const problem = session.apply({ type: 'lineup', kind: 'roster', setup })
-        .problems[0]
-      if (problem != null) throw conflict(problem.message)
-      await session.flush()
-      if (failure != null) throw failure
-      if (session.problem != null) throw conflict(session.problem)
-    }
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
     noteScopeChange(trx, { gameId })
     return unrostered
   })
+}
+
+/**
+ * Puts a game's lineup back in line with who may play in it, as a scorer's
+ * session does on opening it: everyone still available keeps their place,
+ * and nobody else stays in it.
+ */
+async function applyAvailability(
+  trx: Kysely<Database>,
+  gameId: string,
+  stored: Awaited<ReturnType<typeof resolveScoringGame>>,
+  context: NonNullable<Awaited<ReturnType<typeof contextOf>>>,
+  availability: Awaited<ReturnType<typeof gameAvailability>>,
+  unrostered: Unrostered
+): Promise<void> {
+  let failure: Error | undefined
+  const session = await ScoringSession.open(
+    {
+      load: async () => stored,
+      save: async (_id, change) => {
+        try {
+          const posted = await postGamePlays(
+            trx,
+            gameId,
+            asPostEventsBody({
+              ...change,
+              mode: 'live',
+              source: { system: 'teamstation' }
+            })
+          )
+          return {
+            plays: posted.plays.map(row => row.gumbo as GumboPlay),
+            currentPlay: posted.currentPlay as CurrentPlay | null
+          }
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error))
+          throw failure
+        }
+      }
+    },
+    gameId,
+    context,
+    {
+      requireCurrentSetup: true,
+      setTimer: () => null,
+      clearTimer: () => undefined
+    }
+  )
+  if (session.problem != null || awaitingResult(session.state))
+    throw conflict('Finish the current play first')
+  const setup = reconcileRoster(
+    setupOf(session.state),
+    context.teams,
+    availability.roster,
+    availability.guestPlayers,
+    unrostered
+  )
+  const problem = session.apply({ type: 'lineup', kind: 'roster', setup })
+    .problems[0]
+  if (problem != null) throw conflict(problem.message)
+  await session.flush()
+  if (failure != null) throw failure
+  if (session.problem != null) throw conflict(session.problem)
+}
+
+/**
+ * After a player left a team or a game: the lineup of a game that has not
+ * begun follows who may now play in it. A game already under way keeps its
+ * record; one whose record cannot be read is left as it is.
+ */
+export async function reconcileUnbegunLineup(
+  trx: Kysely<Database>,
+  gameId: string
+): Promise<void> {
+  const game = await trx
+    .selectFrom('games')
+    .selectAll()
+    .where('id', '=', gameId)
+    .forUpdate()
+    .executeTakeFirst()
+  if (game == null || game.status === 'final' || game.status === 'cancelled')
+    return
+  const rows = await readPlays(trx, gameId)
+  if (rows.length > 0) return
+  const stored = await resolveScoringGame(trx, {
+    plays: [],
+    currentPlay: atBatOf(game, false) as CurrentPlay | null
+  })
+  if (
+    stored.currentPlay?.teamStation != null &&
+    storedRecordOf(stored.currentPlay) == null
+  )
+    return
+  const context = await contextOf(trx, gameId, game, stored)
+  if (context == null) return
+  const availability = await gameAvailability(trx, game)
+  try {
+    await applyAvailability(
+      trx,
+      gameId,
+      stored,
+      context,
+      availability,
+      availability.unrostered
+    )
+  } catch (error) {
+    // A lineup that no longer replays is the scorer's to fix on opening it.
+    if (!(error instanceof HttpError)) throw error
+    return
+  }
+  await notifyGameChange(trx, { game: gameId, kind: 'game' })
+  noteScopeChange(trx, { gameId })
 }

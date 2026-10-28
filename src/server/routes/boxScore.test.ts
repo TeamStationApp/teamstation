@@ -322,8 +322,11 @@ describe('GET /games/:gameId/box-score stats', function () {
       batting.map(line => line.userId)
     )
     // The same pitchers, in the order they pitched rather than by outs.
-    expect(box.pitching.map(line => line.userId).sort()).deep.equals(
-      pitching.map(line => line.userId).sort()
+    // A withdrawn line has no user id, so the ids sort as text.
+    const byId = (a: string | null, b: string | null): number =>
+      String(a).localeCompare(String(b))
+    expect(box.pitching.map(line => line.userId).sort(byId)).deep.equals(
+      pitching.map(line => line.userId).sort(byId)
     )
     expect(box.batting[0]).includes({
       userId: userIdOfGumbo(batter),

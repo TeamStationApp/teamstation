@@ -531,22 +531,25 @@ function PitchingTable(props: {
             </Text>
           ))}
         </View>
-        {rows.map(line => (
-          <StatRow
-            key={line.userId}
-            name={line.shortName ?? ''}
-            cells={pitchingColumns.map(column => column.value(line))}
-            widths={widths}
-            theme={theme}
-            onPress={
-              onOpenPlayer == null
-                ? undefined
-                : () => {
-                    onOpenPlayer(line.userId, line.shortName ?? '')
-                  }
-            }
-          />
-        ))}
+        {rows.map((line, index) => {
+          const userId = line.userId
+          return (
+            <StatRow
+              key={userId ?? `withdrawn-${index}`}
+              name={line.shortName ?? ''}
+              cells={pitchingColumns.map(column => column.value(line))}
+              widths={widths}
+              theme={theme}
+              onPress={
+                onOpenPlayer == null || userId == null
+                  ? undefined
+                  : () => {
+                      onOpenPlayer(userId, line.shortName ?? '')
+                    }
+              }
+            />
+          )
+        })}
       </WideTable>
     </View>
   )
