@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     const path = `/umpires/${f.leagueA}`
     const open = async (query = ''): Promise<void> => {
       await m.openBrowser({ url: f.h.origin + path + query })
-      await contains(page, baseline ? 'Umpire schedule' : 'Umpire Schedule')
+      await contains(page, baseline ? 'Umpire schedule' : 'Umpire')
       await page.evaluate(async () => await document.fonts.ready)
     }
     const shot = async (name: string): Promise<void> => {
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
       expect(header).greaterThan(sticky)
       const handed = await page.evaluate(() =>
         Array.from(document.querySelectorAll('[dir="auto"]'))
-          .filter(n => n.textContent === 'Umpire Schedule')
+          .filter(n => n.textContent === 'Umpire')
           .some(
             n =>
               n.getBoundingClientRect().top >= 0 &&
@@ -278,7 +278,11 @@ async function main(): Promise<void> {
     }
     await page.setViewport({ width: 390, height: 844 })
     await open(baseline ? '?view=league' : '')
-    if (!baseline) await tap(m, 'Umpire schedule')
+    if (!baseline) {
+      // From Home's Help Umpire row, the way the header's mask used to.
+      await m.openBrowser({ url: f.h.origin + '/' })
+      await tap(m, 'Umpire Schedule')
+    }
     await page.waitForSelector('[data-testid="umpire-game-gam_umpire_g1"]')
     await scrollDown()
     await shot('schedule-narrow')

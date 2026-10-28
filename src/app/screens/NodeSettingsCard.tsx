@@ -25,6 +25,8 @@ const POSITIONS = range(0, 30)
 const HEIGHTS = range(5, 100, 5)
 /** How long a radar speed stays on the board, in seconds. */
 const HOLDS = range(1, 20)
+/** How long a replay holds each pitch, in whole seconds. */
+const PITCH_DELAYS = range(1, 20)
 /** A highlight's timing, in seconds. */
 const SECONDS = range(0, 60)
 /** On a play type's wheel, before 0: the default rewind length. */
@@ -69,6 +71,7 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
   const { scoreboard: s, highlights: h } = settings
   return {
     radar: { ...settings.radar },
+    replay: { pitchSec: nearest(PITCH_DELAYS, settings.replay.pitchSec) },
     scoreboard: {
       ...s,
       single: shownPlacement(s.single),
@@ -397,6 +400,22 @@ export function NodeSettingsCard({
               ...settings,
               radar: { ...radar, inPlayWindowSec: option }
             })
+          )}
+        </ListCard>
+      </View>
+      <View style={styles.section}>
+        <SectionHeader title="Replay" />
+        <Text style={styles.hint}>
+          How long the 3D replay holds each pitch before the next.
+        </Text>
+        <ListCard>
+          {wheelRow(
+            'Pitch delay (seconds)',
+            'Replay pitch delay',
+            PITCH_DELAYS,
+            String,
+            settings.replay.pitchSec,
+            option => ({ ...settings, replay: { pitchSec: option } })
           )}
         </ListCard>
       </View>

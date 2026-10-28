@@ -125,9 +125,13 @@ describe('personal group invitations and accepted role grants', function () {
       await f.h.db.selectFrom('group_requests').select('id').execute()
     ).length(0)
 
-    // The inbox says who did it and as what, and lights the bell until read.
-    const before = await inbox(106)
-    expect(before.hasPending).equals(true)
+    // History says who did it and as what. A grant alone is not Pending and
+    // lights no bell.
+    const pending = await inbox(106)
+    expect(pending.hasPending).equals(false)
+    expect(pending.items.some(item => item.type === 'grant')).equals(false)
+    const before = await inbox(106, true)
+    expect(before.hasPending).equals(false)
     const notice = before.items.find(item => item.type === 'grant')!
     expect(notice.title).equals(
       'Babe Ruth added you as Admin and Scorekeeper of Demo Hawks'
@@ -183,7 +187,7 @@ describe('personal group invitations and accepted role grants', function () {
 
     // The administrator who added them is not told about their own act.
     expect(
-      (await inbox(101)).items.filter(item => item.type === 'grant')
+      (await inbox(101, true)).items.filter(item => item.type === 'grant')
     ).deep.equals([])
   })
 
@@ -252,7 +256,7 @@ describe('personal group invitations and accepted role grants', function () {
     ).deep.equals(['admin', 'scorekeeper'])
     // Accepting is told like any other grant, in the sender's name.
     expect(
-      (await inbox(201)).items.find(item => item.type === 'grant')?.title
+      (await inbox(201, true)).items.find(item => item.type === 'grant')?.title
     ).equals('Babe Ruth added you as Admin and Scorekeeper of Demo Hawks')
     // The address is theirs now: adding it again finds nothing new to give.
     const again = await add('new-person@example.com')
@@ -339,7 +343,7 @@ describe('personal group invitations and accepted role grants', function () {
       ).terms
     ).property('recipientUserId', userIdOfGumbo(104))
     expect(
-      (await inbox(104)).items.find(item => item.type === 'grant')?.title
+      (await inbox(104, true)).items.find(item => item.type === 'grant')?.title
     ).equals('Babe Ruth added you as Admin and Scorekeeper of Demo Hawks')
   })
 

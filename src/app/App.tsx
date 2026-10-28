@@ -135,6 +135,7 @@ import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SchedulePreviewScreen } from './screens/SchedulePreviewScreen'
 import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
+import { SeasonTimeFrameScreen } from './screens/SeasonTimeFrameScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
 import { VenueScreen } from './screens/VenueScreen'
@@ -170,7 +171,6 @@ import {
 } from './theme/ThemeContext'
 import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
-import { UmpireMask } from './umpires/UmpireMask'
 import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
 import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
 import { DjGameScreen } from './walkup/DjGameScreen'
@@ -1875,6 +1875,13 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
           onLoaded={prefetchAfterHome}
+          onOpenUmpireSchedule={
+            umpireLeagues.length === 0
+              ? undefined
+              : () => {
+                  push({ name: 'umpireSchedule', id: umpireLeagues[0].id })
+                }
+          }
         />
       ) : tab === 'search' ? (
         <DiscoverScreen
@@ -2003,6 +2010,16 @@ function Shell(props: AppProps): React.ReactElement {
         venueId={top.venueId}
         fieldId={top.fieldId}
         onGone={pop}
+      />
+    ) : top.name === 'seasonTimeFrame' ? (
+      <SeasonTimeFrameScreen
+        key={top.id}
+        client={client}
+        id={top.id}
+        onSaved={() => {
+          setSettingsVisit(++settingsVisitId.current)
+          pop()
+        }}
       />
     ) : top.name === 'groupLocation' ? (
       <GroupLocationPage
@@ -2179,6 +2196,9 @@ function Shell(props: AppProps): React.ReactElement {
         onInvites={group => {
           push({ name: 'groupInvites', ...group, teamReturn: top.teamReturn })
         }}
+        onOpenTimeFrame={group => {
+          push({ name: 'seasonTimeFrame', kind: 'season', id: group.id })
+        }}
         onLocation={group => {
           if (group.kind !== 'season')
             push({
@@ -2345,6 +2365,10 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
         onDismissed={() => {
+          refreshNotifications().catch(() => undefined)
+        }}
+        onDecided={() => {
+          refreshRoles()
           refreshNotifications().catch(() => undefined)
         }}
       />
@@ -2821,15 +2845,6 @@ function Shell(props: AppProps): React.ReactElement {
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
-      umpire={
-        umpireLeagues.length === 0 ? undefined : (
-          <UmpireMask
-            onPress={() => {
-              push({ name: 'umpireSchedule', id: umpireLeagues[0].id })
-            }}
-          />
-        )
-      }
       tess={
         tessAvailable && !tessSuppressed
           ? {
@@ -3124,6 +3139,16 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
       kind: route.kind,
       id: route.id,
       teamReturn: route.teamReturn
+    }
+    return { [tab]: [...stackFor(settings)[tab]!, route] }
+  }
+  if (route.name === 'seasonTimeFrame') {
+    // Opened by its address too, the season's settings are underneath, so
+    // Save and the back button land there.
+    const settings = {
+      name: 'groupSettings' as const,
+      kind: 'season' as const,
+      id: route.id
     }
     return { [tab]: [...stackFor(settings)[tab]!, route] }
   }

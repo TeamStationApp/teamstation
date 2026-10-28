@@ -27,7 +27,7 @@ import { gameFixture } from './isUnscoredGame.test'
 import { scoringPreferences } from './scoringPreferences'
 import { scoringPreferences as nativePreferences } from './scoringPreferences.native'
 import type { PreferenceStorage } from './scoringPreferenceStore'
-import { saveStatusText, ScoringScreen } from './ScoringScreen'
+import { ScoringScreen } from './ScoringScreen'
 import {
   DevelopmentScoringSource,
   memoryStore,
@@ -280,22 +280,35 @@ describe('local scoring controls', function () {
 })
 
 describe('saving from the scoring screen', function () {
-  it('says what the save is doing in one line', function () {
-    const base = { pending: 0, offline: false, readOnly: false, problem: null }
-    expect(saveStatusText(base)).equals(null)
-    expect(saveStatusText({ ...base, pending: 2 })).equals('Saving…')
-    expect(saveStatusText({ ...base, pending: 1, offline: true })).equals(
-      'Offline — 1 play waiting'
-    )
-    expect(saveStatusText({ ...base, pending: 3, offline: true })).equals(
-      'Offline — 3 plays waiting'
-    )
-    expect(
-      saveStatusText({ ...base, pending: 1, problem: 'play 0: bad' })
-    ).equals('Not saved: play 0: bad')
-    expect(saveStatusText({ ...base, readOnly: true, problem: 'No' })).equals(
-      null
-    )
+  it('says nothing while a tap’s own save is on its way', async function () {
+    const store = memoryStore()
+    const save = store.save
+    let release: () => void = () => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    store.save = async (gameId, change) => {
+      await held
+      return await save(gameId, change)
+    }
+    const source: ScoringSource = {
+      open: async game =>
+        GameSession.start(store, game.id, scoringSession(game))
+    }
+    await mount(clientForSwitchHitter(), source)
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    // The save is still out, and the line says nothing of it.
+    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(document.body.textContent).not.includes('Saving…')
+    release()
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(store.games.get('g1')?.currentPlay).not.equals(null)
   })
 
   it('goes read-only with the server’s reason when a save is refused', async function () {

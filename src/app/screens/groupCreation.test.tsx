@@ -1288,8 +1288,14 @@ describe('creation and organization interface behavior', () => {
       window.dispatchEvent(new window.Event('focus'))
     })
     expect(document.body.textContent).includes('Next invitation')
-    await press('Next invitation')
-    expect(opened).equals('request_next')
+    // The second page's approval is decided on its card, not opened.
+    expect(
+      document.querySelector('[aria-label="Accept Next invitation"]')
+    ).not.equals(null)
+    expect(
+      document.querySelector('[role="button"][aria-label="Next invitation"]')
+    ).equals(null)
+    expect(opened).equals('')
     await press('Sent')
     await press('History')
   })

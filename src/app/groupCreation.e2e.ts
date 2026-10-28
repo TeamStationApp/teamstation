@@ -335,8 +335,14 @@ async function main(): Promise<void> {
     await press(teamAdmin, 'Notifications')
     await text(teamAdmin, 'Hawks invited to Demo Tournament')
     await shot(teamAdmin, 'notifications-oldest-first.png')
-    await press(teamAdmin, 'Demo Hawks invited to Demo Tournament')
+    // Decided on its card in the list: Accept and Reject, and no detail.
     await text(teamAdmin, 'organized by Demo League B')
+    await teamAdmin.waitForSelector(
+      '[aria-label="Accept Demo Hawks invited to Demo Tournament"]'
+    )
+    await teamAdmin.waitForSelector(
+      '[aria-label="Reject Demo Hawks invited to Demo Tournament"]'
+    )
     await shot(teamAdmin, 'notification-season-detail.png')
     await shot(teamAdmin, 'notification-detail-after.png')
     expect(
@@ -344,7 +350,13 @@ async function main(): Promise<void> {
         await f.h.request('GET', '/me/notifications/summary', undefined, 101)
       ).json()) as { hasPending: boolean }
     ).property('hasPending', true)
-    await press(teamAdmin, 'Accept invitation')
+    await press(teamAdmin, 'Accept Demo Hawks invited to Demo Tournament')
+    await teamAdmin.waitForSelector(
+      '[aria-label="Accept Demo Hawks invited to Demo Tournament"]',
+      { hidden: true }
+    )
+    expect(new URL(teamAdmin.url()).pathname).equals('/notifications')
+    await press(teamAdmin, 'History')
     await text(teamAdmin, 'Accepted')
     expect(
       await f.h.db

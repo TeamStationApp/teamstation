@@ -226,8 +226,9 @@ async function e1(run: Run): Promise<void> {
   const inbox = await api<{
     hasPending: boolean
     items: Array<{ type: string; venueId?: string }>
-  }>(fx, 105, 'GET', '/me/notifications')
-  expect(inbox.hasPending).equals(true)
+  }>(fx, 105, 'GET', '/me/notifications?history=1')
+  // A claim is History from the start: it lights no bell on its own.
+  expect(inbox.hasPending).equals(false)
   expect(
     inbox.items.some(
       item => item.type === 'venueClaim' && item.venueId === run.state.venueId
@@ -464,7 +465,7 @@ async function e3(run: Run): Promise<void> {
     fx,
     102,
     'GET',
-    '/me/notifications'
+    '/me/notifications?history=1'
   )
   expect(declined.items.map(item => item.title)).includes(
     'Example Park: request declined'
@@ -569,6 +570,7 @@ async function e4(run: Run): Promise<void> {
   await run.visit(admin, `/games/${second}?tab=info`)
   await contains(admin.page, 'too close to this one to change the field’s size')
   await run.visit(admin, '/notifications')
+  await tapLabel(admin, 'History')
   await contains(admin.page, 'Field warning: Demo Hawks at Demo Owls')
   await showText(admin, 'Field warning: Demo Hawks at Demo Owls')
   await capture(admin.m, artifacts, 'notifications-field-warning.png')
@@ -576,7 +578,7 @@ async function e4(run: Run): Promise<void> {
     fx,
     101,
     'GET',
-    '/me/notifications'
+    '/me/notifications?history=1'
   )
   expect(
     owls.items
@@ -1155,6 +1157,7 @@ async function e8(run: Run): Promise<void> {
   await capture(admin.m, artifacts, 'season-schedule-published.png')
   const outside = await run.session('autoScheduler-e8-visitors', 103)
   await run.visit(outside, '/notifications')
+  await tapLabel(outside, 'History')
   await contains(
     outside.page,
     'Demo Regular schedule updated for Demo Visitors'

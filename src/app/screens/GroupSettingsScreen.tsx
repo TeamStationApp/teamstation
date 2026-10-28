@@ -15,7 +15,6 @@ import {
   SectionHeader,
   TextField
 } from '../components'
-import { DateRangePicker } from '../components/DateRangePicker'
 import { LocationRow } from '../components/LocationRow'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -37,6 +36,7 @@ export function GroupSettingsScreen({
   onChanged,
   onRequest,
   onLocation,
+  onOpenTimeFrame,
   onAddPeople,
   onInvites,
   onPromote,
@@ -47,6 +47,8 @@ export function GroupSettingsScreen({
   onChanged?: () => void
   onRequest?: (id: string) => void
   onLocation?: (ref: GroupRef) => void
+  /** A season's Time frame row: opens the screen that sets its date range. */
+  onOpenTimeFrame?: (ref: GroupRef) => void
   onAddPeople?: (ref: GroupRef) => void
   onInvites?: (ref: GroupRef) => void
   onUmpires?: (screen: UmpireSettingsDestination) => void
@@ -57,7 +59,6 @@ export function GroupSettingsScreen({
   const [detail, setDetail] = useState<GroupDetail>()
   const [name, setName] = useState('')
   const [photo, setPhoto] = useState(false)
-  const [calendar, setCalendar] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -244,32 +245,12 @@ export function GroupSettingsScreen({
                       title={dates}
                       subtitle="Time frame"
                       onPress={() => {
-                        setCalendar(value => !value)
+                        onOpenTimeFrame?.({
+                          kind: 'season',
+                          id: detail.group.id
+                        })
                       }}
                     />
-                    {calendar && (
-                      <DateRangePicker
-                        initial={
-                          detail.group.startsOn == null ||
-                          detail.group.endsOn == null
-                            ? undefined
-                            : {
-                                startsOn: detail.group.startsOn,
-                                endsOn: detail.group.endsOn
-                              }
-                        }
-                        onChoose={range => {
-                          update(range)
-                            .then(() => {
-                              setCalendar(false)
-                            })
-                            .catch(() => undefined)
-                        }}
-                        onCancel={() => {
-                          setCalendar(false)
-                        }}
-                      />
-                    )}
                     <Text style={styles.hint}>
                       Editing this reference time frame does not move scheduled
                       games.

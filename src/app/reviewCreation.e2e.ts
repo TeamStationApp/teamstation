@@ -452,7 +452,7 @@ async function main(): Promise<void> {
     await owner.waitForFunction(
       title =>
         [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
-          node => node.getAttribute('aria-label') === title
+          node => node.getAttribute('aria-label') === `Accept ${title}`
         ).length > 25,
       {},
       cached.title
@@ -460,7 +460,7 @@ async function main(): Promise<void> {
     const loadedCount = await owner.evaluate(
       title =>
         [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
-          node => node.getAttribute('aria-label') === title
+          node => node.getAttribute('aria-label') === `Accept ${title}`
         ).length,
       cached.title
     )
@@ -475,7 +475,7 @@ async function main(): Promise<void> {
     await owner.waitForFunction(
       (title, count) =>
         [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
-          node => node.getAttribute('aria-label') === title
+          node => node.getAttribute('aria-label') === `Accept ${title}`
         ).length === count,
       {},
       cached.title,
@@ -485,8 +485,25 @@ async function main(): Promise<void> {
       'E10 review PASS: an inbox with more than twenty-five actual pending requests retains its loaded second page after a foreground refresh'
     )
     let notificationFailure: 'none' | 'offline' | 'refused' = 'none'
+    let refuseDecision = false
     await owner.setRequestInterception(true)
     owner.on('request', request => {
+      if (
+        refuseDecision &&
+        request.url().includes(`/relationship-requests/${cacheId}/accept`)
+      ) {
+        request
+          .respond({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              code: 'conflict',
+              message: 'This request was already decided'
+            })
+          })
+          .catch(() => undefined)
+        return
+      }
       if (
         !request.url().includes('/me/notifications') ||
         notificationFailure === 'none'
@@ -509,7 +526,22 @@ async function main(): Promise<void> {
     await text(owner, 'Retry notifications')
     await text(owner, cached.title)
     notificationFailure = 'none'
-    await press(owner, cached.title)
+    // A refused Accept leaves the card, says why, and can be pressed again.
+    refuseDecision = true
+    const firstAccept = await owner.$(`[aria-label="Accept ${cached.title}"]`)
+    expect(firstAccept).not.equals(null)
+    await owner.evaluate(
+      label =>
+        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.click(),
+      `Accept ${cached.title}`
+    )
+    await text(owner, 'This request was already decided')
+    await text(owner, cached.title)
+    refuseDecision = false
+    // The detail, opened by its address, keeps Accept invitation.
+    await owner.goto(f.h.origin + `/notifications/${cacheId}`, {
+      waitUntil: 'domcontentloaded'
+    })
     await text(owner, 'Accept invitation')
     notificationFailure = 'offline'
     await owner.evaluate(() => window.dispatchEvent(new Event('focus')))

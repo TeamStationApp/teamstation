@@ -4,7 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
 import { asNodeAccountChange } from '../../common/nodeAdministration'
-import { asNodeSettings } from '../../common/nodeSettings'
+import { asNodeSettingsUpdate } from '../../common/nodeSettings'
 import { asUserId } from '../../common/userId'
 import {
   changeNodeAccount,
@@ -106,9 +106,10 @@ export function nodeAdministrationRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      const settings = cleanBody(asNodeSettings, req.body)
+      const settings = cleanBody(asNodeSettingsUpdate, req.body)
       await setNodeSettings(db, req.actor, settings)
-      res.json(settings)
+      // What is stored now, including a pitch delay the save left alone.
+      res.json(await nodeSettings(db, req.actor))
     })
   )
   return router

@@ -804,8 +804,13 @@ async function people(run: Run): Promise<void> {
   expect(added.status).equals(201)
   expect(added.body.added).equals(true)
   expect(await roleRows(people.oneTeam)).deep.equals(['scorekeeper'])
-  const told = await api('GET', '/me/notifications', people.oneTeam)
-  expect(told.body.hasPending).equals(true)
+  // A grant is History from the start, and lights no bell.
+  const pending = await api('GET', '/me/notifications', people.oneTeam)
+  expect(pending.body.hasPending).equals(false)
+  expect(pending.body.items.some((item: any) => item.type === 'grant')).equals(
+    false
+  )
+  const told = await api('GET', '/me/notifications?history=1', people.oneTeam)
   const grant = told.body.items.find((item: any) => item.type === 'grant')
   expect(grant.title).equals('Babe Ruth added you as Scorekeeper of Demo Hawks')
   expect(grant.leave).deep.equals({
@@ -1433,12 +1438,16 @@ async function guardian(run: Run): Promise<void> {
   await faye.m.openBrowser({ url: `${f.h.origin}/notifications` })
   await contains(faye.page, 'Be a guardian of Alfonso S')
   await contains(faye.page, 'Tim Raines invited you')
+  // Accepted on its card, where the list stays.
   await faye.m.tapOn({
-    css: '[aria-label="Be a guardian of Alfonso S"]',
+    css: '[aria-label="Accept Be a guardian of Alfonso S"]',
     timeout: 15000
   })
-  await contains(faye.page, 'Accept invitation')
-  await tap(faye.m, 'Accept invitation')
+  await faye.m.assertNotVisible({
+    css: '[aria-label="Accept Be a guardian of Alfonso S"]',
+    timeout: 15000
+  })
+  await tap(faye.m, 'History')
   await contains(faye.page, 'Accepted')
   expect(await guardiansOf(avery.id)).deep.equals([people.guardian, invitee])
   const inbox = await api('GET', '/me/notifications?history=1', invitee)
@@ -1563,8 +1572,15 @@ async function guardian(run: Run): Promise<void> {
   await benSession.m.openBrowser({ url: `${f.h.origin}/notifications` })
   const asked = "Hank Majeski asks to be Ben C's guardian"
   await contains(benSession.page, asked)
-  await benSession.m.tapOn({ css: `[aria-label="${asked}"]`, timeout: 15000 })
-  await tap(benSession.m, 'Accept invitation')
+  await benSession.m.tapOn({
+    css: `[aria-label="Accept ${asked}"]`,
+    timeout: 15000
+  })
+  await benSession.m.assertNotVisible({
+    css: `[aria-label="Accept ${asked}"]`,
+    timeout: 15000
+  })
+  await tap(benSession.m, 'History')
   await contains(benSession.page, 'Accepted')
   expect(await guardiansOf(ben.id)).deep.equals([people.oneTeam])
   const hankRoles = await api('GET', '/me/roles', people.oneTeam)

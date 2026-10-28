@@ -6,6 +6,8 @@ import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import {
   forgetScoreboardSettings,
+  replayPitchSec,
+  replaySettings,
   scoreboardSettings,
   speedHoldMs
 } from './nodeSettings'
@@ -27,6 +29,7 @@ describe('node settings', function () {
 
   const changed: NodeSettings = {
     radar: { pitchWindowSec: 4, inPlayWindowSec: 20 },
+    replay: { pitchSec: 7 },
     scoreboard: {
       overlayStartDate: '2026-11-15',
       single: { x: 0.1, y: 0.2, height: 0.25 },
@@ -80,11 +83,14 @@ describe('node settings', function () {
     // What the rest of the server reads moves with it at once.
     expect(await highlightSettings(f.h.db)).deep.equals(changed.highlights)
     expect(await speedHoldMs(f.h.db)).equals(3000)
+    // The replay's delay too, which needs nobody signed in.
+    expect(await replayPitchSec(f.h.db)).equals(7)
 
     const rows = await f.h.db
       .selectFrom('system_settings')
       .select(['key', 'updated_by'])
       .where('key', 'in', [
+        'replay.pitchSec',
         'radar.pitchWindowSec',
         'radar.inPlayWindowSec',
         'scoreboard.overlayStartDate',
@@ -98,7 +104,7 @@ describe('node settings', function () {
         'highlights.mergeWithinSec'
       ])
       .execute()
-    expect(rows).has.length(11)
+    expect(rows).has.length(12)
     expect(new Set(rows.map(row => row.updated_by))).deep.equals(
       new Set([userIdOfGumbo(105)])
     )
@@ -128,6 +134,39 @@ describe('node settings', function () {
       pitchWindowSec: 3,
       inPlayWindowSec: 12
     })
+  })
+
+  it('reads the replay delay as 5 with no row or a bad one, keeps it for a body without it, and caches', async () => {
+    const now = Date.now()
+    expect(await replaySettings(f.h.db, now)).deep.equals({ pitchSec: 5 })
+    expect(await replayPitchSec(f.h.db)).equals(5)
+    await f.h.db
+      .insertInto('system_settings')
+      .values({ key: 'replay.pitchSec', value: JSON.stringify(2.5) })
+      .execute()
+    expect(await replaySettings(f.h.db, now + 31000)).deep.equals({
+      pitchSec: 5
+    })
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: JSON.stringify(9) })
+      .where('key', '=', 'replay.pitchSec')
+      .execute()
+    // Cached for 30 s, then read again.
+    expect((await replaySettings(f.h.db, now + 32000)).pitchSec).equals(5)
+    expect((await replaySettings(f.h.db, now + 62000)).pitchSec).equals(9)
+    // A body from an older screen, with no replay, keeps the stored delay.
+    const { replay: _replay, ...older } = changed
+    const set = await f.h.request('PUT', '/node/settings', older, 105)
+    expect(set.status).equals(200)
+    expect((await set.json()).replay).deep.equals({ pitchSec: 9 })
+    expect(await replayPitchSec(f.h.db)).equals(9)
+    const row = await f.h.db
+      .selectFrom('system_settings')
+      .select('value')
+      .where('key', '=', 'replay.pitchSec')
+      .executeTakeFirstOrThrow()
+    expect(row.value).equals(9)
   })
 
   it('falls back to the default for each value a row holds badly, and caches', async () => {

@@ -15,7 +15,6 @@ import type { UmpireScheduleRoute } from '../navigation/routes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameUmpires } from './GameUmpires'
 import { UmpireLeaderboardView } from './UmpireLeaderboardView'
-import { UmpireMask } from './UmpireMask'
 import {
   initialUmpireGame,
   optionalPositionHeader,
@@ -119,6 +118,12 @@ describe('scheduleUi.test.tsx', () => {
     expect(new URLSearchParams(query).get('timezone')).equals(
       Intl.DateTimeFormat().resolvedOptions().timeZone
     )
+    // The screen is titled Umpire.
+    const headings = [
+      ...document.querySelectorAll('[role="heading"], h1, h2')
+    ].map(node => node.textContent)
+    expect(headings).contains('Umpire')
+    expect(headings).not.contains('Umpire Schedule')
     const game = document.querySelector('[data-testid="umpire-game-game"]')!
     expect(game.lastElementChild?.textContent).equals('Conflict')
     expect(
@@ -692,18 +697,10 @@ describe('scheduleUi.test.tsx', () => {
       'Optional in some games'
     )
   })
-  it('places the mask before bell and account and opens on activation', async () => {
-    let opened = false
+  it('leaves the umpire mask out of the header: bell and account only', async () => {
     await mount(
       <AppHeader
         nav={<span>Tabs</span>}
-        umpire={
-          <UmpireMask
-            onPress={() => {
-              opened = true
-            }}
-          />
-        }
         notifications={{ pending: false, onPress: () => undefined }}
         account={{ name: 'Uma', onPress: () => undefined }}
       />
@@ -711,13 +708,10 @@ describe('scheduleUi.test.tsx', () => {
     const labels = [...document.querySelectorAll('[role="button"]')].map(n =>
       n.getAttribute('aria-label')
     )
-    expect(labels).deep.equals([
-      'Umpire schedule',
-      'Notifications',
-      'Account, Uma'
-    ])
-    await press('Umpire schedule')
-    expect(opened).equals(true)
+    expect(labels).deep.equals(['Notifications', 'Account, Uma'])
+    expect(document.querySelector('[aria-label="Umpire schedule"]')).equals(
+      null
+    )
   })
   it('renders occupied positions as person cards, groups types and omits empty slots', async () => {
     await mount(<GameUmpires umpires={null} />)

@@ -45,8 +45,10 @@ import {
 } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { UmpireMaskDrawing } from '../umpires/UmpireMaskDrawing'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
+import { recentGameIsCurrent } from './recentGameWindow'
 
 export interface HomeScreenProps {
   client: TeamStationClient
@@ -66,6 +68,13 @@ export interface HomeScreenProps {
   onOpenPlayer?: (userId: string, title: string) => void
   /** Home's lists loaded: the phone reads ahead what it needs offline. */
   onLoaded?: () => void
+  /** The clock the Recent game's three days are measured on. */
+  now?: () => number
+  /**
+   * Opens the umpire schedule. Given when the person umpires for a league,
+   * and Home then offers it as Help Umpire.
+   */
+  onOpenUmpireSchedule?: () => void
 }
 
 /**
@@ -80,7 +89,17 @@ export interface HomeScreenProps {
  */
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
-  const styles = getStyles(useTheme())
+  const now = props.now ?? Date.now
+  /** The newest played game, when it started less than three days ago. */
+  const inWindow = useCallback(
+    (game: SeasonGame | null | undefined): SeasonGame | undefined =>
+      game != null && recentGameIsCurrent(game.startAt, now())
+        ? game
+        : undefined,
+    [now]
+  )
+  const theme = useTheme()
+  const styles = getStyles(theme)
   // Offline, the phone has no stream to play: what was live is not offered.
   const offline = usePhoneOffline(client)
 
@@ -114,20 +133,20 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     try {
       const newest = await client.recentGame()
       if (current()) {
-        setRecent(newest ?? undefined)
+        setRecent(inWindow(newest))
         setRecentError(undefined)
       }
     } catch (caught) {
       if (current())
         setRecentError(caught instanceof Error ? caught.message : 'Cannot load')
     }
-  }, [client, beginRecent])
+  }, [client, beginRecent, inWindow])
   /** The recent game as the phone last stored it, until the read returns. */
   const paintRecent = useCallback(async (): Promise<void> => {
-    const current = beginRecent()
+    const latest = beginRecent()
     const stored = await client.cached(HOME_RECENT, asArray(asSeasonGame))
-    if (current() && stored != null) setRecent(stored[0])
-  }, [client, beginRecent])
+    if (latest() && stored != null) setRecent(inWindow(stored[0]))
+  }, [client, beginRecent, inWindow])
   // Each of Home's three loads waits for the home scope's acknowledgement,
   // and reads again when that scope moves past what it read.
   useForegroundRefresh(useScreenScope(refreshRecent, client, paintRecent))
@@ -601,6 +620,24 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 />
               )
             })}
+          </ListCard>
+        </View>
+      )}
+
+      {props.onOpenUmpireSchedule != null && (
+        <View style={styles.section}>
+          <SectionHeader title="Help Umpire" />
+          <ListCard>
+            <ListRow
+              title="Umpire Schedule"
+              leading={
+                <UmpireMaskDrawing
+                  size={theme.rem(1.6)}
+                  color={theme.primaryTextColor}
+                />
+              }
+              onPress={props.onOpenUmpireSchedule}
+            />
           </ListCard>
         </View>
       )}

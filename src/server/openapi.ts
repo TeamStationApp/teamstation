@@ -801,6 +801,22 @@ const nodeSettingsSchema = {
   additionalProperties: false,
   required: ['scoreboard', 'highlights'],
   properties: {
+    replay: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        "The 3D replay's pace. A save from an older client omits it and keeps the stored pace; a read always has it.",
+      required: ['pitchSec'],
+      properties: {
+        pitchSec: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 600,
+          default: 5,
+          description: 'How long a replay holds each pitch, in seconds'
+        }
+      }
+    },
     radar: {
       type: 'object',
       additionalProperties: false,
@@ -1487,6 +1503,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'boolean',
               description:
                 'Whether Tess, the assistant, is available on this server'
+            },
+            replayPitchSec: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 600,
+              description:
+                'How long a replay holds each pitch, in seconds: the node setting, 5 unless a node administrator set another'
             }
           }
         },

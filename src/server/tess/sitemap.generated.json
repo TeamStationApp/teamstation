@@ -442,10 +442,6 @@
         "JPEG, PNG or WebP, up to 10 MB.",
         "Save photo",
         "Cancel",
-        "Previous",
-        "Next",
-        "Both the first and last day are included.",
-        "Use this range",
         "Location not set",
         "Add a city",
         "Umpire Management",
@@ -567,6 +563,8 @@
         "Four-angle portrait",
         "Radar matching",
         "Match recorded speeds to the scorekeeper’s pitch entry.",
+        "Replay",
+        "How long the 3D replay holds each pitch before the next.",
         "Highlights",
         "Where each highlight starts in the video, in seconds.",
         "Rewind length",
@@ -820,6 +818,29 @@
         }
       ],
       "settings": []
+    },
+    {
+      "name": "seasonTimeFrame",
+      "path": "/groups/season/:id/settings/time-frame",
+      "title": "Season time frame",
+      "tabs": [],
+      "settings": [
+        "Set date range",
+        "Winter",
+        "Spring",
+        "Summer",
+        "Fall",
+        "Custom",
+        "Editing this reference time frame does not move scheduled games.",
+        "Save",
+        "Year",
+        "Done",
+        "Previous",
+        "Next",
+        "Both the first and last day are included.",
+        "Use this range",
+        "Cancel"
+      ]
     },
     {
       "name": "signIn",

@@ -11,6 +11,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   Text,
   useWindowDimensions,
   View
@@ -59,9 +60,9 @@ import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
 import { CachingClient } from '../sync/cachingClient'
 import {
-  OFFLINE_BANNER,
   SERVER_COPY_PENDING,
   useHeldGameControl,
+  useOutboxSummary,
   usePhoneOffline
 } from '../sync/useOffline'
 import { useTheme } from '../theme/ThemeContext'
@@ -159,7 +160,14 @@ import {
   type ScoringSource
 } from './scoringSource'
 import {
+  type SaveStatus,
+  scoringStatusLine,
+  useReconnectSaving
+} from './scoringStatusLine'
+import {
+  SCORING_OFFLINE_BAND,
   SCORING_STATUS_MAX_WIDTH,
+  scoringOfflineFrame,
   scoringStatusFrame
 } from './scoringStatusPlacement'
 import {
@@ -758,12 +766,6 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     </>
   )
 }
-interface SaveStatus {
-  pending: number
-  offline: boolean
-  readOnly: boolean
-  problem: string | null
-}
 function statusOf(game: GameSession): SaveStatus {
   return {
     pending: game.pending,
@@ -795,15 +797,6 @@ export function sameStatus(a: SaveStatus, b: SaveStatus): boolean {
     a.readOnly === b.readOnly &&
     a.problem === b.problem
   )
-}
-/** What the save is doing, in a line, or nothing when everything is saved. */
-export function saveStatusText(status: SaveStatus): string | null {
-  if (status.readOnly) return null
-  if (status.pending > 0 && status.offline)
-    return `Offline — ${status.pending} ${status.pending === 1 ? 'play' : 'plays'} waiting`
-  if (status.problem != null) return `Not saved: ${status.problem}`
-  if (status.pending > 0) return 'Saving…'
-  return null
 }
 /** A number for each Undo entry, the same for as long as the entry lasts. */
 const entryIds = new WeakMap<HistoryEntry, number>()
@@ -956,8 +949,28 @@ function ScoringPanel(props: {
   const phoneOffline = usePhoneOffline(props.client)
   const heldGame = useHeldGameControl(props.client, props.gameId)
   const held = heldGame?.text
-  const statusLine =
-    held ?? saveStatusText(status) ?? (phoneOffline ? OFFLINE_BANNER : null)
+  // This game's own writes still on the phone: another game's, held or not,
+  // keep nothing busy here.
+  const queued =
+    useOutboxSummary(props.client)?.chains[`game:${props.gameId}`] ?? 0
+  const reconnecting = useReconnectSaving(
+    phoneOffline || status.offline,
+    status.pending > 0 || queued > 0
+  )
+  const shownStatus = scoringStatusLine({
+    held,
+    status,
+    phoneOffline,
+    reconnecting
+  })
+  const statusLine = shownStatus?.text ?? null
+  // A phone makes room for the offline line across the top; the web's line
+  // already sits above the board (`scoringOfflineFrame`).
+  const topBand =
+    shownStatus?.place === 'top' && Platform.OS !== 'web'
+      ? SCORING_OFFLINE_BAND
+      : 0
+  const atTop = shownStatus?.place === 'top'
   const statusPill = (
     <View
       style={{
@@ -972,6 +985,9 @@ function ScoringPanel(props: {
         accessibilityRole="text"
         accessibilityLabel="Save status"
         testID={held == null ? 'scoringSaveStatus' : 'heldGameMessage'}
+        // At the top it is one line in its band, smaller rather than taller.
+        numberOfLines={atTop ? 1 : undefined}
+        adjustsFontSizeToFit={topBand > 0}
         style={{
           color: theme.primaryTextColor,
           fontFamily: theme.regularTextFont,
@@ -2429,6 +2445,7 @@ function ScoringPanel(props: {
   return (
     <BaseballScreen
       suspended={!props.active}
+      topBand={topBand}
       setupToast={
         setupInstruction === 'Insufficient batting lineup.'
           ? {
@@ -3153,8 +3170,6 @@ function ScoringPanel(props: {
           {sheet === 'settings' && (
             <ScoringSettings
               userId={props.userId}
-              health={props.persistent ? health : noDictation}
-              onDictationModelChange={setDictationModel}
               onSoundChange={setSound}
               onAnimationsChange={enabled => {
                 dispatch({ type: 'PRESENTATION', enabled })
@@ -3329,13 +3344,26 @@ function ScoringPanel(props: {
           )}
         </ScoringSheet>
       )}
+      {topBand > 0 && (
+        // The band's fill is dark: the status bar's text goes light over it.
+        <StatusBar barStyle="light-content" />
+      )}
       {statusLine != null && (
-        // On the phone above the bottom deck, clear of the scoreboard and ☰:
-        // the offline line stays up for as long as the phone is offline. A
-        // held game's line is a button: what to do about it.
+        // Offline, across the very top in a band the field starts under.
+        // Anything else on the phone above the bottom deck, clear of the
+        // scoreboard and ☰. A held game's line is a button: what to do
+        // about it.
         <View
           pointerEvents={heldGame == null ? 'none' : 'box-none'}
-          style={scoringStatusFrame(Platform.OS !== 'web', insets)}
+          style={
+            atTop
+              ? scoringOfflineFrame(
+                  Platform.OS !== 'web',
+                  insets,
+                  theme.scoringSurface.background
+                )
+              : scoringStatusFrame(Platform.OS !== 'web', insets)
+          }
         >
           {heldGame == null ? (
             statusPill

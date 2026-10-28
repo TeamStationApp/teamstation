@@ -1584,11 +1584,20 @@ export const asHealth = asObject({
    * Whether Tess, the assistant, is available. Absent from an older server,
    * which has no Tess: only `true` shows her.
    */
-  tess: asOptional(asBoolean)
+  tess: asOptional(asBoolean),
+  /**
+   * How long a replay holds each pitch, in seconds. Absent from an older
+   * server, which plays at the default five.
+   */
+  replayPitchSec: asOptional(asNumber, 5)
 })
-export type Health = Omit<ReturnType<typeof asHealth>, 'narration' | 'tess'> & {
+export type Health = Omit<
+  ReturnType<typeof asHealth>,
+  'narration' | 'tess' | 'replayPitchSec'
+> & {
   narration?: boolean
   tess?: boolean
+  replayPitchSec?: number
 }
 
 /** A string of at most `max` characters. */

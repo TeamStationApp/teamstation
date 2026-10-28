@@ -6,6 +6,7 @@ import { BOARD_INSET } from '../scoreboardOverlay/layouts'
 import {
   LINE_BOX_HEIGHT,
   LINE_BOX_WIDTH,
+  lineBoxHeight,
   lineColumns
 } from '../scoreboardOverlay/lineScoreLayout'
 import {
@@ -14,6 +15,7 @@ import {
 } from '../scoreboardOverlay/overlayLayout'
 import { type Rect, tileRects } from './layout'
 import {
+  COMPACT_LINE_SCALE,
   GAP,
   playerLayout,
   type PlayerLayoutInput,
@@ -27,9 +29,17 @@ const SETTINGS = {
   portraitHeight: defaultScoreboardSettings.portraitHeight
 }
 const BOARD = { width: 607, height: 247 }
-/** The innings a box drawn at `rect` shows, `current` the latest. */
+/**
+ * The innings a box drawn at `rect` shows, `current` the latest: as
+ * `LineScoreBox` draws it, every inning its width holds when it is shorter
+ * than six innings' shape.
+ */
 const shownOf = (rect: Rect, current: number): number[] =>
-  lineColumns(rect.w / (rect.h / LINE_BOX_HEIGHT), current)
+  lineColumns(
+    rect.w / (rect.h / LINE_BOX_HEIGHT),
+    current,
+    rect.h < lineBoxHeight(rect.w) - 0.5 ? Infinity : undefined
+  )
 const near = (actual: number, expected: number, why?: string): void => {
   expect(actual, why).closeTo(expected, 1e-6)
 }
@@ -79,12 +89,21 @@ describe('the player’s layout (U6)', function () {
         near(board.w, 402 - 2 * BOARD_INSET)
         const scale = board.w / BOARD.width
         near(box.y, 59 + FULL_BOARD_HEIGHT * scale + GAP)
-        // As wide as the board, and as tall as six innings make it there.
+        // As wide as the board, and as tall as six innings make it there:
+        // three quarters of that with one or two angles, which shows more.
         near(box.w, board.w)
-        near(box.h, (board.w * LINE_BOX_HEIGHT) / LINE_BOX_WIDTH)
-        expect(shownOf(box, 12), 'six innings, the latest').deep.equals([
-          7, 8, 9, 10, 11, 12
-        ])
+        const full = (board.w * LINE_BOX_HEIGHT) / LINE_BOX_WIDTH
+        if (count < 3) {
+          near(box.h, full * COMPACT_LINE_SCALE)
+          const shown = shownOf(box, 12)
+          expect(shown.length, 'more than six innings').greaterThan(6)
+          expect(shown.at(-1)).equals(12)
+        } else {
+          near(box.h, full)
+          expect(shownOf(box, 12), 'six innings, the latest').deep.equals([
+            7, 8, 9, 10, 11, 12
+          ])
+        }
         near(placed.tiles[0].y, box.y + box.h + GAP)
         placed.tiles.forEach((tile, index) => {
           // Full width with one or two; three, with the box above them, are
@@ -179,8 +198,16 @@ describe('the player’s layout (U6)', function () {
       near(board.y + FULL_BOARD_HEIGHT * scale, left.y - BOARD_INSET)
       near(box.y + box.h, left.y - BOARD_INSET)
       // Six innings' shape, the left half wide or the band tall.
-      near(box.h, (box.w * LINE_BOX_HEIGHT) / LINE_BOX_WIDTH)
-      expect(shownOf(box, 9)).deep.equals([4, 5, 6, 7, 8, 9])
+      near(
+        box.h,
+        ((box.w * LINE_BOX_HEIGHT) / LINE_BOX_WIDTH) * COMPACT_LINE_SCALE
+      )
+      expect(shownOf(box, 9).length).greaterThan(6)
+      expect(shownOf(box, 9).at(-1)).equals(9)
+      // Drawn at six innings' height, the same width shows six.
+      expect(
+        lineColumns(box.w / (lineBoxHeight(box.w) / LINE_BOX_HEIGHT), 9)
+      ).deep.equals([4, 5, 6, 7, 8, 9])
       expect(box.y).at.least(0)
       for (const tile of placed.tiles) {
         expect(intersects(tile, board)).equals(false)

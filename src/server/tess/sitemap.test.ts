@@ -71,6 +71,24 @@ describe('Tess sitemap', function () {
     )
   })
 
+  it('lists a season’s date-range screen as a settings page, with its seasons', function () {
+    const page = sitemap.routes.find(route => route.name === 'seasonTimeFrame')
+    expect(page?.path).equals('/groups/season/:id/settings/time-frame')
+    expect(page?.settings).to.include.members([
+      'Set date range',
+      'Winter',
+      'Spring',
+      'Summer',
+      'Fall',
+      'Custom',
+      'Save'
+    ])
+    // Its picker left season settings with it.
+    expect(
+      sitemap.routes.find(route => route.name === 'groupSettings')?.settings
+    ).not.include('Use this range')
+  })
+
   it('has one route for every member of Route', function () {
     // Every member has a case in routePath's exhaustive switch.
     const writer = source(ROUTES_FILE).split('export function routePath')[1]

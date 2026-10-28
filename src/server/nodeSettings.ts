@@ -6,11 +6,15 @@ import {
   asHoldSeconds,
   asPlacement,
   asRadarSettings,
+  asReplaySettings,
   type BoardPlacement,
   defaultRadarSettings,
+  defaultReplaySettings,
   defaultScoreboardSettings,
   type NodeSettings,
+  type NodeSettingsUpdate,
   type RadarSettings,
+  type ReplaySettings,
   type ScoreboardOverlay,
   type ScoreboardSettings,
   utcStartOf
@@ -31,9 +35,55 @@ const CACHE_MS = 30000
 
 let cache: { at: number; value: ScoreboardSettings } | undefined
 
-/** Forgets the cached scoreboard settings. Called after a write. */
+let replayCache: { at: number; value: ReplaySettings } | undefined
+
+/** Forgets the cached scoreboard and replay settings. Called after a write. */
 export function forgetScoreboardSettings(): void {
   cache = undefined
+  replayCache = undefined
+}
+
+/**
+ * The replay's settings, falling back to the default for a missing or
+ * malformed row, cached for 30 s as the scoreboard's are. Anyone may read
+ * them: a replay's pace is no secret.
+ */
+export async function replaySettings(
+  db: Kysely<Database>,
+  now: number = Date.now(),
+  /** Read the rows even when the cache is current, and cache what they say. */
+  fresh = false
+): Promise<ReplaySettings> {
+  if (!fresh && replayCache != null && now - replayCache.at < CACHE_MS)
+    return replayCache.value
+  const row = await db
+    .selectFrom('system_settings')
+    .select('value')
+    .where('key', '=', 'replay.pitchSec')
+    .executeTakeFirst()
+  let pitchSec = defaultReplaySettings.pitchSec
+  if (row != null)
+    try {
+      pitchSec = asReplaySettings({ pitchSec: row.value }).pitchSec
+    } catch {
+      /* Keep the default for a malformed stored setting. */
+    }
+  const value = { pitchSec }
+  replayCache = { at: now, value }
+  return value
+}
+
+/**
+ * The replay's pitch delay in seconds, for `GET /health`: no actor needed.
+ * A read that fails answers the default and says nothing, so health still
+ * answers what it would have.
+ */
+export async function replayPitchSec(db: Kysely<Database>): Promise<number> {
+  try {
+    return (await replaySettings(db)).pitchSec
+  } catch {
+    return defaultReplaySettings.pitchSec
+  }
 }
 
 /**
@@ -101,23 +151,30 @@ export async function nodeSettings(
     // Past this worker's cache: another may have taken the last save.
     scoreboard: await scoreboardSettings(db, Date.now(), true),
     radar: await radarSettings(db),
-    highlights: await highlightSettings(db, true)
+    highlights: await highlightSettings(db, true),
+    replay: await replaySettings(db, Date.now(), true)
   }
 }
 
-/** A node administrator sets every node setting at once. */
+/**
+ * A node administrator sets every node setting at once; a save without
+ * `replay` leaves the stored pitch delay as it is.
+ */
 export async function setNodeSettings(
   db: Kysely<Database>,
   actor: Actor,
-  settings: NodeSettings
+  settings: NodeSettingsUpdate
 ): Promise<void> {
   const admin = await requireNodeAdmin(
     db,
     actor,
     'Only a node administrator can change the node settings'
   )
-  const { scoreboard, highlights, radar } = settings
+  const { scoreboard, highlights, radar, replay } = settings
   const rows: Array<[string, unknown]> = [
+    ...(replay == null
+      ? []
+      : [['replay.pitchSec', replay.pitchSec] as [string, unknown]]),
     ['radar.pitchWindowSec', radar.pitchWindowSec],
     ['radar.inPlayWindowSec', radar.inPlayWindowSec],
     ['scoreboard.overlayStartDate', scoreboard.overlayStartDate],

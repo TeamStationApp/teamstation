@@ -90,6 +90,18 @@ function bandOf(natural: Size): number {
 }
 
 /**
+ * How tall a box score is drawn with one or two angles, against the height
+ * six innings make at its width: shorter, so its own units are wider and
+ * more innings fit before a team name is cut off.
+ */
+export const COMPACT_LINE_SCALE = 0.75
+
+/** A box score's height at width `w` for a layout of `count` angles. */
+function boxHeightFor(count: number, w: number): number {
+  return lineBoxHeight(w) * (count <= 2 ? COMPACT_LINE_SCALE : 1)
+}
+
+/**
  * Where everything in the full-screen player goes: the angles, the game's
  * board and its box score, by how many angles there are and which way up
  * the screen is. One answer for the browser's grid and the phone's.
@@ -110,7 +122,8 @@ function bandOf(natural: Size): number {
  *   setting.
  *
  * The box score is shaped for six innings (`LINE_BOX_WIDTH`), as tall as
- * that makes it at the width it is given. With no board it takes the board's
+ * that makes it at the width it is given; with one or two angles it is drawn
+ * at `COMPACT_LINE_SCALE` of that height. With no board it takes the board's
  * place; with neither, the angles
  * start at the top of the safe area. Every board and box is kept inside the
  * safe area (`keptClear`).
@@ -153,19 +166,25 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       // and pitcher rows come and go.
       below = safe.y + bandOf(board) * scale
       if (line && count <= 3) {
-        // As wide as the board, and as tall as six innings make it there.
+        // As wide as the board, and as tall as six innings make it there
+        // (three quarters of that for one or two angles).
         const w = board.width * scale
         boxRect = clear({
           x: boardRect!.x,
           y: below + GAP,
           w,
-          h: lineBoxHeight(w)
+          h: boxHeightFor(count, w)
         })
         below = boxRect!.y + boxRect!.h
       }
     } else if (line && count <= 3) {
       const w = screen.width - 2 * BOARD_INSET
-      boxRect = clear({ x: BOARD_INSET, y: safe.y, w, h: lineBoxHeight(w) })
+      boxRect = clear({
+        x: BOARD_INSET,
+        y: safe.y,
+        w,
+        h: boxHeightFor(count, w)
+      })
       below = boxRect!.y + boxRect!.h
     }
     const top = boardRect != null || boxRect != null ? below + GAP : safe.y
@@ -253,7 +272,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       // The left half, as tall as six innings make it there, unless the band
       // is shorter: then that tall, and as wide as that makes it.
       const boxWidth = Math.max(0, Math.min(leftRoom, lineBoxWidth(room)))
-      const boxHeight = lineBoxHeight(boxWidth)
+      const boxHeight = boxHeightFor(count, boxWidth)
       return {
         tiles,
         board: clear({
@@ -285,7 +304,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
         0,
         Math.min(lineBoxWidth(room), leftRoom + rightRoom + 2 * GAP)
       )
-      const h = lineBoxHeight(w)
+      const h = boxHeightFor(count, w)
       return {
         tiles,
         board: null,

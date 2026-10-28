@@ -60,6 +60,17 @@ export interface NodeSettings {
   scoreboard: ScoreboardSettings
   highlights: HighlightTimings
   radar: RadarSettings
+  replay: ReplaySettings
+}
+
+/** The 3D replay's pacing. */
+export interface ReplaySettings {
+  /** How long a replay holds each pitch on the card, in seconds. */
+  pitchSec: number
+}
+
+export const defaultReplaySettings: ReplaySettings = {
+  pitchSec: 5
 }
 
 export interface RadarSettings {
@@ -91,7 +102,8 @@ export const defaultHighlightTimings: HighlightTimings = {
 export const defaultNodeSettings: NodeSettings = {
   scoreboard: defaultScoreboardSettings,
   highlights: defaultHighlightTimings,
-  radar: defaultRadarSettings
+  radar: defaultRadarSettings,
+  replay: defaultReplaySettings
 }
 
 /** The longest any of the second-valued settings may be. */
@@ -123,11 +135,26 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
  * messages name the field, for the screen to show beside it.
  */
 export function asNodeSettings(raw: unknown): NodeSettings {
+  const { replay, ...rest } = asNodeSettingsUpdate(raw)
+  return { ...rest, replay: replay ?? defaultReplaySettings }
+}
+
+/**
+ * A save from the node administration screen. An app from before the replay
+ * section sends no `replay`, and its save keeps the stored pitch delay.
+ */
+export type NodeSettingsUpdate = Omit<NodeSettings, 'replay'> & {
+  replay?: ReplaySettings
+}
+
+/** A save, checked as `asNodeSettings` checks a document, `replay` optional. */
+export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
   const value = record(raw, 'the settings')
   const scoreboard = record(value.scoreboard, 'scoreboard')
   const highlights = record(value.highlights, 'highlights')
   return {
     radar: asRadarSettings(value.radar ?? defaultRadarSettings),
+    ...(value.replay == null ? {} : { replay: asReplaySettings(value.replay) }),
     scoreboard: {
       overlayStartDate: asDate(
         scoreboard.overlayStartDate,
@@ -157,6 +184,22 @@ export function asNodeSettings(raw: unknown): NodeSettings {
       )
     }
   }
+}
+
+/** The replay's settings: a pitch delay in whole seconds, 1 to 600. */
+export function asReplaySettings(raw: unknown): ReplaySettings {
+  const value = record(raw, 'replay')
+  const pitchSec = value.pitchSec
+  if (
+    typeof pitchSec !== 'number' ||
+    !Number.isInteger(pitchSec) ||
+    pitchSec < 1 ||
+    pitchSec > MAX_SETTING_SEC
+  )
+    throw new TypeError(
+      `replay.pitchSec must be a whole number of seconds from 1 to ${MAX_SETTING_SEC}`
+    )
+  return { pitchSec }
 }
 
 export function asRadarSettings(raw: unknown): RadarSettings {

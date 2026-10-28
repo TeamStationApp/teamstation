@@ -123,6 +123,7 @@ describe('NodeSettingsCard', function () {
     // Stored off the wheels' stops, as the server allows.
     server.store({
       radar: defaultNodeSettings.radar,
+      replay: { pitchSec: 7 },
       scoreboard: {
         ...defaultNodeSettings.scoreboard,
         single: { x: 0.005, y: 0.005, height: 0.15 }
@@ -146,6 +147,8 @@ describe('NodeSettingsCard', function () {
     expect(shown('Four-angle portrait: height')).equals('15%')
     expect(text()).not.contains('Four-angle portrait: top')
     expect(shown('Pitch speed display')).equals('5')
+    expect(text().toLowerCase()).contains('replay')
+    expect(shown('Replay pitch delay')).equals('7')
     expect(shown("Scorekeeper's tap lag")).equals('8 s')
     expect(shown('Rewind length: default')).equals('30 s')
     expect(shown('Rewind length: strikeout')).equals('10 s')
@@ -171,6 +174,7 @@ describe('NodeSettingsCard', function () {
     await pick('Four-angle landscape: height', 'Height 25%')
     await pick('Four-angle portrait: height', 'Height 20%')
     await pick('Pitch speed display', 'Pitch speed display (seconds) 9')
+    await pick('Replay pitch delay', 'Pitch delay (seconds) 7')
     await pick("Scorekeeper's tap lag", "Scorekeeper's tap lag 0 s")
     await pick('Rewind length: default', 'Default 45 s')
     await pick('Rewind length: walk', 'Walk 6 s')
@@ -186,6 +190,7 @@ describe('NodeSettingsCard', function () {
       portraitHeight: 0.2,
       speedHoldSec: 9
     })
+    expect(saved.replay).deep.equals({ pitchSec: 7 })
     expect(saved.highlights).deep.equals({
       lagSec: 0,
       leadSec: 45,
@@ -195,6 +200,21 @@ describe('NodeSettingsCard', function () {
       mergeWithinSec: 7
     })
     expect(text()).contains('Saved.')
+  })
+
+  it('offers a pitch delay of 1 through 20 seconds, and keeps a stored one past it at its last stop', async function () {
+    const server = fake()
+    server.store({ ...defaultNodeSettings, replay: { pitchSec: 45 } })
+    await render(server.client)
+    expect(shown('Replay pitch delay')).equals('20')
+    await press('Replay pitch delay: 20')
+    const rows = [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+      .map(node => node.getAttribute('aria-label') ?? '')
+      .filter(label => label.startsWith('Pitch delay (seconds) '))
+    expect(rows[0]).equals('Pitch delay (seconds) 1')
+    expect(rows.at(-1)).equals('Pitch delay (seconds) 20')
+    expect(rows).length(20)
+    await press('Cancel')
   })
 
   it('keeps the value it had when a wheel is cancelled', async function () {
@@ -258,8 +278,10 @@ describe('NodeSettingsCard', function () {
     const server = fake()
     await render(server.client)
     await pick('Single camera: height', 'Height 40%')
+    await pick('Replay pitch delay', 'Pitch delay (seconds) 12')
     await press('Reset to defaults')
     expect(shown('Single camera: height')).equals('15%')
+    expect(shown('Replay pitch delay')).equals('5')
     await press('Save')
     // The defaults sit on the wheels' stops, so they are put back exactly.
     expect(shownSettings(defaultNodeSettings)).deep.equals(defaultNodeSettings)

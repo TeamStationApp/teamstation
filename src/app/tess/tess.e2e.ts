@@ -39,7 +39,7 @@ interface Rect {
   height: number
 }
 
-const HEADER_BUTTONS = ['Umpire schedule', 'Tess', 'Notifications']
+const HEADER_BUTTONS = ['Tess', 'Notifications']
 
 /** One second of a 440 Hz tone, 16 kHz mono, as a base64 WAV. */
 function toneWav(seconds = 1.2): string {
@@ -214,14 +214,11 @@ async function main(): Promise<void> {
     await identity(t, 101)
     await open('/')
     await waitFor(page, '[role="button"][aria-label="Notifications"]')
-    await waitFor(page, '[role="button"][aria-label="Umpire schedule"]')
     if (!before) await waitFor(page, tessButton)
     // Health is asked once a session is known; give the header that long.
     await pause(1500)
     expect(await headerButtons(page)).deep.equals(
-      before
-        ? ['Umpire schedule', 'Notifications']
-        : ['Umpire schedule', 'Tess', 'Notifications']
+      before ? ['Notifications'] : ['Tess', 'Notifications']
     )
     await shot(`header-wide-${suffix}.png`)
     await identity(t, 102)

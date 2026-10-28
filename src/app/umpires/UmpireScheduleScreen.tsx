@@ -125,7 +125,7 @@ export function UmpireScheduleScreen({
 }): React.ReactElement {
   const s = useUmpireStyles()
   const theme = useTheme()
-  const handoff = useTitleHandoff('Umpire Schedule')
+  const handoff = useTitleHandoff('Umpire')
   const { error, busy, run, live } = useUmpireWork(route.id)
   const [schedule, setSchedule] = useState<UmpireSchedule>()
   const [board, setBoard] = useState<UmpireLeaderboard>()
@@ -372,7 +372,7 @@ export function UmpireScheduleScreen({
       hero={
         <View style={s.page}>
           <Animated.View ref={handoff.ref}>
-            <UmpireHeading>Umpire Schedule</UmpireHeading>
+            <UmpireHeading>Umpire</UmpireHeading>
           </Animated.View>
           {leagues.length > 1 && (
             <ScrollView

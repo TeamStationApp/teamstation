@@ -127,9 +127,10 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       const labels = [...host.querySelectorAll('[aria-label]')].map(n =>
         n.getAttribute('aria-label')
       )
-      const mask = labels.indexOf('Umpire schedule')
-      expect(mask).greaterThan(-1)
-      expect(mask).lessThan(labels.indexOf('Notifications'))
+      // No mask in the header: Home offers the schedule as Help Umpire.
+      expect(labels.indexOf('Umpire schedule')).equals(-1)
+      expect(labels.indexOf('Umpire Schedule')).greaterThan(-1)
+      expect(host.textContent).match(/help umpire/i)
       expect(labels.indexOf('Notifications')).lessThan(
         labels.indexOf('Account, Demo Fan')
       )
@@ -151,7 +152,9 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       })
       await settle()
     }
-    await press('Umpire schedule')
+    await press('Umpire Schedule')
+    expect(window.location.pathname).equals('/umpires/demo')
+    expect(host.textContent).contains('Umpire')
     await press('Leaderboard')
     expect(window.location.search).contains('leaderboard')
     for (const label of [
@@ -229,6 +232,8 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       await new Promise<void>(resolve => setTimeout(resolve, 100))
     })
     expect(host.querySelector('[aria-label="Umpire schedule"]')).equals(null)
+    expect(host.querySelector('[aria-label="Umpire Schedule"]')).equals(null)
+    expect(host.textContent).not.match(/help umpire/i)
     await act(async () => {
       root.render(<NativeMask size={24} color="#123456" />)
     })

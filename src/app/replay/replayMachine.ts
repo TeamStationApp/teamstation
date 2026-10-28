@@ -27,7 +27,8 @@ import type { ScoringEvent, ScoringState } from '../scoring/scoringTypes'
 
 /** Each step's slot, from its start to the next step's. */
 export const SLOT_MS: Record<ReplayStepKind, number> = {
-  pitch: 4500,
+  /** The default pitch delay; a node may set another (`pitchSlotMs`). */
+  pitch: 5000,
   inPlay: 5000,
   other: 2000
 }
@@ -110,6 +111,11 @@ export interface ReplayState {
   rewinds: number
   /** Where the last rewind went, written on the card until `endsAt`. */
   notice: { id: number; text: string; endsAt: number } | null
+  /**
+   * How long a pitch holds the card at replay pace: the node's pitch delay. A
+   * view following the scorer live keeps its own shorter slot.
+   */
+  pitchSlotMs: number
 }
 
 export type ReplayEvent =
@@ -160,7 +166,8 @@ function liveAt(
   timeline: ReplayTimeline,
   changed: boolean,
   /** Stand at the end even before an unplaced ball: the game took no more. */
-  atEnd = false
+  atEnd = false,
+  pitchSlotMs: number = SLOT_MS.pitch
 ): ReplayState {
   const last = timeline.steps.at(-1)
   const waiting = !atEnd && last != null && !isDetermined(last, timeline)
@@ -202,7 +209,8 @@ function liveAt(
     hurrying: false,
     follows: true,
     rewinds: 0,
-    notice: null
+    notice: null,
+    pitchSlotMs
   }
 }
 
@@ -217,7 +225,7 @@ function snapped(
   /** The game refused a step: stand at its end, nothing queued again. */
   atEnd = false
 ): ReplayState {
-  const next = liveAt(timeline, true, atEnd)
+  const next = liveAt(timeline, true, atEnd, state.pitchSlotMs)
   return {
     ...next,
     paused: state.paused,
@@ -234,9 +242,11 @@ function snapped(
 export function startReplay(
   mode: ReplayMode,
   timeline: ReplayTimeline,
-  over = false
+  over = false,
+  /** The node's pitch delay, for whatever this view plays at replay pace. */
+  pitchSlotMs: number = SLOT_MS.pitch
 ): ReplayState {
-  if (mode === 'live') return liveAt(timeline, false)
+  if (mode === 'live') return liveAt(timeline, false, false, pitchSlotMs)
   return {
     mode,
     scoring: trimmed(
@@ -261,11 +271,13 @@ export function startReplay(
     hurrying: false,
     follows: false,
     rewinds: 0,
-    notice: null
+    notice: null,
+    pitchSlotMs
   }
 }
 
-function halfOf(state: ScoringState): string {
+/** The inning and its half a scoring state stands in: `5t`, `5b`. */
+export function halfOf(state: ScoringState): string {
   const line = state.session.liveData.linescore
   return `${line.currentInning}${line.isTopInning ? 't' : 'b'}`
 }
@@ -290,7 +302,7 @@ function playNext(state: ReplayState, now: number): ReplayState {
     return live || state.follows
       ? snapped(state, state.timeline, true)
       : {
-          ...liveAt(state.timeline, false, true),
+          ...liveAt(state.timeline, false, true, state.pitchSlotMs),
           mode: 'replay',
           paused: state.paused,
           gameOver: state.gameOver,
@@ -299,7 +311,11 @@ function playNext(state: ReplayState, now: number): ReplayState {
         }
   const slot = catchUp
     ? CATCH_UP_MS
-    : (live ? LIVE_SLOT_MS : SLOT_MS)[next.step.kind]
+    : live
+      ? LIVE_SLOT_MS[next.step.kind]
+      : next.step.kind === 'pitch'
+        ? state.pitchSlotMs
+        : SLOT_MS[next.step.kind]
   const endedHalf = halfOf(state.scoring) !== halfOf(after)
   const half = endedHalf && !catchUp ? (live ? LIVE_HALF_MS : HALF_MS) : 0
   const applied = {

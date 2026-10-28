@@ -11,7 +11,7 @@ import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 import NodeSocket from 'ws'
 
-import { DICTATION_MODEL_NAMES, DICTATION_MODELS } from '../../common/api'
+import { dictationModelOf } from '../../common/api'
 import { idOfTag } from '../../common/scoring/playerTags'
 import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
 import { signInTestAccount } from '../../test/passwordFixtures'
@@ -971,71 +971,64 @@ describe('dictation, end to end', function () {
       }
     })
 
-    it('E17: each model picked in settings scores the same sentence', async function () {
-      this.timeout(900000)
+    it('E17: settings offers no model, and dictation sends the default', async function () {
+      this.timeout(300000)
       const offered = (
         (await (await fetch(`${API}/health`)).json()) as {
           dictationModels: string[]
         }
       ).dictationModels
-      expect(offered).deep.equals([...DICTATION_MODELS])
-      for (const [index, model] of DICTATION_MODELS.entries()) {
-        const name = DICTATION_MODEL_NAMES[model]
-        const gameId = scoringGame().games[0]
-        const browser = await launch()
-        try {
-          const page = await open(
-            browser,
-            scorer,
-            gameId,
-            clipFile('ballStrike').path
-          )
-          await page.locator('[aria-label="Open scoring menu"]').click()
-          await page.locator('[aria-label="Settings"]').click()
-          const row = `[role="radio"][aria-label="${name}"]`
-          await page.waitForSelector(`${row}:not([aria-disabled="true"])`)
-          await page.locator(row).click()
-          await page.waitForSelector(`${row}[aria-checked="true"]`)
-          if (index === 0) {
-            // The sheet is the screen's height, and a pull on its handle
-            // closes it.
-            const handle = (await (await page.$(
-              '[aria-label="Pull down to close"]'
-            ))!.boundingBox())!
-            const done = (await (await page.$(
-              '[aria-label="Done"]'
-            ))!.boundingBox())!
-            const height = await page.evaluate(() => window.innerHeight)
-            expect(handle.y).lessThan(40)
-            expect(done.y + done.height).greaterThan(height - 60)
-            const x = handle.x + handle.width / 2
-            const y = handle.y + handle.height / 2
-            await page.mouse.move(x, y)
-            await page.mouse.down()
-            for (let step = 1; step <= 10; step++)
-              await page.mouse.move(x, y + step * 30)
-            await page.mouse.up()
-          } else await page.locator('[aria-label="Done"]').click()
-          await page.waitForSelector('[aria-label="Done"]', { hidden: true })
-          await switchOn(page)
-          await hold(page)
-          const reply = await answered(page)
-          const start = (await heard(page)).sent.find(f => f.kind === 'start')
-          expect(start?.model, name).equals(model)
-          // The two pitches, whichever order the model reported them in:
-          // this scenario proves the pick reaches its provider, and GPT-6
-          // Luna sometimes reports the called strike first.
-          expect(
-            (reply.actions as Array<{ call?: string }>)
-              .map(action => String(action.call))
-              .sort((a, b) => a.localeCompare(b)),
-            `${name}: ${JSON.stringify(reply)}`
-          ).deep.equals(['B', 'C'])
-          await waitSaved(page)
-          expect(await summary(page)).includes('1 balls 1 strikes')
-        } finally {
-          await browser.close()
-        }
+      const model = dictationModelOf(undefined, offered)
+      const gameId = scoringGame().games[0]
+      const browser = await launch()
+      try {
+        const page = await open(
+          browser,
+          scorer,
+          gameId,
+          clipFile('ballStrike').path
+        )
+        await page.locator('[aria-label="Open scoring menu"]').click()
+        await page.locator('[aria-label="Settings"]').click()
+        await page.waitForSelector('[aria-label="Toggle scoring sound"]')
+        expect(
+          await page.$('[role="radiogroup"][aria-label="Dictation Model"]')
+        ).equals(null)
+        expect(await page.$$('[role="radio"]')).length(0)
+        // The sheet is the screen's height, and a pull on its handle closes
+        // it.
+        const handle = (await (await page.$(
+          '[aria-label="Pull down to close"]'
+        ))!.boundingBox())!
+        const done = (await (await page.$(
+          '[aria-label="Done"]'
+        ))!.boundingBox())!
+        const height = await page.evaluate(() => window.innerHeight)
+        expect(handle.y).lessThan(40)
+        expect(done.y + done.height).greaterThan(height - 60)
+        const x = handle.x + handle.width / 2
+        const y = handle.y + handle.height / 2
+        await page.mouse.move(x, y)
+        await page.mouse.down()
+        for (let step = 1; step <= 10; step++)
+          await page.mouse.move(x, y + step * 30)
+        await page.mouse.up()
+        await page.waitForSelector('[aria-label="Done"]', { hidden: true })
+        await switchOn(page)
+        await hold(page)
+        const reply = await answered(page)
+        const start = (await heard(page)).sent.find(f => f.kind === 'start')
+        expect(start?.model).equals(model)
+        expect(
+          (reply.actions as Array<{ call?: string }>)
+            .map(action => String(action.call))
+            .sort((a, b) => a.localeCompare(b)),
+          JSON.stringify(reply)
+        ).deep.equals(['B', 'C'])
+        await waitSaved(page)
+        expect(await summary(page)).includes('1 balls 1 strikes')
+      } finally {
+        await browser.close()
       }
     })
 
