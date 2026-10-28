@@ -491,6 +491,8 @@ export const asHighlight = asObject({
   title: asString,
   startOffsetSec: asNumber,
   playOffsetSec: asNumber,
+  /** Where it stops; absent from a server from before the setting. */
+  endOffsetSec: asOptional(asNumber),
   eventType: asNullable(asString),
   isScoringPlay: asBoolean,
   /** One frame of the video at the moment of the play. */
@@ -503,8 +505,12 @@ export const asHighlight = asObject({
   description: asOptional(asNullable(asString), null),
   tag: asOptional(asNullable(asString), null)
 })
-export type Highlight = Omit<ReturnType<typeof asHighlight>, 'tag'> & {
+export type Highlight = Omit<
+  ReturnType<typeof asHighlight>,
+  'tag' | 'endOffsetSec'
+> & {
   tag?: string | null
+  endOffsetSec?: number
 }
 
 export const asHighlightsResponse = asObject({
@@ -912,12 +918,14 @@ export const asPlayerHighlight = asObject({
   playAt: asString,
   startOffsetSec: asNumber,
   playOffsetSec: asNumber,
+  /** Where it stops; absent from a server from before the setting. */
+  endOffsetSec: asOptional(asNumber),
   stillUrl: asString
 })
 export type PlayerHighlight = Omit<
   ReturnType<typeof asPlayerHighlight>,
-  'tag'
-> & { tag?: string | null }
+  'tag' | 'endOffsetSec'
+> & { tag?: string | null; endOffsetSec?: number }
 
 export const asPlayerHighlights = asObject({
   highlights: asArray(asPlayerHighlight),

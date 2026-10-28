@@ -566,7 +566,7 @@
         "Replay",
         "How long the 3D replay holds each pitch before the next.",
         "Highlights",
-        "Where each highlight starts in the video, in seconds.",
+        "Where each highlight starts and stops in the video, in seconds.",
         "Rewind length",
         "Saved.",
         "Save",

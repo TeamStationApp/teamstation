@@ -95,11 +95,13 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
   /**
    * The app's own screens, upright on an iPhone.
    *
-   * `Info.plist` lets an iPhone turn sideways, because the multi-camera view
-   * does: it is a full-screen `Modal`, a view controller of its own that
-   * declares portrait and landscape and turns with the phone. Everything
-   * under it is this controller, which stays upright, so closing the view
-   * stands the app up again. An iPad turns everywhere, as it always has.
+   * `Info.plist` lets an iPhone turn sideways, because the full-screen
+   * player does. It is a sheet, a transparent `Modal` presented over this
+   * controller rather than in place of it, so it turns only as far as this
+   * controller allows: while it is up it asks for rotation
+   * (`TSOrientation.allowRotation`), and when it goes it stands the app
+   * upright again (`lockPortrait`). An iPad turns everywhere, as it always
+   * has.
    */
   override func createRootViewController() -> UIViewController {
     PortraitRootViewController()
@@ -123,9 +125,10 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
  *
  * `portrait` is the rest of the app. `landscape` is the camera view: both
  * landscape directions, so the phone can flip upside down, and never
- * portrait. `any` is the settings sheet over the camera, which may stand
- * upright or lie sideways either way. An iPad asks for landscape while the
- * camera is up, and every orientation otherwise.
+ * portrait. `any` is the settings sheet over the camera, and the full-screen
+ * player's sheet, which may stand upright or lie sideways either way. An
+ * iPad asks for landscape while the camera is up, and every orientation
+ * otherwise.
  *
  * On an iPad that is a request, not a lock. The app is resizable there
  * (`UIRequiresFullScreen` is false; making it true would take Split View and
@@ -162,10 +165,11 @@ enum CameraGeometry {
   /**
    * The mask iOS intersects with the top controller. Landscape while the
    * camera is up: both landscape directions, so the phone can flip upside
-   * down, and never portrait. `any`, which the settings sheet asks for, is
-   * the Info.plist set, so settings can stand upright or lie sideways. The
-   * root controller keeps the other screens upright, and the multi-camera
-   * view can still turn.
+   * down, and never portrait. `any`, which the settings sheet and the
+   * full-screen player's sheet ask for, is the Info.plist set, so they can
+   * stand upright or lie sideways. The root controller keeps the other
+   * screens upright; the full-screen sheet, a transparent modal over it,
+   * turns because the root is allowed to while it is up.
    */
   static var applicationMask: UIInterfaceOrientationMask {
     if mode == .landscape { return .landscape }
@@ -225,7 +229,8 @@ enum CameraGeometry {
   }
 }
 
-/// The streaming screen's orientation, called from `RCTCameraOrientation.mm`.
+/// The interface's orientation for the streaming screen and the full-screen
+/// player's sheet, called from `RCTCameraOrientation.mm` (`TSOrientation`).
 @objc(TSCameraGeometry)
 public final class TSCameraGeometry: NSObject {
   @objc public static func lockLandscape() {

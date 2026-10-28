@@ -16,10 +16,12 @@ import {
 import { type Rect, tileRects } from './layout'
 import {
   COMPACT_LINE_SCALE,
+  controlBlock,
   GAP,
   playerLayout,
   type PlayerLayoutInput,
-  topOfAngles
+  topOfAngles,
+  videoBlock
 } from './playerLayout'
 
 const SETTINGS = {
@@ -345,5 +347,91 @@ describe('where a notice goes (topOfAngles)', function () {
     const upright = layout(PORTRAIT, { count: 2 })
     near(topOfAngles(upright), upright.tiles[0].y)
     expect(topOfAngles({ ...upright, tiles: [] })).equals(0)
+  })
+})
+
+describe('the block of videos the controls go on (videoBlock)', function () {
+  const top = (rects: Rect[]): number => Math.min(...rects.map(r => r.y))
+  const bottom = (rects: Rect[]): number =>
+    Math.max(...rects.map(r => r.y + r.h))
+
+  it('is the one video, upright and sideways, and a zoomed one alone', function () {
+    for (const where of [PORTRAIT, LANDSCAPE]) {
+      const { tiles } = layout(where, { count: 1 })
+      const block = videoBlock(tiles)!
+      for (const key of ['x', 'y', 'w', 'h'] as const)
+        near(block[key], tiles[0][key])
+    }
+    const { tiles } = layout(LANDSCAPE, { count: 4, zoomed: 2 })
+    expect(videoBlock(tiles, 2)).deep.equals(tiles[2])
+  })
+
+  it('is the pair side by side, from their top to their bottom, and none of the space above', function () {
+    const { tiles, board } = layout(LANDSCAPE, { count: 2 })
+    const block = videoBlock(tiles)!
+    near(block.x, Math.min(tiles[0].x, tiles[1].x))
+    near(block.w, tiles[0].w + tiles[1].w)
+    near(block.y, top(tiles))
+    near(block.y + block.h, bottom(tiles))
+    expect(board!.y + board!.h).at.most(block.y + 1e-6)
+  })
+
+  it('is as wide as the bottom pair for three sideways with the board in the top-left quadrant', function () {
+    const { tiles, boardCell } = layout(LANDSCAPE, { count: 3 })
+    expect(boardCell).equals(true)
+    const block = videoBlock(tiles)!
+    // One video on the top row, beside the board; two on the bottom.
+    near(block.y, tiles[0].y)
+    near(block.y + block.h, bottom(tiles))
+    near(block.x, tiles[1].x)
+    near(block.w, tiles[1].w + tiles[2].w)
+    expect(block.w).above(tiles[0].w * 1.5)
+  })
+
+  it('is as wide as the top pair for three sideways with no board, down to the lower video', function () {
+    const { tiles, boardCell } = layout(LANDSCAPE, {
+      count: 3,
+      settings: null,
+      line: false
+    })
+    expect(boardCell).equals(false)
+    const block = videoBlock(tiles)!
+    near(block.w, tiles[0].w + tiles[1].w)
+    near(block.x, tiles[0].x)
+    near(block.y + block.h, tiles[2].y + tiles[2].h)
+  })
+
+  it('is the whole grid of four, and the column of an upright stack of any count', function () {
+    const four = layout(LANDSCAPE, { count: 4 }).tiles
+    const grid = videoBlock(four)!
+    near(grid.w, four[0].w + four[1].w)
+    near(grid.h, bottom(four) - top(four))
+    for (const count of [1, 2, 3, 4]) {
+      const { tiles } = layout(PORTRAIT, { count })
+      const block = videoBlock(tiles)!
+      near(block.w, tiles[0].w)
+      near(block.y, tiles[0].y)
+      near(block.y + block.h, tiles[count - 1].y + tiles[count - 1].h)
+    }
+  })
+
+  it('is nothing with no videos', function () {
+    expect(videoBlock([])).equals(null)
+    expect(videoBlock([{ x: 0, y: 0, w: 0, h: 0 }])).equals(null)
+  })
+
+  it('comes inside the safe area only where an edge runs past it', function () {
+    const safe = LANDSCAPE.safe
+    // Under the island on the left and the home bar below.
+    expect(controlBlock({ x: 0, y: 100, w: 600, h: 400 }, safe)).deep.equals({
+      x: 59,
+      y: 100,
+      w: 541,
+      h: 281
+    })
+    // Inside already: unchanged, not moved out to the safe edges.
+    const inner = { x: 200, y: 50, w: 300, h: 200 }
+    expect(controlBlock(inner, safe)).deep.equals(inner)
+    expect(controlBlock({ x: 900, y: 0, w: 10, h: 10 }, safe).w).equals(0)
   })
 })

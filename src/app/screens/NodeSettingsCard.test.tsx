@@ -154,6 +154,7 @@ describe('NodeSettingsCard', function () {
     expect(shown('Rewind length: strikeout')).equals('10 s')
     // A play type's rewind beyond the wheel shows at its last stop.
     expect(shown('Rewind length: walk')).equals('60 s')
+    expect(shown('Play past the event')).equals('5 s')
     // No free text, and no range repeated on the rows.
     expect(document.querySelector('input')).equals(null)
     expect(text()).not.contains('0–1')
@@ -179,7 +180,9 @@ describe('NodeSettingsCard', function () {
     await pick('Rewind length: default', 'Default 45 s')
     await pick('Rewind length: walk', 'Walk 6 s')
     await pick('Rewind length: strikeout', 'Strikeout Default')
+    await pick('Play past the event', 'Play past the event 8 s')
     expect(shown('Single camera: top')).equals('12%')
+    expect(shown('Play past the event')).equals('8 s')
     expect(shown('Rewind length: strikeout')).equals('Default')
     await press('Save')
     const saved = server.saved.at(-1)!
@@ -197,7 +200,8 @@ describe('NodeSettingsCard', function () {
       // Strikeout back to the default; a play type the card does not offer
       // is kept as stored.
       leadSecByEventType: { double: 12, walk: 6 },
-      mergeWithinSec: 7
+      mergeWithinSec: 7,
+      tailSec: 8
     })
     expect(text()).contains('Saved.')
   })

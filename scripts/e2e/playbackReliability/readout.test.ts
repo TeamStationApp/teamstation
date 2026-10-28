@@ -104,6 +104,26 @@ describe('playback probe: readout', function () {
     assert.equal(judgeReadout(reads).pass, true)
   })
 
+  it('leaves out a landing the readout had not caught up with in its first second', function () {
+    // A scrub back from 313 s to 59 s: two stale held reads, then playing.
+    const landing = judgeReadout(
+      snapshots(
+        [313.2, 313.2, 59.4, 59.9, 60.4, 60.9, 61.4],
+        [true, true, false, false, false, false, false]
+      )
+    )
+    assert.equal(landing.pass, true, landing.reasons.join())
+    // Held past the first second is a hold, and still fails.
+    const long = judgeReadout(
+      snapshots(
+        [313.2, 313.2, 313.2, 313.2, 59.4, 59.9, 60.4],
+        [true, true, true, true, false, false, false]
+      )
+    )
+    assert.equal(long.pass, false)
+    assert.match(long.reasons.join(), /held for/)
+  })
+
   it('fails slow playback and a grid held across two reads', function () {
     const slow = judgeReadout(snapshots([100, 100.2, 100.4, 100.6, 100.8]))
     assert.match(slow.reasons.join(), /0\.40× real time/)

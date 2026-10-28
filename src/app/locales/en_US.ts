@@ -206,6 +206,7 @@ export const enUs = {
   video_not_supported:
     "This browser can't play TeamStation video. Try Chrome, Edge or Safari.",
   angles_close: 'Close',
+  angles_swipe_to_close: 'Swipe down to close',
   angles_play: 'Play',
   angles_pause: 'Pause',
   angles_back_ten: 'Back ten seconds',

@@ -7,6 +7,13 @@ export interface PlayerFrom {
    * dates, the server's timeline, or its start), when it could say.
    */
   wallMs?: number | null
+  /**
+   * Where a highlight opened in it stops, in that video's seconds, and its
+   * wall time by the same mapping as `wallMs`. Absent for the game opened
+   * without a highlight.
+   */
+  untilSec?: number | null
+  untilWallMs?: number | null
 }
 
 /** What a game's frame holds of the full-screen player. */
@@ -16,6 +23,12 @@ export interface GameAngles {
   zoom?: string
   at?: number
   from?: PlayerFrom
+  /**
+   * A highlight chosen somewhere else — a player's page — to open in the
+   * player at once, stopping here (seconds into `at`'s video). Never written
+   * to the address, and taken off the frame by the open it causes.
+   */
+  highlightUntil?: number
 }
 
 /**
@@ -29,6 +42,8 @@ export interface AnglesChange {
   zoom?: string | null
   at?: number | null
   from?: PlayerFrom | null
+  /** Only ever `null`: the highlight has been opened. */
+  highlightUntil?: null
 }
 
 /** The game's frame with the change made. */
@@ -40,8 +55,11 @@ export function withAngles<T extends GameAngles>(
     change: V | null | undefined,
     last: V | undefined
   ): V | undefined => (change === undefined ? last : (change ?? undefined))
+  const { highlightUntil: _opened, ...rest } = frame
+  const highlightUntil = kept(next.highlightUntil, frame.highlightUntil)
   return {
-    ...frame,
+    ...(rest as T),
+    ...(highlightUntil == null ? {} : { highlightUntil }),
     angles: next.angles ?? frame.angles,
     audio: kept(next.audio, frame.audio),
     zoom: kept(next.zoom, frame.zoom),

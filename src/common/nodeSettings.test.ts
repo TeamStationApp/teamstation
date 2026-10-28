@@ -39,9 +39,32 @@ describe('node settings', function () {
         lagSec: 8,
         leadSec: 30,
         leadSecByEventType: { strikeout: 10 },
-        mergeWithinSec: 5
+        mergeWithinSec: 5,
+        tailSec: 5
       }
     })
+  })
+
+  it('stops a highlight 0 to 600 s past the play, 5 by default', function () {
+    for (const value of [0, 5, 600])
+      expect(
+        asNodeSettings(with_(s => (s.highlights.tailSec = value))).highlights
+          .tailSec
+      ).equals(value)
+    for (const value of [-1, 601, Number.NaN, '5'])
+      expect(
+        refused(
+          with_(s => {
+            ;(s.highlights as { tailSec: unknown }).tailSec = value
+          })
+        )
+      ).equals('highlights.tailSec must be from 0 to 600 seconds')
+    // A document saved by an app from before the setting.
+    const { tailSec: _tail, ...older } = defaultNodeSettings.highlights
+    expect(
+      asNodeSettings({ ...defaultNodeSettings, highlights: older }).highlights
+        .tailSec
+    ).equals(5)
   })
 
   it('refuses each value out of range, naming it', function () {

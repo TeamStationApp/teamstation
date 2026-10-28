@@ -54,6 +54,12 @@ export interface HighlightTimings {
    * separate moments and get a row each.
    */
   mergeWithinSec: number
+  /**
+   * How long a highlight keeps playing after the play itself, in seconds:
+   * it stops at the play's corrected moment plus this. Zero stops on the
+   * play.
+   */
+  tailSec: number
 }
 
 export interface NodeSettings {
@@ -96,7 +102,8 @@ export const defaultHighlightTimings: HighlightTimings = {
   lagSec: 8,
   leadSec: 30,
   leadSecByEventType: { strikeout: 10 },
-  mergeWithinSec: 5
+  mergeWithinSec: 5,
+  tailSec: 5
 }
 
 export const defaultNodeSettings: NodeSettings = {
@@ -181,6 +188,13 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
       mergeWithinSec: asSeconds(
         highlights.mergeWithinSec,
         'highlights.mergeWithinSec'
+      ),
+      // A document from before the setting has none: the default, as
+      // `radar` is. The server keeps a node's own when an app saves without
+      // it (`PUT /node/settings`).
+      tailSec: asSeconds(
+        highlights.tailSec ?? defaultHighlightTimings.tailSec,
+        'highlights.tailSec'
       )
     }
   }

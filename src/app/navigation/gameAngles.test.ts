@@ -57,4 +57,21 @@ describe("the game frame's full-screen player (U12)", function () {
     expect(anglesOpenPage({ at: 30 })).equals(false)
     expect(anglesOpenPage({ angles: [], from: null })).equals(false)
   })
+
+  it("carries a highlight's end, and takes the highlight off once it has opened", function () {
+    const asked = { ...page, videoId: 'v2', highlightUntil: 47 }
+    // Moving through the game keeps it until the player opens.
+    expect(withAngles(asked, { at: 30 }).highlightUntil).equals(47)
+    const until = { videoId: 'v2', sec: 12, untilSec: 47, untilWallMs: 1_047 }
+    const open = withAngles(asked, {
+      angles: ['v2'],
+      audio: 'v2',
+      from: until,
+      highlightUntil: null
+    })
+    expect(open.from).deep.equals(until)
+    expect('highlightUntil' in open).equals(false)
+    // So a frame drawn again later does not open it a second time.
+    expect(withAngles(open, { from: null }).highlightUntil).equals(undefined)
+  })
 })

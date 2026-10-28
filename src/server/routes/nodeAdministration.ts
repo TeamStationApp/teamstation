@@ -18,6 +18,7 @@ import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { nodeSettings, setNodeSettings } from '../nodeSettings'
+import { highlightSettings } from '../settings'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
 
@@ -106,6 +107,16 @@ export function nodeAdministrationRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
+      // An app from before a highlight's tail was a setting sends none: the
+      // node's own stays, rather than going back to the default.
+      const body = req.body as { highlights?: Record<string, unknown> } | null
+      const highlights = body?.highlights
+      if (
+        highlights != null &&
+        typeof highlights === 'object' &&
+        highlights.tailSec == null
+      )
+        highlights.tailSec = (await highlightSettings(db, true)).tailSec
       const settings = cleanBody(asNodeSettingsUpdate, req.body)
       await setNodeSettings(db, req.actor, settings)
       // What is stored now, including a pitch delay the save left alone.

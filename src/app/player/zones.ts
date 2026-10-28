@@ -1,33 +1,11 @@
-/** What a press does, by where it lands in the picture. */
+/**
+ * What a press does: the actions, the hold, and the ten-second step, shared
+ * by the press grid (`pressGrid.ts`) and the keyboard.
+ */
 import { seekTo } from './explicitSeek'
 import type { VideoHandle } from './videoHandle'
 
 export type Zone = 'seekBack' | 'seekForward' | 'toggle'
-
-/**
- * Nine squares, tic-tac-toe, over the whole picture.
- *
- * | pause | pause | pause                            |
- * | −10s  | pause | +10s; hold: slow forwards         |
- * | pause | pause | pause                            |
- *
- * Even thirds of the **picture**, not of the window: the box is exactly the
- * video's own shape, so the two are the same thing. The browser's own controls
- * are cut out of the layer rather than shortening the grid, so a square is
- * never on top of a control and the thirds stay even.
- */
-export function zoneFor(
-  x: number,
-  y: number,
-  width: number,
-  height: number
-): Zone {
-  const col = Math.min(2, Math.max(0, Math.floor((x / width) * 3)))
-  const row = Math.min(2, Math.max(0, Math.floor((y / height) * 3)))
-  if (row === 1 && col === 0) return 'seekBack'
-  if (row === 1 && col === 2) return 'seekForward'
-  return 'toggle'
-}
 
 /** What a press ends up doing: a zone's own action, or the crawl. */
 export type GestureAction = Zone | 'slowForward'
@@ -59,13 +37,18 @@ export const HOLD_MS = 500
 export const STILL_FRACTION = 0.05
 
 /**
- * A drag that scrubs starts this share of the screen's width in from either
- * side: one from the edges is left to the browser and the system.
+ * How far a finger may slip, in pixels, and still have made a tap.
+ *
+ * Every touch tap carries a pixel or two, so a press that moved less than
+ * this is the ordinary tap rather than the odd one; one that moved further is
+ * a drag, on a tile or on the black around them alike.
  */
-export const SCRUB_EDGE_FRACTION = 0.1
+export const TAP_SLOP_PX = 8
 
-/** A drag across the picture moves the playhead at a quarter of the bar's rate. */
-export const SCRUB_RATE = 0.25
+/** Whether a finger has moved this far from where it came down. */
+export function beyondSlop(dx: number, dy: number): boolean {
+  return Math.abs(dx) >= TAP_SLOP_PX || Math.abs(dy) >= TAP_SLOP_PX
+}
 
 /** How far a tap on the sides, or an arrow key, moves. */
 export const STEP_SECONDS = 10
@@ -77,28 +60,4 @@ export function seekBy(video: VideoHandle, delta: number): void {
     : video.currentTime + Math.max(0, delta)
   const next = video.currentTime + delta
   seekTo(video, Math.min(Math.max(0, next), duration))
-}
-
-/** What a press does on the multi-camera view, which has no bar of its own to cut round. */
-export type AngleZone = Zone | 'controls'
-
-/**
- * The same nine squares over the four angles, with the bottom row given to
- * the control bar.
- *
- * | pause | pause | pause                     |
- * | −10s  | pause | +10s; hold: slow forwards  |
- * |        show the controls                  |
- *
- * The bar hides itself after a few seconds, so the bottom third is how it is
- * called back.
- */
-export function angleZoneFor(
-  x: number,
-  y: number,
-  width: number,
-  height: number
-): AngleZone {
-  const row = Math.min(2, Math.max(0, Math.floor((y / height) * 3)))
-  return row === 2 ? 'controls' : zoneFor(x, y, width, height)
 }

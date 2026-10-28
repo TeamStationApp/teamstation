@@ -41,7 +41,8 @@ describe('node settings', function () {
       lagSec: 6,
       leadSec: 20,
       leadSecByEventType: { strikeout: 8, walk: 4 },
-      mergeWithinSec: 2
+      mergeWithinSec: 2,
+      tailSec: 9
     }
   }
 
@@ -101,12 +102,34 @@ describe('node settings', function () {
         'highlights.lagSec',
         'highlights.leadSec',
         'highlights.leadSecByEventType',
-        'highlights.mergeWithinSec'
+        'highlights.mergeWithinSec',
+        'highlights.tailSec'
       ])
       .execute()
-    expect(rows).has.length(12)
+    expect(rows).has.length(13)
     expect(new Set(rows.map(row => row.updated_by))).deep.equals(
       new Set([userIdOfGumbo(105)])
+    )
+  })
+
+  it('keeps the node’s tail when an app that sends no tailSec saves', async () => {
+    // The node's own, saved by an app that knows the setting.
+    expect(
+      (await f.h.request('PUT', '/node/settings', changed, 105)).status
+    ).equals(200)
+    const { tailSec: _tail, ...older } = changed.highlights
+    const set = await f.h.request(
+      'PUT',
+      '/node/settings',
+      { ...changed, highlights: older },
+      105
+    )
+    expect(set.status).equals(200)
+    expect((await set.json()).highlights.tailSec).equals(
+      changed.highlights.tailSec
+    )
+    expect((await highlightSettings(f.h.db, true)).tailSec).equals(
+      changed.highlights.tailSec
     )
   })
 
@@ -208,7 +231,8 @@ describe('node settings', function () {
       ['highlights.lagSec', -3],
       ['highlights.leadSec', 900],
       ['highlights.mergeWithinSec', 4],
-      ['highlights.leadSecByEventType', { Strikeout: 10 }]
+      ['highlights.leadSecByEventType', { Strikeout: 10 }],
+      ['highlights.tailSec', 'five']
     ]
     for (const [key, value] of rows)
       await f.h.db

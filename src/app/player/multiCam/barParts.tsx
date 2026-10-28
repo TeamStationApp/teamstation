@@ -4,9 +4,11 @@ import { Pressable, Text, View } from 'react-native'
 import { Icon, type IconName } from '../../components/Icon'
 import { lstrings } from '../../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../../theme/ThemeContext'
+import { type PlacedIcon, placeIcons } from '../pressGrid'
 import { intersects } from '../scoreboardOverlay/overlayLayout'
 import type { Window } from '../wallClock'
 import type { Rect } from './layout'
+import { controlBlock, type PlayerLayout, videoBlock } from './playerLayout'
 
 /**
  * What the two multi-camera bars share — the browser's and the phone's.
@@ -14,9 +16,6 @@ import type { Rect } from './layout'
  * A file of its own because a phone's `MultiCamBar.native.tsx` cannot import
  * from its web twin: Metro resolves the import back to the native sibling.
  */
-
-/** The height a finger can grab the track by, in pixels. */
-export const TRACK_HIT_PX = 72
 
 /** Each button's height and least width, which sets the bar's own height. */
 export const BUTTON_REM = 2.75
@@ -37,19 +36,34 @@ export interface BarAngle {
   toMs: number
 }
 
+/** The bar's left edge, width and distance up from the bottom. */
+export interface BarFrame {
+  left: number
+  width: number
+  bottom: number
+}
+
 export interface MultiCamBarProps {
   window: Window
   atMs: number
   angles: BarAngle[]
-  /** `final` is the finger lifting, or a tap; a move while dragging is not. */
-  onScrub: (wallMs: number, final?: boolean) => void
   /**
-   * The track's width in px, whenever it is laid out: a drag across the
-   * pictures moves the playhead by a share of it.
+   * Where the drawn track is, in the press layer's coordinates, whenever it
+   * is laid out: a press on the bottom row of the press grid lands where the
+   * finger is on it. The track takes no touch of its own.
    */
-  onTrackWidth?: (px: number) => void
-  /** Any press or drag on the bar, which keeps it from hiding under a finger. */
-  onInteract: () => void
+  onTrackRect?: (rect: Rect) => void
+  /**
+   * Where the bar goes: on the bottom of the block of videos, as wide as it,
+   * in the view's coordinates (`controlBlock`). The whole width without it.
+   */
+  frame?: BarFrame
+  /**
+   * The keyboard's focus moving into the bar, which keeps it up while it is
+   * in use there. The bar takes no pointer: the press grid's bottom row is
+   * the scrub.
+   */
+  onInteract?: () => void
   /** Faded in when true, faded out and untouchable when false. */
   visible: boolean
 }
@@ -293,3 +307,74 @@ export const getBarStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.9375)
   }
 }))
+
+/** Where the full-screen player's controls go, on either grid. */
+export interface GridControls {
+  /** The block of videos, kept inside the safe area: the press grid's box. */
+  block: Rect
+  /** The space the controls keep from the block's edges. */
+  gap: number
+  /** The controls group's icons, clear of the board and its box. */
+  icons: PlacedIcon[]
+  /** The ✕'s top: the block's top right, or under a board that reaches it. */
+  exitTop: number
+  /** How far the block's right edge is in from the view's. */
+  blockRight: number
+}
+
+/**
+ * The controls on the block of videos (`videoBlock`), the same for the
+ * browser's grid and the phone's: the press grid's box, the icons' places,
+ * and the ✕'s, all in the coordinates the tiles are laid out in.
+ */
+export function gridControls(
+  theme: Theme,
+  layout: PlayerLayout,
+  safe: Rect,
+  width: number,
+  zoomed: number | null
+): GridControls {
+  const block = controlBlock(
+    videoBlock(layout.tiles, zoomed != null && zoomed >= 0 ? zoomed : null) ??
+      safe,
+    safe
+  )
+  const gap = theme.rem(theme.spaceSmRem)
+  const covers = [layout.board, layout.box]
+  const exitTop = exitTopClear(
+    {
+      x: block.x + block.w - gap - exitSize(theme),
+      y: block.y + gap,
+      w: exitSize(theme),
+      h: exitSize(theme)
+    },
+    covers,
+    gap
+  )
+  const size = exitSize(theme)
+  return {
+    block,
+    gap,
+    icons: [
+      ...placeIcons(
+        block,
+        theme.rem(3),
+        covers,
+        theme.rem(theme.spaceXsRem),
+        false,
+        // The sound level with the ✕, wherever the board has put it.
+        { x: gap + size / 2, y: exitTop - block.y + size / 2 }
+      ),
+      // The ✕, where it is drawn: the way out is a press on it, wherever
+      // the board has put it.
+      {
+        zone: 'corner',
+        x: block.x + block.w - gap - size / 2,
+        y: exitTop + size / 2,
+        r: size / 2
+      }
+    ],
+    exitTop,
+    blockRight: width - (block.x + block.w)
+  }
+}

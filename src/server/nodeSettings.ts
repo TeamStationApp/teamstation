@@ -185,7 +185,8 @@ export async function setNodeSettings(
     ['highlights.lagSec', highlights.lagSec],
     ['highlights.leadSec', highlights.leadSec],
     ['highlights.leadSecByEventType', highlights.leadSecByEventType],
-    ['highlights.mergeWithinSec', highlights.mergeWithinSec]
+    ['highlights.mergeWithinSec', highlights.mergeWithinSec],
+    ['highlights.tailSec', highlights.tailSec]
   ]
   const now = new Date()
   await db.transaction().execute(async trx => {

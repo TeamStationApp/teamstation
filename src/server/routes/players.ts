@@ -396,6 +396,7 @@ export function playerRoutes(
         playAt: string
         startOffsetSec: number
         playOffsetSec: number
+        endOffsetSec: number
         stillUrl: string
         storage: 'peertube' | 'local' | 'spaces'
       }
@@ -442,6 +443,7 @@ export function playerRoutes(
             playAt: highlight.playAt.toISOString(),
             startOffsetSec: highlight.startOffsetSec,
             playOffsetSec: highlight.playOffsetSec,
+            endOffsetSec: highlight.endOffsetSec,
             stillUrl: stillUrl(media, video.id, highlight.playOffsetSec, now),
             storage: video.storage
           })

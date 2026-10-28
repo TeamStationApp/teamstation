@@ -254,6 +254,11 @@ export class NativeVideoHandle implements VideoHandle {
     this.emit('ratechange')
   }
 
+  /** A seek has been asked for and the player has not yet said it landed. */
+  get seeking(): boolean {
+    return this.pendingSeekTo != null
+  }
+
   get readyState(): number {
     return this.state
   }

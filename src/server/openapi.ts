@@ -933,7 +933,10 @@ const nodeSettingsSchema = {
           type: 'number',
           minimum: 0,
           maximum: 600
-        }
+        },
+        // Not required: a body from an app before the setting keeps the
+        // node's own.
+        tailSec: { type: 'number', minimum: 0, maximum: 600 }
       }
     }
   }
@@ -5309,7 +5312,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Highlights are never stored: they are worked out from the plays ' +
             'and the current settings on every read, so a corrected lag or a ' +
             're-synced video fixes them all at once. A highlight is a ' +
-            'timestamp into the full video, never a separate clip. When the ' +
+            'timestamp into the full video, never a separate clip: it starts ' +
+            'at `startOffsetSec` and stops at `endOffsetSec`, the node’s ' +
+            '`highlights.tailSec` past the play or the end of the recording. When the ' +
             "game's plays did not add up to its imported line score, " +
             '`withheld` is `scoreMismatch` and the list is empty. Guests and ' +
             'nonmembers may read the list and signed stills; playback remains members-only.',
@@ -5441,7 +5446,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the page no recording covers. `seasonId`, `teamId` and `year` ' +
             'narrow the games the same way `/players/{userId}/stats` does, ' +
             'before the page is cut; `teamId` is the team the player played ' +
-            'for. With none of them the answer is the career.',
+            'for. With none of them the answer is the career. Each highlight ' +
+            'plays from `startOffsetSec` to `endOffsetSec`.',
           security: [{ bearer: [] }],
           parameters: [
             userIdParam,

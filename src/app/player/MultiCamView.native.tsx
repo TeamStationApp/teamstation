@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  Animated,
   type GestureResponderEvent,
   LayoutAnimation,
   Modal,
   NativeModules,
-  Platform,
+  PanResponder,
   StatusBar,
   Text,
   useWindowDimensions,
@@ -18,23 +19,19 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import type { ParkReason } from './multiCam/align'
-import {
-  ExitButton,
-  exitClearance,
-  exitSize,
-  exitTopClear
-} from './multiCam/barParts'
+import { ExitButton, exitClearance, gridControls } from './multiCam/barParts'
 import { TILE_BUFFER } from './multiCam/buffering'
-import { clearOf, edgeToEdge, type Rect } from './multiCam/layout'
+import { edgeToEdge, type Rect } from './multiCam/layout'
 import {
-  type NativeOrientation,
-  orientationLock
+  gridRotation,
+  type NativeOrientation
 } from './multiCam/orientationLock'
 import {
   type PlayerLayout,
   playerLayout,
   topOfAngles
 } from './multiCam/playerLayout'
+import { claimsSwipe, commitsSwipe, followOf } from './multiCam/sheetSwipe'
 import { tileNotice } from './multiCam/tileNotice'
 import {
   type MultiCamProps,
@@ -52,6 +49,7 @@ import { useScreenInsets } from './useScreenInsets'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
 import type { WallMapping } from './wallMapping'
+import { ZoneIcons } from './ZoneIcons'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -70,9 +68,8 @@ interface Touch {
   carried: boolean
 }
 
-/** Android's `TSOrientation`, which iOS has no need of. */
-const rotation = orientationLock(
-  Platform.OS,
+/** `TSOrientation`, which lets the sheet turn with the phone on both. */
+const rotation = gridRotation(
   NativeModules.TSOrientation as NativeOrientation | undefined
 )
 
@@ -95,9 +92,14 @@ function tileAt(rects: Rect[], x: number, y: number): number | null {
  * Four angles of one game, playing together, on a phone.
  *
  * Everything the grid decides is `useMultiCam`, the same as in a browser;
- * this file draws it with the phone's own players. Full screen as a `Modal`,
- * which a phone draws over everything — the header, the tabs and the status
- * bar included — and whose Android Back closes it. It turns with the phone,
+ * this file draws it with the phone's own players. Full screen as a sheet: a
+ * transparent `Modal`, which a phone draws over everything — the header, the
+ * tabs and the status bar included — sliding up from the bottom. A downward
+ * swipe anywhere on it, on the pictures, the controls or the scrub line,
+ * pulls it down with the finger, and one that goes far enough, or fast
+ * enough, closes it; one that does not lets it spring back. A grabber in the
+ * top inset says so. The ✕ and Android's Back close it the same way. It
+ * turns with the phone,
  * the one screen of the app that does: upright the angles are stacked one
  * above another, sideways they are a two-by-two grid, laid out for the
  * screen inside its safe area either way.
@@ -113,40 +115,39 @@ function tileAt(rects: Rect[], x: number, y: number): number | null {
  * wall time of the master tile's frame.
  */
 export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
-  const { onClose } = props
-  // Where the grid has got to, for Android's Back, which the modal hears
-  // rather than the grid inside it.
-  const wallNowRef = useRef<() => number | null>(() => null)
+  // The grid's way out, for Android's Back, which the modal hears rather
+  // than the grid inside it.
+  const closeRef = useRef<(ended?: boolean) => void>(() => undefined)
   return (
     <Modal
       visible
-      animationType="fade"
+      transparent
+      animationType="slide"
       supportedOrientations={['portrait', 'landscape']}
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={() => {
-        onClose(wallNowRef.current())
+        closeRef.current()
       }}
     >
       <StatusBar hidden />
-      {/* Its own safe area, measured in the modal's window. The app's is
-          measured under the root view controller, which stays upright, so
-          sideways it still gave the upright insets: room kept for a Dynamic
-          Island at the top that was at the side. */}
+      {/* Its own safe area, measured in the modal's window: right through
+          the turn on iOS, where the root turns with the sheet a beat behind
+          it, and on Android, where the modal is a dialog of its own. */}
       <SafeAreaProvider>
-        <MultiCamGrid {...props} wallNowRef={wallNowRef} />
+        <MultiCamGrid {...props} closeRef={closeRef} />
       </SafeAreaProvider>
     </Modal>
   )
 }
 
-/** The grid itself, inside the modal and its safe area. */
+/** The grid itself, the sheet inside the modal and its safe area. */
 function MultiCamGrid(
   props: MultiCamViewProps & {
-    wallNowRef: React.RefObject<() => number | null>
+    closeRef: React.RefObject<(ended?: boolean) => void>
   }
 ): React.ReactElement {
-  const { onClose, wallNowRef } = props
+  const { onClose, closeRef } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   // Sideways the pictures have the whole screen; upright, all of it below the
@@ -156,7 +157,7 @@ function MultiCamGrid(
   const landscape = width > height
   // The board, the box score and the angles around them, the board and the
   // box inside the safe area (`playerLayout`).
-  const board = useGridBoard(props, landscape)
+  const board = useGridBoard(props)
   const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
   const zoomedIndex =
     props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
@@ -173,43 +174,115 @@ function MultiCamGrid(
       zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
     })
   const layout = layoutFor(board.natural)
-  // The way out, in the top right, or under the board where it reaches there.
-  const exitTop = exitTopClear(
-    {
-      x: safe.x + safe.w - theme.rem(theme.spaceSmRem) - exitSize(theme),
-      y: safe.y + theme.rem(theme.spaceSmRem),
-      w: exitSize(theme),
-      h: exitSize(theme)
-    },
-    [layout.board, layout.box],
-    theme.rem(theme.spaceSmRem)
-  )
-  const mc = useMultiCam(props, {
+  // The controls go on the block of videos, kept inside the safe area: the
+  // press grid over it (`pressGrid.ts`), the icons and the way out at its
+  // top, the scrub line on its bottom.
+  const { block, gap, icons, exitTop, blockRight } = gridControls(
+    theme,
+    layout,
+    safe,
     width,
-    height,
-    rects: layout.tiles,
-    // The others slide aside rather than jump when a dragged tile changes
-    // the place it would land in.
-    beforeShuffle: shuffle,
-    // A phone's players read no dates: each tile is placed by its video's
-    // wall timeline, where the server has one.
-    fallbackMapping: board.mappingOf
-  })
+    zoomedIndex
+  )
+
+  /**
+   * The sheet's offset down the screen: 0 where it sits, following a finger
+   * that pulls it, and the screen's height once it has gone.
+   */
+  const translateY = useRef(new Animated.Value(0)).current
+  const closing = useRef(false)
+  /**
+   * Slides the sheet away, then tells the screen where the grid had got to
+   * and whether it was playing — or, at a highlight's end, that it stopped
+   * there: the highlight is over, and the card stays where it ended.
+   */
+  const close = (ended = false): void => {
+    if (closing.current) return
+    closing.current = true
+    // Read now: the tiles may be gone by the time the slide ends.
+    const atWallMs = mc.wallNow() ?? mc.atWallMs
+    const playing = mc.playing && !ended
+    Animated.timing(translateY, {
+      toValue: height,
+      duration: 200,
+      useNativeDriver: true
+    }).start(() => {
+      onClose(atWallMs, playing)
+    })
+  }
+  closeRef.current = close
+  const closeLatest = useRef(close)
+  closeLatest.current = close
+  const heightRef = useRef(height)
+  heightRef.current = height
+  // Taken in the capture phase, so a downward swipe that starts on a tile,
+  // the ✕ or the scrub line is the sheet's — once the press under it has
+  // let go of it (`pressYields`).
+  const swipe = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+        !closing.current && claimsSwipe(gesture.dx, gesture.dy),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_event, gesture) => {
+        translateY.setValue(followOf(gesture.dy))
+      },
+      onPanResponderRelease: (_event, gesture) => {
+        if (commitsSwipe(gesture.dy, gesture.vy, heightRef.current)) {
+          closeLatest.current()
+          return
+        }
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true
+        }).start()
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true
+        }).start()
+      }
+    })
+  ).current
+  const mc = useMultiCam(
+    {
+      ...props,
+      // A highlight's end closes the sheet, as a swipe down would.
+      onEndReached: () => {
+        props.onEndReached?.()
+        closeRef.current(true)
+      }
+    },
+    {
+      width,
+      height,
+      block,
+      icons,
+      onCorner: () => {
+        closeRef.current()
+      },
+      rects: layout.tiles,
+      // The others slide aside rather than jump when a dragged tile changes
+      // the place it would land in.
+      beforeShuffle: shuffle,
+      // A phone's players read no dates: each tile is placed by its video's
+      // wall timeline, where the server has one.
+      fallbackMapping: board.mappingOf
+    }
+  )
   board.follow(mc)
-  wallNowRef.current = mc.wallNow
   const {
     askAgain,
     attaching,
     attached,
     dropTile,
-    scrub,
     moveTile,
     pressCancel,
     pressEnd,
     pressMove,
+    pressYields,
     pressStart,
-    setTrackWidth,
-    showBar,
+    setTrackRect,
     takeElement,
     tileWaiting
   } = mc
@@ -282,7 +355,25 @@ function MultiCamGrid(
       : null
 
   return (
-    <View style={styles.screen}>
+    <Animated.View
+      style={[styles.screen, { transform: [{ translateY }] }]}
+      {...swipe.panHandlers}
+    >
+      {/* The sheet's own: it can be pulled down. In the top inset, above
+          the pictures, and never one of the video controls. */}
+      <View
+        testID="sheet-grabber"
+        accessible
+        accessibilityLabel={lstrings.angles_swipe_to_close}
+        style={[
+          styles.grabber,
+          {
+            left: width / 2 - GRABBER_WIDTH / 2,
+            top: Math.max(6, (safe.y - GRABBER_HEIGHT) / 2)
+          }
+        ]}
+        pointerEvents="none"
+      />
       <View style={[styles.box, { left: 0, top: 0, width, height }]}>
         {mc.chosen.map((video, index) => (
           <Tile
@@ -292,7 +383,12 @@ function MultiCamGrid(
             unavailable={mc.urls[video.id] === null}
             onGiveUp={askAgain}
             // Silent throughout a crawl, whichever angle is heard.
-            muted={mc.slow !== 0 || video.id !== mc.heardId || mc.soundBlocked}
+            muted={
+              mc.slow !== 0 ||
+              video.id !== mc.heardId ||
+              mc.soundBlocked ||
+              mc.soundOff
+            }
             onAttaching={attaching}
             onAttached={attached}
             wantsToPlay={() => mc.intents.current.get(video.id) === true}
@@ -306,8 +402,6 @@ function MultiCamGrid(
             takeRef={takeElement(video.id)}
             onWallMapping={mc.takeMapping(video.id)}
             heard={video.id === mc.heardId}
-            nameTop={board.nameTop(index, mc.rects[index], mc.zoomed, safe)}
-            nameClear={clearOf(mc.shownRects[index], safe)}
           />
         ))}
 
@@ -318,39 +412,54 @@ function MultiCamGrid(
           testID="grid-touches"
           style={styles.touches}
           onStartShouldSetResponder={() => true}
-          onResponderTerminationRequest={() => false}
+          // A press still waiting to be something lets the sheet's swipe
+          // have the finger; a scrub, a crawl or a carried tile keeps it.
+          onResponderTerminationRequest={() =>
+            touch.current == null || pressYields(touch.current.id)
+          }
           onResponderGrant={onGrant}
           onResponderMove={onMove}
           onResponderRelease={onRelease}
           onResponderTerminate={onTerminate}
         />
 
-        {/* The controls, over the touches, where the hardware leaves room. */}
+        {/* The controls, over the touches, on the block of videos. */}
         <View
-          style={[
-            styles.controls,
-            { left: safe.x, top: safe.y, width: safe.w, height: safe.h }
-          ]}
+          style={[styles.controls, { left: 0, top: 0, width, height }]}
           pointerEvents="box-none"
         >
-          <SeekFlashView flash={mc.flash} />
-          {/* Top right, clear of the finger holding the crawl on the right,
-              and stepped left of the way out while that shows. */}
+          <View
+            style={[
+              styles.flashBox,
+              { left: block.x, top: block.y, width: block.w, height: block.h }
+            ]}
+            pointerEvents="none"
+          >
+            <SeekFlashView flash={mc.flash} />
+          </View>
+          <ZoneIcons
+            icons={icons}
+            visible={mc.controlsShown}
+            playing={mc.playing}
+            soundOff={mc.soundOff}
+          />
+          {/* Top right of the block, clear of the finger holding the crawl
+              on the right, and stepped left of the way out while that
+              shows. */}
           <SlowMoBadge
             rate={mc.slow}
+            top={block.y + gap}
             right={
-              mc.controlsShown
-                ? exitClearance(theme) + theme.rem(theme.spaceSmRem)
-                : undefined
+              blockRight + gap + (mc.controlsShown ? exitClearance(theme) : 0)
             }
           />
           <ExitButton
             visible={mc.controlsShown}
             onPress={() => {
-              onClose(mc.wallNow())
+              close()
             }}
-            // In the safe area's coordinates, as the controls are.
-            top={exitTop - safe.y - theme.rem(theme.spaceSmRem)}
+            top={exitTop - gap}
+            right={blockRight}
           />
 
           {/* On the pictures, below the board's band: over the band it would
@@ -360,12 +469,9 @@ function MultiCamGrid(
               style={[
                 styles.notice,
                 {
-                  // In the safe area's coordinates, as the controls are; at
-                  // the top of the highest angle, as the browser's grid puts
+                  // At the top of the highest angle, as the browser's grid puts
                   // it, so it is never over the board.
-                  top:
-                    Math.max(0, topOfAngles(layout) - safe.y) +
-                    theme.rem(theme.spaceSmRem)
+                  top: Math.max(safe.y, topOfAngles(layout)) + gap
                 }
               ]}
               pointerEvents="none"
@@ -379,15 +485,18 @@ function MultiCamGrid(
               window={mc.take}
               atMs={mc.atWallMs}
               angles={mc.barAngles(mc.take)}
-              onScrub={scrub}
-              onTrackWidth={setTrackWidth}
-              onInteract={showBar}
-              visible={mc.barShown}
+              onTrackRect={setTrackRect}
+              visible={mc.scrubShown}
+              frame={{
+                left: block.x,
+                width: block.w,
+                bottom: height - (block.y + block.h)
+              }}
             />
           ) : null}
         </View>
       </View>
-    </View>
+    </Animated.View>
   )
 }
 
@@ -412,10 +521,6 @@ function Tile(props: {
   /** Where its player says it has no dates of its own (`PlayIntent`). */
   onWallMapping: (mapping: WallMapping | null) => void
   heard: boolean
-  /** Where its name goes, below the grid's board; at the top otherwise. */
-  nameTop?: number
-  /** How far its name must come in to be clear of a notch or a corner. */
-  nameClear: { left: number; top: number }
 }): React.ReactElement {
   const {
     videoId,
@@ -430,9 +535,7 @@ function Tile(props: {
     waiting,
     heard,
     muted,
-    takeRef,
-    nameTop,
-    nameClear
+    takeRef
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -530,21 +633,6 @@ function Tile(props: {
         primary={heard}
       />
       {armed ? <View style={styles.tileArmed} /> : null}
-      <View
-        style={[
-          styles.tileName,
-          {
-            // Below the board, which is already kept clear; else at the
-            // top, moved in clear of the hardware.
-            top: nameTop ?? theme.rem(theme.spaceXsRem) + nameClear.top,
-            left: theme.rem(theme.spaceSmRem) + nameClear.left
-          }
-        ]}
-      >
-        <Text style={styles.tileNameText} numberOfLines={1}>
-          {heard ? `🔊 ${name}` : name}
-        </Text>
-      </View>
       {parked != null ||
       unavailable ||
       unplaceable ||
@@ -560,10 +648,23 @@ function Tile(props: {
   )
 }
 
+/** The grabber's size, in points. */
+const GRABBER_WIDTH = 36
+const GRABBER_HEIGHT = 5
+
 const getStyles = cacheStyles((theme: Theme) => ({
   screen: {
     flex: 1,
     backgroundColor: '#000000'
+  },
+  grabber: {
+    position: 'absolute',
+    width: GRABBER_WIDTH,
+    height: GRABBER_HEIGHT,
+    borderRadius: GRABBER_HEIGHT / 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    // Over the pictures where they reach the top, under nothing.
+    zIndex: 9
   },
   box: {
     position: 'absolute',
@@ -581,19 +682,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'absolute',
     zIndex: 4
   },
+  flashBox: {
+    position: 'absolute'
+  },
   tile: {
     position: 'absolute',
     overflow: 'hidden',
     backgroundColor: '#000000'
-  },
-  tileName: {
-    // At the top left, `top` and `left` set where it is drawn.
-    position: 'absolute',
-    maxWidth: '80%',
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.125),
-    borderRadius: theme.rem(1),
-    backgroundColor: 'rgba(0, 0, 0, 0.45)'
   },
   tileArmed: {
     position: 'absolute',
@@ -603,13 +698,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0,
     borderWidth: 3,
     borderColor: theme.activeColor
-  },
-  tileNameText: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowRadius: 4
   },
   tileParked: {
     position: 'absolute',

@@ -155,6 +155,11 @@ export interface Highlight {
   /** Where the play itself is, for a still or a marker. */
   playOffsetSec: number
   /**
+   * Where the highlight stops: `tailSec` past the play, or the end of the
+   * recording where that comes first.
+   */
+  endOffsetSec: number
+  /**
    * When the play happened, by the clock on the wall.
    *
    * The corrected moment, not the scorekeeper's tap: the same arithmetic the
@@ -181,6 +186,7 @@ export interface Highlight {
  *    rather than landing on the contact.
  * 4. Convert to an offset in this video, allowing for the video's own clock
  *    correction.
+ * 5. Stop `tailSec` after the play, or where the recording stops.
  *
  * Plays are returned in game order, oldest first, which is how a game is read.
  */
@@ -229,6 +235,11 @@ export function withDropped(
 
     const playOffsetSec = toOffset(playMs, videoStartMs, video.syncOffsetSec)
     const startOffsetSec = toOffset(startMs, videoStartMs, video.syncOffsetSec)
+    const tailOffsetSec = toOffset(
+      playMs + settings.tailSec * 1000,
+      videoStartMs,
+      video.syncOffsetSec
+    )
 
     // A play before the recording started, or after it stopped, is not in this
     // video. That is normal for a game recorded in two parts.
@@ -270,6 +281,10 @@ export function withDropped(
       playAt: new Date(playMs),
       startOffsetSec: Math.max(0, startOffsetSec),
       playOffsetSec,
+      endOffsetSec:
+        video.durationSec == null
+          ? tailOffsetSec
+          : Math.min(tailOffsetSec, video.durationSec),
       eventType: event.eventType,
       isScoringPlay:
         event.isScoringPlay || shown.some(o => o.eventType === 'run')

@@ -6,6 +6,7 @@ import { wallAt } from '../../../common/wallTimeline'
 import { lstrings } from '../../locales/strings'
 import { boardAt } from './boardAt'
 import {
+  angleTiles,
   api,
   APP,
   broadcast,
@@ -17,7 +18,7 @@ import {
   gridState,
   iso,
   mediaAt,
-  nameChips,
+  nameTexts,
   onThisMachine,
   overrides,
   type Page,
@@ -286,13 +287,19 @@ describe('E9: the board on a phone-size player, single and every angle', functio
           `${size}: the board right of the middle above the angles on the bottom, ${board?.x.toFixed(1)} px in, angles from ${top.toFixed(1)} px`
         )
       }
-      // Every angle's name shows clear of the board, the heard one's 🔊 too.
-      const chips = await nameChips(page, ['E9 programme', 'E9 angle'])
+      // No angle's name drawn over the pictures; every angle still
+      // labelled, and one of them heard.
+      const titles = ['E9 programme', 'E9 angle']
+      const drawn = await nameTexts(page, titles)
+      const labelled = (await angleTiles(page, titles)).filter(
+        tile => tile != null
+      )
+      const heard = labelled.filter(tile => tile.heard)
       check(
-        chips.length === 2 &&
-          chips.every(chip => !chip.covered) &&
-          chips.filter(chip => chip.text.startsWith('🔊')).length === 1,
-        `${size}: every angle's name shows clear of the board (${chips.map(chip => `${chip.text}${chip.covered ? ' COVERED' : ''}`).join(', ')})`
+        drawn.length === 0 &&
+          labelled.length === titles.length &&
+          heard.length === 1,
+        `${size}: no angle's name drawn (${drawn.join(', ')}), every angle labelled (${labelled.length}/${titles.length}), one heard (${heard.map(tile => tile.title).join(', ')})`
       )
       await page.detach()
     }

@@ -118,12 +118,16 @@ export interface PlayerScreenProps {
    * back to that team's roster, saying so with `notice`.
    */
   onRemovedFromTeam?: (teamId: string, teamName: string, notice: string) => void
-  /** Opens the game's video at the moment of one of their highlights. */
+  /**
+   * Opens the game's video at the moment of one of their highlights, in the
+   * full-screen player, stopping at `untilSec` where the server says.
+   */
   onOpenMoment?: (
     gameId: string,
     videoId: string,
     atSec: number,
-    title: string
+    title: string,
+    untilSec?: number
   ) => void
 }
 
@@ -668,7 +672,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                       highlight.gameId,
                       highlight.videoId,
                       highlight.startOffsetSec,
-                      highlight.outcome
+                      highlight.outcome,
+                      highlight.endOffsetSec
                     )
                   }}
                 />
