@@ -187,7 +187,9 @@ describe('placeholder count sheet and platform adapters', function () {
         />
       )
       const open = async (): Promise<void> => {
-        await click(managesTeam ? 'Create Player' : 'Create Game Guests')
+        // The Roster tab's Create Player row: the player sheet for a team the
+        // scorer manages, the placeholder count otherwise.
+        await click('Create Player')
         if (managesTeam) await click('Create Placeholder Player')
       }
       await open()
@@ -263,8 +265,9 @@ describe('placeholder count sheet and platform adapters', function () {
         }}
       />
     )
-    expect(node('Create Player')).equals(null)
-    await click('Create Game Guests')
+    // Create Player offers placeholders only, on a team the scorer cannot
+    // manage.
+    await click('Create Player')
     expect(node('First Name')).equals(null)
     await act(async () => {
       const cancels = document.querySelectorAll<HTMLElement>(
@@ -273,7 +276,7 @@ describe('placeholder count sheet and platform adapters', function () {
       cancels[cancels.length - 1].click()
     })
     expect(node('Number of placeholder players')).equals(null)
-    await click('Create Game Guests')
+    await click('Create Player')
     await click('Player count 2')
     await click('Create')
     await click('Save Rosters')

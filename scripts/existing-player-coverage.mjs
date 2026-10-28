@@ -37,7 +37,14 @@ const appSuites = [
   'src/app/components/StatisticsTable.test.tsx',
   'src/app/screens/expandedStats.test.tsx',
   'src/app/screens/SeasonScreen.test.tsx',
-  'src/app/App.teamRoutes.test.tsx'
+  'src/app/App.teamRoutes.test.tsx',
+  'src/app/scoring/EditRosterList.test.tsx',
+  'src/app/scoring/rosterFooter.test.tsx',
+  'src/app/scoring/placeholderSheets.test.tsx',
+  'src/app/scoring/RosterEditor.coach.test.tsx',
+  'src/app/scoring/RosterSelector.test.tsx',
+  'src/app/scoring/rosterLive.test.tsx',
+  'src/app/components/AddPersonGlyph.test.tsx'
 ]
 
 /**

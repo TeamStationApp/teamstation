@@ -306,10 +306,12 @@ export function RosterEditor({
     if (defaultSide != null) setSide(defaultSide)
   }, [defaultSide, rosterLoading])
   const modes = rosterModes(audience)
+  // The roster first: who is on the team and how to add somebody, then the
+  // lineup. A draft reopened on another tab keeps it.
   const [mode, setMode] = useState<RosterMode>(
     initialDraft != null && modes.includes(initialDraft.mode)
       ? initialDraft.mode
-      : 'lineup'
+      : 'editRoster'
   )
   const boxScore = mode === 'boxScore'
   const [scrollOffsets, setScrollOffsets] = useState(
@@ -452,9 +454,6 @@ export function RosterEditor({
   const canEditLocal = rosterLoading !== true && state.readOnly !== true
   const canCreateRosterPlayer =
     canEditTeams == null || canEditTeams[draft.gameData.teams[side].id]
-  const creationLabel = canCreateRosterPlayer
-    ? 'Create Player'
-    : 'Create Game Guests'
   const addPlaceholders = async (count: number): Promise<void> => {
     if (onCreateGuest == null) throw new Error('Unable to create a guest')
     const next = copyState(draft)
@@ -721,6 +720,17 @@ export function RosterEditor({
               : undefined
           }
           onRetry={onRetryRoster}
+          adding={
+            state.readOnly === true ||
+            rosterLoading === true ||
+            rosterBusy ||
+            savingRoster
+              ? 'disabled'
+              : 'enabled'
+          }
+          onCreatePlayer={() => {
+            setAdding(true)
+          }}
           {...(coach
             ? {}
             : {
@@ -1030,33 +1040,9 @@ export function RosterEditor({
           testID="Roster footer bar"
           style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
         >
-          <View style={{ flex: 1, alignItems: 'flex-end' }}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={creationLabel}
-              hitSlop={{ top: 6, bottom: 6 }}
-              onPress={() => {
-                setAdding(true)
-              }}
-              style={{
-                minHeight: sizes.save,
-                justifyContent: 'center',
-                paddingHorizontal: 0
-              }}
-            >
-              {/* The sheet's green text action, as Create Placeholder Player. */}
-              <Text
-                numberOfLines={1}
-                style={{
-                  color: theme.successColor,
-                  fontFamily: theme.semiBoldTextFont,
-                  fontSize: 16
-                }}
-              >
-                {creationLabel}
-              </Text>
-            </Pressable>
-          </View>
+          {/* Adding a player is a row at the end of the Roster tab; this
+              half keeps the microphone where it was. */}
+          <View style={{ flex: 1 }} />
           {shown != null ? (
             <View
               testID="Roster mic"

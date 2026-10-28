@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { scoringSession } from '../../test/scoringSession'
-import { getTheme, ThemeProvider } from '../theme/ThemeContext'
+import { ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { lineupQrFixture4 } from './lineupQr.fixtures'
 import { encodeLineupQr } from './lineupQrCodec'
@@ -102,7 +102,8 @@ describe('roster screen bottom bar and slider', function () {
     // The visible words are the accessible names.
     for (const label of ['Roster', 'Lineup', 'Defense'])
       expect(node(label)!.textContent).equals(label)
-    expect(node('Lineup')!.getAttribute('aria-selected')).equals('true')
+    // The roster first: who is on the team, and how to add somebody.
+    expect(node('Roster')!.getAttribute('aria-selected')).equals('true')
     await act(async () => {
       root!.unmount()
     })
@@ -119,17 +120,34 @@ describe('roster screen bottom bar and slider', function () {
     expect(tabs()).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
   })
 
-  it('draws Create Player as green text with no outline, labelled Create Player, opening the player sheet', async function () {
+  it('ends the roster with Create Player and Add Existing Player rows, and Create Player opens the player sheet', async function () {
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     const add = node('Create Player')!
     expect(add.getAttribute('role')).equals('button')
-    expect(add.textContent).equals('Create Player')
-    expect(add.style.borderWidth).equals('')
-    expect(add.style.backgroundColor).equals('')
-    const words = add.querySelector<HTMLElement>('div[dir], div')!
-    const theme = getTheme()
-    expect(words.style.color).equals(rgb(theme.successColor))
-    expect(words.style.fontFamily).includes(theme.semiBoldTextFont)
+    expect(add.textContent).includes('Create Player').and.includes('›')
+    // Create Player wears the head and shoulders with a plus, Add Existing
+    // Player the magnifying glass, each with only a chevron after it.
+    expect(add.querySelector('[data-testid="addPersonGlyph"]')).not.equals(null)
+    const existing = node('Add Existing Player')!
+    expect(existing.textContent).equals('searchAdd Existing Player›')
+    expect(existing.querySelector('[data-testid="addPersonGlyph"]')).equals(
+      null
+    )
+    // Nothing opens it yet without a way to search.
+    expect(existing.getAttribute('aria-disabled')).equals('true')
+    // The two rows end the list, after the last player.
+    const list = testId('Edit roster players')!
+    const cards = [...list.querySelectorAll('[role="button"]')].map(
+      card => card.getAttribute('aria-label') ?? ''
+    )
+    expect(cards.slice(-2)).deep.equals([
+      'Create Player',
+      'Add Existing Player'
+    ])
+    // The footer no longer carries a text action.
+    expect(testId('Roster footer bar')!.textContent).not.includes(
+      'Create Player'
+    )
     const field = (): Element | null =>
       document.querySelector('[aria-label="First Name"]')
     expect(field()).equals(null)
@@ -147,7 +165,7 @@ describe('roster screen bottom bar and slider', function () {
   it('hides the microphone when the server does not dictate', async function () {
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     expect(testId('Roster mic')).equals(null)
-    // Create Player and Save Rosters each keep half of the bar.
+    // An empty half, where the microphone sits beside it, and Save Rosters.
     const bar = testId('Roster footer bar')!
     expect(bar.children).length(2)
   })
@@ -385,7 +403,7 @@ describe('roster screen Share Lineup', function () {
     expect(glyph.getAttribute('width')).equals('54')
     // Share Lineup has left the footer; Cancel is alone in the middle again.
     const footer = testId('Roster footer')!
-    expect(footer.textContent).equals('Create PlayerSave RostersCancel')
+    expect(footer.textContent).equals('Save RostersCancel')
     expect(testId('Roster footer actions')).equals(null)
   })
 
