@@ -5212,6 +5212,41 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
+  it('waits for the QA app to be back in front after the Settings app', async () => {
+    const actual = ui([], 'ios')
+    const calls: string[] = []
+    let reads = 0
+    Object.assign(actual, { fixture: { appId: 'app.teamstation.app.chatqa' } })
+    actual.device.launchApp = async (args: { appId?: string }) => {
+      calls.push('launch:' + String(args.appId))
+      return {}
+    }
+    // The switch animates through the app switcher: Settings shows first,
+    // then a lookup times out, then Android-style Home with its tab bar.
+    const looked: string[] = []
+    actual.visible = async (selector: { id?: string; text?: string }) => {
+      looked.push(selector.id ?? 'text:' + String(selector.text))
+      if (selector.id != null) {
+        reads += 1
+        if (reads === 2) throw Error('WDA find: context deadline exceeded')
+        return false
+      }
+      return reads >= 3
+    }
+    await actual.returnFromSettings()
+    expect(calls).deep.equals(['launch:app.teamstation.app.chatqa'])
+    expect(reads).equals(3)
+    expect(looked).deep.equals([
+      'chat-.*',
+      'text:Chat',
+      'chat-.*',
+      'chat-.*',
+      'text:Chat'
+    ])
+    expect(actual.steps.at(-1)).deep.includes({
+      name: 'QA app back in front after Settings'
+    })
+  })
   it('waits out an Android system window that breaks the hierarchy read, and only that', async () => {
     const actual = ui([], 'android')
     let reads = 0
@@ -5260,6 +5295,9 @@ describe('chat native adapter compatibility', function () {
     actual.device.stopRecording = async () => {
       calls.push('stop')
     }
+    actual.androidPullRecording = async (remote: string, local: string) => {
+      calls.push(['pull', remote, local])
+    }
     await actual.clipboardSentinel('sentinel')
     await actual.pasteClipboard()
     await actual.deleteBackward()
@@ -5273,9 +5311,11 @@ describe('chat native adapter compatibility', function () {
       ['tap', { id: 'chat-composer' }],
       ['androidKey', 279],
       ['key', { key: 'BACKSPACE' }],
-      ['start', { path: 'movie.mp4' }],
+      // The phone records to its own storage, which is pulled afterwards.
+      ['start', { path: '/sdcard/chat2-movie.mp4' }],
       'work',
-      'stop'
+      'stop',
+      ['pull', '/sdcard/chat2-movie.mp4', 'movie.mp4']
     ])
   })
   it('uses exact positive deep text metadata without unsupported copy operations', async () => {

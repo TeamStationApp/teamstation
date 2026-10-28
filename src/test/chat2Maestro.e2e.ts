@@ -2767,6 +2767,45 @@ export class Chat2UI {
     }
   }
 
+  /**
+   * Pull a finished phone recording to the host and remove it from the phone.
+   * screenrecord writes the movie's index as it exits, so it must have exited.
+   */
+  async androidPullRecording(remote: string, local: string): Promise<void> {
+    const adb = process.env.CHAT2_ADB ?? 'adb'
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const running = spawnSync(
+        adb,
+        ['-s', this.deviceId, 'shell', 'pgrep', 'screenrecord'],
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      if ((running.stdout ?? '').trim() === '') break
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    const pulled = spawnSync(
+      adb,
+      ['-s', this.deviceId, 'pull', remote, local],
+      {
+        encoding: 'utf8',
+        timeout: 60000
+      }
+    )
+    assert.equal(
+      pulled.status,
+      0,
+      'Android recording pull required: ' + (pulled.stderr ?? '').slice(-200)
+    )
+    spawnSync(adb, ['-s', this.deviceId, 'shell', 'rm', '-f', remote], {
+      timeout: 10000
+    })
+    this.steps.push({
+      name: 'Android recording pulled from the phone',
+      outcome: 'passed',
+      remote,
+      path: local
+    })
+  }
+
   /** One Android key event through adb, for keys the driver has no name for. */
   async androidKey(code: number): Promise<void> {
     assert(this.surface === 'android', 'Android key event requires Android')
@@ -3183,6 +3222,20 @@ export class Chat2UI {
       }
     }
   ): Promise<void> {
+    if (this.surface === 'android') {
+      // maestro-d's Android startRecording runs screenrecord with its path on
+      // the phone and never pulls the movie back, so a host path records
+      // nothing: record on the phone, then pull it.
+      const remote = '/sdcard/chat2-' + basename(path)
+      await this.device.startRecording({ path: remote })
+      try {
+        await work()
+      } finally {
+        await this.device.stopRecording()
+      }
+      await this.androidPullRecording(remote, path)
+      return
+    }
     if (this.surface !== 'ios') {
       await this.device.startRecording({ path })
       try {
@@ -3609,6 +3662,36 @@ export class Chat2UI {
   }
 
   /** OS Settings UI is an explicit observed private recipe, driven only by Maestro. */
+  /**
+   * Back from the OS Settings app to the QA app. A physical iPhone animates the
+   * switch through the app switcher, and a read in the meantime sees Settings
+   * (or times out); Android's launch restarts the app on its Home tab. Either
+   * way the app's own screen must be up first: a chat element, or the tab
+   * bar's Chat item that every main screen shows.
+   */
+  async returnFromSettings(): Promise<void> {
+    await this.device.launchApp({ appId: this.fixture.appId })
+    await until(
+      async () => {
+        // Element lookups, not whole-tree reads: an iPhone's tree of a long
+        // conversation can outlast its read. A lookup during the switch can
+        // time out; the next one decides.
+        try {
+          if (await this.visible({ id: 'chat-.*' }, 2000)) return true
+          return (await this.visible({ text: 'Chat' }, 1000)) ? true : undefined
+        } catch {
+          return undefined
+        }
+      },
+      'QA app back in front after Settings',
+      60000
+    )
+    this.steps.push({
+      name: 'QA app back in front after Settings',
+      outcome: 'passed'
+    })
+  }
+
   private async settingsActions(
     actions: NonNullable<Chat2Fixture['variants']>[string]['set']
   ): Promise<void> {
@@ -3767,7 +3850,7 @@ export class Chat2UI {
             await this.device.setDarkMode({ enabled: name === 'dark' })
           await this.settingsActions(recipe.set)
           await this.settingsVerify(recipe.verify)
-          await this.device.launchApp({ appId: this.fixture.appId })
+          await this.returnFromSettings()
           row.environment = {
             method:
               this.surface === 'ios' && this.physical
@@ -3793,7 +3876,7 @@ export class Chat2UI {
             method: 'Observed OS Settings via Maestro',
             selectors: actual.verify
           }
-          await this.device.launchApp({ appId: this.fixture.appId })
+          await this.returnFromSettings()
         }
       } else {
         const features = [
@@ -3889,7 +3972,7 @@ export class Chat2UI {
         if (recipe?.applicability === 'applicable') {
           await this.settingsActions(recipe.restore)
           await this.settingsVerify(recipe.restoreVerify)
-          await this.device.launchApp({ appId: this.fixture.appId })
+          await this.returnFromSettings()
         }
       } else {
         if (browserZoomAttempted) await this.device.pressKey({ key: 'Cmd+0' })
