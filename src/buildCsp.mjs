@@ -7,8 +7,8 @@ import { createHash } from 'node:crypto'
  * The page may run only its own script, and compile WebAssembly
  * (`'wasm-unsafe-eval'`, which allows that and no `eval`) for chat's crypto
  * core, which it fetches from itself; load styles from itself and Google
- * Fonts, fonts from Google Fonts, pictures and video from itself, `blob:`
- * and `data:` URLs and the media origins the deployment names, and talk to
+ * Fonts, fonts from itself (its bundled text and icon faces) and Google
+ * Fonts, pictures and video from itself, `blob:` and `data:` URLs and the media origins the deployment names, and talk to
  * itself, its API, the API's socket and those media origins. Workers come
  * from itself or `blob:` (hls.js builds its transmuxer from a Blob). No
  * plugins and no `<base>`. Framing is refused by the reverse proxy's
@@ -54,7 +54,7 @@ export function cspFor(origins) {
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
     `style-src ${list("'self'", "'unsafe-inline'", 'https://fonts.googleapis.com')}`,
-    'font-src https://fonts.gstatic.com',
+    "font-src 'self' https://fonts.gstatic.com",
     `img-src ${list("'self'", 'data:', 'blob:', media)}`,
     `media-src ${list("'self'", 'blob:', media)}`,
     `connect-src ${list("'self'", origins.api, origins.socket, media)}`,

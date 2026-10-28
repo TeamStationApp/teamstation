@@ -81,7 +81,7 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     expect(policy).equals(
       "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; " +
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-        'font-src https://fonts.gstatic.com; ' +
+        "font-src 'self' https://fonts.gstatic.com; " +
         "img-src 'self' data: blob: http://127.0.0.1:9120 http://127.0.0.1:9197; " +
         "media-src 'self' blob: http://127.0.0.1:9120 http://127.0.0.1:9197; " +
         "connect-src 'self' http://127.0.0.1:9120 ws://127.0.0.1:9120 http://127.0.0.1:9197; " +
@@ -165,7 +165,10 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         'https://*.mzstatic.com'
       ])
       expect(policy['style-src']).includes('https://fonts.googleapis.com')
-      expect(policy['font-src']).deep.equals(['https://fonts.gstatic.com'])
+      expect(policy['font-src']).deep.equals([
+        "'self'",
+        'https://fonts.gstatic.com'
+      ])
       expect(policy['worker-src']).deep.equals(["'self'", 'blob:'])
       expect(policy['media-src']).includes('blob:')
       expect(policy['img-src']).includes(
