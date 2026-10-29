@@ -63,7 +63,7 @@ export function newStreamKey(sessionSecret: string): NewStreamKey {
 }
 
 /**
- * The publish window, which has no clock at either end.
+ * The publish window opens immediately and records explicit closes.
  *
  * It used to open two hours before the first pitch and shut six hours after
  * it, and both bounds got in the way of the only thing anybody does first:
@@ -73,9 +73,10 @@ export function newStreamKey(sessionSecret: string): NewStreamKey {
  * waiting for a fixture. Both were answered with a refusal that reads like a
  * broken server.
  *
- * So a key is open from the moment it exists and stops when **somebody stops
- * it**: End stream, a new key, or removing the camera. `closesAt` is null
- * until one of those happens, and then it records which moment it was.
+ * A key is open from the moment it exists. End stream, a new key, or removing
+ * the camera records an explicit close in `closesAt`. Independently, the
+ * controller ends a quiet stream once both its publisher and the scheduled
+ * game end have been gone for ten minutes.
  */
 export function streamWindow(
   _live: LiveSettings,

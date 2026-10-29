@@ -30,6 +30,7 @@ import {
   replaceAnchorsFromRecording,
   toRecording
 } from './finishVideo'
+import { quietStreamCanEnd } from './quietStream'
 import { openSecret } from './secrets'
 import {
   clearLive,
@@ -69,16 +70,6 @@ const SYNC_INTERVAL_MS = 1000
 export const REPLACED_BY_UPLOAD =
   'the recording uploaded from the phone replaced it'
 /**
- * How long a stream that stopped arriving is kept open for.
- *
- * An encoder at a ball field drops out for tens of seconds at a time and comes
- * back, and the same key must still work when it does. Ten minutes of nothing
- * is not that: it is a game that ended, a phone that died, or a van that drove
- * away, and the recording should be closed rather than left saying `live` on
- * everybody's home screen until the window runs out hours later.
- */
-const SILENCE_LIMIT_MS = 100 * 365 * 24 * 60 * 60 * 1000
-/**
  * How long a publisher may be away before its viewers are told the stream
  * has finished.
  *
@@ -93,8 +84,8 @@ const SILENCE_LIMIT_MS = 100 * 365 * 24 * 60 * 60 * 1000
  * are not left waiting on a stream that has stopped. It is not the end of the
  * stream: the key still works, a publisher coming back reopens the playlist
  * and carries on in it, and the web player, which knows the video is still
- * live, picks it up again. The stream itself finishes as it always has, when
- * somebody ends it.
+ * live, picks it up again. The stream itself finishes when somebody ends it,
+ * or after ten quiet minutes once the scheduled game end is ten minutes past.
  */
 export const RECONNECT_GRACE_MS = 8 * 60 * 1000
 /**
@@ -155,6 +146,11 @@ let sweeping: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
+/** Publisher events newer than a sync's database snapshot. */
+const publisherActivity = new Map<string, Date>()
+/** In-flight key lookups must not restore a key removed while they awaited. */
+let finalizationRevision = 0
+const finalizingStreams = new Map<string, number>()
 /**
  * Live stream id → the absence its playlist was closed for, as the
  * `last_published_at` it was measured from, so one absence closes it once.
@@ -436,6 +432,7 @@ export function stopLiveController(): void {
   stopIngest()
   tracked.clear()
   lastStatusWrite.clear()
+  publisherActivity.clear()
   anchorCursors.clear()
   closedAfterGrace.clear()
 }
@@ -566,6 +563,7 @@ export async function beganPublishing(
 ): Promise<void> {
   const { db } = current
   const now = new Date()
+  publisherActivity.set(liveStreamId, now)
   const row = await db
     .selectFrom('live_streams')
     .select([
@@ -639,6 +637,7 @@ async function stoppedPublishing(
 ): Promise<void> {
   const { db, mediaRoot } = current
   const now = new Date()
+  publisherActivity.set(liveStreamId, now)
   const row = await db
     .selectFrom('live_streams')
     .select(['video_id as videoId', 'game_id as gameId'])
@@ -708,6 +707,7 @@ export async function resolveKey(
   if (current == null) return undefined
   const { db, mediaRoot } = current
   const now = new Date()
+  const revision = finalizationRevision
 
   const row = await db
     .selectFrom('live_streams')
@@ -746,9 +746,8 @@ export async function resolveKey(
   //
   // Only the closing end refuses now. A key is open from the moment it is
   // issued, so it can be tried before the day.
-  // Only when somebody ended it. There is no clock: a key works before the
-  // game, during it, and after it, which is what makes the whole path
-  // testable without waiting for a fixture.
+  // A key works before, during and after the game until somebody ends it
+  // or sync finalizes it after both the quiet and scheduled-end clocks.
   if (row.closesAt != null && now >= new Date(row.closesAt)) {
     return 'This stream was ended. Ask for a new key.'
   }
@@ -768,6 +767,12 @@ export async function resolveKey(
 
   const hlsDir = liveVideoDir(mediaRoot, row.videoId)
   await mkdir(hlsDir, { recursive: true })
+  if (finalizingStreams.has(row.id))
+    return 'This game’s stream has already finished.'
+  // Any finish during the lookup invalidates its snapshot. Retry against the
+  // database once that finish has committed; unrelated finishes are harmless.
+  // No await remains between this check and handing back the specification.
+  if (revision !== finalizationRevision) return await resolveKey(key, current)
   const known = tracked.get(row.id)
   if (known != null && known.key !== key)
     clearLive(known.key, 'the key was replaced')
@@ -802,6 +807,7 @@ export async function sync(
   const rows = await db
     .selectFrom('live_streams')
     .leftJoin('videos', 'videos.id', 'live_streams.video_id')
+    .leftJoin('games', 'games.id', 'live_streams.game_id')
     .select([
       'live_streams.id as id',
       'live_streams.user_id as userId',
@@ -815,6 +821,7 @@ export async function sync(
       'live_streams.last_published_at as lastPublishedAt',
       'live_streams.last_error as lastError',
       'live_streams.local_recording as localRecording',
+      'games.end_at as gameEndAt',
       'videos.start_at as videoStartAt'
     ])
     .where(eb =>
@@ -884,13 +891,29 @@ export async function sync(
         finish(row.id, 'the stream was ended')
         continue
       }
-      // Nothing has arrived for a long time, and something did once. The game is
-      // over, whether or not anybody pressed anything.
-      if (row.state === 'idle' && row.lastPublishedAt != null) {
-        const silentFor =
-          now.getTime() - new Date(row.lastPublishedAt).getTime()
-        if (silentFor > SILENCE_LIMIT_MS) {
-          finish(row.id, 'the stream stopped arriving')
+      // A reconnect can start AND stop while the snapshot's permission or
+      // disk checks await. Completed events reset the quiet clock in memory;
+      // queued events and active ingest veto expiry before their writes land.
+      const activity = publisherActivity.get(row.id)
+      const quietRow =
+        activity == null
+          ? row
+          : {
+              ...row,
+              lastPublishedAt: new Date(
+                Math.max(
+                  activity.getTime(),
+                  millisOf(row.lastPublishedAt ?? row.opensAt) ?? 0
+                )
+              )
+            }
+      if (quietStreamCanEnd(quietRow, now)) {
+        const key = tracked.get(row.id)?.key
+        if (
+          key == null ||
+          (!work.has(key) && statusFor(key)?.ingress.publishing !== true)
+        ) {
+          finish(row.id, 'the stream was quiet after the scheduled game end')
           continue
         }
       }
@@ -1125,8 +1148,30 @@ export async function finishStream(
   liveStreamId: string,
   reason: string
 ): Promise<void> {
+  finalizationRevision++
+  finalizingStreams.set(
+    liveStreamId,
+    (finalizingStreams.get(liveStreamId) ?? 0) + 1
+  )
+  try {
+    await finishStreamRecording(current, liveStreamId, reason)
+  } finally {
+    // A lookup can begin after the start revision but read before the commit.
+    finalizationRevision++
+    const remaining = finalizingStreams.get(liveStreamId)! - 1
+    if (remaining === 0) finalizingStreams.delete(liveStreamId)
+    else finalizingStreams.set(liveStreamId, remaining)
+  }
+}
+
+async function finishStreamRecording(
+  current: LiveControllerOptions,
+  liveStreamId: string,
+  reason: string
+): Promise<void> {
   const { db, mediaRoot, ffmpegPath } = current
   const entry = tracked.get(liveStreamId)
+  publisherActivity.delete(liveStreamId)
   closedAfterGrace.delete(liveStreamId)
   if (entry != null) {
     tracked.delete(liveStreamId)
