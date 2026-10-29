@@ -13,6 +13,7 @@ import { posterSecond } from '../media/posters'
 import type { SpaceSettings } from '../media/spacesHls'
 import { spaceConfigured } from '../media/spacesHls'
 import {
+  deleteVideoFromSpace,
   uploadVideoDirectory,
   verifyVideoDirectory
 } from '../media/spacesVideo'
@@ -30,12 +31,14 @@ import {
   replaceAnchorsFromRecording,
   toRecording
 } from './finishVideo'
+import { OriginPublisher } from './originPublisher'
 import { quietStreamCanEnd } from './quietStream'
 import { openSecret } from './secrets'
 import {
   clearLive,
   clearLiveSettled,
   configureIngest,
+  finalSegments,
   ingestBound,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
@@ -160,6 +163,102 @@ const closedAfterGrace = new Map<string, number>()
 const work = new Map<string, Promise<void>>()
 /** Video id → how far its live wall-clock scan has got. */
 const anchorCursors = new Map<string, ScanCursor>()
+interface PublishingOrigin {
+  publisher: OriginPublisher
+  current: LiveControllerOptions
+  queued: boolean
+  refreshFinal: () => void
+}
+const origins = new Map<string, PublishingOrigin>()
+let originGeneration = 0
+
+function startOrigin(
+  current: LiveControllerOptions,
+  videoId: string,
+  liveStreamId: string
+): PublishingOrigin | undefined {
+  const { space, db } = current
+  if (space == null || !spaceConfigured(space)) return undefined
+  const held = origins.get(videoId)
+  if (held != null) return held
+  let final: ReadonlySet<string> | undefined
+  const publisher = new OriginPublisher({
+    space,
+    videoId,
+    dir: liveVideoDir(current.mediaRoot, videoId),
+    ffmpegPath: current.ffmpegPath,
+    isFinal: name => final?.has(name) ?? true,
+    rowExists: async () =>
+      (await db
+        .selectFrom('videos')
+        .select('id')
+        .where('id', '=', videoId)
+        .executeTakeFirst()) != null,
+    onFirstSegment: async probe => {
+      await db
+        .updateTable('videos')
+        .set({
+          storage: 'spaces',
+          width: probe.width ?? null,
+          height: probe.height ?? null,
+          codecs: probe.codecTag,
+          updated_at: new Date()
+        })
+        .where('id', '=', videoId)
+        .where('kind', '=', 'live')
+        .where('spaces_verified_at', 'is', null)
+        .execute()
+    }
+  })
+  const origin = {
+    publisher,
+    current,
+    queued: false,
+    refreshFinal: () => {
+      final = finalSegments(liveStreamId)
+    }
+  }
+  origins.set(videoId, origin)
+  return origin
+}
+
+function stopOrigin(videoId: string): void {
+  origins.get(videoId)?.publisher.stop()
+  origins.delete(videoId)
+}
+
+function queueOrigin(videoId: string, origin: PublishingOrigin): void {
+  if (origin.queued) return
+  origin.queued = true
+  const generation = originGeneration
+  queue(`publish:${videoId}`, async () => {
+    try {
+      if (generation !== originGeneration) return
+      const { current } = origin
+      const row = await current.db
+        .selectFrom('videos')
+        .select('id')
+        .where('id', '=', videoId)
+        .executeTakeFirst()
+      if (row == null) {
+        await removeDeletedOrigin(current, videoId)
+        return
+      }
+      if (origin.publisher.closing) return
+      origin.refreshFinal()
+      await origin.publisher.flush()
+    } finally {
+      origin.queued = false
+    }
+  })
+}
+
+/** Settles one video's origin without holding the normal controller tick. */
+export async function drainPublishForTest(videoId: string): Promise<void> {
+  const origin = origins.get(videoId)
+  if (origin != null) queueOrigin(videoId, origin)
+  await work.get(`publish:${videoId}`)
+}
 
 export function liveVideoDir(mediaRoot: string, videoId: string): string {
   return join(mediaRoot, 'work', 'videos', videoId)
@@ -182,6 +281,7 @@ export async function startLiveController(
   bindTimeoutMs: number = BIND_TIMEOUT_MS
 ): Promise<boolean> {
   options = next
+  const generation = originGeneration
   const log =
     next.log ??
     ((message: string) => {
@@ -198,7 +298,7 @@ export async function startLiveController(
     resolve: async key => await resolveKey(key),
     onEvent: event => {
       queue(event.key, async () => {
-        await handle(event)
+        if (generation === originGeneration) await handle(event)
       })
     }
   })
@@ -233,6 +333,24 @@ export async function startLiveController(
       log(`live: ${String(error)}`)
     })
 
+  const restoring = await next.db
+    .selectFrom('live_streams')
+    .innerJoin('videos', 'videos.id', 'live_streams.video_id')
+    .select(['live_streams.id', 'videos.id as videoId'])
+    .where('live_streams.ended_at', 'is', null)
+    .where('videos.spaces_verified_at', 'is', null)
+    .execute()
+  for (const row of restoring) {
+    if (
+      (await hasMedia(next.mediaRoot, row.videoId)) &&
+      generation === originGeneration
+    ) {
+      const origin = startOrigin(next, row.videoId, row.id)
+      if (origin != null) queueOrigin(row.videoId, origin)
+    }
+  }
+
+  if (generation !== originGeneration) return false
   timer = setInterval(() => {
     syncOnce(log).catch(() => {})
   }, SYNC_INTERVAL_MS)
@@ -421,6 +539,9 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
 }
 
 export function stopLiveController(): void {
+  originGeneration++
+  for (const origin of origins.values()) origin.publisher.stop()
+  origins.clear()
   if (timer != null) {
     clearInterval(timer)
     timer = undefined
@@ -561,6 +682,7 @@ export async function beganPublishing(
   current: LiveControllerOptions,
   liveStreamId: string
 ): Promise<void> {
+  const generation = originGeneration
   const { db } = current
   const now = new Date()
   publisherActivity.set(liveStreamId, now)
@@ -583,7 +705,7 @@ export async function beganPublishing(
 
   // The stream and its video go live together, and home and the game's
   // event hear of it from this transaction's last statements.
-  await atomic(db, async trx => {
+  const began = await atomic(db, async trx => {
     const updated = await trx
       .updateTable('live_streams')
       .set({
@@ -619,7 +741,16 @@ export async function beganPublishing(
       }))
       .where('id', '=', row.videoId)
       .execute()
+    return true
   })
+  if (
+    began === true &&
+    row.videoId != null &&
+    generation === originGeneration
+  ) {
+    const origin = startOrigin(current, row.videoId, liveStreamId)
+    if (origin != null) queueOrigin(row.videoId, origin)
+  }
 }
 
 /**
@@ -801,6 +932,7 @@ export async function sync(
   current: LiveControllerOptions | undefined = options
 ): Promise<void> {
   if (current == null) return
+  const generation = originGeneration
   const { db, mediaRoot, sessionSecret } = current
   const now = new Date()
 
@@ -984,6 +1116,9 @@ export async function sync(
   // finish's, as it was when they ran in turn.
   const finished = await Promise.all(finishing)
   failure ??= finished.find(one => one != null)
+  if (generation === originGeneration) {
+    for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
+  }
   if (failure != null) throw failure.error
 }
 
@@ -1306,6 +1441,23 @@ async function finishStreamRecording(
   queue(`finish:${videoId}`, async () => {
     await putAway(current, videoId)
   })
+}
+
+async function removeDeletedOrigin(
+  current: LiveControllerOptions,
+  videoId: string
+): Promise<void> {
+  // Stop writing now, but keep the origin discoverable by sync until both
+  // cleanup operations succeed. The deleted database row cannot drive retries.
+  origins.get(videoId)?.publisher.stop()
+  await rm(liveVideoDir(current.mediaRoot, videoId), {
+    recursive: true,
+    force: true
+  })
+  if (current.space != null && spaceConfigured(current.space))
+    await deleteVideoFromSpace({ space: current.space, videoId })
+  stopOrigin(videoId)
+  anchorCursors.delete(videoId)
 }
 
 /**
