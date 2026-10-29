@@ -60,12 +60,16 @@ export async function scoreboardFromGame(
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) return undefined
-      const stored = await resolveScoringGame(trx, {
-        plays: (await readPlays(trx, gameId)).map(
-          row => row.gumbo as GumboPlay
-        ),
-        currentPlay: game.currentPlay as CurrentPlay | null
-      })
+      const stored = await resolveScoringGame(
+        trx,
+        {
+          plays: (await readPlays(trx, gameId)).map(
+            row => row.gumbo as GumboPlay
+          ),
+          currentPlay: game.currentPlay as CurrentPlay | null
+        },
+        { gameId }
+      )
       if (stored.plays.length === 0 && stored.currentPlay == null)
         return undefined
       const context = await contextOf(trx, gameId, game, stored)

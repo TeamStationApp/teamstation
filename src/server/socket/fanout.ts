@@ -253,10 +253,17 @@ export class GameFanout {
       // them; the digest stays of the stored rows.
       const named =
         change.kind === 'plays'
-          ? await resolveScoringGame(trx, {
-              plays: plays.map(row => row.gumbo as GumboPlay),
-              currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
-            })
+          ? await resolveScoringGame(
+              trx,
+              {
+                plays: plays.map(row => row.gumbo as GumboPlay),
+                currentPlay: atBatOf(
+                  game,
+                  plays.length > 0
+                ) as CurrentPlay | null
+              },
+              { gameId }
+            )
           : undefined
       const head = {
         type: 'change' as const,

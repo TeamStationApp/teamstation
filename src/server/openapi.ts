@@ -1938,7 +1938,9 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'A player in a lineup: his scoring id, or null for a placeholder ' +
             'named at the field, the short name the scoring screen shows ' +
-            '(never a full name), and his jersey.',
+            '(never a full name), and his jersey. The name of a player with ' +
+            'an id is read from his account when the lineup is read, so it ' +
+            'follows a rename; a placeholder keeps the name typed for him.',
           properties: {
             gumboId: { type: ['integer', 'null'] },
             name: { type: 'string' },
@@ -4799,8 +4801,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'back to before its first pitch, the game takes the lineup it ' +
             'begins with next. Substitutions, replace posts and outside ' +
             'posts never change it. The scoring screen starts a new game ' +
-            'from it. Needs somebody who can see the team; 404 for anybody ' +
-            'else.',
+            'from it. The default keeps ids: each player with one is named ' +
+            "by his account's short name among the team's roster as it reads " +
+            'now. Needs somebody who can see the team; 404 for anybody else.',
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {

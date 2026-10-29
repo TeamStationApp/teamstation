@@ -277,7 +277,7 @@ export async function assertMergeScoringSafe(
     const family = new Set(
       [...closing, ...keeping].map(id => resolved.get(id) ?? id)
     )
-    const projected = await resolveScoringGame(db, stored)
+    const projected = await resolveScoringGame(db, stored, { gameId: game.id })
     const affected = new Set(
       scoringIdsIn(projected).filter(id => family.has(id))
     )

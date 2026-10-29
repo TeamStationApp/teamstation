@@ -4,6 +4,7 @@ import {
   asNull,
   asNumber,
   asObject,
+  asOptional,
   asString,
   type Cleaner
 } from 'cleaners'
@@ -227,6 +228,54 @@ export const asDefaultLineup: Cleaner<DefaultLineup> = asObject({
   fromGameId: asEither(asNull, asString),
   setAt: asEither(asNull, asString)
 })
+
+/**
+ * A person as a team's default lineup stores him: a player with an id keeps
+ * no name, which is read from `users` when the default is read; a
+ * placeholder (no id) keeps the name the team typed. A default stored
+ * before names were taken out still carries them, and they are not read.
+ */
+export type StoredLineupPerson = Omit<LineupPerson, 'name'> & { name?: string }
+
+/** A lineup as a team's default stores it. */
+export interface StoredLineup {
+  batters: StoredLineupPerson[]
+  defense: Record<Position, StoredLineupPerson | null>
+}
+
+/** A team's default lineup as `teams.default_lineup` stores it. */
+export interface StoredDefaultLineup {
+  lineup: StoredLineup | null
+  fromGameId: string | null
+  setAt: string | null
+}
+
+const asStoredLineupPerson: Cleaner<StoredLineupPerson> = asObject({
+  gumboId: asEither(asNull, asGumboId),
+  name: asOptional(asString),
+  jersey: asString
+})
+
+/** Checks a team's stored default lineup (`teams.default_lineup`). */
+export const asStoredDefaultLineup: Cleaner<StoredDefaultLineup> = asObject({
+  lineup: asEither(
+    asNull,
+    asObject({
+      batters: asArray(asStoredLineupPerson),
+      defense: asObject(
+        Object.fromEntries(
+          POSITIONS.map(position => [
+            position,
+            asEither(asNull, asStoredLineupPerson)
+          ])
+        ) as Record<Position, Cleaner<StoredLineupPerson | null>>
+      )
+    })
+  ),
+  fromGameId: asEither(asNull, asString),
+  setAt: asEither(asNull, asString)
+})
+
 export const NO_DEFAULT_LINEUP: DefaultLineup = {
   lineup: null,
   fromGameId: null,

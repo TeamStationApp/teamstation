@@ -211,10 +211,14 @@ export async function refoldGame(
   const rows = await readPlays(db, gameId)
   // Refolded and compared named, as a scorer reads the game: a name alone
   // is never a change.
-  const stored: StoredGame = await resolveScoringGame(db, {
-    plays: rows.map(row => row.gumbo as GumboPlay),
-    currentPlay: game.currentPlay as CurrentPlay | null
-  })
+  const stored: StoredGame = await resolveScoringGame(
+    db,
+    {
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    },
+    { gameId }
+  )
   const context = await contextOf(db, gameId, game, stored)
   if (context == null) return { kind: 'unchanged' }
   const problems = replayPlays(stored, context).problems

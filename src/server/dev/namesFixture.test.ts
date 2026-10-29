@@ -220,6 +220,8 @@ describe('names fixture', function () {
       .executeTakeFirstOrThrow()
     const lineup = team.default_lineup as { lineup: { batters: unknown[] } }
     expect(lineup.lineup.batters).has.length(9)
+    // Its players are kept by id, with no names.
+    expect(JSON.stringify(team.default_lineup)).not.includes('"name"')
     const request = await db!
       .selectFrom('group_requests')
       .select(['kind', 'status', 'sender_id'])

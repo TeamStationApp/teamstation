@@ -54,10 +54,16 @@ export async function createGuestPlayer(
       )
     if (game.status === 'final' || game.status === 'cancelled')
       throw conflict('This game cannot accept players')
-    const stored = await resolveScoringGame(trx, {
-      plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
-    })
+    const stored = await resolveScoringGame(
+      trx,
+      {
+        plays: (await readPlays(trx, gameId)).map(
+          row => row.gumbo as GumboPlay
+        ),
+        currentPlay: game.currentPlay as CurrentPlay | null
+      },
+      { gameId }
+    )
     const context = await contextOf(trx, gameId, game, stored)
     if (context != null) {
       const replay = replayPlays(stored, context)
@@ -128,6 +134,8 @@ export async function createGuestPlayer(
 /** A guest's name before and after a correction, for the audit trail. */
 export interface GuestRenamed {
   entry: RosterEntry
+  /** False when the account already had this name, and nothing was written. */
+  changed: boolean
   before: {
     firstName: string | null
     lastName: string | null
@@ -143,7 +151,8 @@ export interface GuestRenamed {
  * lineup of the guest's side (`lineupTeams`: that team's head coach, or a
  * scorekeeper of the game). Anybody else is refused 403; somebody who is no
  * guest of this game, a merged account and a deleted one are 404, as nobody.
- * The answer is the guest's entry as `createGuestPlayer` answers it.
+ * The answer is the guest's entry as `createGuestPlayer` answers it. A name
+ * the account already has writes nothing: no account, no scope change.
  */
 export async function renameGuestPlayer(
   db: Kysely<Database>,
@@ -195,24 +204,30 @@ export async function renameGuestPlayer(
     const displayName = [name.firstName, name.lastName]
       .filter(Boolean)
       .join(' ')
-    await trx
-      .updateTable('users')
-      .set({
-        first_name: name.firstName === '' ? null : name.firstName,
-        last_name: name.lastName === '' ? null : name.lastName,
-        display_name: displayName,
-        updated_at: new Date()
-      })
-      .where('id', '=', userId)
-      .execute()
+    const changed =
+      (guest.firstName ?? '') !== name.firstName ||
+      (guest.lastName ?? '') !== name.lastName ||
+      guest.displayName !== displayName
+    if (changed)
+      await trx
+        .updateTable('users')
+        .set({
+          first_name: name.firstName === '' ? null : name.firstName,
+          last_name: name.lastName === '' ? null : name.lastName,
+          display_name: displayName,
+          updated_at: new Date()
+        })
+        .where('id', '=', userId)
+        .execute()
     const details = await trx
       .selectFrom('game_guest_details')
       .select(['jersey', 'positions'])
       .where('game_id', '=', gameId)
       .where('user_id', '=', userId)
       .executeTakeFirst()
-    noteScopeChange(trx, { gameId })
+    if (changed) noteScopeChange(trx, { gameId })
     return {
+      changed,
       before: {
         firstName: guest.firstName,
         lastName: guest.lastName,

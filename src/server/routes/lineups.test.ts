@@ -51,6 +51,7 @@ import { atBatInProgress } from '../events/atBatInProgress'
 import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
+import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
@@ -75,6 +76,7 @@ describe('the lineup routes (U11)', function () {
   let db: Kysely<Database> | undefined
   let server: ReturnType<express.Express['listen']> | undefined
   let base = ''
+  const written: string[] = []
   const taken = new Set<number>()
   const mint = (): { userId: number; legacyId: string } => {
     const minted = mintUserId(id => taken.has(id))
@@ -384,7 +386,15 @@ describe('the lineup routes (U11)', function () {
     const app = express()
     app.use(jsonBody)
     app.use(withActor(db))
-    app.use('/api/v1', lineupRoutes(db))
+    app.use(withAudit(db))
+    app.use(
+      '/api/v1',
+      lineupRoutes(db, {
+        onGameWritten: gameId => {
+          written.push(gameId)
+        }
+      })
+    )
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -495,6 +505,46 @@ describe('the lineup routes (U11)', function () {
       last_name: 'Ruth',
       display_name: 'George Ruth'
     })
+    // The same name again writes nothing: no account, audit row or notice.
+    const audits = async (): Promise<number> =>
+      (
+        await db!
+          .selectFrom('audit_log')
+          .select('id')
+          .where(
+            'path',
+            '=',
+            `/api/v1/games/${fresh}/guest-players/${body.userId}`
+          )
+          .where('method', '=', 'PUT')
+          .execute()
+      ).length
+    const settled = async (count: number): Promise<void> => {
+      for (let tries = 0; tries < 50 && (await audits()) < count; tries++)
+        await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    await settled(1)
+    expect(await audits()).equals(1)
+    expect(written.filter(id => id === fresh)).has.length(1)
+    const stamp = async (): Promise<unknown> =>
+      (
+        await db!
+          .selectFrom('users')
+          .select('updated_at')
+          .where('id', '=', body.userId)
+          .executeTakeFirstOrThrow()
+      ).updated_at
+    const was = await stamp()
+    const again = await put(ADMIN, body.userId, {
+      firstName: ' George ',
+      lastName: 'Ruth'
+    })
+    expect(again.status).equals(200)
+    expect(await again.json()).deep.include({ shortName: 'George Ruth' })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(await audits()).equals(1)
+    expect(written.filter(id => id === fresh)).has.length(1)
+    expect(await stamp()).deep.equals(was)
   })
 
   it("reads a team's default lineup, or nulls for none", async function () {
@@ -537,6 +587,90 @@ describe('the lineup routes (U11)', function () {
     expect((await get(`/teams/${home}/default-lineup`, null)).status).equals(
       401
     )
+  })
+
+  it('keeps the default it took by ids alone, and answers it named', async function () {
+    // The first pitch of the scored game gave the hosts this default.
+    const row = await db!
+      .selectFrom('teams')
+      .select('default_lineup')
+      .where('id', '=', home)
+      .executeTakeFirstOrThrow()
+    const stored = row.default_lineup as {
+      lineup: {
+        batters: Array<Record<string, unknown>>
+        defense: Record<string, Record<string, unknown> | null>
+      }
+    }
+    expect(
+      stored.lineup.batters.map(person => Object.keys(person).sort())
+    ).deep.equals(Array(9).fill(['gumboId', 'jersey']))
+    expect(JSON.stringify(stored)).not.includes('"name"')
+    const answered = asDefaultLineup(
+      (await get(`/teams/${home}/default-lineup`, MEMBER)).body
+    )
+    expect(answered.lineup?.batters[0]).deep.equals({
+      gumboId: players[9].userId,
+      name: 'H1',
+      jersey: '1'
+    })
+    expect(
+      Object.values(answered.lineup?.defense ?? {}).every(
+        person => person?.name !== ''
+      )
+    ).equals(true)
+  })
+
+  it('answers a placeholder in a default by the name typed for him', async function () {
+    const was = await db!
+      .selectFrom('teams')
+      .select('default_lineup')
+      .where('id', '=', other)
+      .executeTakeFirstOrThrow()
+    const typed = { gumboId: null, name: 'Typed Fielder', jersey: '8' }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: {
+            batters: [typed, { gumboId: players[0].userId, jersey: '1' }],
+            defense: Object.fromEntries(
+              POSITIONS.map(position => [
+                position,
+                position === 'C' ? typed : null
+              ])
+            )
+          },
+          fromGameId: null,
+          setAt: '2026-04-01T18:00:00.000Z'
+        }
+      })
+      .where('id', '=', other)
+      .execute()
+    try {
+      const answered = asDefaultLineup(
+        (await get(`/teams/${other}/default-lineup`, ADMIN)).body
+      )
+      expect(answered.lineup?.batters).deep.equals([
+        typed,
+        { gumboId: players[0].userId, name: 'A1', jersey: '1' }
+      ])
+      expect(answered.lineup?.defense.C).deep.equals(typed)
+      const dj = asDjGame((await get(`/games/${hidden}/dj`, ADMIN)).body)
+      expect(dj.home.source).equals('default')
+      expect(
+        dj.home.batters.map(({ userId, name }) => ({ userId, name }))
+      ).deep.equals([
+        { userId: null, name: 'Typed Fielder' },
+        { userId: userIdOfGumbo(players[0].userId), name: 'A1' }
+      ])
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: was.default_lineup as never })
+        .where('id', '=', other)
+        .execute()
+    }
   })
 
   it("reads both sides' start, changes and current lineup of a game", async function () {
@@ -694,6 +828,52 @@ describe('the lineup routes (U11)', function () {
       // The default is the lineup the visitors began with, before the Guest.
       expect(dj.away.batters[1].name).equals('A2')
       expect(dj.away.batters[0].walkUpSong?.title).equals('Away Song')
+    })
+
+    it('names the default from the accounts, so a rename changes the default and its DJ rows', async function () {
+      const storedOf = async (): Promise<unknown> =>
+        (
+          await db!
+            .selectFrom('teams')
+            .select('default_lineup')
+            .where('id', '=', home)
+            .executeTakeFirstOrThrow()
+        ).default_lineup
+      const stored = await storedOf()
+      const renamed = userIdOfGumbo(players[9].userId)
+      await db!
+        .updateTable('users')
+        .set({
+          first_name: 'Shohei',
+          last_name: 'Ohtani',
+          display_name: 'Shohei Ohtani'
+        })
+        .where('id', '=', renamed)
+        .execute()
+      try {
+        const answered = asDefaultLineup(
+          (await get(`/teams/${home}/default-lineup`, MEMBER)).body
+        )
+        expect(answered.lineup?.batters.map(person => person.name)).deep.equals(
+          ['Shohei O', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8', 'H9']
+        )
+        const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
+        expect(dj.home.source).equals('default')
+        expect(dj.home.batters[0]).deep.include({
+          userId: renamed,
+          name: 'Shohei O'
+        })
+        // Nothing stored changed.
+        expect(await storedOf()).deep.equals(stored)
+      } finally {
+        await db!
+          .updateTable('users')
+          .set({ first_name: null, last_name: null, display_name: 'H1' })
+          .where('id', '=', renamed)
+          .execute()
+      }
+      const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
+      expect(dj.home.batters[0].name).equals('H1')
     })
 
     it('lists the players by jersey, then name, with no default either', async function () {

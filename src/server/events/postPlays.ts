@@ -221,11 +221,21 @@ export async function postGamePlays(
     const prior = live
       ? playsDigest(priorRows, atBatOf(game, priorRows.length > 0))
       : null
+    // The lineups digest the game answers before this post: the one it
+    // keeps, or for a game that keeps none, its stored form's; none when
+    // that stored form does not read, so the post tells a lineups change
+    // and a post built on a base is refused as the read is.
+    const lineupsBefore = live
+      ? await storedLineupsDigest(trx, { id: gameId, ...game }).catch(
+          () => null
+        )
+      : null
     if (
       live &&
       body.lineupsBase !== undefined &&
       body.lineupsBase !==
-        (await storedLineupsDigest(trx, { id: gameId, ...game }))
+        (lineupsBefore ??
+          (await storedLineupsDigest(trx, { id: gameId, ...game })))
     )
       throw conflict(
         'Somebody else changed the lineups since this game was read',
@@ -255,7 +265,7 @@ export async function postGamePlays(
         play => storedRecordOf(play) != null
       )
     ) {
-      const projected = await resolveScoringGame(trx, next)
+      const projected = await resolveScoringGame(trx, next, { gameId })
       await assertStoredScoringRoles(
         trx,
         { id: gameId, ...game },
@@ -264,7 +274,7 @@ export async function postGamePlays(
       )
       const context = (await contextOf(trx, gameId, game, projected))!
       assertAuthoredRosters(
-        await resolveScoringGame(trx, previous),
+        await resolveScoringGame(trx, previous, { gameId }),
         projected,
         context
       )
@@ -466,15 +476,13 @@ export async function postGamePlays(
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
     const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
-    // Told to the game socket when this commits. The lineups only when a
-    // reader of them would see something new: the digest is of what they
-    // show, so a pitch leaves it alone and an undone change moves it.
+    // Told to the game socket when this commits. The lineups only when their
+    // digest moves from the one the game answered before: the digest is of
+    // their stored form, so a pitch leaves it alone and an undone change
+    // moves it.
     await notifyGameChange(trx, { game: gameId, kind: 'plays' })
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
-    if (
-      'lineups_digest' in lineups &&
-      lineups.lineups_digest !== game.lineups_digest
-    )
+    if ('lineups_digest' in lineups && lineups.lineups_digest !== lineupsBefore)
       await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
     // And to the screens of that game: its event, and home and schedule,
     // from the clock this transaction bumps last. A post that makes the
@@ -497,7 +505,7 @@ export async function postGamePlays(
         plays: taggedStored.map(row => row.gumbo as GumboPlay),
         currentPlay: taggedCurrent as CurrentPlay | null
       },
-      { halves: (await options.halves?.(trx, game)) ?? [] }
+      { halves: (await options.halves?.(trx, game)) ?? [], gameId }
     )
     const sides = teamsOfRow(game)
     const answer: PostedPlays = {

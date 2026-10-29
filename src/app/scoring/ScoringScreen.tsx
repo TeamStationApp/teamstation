@@ -756,6 +756,12 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         onNavigationApproved={props.onNavigationApproved}
         rosterRights={returning ? {} : rosterRights}
         guests={guests}
+        lookUpGuests={async () => {
+          const game = await props.client.game(props.gameId)
+          const now = [...game.guestPlayers.away, ...game.guestPlayers.home]
+          setGuests(now)
+          return now
+        }}
         rosterDefaultSide={rosterDefaultSide}
         scorekeeperSide={keeperSide}
         detailsLoading={returning || detailsLoading}
@@ -848,6 +854,11 @@ function ScoringPanel(props: {
   rosterRights: Record<string, boolean>
   /** The game's guests as it opened: whose accounts Save Rosters renames. */
   guests: readonly RosterEntry[]
+  /**
+   * The game's guests as they are now, read again: for a guest another
+   * device added since the game opened, whom Save Rosters renames too.
+   */
+  lookUpGuests: () => Promise<readonly RosterEntry[]>
   rosterDefaultSide?: Side
   /** The one side this scorekeeper keeps score for, when that is exactly one. */
   scorekeeperSide?: Side
@@ -3303,7 +3314,8 @@ function ScoringPanel(props: {
                       props.client,
                       props.gameId,
                       guestRenames(openedOver, draft),
-                      [...props.guests, ...createdGuests.current]
+                      [...props.guests, ...createdGuests.current],
+                      props.lookUpGuests
                     )
                   dispatch({ type: 'ROSTER', draft, nextBatter, runners })
                   closeSheet()

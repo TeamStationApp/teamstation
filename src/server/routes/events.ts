@@ -496,7 +496,7 @@ async function storedGameRead(
       plays: stored.map(row => row.gumbo as GumboPlay),
       currentPlay: current as CurrentPlay | null
     },
-    { halves: await halves(game) }
+    { halves: await halves(game), gameId }
   )
   const teams = teamsOfRow(game)
   const answer: StoredGameAnswer = {

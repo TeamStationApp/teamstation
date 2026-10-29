@@ -6,6 +6,7 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
+import { makeId } from '../../common/ids'
 import { shortNames } from '../../common/names'
 import { cleanAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
@@ -38,7 +39,8 @@ import {
   timelineVersion
 } from '../scoreboard/boardTimeline'
 import { scoreboardFromGame } from '../scoreboard/gameSource'
-import { resolveScoringGame, scoringIdsIn } from './openRow'
+import { gameNames, gameNamesDigest } from '../users/nameBook'
+import { namedScoringGame, resolveScoringGame, scoringIdsIn } from './openRow'
 
 // Full persisted rosters, including a guest whose account later closes into another.
 describe('opening scoring through account merges', function () {
@@ -796,5 +798,83 @@ describe('naming a game whose record does not read', function () {
       actions: [{ type: 'pitch' }, 'odd', { type: 'lineup', setup: 'odd' }]
     })
     expect(named.currentPlay).deep.equals(stored.currentPlay)
+  })
+})
+
+describe('one scope for every surface of a game', function () {
+  this.timeout(60000)
+  const fixture = statsDatabase('onescope')
+  const smith = mintUserId(() => false)
+  const stange = mintUserId(id => id === smith.userId)
+  const gameId = makeId('game')
+  const play = {
+    about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+    result: { eventType: 'single' },
+    matchup: { batter: { id: smith.userId } }
+  } as unknown as GumboPlay
+  before(async () => {
+    for (const [who, first, last] of [
+      [smith, 'Lee', 'Smith'],
+      [stange, 'Lee', 'Stange']
+    ] as const)
+      await insertFixtureUsers(fixture.db, {
+        id: who.userId,
+        legacyId: who.legacyId,
+        display_name: `${first} ${last}`,
+        first_name: first,
+        last_name: last,
+        login_enabled: false
+      })
+    await fixture.db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        start_at: new Date('2026-01-01T00:00:00Z'),
+        home_team_id: 'tem_home',
+        away_team_id: 'tem_away',
+        season_id: 'sea_demo'
+      })
+      .execute()
+    const event = makeId('event')
+    await fixture.db
+      .insertInto('events')
+      .values({ id: event, gameId, gumbo: JSON.stringify(play) })
+      .execute()
+    // A fielder kept on the play's tags whom no stored document names.
+    await fixture.db
+      .insertInto('event_players')
+      .values({
+        id: makeId('eventPlayer'),
+        event_id: event,
+        gumbo_id: stange.userId,
+        team_id: null,
+        role: 'fielder',
+        position: null
+      })
+      .execute()
+  })
+
+  it("breaks a short-name tie with a tagged player the documents do not name the same in the plays and the highlights, under the board's digest", async () => {
+    const stored: StoredGame = { plays: [play], currentPlay: null }
+    const named = await namedScoringGame(fixture.db, stored, { gameId })
+    expect(named.game.plays[0].matchup?.batter).deep.equals({
+      id: smith.userId,
+      fullName: 'Lee Sm'
+    })
+    expect(
+      (await resolveScoringGame(fixture.db, stored, { gameId })).plays[0]
+        .matchup?.batter?.fullName
+    ).equals('Lee Sm')
+    // The highlights' book, read for the game alone.
+    const book = (await gameNames(fixture.db, [gameId])).get(gameId)!
+    expect(book.nameOf(smith.userId)).equals('Lee Sm')
+    expect(book.nameOf(stange.userId)).equals('Lee St')
+    expect(named.names.digest).equals(book.digest)
+    expect(await gameNamesDigest(fixture.db, gameId)).equals(book.digest)
+    // Without the game, only its documents: the tie is not seen.
+    expect(
+      (await resolveScoringGame(fixture.db, stored)).plays[0].matchup?.batter
+        ?.fullName
+    ).equals('Lee S')
   })
 })

@@ -87,7 +87,7 @@ import { createGuestPlayer, renameGuestPlayer } from '../games/guestPlayers'
 import { gameAvailability } from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
 import { cleanBody } from '../jsonBody'
-import { setAudit } from '../middleware/withAudit'
+import { setAudit, skipAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
@@ -215,6 +215,12 @@ export function lineupRoutes(
       const userId = userIdParam(req.params.userId)
       const name = cleanBody(asPlayerSettingsName, req.body)
       const renamed = await renameGuestPlayer(db, actor, gameId, userId, name)
+      // A name the account already has changed nothing to audit or tell.
+      if (!renamed.changed) {
+        skipAudit(res.locals)
+        res.json(renamed.entry)
+        return
+      }
       setAudit(res.locals, {
         entityType: 'user',
         entityId: userId,
@@ -246,7 +252,8 @@ export function lineupRoutes(
         .executeTakeFirst()
       if (team == null) throw notFound()
       res.json(
-        (await resolvedDefaultOf(db, team.default_lineup)) ?? NO_DEFAULT_LINEUP
+        (await resolvedDefaultOf(db, teamId, team.default_lineup)) ??
+          NO_DEFAULT_LINEUP
       )
     })
   )
@@ -534,10 +541,14 @@ async function saveSide(
         .executeTakeFirst()
       if (game == null) throw notFound()
       const rows = await readPlays(trx, gameId)
-      const stored: StoredGame = await resolveScoringGame(trx, {
-        plays: rows.map(row => row.gumbo as GumboPlay),
-        currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
-      })
+      const stored: StoredGame = await resolveScoringGame(
+        trx,
+        {
+          plays: rows.map(row => row.gumbo as GumboPlay),
+          currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
+        },
+        { gameId }
+      )
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
@@ -714,6 +725,7 @@ export async function startingContext(
           ? (
               await resolvedDefaultOf(
                 db,
+                game.away_team_id,
                 row(game.away_team_id)?.default_lineup
               )
             )?.lineup
@@ -722,6 +734,7 @@ export async function startingContext(
           ? (
               await resolvedDefaultOf(
                 db,
+                game.home_team_id,
                 row(game.home_team_id)?.default_lineup
               )
             )?.lineup
@@ -923,7 +936,7 @@ async function djBatters(
     .select('default_lineup')
     .where('id', '=', read.teamId)
     .executeTakeFirst()
-  const kept = await resolvedDefaultOf(db, team?.default_lineup)
+  const kept = await resolvedDefaultOf(db, read.teamId, team?.default_lineup)
   if (kept?.lineup != null) {
     return { source: 'default', batters: await withSongs(kept.lineup) }
   }

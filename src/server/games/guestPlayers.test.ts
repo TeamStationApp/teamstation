@@ -500,6 +500,42 @@ describe("correcting a game-only player's name", function () {
       last_name: 'Ruth',
       display_name: 'Ruth'
     })
+    expect(renamed.changed).equals(true)
+  })
+
+  it('writes nothing for the name the account already has', async function () {
+    const stamp = async (): Promise<unknown> =>
+      (
+        await db
+          .selectFrom('users')
+          .select('updated_at')
+          .where('id', '=', otherGuest)
+          .executeTakeFirstOrThrow()
+      ).updated_at
+    const was = await stamp()
+    const kept = await renameGuestPlayer(
+      db,
+      as(SCORER),
+      'gam_rename_other',
+      otherGuest,
+      { firstName: 'Babe', lastName: 'Ruth' }
+    )
+    expect(kept.changed).equals(false)
+    expect(kept.entry).deep.include({
+      userId: otherGuest,
+      shortName: 'Babe Ruth'
+    })
+    expect(kept.before).deep.equals({
+      firstName: 'Babe',
+      lastName: 'Ruth',
+      displayName: 'Babe Ruth'
+    })
+    expect(await stamp()).deep.equals(was)
+    expect(await nameOf(otherGuest)).deep.equals({
+      first_name: 'Babe',
+      last_name: 'Ruth',
+      display_name: 'Babe Ruth'
+    })
   })
 
   it('refuses everybody else, and anybody who is not a guest of this game', async function () {

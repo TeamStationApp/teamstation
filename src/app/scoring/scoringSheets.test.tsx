@@ -255,6 +255,107 @@ describe('scoring slide-up sheets', function () {
     expect(calls).includes('save')
   })
 
+  it('renames a guest another device added after the game opened, looking him up once, and saves the rosters', async function () {
+    HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
+    const session = scoringSession(gameFixture)
+    const id = session.liveData.boxscore.teams.away.players[0]
+    const was = session.gameData.players[id]
+    const guestUser = userIdOfGumbo(id)
+    const calls: string[] = []
+    const renames: unknown[] = []
+    // The game as it opened lists no guest: another device adds him after.
+    let added = false
+    let reads = 0
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => {
+      if (added) reads++
+      return {
+        ...gameFixture,
+        guestPlayers: {
+          away: added
+            ? [
+                {
+                  ...mintedRosterEntry(
+                    rosterPlayerBody(draftOfLocalPlayer(was))
+                  ),
+                  userId: guestUser,
+                  gumboId: id
+                }
+              ]
+            : [],
+          home: []
+        }
+      }
+    }
+    client.roster = async () => []
+    client.myRoles = async () => ({
+      teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+      guardianOf: []
+    })
+    client.renameGuestPlayer = async (gameId, userId, name, gumboId) => {
+      calls.push('rename')
+      renames.push({ gameId, userId, name, gumboId })
+      return mintedRosterEntry(
+        rosterPlayerBody({ ...draftOfLocalPlayer(was), ...name })
+      )
+    }
+    const store = memoryStore()
+    const save = store.save
+    store.save = async (gameId, change) => {
+      calls.push('save')
+      return await save(gameId, change)
+    }
+    const source: ScoringSource = {
+      persistent: true,
+      open: async () => ScoringSession.start(store, 'g1', session)
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            source={source}
+            userId={12}
+            onExit={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    added = true
+    await menu('Set Team Rosters')
+    await click('Roster')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label*="game-only player"]')!
+        .click()
+    })
+    await input('First Name', 'Jose')
+    await click('Save Player')
+    await click('Save Rosters')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(reads).equals(1)
+    expect(renames).deep.equals([
+      {
+        gameId: 'g1',
+        userId: guestUser,
+        name: {
+          firstName: 'Jose',
+          lastName: draftOfLocalPlayer(was).lastName
+        },
+        gumboId: id
+      }
+    ])
+    expect(calls[0]).equals('rename')
+    expect(calls).includes('save')
+    expect(document.body.textContent).not.includes('cannot be corrected here')
+  })
+
   it('renames nobody for a game kept only on the device', async function () {
     let renamed = 0
     // eslint-disable-next-line @typescript-eslint/unbound-method

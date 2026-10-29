@@ -70,7 +70,9 @@ export async function validateStoredPlays(
       plays: rows.map(row => row.gumbo as GumboPlay),
       currentPlay: (game?.currentPlay ?? null) as CurrentPlay | null
     }
-    const named = await resolveScoringGame(db, stored).catch(() => stored)
+    const named = await resolveScoringGame(db, stored, { gameId }).catch(
+      () => stored
+    )
     const documents: Array<{ play: string; document: unknown }> = rows.map(
       (row, index) => ({
         play: `play ${row.atBatIndex}`,

@@ -2,7 +2,10 @@ import type { Kysely, Transaction } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import type { Role } from '../../common/roles'
-import type { DefaultLineup, Lineup } from '../../common/scoring/lineupHistory'
+import type {
+  StoredDefaultLineup,
+  StoredLineup
+} from '../../common/scoring/lineupHistory'
 import { POSITIONS } from '../../common/scoring/state'
 import { type Database, makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
@@ -131,16 +134,17 @@ export async function createLineupFixture(
     const people = await Promise.all(
       game.roster[side].slice(0, POSITIONS.length).map(async (userId, i) => ({
         gumboId: await ensureGumboId(trx, userId),
-        name: LINEUP_NAMES[side][i],
         jersey: String(i + 1)
       }))
     )
-    const value: DefaultLineup = {
+    // Stored as a live post stores it: ids and jerseys, names read from
+    // the players' accounts.
+    const value: StoredDefaultLineup = {
       lineup: {
         batters: people,
         defense: Object.fromEntries(
           POSITIONS.map((position, i) => [position, people[i]])
-        ) as Lineup['defense']
+        ) as StoredLineup['defense']
       },
       fromGameId: null,
       setAt: new Date().toISOString()

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { beforeEach, describe, it } from 'mocha'
 
-import type { LineupPerson } from '../../common/scoring/lineupHistory'
+import type { StoredLineupPerson } from '../../common/scoring/lineupHistory'
 import { userIdOfGumbo } from '../../common/userId'
 import { statsDatabase } from '../../test/statsDatabase'
 import {
@@ -89,11 +89,12 @@ describe('independent account and scoring identities', function () {
   })
   it('resolves saved lineup positions through merges without rewriting or collapsing historical turns', async () => {
     const { db, ids } = fixture
-    const person = (gumboId: number | null): LineupPerson => ({
-      gumboId,
-      name: 'Player',
-      jersey: ''
-    })
+    // Stored as a live post keeps it: a player by id alone, a placeholder
+    // with the name typed for him.
+    const person = (gumboId: number | null): StoredLineupPerson =>
+      gumboId == null
+        ? { gumboId, name: 'Typed Placeholder', jersey: '' }
+        : { gumboId, jersey: '' }
     const original = {
       lineup: {
         batters: [person(101), person(102)],
@@ -117,15 +118,37 @@ describe('independent account and scoring identities', function () {
       .set({ merged_into: userIdOfGumbo(ids[1]) })
       .where('id', '=', userIdOfGumbo(ids[0]))
       .execute()
-    const resolved = await resolvedDefaultOf(db, original)
+    await db
+      .updateTable('users')
+      .set({
+        first_name: 'Mookie',
+        last_name: 'Betts',
+        display_name: 'Mookie Betts'
+      })
+      .where('id', '=', userIdOfGumbo(ids[1]))
+      .execute()
+    const resolved = await resolvedDefaultOf(db, 'tem_home', original)
     expect(resolved?.lineup?.batters.map(row => row.gumboId)).deep.equals([
       102, 102
     ])
-    expect(resolved?.lineup?.defense.P?.gumboId).equals(102)
-    expect(resolved?.lineup?.defense.C?.gumboId).equals(null)
-    expect(original.lineup.batters[0].gumboId).equals(101)
-    expect(await resolvedDefaultOf(db, null)).equals(null)
-    expect(await resolvedDefaultOf(db, {})).equals(null)
+    // The merged player reads as his survivor, named from the account.
+    expect(resolved?.lineup?.batters.map(row => row.name)).deep.equals([
+      'Mookie B',
+      'Mookie B'
+    ])
+    expect(resolved?.lineup?.defense.P).deep.equals({
+      gumboId: 102,
+      name: 'Mookie B',
+      jersey: ''
+    })
+    expect(resolved?.lineup?.defense.C).deep.equals({
+      gumboId: null,
+      name: 'Typed Placeholder',
+      jersey: ''
+    })
+    expect(original.lineup.batters[0]).deep.equals({ gumboId: 101, jersey: '' })
+    expect(await resolvedDefaultOf(db, 'tem_home', null)).equals(null)
+    expect(await resolvedDefaultOf(db, 'tem_home', {})).equals(null)
   })
   it('does not allocate on empty reads or missing original and survivor mappings', async () => {
     const { db, ids } = fixture

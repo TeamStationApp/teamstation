@@ -95,10 +95,14 @@ export async function computeLineTimeline(
         .where('gameId', '=', gameId)
         .orderBy('atBatIndex')
         .execute()
-      const stored = await resolveScoringGame(trx, {
-        plays: plays.map(row => row.gumbo as GumboPlay),
-        currentPlay: game.currentPlay as CurrentPlay | null
-      })
+      const stored = await resolveScoringGame(
+        trx,
+        {
+          plays: plays.map(row => row.gumbo as GumboPlay),
+          currentPlay: game.currentPlay as CurrentPlay | null
+        },
+        { gameId }
+      )
       const context =
         stored.plays.length === 0 && stored.currentPlay == null
           ? null

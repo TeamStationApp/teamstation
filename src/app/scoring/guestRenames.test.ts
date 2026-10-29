@@ -7,6 +7,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
 import { guestRenames, sendGuestRenames } from './guestRenames'
 import { gameFixture } from './isUnscoredGame.test'
+import { draftOfLocalPlayer, editLocalPlayerDraft } from './playerDraft'
 
 describe('game-only player renames', function () {
   const opened = (): ReturnType<typeof scoringSession> => {
@@ -25,7 +26,7 @@ describe('game-only player renames', function () {
       lastName: 'Altuve',
       fullName: 'Jose Altuve'
     })
-    // Halves set to what the name already says: still a correction.
+    // Halves other than his short name split: a correction.
     Object.assign(draft.gameData.players[second], {
       firstName: 'Kept',
       lastName: ''
@@ -50,6 +51,43 @@ describe('game-only player renames', function () {
     })
     expect(guestRenames(before, copyState(before))).deep.equals([])
     expect(guestRenames(before, emptied)).deep.equals([])
+  })
+
+  it('takes an edit that keeps the halves for no correction, whether the game held them or not', function () {
+    const before = opened()
+    const [held, short] = before.liveData.boxscore.teams.away.players
+    // As the scorer's read names him: his short name, and his halves.
+    Object.assign(before.gameData.players[held], {
+      fullName: 'Avery S',
+      firstName: 'Avery',
+      lastName: 'Smith'
+    })
+    // As a game read with no halves names him: his short name alone.
+    Object.assign(before.gameData.players[short], {
+      fullName: 'Avery S',
+      firstName: undefined,
+      lastName: undefined
+    })
+    const draft = copyState(before)
+    // Only the jersey and the positions change, through the editor, which
+    // rebuilds the whole name from the halves it started from.
+    for (const id of [held, short])
+      editLocalPlayerDraft(draft, 'away', id, {
+        ...draftOfLocalPlayer(before.gameData.players[id]),
+        jersey: '42',
+        positions: ['SS']
+      })
+    expect(draft.gameData.players[held].fullName).equals('Avery Smith')
+    expect(draft.gameData.players[short].jersey).equals('42')
+    expect(guestRenames(before, draft)).deep.equals([])
+    // Halves typed over the split short name are a correction.
+    editLocalPlayerDraft(draft, 'away', short, {
+      ...draftOfLocalPlayer(draft.gameData.players[short]),
+      lastName: 'Smith'
+    })
+    expect(guestRenames(before, draft)).deep.equals([
+      { gumboId: short, firstName: 'Avery', lastName: 'Smith' }
+    ])
   })
 
   it('renames each through the client by his account, and refuses one it cannot find', async function () {
@@ -107,5 +145,49 @@ describe('game-only player renames', function () {
     }
     expect(String(refused)).includes('cannot be corrected here')
     expect(sent).has.length(1)
+    // A guest added since the screen opened is looked up once, before any
+    // correction is sent; one still unknown refuses them all.
+    let lookUps = 0
+    await sendGuestRenames(
+      client,
+      'g1',
+      [
+        { gumboId: 901, firstName: 'George', lastName: 'Ruth' },
+        { gumboId: 902, firstName: 'Lou', lastName: 'Gehrig' }
+      ],
+      [{ userId: userIdOfGumbo(901), gumboId: 901 }],
+      async () => {
+        lookUps++
+        return [{ userId: userIdOfGumbo(902), gumboId: 902 }]
+      }
+    )
+    expect(lookUps).equals(1)
+    expect(
+      sent.slice(1).map(call => (call as { userId: string }).userId)
+    ).deep.equals([userIdOfGumbo(901), userIdOfGumbo(902)])
+    for (const lookUp of [
+      async () => [],
+      async () => {
+        throw new Error('offline')
+      }
+    ]) {
+      refused = undefined
+      try {
+        await sendGuestRenames(
+          client,
+          'g1',
+          [
+            { gumboId: 901, firstName: 'George', lastName: 'Ruth' },
+            { gumboId: 903, firstName: 'Mel', lastName: 'Ott' }
+          ],
+          [{ userId: userIdOfGumbo(901), gumboId: 901 }],
+          lookUp
+        )
+      } catch (error) {
+        refused = error
+      }
+      expect(String(refused)).includes('cannot be corrected here')
+      expect(sent).has.length(3)
+    }
   })
 })

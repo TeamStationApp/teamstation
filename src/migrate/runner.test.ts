@@ -120,10 +120,11 @@ describe('migrations', function () {
 
   it('refuses reverse migrations that cannot put back what they took, without changing the applied schema', async () => {
     // Migrations added after the identity cutovers reverse on their own up to
-    // 090, which took names out of game documents: it refuses, as the
-    // cutovers do. By name, the order the runner applies and reverses them in.
+    // 091, which took names out of default lineups: it refuses, as 090 and
+    // the cutovers do. By name, the order the runner applies and reverses
+    // them in.
     const later = migrations
-      .filter(migration => migration.name > '092playerNamesFromUsers')
+      .filter(migration => migration.name > '093defaultLineupIds')
       .map(migration => migration.name)
       .sort()
     await migrateDown(pool, migrations, later.length)
@@ -403,7 +404,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '089userApiKeys',
           '090plateAppearances',
           '091structuredCredits',
-          '092playerNamesFromUsers'
+          '092playerNamesFromUsers',
+          '093defaultLineupIds'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

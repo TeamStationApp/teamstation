@@ -5,7 +5,10 @@ import { makeId } from '../../common/ids'
 import { shortNames } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
-import type { DefaultLineup, Lineup } from '../../common/scoring/lineupHistory'
+import type {
+  StoredDefaultLineup,
+  StoredLineup
+} from '../../common/scoring/lineupHistory'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
 import {
   type GameSetup,
@@ -672,14 +675,13 @@ export async function createNamesFixture(
     .execute()
 
   // The administered team's default lineup: its nine starters, batting one
-  // to nine.
+  // to nine, by id and jersey, as a live post stores it.
   const starters = players[OURS].filter(p => p.position != null)
   const lineupPeople = starters.map(p => ({
     gumboId: p.gumboId,
-    name: p.name,
     jersey: p.jersey
   }))
-  const defaultLineup: DefaultLineup = {
+  const defaultLineup: StoredDefaultLineup = {
     lineup: {
       batters: lineupPeople,
       defense: Object.fromEntries(
@@ -687,7 +689,7 @@ export async function createNamesFixture(
           position,
           lineupPeople[starters.findIndex(p => p.position === position)] ?? null
         ])
-      ) as Lineup['defense']
+      ) as StoredLineup['defense']
     },
     fromGameId: null,
     setAt: new Date().toISOString()
