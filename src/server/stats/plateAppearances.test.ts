@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { CALL_OF_PITCH_CODE } from '../../common/gumbo/reference'
 import type { GumboPlay } from '../../common/gumboPlay'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { foldPlay } from '../../common/scoring/gumbo'
@@ -472,6 +473,68 @@ describe('plate appearances and the state each began in', function () {
     })
     expect(last.battingTeamId).equals(TEAMS.home.id)
     expect(last.pitchingTeamId).equals(TEAMS.away.id)
+  })
+
+  it('reads a pitch by its call code, as games stored before isBall and isStrike have it', function () {
+    const codesOnly = plays.map(play => ({
+      ...play,
+      playEvents: ((play.playEvents ?? []) as unknown[]).map(event => {
+        const { details, ...rest } = event as {
+          details: Record<string, unknown>
+        }
+        const { isBall, isStrike, isInPlay, ...bare } = details
+        return { ...rest, details: bare }
+      })
+    })) as GumboPlay[]
+    const read = (list: GumboPlay[]): unknown[] =>
+      plateAppearances(list, teams, known).map(pa => [
+        pa.firstPitch,
+        pa.pitches
+      ])
+    expect(read(codesOnly)).deep.equals(read(plays))
+    expect(
+      plateAppearances(codesOnly, teams, known).filter(
+        pa => pa.firstPitch === 'other'
+      )
+    ).deep.equals([])
+    // Codes MLB lists but the engine never writes: a ball in the dirt, a
+    // pitchout hit into play, a blocked swinging strike, a pickoff throw (no
+    // pitch: other). A call with no code of its own is read by the plain
+    // code.
+    const [first] = scored(...hit('single'), close)
+    const coded = (code: string): GumboPlay => ({
+      ...first,
+      playEvents: [{ isPitch: true, details: { call: { code }, code } }]
+    })
+    expect(
+      ['*B', 'Y', 'W', '1'].map(
+        code => plateAppearances([coded(code)], teams, known)[0].firstPitch
+      )
+    ).deep.equals(['ball', 'inPlay', 'strike', 'other'])
+    expect(
+      plateAppearances(
+        [
+          {
+            ...first,
+            playEvents: [
+              {
+                isPitch: true,
+                details: { call: { description: 'x' }, code: 'C' }
+              }
+            ]
+          }
+        ],
+        teams,
+        known
+      )[0].firstPitch
+    ).equals('strike')
+    // Every code MLB puts in play, and nothing else.
+    expect(
+      [...CALL_OF_PITCH_CODE]
+        .filter(([, call]) => call === 'inPlay')
+        .map(([code]) => code)
+        .sort()
+    ).deep.equals(['D', 'E', 'J', 'X', 'Y', 'Z'])
   })
 
   it('leaves out a play with no half, and knows a pitch it cannot read as other', function () {
