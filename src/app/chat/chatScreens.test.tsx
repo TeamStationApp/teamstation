@@ -1215,11 +1215,12 @@ describe('the account screen’s chat', function () {
   }
 
   /** The account screen's client: the fake's chat keys, and account
-   * settings that never arrive (this suite is about chat). */
+   * settings and API keys that never arrive (this suite is about chat). */
   const accountClient = (keys: ChatKeysClient): TeamStationClient =>
     ({
       ...keys,
-      accountSettings: async () => await new Promise<never>(() => {})
+      accountSettings: async () => await new Promise<never>(() => {}),
+      apiKeys: async () => await new Promise<never>(() => {})
     }) as unknown as TeamStationClient
 
   it('opens Chat devices, and signs out only after this device leaves chat', async function () {

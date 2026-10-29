@@ -301,6 +301,42 @@ describe('api client', function () {
     ])
   })
 
+  it('lists, makes and revokes the account’s API keys', async function () {
+    const key = {
+      id: 'uak_1',
+      name: 'Agent',
+      secret: 'tsk_abcdefgh',
+      createdAt: '2026-10-28T00:00:00.000Z',
+      permissions: ['team:read']
+    }
+    const listed = stubFetch(200, { keys: [key] })
+    expect(
+      await new TeamStationClient({
+        baseUrl: 'http://example.com/api/v1',
+        fetch: listed.fetch
+      }).apiKeys()
+    ).deep.equals([key])
+    const made = stubFetch(201, key)
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: made.fetch
+    })
+    expect(
+      await client.createApiKey({ name: 'Agent', permissions: ['team:read'] })
+    ).deep.equals(key)
+    await client.deleteApiKey('uak/1')
+    expect(
+      made.calls.map(call => [call.method, call.url, call.body])
+    ).deep.equals([
+      [
+        'POST',
+        'http://example.com/api/v1/me/api-keys',
+        JSON.stringify({ name: 'Agent', permissions: ['team:read'] })
+      ],
+      ['DELETE', 'http://example.com/api/v1/me/api-keys/uak%2F1', undefined]
+    ])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({

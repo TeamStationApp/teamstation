@@ -327,6 +327,18 @@ describe('addresses', function () {
     }
   })
 
+  it('reads and writes Create API key at /account/api-keys/new', function () {
+    expect(parseRoute('/account/api-keys/new')).deep.equals({
+      name: 'apiKeyNew'
+    })
+    expect(routePath({ name: 'apiKeyNew' })).equals('/account/api-keys/new')
+    expect(roundTrip({ name: 'apiKeyNew' })).deep.equals({ name: 'apiKeyNew' })
+    expect(parseRoute('/account/api-keys')).deep.equals({ name: 'account' })
+    expect(parseRoute('/account/api-keys/new/more')).deep.equals({
+      name: 'account'
+    })
+  })
+
   it('reads and writes Chat devices and linking at /chat/devices and /chat/link', function () {
     expect(parseRoute('/chat/devices')).deep.equals({ name: 'chatDevices' })
     expect(parseRoute('/chat/link')).deep.equals({ name: 'chatLink' })

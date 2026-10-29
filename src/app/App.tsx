@@ -145,6 +145,7 @@ import { GroupSettingsScreen } from './screens/GroupSettingsScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
 import { LoginScreen } from './screens/LoginScreen'
+import { NewApiKeyScreen } from './screens/NewApiKeyScreen'
 import { NodeAdministrationScreen } from './screens/NodeAdministrationScreen'
 import {
   NotificationDetailScreen,
@@ -292,6 +293,8 @@ type Pushed =
       highlightUntil?: number
     }
   | { name: 'account' }
+  /** Create API key, above Account. */
+  | { name: 'apiKeyNew' }
   /** Chat devices, from the account screen or `/chat/devices`. */
   | { name: 'chatDevices' }
   /** Linking this device for chat, or resetting the user's chat keys. */
@@ -2739,9 +2742,16 @@ function Shell(props: AppProps): React.ReactElement {
           />
         </ChatCoreGate>
       )
+    ) : top.name === 'apiKeyNew' ? (
+      session == null ? null : (
+        <NewApiKeyScreen client={client} onCreated={pop} />
+      )
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
+        onCreateApiKey={() => {
+          push({ name: 'apiKeyNew' })
+        }}
         onNodeAdministration={() => {
           push({ name: 'nodeAdministration' })
         }}
@@ -3599,6 +3609,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  // Back from Create API key is Account.
+  if (route.name === 'apiKeyNew')
+    return { [tab]: [{ name: 'account' }, { name: 'apiKeyNew' }] }
   if (route.name === 'chatDevices') return { [tab]: [{ name: 'chatDevices' }] }
   if (route.name === 'chatLink') return { [tab]: [{ name: 'chatLink' }] }
 
@@ -3711,6 +3724,7 @@ function routeOf(
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'apiKeyNew') return { name: 'apiKeyNew' }
     if (top.name === 'chatDevices') return { name: 'chatDevices' }
     if (top.name === 'chatLink') return { name: 'chatLink' }
 
@@ -3907,6 +3921,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
         : undefined
     if (top.name === 'season') return undefined
     if (top.name === 'account') return 'Account'
+    if (top.name === 'apiKeyNew') return lstrings.api_key_new_create
     if (top.name === 'chatDevices') return lstrings.chat_devices_title
     if (top.name === 'chatLink') return lstrings.chat_link_title
 

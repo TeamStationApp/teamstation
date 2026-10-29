@@ -125,6 +125,7 @@ function fixture(
   }
   const calls: string[] = []
   const controls = { fail: '', loadFailures: 0 }
+  const apiKeys: unknown[] = []
   let requested = { email: '', replaceEmailId: undefined as string | undefined }
   const fetcher: typeof fetch = async (input, init) => {
     const url =
@@ -148,6 +149,19 @@ function fixture(
       typeof init?.body === 'string' ? init.body : '{}'
     ) as Record<string, string>
     if (route === '/auth/me') return new Response(JSON.stringify(state.user))
+    if (route === '/me/api-keys' && init?.method === 'POST') {
+      const made = {
+        id: `uak_${apiKeys.length + 1}`,
+        name: body.name,
+        secret: `tsk_fixture${apiKeys.length + 1}secret`,
+        createdAt: '2026-10-28T00:00:00.000Z',
+        permissions: body.permissions
+      }
+      apiKeys.push(made)
+      return new Response(JSON.stringify(made), { status: 201 })
+    }
+    if (route === '/me/api-keys')
+      return new Response(JSON.stringify({ keys: apiKeys }))
     if (route === '/me/roles')
       return new Response(JSON.stringify({ teams: {} }))
     if (route === '/me/account/name')
@@ -711,6 +725,37 @@ describe('Account settings screen', () => {
     await press('Account, Alex Shell')
     await press('Sign out')
     expect(tokens).deep.equals([undefined])
+  })
+  it('opens Create API key at its own address, above Account, and makes a key that Account then lists', async () => {
+    const f = fixture()
+    globalThis.fetch = f.fetcher
+    showRoute(parseRoute('/account/api-keys/new'), true)
+    await render(<App initialToken="test-session" onToken={() => undefined} />)
+    expect(text()).includes('Create API key')
+    expect(text()).includes('Umpire management')
+    expect(window.location.pathname).equals('/account/api-keys/new')
+    // Back from a deep link is Account, and leaving makes nothing.
+    await press('Back')
+    expect(window.location.pathname).equals('/account')
+    expect(text()).includes('API KEYS')
+    expect(f.calls.filter(call => call === '/me/api-keys').length).greaterThan(
+      0
+    )
+    await press('Create API key')
+    expect(window.location.pathname).equals('/account/api-keys/new')
+    await change('Name', 'Agent')
+    const write = document.querySelector<HTMLElement>(
+      '[aria-label="Schedule write"]'
+    )
+    expect(write).not.equals(null)
+    await act(async () => {
+      write!.click()
+      await delay()
+    })
+    await press('Create API key')
+    expect(window.location.pathname).equals('/account')
+    expect(text()).includes('Agent')
+    expect(text()).includes('tsk_fixt…')
   })
   it('puts Delete account last, behind a slide, with Cancel changing nothing', async () => {
     const f = fixture(false, true)

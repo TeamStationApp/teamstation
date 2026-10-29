@@ -35,6 +35,7 @@ import {
   type ReadinessStore,
   walkUpReadiness
 } from '../walkup/walkUpReadiness'
+import { ApiKeysSection } from './ApiKeysSection'
 import { DeleteAccountSheet } from './DeleteAccountSheet'
 
 export interface AccountScreenProps {
@@ -58,6 +59,8 @@ export interface AccountScreenProps {
   onAccountDeleted?: () => void
   onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
+  /** Opens Create API key. */
+  onCreateApiKey?: () => void
   /** Where closing the Apple Music walkthrough is remembered. */
   readiness?: ReadinessStore
 }
@@ -69,6 +72,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     client,
     onChatDevices,
     onChatReports,
+    onCreateApiKey,
     onSignOut,
     onSignOutRequest,
     onAccountDeleted = onSignOut,
@@ -726,6 +730,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           )}
         </View>
       )}
+      <ApiKeysSection client={client} onCreate={onCreateApiKey} />
       <DangerText
         label={lstrings.account_sign_out}
         bold
