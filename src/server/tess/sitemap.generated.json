@@ -337,6 +337,12 @@
         },
         {
           "param": "tab",
+          "id": "chats",
+          "label": "Chats",
+          "path": "/groups/league/:id?tab=chats"
+        },
+        {
+          "param": "tab",
           "id": "people",
           "label": "People",
           "path": "/groups/league/:id?tab=people"
@@ -923,6 +929,12 @@
           "id": "all",
           "label": "All",
           "path": "/seasons/:seasonId?when=all"
+        },
+        {
+          "param": "tab",
+          "id": "chats",
+          "label": "Chats",
+          "path": "/seasons/:seasonId?tab=chats"
         }
       ],
       "settings": []
@@ -992,6 +1004,12 @@
           "id": "stats",
           "label": "Stats",
           "path": "/teams/:teamId?tab=stats"
+        },
+        {
+          "param": "tab",
+          "id": "chats",
+          "label": "Chats",
+          "path": "/teams/:teamId?tab=chats"
         }
       ],
       "settings": []
