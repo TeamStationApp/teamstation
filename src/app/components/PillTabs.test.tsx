@@ -130,6 +130,67 @@ describe('PillTabs', function () {
     ])
   })
 
+  it('draws small strips as the RSVP capsule, stacked with no gaps', async function () {
+    const drawn = async (
+      size: 'compact' | 'small',
+      stacked: boolean
+    ): Promise<string[]> => {
+      const container = await render(
+        <PillTabs
+          size={size}
+          stacked={stacked}
+          tabs={TABS}
+          selected="past"
+          onSelect={() => undefined}
+        />
+      )
+      const { content } = strip(container)
+      const row = content.firstElementChild as HTMLElement
+      const target = row.querySelector<HTMLElement>('[role="tab"]')!
+      const pill = target.firstElementChild as HTMLElement
+      const label = pill.querySelector<HTMLElement>('div[dir], span, div')!
+      const result = [
+        getComputedStyle(pill).height,
+        getComputedStyle(pill).paddingLeft,
+        getComputedStyle(target).minHeight,
+        getComputedStyle(target).paddingLeft,
+        getComputedStyle(row).gap,
+        getComputedStyle(content).paddingTop,
+        getComputedStyle(label).fontSize,
+        getComputedStyle(row).marginLeft
+      ]
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+      return result
+    }
+    const rem = (value: number): string => `${tsBallpark.rem(value)}px`
+    expect(await drawn('small', true)).deep.equals([
+      '32px',
+      rem(1.125),
+      '44px',
+      '4px',
+      '0px',
+      '0px',
+      '12px',
+      // Pulled out by a target's side: the first pill sits on the margin.
+      '-4px'
+    ])
+    // Unstacked, a small strip keeps its room above and below.
+    expect((await drawn('small', false))[5]).equals(rem(tsBallpark.spaceXsRem))
+    // Compact strips are as they were.
+    expect((await drawn('compact', false))[7]).equals('0px')
+    expect((await drawn('compact', false)).slice(0, 5)).deep.equals([
+      rem(2.25),
+      rem(1.125),
+      '48px',
+      '0px',
+      rem(tsBallpark.spaceSmRem)
+    ])
+  })
+
   it('puts a red dot before a live tab\u2019s label, and only there', async function () {
     const container = await render(
       <PillTabs

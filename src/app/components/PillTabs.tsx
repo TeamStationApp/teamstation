@@ -24,8 +24,13 @@ export interface PillTabsProps<Id extends string = string> {
    * pressable keeps its 48px height and the pill is drawn inside it.
    *
    * `regular` is kept only so the difference has a name; nothing uses it.
+   *
+   * `small` is the Yes / Maybe / No capsule's size, for the filter rows
+   * stacked under a screen's tabs: a 32px pill in a 44px target, Apple's
+   * minimum, with 4px of the target on each side and no gap between pills,
+   * so each target reaches the midpoint to the next.
    */
-  size?: 'regular' | 'compact'
+  size?: 'regular' | 'compact' | 'small'
   accessibilityLabel?: string
   /**
    * Run past the column's padding to the edges of the screen, with the first
@@ -38,6 +43,11 @@ export interface PillTabsProps<Id extends string = string> {
    * the same; a strip scrolls instead of squeezing a label into its arcs.
    */
   dense?: boolean
+  /**
+   * No padding above or below the strip, for rows stacked under one another:
+   * with `small` pills, two rows' targets meet at the midpoint between them.
+   */
+  stacked?: boolean
 }
 
 /**
@@ -72,7 +82,8 @@ export function PillTabs<Id extends string = string>(
     onSelect,
     size = 'compact',
     bleed = true,
-    dense = false
+    dense = false,
+    stacked = false
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -89,7 +100,13 @@ export function PillTabs<Id extends string = string>(
       : undefined
 
   const row = (
-    <View style={[styles.row, dense && styles.rowDense]}>
+    <View
+      style={[
+        styles.row,
+        dense && styles.rowDense,
+        size === 'small' && styles.rowSmall
+      ]}
+    >
       {tabs.map(tab => (
         <PillButton
           key={tab.id}
@@ -115,7 +132,11 @@ export function PillTabs<Id extends string = string>(
       accessibilityRole="tablist"
       accessibilityLabel={props.accessibilityLabel}
       style={reach?.strip}
-      contentContainerStyle={[styles.scrollContent, reach?.content]}
+      contentContainerStyle={[
+        styles.scrollContent,
+        stacked && styles.scrollStacked,
+        reach?.content
+      ]}
     >
       {row}
     </ScrollView>
@@ -139,7 +160,7 @@ export function PillButton({
   badge?: string
   live?: boolean
   selected?: boolean
-  size?: 'regular' | 'compact'
+  size?: 'regular' | 'compact' | 'small'
   dense?: boolean
   role?: 'tab' | 'button'
   onPress?: () => void
@@ -148,6 +169,7 @@ export function PillButton({
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const compact = size === 'compact'
+  const small = size === 'small'
   return (
     <Pressable
       accessibilityRole={role}
@@ -160,6 +182,7 @@ export function PillButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.target,
+        small && styles.targetSmall,
         pressed && !selected && styles.targetPressed,
         disabled && styles.disabled
       ]}
@@ -169,6 +192,7 @@ export function PillButton({
         style={[
           styles.pill,
           compact && styles.pillCompact,
+          small && styles.pillSmall,
           dense && styles.pillDense,
           selected ? styles.pillActive : styles.pillIdle
         ]}
@@ -180,6 +204,7 @@ export function PillButton({
           style={[
             styles.label,
             compact && styles.labelCompact,
+            small && styles.labelSmall,
             selected ? styles.labelActive : styles.labelIdle
           ]}
         >
@@ -221,12 +246,28 @@ const getStyles = cacheStyles((theme: Theme) => ({
   rowDense: {
     gap: theme.rem(theme.spaceXsRem)
   },
+  // Small pills carry their spacing in their targets: no gap, so a tap
+  // between two pills lands on the nearer one. The row is pulled out by a
+  // target's side, so the first pill, not its target, starts on the margin.
+  rowSmall: {
+    gap: 0,
+    marginHorizontal: theme.rem(-0.25)
+  },
+  scrollStacked: {
+    paddingVertical: 0
+  },
   // What the finger gets: 48 tall, which the spec asks for so a tab can be hit
   // one-handed while somebody is also holding a scorebook. It is transparent —
   // shrinking the pill is a drawing decision and must not shrink this.
   target: {
     minHeight: theme.rem(3),
     justifyContent: 'center'
+  },
+  // 44 tall, Apple's minimum, and 4 either side: half of the 8 between two
+  // small pills, so neighbouring targets meet in the middle.
+  targetSmall: {
+    minHeight: theme.rem(2.75),
+    paddingHorizontal: theme.rem(0.25)
   },
   disabled: {
     opacity: 0.5
@@ -257,6 +298,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     height: theme.rem(2.25),
     paddingHorizontal: pillPadding(theme.rem(2.25))
   },
+  // The RSVP capsule's: 32 tall, its 0.75rem label and 1.125rem sides.
+  pillSmall: {
+    minHeight: theme.rem(2),
+    height: theme.rem(2),
+    paddingHorizontal: theme.rem(1.125)
+  },
   pillDense: {
     // Dense strips reduce their gaps, never the clearance around a label.
   },
@@ -276,6 +323,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   labelCompact: {
     fontSize: theme.rem(0.875)
+  },
+  labelSmall: {
+    fontSize: theme.rem(0.75)
   },
   labelIdle: {
     color: theme.pillTextColor

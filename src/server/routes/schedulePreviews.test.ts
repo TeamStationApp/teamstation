@@ -11,6 +11,7 @@ import {
 import { fieldSizeLabel } from '../../common/venues'
 import {
   forceSeasonZone,
+  SEASON_STARTS_ON,
   seedHarborField
 } from '../../test/autoSchedulerFixture'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
@@ -154,6 +155,10 @@ describe('schedule preview routes', function () {
 
   it('rejects and adds games on an open preview, and recalculating keeps the rest', async () => {
     const built = await build({ mode: 'full', existing: 'workAround' })
+    // Each season names its first day, where the preview's weeks start.
+    expect(built.body.seasons.map(season => season.startsOn)).deep.equals(
+      built.body.seasons.map(() => SEASON_STARTS_ON)
+    )
     const option = built.body.options[0]
     const [first, second] = option.games
     // Switching options starts that option's edits afresh.

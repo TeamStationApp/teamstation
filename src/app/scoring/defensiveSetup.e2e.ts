@@ -739,10 +739,10 @@ describe('current defensive scoring setup browser', function () {
         )
         expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
         await page.driver.scrollUntilVisible({
-          element: { css: '[aria-label="Assign P Hawks A"]' },
+          element: { css: '[aria-label="Assign P HAWKS A"]' },
           direction: 'DOWN'
         })
-        await click(page, 'Assign P Hawks A')
+        await click(page, 'Assign P HAWKS A')
         await page.waitForFunction(
           () => document.querySelector('[data-nameplate="empty-P"]') == null
         )
@@ -878,7 +878,7 @@ describe('current defensive scoring setup browser', function () {
           {},
           count + 2
         )
-        await click(page, 'Assign RF Hawks A')
+        await click(page, 'Assign RF HAWKS A')
         await page.waitForFunction(
           () => document.querySelector('[data-nameplate="empty-RF"]') == null
         )

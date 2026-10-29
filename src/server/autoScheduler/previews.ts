@@ -113,6 +113,8 @@ export async function previewView(
       timezone:
         snap.seasons.find(each => each.id === season.id)?.timezone ?? 'UTC',
       gameMinutes: season.settings.gameMinutes,
+      // Its first day, where the preview's Week 1 starts.
+      startsOn: season.settings.startsOn,
       participants: season.participants,
       exhibitionTeams: season.exhibitionTeams
     })),

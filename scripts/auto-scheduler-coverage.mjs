@@ -99,7 +99,9 @@ const tsSuites = [
   // Fixes M9: the field on a game's Info tab, and directions to its point.
   'src/common/eventInfo.test.ts',
   'src/app/platform/eventDirections.test.ts',
-  'src/app/platform/eventDirections.web.test.ts'
+  'src/app/platform/eventDirections.web.test.ts',
+  // Preview calendar M3: filters, field labels and the weeks.
+  'src/app/screens/schedulePreviewCalendar.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -133,7 +135,10 @@ const appSuites = [
   // Fixes M6: any registry field for a run, through the picker's field mode.
   'src/app/screens/FieldPickerScene.test.tsx',
   // Fixes M9: the native directions to a field's point.
-  'src/app/platform/eventDirections.native.test.tsx'
+  'src/app/platform/eventDirections.native.test.tsx',
+  // Preview calendar M2: the small, stacked filter pills.
+  'src/app/components/PillTabs.test.tsx',
+  'src/app/components/pillGeometry.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

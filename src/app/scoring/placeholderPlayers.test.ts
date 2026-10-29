@@ -14,49 +14,49 @@ import { initialScoringState, scoringReducer } from './scoringMachine'
 
 // Sample names for the abbreviation rules.
 const productionNames: Array<[string, string]> = [
-  ['11u Blue Vale Titans', '11 Bl Vl'],
+  ['11u Blue Vale Titans', '11 BL VL'],
   ['619 Pilots 11U', '6P1'],
-  ['Alta Hawks', 'Alta Hawks'],
-  ['Amber Gardens', 'AGrdns'],
-  ['Badgers (Ripken)', 'BRpkn'],
+  ['Alta Hawks', 'ALTA HAWKS'],
+  ['Amber Gardens', 'AGRDNS'],
+  ['Badgers (Ripken)', 'BRPKN'],
   ['Bay Stars (Mize)', 'BSM'],
   ['Bay Widows (Votto)', 'BWV'],
-  ['Canyon Creek', 'Cnyn Crk'],
-  ['Dragons', 'Dragons'],
-  ['Ember', 'Ember'],
+  ['Canyon Creek', 'CNYN CRK'],
+  ['Dragons', 'DRAGONS'],
+  ['Ember', 'EMBER'],
   ['CLB 2034 11U', 'C21'],
   ['Oak Ridge National', 'ORN'],
-  ['Cedar Lakes', 'Cdr Lks'],
-  ['MC1 Lofton', 'MC1 Lofton'],
+  ['Cedar Lakes', 'CDR LKS'],
+  ['MC1 Lofton', 'MC1 LOFTON'],
   ['QPLL 8-10 All-Stars 2026', 'QPLL 8 10'],
   ['MVP Rounders 10U', 'MR1'],
-  ['Monument Trails', 'MTrls'],
-  ['NP1 Harper', 'NP1 Harper'],
-  ['NP5 Maddux', 'NP5 Maddux'],
+  ['Monument Trails', 'MTRLS'],
+  ['NP1 Harper', 'NP1 HARPER'],
+  ['NP5 Maddux', 'NP5 MADDUX'],
   ['QPLL 10U All Stars 2026', 'Q1A'],
   ['QPLL PAT Team', 'QPT'],
   ['North Pines Ravens - McCann', 'NPR'],
   ['North Pines Seagulls', 'NPS'],
-  ['Headland', 'Headland'],
-  ['Otters', 'Otters'],
-  ['Posey', 'Posey'],
+  ['Headland', 'HEADLAND'],
+  ['Otters', 'OTTERS'],
+  ['Posey', 'POSEY'],
   ['AC Crush 11U Black', 'AC1'],
   ['AC Hustle 10U', 'AH1'],
   ['AC Rattlers 10U', 'AR1'],
-  ['SS1 Alvarez', 'SS1 lvrz'],
-  ['SS2 Strawberry', 'SStrwbrr'],
-  ['Elm Park 3', 'Elm Park 3'],
+  ['SS1 Alvarez', 'SS1 LVRZ'],
+  ['SS2 Strawberry', 'SSTRWBRR'],
+  ['Elm Park 3', 'ELM PARK 3'],
   ['Bay City Roosters 9U', 'BCR'],
   ['Elm Meadow Impact 11U', 'EMI'],
-  ['Cedar Mesa 1', 'Cdr Ms 1'],
-  ['Silver Ridge', 'Slvr Rdg'],
+  ['Cedar Mesa 1', 'CDR MS 1'],
+  ['Silver Ridge', 'SLVR RDG'],
   ['QLL 8-10 All Stars 2026', 'QLL 8 10'],
   ['Team Altuve North Flow Black 11U', 'TAN'],
   ['Timberland 2', 'T2'],
-  ['Timberlin', 'Timberlin'],
+  ['Timberlin', 'TIMBERLIN'],
   ['Titan Force 11U', 'TF1'],
-  ['Cyclones', 'Cyclones'],
-  ['HC Squirrels', 'HSqrrls'],
+  ['Cyclones', 'CYCLONES'],
+  ['HC Squirrels', 'HSQRRLS'],
   ['West Baseball Navy 9U', 'WBN']
 ]
 describe('team-named placeholder players', function () {
@@ -102,19 +102,19 @@ describe('team-named placeholder players', function () {
     })
   it('handles normalization, thresholds, leading articles, and one/two/many words', function () {
     for (const [name, expected] of [
-      ['', 'Team'],
-      [' ()--- ', 'Team'],
-      ['The THE', 'Team'],
-      [' The Hawks (Red) ', 'Hawks Red'],
-      ['Café Owls', 'Cafe Owls'],
+      ['', 'TEAM'],
+      [' ()--- ', 'TEAM'],
+      ['The THE', 'TEAM'],
+      [' The Hawks (Red) ', 'HAWKS RED'],
+      ['Café Owls', 'CAFE OWLS'],
       ['0123456789', '0123456789'],
       ['01234567890', '01234567'],
-      ['abcdefghijk', 'bcdfghjk'],
-      ['abcdefghjklm', 'bcdfghjk'],
-      ['aeiouAEIOUa', 'Team'],
-      ['abcdefghj k', 'ak'],
+      ['abcdefghijk', 'BCDFGHJK'],
+      ['abcdefghjklm', 'BCDFGHJK'],
+      ['aeiouAEIOUa', 'TEAM'],
+      ['abcdefghj k', 'AK'],
       ['North Pines Very Long Team', 'NPV'],
-      ['The Red Sox and more', 'Rd Sx nd']
+      ['The Red Sox and more', 'RD SX ND']
     ])
       expect(placeholderTeamName(name), name).equals(expected)
     expect(placeholderSuffix(0)).equals('A')
@@ -136,8 +136,8 @@ describe('team-named placeholder players', function () {
     ]
     expect(ids).length(32)
     expect(new Set(ids).size).equals(32)
-    expect(draft.gameData.players[ids[0]].fullName).equals('Hawks A')
-    expect(draft.gameData.players[ids[26]].fullName).equals('Hawks AA')
+    expect(draft.gameData.players[ids[0]].fullName).equals('HAWKS A')
+    expect(draft.gameData.players[ids[26]].fullName).equals('HAWKS AA')
     const player = draft.gameData.players[ids[0]]
     expect(player).includes({
       bats: 'right',
@@ -158,10 +158,10 @@ describe('team-named placeholder players', function () {
     )
     draft.gameData.players[ids[0]].fullName = 'hawks a'
     const next = (await addPlaceholderPlayers(draft, 'away', 1, create))[0]
-    expect(draft.gameData.players[next].fullName).equals('Hawks AG')
+    expect(draft.gameData.players[next].fullName).equals('HAWKS AG')
     await addPlaceholderPlayers(draft, 'home', 1, create)
     const saved = scoringReducer(initial, { type: 'ROSTER', draft })
-    expect(saved.session.gameData.players[next].fullName).equals('Hawks AG')
+    expect(saved.session.gameData.players[next].fullName).equals('HAWKS AG')
     expect(scoringReducer(saved, { type: 'UNDO' }).session).deep.equals(
       initial.session
     )

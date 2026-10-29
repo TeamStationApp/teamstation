@@ -229,4 +229,43 @@ describe('api client scheduling setup', () => {
       ['GET', '/api/v1/leagues/lea%2Fa/games-to-reschedule', undefined]
     ])
   })
+
+  it('reads each preview season’s first day, and a season without one', async () => {
+    const season = {
+      id: 'sea_a',
+      name: 'Demo Regular',
+      timezone: 'UTC',
+      gameMinutes: 90,
+      startsOn: '2027-03-01',
+      participants: [],
+      exhibitionTeams: []
+    }
+    const preview = {
+      id: 'spv/1',
+      leagueId: 'lea/a',
+      mode: 'full',
+      existing: null,
+      status: 'open',
+      createdAt: '2026-10-22T12:00:00.000Z',
+      options: [],
+      blocking: null,
+      edits: { option: 0, rejectedGameKeys: [], addedGames: [] },
+      replacing: 0,
+      publishedOption: null,
+      publishedAt: null,
+      published: [],
+      teams: [],
+      seasons: [season],
+      fields: []
+    }
+    const { startsOn: _dropped, ...undated } = season
+    const { api } = client([preview, { ...preview, seasons: [undated] }])
+    expect((await api.schedulePreview('spv/1')).seasons[0].startsOn).equals(
+      '2027-03-01'
+    )
+    // An answer from a server that does not send it yet still reads.
+    expect((await api.schedulePreview('spv/1')).seasons[0].startsOn).equals(
+      undefined
+    )
+  })
 })

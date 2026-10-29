@@ -322,6 +322,7 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
           name: 'Demo Regular',
           timezone: 'UTC',
           gameMinutes: 90,
+          startsOn: '2027-03-01',
           participants: ['tem_a', 'tem_b'],
           exhibitionTeams: []
         }
@@ -339,7 +340,8 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
     proto.schedulePreview = async id => preview(id)
     proto.buildSchedulePreview = async () => preview('spv_b')
     await open('/groups/league/lea_a/scheduler/previews/spv_a')
-    expect(document.body.textContent).includes('Owls at Demo Hawks')
+    expect(document.body.textContent).includes('Demo Hawks')
+    expect(document.body.textContent).includes('Demo Owls @')
     await press('Recalculate')
     await settle(200)
     expect(window.location.pathname).equals(

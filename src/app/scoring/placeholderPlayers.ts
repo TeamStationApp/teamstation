@@ -6,8 +6,17 @@ import {
 } from './playerDraft'
 import type { ScoringSessionState, Side } from './scoringTypes'
 
-/** The only abbreviation policy for roster placeholders. Length includes spaces. */
+/**
+ * The only abbreviation policy for a team or venue name: a roster
+ * placeholder's prefix, and a schedule preview's field label. Length includes
+ * spaces. Always in capitals, so a shortened name reads as one, whatever the
+ * case it was typed in.
+ */
 export function placeholderTeamName(name: string): string {
+  return abbreviated(name).toUpperCase()
+}
+
+function abbreviated(name: string): string {
   const words = name
     .normalize('NFD')
     .replace(/\p{M}/gu, '')

@@ -212,14 +212,14 @@ describe('placeholder count sheet and platform adapters', function () {
       await open()
       await click('Create')
       await click('Save Rosters')
-      expect(persisted).deep.equals(['Owls A', 'Owls B'])
+      expect(persisted).deep.equals(['OWLS A', 'OWLS B'])
       const visible = Object.values(saved!.gameData.players).filter(player =>
         persisted.includes(player.fullName)
       )
       expect(new Set(visible.map(player => player.id)).size).equals(2)
       expect(visible.map(player => player.fullName)).deep.equals([
-        'Owls A',
-        'Owls B'
+        'OWLS A',
+        'OWLS B'
       ])
     })
   }

@@ -23,11 +23,7 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import type { Frame } from 'puppeteer'
 
-import {
-  eventLocalFields,
-  eventLocalRange,
-  zoneName
-} from '../common/eventTime'
+import { eventLocalFields, zoneName } from '../common/eventTime'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import type { ScheduleSetup } from '../common/seasonScheduling'
 import type { VenueDetail } from '../common/venues'
@@ -631,18 +627,19 @@ async function curlZone(
   return zone
 }
 
-/** A time as the preview's rows show it: the viewer's, then the field's. */
+/** A time as the preview's game boxes show it: the viewer's, then the field's. */
 function rowTime(
-  game: { startAt: string; endAt: string | null },
+  game: { startAt: string },
   field: string,
   viewer: string
 ): string {
-  const there = new Intl.DateTimeFormat('en', {
-    timeZone: field,
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(new Date(game.startAt))
-  return `${eventLocalRange(game.startAt, game.endAt, viewer)} · ${there} ${zoneName(game.startAt, field)} at the field`
+  const at = (timeZone: string): string =>
+    new Intl.DateTimeFormat('en', {
+      timeZone,
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(new Date(game.startAt))
+  return `${at(viewer)} · ${at(field)} ${zoneName(game.startAt, field)} at the field`
 }
 
 /** Runs a scenario's steps with the browser in this zone, then resets it. */
