@@ -153,14 +153,16 @@ async function menu(label: string): Promise<void> {
   await click('Open scoring menu')
   await click(label)
 }
-afterEach(async function () {
+async function unmountSheet(): Promise<void> {
   await act(async () => {
     root?.unmount()
   })
   root = undefined
   HTMLCanvasElement.prototype.getContext = getContext
-})
+}
 describe('scoring slide-up sheets', function () {
+  // Unmount portals before the root DOM hook clears their host elements.
+  afterEach(unmountSheet)
   it('names the teams inside the Away/Home pill and nowhere else', async function () {
     await mount()
     // The scoreboard behind the sheet names the teams too; the sheet adds each
@@ -311,12 +313,12 @@ describe('scoring slide-up sheets', function () {
     expect(document.querySelector('[aria-label="First Name"]')).equals(null)
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
-    ).includes('Owls A')
+    ).includes('OWLS A')
     await click('Cancel')
     await menu('Set Team Rosters')
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
-    ).not.includes('Owls A')
+    ).not.includes('OWLS A')
     await click('Cancel')
   })
 
@@ -619,6 +621,7 @@ describe('scoring slide-up sheets', function () {
 })
 
 describe('ending the game from the menu', function () {
+  afterEach(unmountSheet)
   it('confirms, stores the end, refuses further pitches, and undoes it', async function () {
     await mount()
     await menu('End Game')
@@ -648,6 +651,7 @@ describe('ending the game from the menu', function () {
 })
 
 describe('the animation switch in settings', function () {
+  afterEach(unmountSheet)
   it('turns play animations off and back on', async function () {
     await mount()
     await menu('Settings')

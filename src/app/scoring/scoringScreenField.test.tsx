@@ -2372,7 +2372,7 @@ describe('scoring screen field wiring', function () {
       await click(
         index < 8
           ? `Assign ${slot} #${index + 1} Player ${index + 1}`
-          : `Assign ${slot} Hawks A`
+          : `Assign ${slot} HAWKS A`
       )
     }
     expect(props().instruction).equals(undefined)
@@ -2679,7 +2679,7 @@ describe('scoring screen field wiring', function () {
       await click('Create Placeholder Player')
       await click('Player count 2')
       await click('Create')
-      expect(document.body.textContent).includes('Hawks A')
+      expect(document.body.textContent).includes('HAWKS A')
       expect(document.querySelector('[aria-label="First Name"]')).equals(null)
       expect(live.state.liveData.boxscore.teams.home.players).has.length(13)
       expect(live.state.liveData.boxscore.teams.home.battingOrder).deep.equals(

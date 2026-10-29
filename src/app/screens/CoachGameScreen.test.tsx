@@ -871,7 +871,7 @@ describe('Coach Game (U25)', function () {
         ...roster('home')[0],
         userId: userIdOfGumbo(9000001),
         gumboId: 9000001,
-        shortName: 'Hawks A'
+        shortName: 'HAWKS A'
       }
     }
     await coach(held)
@@ -880,7 +880,7 @@ describe('Coach Game (U25)', function () {
     await click('Create')
     expect(requests).has.length(1)
     expect(requests[0]).includes({ gameId: 'g1', side: 'home' })
-    expect(document.body.textContent).includes('Hawks A')
+    expect(document.body.textContent).includes('HAWKS A')
     held.client.gameLineups = async () => lineups('mine', true)
     await click('Save Rosters')
     await waitFor(() => held.saved.length === 1, 'the saved guest')

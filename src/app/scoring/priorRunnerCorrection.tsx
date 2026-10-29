@@ -4,9 +4,9 @@ import { Pressable, Text, View } from 'react-native'
 import {
   type PriorRunner,
   priorRunners,
-  returnPriorRunner
-} from '../../common/scoring/priorRunner'
-import type { ScoringSession } from '../../common/scoring/session'
+  returnPriorRunner,
+  type ScoringSession
+} from '../../common/scoring/session'
 import type { GameState } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { CancelAction } from '../components/CancelAction'
