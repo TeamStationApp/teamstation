@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { checkApiRequest } from './denyList'
 import {
   contextText,
   instructions,
@@ -81,6 +82,19 @@ describe("Tess's system prompt", function () {
     ])
       expect(index).not.match(refused)
     expect(index.split('\n').every(line => line.length <= 900)).equals(true)
+  })
+
+  it('reads GraphQL with its own tool: named in the instructions, left out of the index, and not refused', function () {
+    const [instructed, index] = instructions().split('## API index')
+    expect(instructed).includes('## Reading with GraphQL')
+    expect(instructed).includes('graphql_query')
+    expect(index).not.match(/^\w+ \/graphql/m)
+    expect(index).not.match(/^\w+ \/me\/api-keys/m)
+    expect(checkApiRequest('POST', '/graphql')).deep.equals({
+      path: '/graphql',
+      search: ''
+    })
+    expect(checkApiRequest('GET', '/me/api-keys')).to.be.a('string')
   })
 
   it('carries the generated sitemap as it is checked in', function () {

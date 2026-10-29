@@ -3,8 +3,9 @@ import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
 import type { Database } from '../db/database'
+import { graphqlOutline } from '../graphql/schema'
 import { proposeChange } from './changes'
-import { checkApiRequest } from './denyList'
+import { checkApiRequest, GRAPHQL_PATH } from './denyList'
 import { apiCall, type Credentials } from './loopback'
 import type {
   ToolDefinition,
@@ -13,8 +14,9 @@ import type {
 } from './messagesApi'
 
 /**
- * Tess's two tools. `api_get` reads the API as the person; `confirmChange`
- * proposes a write, which runs only when the person confirms it. Neither
+ * Tess's tools. `api_get` reads the API as the person, and `graphql_query`
+ * reads many things at once through its GraphQL API; `confirmChange`
+ * proposes a write, which runs only when the person confirms it. None
  * throws: a refusal or a failure is the tool's error, which the model reads
  * and explains.
  */
@@ -50,6 +52,29 @@ export const TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: 'graphql_query',
+    description:
+      'Reads TeamStation through its read-only GraphQL API as the person you are helping, with their permissions: one query can gather what several api_get calls would. Answers the HTTP status and the JSON body, {data, errors}; a field the person may not read is null, with an error saying why. ' +
+      `Types and fields: ${graphqlOutline()}. ` +
+      'It only reads: there are no mutations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'The GraphQL query, such as { team(id: "tem_123") { name games { startAt homeScore awayScore } } }'
+        },
+        variables: {
+          type: 'object',
+          description: "Values for the query's $variables",
+          additionalProperties: true
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
     name: 'confirmChange',
     description:
       'Proposes one change to TeamStation for the person to confirm. Nothing changes now: the person sees a card with this request and it runs only if they hold its Confirm button. Never use it for live scoring.',
@@ -79,6 +104,10 @@ export const TOOLS: ToolDefinition[] = [
 const asApiGet = asObject({
   path: asString,
   query: asOptional(asObject(asUnknown))
+})
+const asGraphqlQuery = asObject({
+  query: asString,
+  variables: asOptional(asObject(asUnknown))
 })
 const asConfirmChange = asObject({
   method: asLiteral('POST', 'PUT', 'PATCH', 'DELETE'),
@@ -141,6 +170,40 @@ export async function runTool(
       }
     }
   }
+  if (call.name === 'graphql_query') {
+    let input: ReturnType<typeof asGraphqlQuery>
+    try {
+      input = asGraphqlQuery(call.input)
+    } catch {
+      return fail('graphql_query takes {query, variables?}')
+    }
+    const checked = checkApiRequest('POST', GRAPHQL_PATH)
+    if (typeof checked === 'string') return fail(checked)
+    const answer = await apiCall(
+      context.origin,
+      context.credentials,
+      'POST',
+      checked.path,
+      undefined,
+      {
+        query: input.query,
+        ...(input.variables == null ? {} : { variables: input.variables })
+      }
+    )
+    // A field refused or a query that failed is an error she explains.
+    const failed =
+      answer.status < 200 ||
+      answer.status >= 300 ||
+      /"errors"\s*:/.test(answer.body)
+    return {
+      result: {
+        type: 'tool_result',
+        tool_use_id: call.id,
+        content: `HTTP ${answer.status}\n${answer.body}`,
+        ...(failed ? { is_error: true } : {})
+      }
+    }
+  }
   if (call.name === 'confirmChange') {
     let input: ReturnType<typeof asConfirmChange>
     try {
@@ -152,6 +215,8 @@ export async function runTool(
     }
     const checked = checkApiRequest(input.method, input.path)
     if (typeof checked === 'string') return fail(checked)
+    if (checked.path.toLowerCase().replace(/\/$/, '') === GRAPHQL_PATH)
+      return fail('A GraphQL query is a read: use graphql_query')
     const summary = input.summary.trim()
     if (summary === '' || summary.length > MAX_SUMMARY)
       return fail(

@@ -94,6 +94,7 @@ describe("Tess's agent loop", function () {
     expect(request.system[2].cache_control).equals(undefined)
     expect(request.tools.map((tool: Block) => tool.name)).deep.equals([
       'api_get',
+      'graphql_query',
       'confirmChange'
     ])
     expect(request.tool_choice).deep.equals({ type: 'auto' })
@@ -196,6 +197,63 @@ describe("Tess's agent loop", function () {
     })
   })
 
+  it('queries GraphQL with graphql_query as the person, and sends the result back', async () => {
+    model.reply(
+      callTools([
+        {
+          name: 'graphql_query',
+          input: { query: '{ teams { id name } }' },
+          id: 'toolu_teams'
+        },
+        {
+          name: 'graphql_query',
+          input: {
+            query: 'query ($id: ID!) { team(id: $id) { name } }',
+            variables: { id: 'tem_nosuch' }
+          },
+          id: 'toolu_missing'
+        },
+        {
+          name: 'graphql_query',
+          input: { text: '{ teams }' },
+          id: 'toolu_bad'
+        },
+        {
+          name: 'confirmChange',
+          input: {
+            method: 'POST',
+            path: '/graphql',
+            body: { query: '{ teams { id } }' },
+            summary: 'Read the teams'
+          },
+          id: 'toolu_propose'
+        }
+      ]),
+      say('You are on Demo Hawks.')
+    )
+    await runTurn(w.deps(), w.user(101), { text: 'Which teams am I on?' })
+    const results = model.messageCalls()[1].messages.at(-1).content as Block[]
+    const byId = (id: string): Block =>
+      results.find(result => result.tool_use_id === id)!
+    expect(byId('toolu_teams').is_error).equals(undefined)
+    expect(byId('toolu_teams').content).equals(
+      'HTTP 200\n{"data":{"teams":[{"id":"tem_account","name":"Demo Hawks"}]}}'
+    )
+    expect(byId('toolu_missing').is_error).equals(true)
+    expect(byId('toolu_missing').content).match(/^HTTP 200\n\{"errors":/)
+    expect(byId('toolu_bad')).deep.include({
+      is_error: true,
+      content: 'graphql_query takes {query, variables?}'
+    })
+    expect(byId('toolu_propose')).deep.include({
+      is_error: true,
+      content: 'A GraphQL query is a read: use graphql_query'
+    })
+    expect(stepLabel({ name: 'graphql_query', input: {} })).equals(
+      'Querying TeamStation'
+    )
+  })
+
   it('answers a refused or malformed tool call with an error the model reads', async () => {
     model.reply(
       callTools([
@@ -267,7 +325,7 @@ describe("Tess's agent loop", function () {
     ).equals(true)
     const closing = calls.at(-1) as Block
     expect(closing.tool_choice).deep.equals({ type: 'none' })
-    expect(closing.tools).length(2)
+    expect(closing.tools).length(3)
     const limited = closing.messages.at(-1).content[0]
     expect(limited).deep.include({ content: TOOL_LIMIT, is_error: true })
     expectValidRequest(closing.messages)
