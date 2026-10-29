@@ -50,6 +50,7 @@ import { openApiDocument } from './openapi'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
+import { apiKeyRoutes } from './routes/apiKeys'
 import { appLinkRoutes } from './routes/appLinks'
 import { authRoutes } from './routes/auth'
 import { chatRoutes } from './routes/chat'
@@ -666,6 +667,10 @@ function runWorker(): void {
         await sendSignInCode(serverConfig.smtp, email, code)
       }
     })
+  )
+  app.use(
+    '/api/v1',
+    apiKeyRoutes(db, { sessionSecret: serverConfig.sessionSecret })
   )
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))

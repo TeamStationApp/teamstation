@@ -1144,8 +1144,8 @@ describe("Tess's agent loop", function () {
     expect(steps.map(step => step.type === 'step' && step.label)).deep.equals([
       reading,
       reading,
-      'Not allowed: Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes.',
-      'Not allowed: Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes.'
+      'Not allowed: Tess may not use sign-in, account, API key, device key, test build, OAuth, dictation or Tess routes.',
+      'Not allowed: Tess may not use sign-in, account, API key, device key, test build, OAuth, dictation or Tess routes.'
     ])
     expect(JSON.stringify(events)).not.contains('secret')
     // Every call of the turn is streamed, with summarized thinking.

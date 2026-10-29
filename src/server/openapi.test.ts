@@ -19,6 +19,7 @@ import { analyticsRoutes } from './observability/routes'
 import { openApiDocument } from './openapi'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
+import { apiKeyRoutes } from './routes/apiKeys'
 import { authRoutes } from './routes/auth'
 import { chatRoutes } from './routes/chat'
 import { chatAttachmentRoutes } from './routes/chatAttachments'
@@ -146,6 +147,7 @@ describe('the API document', function () {
       ...routesOf(
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
+      ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
@@ -216,6 +218,7 @@ describe('the API document', function () {
       ...routesOf(
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
+      ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),

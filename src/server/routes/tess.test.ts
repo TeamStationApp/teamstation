@@ -652,7 +652,7 @@ describe("Tess's routes", function () {
     expect(messages[1].steps).deep.equals([
       {
         label:
-          'Not allowed: Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes.',
+          'Not allowed: Tess may not use sign-in, account, API key, device key, test build, OAuth, dictation or Tess routes.',
         status: 'failed'
       }
     ])

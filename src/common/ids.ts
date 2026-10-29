@@ -43,6 +43,7 @@ export const idPrefixes = {
   umpireType: 'uty',
   umpireLevel: 'ulv',
   user: 'usr',
+  userApiKey: 'uak',
   userEmail: 'uem',
   userLink: 'lnk',
   venue: 'ven',

@@ -243,6 +243,106 @@ const accountResponse = {
     }
   }
 }
+const apiKeyPermissionSchema = {
+  type: 'string',
+  enum: [
+    'account',
+    'gameEvents',
+    'schedule',
+    'league',
+    'season',
+    'team',
+    'umpire'
+  ].flatMap(area => [`${area}:read`, `${area}:write`])
+}
+const apiKeySchema = {
+  type: 'object',
+  required: ['id', 'name', 'secret', 'createdAt', 'permissions'],
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    secret: {
+      type: ['string', 'null'],
+      description:
+        'The bearer token. Null only when the server secret changed since the key was made.'
+    },
+    createdAt: { type: 'string', format: 'date-time' },
+    permissions: { type: 'array', items: apiKeyPermissionSchema }
+  }
+}
+const apiKeyPaths = {
+  '/me/api-keys': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'List your API keys (signed-in sessions only)',
+      description:
+        'Active keys, oldest first, each with its secret. A machine token, Tess and an API key are refused.',
+      responses: {
+        200: {
+          description: 'Your keys',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { keys: { type: 'array', items: apiKeySchema } }
+              }
+            }
+          }
+        },
+        403: { description: 'Not a signed-in session' }
+      }
+    },
+    post: {
+      security: [{ bearer: [] }],
+      summary: 'Create an API key (signed-in sessions only)',
+      description:
+        'A key calls this API as you, within its permissions: `<area>:read` allows GET and HEAD on that area’s routes, `<area>:write` allows POST, PUT, PATCH and DELETE, and write is stored with read. Any route outside the areas answers 403 to a key. A key does not expire. An account holds at most 20 keys and may create 10 per 15 minutes.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['name', 'permissions'],
+              properties: {
+                name: { type: 'string', minLength: 1, maxLength: 80 },
+                permissions: {
+                  type: 'array',
+                  minItems: 1,
+                  items: apiKeyPermissionSchema
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        201: {
+          description: 'The new key, with its secret',
+          content: { 'application/json': { schema: apiKeySchema } }
+        },
+        400: { description: 'A blank name or no permission' },
+        403: { description: 'Not a signed-in session' },
+        409: { description: 'The account already holds 20 keys' },
+        429: { description: 'Too many keys created recently' }
+      }
+    }
+  },
+  '/me/api-keys/{id}': {
+    delete: {
+      security: [{ bearer: [] }],
+      summary: 'Revoke one of your API keys (signed-in sessions only)',
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string' } }
+      ],
+      responses: {
+        204: { description: 'Revoked; the key is refused from now on' },
+        403: { description: 'Not a signed-in session' },
+        404: { description: 'No such active key on your account' }
+      }
+    }
+  }
+}
 const accountPaths = {
   '/me/account': {
     get: {
@@ -2455,6 +2555,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...schedulePreviewPaths(errorResponse),
       ...eventInfoPaths(errorResponse),
       ...accountPaths,
+      ...apiKeyPaths,
       '/me/builds': {
         get: {
           summary: 'Read the optional build distribution link',

@@ -220,6 +220,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/replay/speech.js',
   'server/routes/account.js',
   'server/routes/admin.js',
+  'server/routes/apiKeys.js',
   'server/routes/appLinks.js',
   'server/routes/auth.js',
   'server/routes/chat.js',

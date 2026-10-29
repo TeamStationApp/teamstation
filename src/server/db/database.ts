@@ -535,6 +535,19 @@ export interface ApiTokensTable {
   revoked_at: Timestamp | null
 }
 
+/** An API key a person made under Account. See 089userApiKeys. */
+export interface UserApiKeysTable {
+  id: string
+  user_id: string
+  name: string
+  token_hash: string
+  secret_sealed: string
+  permissions: string[]
+  created_at: Timestamp
+  last_used_at: Timestamp | null
+  revoked_at: Timestamp | null
+}
+
 /**
  * An attempt to sign in by following a link.
  *
@@ -653,6 +666,7 @@ export interface AuditLogTable {
   at: Timestamp
   actor_user_id: string | null
   api_token_id: string | null
+  user_api_key_id: Generated<string | null>
   method: string
   path: string
   entity_type: string | null
@@ -1456,6 +1470,7 @@ export interface Database {
   season_team_parents: SeasonTeamParentsTable
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
+  user_api_keys: UserApiKeysTable
   game_play_archives: GamePlayArchivesTable
   auth_sessions: AuthSessionsTable
   chat_attachments: ChatAttachmentsTable

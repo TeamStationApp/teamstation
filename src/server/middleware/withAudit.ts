@@ -57,6 +57,7 @@ export function withAudit(db: Kysely<Database>): RequestHandler {
           id: makeId('audit'),
           actor_user_id: req.actor?.userId ?? null,
           api_token_id: req.actor?.apiTokenId ?? null,
+          user_api_key_id: req.actor?.apiKey?.id ?? null,
           method: req.method,
           path: req.originalUrl.split('?')[0],
           entity_type: subject.entityType ?? null,

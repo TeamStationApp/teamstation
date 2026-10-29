@@ -8,6 +8,7 @@ import { oauthInteractionRoutes } from '../server/oauth/routes'
 import { analyticsRoutes } from '../server/observability/routes'
 import { accountRoutes } from '../server/routes/account'
 import { adminRoutes } from '../server/routes/admin'
+import { apiKeyRoutes } from '../server/routes/apiKeys'
 import { authRoutes } from '../server/routes/auth'
 import { deviceEventControlRoutes } from '../server/routes/deviceEventControl'
 import { directorRoutes } from '../server/routes/director'
@@ -118,6 +119,7 @@ export function apiRoutes(): string[] {
     ...routesOf(timeRoutes()),
     ...routesOf(authRoutes(db, { sendCode })),
     ...routesOf(accountRoutes(db, { ...media, sendCode })),
+    ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
     ...routesOf(seasonRoutes(db, media)),
     ...routesOf(eventInfoRoutes(db, media)),
     ...routesOf(eventListRoutes(db, media)),
