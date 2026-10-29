@@ -29,7 +29,7 @@ const run = promisify(execFile)
 
 export type FrameSource =
   | { kind: 'file'; path: string }
-  | { kind: 'space'; space: SpaceSettings; videoId: string }
+  | { kind: 'space'; space: SpaceSettings; videoId: string; verified?: boolean }
 
 export interface StillOptions {
   ffmpegPath: string
@@ -240,6 +240,7 @@ async function openFrame(
   return await fetchSpaceFrame({
     space: source.space,
     videoId: source.videoId,
+    verified: source.verified,
     atSec,
     workDir: scratch,
     fetch: async (input, init) =>

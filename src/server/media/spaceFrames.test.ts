@@ -117,6 +117,8 @@ describe('fetching one fragment out of the Space', function () {
 
   const fakeFetch = (async (url: string | URL, init?: RequestInit) => {
     const href = String(url)
+    if (href.includes('master.m3u8'))
+      return new Response('#EXTM3U\nvideo.m3u8\n')
     if (href.includes('video.m3u8')) {
       return new Response(PLAYLIST, { status: 200 })
     }
@@ -187,9 +189,11 @@ describe('fetching one fragment out of the Space', function () {
 
   it('gives up when the Space ignores the range', async function () {
     const whole = (async (url: string | URL) =>
-      String(url).includes('video.m3u8')
-        ? new Response(PLAYLIST, { status: 200 })
-        : new Response(object, { status: 200 })) as unknown as typeof fetch
+      String(url).includes('master.m3u8')
+        ? new Response('#EXTM3U\nvideo.m3u8\n')
+        : String(url).includes('video.m3u8')
+          ? new Response(PLAYLIST, { status: 200 })
+          : new Response(object, { status: 200 })) as unknown as typeof fetch
 
     const frame = await fetchSpaceFrame({
       space: SPACE,
@@ -201,6 +205,104 @@ describe('fetching one fragment out of the Space', function () {
     // A 200 is the whole 2 GB object on its way, which is the thing this
     // module exists to avoid.
     expect(frame).equals(undefined)
+  })
+
+  it('reads only the init object and the chosen live fragment and refreshes an open playlist', async () => {
+    let body =
+      '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n#EXT-X-ENDLIST\n'
+    const reads: string[] = []
+    const liveFetch = (async (url: string | URL, init?: RequestInit) => {
+      const name = new URL(String(url)).pathname.split('/').at(-1)!
+      reads.push(name)
+      if (name === 'master.m3u8') return new Response('#EXTM3U\nindex.m3u8\n')
+      if (name === 'index.m3u8') return new Response(body)
+      expect(init?.headers).equals(undefined)
+      return new Response(
+        name === 'init.mp4' ? Buffer.from([1, 2]) : Buffer.from([3, 4])
+      )
+    }) as typeof fetch
+    const opts = {
+      space: SPACE,
+      videoId: 'vid_live',
+      atSec: 2,
+      workDir,
+      fetch: liveFetch
+    }
+    const first = await fetchSpaceFrame(opts)
+    expect(await readFile(first!.path)).deep.equals(Buffer.from([1, 2, 3, 4]))
+    expect(first?.seekSec).equals(2)
+    await first?.release()
+    expect(reads).deep.equals([
+      'master.m3u8',
+      'index.m3u8',
+      'init.mp4',
+      'seg000000.m4s'
+    ])
+    body = body.replace(
+      '#EXT-X-ENDLIST\n',
+      '#EXT-X-DISCONTINUITY\n#EXTINF:4,\nseg000001.m4s\n'
+    )
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    const next = await fetchSpaceFrame({ ...opts, atSec: 5 })
+    expect(next?.seekSec).equals(1)
+    expect(reads.at(-1)).equals('seg000001.m4s')
+    await next?.release()
+    const verified = await fetchSpaceFrame({
+      ...opts,
+      atSec: 5,
+      verified: true
+    })
+    await verified?.release()
+    reads.length = 0
+    const cached = await fetchSpaceFrame({ ...opts, atSec: 5, verified: true })
+    await cached?.release()
+    expect(reads).deep.equals(['init.mp4', 'seg000001.m4s'])
+  })
+
+  it('rejects invalid variants, missing playlists, and failed full-object reads', async () => {
+    for (const failure of [
+      'master',
+      'variant',
+      'playlist',
+      'segment'
+    ] as const) {
+      clearFragmentCache()
+      const badFetch = (async (url: string | URL) => {
+        const name = new URL(String(url)).pathname.split('/').at(-1)
+        if (name === 'master.m3u8')
+          return failure === 'master'
+            ? new Response('', { status: 404 })
+            : new Response(
+                failure === 'variant'
+                  ? '#EXTM3U\n../../bad\n'
+                  : '#EXTM3U\nindex.m3u8\n'
+              )
+        if (name === 'index.m3u8')
+          return failure === 'playlist'
+            ? new Response('', { status: 404 })
+            : new Response(
+                '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n'
+              )
+        return new Response('', { status: 404 })
+      }) as typeof fetch
+      expect(
+        await fetchSpaceFrame({
+          space: SPACE,
+          videoId: 'vid_bad',
+          atSec: 1,
+          workDir,
+          fetch: badFetch
+        })
+      ).equals(undefined)
+    }
+    expect(fragmentAt(PLAYLIST, NaN)).equals(undefined)
+    expect(fragmentAt(PLAYLIST, -1)).equals(undefined)
+    expect(
+      fragmentAt(PLAYLIST.replace('URI="video.mp4"', 'URI="../video.mp4"'), 1)
+    ).equals(undefined)
+    expect(
+      fragmentAt(PLAYLIST.replace('#EXT-X-BYTERANGE:1000@1402\n', ''), 1)
+    ).equals(undefined)
   })
 
   it('gives two stills of the same video files of their own', async function () {

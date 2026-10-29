@@ -206,6 +206,7 @@ export function mediaRoutes(
         .select([
           'videos.storage as storage',
           'videos.hidden as hidden',
+          'videos.spaces_verified_at as spacesVerifiedAt',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId'
@@ -218,7 +219,13 @@ export function mediaRoutes(
       // members.
       if (!canSeeGame(scopes, video)) throw membersOnly()
 
-      await redirectToStill(res, video.storage, videoId, atSec)
+      await redirectToStill(
+        res,
+        video.storage,
+        videoId,
+        atSec,
+        video.spacesVerifiedAt != null
+      )
     })
   )
 
@@ -256,11 +263,17 @@ export function mediaRoutes(
       }
       const video = await db
         .selectFrom('videos')
-        .select(['storage', 'hidden'])
+        .select(['storage', 'hidden', 'spaces_verified_at'])
         .where('id', '=', videoId)
         .executeTakeFirst()
       if (video == null || video.hidden) throw notFound()
-      await redirectToStill(res, video.storage, videoId, atSec)
+      await redirectToStill(
+        res,
+        video.storage,
+        videoId,
+        atSec,
+        video.spaces_verified_at != null
+      )
     })
   )
 
@@ -269,13 +282,15 @@ export function mediaRoutes(
     res: Response,
     storage: 'peertube' | 'local' | 'spaces',
     videoId: string,
-    atSec: number
+    atSec: number,
+    verified: boolean
   ): Promise<void> {
     const source = await videoFrameSource({
       mediaRoot,
       space,
       storage,
-      videoId
+      videoId,
+      verified
     })
     if (source == null) throw notFound()
     const kept = await ensureStill({
