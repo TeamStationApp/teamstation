@@ -443,12 +443,14 @@ describe('what the ingest is told', function () {
     const writer = join(mediaRoot, 'slow-writer.sh')
     const ready = join(mediaRoot, 'writers-ready')
     const stopping = join(mediaRoot, 'writers-stopping')
+    const completed = join(mediaRoot, 'writers-completed')
     const release = join(mediaRoot, 'release-writers')
     await writeFile(ready, '')
     await writeFile(stopping, '')
+    await writeFile(completed, '')
     await writeFile(
       writer,
-      `#!/bin/sh\ntrap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; echo stopping >> "${stopping}"; while [ ! -f "${release}" ]; do sleep 0.01; done; exit 0' TERM\nsleep 30 &\nchild=$!\necho ready >> '${ready}'\nwait\n`
+      `#!/bin/sh\ntrap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; echo stopping >> "${stopping}"; while [ ! -f "${release}" ]; do sleep 0.01; done; echo completed >> "${completed}"; exit 0' TERM\nsleep 30 &\nchild=$!\necho ready >> '${ready}'\nwait\n`
     )
     const waitForBoth = async (path: string): Promise<number> => {
       const deadline = Date.now() + 5000
@@ -538,6 +540,12 @@ describe('what the ingest is told', function () {
         await finished
       }
       expect(stoppedTogether, 'both stops precede either exit').equals(2)
+      // A sequential stop can reach the second writer after force-killing
+      // the first. Both must instead survive until the barrier is released.
+      expect(
+        (await readFile(completed, 'utf8')).trim().split('\n').filter(Boolean),
+        'both writers finish gracefully after release'
+      ).has.length(2)
       expect(liveKeys()).not.contains(FOURTH_KEY)
       expect(liveKeys()).not.contains(FIFTH_KEY)
       const ended = await db
