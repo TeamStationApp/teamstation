@@ -10,6 +10,7 @@ import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
 import { ffprobeFor, probeDuration, VIDEO_FILE } from '../media/ffmpeg'
 import { posterSecond } from '../media/posters'
+import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
 import { spaceConfigured } from '../media/spacesHls'
 import {
@@ -437,6 +438,7 @@ export async function sweepLocalCopies(
   current: LiveControllerOptions | undefined = options
 ): Promise<void> {
   if (current == null) return
+  const generation = originGeneration
   const { db, mediaRoot } = current
   const log =
     current.log ??
@@ -466,6 +468,7 @@ export async function sweepLocalCopies(
   }
 
   await retryTheSpace(current)
+  await retryTheClose(current, generation)
 }
 
 /**
@@ -526,7 +529,7 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   const videoId = unpacked
   // Behind any finish of the same video still running, and only if nothing
   // has replaced it or sent it in the meantime.
-  queue(`finish:${videoId}`, async () => {
+  queue(`publish:${videoId}`, async () => {
     const still = await db
       .selectFrom('videos')
       .select('id')
@@ -992,7 +995,7 @@ export async function sync(
   const finishing: Array<Promise<{ error: unknown } | undefined>> = []
   const finish = (liveStreamId: string, reason: string): void => {
     finishing.push(
-      finishStream(current, liveStreamId, reason).then(
+      finishStream(current, liveStreamId, reason, generation).then(
         () => undefined,
         (error: unknown) => ({ error })
       )
@@ -1281,7 +1284,8 @@ async function sayOnce(
 export async function finishStream(
   current: LiveControllerOptions,
   liveStreamId: string,
-  reason: string
+  reason: string,
+  generation = originGeneration
 ): Promise<void> {
   finalizationRevision++
   finalizingStreams.set(
@@ -1289,7 +1293,7 @@ export async function finishStream(
     (finalizingStreams.get(liveStreamId) ?? 0) + 1
   )
   try {
-    await finishStreamRecording(current, liveStreamId, reason)
+    await finishStreamRecording(current, liveStreamId, reason, generation)
   } finally {
     // A lookup can begin after the start revision but read before the commit.
     finalizationRevision++
@@ -1302,7 +1306,8 @@ export async function finishStream(
 async function finishStreamRecording(
   current: LiveControllerOptions,
   liveStreamId: string,
-  reason: string
+  reason: string,
+  generation: number
 ): Promise<void> {
   const { db, mediaRoot, ffmpegPath } = current
   const entry = tracked.get(liveStreamId)
@@ -1353,7 +1358,6 @@ async function finishStreamRecording(
       await noteGameFigures(trx, gameId)
     })
   }
-  anchorCursors.delete(row.videoId)
 
   // A key nobody ever used, or used only by something that was turned away —
   // an encoder in the wrong codec connects and is refused, which does count as
@@ -1365,10 +1369,15 @@ async function finishStreamRecording(
     !(await hasMedia(mediaRoot, row.videoId))
   ) {
     const videoId = row.videoId
+    anchorCursors.delete(videoId)
+    origins.get(videoId)?.publisher.stop()
     await settle(
       async trx =>
         await trx.deleteFrom('videos').where('id', '=', videoId).execute()
     )
+    queue(`publish:${videoId}`, async () => {
+      await removeDeletedOrigin(current, videoId)
+    })
     return
   }
 
@@ -1381,6 +1390,8 @@ async function finishStreamRecording(
 
   if (durationSec == null) {
     const videoId = row.videoId
+    anchorCursors.delete(videoId)
+    stopOrigin(videoId)
     await settle(
       async trx =>
         await trx
@@ -1424,22 +1435,40 @@ async function finishStreamRecording(
         .execute()
   )
 
-  // A recording uploaded from the phone replaced this one while it was
-  // between publishes. It is kept here, whole and watchable, for the month
-  // in which the replacement may be undone, and the purge deletes it with
-  // its work directory after that: packing it up and paying the Space for a
-  // copy nobody sees would be work for nothing.
-  const replaced = await db
-    .selectFrom('videos')
-    .select('id')
-    .where('id', '=', row.videoId)
-    .where('replaced_by', 'is not', null)
-    .executeTakeFirst()
-  if (replaced != null) return
+  queueOriginClose(current, row.videoId, liveStreamId, generation)
+}
 
-  const videoId = row.videoId
-  queue(`finish:${videoId}`, async () => {
-    await putAway(current, videoId)
+/** Finish work shares the publisher queue, behind any first-segment callback. */
+function queueOriginClose(
+  current: LiveControllerOptions,
+  videoId: string,
+  liveStreamId: string,
+  generation: number
+): void {
+  if (generation !== originGeneration) return
+  const held = origins.get(videoId)
+  if (held != null) held.publisher.closing = true
+  queue(`publish:${videoId}`, async () => {
+    if (generation !== originGeneration) return
+    const row = await current.db
+      .selectFrom('videos')
+      .select(['storage', 'replaced_by', 'spaces_verified_at', 'duration_sec'])
+      .where('id', '=', videoId)
+      .executeTakeFirst()
+    // Shutdown may have stopped and removed this publisher during the lookup.
+    if (generation !== originGeneration) return
+    if (row == null) {
+      await removeDeletedOrigin(current, videoId)
+      return
+    }
+    if (row.storage === 'spaces') {
+      if (row.spaces_verified_at == null)
+        await closeOrigin(current, videoId, liveStreamId, row.duration_sec ?? 0)
+      return
+    }
+    stopOrigin(videoId)
+    anchorCursors.delete(videoId)
+    if (row.replaced_by == null) await putAway(current, videoId)
   })
 }
 
@@ -1458,6 +1487,114 @@ async function removeDeletedOrigin(
     await deleteVideoFromSpace({ space: current.space, videoId })
   stopOrigin(videoId)
   anchorCursors.delete(videoId)
+}
+
+async function closeOrigin(
+  current: LiveControllerOptions,
+  videoId: string,
+  liveStreamId: string,
+  durationSec: number
+): Promise<void> {
+  const { db, space } = current
+  const dir = liveVideoDir(current.mediaRoot, videoId)
+  try {
+    const origin = startOrigin(current, videoId, liveStreamId)
+    if (origin == null || space == null)
+      throw new Error('No Space configured for live recording')
+    origin.publisher.closing = true
+    await closePlaylist(current.mediaRoot, videoId)
+    // Each pass stays bounded. A failed scan advances nothing and ends the drain.
+    for (;;) {
+      const before = anchorCursors.get(videoId)?.segments ?? -1
+      await recordWallPoints(current, videoId, dir)
+      const after = anchorCursors.get(videoId)?.segments ?? -1
+      if (after <= before) break
+    }
+    await replaceAnchorsFromRecording(db, videoId, dir, LIVE_PLAYLIST_NAME)
+    anchorCursors.delete(videoId)
+    origin.refreshFinal()
+    const result = await origin.publisher.flush({ close: true })
+    if (!result.complete || result.body == null)
+      throw new Error('Live origin is not fully acknowledged')
+    const response = await fetch(
+      presignGetUrl({
+        ...space,
+        key: `videos/${videoId}/index.m3u8`,
+        expiresSec: 300
+      })
+    )
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error(`Closed playlist answered ${response.status}`)
+    }
+    if ((await response.text()) !== result.body)
+      throw new Error('Closed playlist came back different')
+    await keepAPicture(current, videoId, dir, durationSec, LIVE_PLAYLIST_NAME)
+    const row = await db
+      .selectFrom('videos')
+      .select('status_message')
+      .where('id', '=', videoId)
+      .executeTakeFirst()
+    if (row == null) {
+      await removeDeletedOrigin(current, videoId)
+      return
+    }
+    const now = new Date()
+    await db
+      .updateTable('videos')
+      .set({
+        spaces_verified_at: now,
+        local_delete_after: now,
+        status_message: isSoundStepProblem(row.status_message)
+          ? row.status_message
+          : null,
+        updated_at: now
+      })
+      .where('id', '=', videoId)
+      .execute()
+    // The durable cleanup marker survives a crash or a failed removal.
+    stopOrigin(videoId)
+    await rm(dir, { recursive: true, force: true })
+    await db
+      .updateTable('videos')
+      .set({ local_delete_after: null })
+      .where('id', '=', videoId)
+      .execute()
+  } catch (error) {
+    ;(current.log ?? console.log)(
+      `live: ${videoId} close failed: ${String(error)}`
+    )
+    await db
+      .updateTable('videos')
+      .set({
+        status_message: 'Not yet copied off this machine',
+        updated_at: new Date()
+      })
+      .where('id', '=', videoId)
+      .where('spaces_verified_at', 'is', null)
+      .execute()
+  }
+}
+
+async function retryTheClose(
+  current: LiveControllerOptions,
+  generation: number
+): Promise<void> {
+  if (generation !== originGeneration) return
+  const rows = await current.db
+    .selectFrom('videos')
+    .leftJoin('live_streams', 'live_streams.video_id', 'videos.id')
+    .select(['videos.id', 'live_streams.id as streamId'])
+    .where('videos.kind', '=', 'live')
+    .where('videos.status', '=', 'ready')
+    .where('videos.storage', '=', 'spaces')
+    .where('videos.spaces_verified_at', 'is', null)
+    .where('videos.updated_at', '<', new Date(Date.now() - RETRY_AFTER_MS))
+    .orderBy('videos.updated_at', 'asc')
+    .limit(5)
+    .execute()
+  for (const row of rows)
+    queueOriginClose(current, row.id, row.streamId ?? '', generation)
 }
 
 /**
@@ -1551,13 +1688,14 @@ async function keepAPicture(
   current: LiveControllerOptions,
   videoId: string,
   dir: string,
-  durationSec: number
+  durationSec: number,
+  sourceFile: string = VIDEO_FILE
 ): Promise<void> {
   try {
     if (current.space == null) return
     await ensureStill({
       ffmpegPath: current.ffmpegPath,
-      source: { kind: 'file', path: join(dir, VIDEO_FILE) },
+      source: { kind: 'file', path: join(dir, sourceFile) },
       space: current.space,
       videoId,
       atSec: posterSecond(durationSec)

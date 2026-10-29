@@ -620,7 +620,7 @@ export interface RecordingScan {
  */
 export async function scanRecording(
   dir: string,
-  options: { onlyIfFirstStamped?: boolean } = {}
+  options: { onlyIfFirstStamped?: boolean; playlistFile?: string } = {}
 ): Promise<WallPoint[]> {
   return (await readRecordingStamps(dir, options)).points
 }
@@ -641,11 +641,11 @@ export async function scanRecording(
  */
 export async function readRecordingStamps(
   dir: string,
-  options: { onlyIfFirstStamped?: boolean } = {}
+  options: { onlyIfFirstStamped?: boolean; playlistFile?: string } = {}
 ): Promise<RecordingScan> {
   const none: RecordingScan = { points: [], stamped: [], durationMs: 0 }
   const playlist = parseMediaPlaylist(
-    await readFile(join(dir, MEDIA_PLAYLIST), 'utf8')
+    await readFile(join(dir, options.playlistFile ?? MEDIA_PLAYLIST), 'utf8')
   )
   if (playlist.map == null) return none
   const track = videoTrackOf(

@@ -122,6 +122,7 @@ describe('the live sweep', function () {
   })
 
   after(async function () {
+    await settleLiveWork()
     space?.close()
     if (db != null) await db.destroy()
     if (mediaRoot !== '') await rm(mediaRoot, { recursive: true, force: true })

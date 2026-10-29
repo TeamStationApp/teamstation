@@ -152,6 +152,36 @@ describe('the wall clock of a live stream (U25)', function () {
     expect(SEGMENTS_PER_SCAN).within(2, 16)
   })
 
+  it('uses settled prefix durations and refreshed placement after a reconnect restamp', async function () {
+    const live = join(dir, 'restamped-prefix')
+    await mkdir(live)
+    await writeLive(stamped, live, { seconds: 2 })
+    const first = await scanNewSegments(live, undefined, atNow)
+    const playlistPath = join(live, 'master.m3u8')
+    await writeFile(
+      playlistPath,
+      (await readFile(playlistPath, 'utf8')).replace(
+        /#EXTINF:1\.000000,\nseg000001/,
+        '#EXTINF:0.900000,\nseg000001'
+      )
+    )
+    await writeLive(stamped, live, { fromSec: 4, seconds: 2, startNumber: 2 })
+    const second = await scanNewSegments(live, first.cursor, atNow, 1)
+    expect(second.points[0].mediaMs).equals(1900)
+    const init = await readFile(join(live, 'init.mp4'))
+    const listed = parseMediaPlaylist(await readFile(playlistPath, 'utf8'))
+    for (const segment of listed.segments.slice(2)) {
+      const path = join(live, segment.uri)
+      await writeFile(
+        path,
+        placeSegmentOnTimeline(init, await readFile(path), 20)!
+      )
+    }
+    const third = await scanNewSegments(live, second.cursor, atNow)
+    expect(third.points[0].mediaMs).equals(2900)
+    expect(third.points[0].wallMs).equals(START + 5000)
+  })
+
   it('places an unstamped segment by its arrival, never behind the one before it', async function () {
     const live = join(dir, 'plain')
     await mkdir(live)
@@ -708,6 +738,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
       segments: 2,
       startMs: 2000,
       placement: undefined,
+      placementSegment: undefined,
       last: { mediaMs: 2500, wallMs: START + 2500, corrected: true },
       latest: { mediaMs: 2500, wallMs: START + 2500 }
     })
