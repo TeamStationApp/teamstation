@@ -47,7 +47,7 @@ const client = new Proxy(
   }
 ) as TeamStationClient
 
-describe('a season’s chats', function () {
+describe('entity chat season sections', function () {
   it('links to each one, and opens it', async function () {
     const opened: string[] = []
     const host = document.createElement('div')
@@ -67,6 +67,12 @@ describe('a season’s chats', function () {
         </ThemeProvider>
       )
       await delay(20)
+    })
+    expect(document.querySelector('[data-testid="entity-chats"]')).equals(null)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[role="tab"][aria-label="Chats"]')!
+        .click()
     })
     const link = document.querySelector<HTMLElement>(
       '[role="button"][aria-label="Open Spring Org"]'

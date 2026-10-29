@@ -1950,8 +1950,8 @@ describe('members, approvals and safety numbers', function () {
   })
 })
 
-describe('chat links on a team or season page', function () {
-  it('opens each chat, and draws nothing without one', async function () {
+describe('entity chat links on a team or season page', function () {
+  it('opens each chat, and shows an empty section without one', async function () {
     const opened: string[] = []
     await render(
       <ChatLinks
@@ -1968,7 +1968,7 @@ describe('chat links on a team or season page', function () {
       root?.unmount()
     })
     await render(<ChatLinks chats={[]} onOpen={() => {}} />)
-    expect(text()).equals('')
+    expect(text()).contains('No chats available.')
   })
 })
 

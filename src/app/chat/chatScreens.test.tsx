@@ -1650,9 +1650,9 @@ describe('chat devices in the app', function () {
     expect(currentRoute()).deep.equals({ name: 'chat' })
   })
 
-  it('opens a league’s Org chat from its card on Home', async function () {
+  it('keeps league chats off Home and opens them from Chats', async function () {
     const fake = new FakeKeys()
-    fakeApi(
+    const asked = fakeApi(
       fake,
       chats([
         summary({
@@ -1666,8 +1666,17 @@ describe('chat devices in the app', function () {
     )
     showRoute({ name: 'home' }, true)
     await render(<App />)
-    await until('the league card', () => text().includes('LEAGUES'))
-    await press('QPLL, QPLL Org')
+    await until('chat summaries', () =>
+      asked.includes('GET /chat/conversations')
+    )
+    expect(text()).not.contains('QPLL Org')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[role="tab"][aria-label="Chat"]')!
+        .click()
+    })
+    await until('the chat list', () => text().includes('QPLL'))
+    await press('QPLL Org')
     await until('the chat', () => text().includes('No messages yet'))
     expect(currentRoute()).deep.equals({
       name: 'conversation',

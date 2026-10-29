@@ -115,6 +115,8 @@ export interface ConversationListItem {
   lastPostSeq?: number
   preferences?: ChatPreferences
   preview?: string
+  /** The latest preview comes from authenticated, readable message content. */
+  previewReadable?: boolean
   /** A current preview attempt failed; a visible row can retry it explicitly. */
   previewFailed?: boolean
   previewRetrying?: boolean
@@ -251,6 +253,7 @@ export class ChatEngine {
   private readonly alertedSeq = new Map<string, number>()
   private unlisten: (() => void) | undefined
   private stopped = false
+  private existingOnly = false
 
   constructor(options: ChatEngineOptions) {
     this.options = options
@@ -280,6 +283,7 @@ export class ChatEngine {
       store,
       userId,
       device,
+      existingOnly: this.existingOnly,
       current: () => (this.context == null ? !this.stopped : this.live)
     }
   }
@@ -319,8 +323,9 @@ export class ChatEngine {
    * Brings the device to `ready`, `link` or `reset` (see `links.ts`). When
    * ready, reads the chats and fills the grant requests it may.
    */
-  async start(): Promise<Enrolment['state']> {
-    const enrolment = await ensureEnrolled(this.setup)
+  async start(existingOnly = false): Promise<Enrolment['state']> {
+    const enrolment = await ensureEnrolled({ ...this.setup, existingOnly })
+    this.existingOnly = existingOnly
     // Stopped while it ran: whoever signs in next gets an engine of their own.
     if (!this.live) throw new StaleChatSetupError()
     if (this.context == null) {
@@ -490,6 +495,21 @@ export class ChatEngine {
         }
       }
     }
+    const latestMessage =
+      lastPost.seq > 0 && state.synced
+        ? foldMessages({
+            envelopes: state.envelopes.values(),
+            opened: state.opened,
+            me: this.options.userId,
+            names: new Map(
+              (state.members ?? []).map(member => [
+                member.userId,
+                member.shortName
+              ])
+            ),
+            reads: state.reads
+          }).find(message => message.id === lastPost.id)
+        : undefined
     const keyed =
       this.context != null &&
       state.epochsSynced &&
@@ -540,21 +560,11 @@ export class ChatEngine {
         lastPost.seq === 0
           ? ''
           : state.synced
-            ? messagePreview(
-                foldMessages({
-                  envelopes: state.envelopes.values(),
-                  opened: state.opened,
-                  me: this.options.userId,
-                  names: new Map(
-                    (state.members ?? []).map(member => [
-                      member.userId,
-                      member.shortName
-                    ])
-                  ),
-                  reads: state.reads
-                }).find(message => message.id === lastPost.id)
-              )
+            ? messagePreview(latestMessage)
             : undefined,
+      previewReadable:
+        latestMessage?.status === 'ok' &&
+        (latestMessage.body !== '' || latestMessage.attachments.length > 0),
       previewFailed:
         this.previewVersions.get(summary.id)?.state === state &&
         this.previewVersions.get(summary.id)?.failed === true,
