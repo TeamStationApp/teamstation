@@ -4,6 +4,8 @@ import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
 import type { Database } from '../server/db/database'
+import type { PlateAppearance } from '../server/stats/plateAppearances'
+import { writePlateAppearances } from '../server/statsBuilder/builder'
 import type { MountExtra } from './accountHarness'
 import { type GuardianFixture, guardianFixture } from './guardianFixture'
 import { insertFixtureUsers } from './insertFixtureUsers'
@@ -158,6 +160,164 @@ async function seed(f: GuardianFixture): Promise<ApiFixture> {
       line(cometsGame, 201, f.secondTeam, { ab: 3, h: 2, hr: 1 })
     ])
     .execute()
+
+  // The plate appearances behind Alfonso's lines and Ben's pitching in the
+  // Hawks' home game, and Alfonso's in the Comets' game: the state each
+  // began in, and what came of it.
+  const pa = (
+    atBatIndex: number,
+    batter: number | null,
+    pitcher: number | null,
+    battingTeamId: string,
+    pitchingTeamId: string,
+    state: {
+      outs: number
+      on?: Array<'1B' | '2B' | '3B'>
+      first: 'ball' | 'strike' | 'inPlay'
+    },
+    result: Partial<PlateAppearance>
+  ): PlateAppearance => ({
+    isPa: true,
+    atBatIndex,
+    inning: 1 + atBatIndex,
+    halfInning: battingTeamId === f.teamA ? 'bottom' : 'top',
+    batterGumboId: batter,
+    pitcherGumboId: pitcher,
+    battingTeamId,
+    pitchingTeamId,
+    outsBefore: state.outs,
+    onFirst: state.on?.includes('1B') ?? false,
+    onSecond: state.on?.includes('2B') ?? false,
+    onThird: state.on?.includes('3B') ?? false,
+    firstPitch: state.first,
+    pitches: 3,
+    firstPitchThrown: state.first,
+    pitchesThrown: 3,
+    ab: 1,
+    h: 0,
+    singles: 0,
+    doubles: 0,
+    triples: 0,
+    hr: 0,
+    bb: 0,
+    k: 0,
+    hbp: 0,
+    ci: 0,
+    sf: 0,
+    sh: 0,
+    rbi: 0,
+    outsMade: 0,
+    ...result
+  })
+  const single = { h: 1, singles: 1 }
+  const homer = { h: 1, hr: 1, rbi: 2 }
+  const strikeout = { k: 1, outsMade: 1 }
+  await writePlateAppearances(db, hawksHome.id, [
+    pa(0, 201, null, f.teamA, f.teamB, { outs: 0, first: 'strike' }, single),
+    pa(
+      1,
+      201,
+      null,
+      f.teamA,
+      f.teamB,
+      { outs: 2, on: ['2B'], first: 'ball' },
+      homer
+    ),
+    pa(2, 201, null, f.teamA, f.teamB, { outs: 1, first: 'ball' }, strikeout),
+    pa(
+      3,
+      201,
+      null,
+      f.teamA,
+      f.teamB,
+      { outs: 0, on: ['1B'], first: 'strike' },
+      single
+    ),
+    pa(4, null, 202, f.teamB, f.teamA, { outs: 0, first: 'strike' }, strikeout),
+    // Ben came in for this one at 1-0: the plate appearance is his, its
+    // first pitch is not.
+    {
+      ...pa(
+        5,
+        null,
+        202,
+        f.teamB,
+        f.teamA,
+        { outs: 1, first: 'inPlay' },
+        { outsMade: 1 }
+      ),
+      firstPitch: 'ball',
+      firstPitchThrown: null,
+      pitchesThrown: 2
+    },
+    pa(6, null, 202, f.teamB, f.teamA, { outs: 2, first: 'ball' }, strikeout),
+    // Cody Decker comes in and picks a runner off: an out, and no batter.
+    {
+      ...pa(
+        7,
+        null,
+        203,
+        f.teamB,
+        f.teamA,
+        { outs: 2, on: ['1B'], first: 'ball' },
+        { outsMade: 1 }
+      ),
+      isPa: false,
+      ab: 0,
+      firstPitch: null,
+      pitches: 0,
+      firstPitchThrown: null,
+      pitchesThrown: 0
+    },
+    // Drew Ellis's run batted in on a strikeout charged to the man he
+    // pinch-hit for: a row of its own.
+    {
+      ...pa(
+        8,
+        204,
+        null,
+        f.teamA,
+        f.teamB,
+        { outs: 0, first: 'ball' },
+        { rbi: 1 }
+      ),
+      isPa: false,
+      ab: 0,
+      firstPitch: null,
+      pitches: 0,
+      firstPitchThrown: null,
+      pitchesThrown: 0
+    }
+  ])
+  await writePlateAppearances(db, cometsGame, [
+    pa(
+      0,
+      201,
+      null,
+      f.secondTeam,
+      f.rookies,
+      { outs: 1, first: 'ball' },
+      homer
+    ),
+    pa(
+      1,
+      201,
+      null,
+      f.secondTeam,
+      f.rookies,
+      { outs: 2, on: ['2B', '3B'], first: 'strike' },
+      single
+    ),
+    pa(
+      2,
+      201,
+      null,
+      f.secondTeam,
+      f.rookies,
+      { outs: 0, first: 'strike' },
+      strikeout
+    )
+  ])
 
   return { ...f, songkeeper: SONGKEEPER, cometsGame }
 }

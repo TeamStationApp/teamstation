@@ -121,7 +121,7 @@ export function apiRoutes(): string[] {
     ...routesOf(authRoutes(db, { sendCode })),
     ...routesOf(accountRoutes(db, { ...media, sendCode })),
     ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
-    ...routesOf(graphqlRoutes({ origin: () => 'http://127.0.0.1' })),
+    ...routesOf(graphqlRoutes({ db, origin: () => 'http://127.0.0.1' })),
     ...routesOf(seasonRoutes(db, media)),
     ...routesOf(eventInfoRoutes(db, media)),
     ...routesOf(eventListRoutes(db, media)),

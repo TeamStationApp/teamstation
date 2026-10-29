@@ -10,7 +10,9 @@ import {
   specifiedRules,
   validate
 } from 'graphql'
+import type { Kysely } from 'kysely'
 
+import type { Database } from '../db/database'
 import { readerHeaders, RestError, restReader } from '../graphql/restReader'
 import {
   depthLimit,
@@ -18,6 +20,7 @@ import {
   MAX_FIELDS,
   sizeLimit
 } from '../graphql/schema'
+import { statsLimit } from '../graphql/statsField'
 import { cleanBody } from '../jsonBody'
 import { skipAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -26,6 +29,8 @@ import { withAsync } from '../middleware/withErrors'
 export interface GraphqlRouteOptions {
   /** This server's own address, where each field's REST route is read. */
   origin: () => string
+  /** For `Query.stats`, which reads its splits straight from the database. */
+  db: Kysely<Database>
   fetch?: typeof fetch
   /** How long a whole query may take; 25 s, inside Tess's loopback's 30. */
   deadlineMs?: number
@@ -94,7 +99,8 @@ export function graphqlRoutes(options: GraphqlRouteOptions): Router {
       const problems = validate(graphqlSchema, document, [
         ...specifiedRules,
         depthLimit,
-        sizeLimit
+        sizeLimit,
+        statsLimit
       ])
       if (problems.length > 0) {
         res.status(400).json({ errors: problems.map(formatted) })
@@ -132,7 +138,9 @@ export function graphqlRoutes(options: GraphqlRouteOptions): Router {
               signal: query.signal
             }),
             budget,
-            signal: query.signal
+            signal: query.signal,
+            db: options.db,
+            actor: req.actor
           }
         })
       } finally {

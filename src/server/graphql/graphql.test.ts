@@ -41,7 +41,7 @@ describe('the GraphQL API', function () {
   before(async function () {
     f = await apiFixture(undefined, undefined, (app, { db }) => {
       app.use('/api/v1', apiKeyRoutes(db, { sessionSecret: 'graphql-test' }))
-      app.use('/api/v1', graphqlRoutes({ origin: () => origin }))
+      app.use('/api/v1', graphqlRoutes({ db, origin: () => origin }))
     })
     origin = f.h.origin
     await f.h.db
@@ -344,6 +344,268 @@ describe('the GraphQL API', function () {
     })
   })
 
+  describe('stats from the database', function () {
+    const STATS = `query ($filter: StatsFilter, $groupBy: [StatsGroup!], $perspective: StatsPerspective!, $orderBy: StatsOrder, $limit: Int) {
+      stats(filter: $filter, groupBy: $groupBy, perspective: $perspective, orderBy: $orderBy, limit: $limit) {
+        player { id name } team { id name } opponent { id name } season { id name }
+        side outs runners firstPitch games pa ab h hr k rbi avg slg ops kRate
+        firstPitchKnown firstPitchStrikeRate firstPitchBallRate whip ip outsMade
+        pitches pitchedPa pitchesPerPa
+      }
+    }`
+    const stats = async (
+      who: number | string,
+      variables: Record<string, unknown>
+    ): Promise<Answer> =>
+      await ask(who, STATS, { perspective: 'BATTING', ...variables })
+
+    it('counts only the games the caller may open, and every game for a site administrator', async function () {
+      const filter = { playerId: alfonso }
+      const coach = await stats(104, { filter })
+      expect(coach.body.errors).equals(undefined)
+      expect(coach.body.data.stats).to.have.length(1)
+      expect(coach.body.data.stats[0]).deep.include({
+        games: 1,
+        pa: 4,
+        ab: 4,
+        h: 3,
+        hr: 1,
+        avg: 0.75
+      })
+      const admin = await stats(105, { filter })
+      expect(admin.body.data.stats[0]).deep.include({
+        games: 2,
+        pa: 7,
+        h: 5,
+        hr: 2
+      })
+      // His guardian sees every game of his, as on his stats page.
+      const guardian = await stats(106, { filter })
+      expect(guardian.body.data.stats[0]).deep.include({ games: 2, pa: 7 })
+      // Nobody outside his teams sees a line of his.
+      expect((await stats(207, { filter })).body.data.stats).deep.equals([])
+    })
+
+    it('splits by outs, by runners and by the first pitch', async function () {
+      const filter = { playerId: alfonso }
+      const byOuts = await stats(105, { filter, groupBy: ['OUTS'] })
+      const outs = Object.fromEntries(
+        (
+          byOuts.body.data.stats as Array<{
+            outs: number
+            pa: number
+            h: number
+          }>
+        ).map(line => [line.outs, [line.pa, line.h]])
+      )
+      expect(outs).deep.equals({ 0: [3, 2], 1: [2, 1], 2: [2, 2] })
+      const risp = await stats(105, {
+        filter: { ...filter, runners: 'SCORING_POSITION' }
+      })
+      expect(risp.body.data.stats[0]).deep.include({ pa: 2, h: 2, avg: 1 })
+      const byRunners = await stats(105, { filter, groupBy: ['RUNNERS'] })
+      expect(
+        (byRunners.body.data.stats as Array<{ runners: string; pa: number }>)
+          .map(line => `${line.runners}:${line.pa}`)
+          .sort()
+      ).deep.equals(['empty:4', 'first:1', 'scoringPosition:2'])
+      const twoOuts = await stats(105, { filter: { ...filter, outs: [2] } })
+      expect(twoOuts.body.data.stats[0]).deep.include({ pa: 2, h: 2, hr: 1 })
+      const firstBall = await stats(105, {
+        filter: { ...filter, firstPitch: 'BALL' }
+      })
+      expect(firstBall.body.data.stats[0]).deep.include({ pa: 3, h: 2, k: 1 })
+    })
+
+    it('splits by home and away, by opponent, by season and by dates', async function () {
+      const filter = { playerId: alfonso }
+      const byOpponent = await stats(105, {
+        filter,
+        groupBy: ['OPPONENT'],
+        orderBy: 'PA'
+      })
+      expect(
+        (
+          byOpponent.body.data.stats as Array<{
+            opponent: { id: string; name: string }
+            pa: number
+          }>
+        ).map(line => [line.opponent.name, line.pa])
+      ).deep.equals([
+        ['Demo Eagles', 4],
+        ['Demo Rookies', 3]
+      ])
+      const home = await stats(105, { filter: { ...filter, side: 'HOME' } })
+      expect(home.body.data.stats[0]).deep.include({ pa: 7 })
+      expect(
+        (await stats(105, { filter: { ...filter, side: 'AWAY' } })).body.data
+          .stats
+      ).deep.equals([])
+      const since = await stats(105, {
+        filter: { ...filter, from: '2026-09-10T00:00:00Z' }
+      })
+      expect(since.body.data.stats[0]).deep.include({ pa: 4, games: 1 })
+      const bySeason = await stats(105, { filter, groupBy: ['SEASON'] })
+      expect(
+        (bySeason.body.data.stats as Array<{ season: { id: string } }>)
+          .map(line => line.season.id)
+          .sort()
+      ).deep.equals([f.playoffs, f.seasonA].sort())
+      const team = await stats(105, {
+        filter: { teamId: f.teamA },
+        groupBy: ['PLAYER', 'TEAM']
+      })
+      expect(
+        (
+          team.body.data.stats as Array<{
+            player: { id: string; name: string }
+            team: { id: string; name: string }
+            pa: number
+            rbi: number
+          }>
+        ).map(line => [line.player.name, line.team.name, line.pa, line.rbi])
+      ).deep.equals([
+        ['Alfonso S', 'Demo Hawks', 4, 2],
+        // Drew Ellis's only line is a run batted in pinch-hitting.
+        ['Drew E', 'Demo Hawks', 0, 1]
+      ])
+      // A date alone would be UTC midnight, not the caller's: a time with
+      // its offset is required.
+      for (const from of ['yesterday', '2026-09-10', '2026-09-10T00:00:00']) {
+        const bad = await stats(105, { filter: { from } })
+        expect(bad.body.errors?.[0], from).deep.include({
+          message:
+            'from must be an ISO 8601 time with its offset, as 2026-05-01T00:00:00-07:00'
+        })
+      }
+      const local = await stats(105, {
+        filter: { ...filter, from: '2026-09-09T17:00:00-07:00' }
+      })
+      expect(local.body.data.stats[0]).deep.include({ pa: 4, games: 1 })
+      const outs = await stats(105, { filter: { outs: [100000] } })
+      expect(outs.body.errors?.[0]).deep.include({
+        message: 'outs must be 0, 1 or 2'
+      })
+    })
+
+    it('gives a pitcher how often he starts a batter with a strike, or a ball', async function () {
+      const ben = await stats(104, {
+        perspective: 'PITCHING',
+        filter: { playerId: userIdOfGumbo(202) },
+        groupBy: ['PLAYER']
+      })
+      expect(ben.body.errors).equals(undefined)
+      expect(ben.body.data.stats[0]).deep.include({
+        player: { id: userIdOfGumbo(202), name: 'Ben C' },
+        pa: 3,
+        k: 2,
+        outsMade: 3,
+        ip: '1.0',
+        // He threw the first pitch of two of them, and 8 pitches to his 3
+        // batters.
+        firstPitchKnown: 2,
+        firstPitchStrikeRate: 0.5,
+        firstPitchBallRate: 0.5,
+        kRate: 0.667,
+        pitches: 8,
+        pitchedPa: 3,
+        pitchesPerPa: 2.667
+      })
+      // A reliever who only picked a runner off still has his line: his out.
+      const relief = await stats(104, {
+        perspective: 'PITCHING',
+        filter: { teamId: f.teamA },
+        groupBy: ['PLAYER']
+      })
+      expect(
+        (
+          relief.body.data.stats as Array<{
+            player: { name: string }
+            pa: number
+            outsMade: number
+            ip: string
+          }>
+        ).map(line => [line.player.name, line.pa, line.outsMade, line.ip])
+      ).deep.equals([
+        ['Ben C', 3, 3, '1.0'],
+        ['Cody D', 0, 1, '0.1']
+      ])
+    })
+
+    it('orders, limits, and keeps to its bounds', async function () {
+      const leaders = await stats(105, {
+        groupBy: ['PLAYER'],
+        orderBy: 'HR',
+        limit: 1
+      })
+      expect(leaders.body.data.stats).to.have.length(1)
+      expect(leaders.body.data.stats[0].player.id).equals(alfonso)
+      // Without an order, the most plate appearances first, the same way
+      // every time.
+      const byGame = await stats(105, { groupBy: ['GAME', 'PLAYER'] })
+      const again = await stats(105, { groupBy: ['GAME', 'PLAYER'] })
+      expect(byGame.body.data.stats).deep.equals(again.body.data.stats)
+      const pas = (byGame.body.data.stats as Array<{ pa: number }>).map(
+        line => line.pa
+      )
+      expect(pas).deep.equals([...pas].sort((a, b) => b - a))
+      expect((await ask(105, '{ stats(limit: null) { pa } }')).status).equals(
+        400
+      )
+      // Not split by player, a count is ordered and cut in SQL.
+      const top = await stats(105, {
+        groupBy: ['GAME', 'OUTS'],
+        orderBy: 'PA',
+        limit: 2
+      })
+      expect(
+        (top.body.data.stats as Array<{ pa: number }>).map(line => line.pa)
+      ).deep.equals([3, 2])
+      expect(
+        (await stats(105, { filter: { firstPitch: 'OTHER' } })).body.data.stats
+      ).deep.equals([])
+      const aliased = await ask(
+        105,
+        `{ ${['a', 'b', 'c', 'd'].map(alias => `${alias}: stats { pa }`).join(' ')} }`
+      )
+      expect(aliased.status).equals(400)
+      expect(aliased.body.errors?.[0].message).equals(
+        'A query may ask for stats at most 3 times'
+      )
+      // A pinch hitter's run batted in on another's strikeout is his.
+      const drew = await stats(104, {
+        filter: { playerId: userIdOfGumbo(204) }
+      })
+      expect(drew.body.data.stats[0]).deep.include({ pa: 0, rbi: 1 })
+      const tooMany = await stats(105, { limit: 5000 })
+      expect(tooMany.body.errors?.[0].message).equals('limit is 1 to 1000')
+    })
+
+    it('needs game events read on an API key', async function () {
+      const made = async (permissions: string[]): Promise<string> => {
+        await f.h.resetLimits()
+        const response = await f.h.request(
+          'POST',
+          '/me/api-keys',
+          { name: 'Stats', permissions },
+          105
+        )
+        return asApiKey(await response.json()).secret ?? ''
+      }
+      const refused = await stats(await made(['team:read']), {
+        filter: { playerId: alfonso }
+      })
+      expect(refused.body.errors?.[0]).deep.include({
+        message: 'This API key cannot do that',
+        extensions: { status: 403 }
+      })
+      const allowed = await stats(await made(['gameEvents:read']), {
+        filter: { playerId: alfonso }
+      })
+      expect(allowed.body.data.stats[0]).deep.include({ pa: 7 })
+    })
+  })
+
   describe('what it cannot do', function () {
     it('has no mutation, and refuses one', async function () {
       const schema = await ask(
@@ -380,7 +642,7 @@ describe('the GraphQL API', function () {
             name
           )
         )
-      ).deep.equals(['Player.stats'])
+      ).deep.equals(['Query.stats', 'Player.stats'])
       const asked = await ask(207, '{ account { id } }')
       expect(asked.status).equals(400)
     })

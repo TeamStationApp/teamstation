@@ -149,7 +149,7 @@ describe('the API document', function () {
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
       ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
-      ...routesOf(graphqlRoutes({ origin: () => 'http://127.0.0.1' })),
+      ...routesOf(graphqlRoutes({ db, origin: () => 'http://127.0.0.1' })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
@@ -221,7 +221,7 @@ describe('the API document', function () {
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
       ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
-      ...routesOf(graphqlRoutes({ origin: () => 'http://127.0.0.1' })),
+      ...routesOf(graphqlRoutes({ db, origin: () => 'http://127.0.0.1' })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),

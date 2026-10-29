@@ -646,7 +646,7 @@ function runWorker(): void {
   // as the caller.
   app.use(
     '/api/v1',
-    graphqlRoutes({ origin: () => loopbackOrigin(serverConfig) })
+    graphqlRoutes({ db, origin: () => loopbackOrigin(serverConfig) })
   )
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))

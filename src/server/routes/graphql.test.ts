@@ -2,8 +2,10 @@ import type { AddressInfo } from 'node:net'
 
 import { expect } from 'chai'
 import express from 'express'
+import type { Kysely } from 'kysely'
 import { after, describe, it } from 'mocha'
 
+import type { Database } from '../db/database'
 import { MAX_FIELDS, MAX_SELECTIONS } from '../graphql/schema'
 import { errorHandler } from '../middleware/withErrors'
 import { graphqlRoutes } from './graphql'
@@ -36,6 +38,8 @@ describe('the GraphQL route', function () {
     app.use(
       '/api/v1',
       graphqlRoutes({
+        // These cases read no stats, so nothing touches the database.
+        db: {} as unknown as Kysely<Database>,
         origin: () => 'http://api.invalid',
         fetch: fake,
         deadlineMs

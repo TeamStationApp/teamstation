@@ -23,6 +23,7 @@ import {
 } from 'graphql'
 
 import { RestError, type RestReader } from './restReader'
+import { type StatsContext, statsField } from './statsField'
 
 /**
  * The read-only GraphQL API over teams, games, players, seasons and stat
@@ -38,7 +39,7 @@ import { RestError, type RestReader } from './restReader'
  * the stats builder's status are no type here and cannot be asked for.
  */
 
-export interface GraphqlContext {
+export interface GraphqlContext extends StatsContext {
   reader: RestReader
   /** Fields this query has resolved so far; see `MAX_FIELDS`. */
   budget: { used: number }
@@ -759,6 +760,12 @@ const SeasonType: GraphQLObjectType = new GraphQLObjectType({
 const QueryType = new GraphQLObjectType({
   name: 'Query',
   fields: {
+    stats: statsField({
+      player: PlayerType,
+      team: TeamType,
+      season: SeasonType,
+      game: GameType
+    }),
     // Root lists may be null, so a refused one leaves its siblings whole.
     teams: {
       type: list(TeamType),

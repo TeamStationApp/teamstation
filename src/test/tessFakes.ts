@@ -238,7 +238,7 @@ export async function tessWorld(
     (app, fixture) => {
       const { db, media } = fixture
       app.use('/api/v1', groupRoutes(db, media))
-      app.use('/api/v1', graphqlRoutes({ origin: () => origin }))
+      app.use('/api/v1', graphqlRoutes({ db, origin: () => origin }))
       app.use(
         '/api/v1',
         tessRoutes(db, {
