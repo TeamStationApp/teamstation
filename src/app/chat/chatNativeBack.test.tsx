@@ -7,10 +7,12 @@ import { BackHandler, Linking, Platform } from 'react-native'
 import type { Route } from '../navigation/routes'
 import {
   currentRoute,
+  finishChatChild,
   popRoute,
   scoringOriginHistory,
   seedRoute,
   showRoute,
+  stepBackTo,
   useBrowserBack
 } from '../navigation/useAddressBar.native'
 
@@ -25,6 +27,7 @@ async function androidBack(
     open: (path: string) => void
     routes: Route[]
     decide: (accepted: boolean) => void
+    newHistory: number[]
   }) => Promise<void>
 ): Promise<void> {
   const originalOS = Platform.OS
@@ -36,6 +39,7 @@ async function androidBack(
   let opened: ((event: { url: string }) => void) | undefined
   let decision: ((accepted: boolean) => void) | undefined
   const routes: Route[] = []
+  const newHistory: number[] = []
   Object.defineProperty(Platform, 'OS', {
     value: 'android',
     configurable: true
@@ -59,7 +63,7 @@ async function androidBack(
     decision = handled
   }
   function Harness(): React.ReactElement | null {
-    useBrowserBack(onRoute)
+    useBrowserBack(onRoute, undefined, position => newHistory.push(position))
     return null
   }
   const host = document.createElement('div')
@@ -75,6 +79,7 @@ async function androidBack(
         opened?.({ url: 'teamstation:/' + path })
       },
       routes,
+      newHistory,
       decide: accepted => {
         decision?.(accepted)
       }
@@ -147,6 +152,69 @@ describe('Android Back from a chat opened by a link', function () {
       decide(false)
       expect(scoringOriginHistory()).equals(depth)
       expect(currentRoute()).deep.equals({ name: 'team', teamId: 'tm_1' })
+    })
+  })
+
+  it('returns an internal entity chat directly to its source, including after a new DM', async function () {
+    seedRoute(null)
+    const origin: Route = {
+      name: 'group',
+      kind: 'league',
+      id: 'league_demo',
+      tab: 'chats'
+    }
+    showRoute(origin)
+    const depth = scoringOriginHistory()
+    await androidBack(async ({ back, routes, decide }) => {
+      showRoute({ name: 'conversation', conversationId: 'cnv_first' })
+      showRoute({ name: 'conversation', conversationId: 'cnv_second' }, true)
+      expect(scoringOriginHistory()).equals(depth + 1)
+      expect(back()).equals(true)
+      decide(true)
+      expect(routes.at(-1)).deep.equals(origin)
+      showRoute({ name: 'conversation', conversationId: 'cnv_first' })
+      showRoute({ name: 'home' })
+      showRoute({ name: 'conversation', conversationId: 'cnv_first' })
+      stepBackTo(origin, depth)
+      expect(scoringOriginHistory()).equals(depth)
+      expect(currentRoute()).deep.equals(origin)
+      showRoute({ name: 'conversation', conversationId: 'cnv_first' })
+      showRoute({ name: 'chatNew' })
+      showRoute({ name: 'home' })
+      showRoute({ name: 'chatNew' })
+      finishChatChild({ name: 'conversation', conversationId: 'cnv_dm' }, depth)
+      expect(scoringOriginHistory()).equals(depth + 1)
+      expect(back()).equals(true)
+      decide(true)
+      expect(routes.at(-1)).deep.equals(origin)
+    })
+  })
+
+  it('invalidates reused embedded chat positions before delivering a new link', async function () {
+    seedRoute(null)
+    showRoute({
+      name: 'group',
+      kind: 'league',
+      id: 'league_demo',
+      tab: 'chats'
+    })
+    showRoute({ name: 'conversation', conversationId: 'cnv_same' })
+    await androidBack(async ({ back, open, decide, newHistory, routes }) => {
+      back()
+      decide(true)
+      back()
+      decide(true)
+      const retainedDepth = scoringOriginHistory()
+      open('/chat/cnv_same')
+      expect(newHistory).deep.equals([retainedDepth + 1])
+      expect(routes.at(-1)).deep.equals({
+        name: 'conversation',
+        conversationId: 'cnv_same'
+      })
+      decide(true)
+      back()
+      decide(true)
+      expect(routes.at(-1)).deep.equals({ name: 'chat' })
     })
   })
 

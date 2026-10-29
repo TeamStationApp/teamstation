@@ -15,7 +15,7 @@ import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 
 // The real shell and route adapters, with access and conversation boundaries controlled.
 describe('entity chat app routing', () => {
-  it('opens scoped rows from every entity route in the main Chat tab', async () => {
+  it('opens scoped rows on the originating stack and returns directly with Back', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
     const engineProto = ChatEngine.prototype
@@ -120,9 +120,7 @@ describe('entity chat app routing', () => {
           await settle()
           expect(window.location.pathname).equals('/chat/cnv_exact')
           await act(async () => {
-            document
-              .querySelector<HTMLElement>('[role="tab"][aria-label="Home"]')!
-              .click()
+            document.querySelector<HTMLElement>('[aria-label="Back"]')!.click()
           })
           await settle()
           expect(window.location.pathname + window.location.search).equals(
@@ -131,6 +129,22 @@ describe('entity chat app routing', () => {
           expect(
             document.querySelector('[data-testid="entity-chat-cnv_exact"]')
           ).not.equals(null)
+          await act(async () => {
+            window.history.forward()
+          })
+          await settle()
+          await act(async () => {
+            window.history.back()
+          })
+          await settle()
+          await act(async () => {
+            document.querySelector<HTMLElement>('[aria-label="Back"]')!.click()
+          })
+          await settle()
+          expect(
+            window.location.pathname,
+            'the source has only one frame'
+          ).equals('/')
         } finally {
           await act(async () => {
             root.unmount()

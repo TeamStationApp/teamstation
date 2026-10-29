@@ -121,13 +121,13 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 300))
         await m.tapOn({ css: '[data-testid="entity-chat-' + row.id + '"]' })
         await waitForPath('/chat/' + row.id)
-        // Home retains the source page only when navigation switched to Chat.
-        await m.tapOn({ css: '[role="tab"][aria-label="Home"]' })
+        // The embedded workspace returns directly to its originating section.
+        await m.tapOn({ css: '[aria-label="Back"]' })
         await waitForPath(target)
         await m.assertVisible({ id: 'entity-chat-' + row.id, timeout: 10000 })
       }
       console.log(
-        `${name}: order, accessible rows, labels, icon/chevron, previews and exact main-tab routing passed`
+        `${name}: order, accessible rows, labels, icon/chevron, previews and exact originating-stack routing passed`
       )
     }
   } finally {
