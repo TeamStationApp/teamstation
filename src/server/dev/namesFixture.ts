@@ -48,7 +48,9 @@ import { ensureGumboId, insertUser } from '../users/insertUser'
  *   fielding chain;
  * - a video of the scored game, whose plays it covers, so it has highlights;
  * - the administered team's default lineup;
- * - a player with a sign-in e-mail who can delete his account;
+ * - a player of the scored game with a sign-in e-mail, who can delete his
+ *   account: the visitors' third batter, credited in its highlights, in the
+ *   default lineup and pinch-hit for by the game-only player;
  * - a test account (a player of the administered team who signs in), asked
  *   by the first administrator to be his guardian, and made a coach of the
  *   team by the second.
@@ -100,7 +102,7 @@ export const NAMES_PEOPLE = {
   admin: { first: 'Joe', last: 'Torre' },
   secondAdmin: { first: 'Bobby', last: 'Cox' },
   testAccount: { first: 'Mike', last: 'Trout' },
-  deletable: { first: 'Paul', last: 'Goldschmidt' },
+  deletable: { first: 'Anthony', last: 'Rizzo' },
   guest: { first: 'Ichiro', last: 'Suzuki' },
   typedOpponent: 'Clayton Kershaw'
 } as const
@@ -494,8 +496,18 @@ export async function createNamesFixture(
     const made: Array<{ userId: UserId; gumboId: number; jersey: string }> = []
     for (const [index, named] of list.entries()) {
       const jersey = String(index + (side === 'away' ? 1 : 21))
+      const signsIn =
+        side === OURS &&
+        named.first === NAMES_PEOPLE.deletable.first &&
+        named.last === NAMES_PEOPLE.deletable.last
       made.push({
-        ...(await rosterPlayer(db, teams[side], named, jersey)),
+        ...(await rosterPlayer(
+          db,
+          teams[side],
+          named,
+          jersey,
+          signsIn ? { email: email('deletable'), passwordHash } : undefined
+        )),
         jersey
       })
     }
@@ -554,12 +566,11 @@ export async function createNamesFixture(
   )
   const deletable = await person(
     'deletable',
-    (
-      await rosterPlayer(db, teams[OURS], NAMES_PEOPLE.deletable, '46', {
-        email: email('deletable'),
-        passwordHash
-      })
-    ).userId
+    players[OURS].find(
+      p =>
+        p.first === NAMES_PEOPLE.deletable.first &&
+        p.last === NAMES_PEOPLE.deletable.last
+    )!.userId
   )
 
   // The scored game, with the game-only player made for it first: a game

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { fullName, shortName, shortNames } from './names'
+import { DELETED_NAME, fullName, shortName, shortNames } from './names'
 
 const person = (
   id: string,
@@ -36,6 +36,23 @@ describe('how a name is written', function () {
   it('splits a display name when the halves are missing', function () {
     expect(shortName({ id: '1', displayName: 'Childe Harold Janvrin' })).equals(
       'Childe J'
+    )
+  })
+
+  it('keeps a deleted account whole, read by its name alone', function () {
+    expect(shortName({ id: '1', displayName: DELETED_NAME })).equals(
+      'Deleted user'
+    )
+    expect(
+      shortNames([
+        { id: '1', displayName: DELETED_NAME },
+        { id: '2', displayName: 'Deleted user ' }
+      ])
+    ).deep.equals(
+      new Map([
+        ['1', 'Deleted user'],
+        ['2', 'Deleted user']
+      ])
     )
   })
 

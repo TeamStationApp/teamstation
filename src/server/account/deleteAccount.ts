@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { conflict, HttpError, unauthorized } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
+import { DELETED_NAME } from '../../common/names'
 import { activeNodeIds } from '../admin/nodeAdministration'
 import { MERGE_LOCK, onePerson } from '../admin/people'
 import { signOutEverywhere } from '../auth/sessions'
@@ -13,23 +14,23 @@ import { groupName } from '../invites/grants'
 import { revokeStreams } from '../live/revokeStreams'
 import { eraseAnalytics } from '../observability/analytics'
 
-/** What a deleted account is called wherever it still appears. */
-export const DELETED_NAME = 'Deleted user'
+export { DELETED_NAME }
 
 /**
  * Deletes the signed-in person's account, which cannot be undone.
  *
  * The rows stay: a deleted person who played still has plays, stat lines and
  * roster places, and every one of those reads the name from `users`. So the
- * row is emptied rather than removed. Its name becomes "Deleted user", here
- * and on the requests it sent to other people's inboxes; its
+ * row is emptied rather than removed. Its name becomes "Deleted user", which
+ * every play, highlight, lineup, scoreboard and notification that names the
+ * person reads from this row, since none of them keeps a copy; its
  * addresses, password, picture, bats and throws, walk-up songs, family links,
  * roles, follows, tags, notifications and Tess conversation go; and it is
- * marked deleted, which
- * keeps it disabled for good: no sign-in, no lifted suspension and no import
- * gives it a way in, a role or a family link again. Its import ids and RSVPs
- * stay, with its plays and stats, so a later import of a game it played in
- * still credits the deleted row rather than making a second person.
+ * marked deleted, which keeps it disabled for good: no sign-in, no lifted
+ * suspension and no import gives it a way in, a role or a family link again.
+ * Its import ids and RSVPs stay, with its plays and stats, so a later import
+ * of a game it played in still credits the deleted row rather than making a
+ * second person.
  *
  * Every row merged into the account is emptied the same way. A merged row's
  * addresses still sign in, landing on the open row, so leaving them would leave

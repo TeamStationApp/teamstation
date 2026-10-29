@@ -212,6 +212,35 @@ describe('names fixture', function () {
     ).equals(true)
   })
 
+  it('lets a player of the scored game sign in and delete his account', async () => {
+    const third = fixture.players.away[2]
+    expect(fixture.people.deletable).include({
+      userId: third.userId,
+      gumboId: third.gumboId,
+      name: `${NAMES_PEOPLE.deletable.first} ${NAMES_PEOPLE.deletable.last}`
+    })
+    const account = await db!
+      .selectFrom('users')
+      .innerJoin('user_emails', 'user_emails.user_id', 'users.id')
+      .select(['users.login_enabled', 'user_emails.email'])
+      .where('users.id', '=', third.userId)
+      .executeTakeFirstOrThrow()
+    expect(account).deep.equals({
+      login_enabled: true,
+      email: fixture.people.deletable.email
+    })
+    // Credited in the scored game, where the game-only player pinch-hits
+    // for him.
+    const credited = await db!
+      .selectFrom('eventCredits')
+      .innerJoin('events', 'events.id', 'eventCredits.eventId')
+      .select('eventCredits.head')
+      .where('events.gameId', '=', fixture.gameId)
+      .where('eventCredits.creditGumboId', '=', third.gumboId)
+      .execute()
+    expect(credited.map(row => row.head)).includes('Single')
+  })
+
   it('sets the default lineup, the request and the grant', async () => {
     const team = await db!
       .selectFrom('teams')
