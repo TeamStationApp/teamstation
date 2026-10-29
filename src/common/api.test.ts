@@ -1194,6 +1194,10 @@ describe('api client', function () {
       'http://x/api/v1/chat/dm-candidates?q=ha%20nk'
     )
     await client([]).client.dmCandidates()
+    await candidates.client.dmCandidates('', person.userId)
+    expect(candidates.calls[1].url).equals(
+      `http://x/api/v1/chat/dm-candidates?q=&userId=${encodeURIComponent(person.userId)}`
+    )
 
     const adult = {
       userId: userIdOfGumbo(7),

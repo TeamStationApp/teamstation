@@ -1614,6 +1614,96 @@ describe('chat devices in the app', function () {
     })
   })
 
+  for (const [width, player] of [
+    [1200, false],
+    [390, false],
+    [390, true]
+  ] as const) {
+    it(`person Message returns directly to its ${player ? 'player' : 'person'} profile at width ${width}`, async function () {
+      const viewport = await windowSize(width)
+      const recipient = userIdOfGumbo(203)
+      const dm = summary({
+        id: 'cnv_profile',
+        kind: 'dm',
+        title: 'Mike T',
+        scope: null,
+        scopeName: null
+      })
+      const route = player
+        ? ({ name: 'player', userId: recipient } as const)
+        : ({
+            name: 'person',
+            kind: 'team',
+            id: 'tem_demo',
+            userId: recipient
+          } as const)
+      let creates = 0
+      fakeApi(new FakeKeys(), (method, path, body) => {
+        if (path === `/players/${recipient}`)
+          return {
+            userId: recipient,
+            name: 'Mike Trout',
+            bats: null,
+            throws: null,
+            teams: []
+          }
+        if (path === `/players/${recipient}/highlights`)
+          return { highlights: [], nextBefore: null, withoutVideo: 0 }
+        if (path === `/teams/tem_demo/people/${recipient}`)
+          return {
+            context: { kind: 'team', id: 'tem_demo', name: 'Demo Team' },
+            person: {
+              userId: recipient,
+              gumboId: 203,
+              shortName: 'Mike T',
+              fullName: 'Mike Trout',
+              avatarUrl: null,
+              canHoldRoles: true
+            },
+            guardianOf: [],
+            sections: [],
+            viewer: { manages: true, admin: false }
+          }
+        if (path === '/chat/dm-candidates')
+          return [{ userId: recipient, shortName: 'Mike T', avatarUrl: null }]
+        if (path === '/chat/dms' && method === 'POST') {
+          expect(body).deep.equals({ userIds: [recipient] })
+          creates++
+          return dm
+        }
+        return chats(creates === 0 ? [] : [dm])(method, path, body)
+      })
+      try {
+        showRoute(route, true)
+        await render(<App />)
+        await until(
+          'profile Message',
+          () => document.querySelector('[data-testid="person-message"]') != null
+        )
+        await press('Message')
+        await until('direct conversation', () =>
+          text().includes('No messages yet')
+        )
+        expect(currentRoute()).deep.equals({
+          name: 'conversation',
+          conversationId: dm.id
+        })
+        expect(creates).equals(1)
+        await press('Back')
+        await until(
+          'original profile',
+          () => currentRoute().name === route.name
+        )
+        expect(currentRoute()).deep.equals(route)
+        expect(text()).contains('Mike Trout')
+      } finally {
+        await act(async () => root?.unmount())
+        root = undefined
+        await viewport.restore()
+      }
+    })
+  }
+
   for (const [width, retained, nested] of [
     [1200, false, false],
     [390, false, false],
@@ -1868,7 +1958,7 @@ describe('chat devices in the app', function () {
           () => currentRoute().name === 'conversation'
         )
         if (width >= 960) {
-          await press('Other Members')
+          await press('Demo Season')
           await until(
             'second conversation',
             () => window.location.pathname === '/chat/cnv_second'

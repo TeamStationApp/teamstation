@@ -1862,6 +1862,22 @@ function Shell(props: AppProps): React.ReactElement {
       push(next)
     }
   }
+  const openPersonChat = async (chat: {
+    id: string
+    title: string
+  }): Promise<void> => {
+    const owner = navigationRef.current
+    await chatEngine
+      ?.refresh()
+      .catch(() => undefined)
+      .then(() => {
+        if (
+          navigationRef.current.tab === owner.tab &&
+          navigationRef.current.top === owner.top
+        )
+          openChat(chat)
+      })
+  }
   /**
    * What every chat screen stands behind: chat's crypto core on this
    * platform, then this device set up for chat.
@@ -2926,6 +2942,7 @@ function Shell(props: AppProps): React.ReactElement {
       <PlayerScreen
         key={`${signedInAs ?? 'signed-out'}:${top.userId}:${top.onTeam ?? ''}:${visit == null ? '' : settingsVisit}`}
         client={client}
+        onOpenChat={chatEngine == null ? undefined : openPersonChat}
         userId={top.userId}
         title={top.title}
         initialTab={top.tab}
@@ -3085,6 +3102,7 @@ function Shell(props: AppProps): React.ReactElement {
       <PersonProfileScreen
         key={`${top.kind}:${top.id}:${top.userId}`}
         client={client}
+        onOpenChat={chatEngine == null ? undefined : openPersonChat}
         kind={top.kind}
         id={top.id}
         userId={top.userId}

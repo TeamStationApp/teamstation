@@ -14,6 +14,7 @@ import { HttpError } from '../../common/errors'
 import { rosterFullName, shortName } from '../../common/names'
 import { coachesTeam, keepsSongs, managesRoster } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
+import { PersonMessageButton } from '../chat/PersonMessageButton'
 import {
   Button,
   Card,
@@ -50,6 +51,7 @@ import { battingColumns, pitchingColumns, playerStats } from './statColumns'
 export interface PlayerScreenProps {
   client: TeamStationClient
   userId: string
+  onOpenChat?: (chat: { id: string; title: string }) => void | Promise<void>
   /** The name the row that was tapped showed, so the header has one at once. */
   title?: string
   /** Which tab to open on, from the address. */
@@ -593,6 +595,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
               />
             )}
           </View>
+          {props.onOpenChat != null && player != null && (
+            <PersonMessageButton
+              key={player.userId}
+              client={client}
+              userId={player.userId}
+              onOpenChat={props.onOpenChat}
+            />
+          )}
         </Card>
       </CardBand>
 

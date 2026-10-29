@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import {
+  asChatConversation,
   asPersonProfile,
   asPlayerDetail,
   asRosterEntry,
@@ -21,6 +22,7 @@ import type {
 import type { Role } from '../../common/roles'
 import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
+import { chat } from '../chat/chatViews.test.helpers'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -258,6 +260,39 @@ afterEach(async function () {
 })
 
 describe('a player’s tabs', function () {
+  it('opens an eligible player conversation from the hero Message action', async function () {
+    const client = playerClient()
+    client.dmCandidates = async () => [
+      { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
+    ]
+    client.createDm = async ids => {
+      expect(ids).deep.equals([userIdOfGumbo(7)])
+      return asChatConversation(chat({ id: 'cnv_player', title: 'Jordan P' }))
+    }
+    const opened: string[] = []
+    await render(
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        onOpenChat={chat => {
+          opened.push(chat.id)
+        }}
+      />
+    )
+    await act(async () => {
+      await delay(30)
+    })
+    await act(async () => {
+      const action = document.querySelector<HTMLElement>(
+        '[data-testid="person-message"]'
+      )
+      expect(action).not.equals(null)
+      action!.click()
+      await delay(20)
+    })
+    expect(opened).deep.equals(['cnv_player'])
+  })
+
   it('reads Videos, Stats, Walk-up, Teams, Settings beside a team', async function () {
     await render(
       <PlayerScreen

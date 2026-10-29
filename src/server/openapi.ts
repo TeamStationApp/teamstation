@@ -6594,6 +6594,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [
             {
+              name: 'userId',
+              in: 'query',
+              required: false,
+              description:
+                'Optional exact recipient filter (merged identities resolve to the surviving user); omitted returns all matching candidates.',
+              schema: { type: 'string' }
+            },
+            {
               name: 'q',
               in: 'query',
               required: false,

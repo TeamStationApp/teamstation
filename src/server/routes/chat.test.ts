@@ -470,6 +470,32 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(second.body.id).equals(first.body.id)
     })
 
+    it('filters an exact eligible DM recipient without exposing ineligible people', async function () {
+      const result = await call(
+        'Hc',
+        'GET',
+        `/chat/dm-candidates?userId=${fixture.id('P')}`
+      )
+      expect(result.status).equals(200)
+      expect(
+        result.body.map((person: { userId: string }) => person.userId)
+      ).deep.equals([fixture.id('P')])
+      for (const key of ['Hc', 'R', 'Q']) {
+        const denied = await call(
+          'Hc',
+          'GET',
+          `/chat/dm-candidates?userId=${fixture.id(key)}`
+        )
+        expect(denied.body, key).deep.equals([])
+      }
+      const denied = await call(
+        'F',
+        'GET',
+        `/chat/dm-candidates?userId=${fixture.id('Hc')}`
+      )
+      expect(denied.body).deep.equals([])
+    })
+
     it('reuses one exact full-width pair for reversed and concurrent creators without a scoring mapping', async function () {
       const a = await fixture.person('fullA', {
         userId: userIdOfValue((1n << 127n) + 7n)

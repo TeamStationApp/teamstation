@@ -28,6 +28,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { survivors } from '../teams/teamStaff'
 
 /** At most this many people come back from a candidate search. */
 export const MAX_CANDIDATES = 50
@@ -176,7 +177,15 @@ export function chatRoutes(
       if (actor == null) throw unauthorized()
       const query = typeof req.query.q === 'string' ? req.query.q : ''
       const ids = await dmCandidateIds(db, actor.userId, clock())
-      const people = await chatPeople(db, media.space, ids)
+      const target =
+        typeof req.query.userId === 'string' ? req.query.userId : undefined
+      const canonical =
+        target == null ? undefined : (await survivors(db, [target])).get(target)
+      const people = await chatPeople(
+        db,
+        media.space,
+        target == null ? ids : ids.filter(id => id === canonical)
+      )
       res.json(
         [...people.values()]
           .filter(person => nameMatches(person.names, query))
