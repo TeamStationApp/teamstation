@@ -7,6 +7,7 @@ import {
   type Notification,
   RECORDING_UPLOAD
 } from '../../common/notifications'
+import type { Role } from '../../common/roles'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
@@ -19,13 +20,24 @@ import {
   type StoredRequest
 } from '../groups/requests'
 import { canScheduleFor, currentActor } from '../groups/rights'
-import { groupName, heldAt } from '../invites/grants'
-import { titleAndDescription } from './requestInformation'
+import { heldAt } from '../invites/grants'
+import { userNames } from '../users/nameBook'
+import { grantInformation, titleAndDescription } from './requestInformation'
 
+/** The words a page of notices reads of other rows, read once for the page. */
+interface PageNames {
+  /** The live name of each user a notice names: actors and senders. */
+  people: ReadonlyMap<string, string>
+  /** Each group a grant names, by `kind:id` (`groupNames`). */
+  groups: ReadonlyMap<string, string>
+}
+
+/** A notice of information, worded for this person. */
 async function informationFor(
   db: Kysely<Database>,
   actor: Actor,
-  event: Selectable<NotificationEventsTable>
+  event: Selectable<NotificationEventsTable>,
+  names: PageNames
 ): Promise<Notification | null> {
   if (
     event.source_type === 'groupRequest' ||
@@ -42,6 +54,9 @@ async function informationFor(
     title?: string
     description?: string
     scope?: GroupRef
+    roles?: Role[]
+    claimKind?: 'claim' | 'request'
+    leagueName?: string
     gameId?: string
     liveStreamId?: string
     venueId?: string
@@ -49,13 +64,34 @@ async function informationFor(
     seasonId?: string
     teamId?: string
   }
+  let title = metadata.title ?? 'Organization update'
+  let description = metadata.description ?? ''
   // A grant offers to leave the level it gave, for as long as they are in it.
   let leave: Notification['leave'] = null
   if (event.source_type === 'grant' && metadata.scope != null) {
+    const group =
+      names.groups.get(`${metadata.scope.kind}:${metadata.scope.id}`) ??
+      'Unavailable group'
+    // Who gave it, and where, are named as they are now.
+    const said = grantInformation(
+      actorName(names.people, event.actor_id),
+      group,
+      metadata.roles ?? []
+    )
+    title = said.title
+    description = said.description
     const held = await heldAt(db, metadata.scope, actor.userId)
     if (held.member || held.roles.length > 0)
-      leave = { ...metadata.scope, name: await groupName(db, metadata.scope) }
+      leave = { ...metadata.scope, name: group }
   }
+  // A claim a person decided names them as they are now.
+  if (
+    event.source_type === 'venueClaimDecided' &&
+    metadata.description == null &&
+    metadata.claimKind != null &&
+    metadata.leagueName != null
+  )
+    description = `${actorName(names.people, event.actor_id)} decided ${metadata.leagueName}'s ${metadata.claimKind}.`
   // A reminder waits on its owner until they dismiss it or the upload lands,
   // which settles it the same way.
   const reminder = event.source_type === RECORDING_UPLOAD
@@ -64,8 +100,8 @@ async function informationFor(
     id: event.id,
     requestId: event.id,
     type: event.source_type,
-    title: metadata.title ?? 'Organization update',
-    description: metadata.description ?? '',
+    title,
+    description,
     sentAt: event.created_at.toISOString(),
     expiresAt: event.created_at.toISOString(),
     status: waiting ? 'pending' : 'accepted',
@@ -85,6 +121,70 @@ async function informationFor(
         )
       : {})
   }
+}
+
+/**
+ * What a page of notices names, in one read of `users` and one of each kind
+ * of group: the actor of every grant and of every claim a person decided,
+ * the sender of every request, and the group of every grant.
+ */
+async function pageNames(
+  db: Kysely<Database>,
+  events: ReadonlyArray<Selectable<NotificationEventsTable>>,
+  requests: readonly StoredRequest[] = []
+): Promise<PageNames> {
+  const people = await userNames(db, [
+    ...events
+      .filter(
+        event =>
+          event.source_type === 'grant' ||
+          event.source_type === 'venueClaimDecided'
+      )
+      .flatMap(event => (event.actor_id == null ? [] : [event.actor_id])),
+    ...requests.map(request => request.sender_id)
+  ])
+  const scopes = events.flatMap(event => {
+    const scope = (event.metadata as { scope?: GroupRef } | null)?.scope
+    return event.source_type === 'grant' && scope != null ? [scope] : []
+  })
+  return { people, groups: await groupNames(db, scopes) }
+}
+
+/**
+ * Each group's name, by `kind:id`, in one query for each kind named; a group
+ * that is gone is not in it.
+ */
+async function groupNames(
+  db: Kysely<Database>,
+  refs: readonly GroupRef[]
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>()
+  for (const [kind, table] of [
+    ['league', 'leagues'],
+    ['season', 'seasons'],
+    ['team', 'teams']
+  ] as const) {
+    const ids = [
+      ...new Set(refs.filter(ref => ref.kind === kind).map(ref => ref.id))
+    ]
+    if (ids.length === 0) continue
+    const rows = await db
+      .selectFrom(table)
+      .select(['id', 'name'])
+      .where('id', 'in', ids)
+      .execute()
+    for (const row of rows) names.set(`${kind}:${row.id}`, row.name)
+  }
+  return names
+}
+
+/** The live name of whoever a notice is from, or "An admin" for nobody. */
+function actorName(
+  actors: ReadonlyMap<string, string>,
+  actorId: string | null
+): string {
+  const name = actorId == null ? undefined : actors.get(actorId)
+  return name == null || name === '' ? 'An admin' : name
 }
 
 /** A reminder still waiting: Pending lists these before anything else. */
@@ -112,11 +212,16 @@ function isNews(row: Notification): boolean {
   return row.canAct
 }
 
+/**
+ * A request as this person's notification, or null when it is not theirs.
+ * `senders` holds the senders' live names a page read at once.
+ */
 export async function notificationFor(
   db: Kysely<Database>,
   actor: Actor,
   request: StoredRequest,
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  senders?: ReadonlyMap<string, string>
 ): Promise<Notification | null> {
   const fresh = await currentActor(db, actor)
   const sides = await db
@@ -196,7 +301,7 @@ export async function notificationFor(
       event?.recorded_recipients.includes(fresh.userId) === true ||
       receipt != null)
   if (!eligible && !senderAdmin && !historical) return null
-  const display = await titleAndDescription(db, request)
+  const display = await titleAndDescription(db, request, senders)
   return {
     id: event?.id ?? request.id,
     requestId: request.id,
@@ -418,11 +523,6 @@ export async function inbox(
     )
   }
   const found = await rows.orderBy('sent_at', 'asc').orderBy('id').execute()
-  const projected: Notification[] = []
-  for (const request of found) {
-    const row = await notificationFor(db, fresh, request, clock)
-    if (row != null) projected.push(row)
-  }
   // History lists every piece of information; the other tabs read only
   // undismissed upload reminders, which wait in Pending and light the bell.
   // Grants and scheduling notices are History from the moment they are
@@ -456,8 +556,14 @@ export async function inbox(
       eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
     )
     .execute()
+  const names = await pageNames(db, information, found)
+  const projected: Notification[] = []
+  for (const request of found) {
+    const row = await notificationFor(db, fresh, request, clock, names.people)
+    if (row != null) projected.push(row)
+  }
   for (const event of information) {
-    const row = await informationFor(db, fresh, event)
+    const row = await informationFor(db, fresh, event, names)
     if (row != null) projected.push(row)
   }
   projected.sort((a, b) =>
@@ -529,7 +635,12 @@ export async function notificationDetail(
       .where('id', '=', id)
       .executeTakeFirst()
     if (event == null) throw notFound()
-    const information = await informationFor(db, fresh, event)
+    const information = await informationFor(
+      db,
+      fresh,
+      event,
+      await pageNames(db, [event])
+    )
     if (information == null) throw notFound()
     return information
   }

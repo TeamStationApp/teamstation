@@ -20,6 +20,7 @@ import { findInviteByCode, redeemInvite } from '../invites/invites'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { notificationDetail } from '../notifications/inbox'
 import { manageRoutes } from './manage'
 
 /**
@@ -58,6 +59,14 @@ function exampleEmail(): string {
 const bossId = mintUser()
 const coachId = mintUser()
 const parentId = mintUser()
+/** A reader of their own inbox. */
+const actorOf = (
+  id: number
+): { userId: string; isAdmin: boolean; scopes: [] } => ({
+  userId: userIdOfGumbo(id),
+  isAdmin: false,
+  scopes: []
+})
 const ghostId = mintUser()
 const chiefId = mintUser()
 const bossEmail = exampleEmail()
@@ -423,9 +432,14 @@ describe('the manage page', function () {
         )
       )
       .executeTakeFirstOrThrow()
-    expect(notice.metadata).includes({
-      title: 'Robin Yount added you to Demo Hawks'
+    // It stores what was given, and where; its words are read with names.
+    expect(notice.metadata).deep.equals({
+      scope: { kind: 'team', id: 'tem_hawks' },
+      roles: []
     })
+    expect(
+      (await notificationDetail(db, actorOf(parentId), notice.id)).title
+    ).equals('Robin Yount added you to Demo Hawks')
     expect(told.at(-1)).deep.equals({
       email: parentEmail,
       roles: '',
@@ -1066,7 +1080,7 @@ describe('the manage page', function () {
     expect(membership?.role).equals('member')
     const notice = await db
       .selectFrom('notification_events')
-      .select('metadata')
+      .select(['id', 'metadata'])
       .where('source_type', '=', 'grant')
       .where(eb =>
         eb(
@@ -1076,9 +1090,13 @@ describe('the manage page', function () {
         )
       )
       .executeTakeFirstOrThrow()
-    expect(notice.metadata).includes({
-      title: 'Robin Yount added you as Coach of Demo Hawks'
+    expect(notice.metadata).deep.equals({
+      scope: { kind: 'team', id: 'tem_hawks' },
+      roles: ['coach']
     })
+    expect(
+      (await notificationDetail(db, actorOf(watcherId), notice.id)).title
+    ).equals('Robin Yount added you as Coach of Demo Hawks')
 
     // Somebody on no list of the team is not given anything by id.
     const stranger = mintUser()

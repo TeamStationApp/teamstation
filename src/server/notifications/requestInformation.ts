@@ -8,6 +8,84 @@ import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
 import { isGuardianRequest } from '../groups/guardianLimits'
 import type { StoredRequest } from '../groups/requests'
+import { userNames } from '../users/nameBook'
+
+/**
+ * The group names and season time zones a request's text read when it was
+ * sent, frozen so a later rename does not change what was asked: groups by
+ * `<kind>:<id>`, zones by season id. People are never frozen; their names are
+ * read from `users`.
+ */
+export interface FrozenNames {
+  groups: Record<string, string>
+  zones: Record<string, string>
+}
+
+/** How a request's text reads the groups and zones it names. */
+interface Lookups {
+  group: (ref: GroupRef) => Promise<string>
+  zone: (seasonId: string) => Promise<string>
+}
+
+/** A group's name and a season's zone as they stand now. */
+function liveLookups(db: Kysely<Database>): Lookups {
+  return {
+    group: async ref =>
+      (
+        await db
+          .selectFrom(
+            ref.kind === 'league'
+              ? 'leagues'
+              : ref.kind === 'season'
+                ? 'seasons'
+                : 'teams'
+          )
+          .select('name')
+          .where('id', '=', ref.id)
+          .executeTakeFirst()
+      )?.name ?? 'Unavailable group',
+    zone: async seasonId =>
+      (
+        await db
+          .selectFrom('seasons')
+          .select('timezone')
+          .where('id', '=', seasonId)
+          .executeTakeFirst()
+      )?.timezone ?? 'UTC'
+  }
+}
+
+/** The frozen names first, and the live ones for what was not frozen. */
+function frozenLookups(
+  db: Kysely<Database>,
+  frozen: Partial<FrozenNames> | undefined
+): Lookups {
+  const live = liveLookups(db)
+  return {
+    group: async ref =>
+      frozen?.groups?.[`${ref.kind}:${ref.id}`] ?? (await live.group(ref)),
+    zone: async seasonId =>
+      frozen?.zones?.[seasonId] ?? (await live.zone(seasonId))
+  }
+}
+
+/** Live lookups that keep every answer they gave, to freeze. */
+function recordingLookups(db: Kysely<Database>): {
+  lookups: Lookups
+  frozen: FrozenNames
+} {
+  const live = liveLookups(db)
+  const frozen: FrozenNames = { groups: {}, zones: {} }
+  return {
+    frozen,
+    lookups: {
+      group: async ref =>
+        (frozen.groups[`${ref.kind}:${ref.id}`] = await live.group(ref)),
+      zone: async seasonId =>
+        (frozen.zones[seasonId] = await live.zone(seasonId))
+    }
+  }
+}
 
 function eventDetails(terms: GameRequestTerms): string {
   const { game, previous } = terms
@@ -45,7 +123,7 @@ function eventDetails(terms: GameRequestTerms): string {
 }
 
 async function scheduleDetails(
-  db: Kysely<Database>,
+  lookups: Lookups,
   terms: GameRequestTerms
 ): Promise<string> {
   const { game, previous } = terms
@@ -73,15 +151,7 @@ async function scheduleDetails(
       if (value == null) return 'Not set (defaults to three hours after start)'
       const zone =
         intent.timezone ??
-        (intent.seasonId == null
-          ? 'UTC'
-          : ((
-              await db
-                .selectFrom('seasons')
-                .select('timezone')
-                .where('id', '=', intent.seasonId)
-                .executeTakeFirst()
-            )?.timezone ?? 'UTC'))
+        (intent.seasonId == null ? 'UTC' : await lookups.zone(intent.seasonId))
       return `${new Intl.DateTimeFormat('en', { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))} (${zone})`
     }
     const proposed = Object.hasOwn(game, 'endAt') ? game.endAt : previous?.endAt
@@ -96,9 +166,23 @@ async function scheduleDetails(
   return details
 }
 
+/** What a request's notification metadata holds. */
+interface RequestMetadata {
+  senderGroupName?: string
+  frozen?: Partial<FrozenNames>
+}
+
+/**
+ * A request's title and description, rendered from its terms: the sender's
+ * name and the player's are read from `users` now, and the group names and
+ * zones are the ones frozen when it was sent (live for any not frozen).
+ * `senders` holds the live names a page of requests read for its senders at
+ * once (`userNames`); a sender it lacks is read here.
+ */
 export async function titleAndDescription(
   db: Kysely<Database>,
-  request: StoredRequest
+  request: StoredRequest,
+  senders?: ReadonlyMap<string, string>
 ): Promise<{ title: string; description: string }> {
   const event = await db
     .selectFrom('notification_events')
@@ -106,51 +190,30 @@ export async function titleAndDescription(
     .where('source_type', '=', 'groupRequest')
     .where('source_id', '=', request.id)
     .executeTakeFirst()
-  const metadata = event?.metadata as
-    | {
-        senderName?: string
-        senderGroupName?: string
-        requestTitle?: string
-        requestDescription?: string
-        gameClassificationIncluded?: boolean
-        gameEventDetailsIncluded?: boolean
-        gameScheduleDetailsIncluded?: boolean
-      }
-    | undefined
+  const metadata = event?.metadata as RequestMetadata | undefined
+  const sender = (
+    senders?.has(request.sender_id) === true
+      ? senders
+      : await userNames(db, [request.sender_id])
+  ).get(request.sender_id)
+  return await rendered(db, request, {
+    sender: sender == null || sender === '' ? 'An administrator' : sender,
+    organization: metadata?.senderGroupName ?? 'their organization',
+    lookups: frozenLookups(db, metadata?.frozen)
+  })
+}
+
+/** A request's words, with its sender named and its groups and zones looked up. */
+async function rendered(
+  db: Kysely<Database>,
+  request: StoredRequest,
+  words: { sender: string; organization: string; lookups: Lookups }
+): Promise<{ title: string; description: string }> {
+  const { sender, organization, lookups } = words
   const terms = request.terms as RequestTerms
   const exhibition = (value?: boolean): string =>
     `Exhibition: ${value === true ? 'On' : 'Off'}`
-  if (metadata?.requestTitle != null && metadata.requestDescription != null)
-    return {
-      title: metadata.requestTitle,
-      description:
-        metadata.requestDescription +
-        (terms.kind === 'game' && metadata.gameClassificationIncluded !== true
-          ? ` Proposed ${exhibition(terms.game.exhibition)}.${terms.previous == null ? '' : ` Previous ${exhibition(terms.previous.exhibition)}.`}`
-          : '') +
-        (terms.kind === 'game' && metadata.gameEventDetailsIncluded !== true
-          ? eventDetails(terms)
-          : '') +
-        (terms.kind === 'game' && metadata.gameScheduleDetailsIncluded !== true
-          ? await scheduleDetails(db, terms)
-          : '')
-    }
-  const sender = metadata?.senderName ?? 'An administrator'
-  const organization = metadata?.senderGroupName ?? 'their organization'
-  const name = async (ref: GroupRef): Promise<string> =>
-    (
-      await db
-        .selectFrom(
-          ref.kind === 'league'
-            ? 'leagues'
-            : ref.kind === 'season'
-              ? 'seasons'
-              : 'teams'
-        )
-        .select('name')
-        .where('id', '=', ref.id)
-        .executeTakeFirst()
-    )?.name ?? 'Unavailable group'
+  const name = lookups.group
   if (terms.kind === 'game') {
     const home = await name({ kind: 'team', id: terms.game.homeTeamId })
     const away = await name({ kind: 'team', id: terms.game.awayTeamId })
@@ -166,16 +229,7 @@ export async function titleAndDescription(
       timezone?: string
     ): Promise<string> => {
       const zone =
-        timezone ??
-        (seasonId == null
-          ? 'UTC'
-          : ((
-              await db
-                .selectFrom('seasons')
-                .select('timezone')
-                .where('id', '=', seasonId)
-                .executeTakeFirst()
-            )?.timezone ?? 'UTC'))
+        timezone ?? (seasonId == null ? 'UTC' : await lookups.zone(seasonId))
       return `${new Intl.DateTimeFormat('en', { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(startAt))} (${zone})`
     }
     const prior =
@@ -187,7 +241,7 @@ export async function titleAndDescription(
         terms.gameId == null
           ? `${away} invited to game vs. ${home}`
           : `${away} vs. ${home}: ${terms.game.status === 'cancelled' ? 'cancellation' : 'game change'}`,
-      description: `${sender} from ${organization} proposed ${away} at ${home} ${competition}, ${await when(terms.game.startAt, terms.game.seasonId, terms.game.timezone)}${terms.game.venue == null ? '' : ' at ' + terms.game.venue}, ${terms.game.status}, ${exhibition(terms.game.exhibition)}.${prior} This changes neither management parents nor season participation.${eventDetails(terms)}${await scheduleDetails(db, terms)}`
+      description: `${sender} from ${organization} proposed ${away} at ${home} ${competition}, ${await when(terms.game.startAt, terms.game.seasonId, terms.game.timezone)}${terms.game.venue == null ? '' : ' at ' + terms.game.venue}, ${terms.game.status}, ${exhibition(terms.game.exhibition)}.${prior} This changes neither management parents nor season participation.${eventDetails(terms)}${await scheduleDetails(lookups, terms)}`
     }
   }
   if (terms.kind === 'membership') {
@@ -302,7 +356,24 @@ export function grantInformation(
   }
 }
 
-/** Freeze display meaning at send time; authority continues to use live IDs. */
+/**
+ * The group names and season zones a request's text reads now: what
+ * `snapshotRequestInformation` freezes when it is sent.
+ */
+export async function frozenNamesOf(
+  db: Kysely<Database>,
+  request: StoredRequest
+): Promise<FrozenNames> {
+  const { lookups, frozen } = recordingLookups(db)
+  await rendered(db, request, { sender: '', organization: '', lookups })
+  return frozen
+}
+
+/**
+ * Freezes the group names and zones a request's text reads, at send time, so
+ * a later rename of a group does not change what was asked. Authority keeps
+ * reading live ids, and people's names are read from `users` when it is read.
+ */
 export async function snapshotRequestInformation(
   db: Kysely<Database>,
   id: string
@@ -312,11 +383,11 @@ export async function snapshotRequestInformation(
     .selectAll()
     .where('id', '=', id)
     .executeTakeFirstOrThrow()
-  const information = await titleAndDescription(db, request)
+  const frozen = await frozenNamesOf(db, request)
   await db
     .updateTable('notification_events')
     .set({
-      metadata: sql`metadata || jsonb_build_object('requestTitle', ${information.title}::text, 'requestDescription', ${information.description}::text, 'gameClassificationIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean, 'gameEventDetailsIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean, 'gameScheduleDetailsIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean)`
+      metadata: sql`metadata || jsonb_build_object('frozen', ${JSON.stringify(frozen)}::jsonb)`
     })
     .where('source_type', '=', 'groupRequest')
     .where('source_id', '=', id)

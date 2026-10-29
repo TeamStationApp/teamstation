@@ -116,6 +116,46 @@ describe('approved games and shared schedule ownership', function () {
       await f.h.request('GET', `/me/notifications/${old.id}`, undefined, 101)
     ).json()) as { status: string }
     expect(history.status).equals('declined')
+    // Both store the group names their text read and nobody's name; the
+    // sender is named as they are now.
+    for (const id of [old.id, replacement.id]) {
+      const { metadata } = await f.h.db
+        .selectFrom('notification_events')
+        .select('metadata')
+        .where('source_type', '=', 'groupRequest')
+        .where('source_id', '=', id)
+        .executeTakeFirstOrThrow()
+      expect(metadata).deep.equals({
+        senderGroupName: 'Demo Regular',
+        frozen: {
+          groups: {
+            [`team:${f.teamA}`]: 'Demo Hawks',
+            [`team:${f.teamB}`]: 'Demo Eagles',
+            [`season:${f.seasonA}`]: 'Demo Regular'
+          },
+          zones: {}
+        },
+        ...(id === old.id ? { scheduleHiddenScopes: [`team:${f.teamA}`] } : {})
+      })
+    }
+    const description = async (): Promise<string> =>
+      (
+        (await (
+          await f.h.request(
+            'GET',
+            `/me/notifications/${replacement.id}`,
+            undefined,
+            102
+          )
+        ).json()) as { description: string }
+      ).description
+    expect(await description()).matches(/^Babe Ruth from Demo Regular /)
+    await f.h.db
+      .updateTable('users')
+      .set({ display_name: 'Ken Griffey' })
+      .where('id', '=', userIdOfGumbo(101))
+      .execute()
+    expect(await description()).matches(/^Ken Griffey from Demo Regular /)
   })
   it('hides declined team-origin season proposals only from the selected inviting projection with its own current administrator', async () => {
     await setScopeRoles(

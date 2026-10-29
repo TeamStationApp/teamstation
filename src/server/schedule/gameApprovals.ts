@@ -1211,11 +1211,6 @@ export async function proposeGame(
         })
         .execute()
     }
-    const sender = await trx
-      .selectFrom('users')
-      .select('display_name')
-      .where('id', '=', fresh.userId)
-      .executeTakeFirstOrThrow()
     const organization = await trx
       .selectFrom(body.sender.kind === 'team' ? 'teams' : 'seasons')
       .select('name')
@@ -1229,10 +1224,7 @@ export async function proposeGame(
         source_id: id,
         revision: 1,
         actor_id: fresh.userId,
-        metadata: {
-          senderName: sender.display_name,
-          senderGroupName: organization.name
-        },
+        metadata: { senderGroupName: organization.name },
         recorded_recipients: [fresh.userId],
         created_at: sent
       })

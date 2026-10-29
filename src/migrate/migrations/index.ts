@@ -104,6 +104,7 @@ import { migration090PlateAppearances } from './090plateAppearances'
 import { migration091StructuredCredits } from './091structuredCredits'
 import { migration092PlayerNamesFromUsers } from './092playerNamesFromUsers'
 import { migration093DefaultLineupIds } from './093defaultLineupIds'
+import { migration094NotificationIds } from './094notificationIds'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -211,5 +212,6 @@ export const migrations: Migration[] = [
   migration090PlateAppearances,
   migration091StructuredCredits,
   migration092PlayerNamesFromUsers,
-  migration093DefaultLineupIds
+  migration093DefaultLineupIds,
+  migration094NotificationIds
 ]

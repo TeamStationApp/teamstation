@@ -936,11 +936,6 @@ export async function createRelationshipRequest(
         })
         .execute()
     }
-    const named = await trx
-      .selectFrom('users')
-      .select('display_name')
-      .where('id', '=', fresh.userId)
-      .executeTakeFirstOrThrow()
     const group =
       sender == null
         ? null
@@ -963,10 +958,7 @@ export async function createRelationshipRequest(
         source_id: id,
         revision: 1,
         actor_id: fresh.userId,
-        metadata: {
-          senderName: named.display_name,
-          ...(group == null ? {} : { senderGroupName: group.name })
-        },
+        metadata: group == null ? {} : { senderGroupName: group.name },
         recorded_recipients: [fresh.userId],
         created_at: sent
       })
