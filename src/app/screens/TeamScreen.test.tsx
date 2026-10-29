@@ -396,7 +396,13 @@ describe('TeamScreen for the team’s own people', function () {
       await render(
         <TeamScreen client={client} team={team} onOpenGame={() => undefined} />
       )
-      expect(tabs()).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
+      expect(tabs()).deep.equals([
+        'Videos',
+        'Schedule',
+        'Team',
+        'Stats',
+        'Chats'
+      ])
       expect(control('Follow Hawks')).equals(undefined)
       expect(control('Following Hawks')).equals(undefined)
       expect(calls.asked).to.include('teamGames')
