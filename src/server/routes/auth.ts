@@ -13,6 +13,7 @@ import {
   claimApprovedRequest,
   claimSignInLink,
   createEmailCode,
+  forgetTypedName,
   signInLink,
   verifyEmailCode
 } from '../auth/emailCodes'
@@ -239,10 +240,18 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
    * asked on a phone may well finish on a laptop, and the account must be
    * made exactly once no matter which of the three arrives. An address that
    * already has an account is simply found, invite or not.
+   *
+   * The claim carries the name typed at sign-up, read before anything clears
+   * it; once the account is settled the code forgets it, so the name lives
+   * on `users` alone.
    */
   const userForSignIn = async (
     email: string,
-    claim: { inviteId: string | null; displayName: string | null },
+    claim: {
+      codeId: string
+      inviteId: string | null
+      displayName: string | null
+    },
     app: unknown
   ): Promise<FoundUser | undefined> => {
     const settled =
@@ -253,6 +262,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             displayName: claim.displayName
           })
         : await settleAccount(db, email)
+    await forgetTypedName(db, claim.codeId)
     const user = await findUserByEmail(db, email)
     if (settled?.createdAccount === true && user != null)
       await recordOutcome(

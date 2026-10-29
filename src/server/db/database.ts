@@ -680,7 +680,10 @@ export interface EmailCodesTable {
   approved_at: Timestamp | null
   /** The invite this sign-in carries, so finishing it also lets them in. */
   invite_id: string | null
-  /** What an account made by that invite will be called. */
+  /**
+   * What an account made by that invite will be called. Held only while the
+   * code is pending: settling the account, spending or expiry forgets it.
+   */
   display_name: string | null
 }
 

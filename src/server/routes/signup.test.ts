@@ -257,7 +257,8 @@ describe('signup and onboarding in the real HTTP service', function () {
       createdBy: userIdOfGumbo(101)
     })
     const claim = await createEmailCode(h.db, 'revoked@example.com', 'login', {
-      inviteId: invite.id
+      inviteId: invite.id,
+      displayName: 'Mike Trout'
     })
     await revokeInvite(h.db, invite.id)
     const response = await h.request(
@@ -269,6 +270,17 @@ describe('signup and onboarding in the real HTTP service', function () {
     expect(response.status).equals(200)
     const body = (await response.json()) as Session
     expect(body.user.onboarding?.step).equals('name')
+    // The account took the typed name; the spent code keeps none of it.
+    expect(body.user.displayName).equals('Mike Trout')
+    expect(
+      (
+        await h.db
+          .selectFrom('email_codes')
+          .select('display_name')
+          .where('id', '=', claim.id)
+          .executeTakeFirstOrThrow()
+      ).display_name
+    ).equals(null)
     expect(
       await h.db
         .selectFrom('memberships')

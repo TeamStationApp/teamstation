@@ -105,7 +105,7 @@ export async function deleteAccount(
     if (emails.length > 0) {
       await trx
         .updateTable('email_codes')
-        .set({ consumed_at: at })
+        .set({ consumed_at: at, display_name: null })
         .where(sql<string>`lower(email)`, 'in', emails)
         .where('consumed_at', 'is', null)
         .execute()

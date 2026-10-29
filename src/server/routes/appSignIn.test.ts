@@ -244,6 +244,50 @@ describe('signing in from an app', function () {
     expect(await poll(third)).equals(200)
   })
 
+  it('names an account an approved request makes with the typed name, which the code then forgets', async function () {
+    if (db == null) throw new Error('no database')
+    // The invite's team, so joining it can make the membership.
+    await db
+      .insertInto('teams')
+      .values({ id: 'tem_nowhere', name: 'Demo Padres' })
+      .execute()
+    const asked = await post('/join/joinapp/email-code', {
+      email: 'gwynn@example.com',
+      displayName: 'Tony Gwynn',
+      appOrigin: APP1
+    })
+    expect(asked.status).equals(202)
+    const { requestId, clientSecret } = asked.body as {
+      requestId: string
+      clientSecret: string
+    }
+    const typedName = async (): Promise<string | null> =>
+      (
+        await db!
+          .selectFrom('email_codes')
+          .select('display_name')
+          .where('id', '=', requestId)
+          .executeTakeFirstOrThrow()
+      ).display_name
+    expect(await typedName()).equals('Tony Gwynn')
+
+    // Opened on another device, which settles the account; the app that
+    // asked then claims the approved request.
+    const token = LINK.exec(sent[sent.length - 1].link ?? '')?.[1]
+    const elsewhere = await post('/auth/link/verify', { token })
+    expect(elsewhere.status).equals(200)
+    expect(await typedName()).equals(null)
+    const claimed = await post('/auth/request/claim', {
+      requestId,
+      clientSecret
+    })
+    expect(claimed.status).equals(200)
+    const user = claimed.body.user as { id: string; displayName: string }
+    expect(user.displayName).equals('Tony Gwynn')
+    expect(user.id).equals((elsewhere.body.user as { id: string }).id)
+    expect(await typedName()).equals(null)
+  })
+
   it('gives a device that spends its link the named, long session', async function () {
     if (db == null) throw new Error('no database')
     await post('/auth/email-code', {

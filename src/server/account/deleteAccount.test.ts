@@ -158,7 +158,14 @@ describe('deleting an account', function () {
       keptProof
     )
     // A sign-in asked for before the deletion must not finish after it.
-    const pending = await createEmailCode(h.db, 'JUNIOR@example.test', 'login')
+    const pending = await createEmailCode(
+      h.db,
+      'JUNIOR@example.test',
+      'login',
+      {
+        displayName: 'Ken Griffey'
+      }
+    )
 
     const deleted = await h.request('DELETE', ROOT, undefined, kept.session)
     expect(deleted.status).equals(204)
@@ -191,10 +198,11 @@ describe('deleting an account', function () {
     expect(addresses.map(row => row.user_id)).deep.equals([bystander.id])
     const code = await h.db
       .selectFrom('email_codes')
-      .select('consumed_at')
+      .select(['consumed_at', 'display_name'])
       .where('id', '=', pending.id)
       .executeTakeFirstOrThrow()
     expect(code.consumed_at).not.equals(null)
+    expect(code.display_name).equals(null)
 
     for (const who of [kept, closed, older]) {
       expect(await status(who.session)).equals(401)
