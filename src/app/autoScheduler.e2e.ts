@@ -1258,7 +1258,7 @@ async function e7(run: Run): Promise<void> {
         )[1] as HTMLElement
       ).innerText
   )
-  expect(field).equals('xmpl Prk/Field 1')
+  expect(field).equals('XMPL PRK/Field 1')
   await tapText(admin, field, '[role="tab"]')
   expect((await boxTexts(admin)).length).equals(teamGames.length)
   await tapText(admin, 'All teams', '[role="tab"]')

@@ -90,7 +90,7 @@ describe('the schedule preview calendar', () => {
   it('names a field by its shortened venue and its own name', () => {
     expect(fieldPillLabel(PREVIEW.fields[0])).equals('MFS/TB1')
     // A venue of ten characters or fewer stays whole.
-    expect(fieldPillLabel(PREVIEW.fields[1])).equals('Balboa/Field 1')
+    expect(fieldPillLabel(PREVIEW.fields[1])).equals('BALBOA/Field 1')
     expect(fieldPillLabel({ venueName: 'Park', name: 'B' })).not.includes(' /')
   })
 
@@ -110,7 +110,7 @@ describe('the schedule preview calendar', () => {
       '***/Main',
       // Only "The" would read as the shortener's placeholder.
       'The/Field 1',
-      'Team/Field 2'
+      'TEAM/Field 2'
     ])
   })
 
@@ -132,7 +132,7 @@ describe('the schedule preview calendar', () => {
       'Demo Owls'
     ])
     expect(all.fields.map(field => field.label)).deep.equals([
-      'Balboa/Field 1',
+      'BALBOA/Field 1',
       'MFS/TB1'
     ])
     const spring = filterChoices(PREVIEW, games, 'sea_spring')

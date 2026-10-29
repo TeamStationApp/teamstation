@@ -420,7 +420,7 @@ describe('a schedule preview', () => {
       '[data-testid="preview-game"]'
     )!
     expect(first.textContent).includes('5:00 AM · 8:00 AM EDT at the field')
-    expect(first.textContent).includes('xmpl Prk/Field 1 · 50/70')
+    expect(first.textContent).includes('XMPL PRK/Field 1 · 50/70')
     expect(first.textContent).includes('Home: Demo Hawks')
     expect(first.textContent).includes('Away: Demo Owls')
     expect(first.textContent).not.includes('Apr')
@@ -501,7 +501,7 @@ describe('a schedule preview', () => {
     expect(tabs('Fields')).deep.equals([
       'All fields',
       'MFS/TB1',
-      'xmpl Prk/Field 1'
+      'XMPL PRK/Field 1'
     ])
     // A season offers its own teams, and only the fields its games use.
     await tapText('Demo Summer')
@@ -514,7 +514,7 @@ describe('a schedule preview', () => {
     await tapText('All seasons')
     await tapText('Demo Hawks')
     expect(boxes()).equals(2)
-    await tapText('xmpl Prk/Field 1')
+    await tapText('XMPL PRK/Field 1')
     expect(boxes()).equals(1)
     // A season without the chosen field puts the field back to all.
     await tapText('Demo Summer')

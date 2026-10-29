@@ -727,9 +727,9 @@ async function main(): Promise<void> {
         await shown('Create Player')
         await tap('Cancel')
         await reach(
-          count === 1 ? 'Add Owls A to Lineup' : 'Add Owls P to Lineup'
+          count === 1 ? 'Add OWLS A to Lineup' : 'Add OWLS P to Lineup'
         )
-        await shown(count === 1 ? 'Owls A' : 'Owls P')
+        await shown(count === 1 ? 'OWLS A' : 'OWLS P')
         await tap('Save Rosters')
         await shown('Undo Set team roster')
         await tap('Undo Set team roster')

@@ -49,8 +49,8 @@ export function fieldLabels(
       const clashes = short.filter(each => each === label).length > 1
       const nothingToShorten =
         !/[\p{L}\p{N}]/u.test(field.venueName) ||
-        (placeholderTeamName(field.venueName) === 'Team' &&
-          field.venueName.trim() !== 'Team')
+        (placeholderTeamName(field.venueName) === 'TEAM' &&
+          field.venueName.trim().toUpperCase() !== 'TEAM')
       return [
         field.id,
         clashes || nothingToShorten ? `${field.venueName}/${field.name}` : label
