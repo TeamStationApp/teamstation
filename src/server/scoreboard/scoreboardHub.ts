@@ -20,7 +20,7 @@ import {
   type RadarReading
 } from '../../common/scoring/radarSpeeds'
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
-import { actorForToken } from '../auth/sessions'
+import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { mayRunGame } from '../director/runGames'
@@ -442,7 +442,7 @@ export function makeScoreboardHub(
     }
     try {
       if (!store.isReady()) throw new ScoreboardUnavailable()
-      let runner: { userId: string; isAdmin: boolean } | undefined
+      let runner: Actor | undefined
       if (kind !== 'viewer' || member.timeline) {
         const token = sessionToken(
           headerOf(req.headers.authorization),
@@ -451,6 +451,21 @@ export function makeScoreboardHub(
         runner = token == null ? undefined : await actorForToken(db, token)
         if (runner == null) {
           shut(socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
+          return undefined
+        }
+        // A key runs a scoreboard only with game events write, and reads a
+        // timeline only with game events read.
+        if (
+          !keyAllows(
+            runner,
+            kind === 'viewer' ? 'gameEvents:read' : 'gameEvents:write'
+          )
+        ) {
+          shut(
+            socket,
+            SCOREBOARD_CLOSE.notAllowed,
+            'This API key cannot do that'
+          )
           return undefined
         }
         member.token = token

@@ -12,6 +12,9 @@
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
+/** The GraphQL API, which Tess reads with `graphql_query`. */
+export const GRAPHQL_PATH = '/graphql'
+
 /** A path as the loopback sends it: under `/api/v1`, already checked. */
 export interface ApiPath {
   /** The path below `/api/v1`, starting with `/`, exactly as it will be sent. */
@@ -24,7 +27,8 @@ export interface ApiPath {
  * Routes no tool may reach, for any method. These belong to a signed-in
  * person and never to a machine acting for them: signing in and out, OAuth
  * approvals, Tess herself, the dictation socket, the account's own settings
- * (deletion, password, addresses and name) and its first-run setup, the key
+ * (deletion, password, addresses and name), its API keys and its first-run
+ * setup, the key
  * the person's devices share for event control, and the link to test
  * builds. The server refuses each of them to Tess as well (`isMachine`);
  * listed here, she is told why without asking.
@@ -35,6 +39,7 @@ const ANY_METHOD: readonly RegExp[] = [
   /^\/me\/tess/,
   /^\/dictation(\/|$)/,
   /^\/me\/account/,
+  /^\/me\/api-keys(\/|$)/,
   /^\/me\/onboarding(\/|$)/,
   /^\/me\/builds(\/|$)/,
   /^\/device-event-control(\/|$)/
@@ -141,7 +146,7 @@ export function refusalOf(method: ApiMethod, path: string): string | null {
   }
   const route = decoded.toLowerCase().replace(/\/$/, '')
   if (ANY_METHOD.some(rule => rule.test(route)))
-    return 'Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes. The person can do this themselves in the app.'
+    return 'Tess may not use sign-in, account, API key, device key, test build, OAuth, dictation or Tess routes. The person can do this themselves in the app.'
   if (method !== 'GET' && WRITES.some(rule => rule.test(route)))
     return 'Tess may not change live scoring, lineups during a game, live video or the Director. The person scores on the scoring screen.'
   return null

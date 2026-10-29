@@ -1,5 +1,12 @@
-import { type Kysely, sql } from 'kysely'
+import {
+  type Expression,
+  type ExpressionBuilder,
+  type Kysely,
+  sql,
+  type SqlBool
+} from 'kysely'
 
+import type { ApiKeyPermission } from '../../common/apiKeys'
 import { unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
@@ -18,7 +25,57 @@ export interface Actor {
    * machine acting for them, not the person. See `isMachine`.
    */
   viaTess?: true
+  /**
+   * Set when the caller used an API key the person made under Account: the
+   * person, within the permissions the key holds. See `keyAllows`.
+   */
+  apiKey?: { id: string; permissions: ReadonlySet<ApiKeyPermission> }
   scopes: string[]
+}
+
+/**
+ * How often a credential's `last_used_at` is written, at most: one GraphQL
+ * query reads through the same session, token or key many times at once,
+ * and the row need not be written for each.
+ */
+const USE_GRANULARITY_MS = 60_000
+
+/** A `last_used_at` never written, or written more than a minute ago. */
+function staleUse(
+  now: Date
+): (
+  eb: ExpressionBuilder<
+    Database,
+    'auth_sessions' | 'api_tokens' | 'user_api_keys'
+  >
+) => Expression<SqlBool> {
+  return eb =>
+    eb.or([
+      eb('last_used_at', 'is', null),
+      eb('last_used_at', '<', new Date(now.getTime() - USE_GRANULARITY_MS))
+    ])
+}
+
+/** What every user API key's secret starts with. */
+export const USER_API_KEY_PREFIX = 'tsk_'
+
+/**
+ * Whether the caller may use `permission`: anyone who is not using an API
+ * key, and a key that holds it.
+ */
+export function keyAllows(
+  actor: Actor | undefined,
+  permission: ApiKeyPermission
+): boolean {
+  return actor?.apiKey == null || actor.apiKey.permissions.has(permission)
+}
+
+/**
+ * Whether the person is here themselves, signed in: not a machine token, not
+ * Tess, not an API key. Only they may make or remove the account's keys.
+ */
+export function isHumanSession(actor: Actor): boolean {
+  return !isMachine(actor) && actor.apiKey == null
 }
 
 /**
@@ -87,8 +144,8 @@ export async function createSession(
 }
 
 /**
- * Resolves a bearer token to whoever is behind it, trying sessions first and
- * then machine tokens. Returns undefined for anything expired, revoked or
+ * Resolves a bearer token to whoever is behind it: a user API key by its
+ * `tsk_` prefix, otherwise a session and then a machine token. Returns undefined for anything expired, revoked or
  * unknown — a caller cannot tell which, on purpose.
  *
  * A token whose account has been merged into another is refused the same way.
@@ -108,6 +165,13 @@ export async function actorForToken(
 ): Promise<Actor | undefined> {
   const tokenHash = hashToken(token)
   const now = new Date()
+
+  // A session token can begin `tsk_` too, one in 16.7 million: one that is
+  // no key is looked for as a session after all.
+  if (token.startsWith(USER_API_KEY_PREFIX)) {
+    const keyActor = await actorForApiKey(db, tokenHash, now, options)
+    if (keyActor != null) return keyActor
+  }
 
   const session = await db
     .selectFrom('auth_sessions')
@@ -134,6 +198,7 @@ export async function actorForToken(
         .updateTable('auth_sessions')
         .set({ last_used_at: now })
         .where('id', '=', session.sessionId)
+        .where(staleUse(now))
         .execute()
     return {
       userId: session.userId,
@@ -175,6 +240,7 @@ export async function actorForToken(
       .updateTable('api_tokens')
       .set({ last_used_at: now })
       .where('id', '=', apiToken.tokenId)
+      .where(staleUse(now))
       .execute()
 
   return {
@@ -182,6 +248,46 @@ export async function actorForToken(
     isAdmin: apiToken.isAdmin,
     apiTokenId: apiToken.tokenId,
     scopes: apiToken.scopes
+  }
+}
+
+async function actorForApiKey(
+  db: Kysely<Database>,
+  tokenHash: string,
+  now: Date,
+  options: { recordUse?: boolean }
+): Promise<Actor | undefined> {
+  const key = await db
+    .selectFrom('user_api_keys')
+    .innerJoin('users', 'users.id', 'user_api_keys.user_id')
+    .select([
+      'user_api_keys.id as keyId',
+      'user_api_keys.user_id as userId',
+      'user_api_keys.permissions as permissions',
+      'user_api_keys.revoked_at as revokedAt',
+      'users.is_admin as isAdmin',
+      'users.disabled_at as disabledAt',
+      'users.merged_into as mergedInto'
+    ])
+    .where('user_api_keys.token_hash', '=', tokenHash)
+    .executeTakeFirst()
+  if (key == null || key.revokedAt != null) return undefined
+  if (key.disabledAt != null || key.mergedInto != null) return undefined
+  if (options.recordUse !== false)
+    await db
+      .updateTable('user_api_keys')
+      .set({ last_used_at: now })
+      .where('id', '=', key.keyId)
+      .where(staleUse(now))
+      .execute()
+  return {
+    userId: key.userId,
+    isAdmin: key.isAdmin,
+    apiKey: {
+      id: key.keyId,
+      permissions: new Set(key.permissions as ApiKeyPermission[])
+    },
+    scopes: []
   }
 }
 
@@ -201,13 +307,14 @@ export async function revokeSession(
 export interface SignedOut {
   sessions: number
   apiTokens: number
+  apiKeys: number
   oauthGrants: number
 }
 
 /**
  * Signs one account, or each of several, out of everything it is signed in
- * to: every session on every device, every machine token, and every OAuth
- * grant with the tokens issued under it.
+ * to: every session on every device, every machine token, every API key the
+ * person made, and every OAuth grant with the tokens issued under it.
  *
  * A merge calls this for the account it closes, inside the merge's own
  * transaction, so a device signed in as the closed account can make no request
@@ -227,7 +334,8 @@ export async function signOutEverywhere(
   at = new Date()
 ): Promise<SignedOut> {
   const userIds = typeof userId === 'string' ? [userId] : [...userId]
-  if (userIds.length === 0) return { sessions: 0, apiTokens: 0, oauthGrants: 0 }
+  if (userIds.length === 0)
+    return { sessions: 0, apiTokens: 0, apiKeys: 0, oauthGrants: 0 }
   const sessions = await db
     .updateTable('auth_sessions')
     .set({ revoked_at: at })
@@ -236,6 +344,12 @@ export async function signOutEverywhere(
     .executeTakeFirst()
   const apiTokens = await db
     .updateTable('api_tokens')
+    .set({ revoked_at: at })
+    .where('user_id', 'in', userIds)
+    .where('revoked_at', 'is', null)
+    .executeTakeFirst()
+  const apiKeys = await db
+    .updateTable('user_api_keys')
     .set({ revoked_at: at })
     .where('user_id', 'in', userIds)
     .where('revoked_at', 'is', null)
@@ -253,6 +367,7 @@ export async function signOutEverywhere(
   return {
     sessions: Number(sessions.numUpdatedRows),
     apiTokens: Number(apiTokens.numUpdatedRows),
+    apiKeys: Number(apiKeys.numUpdatedRows),
     oauthGrants: Number(grants.numAffectedRows ?? 0)
   }
 }

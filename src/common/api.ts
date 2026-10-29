@@ -18,6 +18,7 @@ import {
   asAccountEmailPending,
   asAccountSettings
 } from './accountSettings'
+import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
@@ -3221,6 +3222,24 @@ export class TeamStationClient {
 
   async clearAccountPhoto(): Promise<AccountSettings> {
     return await this.request('DELETE', '/me/account/photo', asAccountSettings)
+  }
+
+  /** The account's API keys, oldest first, each with its secret. */
+  async apiKeys(): Promise<ApiKey[]> {
+    return (await this.request('GET', '/me/api-keys', asApiKeys)).keys
+  }
+
+  async createApiKey(body: ApiKeyCreate): Promise<ApiKey> {
+    return await this.request('POST', '/me/api-keys', asApiKey, body)
+  }
+
+  /** Revokes the key: anything using it stops working. */
+  async deleteApiKey(id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/me/api-keys/${encodeURIComponent(id)}`,
+      asUnknownOk
+    )
   }
 
   /** Irrecoverable: this account and every one merged into it can never sign in again. */

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import type { TessScreen } from '../../common/api'
 import { openApiDocument } from '../openapi'
-import { type ApiMethod, refusalOf } from './denyList'
+import { type ApiMethod, GRAPHQL_PATH, refusalOf } from './denyList'
 import type { SystemBlock } from './messagesApi'
 import type { UserContext } from './userContext'
 
@@ -25,6 +25,9 @@ You help the person find information in TeamStation and take actions in TeamStat
 
 ## Reading
 Use the api_get tool for every fact: teams, games, scores, rosters, stats, schedules, people. Never invent ids, names, dates, scores or numbers, and never guess what the API would say. Paths are the API's own, written without the /api/v1 prefix, from the API index below (\`/teams/{teamId}/games\` with a real id in place of \`{teamId}\`); filters are query parameters. Start from what the context below already gives you (the person's teams and their ids). The API answers with what this person may see: a 403 or 404 means they cannot see it, so say so. A long answer is cut; ask for less.
+
+## Reading with GraphQL
+The graphql_query tool reads the same facts through TeamStation's read-only GraphQL API, as the person, with their permissions. Use it when one query can gather what several api_get calls would, such as a team with its games and each game's score or box score, or a player's stats across seasons. Its description lists the types and fields. For stats split any way (by outs, runners on base, home or away, opponent, dates, the first pitch, batting or pitching), ask its stats field, which works them out in one query. Names come back as the person may see them: name is the short name, and fullName is null unless they may read it; never guess a full name. A field they may not read comes back null with an error; say they cannot see it.
 
 ## Changing things
 You never change anything yourself. Propose every change with the confirmChange tool: the method, the path, the body as the API index describes it, and a one-sentence summary in plain words. The person sees a card and the change runs only if they hold its Confirm button. Read what the change needs first (ids, current values) with api_get. After proposing, say what you proposed and that they can hold Confirm. Never say a change has happened, or will happen, until a later message reports what the server answered.
@@ -118,6 +121,8 @@ function apiIndex(): string {
   for (const [path, entry] of Object.entries(
     document.paths as Record<string, Record<string, Schema>>
   )) {
+    // A query is a read through its own tool, never a change to propose.
+    if (path === GRAPHQL_PATH) continue
     for (const [method, operation] of Object.entries(entry)) {
       const upper = method.toUpperCase() as ApiMethod
       if (refusalOf(upper, path.replace(/\{[^}]+\}/g, 'x')) != null) continue

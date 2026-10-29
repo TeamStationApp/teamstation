@@ -2,6 +2,7 @@ import { expect } from 'chai'
 
 import { serverSentEvents } from '../common/serverSentEvents'
 import { userIdOfGumbo } from '../common/userId'
+import { graphqlRoutes } from '../server/routes/graphql'
 import { groupRoutes } from '../server/routes/groups'
 import { tessRoutes } from '../server/routes/tess'
 import type { TessSettings } from '../server/serverConfig'
@@ -237,6 +238,7 @@ export async function tessWorld(
     (app, fixture) => {
       const { db, media } = fixture
       app.use('/api/v1', groupRoutes(db, media))
+      app.use('/api/v1', graphqlRoutes({ db, origin: () => origin }))
       app.use(
         '/api/v1',
         tessRoutes(db, {

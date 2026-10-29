@@ -43,7 +43,7 @@ describe("Tess's step labels", function () {
 
   it('says what a refused call may not do, in the refusal’s first sentence', () => {
     expect(read('/me/account')).equals(
-      'Not allowed: Tess may not use sign-in, account, device key, test build, OAuth, dictation or Tess routes.'
+      'Not allowed: Tess may not use sign-in, account, API key, device key, test build, OAuth, dictation or Tess routes.'
     )
     // A reason of one sentence without its stop gets one.
     expect(read('/teams/../me/account')).equals(

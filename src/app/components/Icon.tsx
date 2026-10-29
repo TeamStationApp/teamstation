@@ -62,6 +62,7 @@ export type IconName =
   | 'add_reaction'
   | 'mood'
   | 'lock'
+  | 'key'
   | 'group'
 
 export interface IconProps {

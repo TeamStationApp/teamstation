@@ -37,6 +37,7 @@ import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
 import type { MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
+import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
@@ -50,6 +51,7 @@ import { openApiDocument } from './openapi'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
+import { apiKeyRoutes } from './routes/apiKeys'
 import { appLinkRoutes } from './routes/appLinks'
 import { authRoutes } from './routes/auth'
 import { chatRoutes } from './routes/chat'
@@ -66,6 +68,7 @@ import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
+import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
@@ -482,9 +485,11 @@ function runWorker(): void {
   app.use(requestLogs)
   app.use(withCors(serverConfig.corsOrigins))
 
-  // Who is calling, then their body, which for a picture is read only when
-  // somebody is signed in, then what they changed, then the routes.
+  // Who is calling, and the ceiling of an API key, then their body, which
+  // for a picture is read only when somebody is signed in, then what they
+  // changed, then the routes.
   app.use(withActor(db))
+  app.use(withApiKeyCeiling())
   if (serverConfig.oauth?.enabled === true) {
     const provider = createOAuthProvider(db, serverConfig.oauth, publicUrl)
     app.use(['/oauth', '/api/v1/oauth/approvals'], oauthRequestLimit(db))
@@ -637,6 +642,12 @@ function runWorker(): void {
       origin: () => loopbackOrigin(serverConfig)
     })
   )
+  // Each field of a query is read from its REST route on this same server,
+  // as the caller.
+  app.use(
+    '/api/v1',
+    graphqlRoutes({ db, origin: () => loopbackOrigin(serverConfig) })
+  )
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))
   app.use(
@@ -666,6 +677,10 @@ function runWorker(): void {
         await sendSignInCode(serverConfig.smtp, email, code)
       }
     })
+  )
+  app.use(
+    '/api/v1',
+    apiKeyRoutes(db, { sessionSecret: serverConfig.sessionSecret })
   )
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))

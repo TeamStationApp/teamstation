@@ -55,5 +55,6 @@ export const iconCodepoints: Record<IconName, number> = {
   add_reaction: 0xe1d3,
   mood: 0xe24e,
   lock: 0xe88d,
+  key: 0xe73c,
   group: 0xe7ef
 }

@@ -164,6 +164,8 @@ export type Route =
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
+  /** Create API key, from Account. */
+  | { name: 'apiKeyNew' }
   | { name: 'team'; teamId: string; tab?: string }
   /**
    * One player, and what their Stats and Videos tabs are narrowed to.
@@ -496,6 +498,8 @@ export function parseRoute(path: string, search = ''): Route {
       // address that names past or all still opens on that filter.
       return { name: 'schedule', when: whenOf(query.get('when'), 'upcoming') }
     case 'account':
+      if (parts[1] === 'api-keys' && parts[2] === 'new' && parts.length === 3)
+        return { name: 'apiKeyNew' }
       return { name: 'account' }
     case 'sign-in':
       return { name: 'signIn', next: safeNext(query.get('next')) }
@@ -818,6 +822,8 @@ export function routePath(route: Route): string {
         : `/schedule?when=${route.when}`
     case 'account':
       return '/account'
+    case 'apiKeyNew':
+      return '/account/api-keys/new'
     case 'signInLink':
       return route.server == null
         ? `/signin/${route.token}`

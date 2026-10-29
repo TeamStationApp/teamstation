@@ -1,4 +1,11 @@
 import {
+  API_KEY_AREAS,
+  API_KEY_CREATE_WINDOW_MIN,
+  API_KEY_CREATES_PER_WINDOW,
+  MAX_API_KEY_NAME,
+  MAX_API_KEYS
+} from '../common/apiKeys'
+import {
   HIT_TRAJECTORIES,
   MOVEMENT_REASONS,
   PITCH_CODES,
@@ -19,7 +26,10 @@ import {
 } from '../common/walkUpSong'
 import { schedulePreviewPaths } from './autoScheduler/schedulePreviewsOpenApi'
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
+import { MAX_READS } from './graphql/restReader'
+import { MAX_DEPTH } from './graphql/schema'
 import { creationPaths } from './groups/openApi'
+import { MAX_QUERY_LENGTH } from './routes/graphql'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 import { schedulingSetupPaths } from './scheduler/schedulingSetupOpenApi'
 import { tessPaths } from './tess/openApi'
@@ -239,6 +249,155 @@ const accountResponse = {
             }
           }
         }
+      }
+    }
+  }
+}
+const apiKeyPermissionSchema = {
+  type: 'string',
+  enum: API_KEY_AREAS.flatMap(area => [`${area}:read`, `${area}:write`])
+}
+const apiKeySchema = {
+  type: 'object',
+  required: ['id', 'name', 'secret', 'createdAt', 'permissions'],
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    secret: {
+      type: ['string', 'null'],
+      description:
+        'The bearer token. Null only when the server secret changed since the key was made.'
+    },
+    createdAt: { type: 'string', format: 'date-time' },
+    permissions: { type: 'array', items: apiKeyPermissionSchema }
+  }
+}
+const apiKeyPaths = {
+  '/me/api-keys': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'List your API keys (signed-in sessions only)',
+      description:
+        'Active keys, oldest first, each with its secret. A machine token, Tess and an API key are refused.',
+      responses: {
+        200: {
+          description: 'Your keys',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { keys: { type: 'array', items: apiKeySchema } }
+              }
+            }
+          }
+        },
+        403: { description: 'Not a signed-in session' }
+      }
+    },
+    post: {
+      security: [{ bearer: [] }],
+      summary: 'Create an API key (signed-in sessions only)',
+      description: `A key calls this API as you, within its permissions: \`<area>:read\` allows GET and HEAD on that area’s routes, \`<area>:write\` allows POST, PUT, PATCH and DELETE, and write is stored with read. Any route outside the areas answers 403 to a key. A key does not expire. An account holds at most ${MAX_API_KEYS} keys and may create ${API_KEY_CREATES_PER_WINDOW} per ${API_KEY_CREATE_WINDOW_MIN} minutes.`,
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['name', 'permissions'],
+              properties: {
+                name: {
+                  type: 'string',
+                  minLength: 1,
+                  maxLength: MAX_API_KEY_NAME
+                },
+                permissions: {
+                  type: 'array',
+                  minItems: 1,
+                  items: apiKeyPermissionSchema
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        201: {
+          description: 'The new key, with its secret',
+          content: { 'application/json': { schema: apiKeySchema } }
+        },
+        400: { description: 'A blank name or no permission' },
+        403: { description: 'Not a signed-in session' },
+        409: { description: `The account already holds ${MAX_API_KEYS} keys` },
+        429: { description: 'Too many keys created recently' }
+      }
+    }
+  },
+  '/me/api-keys/{id}': {
+    delete: {
+      security: [{ bearer: [] }],
+      summary: 'Revoke one of your API keys (signed-in sessions only)',
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string' } }
+      ],
+      responses: {
+        204: { description: 'Revoked; the key is refused from now on' },
+        403: { description: 'Not a signed-in session' },
+        404: { description: 'No such active key on your account' }
+      }
+    }
+  }
+}
+const graphqlPaths = {
+  '/graphql': {
+    post: {
+      security: [{ bearer: [] }],
+      summary:
+        'Read teams, games, players, seasons and stat lines with one GraphQL query',
+      description: `Read-only: the schema has a query type and no mutation or subscription. Each field is read from the REST route that serves it, as you, so a field holds exactly what that route gives you — a short name where you may not see the full one, a game’s non-member view, a stat line only for a game you may open — and a field that route refuses is an error, with its status in \`extensions.status\`, and null. Introspection is open. An API key needs any read permission to send a query, and each field’s own family to read it. At most ${MAX_QUERY_LENGTH} characters, ${MAX_DEPTH} levels deep and ${MAX_READS} route reads a query.`,
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['query'],
+              properties: {
+                query: { type: 'string', maxLength: MAX_QUERY_LENGTH },
+                variables: { type: 'object', additionalProperties: true },
+                operationName: { type: 'string' }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: {
+          description:
+            'The data, with an error for each field that could not be read',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  data: {
+                    type: ['object', 'null'],
+                    additionalProperties: true
+                  },
+                  errors: {
+                    type: 'array',
+                    items: { type: 'object', additionalProperties: true }
+                  }
+                }
+              }
+            }
+          }
+        },
+        400: {
+          description:
+            'The query does not parse or validate, is a mutation, or is too long or too deep'
+        },
+        401: { description: 'Not signed in' }
       }
     }
   }
@@ -2455,6 +2614,8 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...schedulePreviewPaths(errorResponse),
       ...eventInfoPaths(errorResponse),
       ...accountPaths,
+      ...apiKeyPaths,
+      ...graphqlPaths,
       '/me/builds': {
         get: {
           summary: 'Read the optional build distribution link',

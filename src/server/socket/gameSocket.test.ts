@@ -455,6 +455,40 @@ describe('the game socket (U14)', function () {
       ).equals(401)
     })
 
+    it('takes an API key only with game events read', async function () {
+      const keyOf = async (
+        secret: string,
+        permissions: string[]
+      ): Promise<void> => {
+        await db!
+          .insertInto('user_api_keys')
+          .values({
+            id: makeId('userApiKey'),
+            user_id: userIdOfGumbo(viewer.userId),
+            name: 'Socket key',
+            token_hash: hashToken(secret),
+            secret_sealed: 'v1.unused',
+            permissions
+          })
+          .execute()
+      }
+      await keyOf('tsk_socket_team_reader', ['team:read'])
+      await keyOf('tsk_socket_game_reader', ['gameEvents:read'])
+      expect(
+        await refusedWith(socketUrl, {
+          authorization: 'Bearer tsk_socket_team_reader'
+        })
+      ).equals(403)
+      const listener = await listen('tsk_socket_game_reader')
+      expect(await subscribed(listener, scored, 'k1')).deep.equals({
+        type: 'subscribed',
+        gameId: scored,
+        id: 'k1'
+      })
+      listener.ws.close()
+      await listener.closed
+    })
+
     it('is refused with 404 anywhere but /socket', async function () {
       expect(
         await refusedWith(socketUrl.replace('/socket', '/api/v1/socket'), {

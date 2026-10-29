@@ -7,6 +7,7 @@ import type { Kysely } from 'kysely'
 import { after, afterEach, before, describe, it } from 'mocha'
 import { WebSocket } from 'ws'
 
+import { makeId } from '../../common/ids'
 import {
   NO_OVERRIDES,
   SCOREBOARD_CLOSE,
@@ -25,6 +26,7 @@ import {
   testPrefix,
   until
 } from '../../test/scoreboardKit'
+import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { forgetScoreboardSettings } from '../nodeSettings'
 import { attachScoreboard } from './attachScoreboard'
@@ -259,6 +261,47 @@ describe('the scoreboard hub', function () {
     send(byCookie, { balls: 2 })
     await until('balls 2', () => last(watching)?.balls === 2)
     expect(byCookie.closed).equals(undefined)
+  })
+
+  it('runs a scoreboard with an API key only with game events write, and reads its timeline with read', async function () {
+    const worker = await startWorker()
+    const gameId = await newGame()
+    const keyOf = async (permissions: string[]): Promise<Person> => {
+      const token = `tsk_scoreboard_${permissions.join('_').replace(/:/g, '-')}_${gameId}`
+      await db
+        .insertInto('user_api_keys')
+        .values({
+          id: makeId('userApiKey'),
+          user_id: runner.userId,
+          name: 'Scoreboard key',
+          token_hash: hashToken(token),
+          secret_sealed: 'v1.unused',
+          permissions
+        })
+        .execute()
+      return { ...runner, token }
+    }
+    const reader = await keyOf(['gameEvents:read'])
+    const writer = await keyOf(['gameEvents:read', 'gameEvents:write'])
+    const elsewhere = await keyOf(['schedule:read'])
+    expect(await closedWith(publisher(worker, gameId, reader))).equals(
+      SCOREBOARD_CLOSE.notAllowed
+    )
+    expect(await closedWith(dashboard(worker, gameId, reader))).equals(
+      SCOREBOARD_CLOSE.notAllowed
+    )
+    expect(await closedWith(timeline(worker, gameId, elsewhere))).equals(
+      SCOREBOARD_CLOSE.notAllowed
+    )
+    const watching = viewer(worker, gameId)
+    await heard(watching, 1)
+    const running = publisher(worker, gameId, writer)
+    await running.opened
+    send(running, { balls: 3 })
+    await until('balls 3', () => last(watching)?.balls === 3)
+    const reading = timeline(worker, gameId, reader)
+    await reading.opened
+    expect(reading.closed).equals(undefined)
   })
 
   it('admits a timeline socket only for somebody signed in who can see the game, and a plain viewer for anybody', async function () {

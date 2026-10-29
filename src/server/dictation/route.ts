@@ -15,7 +15,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { actionFromTagSlots } from '../../common/scoring/actions'
-import { type Actor, actorForToken } from '../auth/sessions'
+import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { gameStateLogLines } from './gameStateSummary'
@@ -164,6 +164,11 @@ export function attachDictation(
       actor => {
         if (actor == null) {
           refuse(socket, 401, 'Unauthorized')
+          return
+        }
+        // Dictation scores: a key needs game events write.
+        if (!keyAllows(actor, 'gameEvents:write')) {
+          refuse(socket, 403, 'Forbidden')
           return
         }
         wss.handleUpgrade(request, socket, head, ws => {

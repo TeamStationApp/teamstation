@@ -59,6 +59,15 @@
         "With 17 or more characters, only length matters. No special character is needed.",
         "Use at most 1024 UTF-8 bytes.",
         "Confirm new password",
+        "Could not load your API keys",
+        "API keys",
+        "Copy %s",
+        "Delete",
+        "Delete %s",
+        "Delete %s?",
+        "Anything using this key stops working.",
+        "Create API key",
+        "Copied the secret of %s",
         "Are you sure? Deleting an account is irrecoverable.",
         "Your session ended. Sign in again to finish deleting your account.",
         "Your account could not be deleted.",
@@ -70,6 +79,13 @@
         "Use initials",
         "Initials selected."
       ]
+    },
+    {
+      "name": "apiKeyNew",
+      "path": "/account/api-keys/new",
+      "title": "Create API key",
+      "tabs": [],
+      "settings": []
     },
     {
       "name": "autoScheduler",

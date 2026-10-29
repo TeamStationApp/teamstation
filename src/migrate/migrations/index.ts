@@ -99,6 +99,8 @@ import { migration085Tess } from './085tess'
 import { migration086FieldSizes } from './086fieldSizes'
 import { migration087LoginOffOnly } from './087loginOffOnly'
 import { migration088ChatDirtyQueue } from './088chatDirtyQueue'
+import { migration089UserApiKeys } from './089userApiKeys'
+import { migration090PlateAppearances } from './090plateAppearances'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -201,5 +203,7 @@ export const migrations: Migration[] = [
   migration085Tess,
   migration086FieldSizes,
   migration087LoginOffOnly,
-  migration088ChatDirtyQueue
+  migration088ChatDirtyQueue,
+  migration089UserApiKeys,
+  migration090PlateAppearances
 ]

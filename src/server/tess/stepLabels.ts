@@ -11,6 +11,7 @@ import { checkApiRequest } from './denyList'
 
 export const READING_API = 'Reading the API'
 export const PREPARING_CHANGE = 'Preparing a change for you to confirm'
+export const QUERYING = 'Querying TeamStation'
 export const NO_SUCH_TOOL = 'Not allowed: there is no such tool.'
 
 interface Route {
@@ -85,6 +86,7 @@ export function stepLabel(call: { name: string; input: unknown }): string {
       ? `Not allowed: ${firstSentence(checked)}`
       : readingLabel(checked.path)
   }
+  if (call.name === 'graphql_query') return QUERYING
   if (call.name === 'confirmChange') {
     if (
       typeof input.path === 'string' &&

@@ -64,6 +64,14 @@ describe('dictation scopes', function () {
       viaTess: true
     })
     expect(own.status).equals(403)
+    // The person's own API key: the person, but not here themselves.
+    const key = await refusal(true, {
+      userId: userIdOfGumbo(1),
+      isAdmin: false,
+      scopes: [],
+      apiKey: { id: 'uak_1', permissions: new Set(['gameEvents:write']) }
+    })
+    expect(key.status).equals(403)
     const off = await refusal(false, {
       userId: userIdOfGumbo(1),
       isAdmin: false,
