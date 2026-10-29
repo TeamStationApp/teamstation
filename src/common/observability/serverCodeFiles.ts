@@ -153,6 +153,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/live/frameWallFixture.js',
   'server/live/holeFiller.js',
   'server/live/ingestQuiet.js',
+  'server/live/quietStream.js',
   'server/live/receiving.js',
   'server/live/revokeStreams.js',
   'server/live/secrets.js',

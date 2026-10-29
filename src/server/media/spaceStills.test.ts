@@ -197,14 +197,16 @@ describe('a still from the Space', function () {
   it('cuts no more than a few stills at once, however many are asked for together', async function () {
     // FFmpeg behind a stand-in that notes when each run starts and ends.
     const log = join(workDir, 'cuts.log')
+    const release = join(workDir, 'release-cuts')
     const wrapper = join(workDir, 'ffmpeg-counted.sh')
+    await writeFile(log, '')
     await writeFile(
       wrapper,
-      `#!/bin/sh\necho start >> '${log}'\n'${ffmpegPath}' "$@"\nrc=$?\necho end >> '${log}'\nexit $rc\n`
+      `#!/bin/sh\necho start >> '${log}'\nwhile [ ! -f '${release}' ]; do sleep 0.01; done\n'${ffmpegPath}' "$@"\nrc=$?\necho end >> '${log}'\nexit $rc\n`
     )
     await chmod(wrapper, 0o755)
     const seconds = [3, 6, 9, 12, 15, 18, 21, 24]
-    const keys = await Promise.all(
+    const cuts = Promise.allSettled(
       seconds.map(
         async atSec =>
           await ensureStill({
@@ -216,6 +218,23 @@ describe('a still from the Space', function () {
           })
       )
     )
+    // Hold the first wave open so even a fast encoder exercises the limit.
+    const deadline = Date.now() + 10000
+    try {
+      while (Date.now() < deadline) {
+        const starts = (await readFile(log, 'utf8'))
+          .split('\n')
+          .filter(line => line === 'start').length
+        if (starts >= MAX_CONCURRENT_CUTS) break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+    } finally {
+      await writeFile(release, '')
+    }
+    const keys = (await cuts).map(result => {
+      if (result.status === 'rejected') throw result.reason
+      return result.value
+    })
     expect(keys).deep.equals(
       seconds.map(atSec => `videos/vid_many/stills/${String(atSec)}.jpg`)
     )
@@ -226,6 +245,7 @@ describe('a still from the Space', function () {
       most = Math.max(most, running)
     }
     expect(most, 'at once').equals(MAX_CONCURRENT_CUTS)
+    expect(running, 'all cuts finished').equals(0)
   })
 
   it('frees its turn when a cut fails', async function () {

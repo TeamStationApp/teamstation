@@ -216,7 +216,7 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
       .where('email', 'in', ['pat@example.com', 'pat.work@example.com'])
       .orderBy('email')
       .execute()
-    expect(emails).deep.equals([
+    expect(emails).to.have.deep.members([
       { user_id: account.id, email: 'pat.work@example.com', is_primary: false },
       { user_id: account.id, email: 'pat@example.com', is_primary: true }
     ])
@@ -299,7 +299,7 @@ describe('closeInto keeps sign-ins and follows, and leaves links where they are'
       .where('email', 'in', ['both@example.com', 'both.old@example.com'])
       .orderBy('email')
       .execute()
-    expect(emails).deep.equals([
+    expect(emails).to.have.deep.members([
       {
         user_id: bothClosed.id,
         email: 'both.old@example.com',

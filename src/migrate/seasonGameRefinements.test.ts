@@ -8,7 +8,7 @@ import { migrations } from './migrations'
 import { migration052SeasonGameRefinements } from './migrations/052seasonGameRefinements'
 import { migrateUp } from './runner'
 import { schemaSnapshot } from './schemaSnapshot'
-import { testDatabaseUrl } from './testDatabase'
+import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
 const through052 = migrations.filter(
   migration => migration.name <= migration052SeasonGameRefinements.name
@@ -26,7 +26,7 @@ interface RequestTerms {
 
 describe('052 over legacy schedules and request history', function () {
   this.timeout(120000)
-  const name = `season_refinements_upgrade_${Date.now()}_${randomBytes(4).toString('hex')}`
+  const name = `teamstation_season_refinements_${Date.now()}_${randomBytes(4).toString('hex')}`
   let admin: Pool | undefined
   let pool: Pool | undefined
   let created = false
@@ -36,8 +36,7 @@ describe('052 over legacy schedules and request history', function () {
     } finally {
       pool = undefined
       if (admin != null) {
-        if (created)
-          await admin.query(`drop database if exists ${name} with (force)`)
+        if (created) await dropScratchDatabase(admin, name)
         created = false
         await admin.end()
         admin = undefined
