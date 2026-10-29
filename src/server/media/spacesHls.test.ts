@@ -2,11 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  mediaVariant,
   PlaylistCache,
   rewriteMasterPlaylist,
   rewriteMediaPlaylist,
   spaceConfigured,
-  spaceKey
+  spaceKey,
+  SpacePlayback
 } from './spacesHls'
 
 const SPACE = {
@@ -117,5 +119,137 @@ describe('serving HLS out of a Space', function () {
     expect(await cache.get('vid_missing', 'video.m3u8')).equals(undefined)
     expect(await cache.get('vid_missing', 'video.m3u8')).equals(undefined)
     expect(calls).equals(2)
+  })
+})
+
+describe('live Space playback cache', function () {
+  it('rewrites every fragment and init URI while preserving timing tags', function () {
+    const body =
+      '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXT-X-DISCONTINUITY\n#EXTINF:4,\nseg000000.m4s\n#EXTINF:3,\nseg000001.m4s\n'
+    const result = rewriteMediaPlaylist(
+      body,
+      uri => `https://objects.example.test/${uri}?signed=1`
+    )
+    expect(result).contains(
+      'URI="https://objects.example.test/init.mp4?signed=1"'
+    )
+    expect(result).contains(
+      '#EXT-X-DISCONTINUITY\n#EXTINF:4,\nhttps://objects.example.test/seg000000.m4s?signed=1'
+    )
+    expect(result).contains(
+      '#EXTINF:3,\nhttps://objects.example.test/seg000001.m4s?signed=1'
+    )
+  })
+
+  it('recognizes only the two supported single variants', function () {
+    expect(mediaVariant(MASTER_PLAYLIST)).equals('video.m3u8')
+    expect(
+      mediaVariant(MASTER_PLAYLIST.replace('video.m3u8', 'index.m3u8'))
+    ).equals('index.m3u8')
+    expect(mediaVariant('#EXTM3U\n')).equals(undefined)
+    expect(mediaVariant('#EXTM3U\n../wrong.m3u8\n')).equals(undefined)
+  })
+
+  it('shares slow reads, refreshes grace closes, and caches only verified finals', async function () {
+    let time = 900_000
+    let requests = 0
+    let release!: () => void
+    let body = MEDIA_PLAYLIST
+    const cache = new SpacePlayback(
+      {
+        space: SPACE,
+        expiresSec: 3600,
+        fetch: async () => {
+          requests++
+          if (requests === 1)
+            await new Promise<void>(resolve => {
+              release = resolve
+            })
+          return new Response(body)
+        }
+      },
+      () => time
+    )
+    const first = cache.get('live', 'index.m3u8', false)
+    time += 5000
+    const second = cache.get('live', 'index.m3u8', false)
+    expect(requests).equals(1)
+    release()
+    expect(await first).equals(await second)
+    await cache.get('live', 'index.m3u8', false)
+    expect(requests).equals(1)
+    time += 1000
+    body = MEDIA_PLAYLIST.replace('#EXT-X-ENDLIST', '')
+    expect(await cache.get('live', 'index.m3u8', false)).not.contains(
+      '#EXT-X-ENDLIST'
+    )
+    expect(requests).equals(2)
+    body = MEDIA_PLAYLIST
+    expect(await cache.get('live', 'index.m3u8', true)).contains(
+      '#EXT-X-ENDLIST'
+    )
+    time += 60_001
+    await cache.get('other', 'index.m3u8', false)
+    await cache.get('live', 'index.m3u8', true)
+    expect(requests).equals(4)
+    await cache.get('live', 'video.m3u8', false)
+    expect(requests).equals(5)
+    cache.playlists.clear()
+    await cache.get('live', 'index.m3u8', true)
+    expect(requests).equals(6)
+  })
+
+  it('memoizes signatures and rewritten bodies for fifteen-minute windows', function () {
+    let time = 900_001
+    const cache = new SpacePlayback(
+      { space: SPACE, expiresSec: 3600 },
+      () => time
+    )
+    const one = cache.sign('live', 'video.mp4')
+    const url = new URL(one)
+    expect(url.searchParams.get('X-Amz-Date')).equals('19700101T001500Z')
+    expect(url.searchParams.get('X-Amz-Expires')).equals('4500')
+    const rewritten = cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)
+    expect(cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)).equals(
+      rewritten
+    )
+    expect(rewritten.split(one)).length(4)
+    time += 899_998
+    expect(cache.sign('live', 'video.mp4')).equals(one)
+    time += 1
+    expect(cache.sign('live', 'video.mp4')).not.equals(one)
+    expect(cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)).not.equals(
+      rewritten
+    )
+    expect(() => cache.sign('live', '../other/video.mp4')).throws(
+      'Invalid media'
+    )
+  })
+
+  it('retries missing or failed live reads after the refresh interval', async function () {
+    let time = 0
+    let calls = 0
+    const cache = new SpacePlayback(
+      {
+        space: SPACE,
+        expiresSec: 3600,
+        fetch: async () => {
+          if (++calls === 1) return new Response('missing', { status: 404 })
+          if (calls === 2) throw new Error('disconnected')
+          return new Response(MEDIA_PLAYLIST)
+        }
+      },
+      () => time
+    )
+    expect(await cache.get('live', 'index.m3u8', false)).equals(undefined)
+    time += 1000
+    try {
+      await cache.get('live', 'index.m3u8', false)
+      throw new Error('Expected failure')
+    } catch (error) {
+      expect(String(error)).contains('disconnected')
+    }
+    time += 1000
+    expect(await cache.get('live', 'index.m3u8', false)).equals(MEDIA_PLAYLIST)
   })
 })

@@ -1530,9 +1530,13 @@ export const asPlayback = asObject({
   url: asNullable(asString),
   expiresAt: asNullable(asString),
   durationSec: asNullable(asNumber),
-  unavailable: asBoolean
+  unavailable: asBoolean,
+  /** Publication is still pending, including after the stream has ended. */
+  pending: asOptional(asBoolean)
 })
-export type Playback = ReturnType<typeof asPlayback>
+export type Playback = Omit<ReturnType<typeof asPlayback>, 'pending'> & {
+  pending?: boolean
+}
 
 export const asSeasonSummary = asObject({
   id: asString,

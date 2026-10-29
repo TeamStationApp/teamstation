@@ -13,7 +13,6 @@ import {
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { VIDEO_FILE } from '../media/ffmpeg'
 import { locateVideo, videoFrameSource } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import {
@@ -23,13 +22,11 @@ import {
   verifyMediaPath,
   verifyQueryToken
 } from '../media/mediaTokens'
-import { presignGetUrl } from '../media/presign'
 import {
-  PlaylistCache,
+  mediaVariant,
   rewriteMasterPlaylist,
-  rewriteMediaPlaylist,
   spaceConfigured,
-  spaceKey
+  SpacePlayback
 } from '../media/spacesHls'
 import { deleteVideoFromSpace } from '../media/spacesVideo'
 import {
@@ -58,7 +55,7 @@ export function mediaRoutes(
 ): Router {
   const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, space } = options
   const router = Router()
-  const playlists = new PlaylistCache({
+  const playback = new SpacePlayback({
     space,
     expiresSec: MEDIA_TOKEN_TTL_SEC
   })
@@ -78,6 +75,7 @@ export function mediaRoutes(
         .select([
           'videos.id as id',
           'videos.storage as storage',
+          'videos.kind as kind',
           'videos.status as status',
           'videos.duration_sec as durationSec',
           'videos.hidden as hidden',
@@ -93,11 +91,17 @@ export function mediaRoutes(
       if (video == null || video.hidden) throw notFound()
       if (!canSeeGame(scopes, video)) throw membersOnly()
 
-      const location = await locateVideo({
-        mediaRoot,
-        storage: video.storage,
-        videoId
-      })
+      const waitingForOrigin =
+        video.storage === 'local' &&
+        video.kind === 'live' &&
+        spaceConfigured(space)
+      const location = waitingForOrigin
+        ? undefined
+        : await locateVideo({
+            mediaRoot,
+            storage: video.storage,
+            videoId
+          })
       if (location == null) {
         // The row says there is a video; its files are not there. Better to
         // say so than to hand back a URL that plays black.
@@ -107,11 +111,20 @@ export function mediaRoutes(
           url: null,
           expiresAt: null,
           durationSec: video.durationSec,
-          unavailable: true
+          unavailable: true,
+          // Finish may race the first acknowledgement. No node should issue
+          // a scratch URL that the pending origin close will immediately remove.
+          pending: waitingForOrigin
         })
         return
       }
 
+      let entry = 'master.m3u8'
+      if (video.storage === 'spaces' && video.kind === 'live') {
+        const master = await playback.playlists.get(videoId, 'master.m3u8')
+        if (master != null && mediaVariant(master) === 'index.m3u8')
+          entry = 'index.m3u8'
+      }
       const now = Date.now()
       const url =
         video.storage === 'spaces'
@@ -119,7 +132,7 @@ export function mediaRoutes(
             // to a presigned URL so the bytes come from the Space directly. A
             // `<video>` element cannot send a bearer token, so the permission
             // rides in the query string.
-            `${publicUrl}/api/v1/videos/${videoId}/hls/master.m3u8?t=${signQueryToken(
+            `${publicUrl}/api/v1/videos/${videoId}/hls/${entry}?t=${signQueryToken(
               mediaSecret,
               hlsSubject(videoId),
               now
@@ -309,30 +322,36 @@ export function mediaRoutes(
         res.status(403).end()
         return
       }
-      if (file !== 'master.m3u8' && file !== 'video.m3u8') throw notFound()
+      if (!['master.m3u8', 'index.m3u8', 'video.m3u8'].includes(file))
+        throw notFound()
       if (!spaceConfigured(space)) throw notFound()
-
-      const body = await playlists.get(videoId, file)
+      const video = await db
+        .selectFrom('videos')
+        .select(['hidden', 'storage', 'spaces_verified_at'])
+        .where('id', '=', videoId)
+        .executeTakeFirst()
+      if (video == null || video.hidden || video.storage !== 'spaces')
+        throw notFound()
+      const verified = video.spaces_verified_at != null
+      const body = await playback.get(videoId, file, verified)
       if (body == null) throw notFound()
 
       res.type('application/vnd.apple.mpegurl')
-      res.setHeader('cache-control', 'private, max-age=3600')
+      res.setHeader(
+        'cache-control',
+        file === 'index.m3u8' && !verified
+          ? 'private, max-age=1'
+          : 'private, max-age=3600'
+      )
 
       if (file === 'master.m3u8') {
-        // The variant keeps the same token; a relative URI would lose it.
-        const variant = `${publicUrl}/api/v1/videos/${videoId}/hls/video.m3u8?t=${token}`
+        const name = mediaVariant(body)
+        if (name == null) throw notFound()
+        const variant = `${publicUrl}/api/v1/videos/${videoId}/hls/${name}?t=${token}`
         res.send(rewriteMasterPlaylist(body, variant))
         return
       }
-
-      // One presigned URL covers the whole file, at every byte range, which is
-      // what makes seeking work without a signature per seek.
-      const signed = presignGetUrl({
-        ...space,
-        key: spaceKey(videoId, VIDEO_FILE),
-        expiresSec: MEDIA_TOKEN_TTL_SEC
-      })
-      res.send(rewriteMediaPlaylist(body, VIDEO_FILE, signed))
+      res.send(playback.rewrite(videoId, file, body))
     })
   )
 

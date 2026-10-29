@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { rewriteMediaPlaylist } from '../../server/media/spacesHls'
 import { seekTo } from './explicitSeek'
 import { joinLiveWithCushion, SLACK_SEC } from './liveCushion'
 import { readRealEndSec, realEndSec } from './livePlaylistEnd'
@@ -199,5 +200,15 @@ describe('where a live playlist’s newest footage ends (U26)', function () {
     } finally {
       globalThis.fetch = real
     }
+  })
+})
+
+describe('presigned live origin timing', function () {
+  it('counts media durations with signed fragment and map URLs', function () {
+    const body = rewriteMediaPlaylist(
+      '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n#EXT-X-DISCONTINUITY\n#EXTINF:3.5,\nseg000001.m4s\n',
+      uri => `https://objects.example.test/${uri}?X-Amz-Signature=example`
+    )
+    expect(realEndSec(body)).equals(7.5)
   })
 })

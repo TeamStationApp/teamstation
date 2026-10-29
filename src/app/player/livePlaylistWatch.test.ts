@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { rewriteMediaPlaylist } from '../../server/media/spacesHls'
 import {
   type PlaylistAnswer,
   playlistSeconds,
@@ -341,5 +342,15 @@ describe('reading a playlist', function () {
   it('reads the target duration, four seconds if none is given', function () {
     expect(targetSeconds(playlist(3, 8))).equals(8)
     expect(targetSeconds('#EXTM3U\n')).equals(4)
+  })
+})
+
+describe('presigned live origin timing', function () {
+  it('counts media durations with signed fragment and map URLs', function () {
+    const body = rewriteMediaPlaylist(
+      '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n#EXT-X-DISCONTINUITY\n#EXTINF:3.5,\nseg000001.m4s\n',
+      uri => `https://objects.example.test/${uri}?X-Amz-Signature=example`
+    )
+    expect(playlistSeconds(body)).equals(7.5)
   })
 })

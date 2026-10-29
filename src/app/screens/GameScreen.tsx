@@ -944,7 +944,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     if (
       videoId == null ||
-      videoStatus !== 'live' ||
+      (videoStatus !== 'live' && playback?.pending !== true) ||
       playbackFor !== videoId ||
       playback == null ||
       playback.url != null
@@ -964,8 +964,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         .playback(forVideoId)
         .then(found => {
           if (!live) return
+          setPlayback(found)
           if (found.url == null) askAgain()
-          else setPlayback(found)
         })
         .catch(askAgain)
     }, wait)
