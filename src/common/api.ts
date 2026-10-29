@@ -2537,6 +2537,12 @@ export interface RequestOptions {
   /** Whether a screen's load collects the answer's revision. */
   collect?: boolean
   headers?: Record<string, string>
+  /**
+   * The names of the players a live post's plays name, by gumbo id: never
+   * sent, but kept on the device beside a queued post, so the phone's copy
+   * of the game reads named before the server answers.
+   */
+  deviceNames?: Record<string, string>
 }
 
 /**
@@ -4903,7 +4909,8 @@ export class TeamStationClient {
         ...(change.generation === undefined
           ? {}
           : { generation: change.generation })
-      }
+      },
+      change.names == null ? undefined : { deviceNames: change.names }
     )
     return storedGameOf(stored)
   }
@@ -5022,6 +5029,36 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asRosterEntry,
       { side, ...(teamId == null ? {} : { teamId }), ...player }
+    )
+  }
+
+  /**
+   * Corrects the name of a game-only player, a guest of this game who cannot
+   * sign in: his account is renamed, so every read of the game names him
+   * anew. The answer is his roster entry as `createGuestPlayer` answers it.
+   * `gumboId`, when given, is kept on the device with the name, so a rename
+   * queued offline names him so in the phone's copy of the game.
+   */
+  async renameGuestPlayer(
+    gameId: string,
+    userId: string,
+    name: { firstName: string; lastName: string },
+    gumboId?: number | null
+  ): Promise<RosterEntry> {
+    return await this.request(
+      'PUT',
+      `/games/${encodeURIComponent(gameId)}/guest-players/${encodeURIComponent(userId)}`,
+      asRosterEntry,
+      { firstName: name.firstName, lastName: name.lastName },
+      gumboId == null
+        ? undefined
+        : {
+            deviceNames: {
+              [String(gumboId)]: [name.firstName, name.lastName]
+                .filter(part => part !== '')
+                .join(' ')
+            }
+          }
     )
   }
 

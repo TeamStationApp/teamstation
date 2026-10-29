@@ -102,6 +102,7 @@ import {
 import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { EventTagEditor } from './EventTagEditor'
+import { guestRenames, sendGuestRenames } from './guestRenames'
 import { HeldGameNotice } from './HeldGameNotice'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
@@ -245,6 +246,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const [opened, setOpened] = useState<GameSession>()
   const [visibleDefaults, setVisibleDefaults] = useState<DefaultLineups>({})
   const [rosters, setRosters] = useState<WalkUpRosters>({})
+  /** The game's guests, whose accounts a correction of their names renames. */
+  const [guests, setGuests] = useState<RosterEntry[]>([])
   const music = props.music ?? NO_WALK_UP_MUSIC
   // Both teams' Apple Music walk-up songs, once the game and its rosters
   // are read: they go into the phone's library on the way in.
@@ -306,6 +309,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     setOpened(undefined)
     setVisibleDefaults({})
     setRosters({})
+    setGuests([])
     authorizationPending.current = false
     rightsRef.current = {}
     setRosterRights({})
@@ -364,6 +368,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         session: value
       }
       setRosters({ [game.awayTeamId]: away, [game.homeTeamId]: home })
+      setGuests([...game.guestPlayers.away, ...game.guestPlayers.home])
       setVisibleDefaults(defaults)
       setCopyPending(false)
       setOpened(value)
@@ -750,6 +755,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         allowNavigation={props.allowNavigation}
         onNavigationApproved={props.onNavigationApproved}
         rosterRights={returning ? {} : rosterRights}
+        guests={guests}
         rosterDefaultSide={rosterDefaultSide}
         scorekeeperSide={keeperSide}
         detailsLoading={returning || detailsLoading}
@@ -840,6 +846,8 @@ function ScoringPanel(props: {
   allowNavigation?: ScoringScreenProps['allowNavigation']
   onNavigationApproved?: ScoringScreenProps['onNavigationApproved']
   rosterRights: Record<string, boolean>
+  /** The game's guests as it opened: whose accounts Save Rosters renames. */
+  guests: readonly RosterEntry[]
   rosterDefaultSide?: Side
   /** The one side this scorekeeper keeps score for, when that is exactly one. */
   scorekeeperSide?: Side
@@ -1186,6 +1194,8 @@ function ScoringPanel(props: {
   const [rosterLoading, setRosterLoading] = useState(false)
   const [rosterProblem, setRosterProblem] = useState<string>()
   const [rosterInitial, setRosterInitial] = useState<RosterEditorDraft>()
+  /** Guests made since the game opened, whose accounts a rename finds too. */
+  const createdGuests = useRef<RosterEntry[]>([])
   const [acceptedLineup, setAcceptedLineup] = useState<string>()
   const defensiveOpen = defensiveSlot != null
   const confirmation = useRef<((value: boolean) => void) | null>(null)
@@ -2161,18 +2171,16 @@ function ScoringPanel(props: {
   const createDefensivePlaceholders = async (count: number): Promise<void> => {
     await createDefensivePlayers(async (fresh, side) => {
       const staged = copyState(fresh)
-      await addPlaceholderPlayers(
-        staged,
-        side,
-        count,
-        async (side, player) =>
-          await props.client.createGuestPlayer(
-            fresh.gamePk,
-            side,
-            rosterPlayerBody(player),
-            openedTeam(side, fresh.gameData.teams[side].id)
-          )
-      )
+      await addPlaceholderPlayers(staged, side, count, async (side, player) => {
+        const entry = await props.client.createGuestPlayer(
+          fresh.gamePk,
+          side,
+          rosterPlayerBody(player),
+          openedTeam(side, fresh.gameData.teams[side].id)
+        )
+        createdGuests.current.push(entry)
+        return entry
+      })
       return draft => {
         for (const id of staged.liveData.boxscore.teams[side].players) {
           if (draft.gameData.players[id] != null) continue
@@ -3237,14 +3245,16 @@ function ScoringPanel(props: {
                 conflict={rosterLive.conflict}
                 onDirtyChange={setRosterChanged}
                 onEditPlayer={props.onEditPlayer}
-                onCreateGuest={async (side, player) =>
-                  await props.client.createGuestPlayer(
+                onCreateGuest={async (side, player) => {
+                  const entry = await props.client.createGuestPlayer(
                     state.session.gamePk,
                     side,
                     rosterPlayerBody(player),
                     openedTeam(side, state.session.gameData.teams[side].id)
                   )
-                }
+                  createdGuests.current.push(entry)
+                  return entry
+                }}
                 onCreatePlayer={async (teamId, player) =>
                   await props.client.createRosterPlayer(
                     teamId,
@@ -3274,7 +3284,7 @@ function ScoringPanel(props: {
                   }
                   closeSheet()
                 }}
-                onSave={async (draft, nextBatter, runners) => {
+                onSave={async (draft, nextBatter, runners, openedOver) => {
                   const problem = rosterRefusal(
                     state,
                     draft,
@@ -3282,6 +3292,19 @@ function ScoringPanel(props: {
                     runners
                   )
                   if (problem != null) throw new Error(problem)
+                  // A game-only player's corrected name is his account's:
+                  // renamed first, then the setup that shows it is saved.
+                  // A game kept only on this device renames nobody. The
+                  // corrections are told against the game the editor was
+                  // opened over: one followed from another device since
+                  // may name a guest anew, which the draft does not undo.
+                  if (props.persistent)
+                    await sendGuestRenames(
+                      props.client,
+                      props.gameId,
+                      guestRenames(openedOver, draft),
+                      [...props.guests, ...createdGuests.current]
+                    )
                   dispatch({ type: 'ROSTER', draft, nextBatter, runners })
                   closeSheet()
                 }}

@@ -438,3 +438,41 @@ describe('the server scoring source after a swap of home and away', function () 
     expect(session.state.liveData.linescore.offense.batter?.id).equals(201)
   })
 })
+
+describe('the in-memory store', function () {
+  it('keeps a game unnamed with its names beside it, and reopens it named', async () => {
+    const store = memoryStore()
+    const first = await ScoringSession.open(store, game.id, {
+      gamePk: game.id,
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    for (const call of ['S', 'S', 'S'] as const)
+      expect(first.apply({ type: 'pitch', call }).problems).deep.equals([])
+    first.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await first.flush()
+    // Kept as a session sends it: nobody's name in the documents.
+    const kept = JSON.stringify(store.games.get(game.id))
+    expect(kept).not.include('Player 101')
+    expect(store.names.get(game.id)?.get(101)).equals('Player 101')
+    const loaded = await store.load(game.id)
+    expect(loaded.plays[0].matchup?.batter).deep.equals({
+      id: 101,
+      fullName: 'Player 101'
+    })
+    const again = await ScoringSession.open(store, game.id, {
+      gamePk: game.id,
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    expect(again.state.gameData.players[101].fullName).equals('Player 101')
+    expect(
+      again.state.liveData.plays.allPlays[0].matchup.batter.fullName
+    ).equals('Player 101')
+    // A game it never kept reads empty.
+    expect(await store.load('nothing')).deep.equals({
+      plays: [],
+      currentPlay: null
+    })
+  })
+})

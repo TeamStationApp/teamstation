@@ -275,11 +275,14 @@ export function RosterEditor({
    * sheet; a coach's saves it and stays, answering once it is saved, or
    * failing when the save is refused. The chat closes once the draft is
    * saved, and stays over a save refused, to say what was staged.
+   * `openedOver` is the game the draft was opened over (`base`), not the one
+   * shown behind the sheet since: what the draft changes is told from it.
    */
   onSave: (
     draft: ScoringSessionState,
-    nextBatter?: number,
-    runners?: StagedRunner[]
+    nextBatter: number | undefined,
+    runners: StagedRunner[] | undefined,
+    openedOver: ScoringSessionState
   ) => void | Promise<void>
 }): React.ReactElement {
   const coach = audience === 'coach'
@@ -1088,7 +1091,8 @@ export function RosterEditor({
                 const saving = onSave(
                   draft,
                   nextBatter,
-                  runners.length === 0 ? undefined : runners
+                  runners.length === 0 ? undefined : runners,
+                  openedOver
                 )
                 if (saving instanceof Promise) {
                   setSavingRoster(true)

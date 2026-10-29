@@ -33,7 +33,7 @@ import {
   POSITIONS,
   type Side
 } from '../../common/scoring/state'
-import { withNames } from '../../common/scoring/storedNames'
+import { withNames, withoutNames } from '../../common/scoring/storedNames'
 import { retargetRecord } from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
@@ -1905,13 +1905,14 @@ describe('posting and reading plays', function () {
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
     await live(liveAtBatId, { plays: [] })
+    // Stored naming nobody, as every play is.
     expect(
       withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
-    ).deep.equals(current(0))
+    ).deep.equals(withoutNames(current(0)))
     await live(liveAtBatId, { currentPlay: current(0, 2) })
     expect(
       withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
-    ).deep.equals(current(0, 2))
+    ).deep.equals(withoutNames(current(0, 2)))
     await live(liveAtBatId, { currentPlay: null })
     expect((await gameRow(liveAtBatId)).currentPlay).equals(null)
     // An at-bat in progress changes no stats, so none are asked for.
@@ -4117,7 +4118,8 @@ describe('the team default lineup a live post keeps (U10)', function () {
       .teamStation as { version: number; setupBefore: { sides: object } }
     expect(answered.version).equals(2)
     expect(answered.setupBefore.sides).have.keys('away', 'home')
-    expect(recordOf(read.currentPlay, TEAMS)).deep.equals(
+    // Answered named; stored naming nobody.
+    expect(recordOf(withoutNames(read.currentPlay), TEAMS)).deep.equals(
       recordOf(stored.currentPlay, TEAMS)
     )
 

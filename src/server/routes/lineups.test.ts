@@ -53,6 +53,7 @@ import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { resolveScoringGame } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
 import { lineupRoutes, startingContext } from './lineups'
 
@@ -444,6 +445,55 @@ describe('the lineup routes (U11)', function () {
     expect(storedGuests(game.guests, teamsOfRow(game))).deep.equals({
       away: [body.gumboId],
       home: []
+    })
+
+    // The guest's name is corrected on his account, through its own route.
+    const put = async (
+      token: string | null,
+      userId: string,
+      name: unknown
+    ): Promise<Response> =>
+      await fetch(`${base}/games/${fresh}/guest-players/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          ...(token == null ? {} : { authorization: `Bearer ${token}` })
+        },
+        body: JSON.stringify(name)
+      })
+    const corrected = { firstName: 'George', lastName: 'Ruth' }
+    expect((await put(null, body.userId, corrected)).status).equals(401)
+    expect((await put(STRANGER, body.userId, corrected)).status).equals(403)
+    expect((await put(ADMIN, 'nobody', corrected)).status).equals(400)
+    expect(
+      (await put(ADMIN, body.userId, { firstName: '', lastName: '' })).status
+    ).equals(400)
+    expect(
+      (await put(ADMIN, userIdOfGumbo(987654321), corrected)).status
+    ).equals(404)
+    const renamed = await put(ADMIN, body.userId, corrected)
+    expect(renamed.status).equals(200)
+    expect(await renamed.json()).deep.include({
+      userId: body.userId,
+      gumboId: body.gumboId,
+      shortName: 'George Ruth',
+      nameDetails: {
+        firstName: 'George',
+        lastName: 'Ruth',
+        displayName: 'George Ruth'
+      },
+      jersey: '00'
+    })
+    expect(
+      await db!
+        .selectFrom('users')
+        .select(['first_name', 'last_name', 'display_name'])
+        .where('id', '=', body.userId)
+        .executeTakeFirstOrThrow()
+    ).deep.equals({
+      first_name: 'George',
+      last_name: 'Ruth',
+      display_name: 'George Ruth'
     })
   })
 
@@ -1006,18 +1056,20 @@ describe("saving a side's lineup (U8)", function () {
     const database = db!
     return await ScoringSession.open(
       {
-        load: async () => ({
-          plays: (await readPlays(database, gameId)).map(
-            row => row.gumbo as GumboPlay
-          ),
-          currentPlay: (
-            await database
-              .selectFrom('games')
-              .select(atBatInProgress().as('currentPlay'))
-              .where('id', '=', gameId)
-              .executeTakeFirstOrThrow()
-          ).currentPlay as CurrentPlay | null
-        }),
+        // Read as `GET /events` reads it: named from the accounts.
+        load: async () =>
+          await resolveScoringGame(database, {
+            plays: (await readPlays(database, gameId)).map(
+              row => row.gumbo as GumboPlay
+            ),
+            currentPlay: (
+              await database
+                .selectFrom('games')
+                .select(atBatInProgress().as('currentPlay'))
+                .where('id', '=', gameId)
+                .executeTakeFirstOrThrow()
+            ).currentPlay as CurrentPlay | null
+          }),
         save: async (id, change) => {
           const posted = await postGamePlays(
             database,
@@ -2057,7 +2109,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(named('Newcomer')).equals(1)
   })
 
-  it('saves and reloads guest name and jersey edits without changing identity or roster profiles', async function () {
+  it("saves and reloads a guest's jersey edit, never the name it posts, without changing identity or roster profiles", async function () {
     const initial = await scoring(games.locals)
     const guest = Object.values(initial.state.gameData.players).find(
       player => player.local && player.fullName === 'Guest'
@@ -2097,12 +2149,18 @@ describe("saving a side's lineup (U8)", function () {
     const answer = await save(games.locals, COACH, body)
     expect(answer.status, JSON.stringify(answer.body)).equals(200)
     const reopened = await scoring(games.locals)
+    // A guest's name is his account's: the save renamed nobody.
     expect(reopened.state.gameData.players[guest.id]).includes({
       id: guest.id,
-      fullName: 'Babe Ruth',
+      fullName: 'Guest',
       jersey: '03',
       local: true
     })
+    const stored = JSON.stringify(
+      (await readPlays(db!, games.locals)).map(row => row.gumbo)
+    )
+    expect(stored).not.include('Babe Ruth')
+    expect(stored).not.include('Willie Mays')
     expect(reopened.state.gameData.players[guest.id].firstName).equals(
       undefined
     )

@@ -15,18 +15,14 @@ const CREDIT_COLUMNS = [
   'assistWord',
   'teamId',
   'creditGumboId as creditUserId',
-  'name',
+  'typedName',
   'role',
-  'position'
+  'position',
+  'positionShown'
 ] as const
 
-/** A play's credit, structured, with the game it was credited in. */
-export interface CreditRow extends CreditedOutcome {
-  gameId: string
-}
-
+/** A play's credit, structured. */
 function asCredit(row: {
-  gameId: string
   eventType: string
   head: string
   suffix: string | null
@@ -34,12 +30,12 @@ function asCredit(row: {
   assistWord: 'from' | 'to' | null
   teamId: string | null
   creditUserId: number | null
-  name: string
+  typedName: string | null
   role: string | null
   position: string | null
-}): CreditRow {
+  positionShown: boolean
+}): CreditedOutcome {
   return {
-    gameId: row.gameId,
     eventType: row.eventType,
     head: row.head,
     suffix: row.suffix,
@@ -51,47 +47,36 @@ function asCredit(row: {
         : {})
     })),
     assistWord: row.assistWord,
+    positionShown: row.positionShown,
     teamId: row.teamId,
     creditUserId: row.creditUserId,
     credit: {
       // Only a person with no id is named here: an id's name is read from
       // users when the credit is shown.
-      ...(row.creditUserId == null ? { name: row.name } : {}),
+      ...(row.creditUserId == null ? { name: row.typedName ?? '' } : {}),
       role: row.role ?? '',
       position: row.position
     }
   }
 }
 
-/**
- * Every credit of these plays, structured, each with its play's game. The
- * games are read on their own, so the credits are read as they always were.
- */
+/** Every credit of these plays, structured. */
 async function creditsOf(
   db: Kysely<Database>,
   eventIds: string[]
-): Promise<Array<{ eventId: string; credit: CreditRow }>> {
-  const games = await db
-    .selectFrom('events')
-    .select(['id', 'gameId'])
-    .where('id', 'in', eventIds)
-    .execute()
-  const gameOf = new Map(games.map(row => [row.id, row.gameId]))
+): Promise<Array<{ eventId: string; credit: CreditedOutcome }>> {
   const rows = await db
     .selectFrom('eventCredits')
     .select(CREDIT_COLUMNS)
     .where('eventId', 'in', eventIds)
     .execute()
-  return rows.map(row => ({
-    eventId: row.eventId,
-    credit: asCredit({ ...row, gameId: gameOf.get(row.eventId) ?? '' })
-  }))
+  return rows.map(row => ({ eventId: row.eventId, credit: asCredit(row) }))
 }
 
 /**
- * Every credit on each play that credits this person, keyed by play, each
- * with its game, so the player page names them from one book for the games
- * of its page (`gameNames`).
+ * Every credit on each play that credits this person, keyed by play. The
+ * player page names them from one book for the games of its page
+ * (`gameNames`).
  *
  * A credit names its person by `creditUserId` alone. A merge closes a row
  * without moving the credits written under it, so every row that is this
@@ -100,8 +85,8 @@ async function creditsOf(
 export async function creditsForPlayer(
   db: Kysely<Database>,
   userId: string
-): Promise<Map<string, CreditRow[]>> {
-  const out = new Map<string, CreditRow[]>()
+): Promise<Map<string, CreditedOutcome[]>> {
+  const out = new Map<string, CreditedOutcome[]>()
   const person = await onePerson(db, userId)
   const gumboIds = await gumboIdsOfUsers(db, person.userIds)
   if (gumboIds.length === 0) return out
@@ -126,14 +111,13 @@ export async function creditsForPlayer(
  * `credits` key for, or a row from before 031 (`creditsLookedAt` false), is
  * `undefined`, and kept. A re-post without the key keeps the list already
  * stored (`withKeptCredits`). A play whose stored list is empty is `[]`, and
- * omitted. Otherwise its `eventCredits` rows are the array, structured, each
- * with its game.
+ * omitted. Otherwise its `eventCredits` rows are the array, structured.
  */
 export async function creditsForHighlight(
   db: Kysely<Database>,
   eventIds: string[]
-): Promise<Map<string, CreditRow[] | undefined>> {
-  const out = new Map<string, CreditRow[] | undefined>()
+): Promise<Map<string, CreditedOutcome[] | undefined>> {
+  const out = new Map<string, CreditedOutcome[] | undefined>()
   if (eventIds.length === 0) return out
 
   const flags = await db

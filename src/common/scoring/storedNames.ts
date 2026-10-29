@@ -358,6 +358,12 @@ export interface StructuredCredit {
     name?: string
   }>
   assistWord?: 'from' | 'to'
+  /**
+   * False for a label that words the credited person with no position,
+   * though the credit has one (an outside scorer's `Strikeout: X pitching`
+   * for a pitcher at P). Absent otherwise.
+   */
+  positionShown?: false
   label?: string
 }
 
@@ -369,10 +375,10 @@ function personName(id: unknown, typed: unknown, nameOf: NameOf): string {
 
 /**
  * A credit's label, worded from its structure: the head, then, when the
- * credit names somebody, `: <name>` and ` (<position>)` when he has one, the
- * suffix (` pitching`), then the fielders who assisted — ` from A (SS), B
- * (2B)` as the engine words it, or ` to A (1B) to B (2B)` for an outside
- * scorer's chain.
+ * credit names somebody, `: <name>` and ` (<position>)` when he has one and
+ * the label shows it (`positionShown`), the suffix (` pitching`), then the
+ * fielders who assisted — ` from A (SS), B (2B)` as the engine words it, or
+ * ` to A (1B) to B (2B)` for an outside scorer's chain.
  */
 export function creditLabel(credit: StructuredCredit, nameOf: NameOf): string {
   const person = object(credit.credit) ? credit.credit : undefined
@@ -380,7 +386,8 @@ export function creditLabel(credit: StructuredCredit, nameOf: NameOf): string {
   let label = credit.head
   if (credit.creditUserId != null || name !== '') {
     label += `: ${name}`
-    if (person?.position != null) label += ` (${person.position})`
+    if (person?.position != null && credit.positionShown !== false)
+      label += ` (${person.position})`
   }
   label += credit.suffix ?? ''
   const assists = credit.assists ?? []
@@ -487,6 +494,16 @@ function restOf(
   return { suffix: after }
 }
 
+/** A credit in its stored form, and whether it words its label again. */
+export interface ReadCredit {
+  credit: unknown
+  /**
+   * False for a credit sent with a label its structure does not word again
+   * exactly: it keeps its head and its person only.
+   */
+  exact: boolean
+}
+
 /**
  * A credit in its stored form: structured (`head`, `suffix`, `assists`,
  * `assistWord`), with no `label`, and with a name only where the person has
@@ -494,44 +511,48 @@ function restOf(
  * names. A credit sent with only a label (an outside scorer's, or one stored
  * before credits had structure) is read from it: the head is the label up to
  * the first `: `, the subject and his position are matched against the
- * credit's own name and position, a fielders' chain after them becomes its
- * assists (each given the id the credit's own `assists` give him at that
- * position, or the one `names.idOf` finds for his name, or kept by name),
- * and the words between that are no name in the play become the suffix. A
- * label the structure cannot word again exactly keeps its head and the
- * credited person only.
+ * credit's own name and position — a label that shows no position for a
+ * credit that has one is read without it, and stored `positionShown: false`
+ * — a fielders' chain after them becomes its assists (each given the id the
+ * credit's own `assists` give him at that position, or the one `names.idOf`
+ * finds for his name, or kept by name), and the words between that are no
+ * name in the play become the suffix. A person with no id and no name is
+ * named as the label names him: the words before his position, or all the
+ * label's rest. A label the structure cannot word again exactly keeps its
+ * head and the credited person only.
  */
 export function structuredCredit(
   credit: unknown,
   names: CreditNames = {}
 ): unknown {
-  if (!object(credit)) return credit
-  if (typeof credit.head === 'string') return unnamedCredit(credit)
-  if (typeof credit.label !== 'string') return credit
+  return readCredit(credit, names).credit
+}
+
+/** `structuredCredit`, saying whether the label is worded again exactly. */
+export function readCredit(
+  credit: unknown,
+  names: CreditNames = {}
+): ReadCredit {
+  if (!object(credit)) return { credit, exact: true }
+  if (typeof credit.head === 'string')
+    return { credit: unnamedCredit(credit), exact: true }
+  if (typeof credit.label !== 'string') return { credit, exact: true }
   const label = credit.label
   const person = object(credit.credit) ? credit.credit : undefined
-  const name = typeof person?.name === 'string' ? person.name : ''
+  const sentName = typeof person?.name === 'string' ? person.name : ''
   const position = typeof person?.position === 'string' ? person.position : null
   const split = label.indexOf(': ')
   const head = split < 0 ? label : label.slice(0, split)
+  const rest = split < 0 ? '' : label.slice(split + 2)
   // Whatever structure the sender attached is read again from the label.
   const {
     assists: sentAssists,
     assistWord: _assistWord,
     suffix: _suffix,
-    ...rest
+    positionShown: _positionShown,
+    ...kept
   } = credit
-  const plain: Json = { ...rest, head }
-  const read: ReadLabel | undefined =
-    split < 0 ? { suffix: '' } : restOf(label.slice(split + 2), name, position)
-  if (read == null) return unnamedCredit(plain)
-  const known = [...(names.names ?? []), name].filter(other => other !== '')
-  if (read.suffix !== '' && known.some(other => read.suffix.includes(other)))
-    return unnamedCredit(plain)
-  // Each person is named as the label names him, to check its wording.
-  const said = new Map<number, string>()
-  if (typeof credit.creditUserId === 'number')
-    said.set(credit.creditUserId, name)
+  const plain: Json = { ...kept, head }
   // The fielders the credit itself names by id come first.
   const sent = Array.isArray(sentAssists) ? sentAssists : []
   const sentId = (assist: Assist): number | undefined => {
@@ -545,27 +566,54 @@ export function structuredCredit(
         return one.creditUserId
     return undefined
   }
-  const assists = read.assists?.map(assist => {
-    const id = sentId(assist) ?? names.idOf?.(assist.name, assist.position)
-    if (id == null)
-      return {
-        creditUserId: null,
-        position: assist.position,
-        name: assist.name
-      }
-    said.set(id, assist.name)
-    return { creditUserId: id, position: assist.position }
-  })
-  const candidate: Json = {
-    ...plain,
-    ...(read.suffix === '' ? {} : { suffix: read.suffix }),
-    ...(assists == null ? {} : { assists, assistWord: read.assistWord })
+  /** The credit read with `shown` as the position the label shows. */
+  const attempt = (shown: string | null): Json | undefined => {
+    // A person with no id and no name is named as the label names him.
+    let name = sentName
+    if (name === '' && credit.creditUserId == null && split >= 0) {
+      const at = shown == null ? rest.length : rest.indexOf(` (${shown})`)
+      if (at <= 0) return undefined
+      name = rest.slice(0, at)
+    }
+    const read: ReadLabel | undefined =
+      split < 0 ? { suffix: '' } : restOf(rest, name, shown)
+    if (read == null) return undefined
+    const known = [...(names.names ?? []), name].filter(other => other !== '')
+    if (read.suffix !== '' && known.some(other => read.suffix.includes(other)))
+      return undefined
+    // Each person is named as the label names him, to check its wording.
+    const said = new Map<number, string>()
+    if (typeof credit.creditUserId === 'number')
+      said.set(credit.creditUserId, name)
+    const assists = read.assists?.map(assist => {
+      const id = sentId(assist) ?? names.idOf?.(assist.name, assist.position)
+      if (id == null)
+        return {
+          creditUserId: null,
+          position: assist.position,
+          name: assist.name
+        }
+      said.set(id, assist.name)
+      return { creditUserId: id, position: assist.position }
+    })
+    const candidate: Json = {
+      ...plain,
+      ...(name === sentName ? {} : { credit: { ...person, name } }),
+      ...(read.suffix === '' ? {} : { suffix: read.suffix }),
+      ...(assists == null ? {} : { assists, assistWord: read.assistWord }),
+      ...(shown == null && position != null ? { positionShown: false } : {})
+    }
+    return creditLabel(candidate as unknown as StructuredCredit, id =>
+      said.get(id)
+    ) === label
+      ? candidate
+      : undefined
   }
-  return creditLabel(candidate as unknown as StructuredCredit, id =>
-    said.get(id)
-  ) === label
-    ? unnamedCredit(candidate)
-    : unnamedCredit(plain)
+  const exact =
+    attempt(position) ?? (position == null ? undefined : attempt(null))
+  return exact == null
+    ? { credit: unnamedCredit(plain), exact: false }
+    : { credit: unnamedCredit(exact), exact: true }
 }
 
 /** A stored credit named: its label, and its person's name by id. */
@@ -1192,23 +1240,43 @@ function creditNamesOf(play: Json): CreditNames {
 /**
  * A play with each credit given its structure (`structuredCredit`, read
  * against the play's own names), its `label` and its person's name kept
- * beside it.
+ * beside it. A person with no id whose name the label gave keeps that name.
  */
 export function withStructuredCredits<T>(play: T): T {
-  if (!object(play) || !Array.isArray(play.credits)) return play
+  return structuredCreditsOf(play).play
+}
+
+/**
+ * `withStructuredCredits`, counting the credits whose label the structure
+ * does not word again exactly (`readCredit`), as a migration reports them.
+ */
+export function structuredCreditsOf<T>(play: T): {
+  play: T
+  unreproduced: number
+} {
+  if (!object(play) || !Array.isArray(play.credits))
+    return { play, unreproduced: 0 }
   const names = creditNamesOf(play)
-  return {
-    ...play,
-    credits: play.credits.map(credit => {
-      const structured = structuredCredit(credit, names)
-      if (!object(credit) || !object(structured)) return structured
-      return {
-        ...structured,
-        ...('label' in credit ? { label: credit.label } : {}),
-        ...('credit' in credit ? { credit: credit.credit } : {})
-      }
-    })
-  }
+  let unreproduced = 0
+  const credits = play.credits.map(credit => {
+    const read = readCredit(credit, names)
+    if (!read.exact) unreproduced++
+    const structured = read.credit
+    if (!object(credit) || !object(structured)) return structured
+    return {
+      ...structured,
+      ...('label' in credit ? { label: credit.label } : {}),
+      ...('credit' in credit
+        ? {
+            credit:
+              object(credit.credit) && object(structured.credit)
+                ? { ...credit.credit, ...structured.credit }
+                : credit.credit
+          }
+        : {})
+    }
+  })
+  return { play: { ...play, credits }, unreproduced }
 }
 
 /** The stored form of a document, and what making it found. */
@@ -1242,10 +1310,24 @@ export function storedForm<T>(
   const record = object(play.teamStation) ? upgraded(play.teamStation) : null
   if (record != null && record !== play.teamStation)
     play = { ...play, teamStation: record }
+  // A version 1 record `upgradeRecord` refused names its players by session
+  // id: its sentences cannot be read back to gumbo ids, so they keep their
+  // words and are counted as sentences not read back.
+  const refusedRecord = object(play.teamStation) && record == null
   const source =
     options.source ?? (object(play.teamStation) ? 'teamstation' : 'manual')
   let unreproduced = 0
-  if (source === 'teamstation' && Array.isArray(play.playEvents)) {
+  if (refusedRecord && source === 'teamstation') {
+    for (const event of Array.isArray(play.playEvents) ? play.playEvents : [])
+      if (
+        describedEvent(event) &&
+        !('said' in event) &&
+        object(event.details) &&
+        typeof event.details.description === 'string' &&
+        event.details.description !== ''
+      )
+        unreproduced++
+  } else if (source === 'teamstation' && Array.isArray(play.playEvents)) {
     const read = play
     play = changed(play, ['playEvents'], events =>
       mapped(events, event => {

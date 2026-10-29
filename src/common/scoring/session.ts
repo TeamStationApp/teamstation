@@ -34,7 +34,7 @@ import {
   setupOf,
   type Side
 } from './state'
-import { withoutNames } from './storedNames'
+import { namesIn, withoutNames } from './storedNames'
 
 /**
  * A game being scored, and kept on the server as it is scored.
@@ -113,9 +113,22 @@ export interface StoredGame {
   context?: SessionContext
 }
 export interface SaveChange {
+  /**
+   * The plays that changed. A session saves them in their stored form
+   * (`withoutNames`): nobody's name travels with a play, and the server
+   * names it from the players' accounts when it is read.
+   */
   plays: GumboPlay[]
   remove: number[]
+  /** The at-bat in progress when it changed, in its stored form too. */
   currentPlay?: CurrentPlay | null
+  /**
+   * The session's name for each gumbo id the change's plays name
+   * (`namesIn` of the named documents): kept on the device beside the
+   * change, so a copy written on the phone reads named before the server
+   * has answered (`appliedEvents`, `memoryStore`). Never sent.
+   */
+  names?: Record<string, string>
   /**
    * The fence, in feet, the plays were sized by: the game's
    * `gameData.venue.fieldInfo.center`, or the default for a game saved
@@ -237,23 +250,54 @@ interface Displaced {
 }
 
 /**
- * A folded play as the server stores it, written out once per play: in its
- * stored form (`withoutNames`), so a play whose only change is a player's
- * name is never written again.
+ * A folded play as the server stores it (`withoutNames`), worked out once
+ * per play and kept with its text: what changed is decided by the text, so
+ * a play whose only change is a player's name is never written again, and a
+ * save sends the stored form it was decided on (`storedChange`).
  */
-const writtenPlays = new WeakMap<GumboPlay, string>()
-function written(play: GumboPlay): string {
-  let text = writtenPlays.get(play)
-  if (text == null) {
-    text = JSON.stringify(withoutNames(play))
-    writtenPlays.set(play, text)
+const writtenPlays = new WeakMap<
+  GumboPlay,
+  { stored: GumboPlay; text: string }
+>()
+function storedPlay(play: GumboPlay): { stored: GumboPlay; text: string } {
+  let form = writtenPlays.get(play)
+  if (form == null) {
+    const stored = withoutNames(play)
+    form = { stored, text: JSON.stringify(stored) }
+    writtenPlays.set(play, form)
   }
-  return text
+  return form
+}
+function written(play: GumboPlay): string {
+  return storedPlay(play).text
 }
 
 /** The at-bat in progress as the server stores it, written out. */
 function writtenCurrent(current: CurrentPlay | null | undefined): string {
   return JSON.stringify(current == null ? current : withoutNames(current))
+}
+
+/**
+ * A change as a store is sent it: its plays and at-bat in their stored form,
+ * and beside them the names those documents carried.
+ */
+export function storedChange(change: SaveChange): SaveChange {
+  const names: Record<string, string> = { ...change.names }
+  for (const play of [...change.plays, change.currentPlay])
+    if (play != null)
+      for (const [id, name] of namesIn(play))
+        if (!(String(id) in names)) names[String(id)] = name
+  return {
+    ...change,
+    plays: change.plays.map(play => storedPlay(play).stored),
+    ...(change.currentPlay === undefined
+      ? {}
+      : {
+          currentPlay:
+            change.currentPlay == null ? null : withoutNames(change.currentPlay)
+        }),
+    names
+  }
 }
 
 export class ScoringSession {
@@ -1616,7 +1660,7 @@ export class ScoringSession {
       let answer: StoredGame | undefined
       try {
         answer = await this.store.save(this.gameId, {
-          ...change,
+          ...storedChange(change),
           ...(this.lineupsBase === undefined
             ? {}
             : { lineupsBase: this.lineupsBase }),

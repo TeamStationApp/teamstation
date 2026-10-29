@@ -187,17 +187,29 @@ describe('names fixture', function () {
     const credits = await db!
       .selectFrom('eventCredits')
       .innerJoin('events', 'events.id', 'eventCredits.eventId')
-      .select(['eventCredits.label', 'eventCredits.creditGumboId'])
+      .select([
+        'eventCredits.head',
+        'eventCredits.creditGumboId',
+        'eventCredits.typedName',
+        'eventCredits.position',
+        'eventCredits.assists',
+        'eventCredits.assistWord'
+      ])
       .where('events.gameId', '=', fixture.outsideGameId)
       .execute()
-    const labels = credits.map(row => row.label)
-    expect(labels).includes(`Single: ${NAMES_PEOPLE.typedOpponent}`)
-    expect(labels.some(label => / \(SS\) to .* \(1B\)$/.test(label))).equals(
-      true
-    )
+    const single = credits.find(row => row.head === 'Single')
+    expect(single).include({
+      creditGumboId: null,
+      typedName: NAMES_PEOPLE.typedOpponent
+    })
     expect(
-      credits.find(row => row.label.startsWith('Single'))?.creditGumboId
-    ).equals(null)
+      credits.some(
+        row =>
+          row.position === 'SS' &&
+          row.assistWord === 'to' &&
+          row.assists.at(-1)?.position === '1B'
+      )
+    ).equals(true)
   })
 
   it('sets the default lineup, the request and the grant', async () => {

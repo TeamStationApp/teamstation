@@ -102,6 +102,7 @@ import { migration088ChatDirtyQueue } from './088chatDirtyQueue'
 import { migration089UserApiKeys } from './089userApiKeys'
 import { migration090PlateAppearances } from './090plateAppearances'
 import { migration091StructuredCredits } from './091structuredCredits'
+import { migration092PlayerNamesFromUsers } from './092playerNamesFromUsers'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -207,5 +208,6 @@ export const migrations: Migration[] = [
   migration088ChatDirtyQueue,
   migration089UserApiKeys,
   migration090PlateAppearances,
-  migration091StructuredCredits
+  migration091StructuredCredits,
+  migration092PlayerNamesFromUsers
 ]

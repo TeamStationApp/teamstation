@@ -59,13 +59,14 @@ function outside(
 const OUTSIDE_CREDITS: Json[] = [
   outside('single', 'Single: Kyle Tucker', null, 'Kyle Tucker', 'batter', null),
   outside('run', 'Run: Kyle Tucker', null, 'Kyle Tucker', 'runner', null),
+  // As GameChanger sends it: the pitcher at P, his label naming none.
   outside(
     'strikeout',
     'Strikeout: Tyler Glasnow pitching',
     GLASNOW,
     'Tyler Glasnow',
     'pitcher',
-    null
+    'P'
   ),
   outside(
     'field_out',
@@ -100,6 +101,16 @@ const OUTSIDE_CREDITS: Json[] = [
   outside('pickoff_1b', 'Pickoff at 1st', null, '', 'fielder', null)
 ]
 
+/** A typed opponent sent with no name: his label names him. */
+const NAMELESS = outside(
+  'field_out',
+  'Ground out: Visiting 1B (1B)',
+  null,
+  '',
+  'fielder',
+  '1B'
+)
+
 /** A label its own credit cannot word again: the subject is spelled apart. */
 const UNREAD = outside(
   'field_out',
@@ -128,6 +139,7 @@ interface CreditRow {
   }>
   assistWord?: string | null
   typedName?: string | null
+  positionShown?: boolean
 }
 
 describe('091 structured credits', function () {
@@ -142,6 +154,7 @@ describe('091 structured credits', function () {
   let functionBefore = ''
   let untouchedBefore: Array<{ id: string; xmin: string }> = []
   let structuredBefore: Array<{ id: string; gumbo: unknown }> = []
+  const notices: string[] = []
 
   // Without the id, which a refired trigger makes anew, and with the
   // bigint read as a number whichever parser the process has.
@@ -178,6 +191,9 @@ describe('091 structured credits', function () {
     await admin.query(`create database ${name}`)
     pool = new Pool({
       connectionString: testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
+    })
+    pool.on('connect', client => {
+      client.on('notice', notice => notices.push(notice.message ?? ''))
     })
     await migrateUp(pool, before091)
     for (const player of [...AWAY_PLAYERS, ...HOME_PLAYERS]) {
@@ -226,7 +242,7 @@ describe('091 structured credits', function () {
         batter: { fullName: 'Kyle Tucker' },
         pitcher: { id: GLASNOW, fullName: 'Tyler Glasnow' }
       },
-      credits: [...OUTSIDE_CREDITS, UNREAD]
+      credits: [...OUTSIDE_CREDITS, NAMELESS, UNREAD]
     })
     // Looked at and credited to nobody, and stored before credits existed.
     await insertPlay('evt_empty', 'gam_outside', {
@@ -277,7 +293,14 @@ describe('091 structured credits', function () {
       role: row.role,
       position: row.position
     })
-    expect(after.map(before)).deep.equals(creditsBefore.map(before))
+    // One sent with no name now holds the name his label gives him.
+    expect(after.map(before)).deep.equals(
+      creditsBefore
+        .map(before)
+        .map(row =>
+          row.label === NAMELESS.label ? { ...row, name: 'Visiting 1B' } : row
+        )
+    )
     expect(after.every(row => row.head !== '')).equals(true)
     expect(after.every(row => row.typedName === null)).equals(true)
   })
@@ -302,7 +325,8 @@ describe('091 structured credits', function () {
         })),
         ...(row.assistWord == null
           ? {}
-          : { assistWord: row.assistWord as 'from' | 'to' })
+          : { assistWord: row.assistWord as 'from' | 'to' }),
+        ...(row.positionShown === false ? { positionShown: false } : {})
       }
       const nameOf = (id: number): string | undefined =>
         id === credited ? row.name : names.get(id)
@@ -343,6 +367,15 @@ describe('091 structured credits', function () {
       assists: [],
       assistWord: null
     })
+    // His position is kept, and that the label shows none.
+    expect(
+      rows.find(row => row.label === 'Strikeout: Tyler Glasnow pitching')
+    ).include({ position: 'P', positionShown: false })
+    expect(
+      rows
+        .filter(row => row.label !== 'Strikeout: Tyler Glasnow pitching')
+        .every(row => row.positionShown === true)
+    ).equals(true)
     expect(
       parts(
         'Double play: Mookie Betts (SS) to Rowan Pell (2B) to Kyle Tucker (1B)'
@@ -373,16 +406,45 @@ describe('091 structured credits', function () {
     expect(unread.assists).deep.equals([])
   })
 
+  it('names a typed person sent with no name as his label does, and counts the labels it cannot word again', async () => {
+    const row = (await credits()).find(one => one.label === NAMELESS.label)!
+    expect(row).include({
+      head: 'Ground out',
+      name: 'Visiting 1B',
+      creditGumboId: null,
+      position: '1B'
+    })
+    const reported = notices.filter(notice =>
+      notice.startsWith('091structuredCredits:')
+    )
+    expect(reported).length(1)
+    const counts =
+      /(\d+) plays rewritten, (\d+) credit labels not reproduced/.exec(
+        reported[0]
+      )!
+    expect(Number(counts[1])).greaterThan(0)
+    // Only the label whose subject is spelled apart.
+    expect(Number(counts[2])).equals(1)
+  })
+
   it('stores the structure in each play, keeping labels and names, and writes only what it changed', async () => {
     const { rows } = await pool.query<{ id: string; gumbo: Json }>(
       `select id, gumbo from events where id = 'evt_outside'`
     )
     const stored = rows[0].gumbo.credits as Json[]
     expect(stored.map(credit => credit.label)).deep.equals(
-      [...OUTSIDE_CREDITS, UNREAD].map(credit => credit.label)
+      [...OUTSIDE_CREDITS, NAMELESS, UNREAD].map(credit => credit.label)
     )
+    // Each keeps its person as sent, but one sent with no name: the label's.
     expect(stored.map(credit => credit.credit)).deep.equals(
-      [...OUTSIDE_CREDITS, UNREAD].map(credit => credit.credit)
+      [
+        ...OUTSIDE_CREDITS,
+        {
+          ...NAMELESS,
+          credit: { ...(NAMELESS.credit as Json), name: 'Visiting 1B' }
+        },
+        UNREAD
+      ].map(credit => credit.credit)
     )
     expect(stored[3]).deep.include({
       head: 'Ground out',

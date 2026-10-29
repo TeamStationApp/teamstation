@@ -5,6 +5,7 @@ import { Pool } from 'pg'
 
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -219,14 +220,13 @@ describe('scoring events', function () {
       .where('id', '=', replaced[0].id)
       .executeTakeFirstOrThrow()
     expect(document.gumbo).to.not.have.property('source')
-    // The credit is stored with its structure, its label and name kept.
+    // The credit is stored with its structure, and no name its id gives.
     expect((document.gumbo as { credits: unknown[] }).credits).deep.equals([
       {
         eventType: 'single',
-        label: 'Single: Adam Dunn',
         teamId: home,
         creditUserId: player.userId,
-        credit: { name: 'Adam Dunn', role: 'batter', position: null },
+        credit: { role: 'batter', position: null },
         head: 'Single'
       }
     ])
@@ -238,15 +238,15 @@ describe('scoring events', function () {
     expect(roles.map(row => row.role)).deep.equals(['fielder'])
 
     const byPlayer = await creditsForPlayer(db, userIdOfGumbo(player.userId))
-    // Read back structured, with its game, naming its person by id alone.
+    // Read back structured, naming its person by id alone.
     expect(byPlayer.get(replaced[0].id)).deep.equals([
       {
-        gameId,
         eventType: 'single',
         head: 'Single',
         suffix: null,
         assists: [],
         assistWord: null,
+        positionShown: true,
         teamId: home,
         creditUserId: player.userId,
         credit: { role: 'batter', position: null }
@@ -260,7 +260,7 @@ describe('scoring events', function () {
     expect(highlights.get(replaced[0].id)?.[0].eventType).equals('single')
   })
 
-  it("stores an outside scorer's credits with their structure, labels and names kept, and copies it into eventCredits", async function () {
+  it("stores an outside scorer's credits with their structure, naming only a person with no id, and copies it into eventCredits", async function () {
     const fielder = mintUserId(id => id === player.userId)
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(fielder.userId),
@@ -290,7 +290,8 @@ describe('scoring events', function () {
         label: 'Strikeout: Adam Dunn pitching',
         teamId: 'home',
         creditUserId: player.userId,
-        credit: { name: 'Adam Dunn', role: 'pitcher', position: null }
+        // As GameChanger sends it: at P, though the label shows no position.
+        credit: { name: 'Adam Dunn', role: 'pitcher', position: 'P' }
       },
       {
         eventType: 'double_play',
@@ -335,13 +336,34 @@ describe('scoring events', function () {
     const credits = (
       stored.gumbo as { credits: Array<Record<string, unknown>> }
     ).credits
-    expect(credits.map(credit => credit.label)).deep.equals(
+    expect(credits.map(credit => credit.label)).deep.equals([
+      undefined,
+      undefined,
+      undefined
+    ])
+    expect(credits.map(credit => credit.credit)).deep.equals([
+      { name: 'Kyle Tucker', role: 'batter', position: null },
+      { role: 'pitcher', position: 'P' },
+      { role: 'fielder', position: 'SS' }
+    ])
+    // Named from the accounts, each label reads as it was sent.
+    const named = withNames(
+      stored.gumbo,
+      new Map([
+        [player.userId, 'Adam Dunn'],
+        [fielder.userId, 'Alex Bregman']
+      ])
+    ) as { credits: Array<{ label: string }> }
+    expect(named.credits.map(credit => credit.label)).deep.equals(
       sent.map(credit => credit.label)
     )
-    expect(credits.map(credit => credit.credit)).deep.equals(
-      sent.map(credit => credit.credit)
-    )
-    expect(credits[1]).include({ head: 'Strikeout', suffix: ' pitching' })
+    expect(JSON.stringify(stored.gumbo)).not.include('Adam Dunn')
+    expect(JSON.stringify(stored.gumbo)).not.include('Alex Bregman')
+    expect(credits[1]).include({
+      head: 'Strikeout',
+      suffix: ' pitching',
+      positionShown: false
+    })
     expect(credits[2]).deep.include({
       head: 'Double play',
       assists: [
@@ -354,22 +376,18 @@ describe('scoring events', function () {
     const rows = await db
       .selectFrom('eventCredits')
       .select([
-        'label',
-        'name',
         'head',
         'suffix',
         'assists',
         'assistWord',
-        'typedName'
+        'typedName',
+        'positionShown'
       ])
       .where('eventId', '=', stored.id)
-      .orderBy('label')
+      .orderBy('head')
       .execute()
     expect(rows).deep.equals([
       {
-        label:
-          'Double play: Adam Dunn (SS) to Alex Bregman (2B) to Jose Altuve (1B)',
-        name: 'Adam Dunn',
         head: 'Double play',
         suffix: null,
         assists: [
@@ -377,31 +395,30 @@ describe('scoring events', function () {
           { gumboId: null, position: '1B', name: 'Jose Altuve' }
         ],
         assistWord: 'to',
-        typedName: null
+        typedName: null,
+        positionShown: true
       },
       {
-        label: 'Single: Kyle Tucker',
-        name: 'Kyle Tucker',
         head: 'Single',
         suffix: null,
         assists: [],
         assistWord: null,
-        typedName: null
+        typedName: 'Kyle Tucker',
+        positionShown: true
       },
       {
-        label: 'Strikeout: Adam Dunn pitching',
-        name: 'Adam Dunn',
         head: 'Strikeout',
         suffix: ' pitching',
         assists: [],
         assistWord: null,
-        typedName: null
+        typedName: null,
+        positionShown: false
       }
     ])
     const read = await creditsForHighlight(db, [stored.id])
     expect(read.get(stored.id)?.map(credit => credit.credit)).deep.equals([
       { name: 'Kyle Tucker', role: 'batter', position: null },
-      { role: 'pitcher', position: null },
+      { role: 'pitcher', position: 'P' },
       { role: 'fielder', position: 'SS' }
     ])
     expect(read.get(stored.id)?.[2].assists).deep.equals([

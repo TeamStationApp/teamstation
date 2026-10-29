@@ -17,6 +17,7 @@ import {
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
 import { pregameRecord } from '../../common/scoring/sideSwap'
+import { withoutNames } from '../../common/scoring/storedNames'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
@@ -365,6 +366,9 @@ export async function postGamePlays(
         .where('id', '=', gameId)
         .execute()
     }
+    // The at-bat in progress is stored as every play is, naming nobody.
+    if (currentPlay != null && typeof currentPlay === 'object')
+      currentPlay = withoutNames(currentPlay, { source: system })
     const write = {
       gameId,
       homeTeamId: game.home_team_id,
@@ -645,7 +649,8 @@ export async function readPlays(
 }
 
 /**
- * What a live post that sends the at-bat in progress stores of it. Before
+ * What a live post that sends the at-bat in progress stores of it, in its
+ * stored form, as the pregame is (`withoutNames`). Before
  * the first pitch no Gumbo is: a post that leaves no stored play, and whose
  * at-bat holds lineup changes only, keeps its record as the game's pregame
  * lineups, as does the post that takes the first pitch back. The first post
@@ -671,7 +676,9 @@ function atBatWrite(
   )
     return {
       currentPlay: null,
-      pregame: (currentPlay as { teamStation: unknown }).teamStation
+      pregame: withoutNames(
+        (currentPlay as { teamStation: unknown }).teamStation
+      )
     }
   const began =
     pregame == null || begins
@@ -683,7 +690,7 @@ function atBatWrite(
       : null
   return {
     currentPlay,
-    ...(began == null ? {} : { pregame: began })
+    ...(began == null ? {} : { pregame: withoutNames(began) })
   }
 }
 

@@ -1,4 +1,6 @@
-import { withStructuredCredits } from '../../common/scoring/storedNames'
+import type { PoolClient } from 'pg'
+
+import { structuredCreditsOf } from '../../common/scoring/storedNames'
 import { type Migration, rewriteJson } from '../runner'
 
 /**
@@ -6,15 +8,19 @@ import { type Migration, rewriteJson } from '../runner'
  * head, its person and position, a suffix and the fielders who assisted
  * (`creditLabel`), so each `"eventCredits"` row gains those columns: `head`,
  * `suffix`, `assists` (each `{ gumboId, position, name? }`, the name only for
- * a fielder with no id), `"assistWord"` (`from` or `to`) and `"typedName"`,
- * which only a credit naming nobody by id may hold.
+ * a fielder with no id), `"assistWord"` (`from` or `to`), `"typedName"`,
+ * which only a credit naming nobody by id may hold, and `"positionShown"`,
+ * false for a label that words its person with no position though the
+ * credit has one (`Strikeout: X pitching` for a pitcher at P).
  *
  * `events_sync_children` copies the structure out of each stored credit as
  * well as its label and name. The step gives every stored credit its
  * structure (`withStructuredCredits`: an engine credit has it already, and
  * one sent with only a label is read from it), keeping its label and name,
  * so the trigger refires on each play it changed; a play whose credits were
- * structured already is refired by the SQL.
+ * structured already is refired by the SQL. A credited person with no id
+ * and no name is given the name his label gives him. Its notice counts the
+ * plays rewritten and the labels the structure does not word again exactly.
  *
  * Rolling back drops the columns and puts the trigger function back as 068
  * left it.
@@ -155,9 +161,10 @@ const CREDIT_068 = `      insert into "eventCredits" (
 `
 
 /** One credit's row, its structure copied as well as its label and name. */
-const CREDIT_091 = `      insert into "eventCredits" (
+export const CREDIT_091 = `      insert into "eventCredits" (
         id, "eventId", "eventType", label, "teamId", "creditGumboId",
-        name, role, position, head, suffix, assists, "assistWord"
+        name, role, position, head, suffix, assists, "assistWord",
+        "positionShown"
       ) values (
         ts_make_id('evc'),
         new.id,
@@ -206,18 +213,54 @@ const CREDIT_091 = `      insert into "eventCredits" (
           ) with ordinality as listed(assist, ordinal)
           where jsonb_typeof(assist) = 'object'
         ), '[]'::jsonb),
-        credit->>'assistWord'
+        credit->>'assistWord',
+        credit->'positionShown' is distinct from 'false'::jsonb
       );
 `
 
-function syncChildren(body: string): string {
+export function syncChildren(body: string): string {
   return `create or replace function events_sync_children()
 returns trigger language plpgsql as $fn$${body}$fn$;`
 }
 
-const SYNC_CHILDREN_091 = SYNC_CHILDREN_068.replace(CREDIT_068, CREDIT_091)
+export const SYNC_CHILDREN_091 = SYNC_CHILDREN_068.replace(
+  CREDIT_068,
+  CREDIT_091
+)
 if (SYNC_CHILDREN_091 === SYNC_CHILDREN_068)
   throw new Error('091structuredCredits: no credit insert to replace')
+
+/**
+ * The step: every stored credit given its structure, and a notice of how
+ * many plays it rewrote and how many labels its structure does not word
+ * again exactly (each keeps its head and person only, and will read so once
+ * 092 drops the label).
+ */
+export async function structureCredits(
+  client: PoolClient
+): Promise<{ plays: number; unreproduced: number }> {
+  let unreproduced = 0
+  const plays = await rewriteJson(
+    client,
+    {
+      table: 'events',
+      column: 'gumbo',
+      where: `jsonb_typeof(gumbo -> 'credits') = 'array'`
+    },
+    value => {
+      const read = structuredCreditsOf(value)
+      unreproduced += read.unreproduced
+      return read.play
+    }
+  )
+  const message =
+    `091structuredCredits: ${plays} plays rewritten, ` +
+    `${unreproduced} credit labels not reproduced`
+  await client.query(
+    `do $notice$ begin raise notice '%', '${message}'; end $notice$`
+  )
+  return { plays, unreproduced }
+}
 
 export const migration091StructuredCredits: Migration = {
   name: '091structuredCredits',
@@ -228,6 +271,7 @@ alter table "eventCredits"
   add column assists jsonb not null default '[]',
   add column "assistWord" text,
   add column "typedName" text,
+  add column "positionShown" boolean not null default true,
   add constraint "eventCredits_typedName_check"
     check ("creditGumboId" is null or "typedName" is null);
 alter table "eventCredits" alter column head drop default;
@@ -244,15 +288,7 @@ where jsonb_typeof(gumbo -> 'credits') = 'array'
   );
 `,
   steps: async client => {
-    await rewriteJson(
-      client,
-      {
-        table: 'events',
-        column: 'gumbo',
-        where: `jsonb_typeof(gumbo -> 'credits') = 'array'`
-      },
-      withStructuredCredits
-    )
+    await structureCredits(client)
   },
   down: `
 ${syncChildren(SYNC_CHILDREN_068)}
@@ -263,6 +299,7 @@ alter table "eventCredits"
   drop column suffix,
   drop column assists,
   drop column "assistWord",
-  drop column "typedName";
+  drop column "typedName",
+  drop column "positionShown";
 `
 }

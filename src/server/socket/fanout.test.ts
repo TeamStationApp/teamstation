@@ -315,7 +315,8 @@ describe('the game socket fan-out (U15)', function () {
         pitcher: { id: second.userId, fullName: 'Cy Y' }
       })
       const rows = await readPlays(db!, named)
-      expect(JSON.stringify(rows[0].gumbo)).includes('Stale Batter')
+      // The stored row names nobody: the name it was posted with is gone.
+      expect(JSON.stringify(rows[0].gumbo)).not.includes('Stale Batter')
       expect(data.digest).equals(playsDigest(rows, null))
     } finally {
       await one.close()

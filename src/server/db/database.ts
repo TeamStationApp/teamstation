@@ -310,9 +310,7 @@ export interface GamesTable {
   status: Generated<'scheduled' | 'inProgress' | 'final' | 'cancelled'>
   home_score: number | null
   away_score: number | null
-  gumbo_game_data: Json | null
   linescore: Json | null
-  boxscore: Json | null
   /** `teamstation` when a post from that system owns the plays. */
   scoringOwner: ColumnType<
     string | null,
@@ -487,10 +485,8 @@ export interface EventCreditsTable {
   id: string
   eventId: string
   eventType: string
-  label: string
   teamId: string | null
   creditGumboId: number | null
-  name: string
   role: string | null
   position: string | null
   /** The label's first words, `Ground out`. */
@@ -503,6 +499,11 @@ export interface EventCreditsTable {
   assistWord: 'from' | 'to' | null
   /** The typed name of a credited person with no id. */
   typedName: string | null
+  /**
+   * False for a label that words its person with no position though the
+   * credit has one: `Strikeout: X pitching` for a pitcher at P.
+   */
+  positionShown: Generated<boolean>
 }
 
 /** A fielder who assisted on a credit, as `"eventCredits".assists` holds him. */

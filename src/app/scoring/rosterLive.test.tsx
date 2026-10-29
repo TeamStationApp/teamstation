@@ -5,9 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { GameLineupsResponse } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { copyState, type GameState } from '../../common/scoring/state'
 import { scoringSession } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { guestRenames } from './guestRenames'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor } from './RosterEditor'
 import {
@@ -384,6 +386,68 @@ describe('a roster screen following the lineups', function () {
     await settle()
     await changes.lineups('d6')
     expect(reloads()).equals(1)
+  })
+
+  it("tells a save's guest corrections against the game it was opened over, not one followed since", async function () {
+    const opened = scoringSession(gameFixture)
+    const guest = opened.liveData.boxscore.teams.away.players[0]
+    Object.assign(opened.gameData.players[guest], {
+      local: true,
+      fullName: 'Jon L',
+      firstName: 'Jon',
+      lastName: 'Lester'
+    })
+    // Another device corrected him since; this screen followed it behind
+    // the sheet, and the draft still holds the name it was opened with.
+    const followed = copyState(opened)
+    Object.assign(followed.gameData.players[guest], {
+      fullName: 'John L',
+      firstName: 'John'
+    })
+    let follow = (): void => undefined
+    const saves: Array<{ draft: GameState; openedOver: GameState }> = []
+    function Screen(): React.ReactElement {
+      const [shown, setShown] = useState(() => initialScoringState(opened))
+      follow = () => {
+        setShown(initialScoringState(followed))
+      }
+      return (
+        <RosterEditor
+          state={shown}
+          audience="scorekeeper"
+          onSave={(draft, _nextBatter, _runners, openedOver) => {
+            saves.push({ draft, openedOver })
+          }}
+        />
+      )
+    }
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <Screen />
+        </ThemeProvider>
+      )
+    })
+    await settle()
+    await dirty()
+    await act(async () => {
+      follow()
+    })
+    await settle()
+    await click('Save Rosters')
+    expect(saves).has.length(1)
+    const [{ draft, openedOver }] = saves
+    expect(openedOver.gameData.players[guest].firstName).equals('Jon')
+    expect(draft.gameData.players[guest].firstName).equals('Jon')
+    // Told against the game it was opened over, the draft corrects nobody;
+    // against the one followed since it would undo the other device's.
+    expect(guestRenames(openedOver, draft)).deep.equals([])
+    expect(guestRenames(followed, draft)).deep.equals([
+      { gumboId: guest, firstName: 'Jon', lastName: 'Lester' }
+    ])
   })
 
   it('treats every change as another device’s when the first read fails', async function () {

@@ -9,8 +9,18 @@ import type { SaveLineupsBody } from '../../common/api'
 import type { CreateGroup } from '../../common/groupCreation'
 import type { GumboPlay } from '../../common/gumboPlay'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import { type SaveChange, ScoringSession } from '../../common/scoring/session'
+import { copyState, setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { scoringSession } from '../../test/scoringSession'
+import { guestRenames, sendGuestRenames } from '../scoring/guestRenames'
+import { gameFixture } from '../scoring/isUnscoredGame.test'
+import {
+  draftOfLocalPlayer,
+  editLocalPlayerDraft
+} from '../scoring/playerDraft'
+import { memoryStore } from '../scoring/scoringSource'
 import {
   cacheFileName,
   type DocumentStore,
@@ -730,17 +740,24 @@ describe('the phone outbox', function () {
         gameId: 'g1',
         plays: 'local-p',
         lineups: null,
-        newPlayId: () => 'local-row'
+        newPlayId: () => 'local-row',
+        names: { 7: 'Juan Soto' }
       }
     )
+    // The post's plays name nobody; the phone's copy names them from the
+    // names kept beside it.
+    const named = (gumbo: GumboPlay): GumboPlay => ({
+      ...gumbo,
+      matchup: { ...gumbo.matchup, batter: { id: 7, fullName: 'Juan Soto' } }
+    })
     expect(applied).deep.include({
-      currentPlay: play(4),
+      currentPlay: named(play(4)),
       priorPlaysDigest: null,
       playsDigest: 'local-p',
       lineupsDigest: null
     })
     expect(applied.plays).deep.equals([
-      { id: 'local-row', gameId: 'g1', gumbo: play(3) }
+      { id: 'local-row', gameId: 'g1', gumbo: named(play(3)) }
     ])
     const lineups = appliedLineups(
       null,
@@ -1928,6 +1945,377 @@ describe('the phone outbox', function () {
     await p.client.drainOutbox()
     expect(p.posts().map(call => call.key)).deep.equals(['k1'])
     expect(p.rows()).deep.equals([])
+  })
+
+  /** The game's plays, Babe Ruth batting first, named as a read answers them. */
+  const namedEvents = (): unknown =>
+    eventsDoc('g1', 'D0', [
+      {
+        ...play(0, 901),
+        matchup: { batter: { id: 901, fullName: 'Babe Ruth' } }
+      }
+    ])
+  const guestPath = `/games/g1/guest-players/${userIdOfGumbo(901)}`
+  const batterOf = (body: string, at: number): unknown =>
+    (JSON.parse(body) as { plays: Array<{ gumbo: GumboPlay }> }).plays[at].gumbo
+      .matchup?.batter
+
+  it('reads a game-only player’s rename as a queued call on the game’s chain', function () {
+    const rename = queuedCallOf(
+      'PUT',
+      guestPath,
+      { firstName: 'George' },
+      {
+        901: 'George Ruth'
+      }
+    )!
+    expect(rename).deep.equals({
+      kind: 'guestRename',
+      gameId: 'g1',
+      userId: userIdOfGumbo(901),
+      path: guestPath,
+      body: { firstName: 'George' },
+      names: { 901: 'George Ruth' }
+    })
+    expect(chainOf(rename)).equals('game:g1')
+    expect(queuedCallOf('PUT', '/games/g1/lineups', {})).equals(undefined)
+    expect(queuedCallOf('PUT', '/games/%E0/guest-players/u', {})).equals(
+      undefined
+    )
+    expect(
+      queuedCallOf('POST', '/games/g1/events', { mode: 'live' }, { 7: 'A' })
+    ).deep.include({ kind: 'events', names: { 7: 'A' } })
+  })
+
+  it('keeps a post’s names beside it on the phone, names the phone’s copy with them, and sends none', async function () {
+    let online = false
+    const p = phone(
+      server({ '/games/g1/events': namedEvents() }, sent =>
+        online ? { body: namedEvents() } : 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    await p.client.saveGameEvents('g1', {
+      plays: [play(1, 902)],
+      remove: [],
+      names: { 902: 'Lou Gehrig' }
+    })
+    const [row] = p.rows()
+    expect(JSON.parse(String(row.names))).deep.equals({ 902: 'Lou Gehrig' })
+    expect(String(row.body)).not.include('Lou Gehrig')
+    expect(bodyOf(row)).not.have.property('names')
+    const held = String(p.document(eventsKey('g1'))!.body)
+    expect(batterOf(held, 0)).deep.equals({ id: 901, fullName: 'Babe Ruth' })
+    expect(batterOf(held, 1)).deep.equals({ id: 902, fullName: 'Lou Gehrig' })
+    online = true
+    p.clock.now += 60_000
+    await p.client.drainOutbox()
+    const posted = p.posts().filter(call => call.key != null)
+    expect(posted.length).greaterThan(0)
+    for (const call of posted) {
+      expect(JSON.stringify(call.body)).not.include('Lou Gehrig')
+      expect(call.body).not.have.property('names')
+    }
+    expect(p.rows()).deep.equals([])
+  })
+
+  it('queues a rename made offline ahead of the lineup save, and writes the name onto the phone’s copy', async function () {
+    let online = false
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': namedEvents(),
+          '/games/g1/lineups': lineupsDoc('D0')
+        },
+        sent => {
+          if (!online) return 'offline'
+          if (sent.method === 'PUT')
+            return {
+              body: serverEntry(
+                901,
+                String((sent.body as { firstName: string }).firstName)
+              )
+            }
+          return { body: lineupsDoc('D1') }
+        }
+      )
+    )
+    await p.client.gameEvents('g1')
+    await p.client.gameLineups('g1')
+    const entry = await p.client.renameGuestPlayer(
+      'g1',
+      userIdOfGumbo(901),
+      { firstName: 'George', lastName: 'Ruth' },
+      901
+    )
+    expect(entry).deep.include({
+      userId: userIdOfGumbo(901),
+      gumboId: 901,
+      shortName: 'George Ruth'
+    })
+    await p.client.saveLineups('g1', lineupSave('D0', [901]))
+    expect(p.rows().map(row => [row.method, row.path, row.chain])).deep.equals([
+      ['PUT', guestPath, 'game:g1'],
+      ['POST', '/games/g1/lineups', 'game:g1']
+    ])
+    expect(JSON.parse(String(p.rows()[0].names))).deep.equals({
+      901: 'George Ruth'
+    })
+    const held = p.document(eventsKey('g1'))!
+    expect(held.pending).equals(1)
+    // By the game's short name for him, as the server will name him.
+    expect(batterOf(String(held.body), 0)).deep.equals({
+      id: 901,
+      fullName: 'George R'
+    })
+    const before = p.sent.length
+    online = true
+    p.clock.now += 60_000
+    await p.client.drainOutbox()
+    const sent = p.sent.slice(before).filter(call => call.key != null)
+    expect(sent.map(call => [call.method, call.path])).deep.equals([
+      ['PUT', guestPath],
+      ['POST', '/games/g1/lineups']
+    ])
+    expect(sent[0].body).deep.equals({ firstName: 'George', lastName: 'Ruth' })
+    expect(p.rows()).deep.equals([])
+    // The server's to answer again, with the name it now gives him.
+    expect(p.document(eventsKey('g1'))!.pending).equals(0)
+  })
+
+  it('names a guest renamed offline by the game’s short name, against everyone its plays name, and gives his halves only to his setup players', async function () {
+    // George Kell bats second; the at-bat in progress holds both in its setup,
+    // with the halves a scorer is answered.
+    const setupPlayer = (
+      id: number,
+      fullName: string,
+      firstName: string,
+      lastName: string
+    ): Record<string, unknown> => ({
+      id,
+      teamId: 'tem_away',
+      fullName,
+      firstName,
+      lastName
+    })
+    const atBat = {
+      ...play(2, 901),
+      about: { atBatIndex: 2, inning: 1, halfInning: 'top', isComplete: false },
+      matchup: { batter: { id: 901, fullName: 'Babe R' } },
+      teamStation: {
+        version: 2,
+        setupBefore: {
+          players: {
+            901: setupPlayer(901, 'Babe R', 'Babe', 'Ruth'),
+            902: setupPlayer(902, 'George K', 'George', 'Kell')
+          },
+          sides: {},
+          tagOrder: []
+        },
+        actions: []
+      }
+    }
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': {
+            ...(eventsDoc('g1', 'D0', [
+              {
+                ...play(0, 901),
+                matchup: { batter: { id: 901, fullName: 'Babe R' } }
+              },
+              {
+                ...play(1, 902),
+                matchup: { batter: { id: 902, fullName: 'George K' } }
+              }
+            ]) as Record<string, unknown>),
+            currentPlay: atBat
+          }
+        },
+        () => 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    await p.client.renameGuestPlayer(
+      'g1',
+      userIdOfGumbo(901),
+      { firstName: 'George', lastName: 'Kirby' },
+      901
+    )
+    const held = JSON.parse(String(p.document(eventsKey('g1'))!.body)) as {
+      plays: Array<{ gumbo: GumboPlay }>
+      currentPlay: Record<string, any>
+    }
+    // "George K" is Kell's: the guest takes the letters that tell them apart.
+    expect(held.plays.map(row => row.gumbo.matchup?.batter)).deep.equals([
+      { id: 901, fullName: 'George Ki' },
+      { id: 902, fullName: 'George K' }
+    ])
+    expect(held.currentPlay.matchup.batter).deep.equals({
+      id: 901,
+      fullName: 'George Ki'
+    })
+    expect(held.currentPlay.teamStation.setupBefore.players).deep.equals({
+      901: setupPlayer(901, 'George Ki', 'George', 'Kirby'),
+      902: setupPlayer(902, 'George K', 'George', 'Kell')
+    })
+  })
+
+  it('drops a refused rename alone and still sends the lineup save and plays behind it', async function () {
+    let online = false
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': namedEvents(),
+          '/games/g1/lineups': lineupsDoc('D0')
+        },
+        sent => {
+          if (!online) return 'offline'
+          if (sent.method === 'PUT')
+            return String((sent.body as { firstName: string }).firstName) ===
+              'George'
+              ? refusal(403, 'forbidden', 'This player can sign in')
+              : refusal(409, 'conflict', 'The game moved on', { stale: true })
+          if (sent.path === '/games/g1/lineups')
+            return { body: lineupsDoc('D1') }
+          return { body: namedEvents() }
+        }
+      )
+    )
+    await p.client.gameEvents('g1')
+    await p.client.gameLineups('g1')
+    await p.client.renameGuestPlayer(
+      'g1',
+      userIdOfGumbo(901),
+      { firstName: 'George', lastName: 'Ruth' },
+      901
+    )
+    await p.client.saveLineups('g1', lineupSave('D0', [901]))
+    await p.client.renameGuestPlayer(
+      'g1',
+      userIdOfGumbo(901),
+      { firstName: 'Herman', lastName: 'Ruth' },
+      901
+    )
+    await p.client.saveGameEvents('g1', {
+      plays: [play(1)],
+      remove: [],
+      names: { 7: 'Mel Ott' }
+    })
+    // Renamed on the phone, as the scorer typed it last.
+    expect(batterOf(String(p.document(eventsKey('g1'))!.body), 0)).deep.equals({
+      id: 901,
+      fullName: 'Herman R'
+    })
+    const before = p.sent.length
+    online = true
+    p.clock.now += 60_000
+    await p.client.drainOutbox()
+    const sent = p.sent.slice(before).filter(call => call.key != null)
+    expect(sent.map(call => [call.method, call.path])).deep.equals([
+      ['PUT', guestPath],
+      ['POST', '/games/g1/lineups'],
+      ['PUT', guestPath],
+      ['POST', '/games/g1/events']
+    ])
+    expect(p.rows()).deep.equals([])
+    expect((await p.client.outboxSummary()).games).deep.equals({})
+    // The plays' answer is the server's: the name it gives him.
+    const after = p.document(eventsKey('g1'))!
+    expect(after.pending).equals(0)
+    expect(batterOf(String(after.body), 0)).deep.equals({
+      id: 901,
+      fullName: 'Babe Ruth'
+    })
+  })
+
+  it('keeps the halves the server gave a guest over an offline post, so a game reopened from the phone corrects nobody on a jersey edit', async function () {
+    // The game as the server keeps it: a guest, "Avery S" in this game, and
+    // an at-bat in progress whose setup holds him.
+    const game = scoringSession(gameFixture)
+    const guest = game.liveData.boxscore.teams.away.players[0]
+    Object.assign(game.gameData.players[guest], {
+      fullName: 'Avery S',
+      firstName: 'Avery',
+      lastName: 'Smith'
+    })
+    const kept = memoryStore()
+    const begun = ScoringSession.start(kept, 'g1', game)
+    expect(begun.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await begun.flush()
+    const stored = kept.games.get('g1')!
+    // Answered to a scorer as the server answers him: named, the setups'
+    // players with their halves.
+    const named = (await kept.load('g1')).currentPlay!
+    const setups = (play: Record<string, any>): Array<Record<string, any>> =>
+      [
+        play.teamStation?.setupBefore,
+        ...(play.teamStation?.actions ?? []).map(
+          (action: Record<string, any>) => action.setup
+        )
+      ].filter(setup => setup?.players != null)
+    for (const setup of setups(named))
+      for (const player of Object.values<Record<string, any>>(setup.players))
+        if (player.id === guest)
+          Object.assign(player, { firstName: 'Avery', lastName: 'Smith' })
+    expect(setups(named)).not.deep.equals([])
+    let online = true
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': {
+            ...(eventsDoc('g1', 'D0', []) as Record<string, unknown>),
+            plays: stored.plays.map((gumbo, index) => ({
+              id: `evt_${index}`,
+              gameId: 'g1',
+              gumbo
+            })),
+            currentPlay: named
+          }
+        },
+        () => (online ? { body: {} } : 'offline')
+      )
+    )
+    const store = {
+      load: async (gameId: string) => await p.client.gameEvents(gameId),
+      save: async (gameId: string, change: SaveChange) =>
+        await p.client.saveGameEvents(gameId, change)
+    }
+    const context = {
+      gamePk: 'g1',
+      teams: game.gameData.teams,
+      setup: setupOf(game)
+    }
+    const scoring = await ScoringSession.open(store, 'g1', context)
+    expect(scoring.state.gameData.players[guest]).deep.include({
+      firstName: 'Avery',
+      lastName: 'Smith'
+    })
+    // Offline, a pitch is queued, and the phone's copy is written from it.
+    online = false
+    expect(scoring.apply({ type: 'pitch', call: 'S' }).problems).deep.equals([])
+    await scoring.flush()
+    expect(p.rows().map(row => [row.method, row.path])).deep.equals([
+      ['POST', '/games/g1/events']
+    ])
+    // Opened again from the phone, still offline: he keeps his halves.
+    const reopened = await ScoringSession.open(store, 'g1', context)
+    const before = reopened.state
+    expect(before.gameData.players[guest]).deep.include({
+      fullName: 'Avery S',
+      firstName: 'Avery',
+      lastName: 'Smith'
+    })
+    // Only his jersey changes: no rename, and none is queued.
+    const draft = copyState(before)
+    editLocalPlayerDraft(draft, 'away', guest, {
+      ...draftOfLocalPlayer(before.gameData.players[guest]),
+      jersey: '42'
+    })
+    const renames = guestRenames(before, draft)
+    expect(renames).deep.equals([])
+    await sendGuestRenames(p.client, 'g1', renames, [])
+    expect(p.rows().map(row => row.method)).deep.equals(['POST'])
   })
 
   it('sends a queued write without a cache as a plain request', async function () {

@@ -5,6 +5,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { withNames } from '../../common/scoring/storedNames'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -241,8 +242,17 @@ describe('replay seed', function () {
       .where('gameId', '=', REPLAY_SEED.games.final)
       .where('atBatIndex', '=', 0)
       .executeTakeFirstOrThrow()
+    // Stored naming nobody; named here from each player's account.
+    const accounts = await db!
+      .selectFrom('gumbo_ids')
+      .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
+      .select(['gumbo_ids.gumbo_id as gumboId', 'users.display_name as name'])
+      .execute()
     const players = (
-      opening.gumbo as {
+      withNames(
+        opening.gumbo,
+        new Map(accounts.map(row => [Number(row.gumboId), row.name]))
+      ) as {
         teamStation: {
           setupBefore: {
             players: Record<string, { fullName: string; jersey: string }>

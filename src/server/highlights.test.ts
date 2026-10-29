@@ -559,6 +559,7 @@ describe('a highlight named from its structured credits', function () {
       suffix: null,
       assists: [],
       assistWord: null,
+      positionShown: true,
       teamId: null,
       creditUserId,
       credit: {
@@ -621,6 +622,20 @@ describe('a highlight named from its structured credits', function () {
     expect(play.description).equals(
       'Top 1st: Vladimir G strikes out the batter. Ground out, Jordan Pu (SS) to Jordan Pe (2B) to Kyle Tucker (1B). 1–0'
     )
+  })
+
+  it('words a pitcher at P with no position where his label showed none', function () {
+    const [play] = shown(
+      [
+        outcome('strikeout', 'Strikeout', VLAD, {
+          suffix: ' pitching',
+          credit: { role: 'pitcher', position: 'P' },
+          positionShown: false
+        })
+      ],
+      { [VLAD]: 'Vladimir G' }
+    ).highlights
+    expect(play.title).equals('Strikeout: Vladimir G pitching')
   })
 
   it('names a person once by his id or typed name, and two people who read alike twice', function () {

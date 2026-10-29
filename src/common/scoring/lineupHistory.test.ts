@@ -27,6 +27,7 @@ import {
   type StoredGame
 } from './session'
 import { type GameSetup, lineupsOf, type Position, POSITIONS } from './state'
+import { withNames } from './storedNames'
 import type { TeamSetup } from './teamRecord'
 
 /**
@@ -64,15 +65,28 @@ function setup(): GameSetup {
 }
 const context = { gamePk: 'g1', teams: TEAMS, setup: setup() }
 
-/** A server in memory, as the session sees one. */
+/**
+ * A server in memory, as the session sees one: it keeps the stored forms a
+ * session sends, and answers them named, here from the names sent beside.
+ */
 function store(): EventStore & { game: StoredGame } {
   const kept: { game: StoredGame } = { game: { plays: [], currentPlay: null } }
+  const names = new Map<number, string>()
+  const named = (): StoredGame => ({
+    plays: kept.game.plays.map(play => withNames(play, names)),
+    currentPlay:
+      kept.game.currentPlay == null
+        ? null
+        : withNames(kept.game.currentPlay, names)
+  })
   return {
     get game() {
-      return kept.game
+      return named()
     },
-    load: async () => kept.game,
+    load: async () => named(),
     save: async (_gameId: string, change: SaveChange) => {
+      for (const [id, name] of Object.entries(change.names ?? {}))
+        names.set(Number(id), name)
       const plays = new Map(
         kept.game.plays.map(play => [play.about.atBatIndex, play])
       )
@@ -93,7 +107,7 @@ function store(): EventStore & { game: StoredGame } {
                 JSON.stringify(change.currentPlay)
               ) as CurrentPlay | null)
       }
-      return kept.game
+      return named()
     }
   }
 }

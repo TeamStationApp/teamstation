@@ -7,6 +7,12 @@ import { migrateDown, migrateUp } from './runner'
 async function main(): Promise<void> {
   const [command = 'up', countText] = process.argv.slice(2)
   const pool = new Pool({ connectionString: serverConfig.databaseUrl })
+  // What a migration reports of its backfill (`raise notice`).
+  pool.on('connect', client => {
+    client.on('notice', notice => {
+      console.log(`notice: ${notice.message}`)
+    })
+  })
 
   try {
     if (command === 'up') {

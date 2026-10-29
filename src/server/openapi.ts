@@ -4954,6 +4954,60 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/guest-players/{userId}': {
+        put: {
+          summary: "Correct a game-only player's name",
+          description:
+            "Renames the guest's account (first, last and display name), so " +
+            'every read of every game names him anew; no stored play ' +
+            'changes, and nothing else does: a lineup save never renames a ' +
+            "guest. The caller may save the lineup of the guest's side (that " +
+            "team's head coach, or a scorekeeper of either team); anybody " +
+            'else, and a guest whose account can sign in, get 403. Somebody ' +
+            'who is no guest of this game, a merged account and a deleted ' +
+            'one get 404. Save Rosters sends it for each game-only player ' +
+            'whose name the roster editor corrected, before saving the ' +
+            'lineup; offline it waits in the outbox ahead of that save.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['firstName', 'lastName'],
+                  description: 'At least one part is not empty.',
+                  properties: {
+                    firstName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    lastName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The guest, named anew',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/lineups': {
         get: {
           summary: "Both sides' lineups in a game",

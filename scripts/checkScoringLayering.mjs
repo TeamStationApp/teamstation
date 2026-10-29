@@ -50,9 +50,13 @@ function sources(dir) {
 }
 
 // These exports only inspect a game. Other exports in these modules mutate it.
+// `storedNames` reads the names a document carries and names a copy of one,
+// as a phone's copy of a game is named; making the stored form is the
+// session's and the server's.
 const READ_ONLY_EXPORTS = {
   lineup: ['ordinal', 'begun'],
-  lineupHistory: ['revealedSides', 'confirmedSides']
+  lineupHistory: ['revealedSides', 'confirmedSides'],
+  storedNames: ['namesIn', 'withNames']
 }
 
 function imports(text) {

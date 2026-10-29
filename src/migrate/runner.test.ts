@@ -118,11 +118,12 @@ describe('migrations', function () {
     )
   })
 
-  it('refuses reverse identity migrations without changing the applied schema', async () => {
-    // Later migrations reverse on their own; the latest identity cutover refuses.
-    // By name, the order the runner applies and reverses them in.
+  it('refuses reverse migrations that cannot put back what they took, without changing the applied schema', async () => {
+    // Migrations added after the identity cutovers reverse on their own up to
+    // 090, which took names out of game documents: it refuses, as the
+    // cutovers do. By name, the order the runner applies and reverses them in.
     const later = migrations
-      .filter(migration => migration.name > '075chatCanonicalUserIds')
+      .filter(migration => migration.name > '092playerNamesFromUsers')
       .map(migration => migration.name)
       .sort()
     await migrateDown(pool, migrations, later.length)
@@ -136,7 +137,7 @@ describe('migrations', function () {
     } catch (error) {
       failure = error
     }
-    expect(String(failure)).contains('Restore the matching pre-cutover')
+    expect(String(failure)).contains('Restore the verified pre-cutover')
     expect(
       (await pool.query('select name from schema_migrations order by name'))
         .rows
@@ -401,7 +402,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '088chatDirtyQueue',
           '089userApiKeys',
           '090plateAppearances',
-          '091structuredCredits'
+          '091structuredCredits',
+          '092playerNamesFromUsers'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

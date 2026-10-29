@@ -8,6 +8,12 @@ import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import {
+  AWAY_PLAYERS,
+  finalGame,
+  HOME_PLAYERS
+} from '../../test/replayGameFixture'
 import { type Database, makeDatabase } from '../db/database'
 import { replaceGameEvents } from '../events/eventWrite'
 import { runValidate, validateStoredPlays } from './validateGumbo'
@@ -127,5 +133,46 @@ describe('validate-gumbo', function () {
     const lines: string[] = []
     expect(await runValidate(db, line => lines.push(line))).equals(0)
     expect(lines).deep.equals(['0 violations in 0 games; 4 plays checked'])
+  })
+
+  it('checks a game TeamStation scored as it is read, named, though it is stored naming nobody', async function () {
+    const game = await finalGame()
+    await insertFixtureUsers(
+      db,
+      [...AWAY_PLAYERS, ...HOME_PLAYERS].map(player => ({
+        id: player.gumboId,
+        legacyId: makeId('user'),
+        display_name: `${player.first} ${player.last}`
+      }))
+    )
+    const scored = await newGame()
+    await replaceGameEvents(db, {
+      gameId: scored,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: game.plays.map(gumbo => ({
+        gumbo,
+        source: 'teamstation' as const
+      }))
+    })
+    const rows = await db
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', scored)
+      .execute()
+    // Its actions are stored with no sentence: they are worded on a read.
+    const actions = rows.flatMap(row =>
+      (((row.gumbo as GumboPlay).playEvents ?? []) as unknown[]).filter(
+        event => (event as { type?: unknown }).type === 'action'
+      )
+    )
+    expect(actions.length).greaterThan(0)
+    for (const action of actions)
+      expect((action as { details: object }).details).not.have.property(
+        'description'
+      )
+    const report = await validateStoredPlays(db)
+    expect(report.games).deep.equals([])
+    expect(report.checked).equals(4 + game.plays.length)
   })
 })

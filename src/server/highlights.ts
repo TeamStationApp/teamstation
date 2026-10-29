@@ -34,6 +34,11 @@ export interface CreditedOutcome {
   }>
   /** `from A (SS), B (2B)`, or an outside scorer's `to A (1B) to B (2B)`. */
   assistWord: 'from' | 'to' | null
+  /**
+   * False for a label that words its person with no position though the
+   * credit has one: `Strikeout: X pitching` for a pitcher at P.
+   */
+  positionShown: boolean
   credit: {
     /** The typed name of a person with no id; an id's is read from users. */
     name?: string
@@ -88,7 +93,8 @@ export function namedOutcome(
         assists: outcome.assists,
         ...(outcome.assistWord == null
           ? {}
-          : { assistWord: outcome.assistWord })
+          : { assistWord: outcome.assistWord }),
+        ...(outcome.positionShown ? {} : { positionShown: false })
       },
       nameOf
     ),

@@ -12,6 +12,7 @@ import {
   replayContext,
   scored
 } from '../../test/replayGameFixture'
+import { withoutHalves } from '../../test/storedNamesRoundTrip'
 import type { ScoringAction } from '../scoring/actions'
 import type { StoredGame } from '../scoring/session'
 import {
@@ -236,12 +237,13 @@ describe('replay context and whether a game replays', function () {
     })
     expect(made.teams.away.logoUrl).equals(null)
     expect(made.fenceDistanceFt).equals(210)
-    expect(made.setup).deep.equals(context.setup)
+    // Read back as the server answers a game: named, with nobody's halves.
+    expect(made.setup).deep.equals(withoutHalves(context.setup))
     // A game whose only record is the at-bat in progress.
     const fresh = await scored(replayActions().slice(0, 1))
     expect(fresh.plays).length(0)
     expect(replayContextOf({ ...gameDetail() }, fresh)?.setup).deep.equals(
-      context.setup
+      withoutHalves(context.setup)
     )
   })
 

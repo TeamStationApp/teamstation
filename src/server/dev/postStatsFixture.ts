@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 import type { GumboPlay } from '../../common/gumboPlay'
+import { withoutNames } from '../../common/scoring/storedNames'
 import { asGumboId } from '../../common/userId'
 import type { PlayerGameLine } from '../stats/gumboStats'
 
@@ -254,7 +255,9 @@ export async function postStatsFixture(input: {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      plays: mapped.plays,
+      // Named by id alone, as every play is stored: the names come from the
+      // roster's accounts.
+      plays: mapped.plays.map(play => withoutNames(play, { source: 'manual' })),
       source: { system: 'manual' }
     })
   })

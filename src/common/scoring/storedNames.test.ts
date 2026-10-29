@@ -29,6 +29,7 @@ import {
   creditLabel,
   eventSaid,
   namesIn,
+  readCredit,
   saidFromDescription,
   storedForm,
   structuredCredit,
@@ -904,6 +905,106 @@ describe('stored and named forms of a game document', function () {
       }
     })
 
+    it('words every label shape again whether or not it shows the credit’s position', function () {
+      // Each shape the outside scorer sends, as the label words its subject,
+      // for every position the credit may carry.
+      const shapes: Array<[string, string, string | null]> = [
+        ['Strikeout: Ava M pitching', 'Ava M', null],
+        ['Ground out: Jordan P (SS) to Casey B (1B)', 'Jordan P', 'SS'],
+        ['Ground out: Jordan P to Casey B (1B)', 'Jordan P', null],
+        [
+          'Double play: Jordan P (LF) to Casey B (2B) to Luke T (1B)',
+          'Jordan P',
+          'LF'
+        ],
+        [
+          'Double play: Jordan P to Casey B (2B) to Luke T (1B)',
+          'Jordan P',
+          null
+        ],
+        ['Caught stealing 2nd: Mia R (P)', 'Mia R', 'P'],
+        ['Caught stealing 2nd: Mia R', 'Mia R', null],
+        ['Pickoff at 1st', '', null],
+        ['Run: Hunter P', 'Hunter P', null]
+      ]
+      const named = new Map([
+        [2, 'Casey B'],
+        [3, 'Luke T']
+      ])
+      for (const [label, name, shows] of shapes)
+        for (const position of [null, 'P', 'C', 'SS', 'LF', 'DH'])
+          for (const creditUserId of [7, null]) {
+            // A label showing a position is sent with that one.
+            const carried = shows ?? position
+            const sent = outside(
+              label,
+              label.includes(': ') ? name : null,
+              carried,
+              label.includes(': ') ? creditUserId : null
+            )
+            const what = `${label} at ${String(carried)} by ${String(creditUserId)}`
+            const read = readCredit(sent, {
+              idOf,
+              names: ['Casey B', 'Luke T']
+            })
+            expect(read.exact, what).equals(true)
+            const stored = read.credit as Json
+            expect(stored, what).not.have.property('label')
+            expect(
+              (stored.credit as Json | null)?.position ?? null,
+              what
+            ).equals(label.includes(': ') ? carried : null)
+            expect(stored.positionShown, what).equals(
+              shows == null && carried != null && label.includes(': ')
+                ? false
+                : undefined
+            )
+            expect(
+              creditLabel(stored as never, id =>
+                id === 7 ? name : named.get(id)
+              ),
+              what
+            ).equals(label)
+          }
+      // The engine's credits, and one whose label shows its position, show it.
+      expect(
+        creditLabel(
+          structuredCredit(
+            outside('Fly out: Jordan P (LF)', 'Jordan P', 'LF')
+          ) as never,
+          () => 'Jordan P'
+        )
+      ).equals('Fly out: Jordan P (LF)')
+    })
+
+    it('names a person with no id and no name as the label names him', function () {
+      const typed = readCredit(
+        outside('Ground out: Visiting SS (1B)', '', '1B', null)
+      )
+      expect(typed.exact).equals(true)
+      expect(typed.credit).deep.include({
+        head: 'Ground out',
+        credit: { name: 'Visiting SS', role: 'fielder', position: '1B' }
+      })
+      expect(creditLabel(typed.credit as never, () => undefined)).equals(
+        'Ground out: Visiting SS (1B)'
+      )
+      // With no position, the whole rest; with no person at all, one made.
+      for (const sent of [
+        outside('Run: Visiting CF', '', null, null),
+        { ...outside('Run: Visiting CF', null, null, null), credit: null }
+      ]) {
+        const read = readCredit(sent)
+        expect(read.exact).equals(true)
+        expect((read.credit as Json).credit).deep.include({
+          name: 'Visiting CF'
+        })
+        expect(creditLabel(read.credit as never, () => undefined)).equals(
+          'Run: Visiting CF'
+        )
+      }
+    })
+
     it('keeps a typed opponent and an assist it cannot name by id', function () {
       const stored = structuredCredit(
         outside(
@@ -931,7 +1032,6 @@ describe('stored and named forms of a game document', function () {
     it('keeps the head and the person of a label it cannot word again', function () {
       for (const [label, name, position] of [
         ['Single: Jordan P on a soft liner', 'Mia R', null],
-        ['Fly out: Jordan P', 'Jordan P', 'LF'],
         ['Run: Jordan P scores on Casey B', 'Jordan P', null],
         ['Pickoff at 1st', 'Jordan P', null]
       ] as Array<[string, string, string | null]>) {
@@ -1426,6 +1526,46 @@ describe('stored and named forms of a game document', function () {
         counted.document
       )
       expect(storedForm(record).refused).equals(1)
+    })
+
+    it('leaves the sentences of a version 1 record it cannot upgrade as they are, and counts them', function () {
+      const record = legacy()
+      ;((record.setupBefore as Json).identities as Json).sessionToSource = {
+        1: 501
+      }
+      const said = {
+        type: 'action',
+        index: 1,
+        isPitch: false,
+        details: {
+          eventType: 'offensive_substitution',
+          description:
+            'Offensive Substitution: Pinch-hitter Bobby Witt replaces Juan Soto.'
+        },
+        player: { id: 503, fullName: 'Bobby Witt' }
+      }
+      const play = {
+        about: { atBatIndex: 0 },
+        matchup: { batter: { id: 501, fullName: 'Juan Soto' } },
+        playEvents: [{ type: 'pitch', isPitch: true, details: {} }, said],
+        teamStation: record
+      }
+      const counted = storedForm(play)
+      expect(counted.refused).equals(1)
+      expect(counted.unreproduced).equals(1)
+      const events = (counted.document as Json).playEvents as Json[]
+      expect(events[1]).not.have.property('said')
+      expect((events[1].details as Json).description).equals(
+        said.details.description
+      )
+      expect(events[1].player).deep.equals({ id: 503 })
+      const named = withNames(counted.document, id =>
+        id === 501 ? 'Juan Soto' : id === 503 ? 'Bobby Witt' : undefined
+      ) as Json
+      expect(
+        ((named.playEvents as Json[])[1].details as Json).description
+      ).equals(said.details.description)
+      expect((named.matchup as Json).batter).deep.equals(play.matchup.batter)
     })
   })
 

@@ -78,6 +78,8 @@ const check = spawnSync(
     'src/server/index.ts',
     '--exclude',
     'src/server/statsBuilder/start.ts',
+    '--exclude',
+    'src/migrate/cli.ts',
     'src/server',
     'src/common',
     'src/migrate'

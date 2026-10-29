@@ -38,6 +38,7 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { guestRenames, sendGuestRenames } from '../scoring/guestRenames'
 import { HeldGameNotice } from '../scoring/HeldGameNotice'
 import { rosterPlayerBody } from '../scoring/playerDraft'
 import type { RosterDictationOptions } from '../scoring/rosterDictation'
@@ -261,6 +262,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   // device's change; the tab shown is kept.
   const [read, setRead] = useState(0)
   const [held, setHeld] = useState<RosterEditorDraft>()
+  /** Guests made on this screen, whose accounts a rename finds too. */
+  const createdGuests = useRef<RosterEntry[]>([])
   const mountedOn = useRef<GameState | undefined>(undefined)
   const [dirty, setDirty] = useState(false)
   const [unaccepted, setUnaccepted] = useState(false)
@@ -583,17 +586,39 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
 
   const save = (
     draft: GameState,
-    nextBatter?: number,
-    runners?: StagedRunner[]
+    nextBatter: number | undefined,
+    runners: StagedRunner[] | undefined,
+    openedOver: GameState
   ): void | Promise<void> => {
-    if (opened == null) return
+    if (opened == null || state == null) return
     const saving = opened
     setProblem(undefined)
+    // A game-only player's corrected name is his account's: renamed first,
+    // then the lineup that shows it is saved. The corrections are told
+    // against the game the editor was opened over (`mountedOn`).
+    const renamed = sendGuestRenames(
+      client,
+      gameId,
+      guestRenames(openedOver, draft),
+      [
+        ...Object.values((detail ?? saving.game).guestPlayers).flat(),
+        ...createdGuests.current
+      ]
+    )
     // Made on the plays the screen opened: a reset since refuses it.
-    const posted = client.saveLineups(gameId, {
-      ...lineupsBody(draft, saving.side, digest.current, nextBatter, runners),
-      generation: saving.game.generation
-    })
+    const posted = renamed.then(
+      async () =>
+        await client.saveLineups(gameId, {
+          ...lineupsBody(
+            draft,
+            saving.side,
+            digest.current,
+            nextBatter,
+            runners
+          ),
+          generation: saving.game.generation
+        })
+    )
     live.saving(posted.then(lineups => lineups.digest))
     // The chat closes when this resolves and stays when it is refused, so
     // what was staged and said is still there to read.
@@ -781,14 +806,16 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                 )
                 return entry
               }}
-              onCreateGuest={async (side, player) =>
-                await client.createGuestPlayer(
+              onCreateGuest={async (side, player) => {
+                const entry = await client.createGuestPlayer(
                   gameId,
                   side,
                   rosterPlayerBody(player),
                   teamId
                 )
-              }
+                createdGuests.current.push(entry)
+                return entry
+              }}
               unaccepted={unaccepted}
               conflict={live.conflict}
               onDirtyChange={setDirty}

@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { withPreviousTagIdentities } from '../../common/eventTags'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { withStructuredCredits } from '../../common/scoring/storedNames'
+import { withoutNames } from '../../common/scoring/storedNames'
 import type { Database } from '../db/database'
 import { requestGameStats } from '../statsBuilder/request'
 
@@ -98,22 +98,27 @@ function withKeptCredits(gumbo: GumboPlay, previous: unknown): GumboPlay {
  * type and credits, written when it is shown. A `manual` or `teamstation`
  * play keeps them, because they are a person's or TeamStation's own words.
  *
- * Each credit is stored with its structure (`withStructuredCredits`): the
- * head, suffix and assists its label is worded from, read from the label of
- * a credit sent with only one, its label and name kept beside them. The
- * document is otherwise stored as it was sent.
+ * The play is stored in its stored form (`withoutNames`), whatever sent
+ * it: no name of a person with an id — on a reference, a setup player, an
+ * `addPlayer` action or a credit — and no sentence of an event that carries
+ * the `said` it is worded from. Each credit is stored with its structure:
+ * the head, suffix and assists its label is worded from, read from the label
+ * of a credit sent with only one. An event a build from before sentences
+ * carried their `said` sent is given one (`saidFromDescription`). A person
+ * with no id keeps the name typed for him. The document is otherwise stored
+ * as it was sent.
  */
 export function storedGumbo(
   gumbo: GumboPlay,
   source: PlaySource
 ): Record<string, unknown> {
-  const next: Record<string, unknown> = withStructuredCredits({ ...gumbo })
+  const next: Record<string, unknown> = withoutNames({ ...gumbo }, { source })
   delete next.source
   if (source !== 'external') return next
   const { description, ...result } = gumbo.result
   next.result = result
-  if (Array.isArray(gumbo.playEvents))
-    next.playEvents = withoutDescriptions(gumbo.playEvents)
+  if (Array.isArray(next.playEvents))
+    next.playEvents = withoutDescriptions(next.playEvents)
   return next
 }
 

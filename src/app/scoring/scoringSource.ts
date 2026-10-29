@@ -12,6 +12,7 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import { reconcileRoster } from '../../common/scoring/startingSetup'
+import { withNames } from '../../common/scoring/storedNames'
 import { deviceStorage } from '../platform/deviceStorage'
 import {
   type DefaultLineups,
@@ -197,15 +198,41 @@ export class ServerScoringSource implements ScoringSource {
  * Scores into memory and nowhere else: the field preview, and the tests. A
  * game opened again from the same source picks up where it was left.
  */
-/** A store that keeps games in memory: the field preview, and the tests. */
+/**
+ * A store that keeps games in memory: the field preview, and the tests. It
+ * keeps what a session saves as it is sent, in the stored form, and beside
+ * each game the names the saves carried (`names`); a read answers the game
+ * named from them (`withNames`), as the server names it from the accounts.
+ */
 export function memoryStore(
-  games = new Map<string, StoredGame>()
-): EventStore & { games: Map<string, StoredGame> } {
+  games = new Map<string, StoredGame>(),
+  names = new Map<string, Map<number, string>>()
+): EventStore & {
+  games: Map<string, StoredGame>
+  names: Map<string, Map<number, string>>
+} {
+  const named = (gameId: string, stored: StoredGame): StoredGame => {
+    const book = names.get(gameId) ?? new Map<number, string>()
+    return {
+      ...stored,
+      plays: stored.plays.map(play => withNames(play, book)),
+      currentPlay:
+        stored.currentPlay == null
+          ? stored.currentPlay
+          : withNames(stored.currentPlay, book)
+    }
+  }
   return {
     games,
-    load: async gameId => games.get(gameId) ?? { plays: [], currentPlay: null },
+    names,
+    load: async gameId =>
+      named(gameId, games.get(gameId) ?? { plays: [], currentPlay: null }),
     save: async (gameId, change: SaveChange) => {
       const stored = games.get(gameId) ?? { plays: [], currentPlay: null }
+      const book = names.get(gameId) ?? new Map<number, string>()
+      for (const [id, name] of Object.entries(change.names ?? {}))
+        book.set(Number(id), name)
+      names.set(gameId, book)
       const plays = new Map(
         stored.plays.map(play => [play.about.atBatIndex, play])
       )
@@ -221,7 +248,7 @@ export function memoryStore(
             : change.currentPlay
       }
       games.set(gameId, next)
-      return next
+      return named(gameId, next)
     }
   }
 }

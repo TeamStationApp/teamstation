@@ -396,7 +396,17 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     const events = stored(eventsKey('g1'))!
     expect(events.pending).equals(1)
     expect(JSON.stringify(events.body)).includes(String(local!.gumboId))
+    // The phone's copy names its players, him too; what it will send names
+    // nobody, and keeps their names beside it.
+    expect(JSON.stringify(events.body)).includes('Mookie B')
     const queued = rows()
+    for (const row of queued.slice(1)) {
+      expect(String(row.body)).not.includes('Mookie')
+      expect(String(row.body)).not.includes('"fullName"')
+    }
+    expect(
+      queued.slice(1).some(row => String(row.names).includes('Mookie B'))
+    ).equals(true)
     expect(queued.map(row => row.chain)).deep.equals([
       'team:away',
       ...queued.slice(1).map(() => 'game:g1')
@@ -422,6 +432,8 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     for (const post of sent.slice(1)) {
       const body = JSON.stringify(post.body)
       expect(body).not.includes(String(local!.gumboId))
+      expect(body).not.includes('"fullName"')
+      expect(post.body).not.have.property('names')
       expect(post.body.lineupsBase).not.match(/^local-/)
     }
     // The server's game holds him, under the server's id, and the ball.

@@ -4,13 +4,19 @@ import type { Kysely } from 'kysely'
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { gumboViolations } from '../../common/gumbo/validate'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import {
+  type NameOf,
+  withNames,
+  withoutNames
+} from '../../common/scoring/storedNames'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
-import { withoutDescriptions } from './eventWrite'
+import { gameNames } from '../users/nameBook'
+import { type PlaySource, withoutDescriptions } from './eventWrite'
 
 /**
  * The body of `PATCH /games/:gameId/events`: for plays a game already has,
@@ -69,6 +75,11 @@ function peopleIn(event: unknown): unknown[] {
   })
 }
 
+/** Who wrote a stored play, as `storedGumbo` stores it. */
+function sourceOf(source: string | null): PlaySource {
+  return source === 'teamstation' || source === 'manual' ? source : 'external'
+}
+
 /** A user's id as the statistics rebuild takes one (`gumboStats`). */
 function isUserId(id: unknown): id is number {
   return typeof id === 'number' && Number.isSafeInteger(id) && id > 0
@@ -94,7 +105,9 @@ function isUserId(id: unknown): id is number {
  * play event or has no time (an ISO 8601 date-time), and for any person an event names (its player,
  * pitcher, replaced player or a runner on base) who is not a user: a
  * statistics rebuild would stop at that game. A play not named keeps its events. Each
- * event's `description` is dropped, as for any outside scorer's play.
+ * event's `description` is dropped, as for any outside scorer's play. The
+ * merged play is checked named from the accounts, and stored, as every play
+ * is, naming nobody (`withoutNames`).
  */
 export async function addPlayEvents(
   db: Kysely<Database>,
@@ -125,12 +138,15 @@ export async function addPlayEvents(
       (
         await trx
           .selectFrom('events')
-          .select(['id', 'atBatIndex', 'gumbo'])
+          .select(['id', 'atBatIndex', 'gumbo', 'source'])
           .where('gameId', '=', gameId)
           .execute()
       ).map(row => [row.atBatIndex, row])
     )
     const writes: Array<{ id: string; gumbo: Record<string, unknown> }> = []
+    // The merged play is checked as it is read, named from the accounts.
+    const book = (await gameNames(trx, [gameId])).get(gameId)
+    const nameOf: NameOf = id => book?.nameOf(id)
     for (const play of body.plays) {
       const row = stored.get(play.atBatIndex)
       if (row == null)
@@ -145,14 +161,18 @@ export async function addPlayEvents(
         ...(row.gumbo as Record<string, unknown>),
         playEvents: withoutDescriptions(play.playEvents)
       }
-      const wrong = gumboViolations(gumbo).find(violation =>
+      const wrong = gumboViolations(withNames(gumbo, nameOf)).find(violation =>
         violation.path.startsWith('playEvents')
       )
       if (wrong != null)
         throw badRequest(
           `Play ${play.atBatIndex}: ${wrong.path}: ${wrong.message}`
         )
-      writes.push({ id: row.id, gumbo })
+      // Stored as every play is, naming nobody (`storedGumbo`).
+      writes.push({
+        id: row.id,
+        gumbo: withoutNames(gumbo, { source: sourceOf(row.source) })
+      })
     }
     const named = new Map<number, string>()
     for (const play of body.plays)

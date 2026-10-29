@@ -616,6 +616,82 @@ describe('naming a scoring game from the accounts', function () {
     })
   })
 
+  it('stores no name from a build that sends named sentences and no said, and reads its sentences back the same', async () => {
+    const teams = Object.values(REPLAY_TEAMS)
+    await fixture.db
+      .insertInto('teams')
+      .values(teams.map(team => ({ id: team.id, name: team.name })))
+      .onConflict(conflict => conflict.doNothing())
+      .execute()
+    await fixture.db
+      .insertInto('games')
+      .values({
+        id: 'gam_oldbuild',
+        start_at: new Date('2026-01-01T00:00:00Z'),
+        home_team_id: REPLAY_TEAMS.home.id,
+        away_team_id: REPLAY_TEAMS.away.id
+      })
+      .execute()
+    // What a build from before sentences carried their `said` posts.
+    const unsaid = <T>(document: T): T =>
+      JSON.parse(
+        JSON.stringify(document, (key, value: unknown) =>
+          key === 'said' ? undefined : value
+        )
+      ) as T
+    await postGamePlays(
+      fixture.db,
+      'gam_oldbuild',
+      asPostEventsBody({
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: stored.plays.map(unsaid),
+        currentPlay: unsaid(stored.currentPlay)
+      })
+    )
+    const rows = await readPlays(fixture.db, 'gam_oldbuild')
+    const game = await fixture.db
+      .selectFrom('games')
+      .select(['currentPlay', 'pregame'])
+      .where('id', '=', 'gam_oldbuild')
+      .executeTakeFirstOrThrow()
+    const text = JSON.stringify([
+      rows.map(row => row.gumbo),
+      game.currentPlay,
+      game.pregame
+    ])
+    for (const person of accounts) {
+      expect(text).not.includes(`${person.first} ${person.last}`)
+      expect(text).not.includes(shown.get(person.userId)!)
+    }
+    expect(text).not.includes('Typed Whole Name')
+    // Every sentence was read back to what it is worded from.
+    const described = rows.flatMap(row =>
+      (((row.gumbo as GumboPlay).playEvents ?? []) as unknown[]).filter(
+        event =>
+          (event as { said?: unknown }).said != null ||
+          (event as { details?: { description?: unknown } }).details
+            ?.description != null
+      )
+    )
+    expect(described.length).greaterThan(5)
+    const sentences = (game: StoredGame): unknown =>
+      [...game.plays, game.currentPlay].map(document =>
+        ((document?.playEvents ?? []) as unknown[]).map(
+          event =>
+            (event as { details?: { description?: unknown } }).details
+              ?.description
+        )
+      )
+    const named = await resolveScoringGame(fixture.db, {
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    })
+    expect(sentences(named)).deep.equals(
+      sentences(await resolveScoringGame(fixture.db, stored))
+    )
+  })
+
   it('names a merged player by his survivor, in every sentence that names him', async () => {
     const replaced = idOf(AWAY_PLAYERS[8])
     const survivor = mint()

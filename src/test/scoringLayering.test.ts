@@ -56,6 +56,7 @@ describe('scoring read-only import boundary', function () {
     for (const source of [
       `import { ordinal, begun as started } from '${prefix}lineup'`,
       `import { confirmedSides, revealedSides } from '${prefix}lineupHistory'`,
+      `import { namesIn, withNames } from '${prefix}storedNames'`,
       `import type { BoardLine } from '${prefix}boardLineTypes'`,
       `import { type Lineup } from '${prefix}lineupHistory'`,
       `export type { Lineup } from '${prefix}lineupHistory'`,
@@ -79,7 +80,8 @@ describe('scoring read-only import boundary', function () {
       `import x = require('${prefix}lineup')`,
       `export * from '${prefix}lineup'`,
       `export { updateDefense as ordinal } from '${prefix}lineup'`,
-      `import { documentOf } from '${prefix}document'`
+      `import { documentOf } from '${prefix}document'`,
+      `import { withNames, withoutNames } from '${prefix}storedNames'`
     ]) {
       writeFileSync(file, source)
       expect(checkLayering(root), source).has.length(1)
