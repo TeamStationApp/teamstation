@@ -29,12 +29,20 @@ for (const key of [
 }
 // Reanimated starts animations with Node's performance clock. JSDOM rAF has
 // its own time origin, so supply the same clock to each frame callback.
-Object.defineProperty(globalThis, 'requestAnimationFrame', {
-  configurable: true,
-  writable: true,
-  value: callback =>
-    dom.window.requestAnimationFrame(() => callback(performance.now()))
-})
+function installAnimationFrames() {
+  Object.defineProperty(globalThis, 'requestAnimationFrame', {
+    configurable: true,
+    writable: true,
+    value: callback =>
+      dom.window.requestAnimationFrame(() => callback(performance.now()))
+  })
+  Object.defineProperty(globalThis, 'cancelAnimationFrame', {
+    configurable: true,
+    writable: true,
+    value: dom.window.cancelAnimationFrame.bind(dom.window)
+  })
+}
+installAnimationFrames()
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 // A browser that can decode the video (HEVC, through Media Source), so the
 // player draws a picture rather than saying it cannot (`playable.ts`). It
@@ -142,6 +150,13 @@ globalThis.HTMLElement.prototype.hasPointerCapture = function () {
   return false
 }
 exports.mochaHooks = {
+  beforeAll() {
+    // Worklets installs a zero-delay timeout rAF while importing in test mode,
+    // but leaves JSDOM's cancelAnimationFrame in place. Restore a matching pair
+    // after imports: otherwise unmounted frame loops survive cancellation and
+    // spin forever when a later test advances fake setTimeout timers.
+    installAnimationFrames()
+  },
   afterEach() {
     document.body.replaceChildren()
     globalThis.localStorage.clear()
