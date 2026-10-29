@@ -18,7 +18,7 @@ import {
   type VisibleScopes,
   visibleScopes
 } from '../access'
-import { type Actor, actorForToken } from '../auth/sessions'
+import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import { mayPost, type PostingStanding } from '../chat/messages'
 import type { Database } from '../db/database'
@@ -813,6 +813,11 @@ export function attachGameSocket(
       actor => {
         if (actor == null) {
           refuseUpgrade(socket, 401, 'Unauthorized')
+          return
+        }
+        // A key subscribes to games only with game events read.
+        if (!keyAllows(actor, 'gameEvents:read')) {
+          refuseUpgrade(socket, 403, 'Forbidden')
           return
         }
         wss.handleUpgrade(req, socket, head, ws => {

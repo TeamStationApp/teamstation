@@ -37,6 +37,7 @@ import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
 import type { MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
+import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
@@ -483,9 +484,11 @@ function runWorker(): void {
   app.use(requestLogs)
   app.use(withCors(serverConfig.corsOrigins))
 
-  // Who is calling, then their body, which for a picture is read only when
-  // somebody is signed in, then what they changed, then the routes.
+  // Who is calling, and the ceiling of an API key, then their body, which
+  // for a picture is read only when somebody is signed in, then what they
+  // changed, then the routes.
   app.use(withActor(db))
+  app.use(withApiKeyCeiling())
   if (serverConfig.oauth?.enabled === true) {
     const provider = createOAuthProvider(db, serverConfig.oauth, publicUrl)
     app.use(['/oauth', '/api/v1/oauth/approvals'], oauthRequestLimit(db))

@@ -9,7 +9,7 @@ import {
   rosterToolSchema
 } from '../../common/scoring/rosterCommands'
 import { canScore, isHeadCoach, roleScopes } from '../access'
-import { type Actor, isMachine } from '../auth/sessions'
+import { type Actor, isHumanSession } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 
@@ -95,7 +95,7 @@ export function dictationScopes(options: {
         authorise: async (_db, actor) => {
           if (!options.tess)
             throw unavailable('Tess is not available on this server')
-          if (isMachine(actor)) throw forbidden('Sign in to talk to Tess')
+          if (!isHumanSession(actor)) throw forbidden('Sign in to talk to Tess')
         }
       }
     ]

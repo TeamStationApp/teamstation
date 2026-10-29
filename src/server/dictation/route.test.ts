@@ -435,6 +435,37 @@ describe('dictation route', function () {
       expect(await refusal({ authorization: 'Bearer tok_nobody' })).equals(401)
     })
 
+    it('takes an API key only with game events write', async function () {
+      const keyOf = async (
+        secret: string,
+        permissions: string[]
+      ): Promise<void> => {
+        await db!
+          .insertInto('user_api_keys')
+          .values({
+            id: makeId('userApiKey'),
+            user_id: userIdOfGumbo(member.userId),
+            name: 'Dictation key',
+            token_hash: hashToken(secret),
+            secret_sealed: 'v1.unused',
+            permissions
+          })
+          .execute()
+      }
+      await keyOf('tsk_dictation_reader', ['gameEvents:read'])
+      await keyOf('tsk_dictation_writer', [
+        'gameEvents:read',
+        'gameEvents:write'
+      ])
+      expect(
+        await refusal({ authorization: 'Bearer tsk_dictation_reader' })
+      ).equals(403)
+      const writer = await connect({
+        authorization: 'Bearer tsk_dictation_writer'
+      })
+      writer.ws.close()
+    })
+
     it('admits a bearer token and a session cookie alike', async function () {
       const bearer = await connect({ authorization: `Bearer ${MEMBER}` })
       const cookie = await connect({ cookie: `${SESSION_COOKIE}=${MEMBER}` })

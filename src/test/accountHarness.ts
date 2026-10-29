@@ -18,6 +18,7 @@ import { makeDatabase } from '../server/db/database'
 import { jsonBody } from '../server/jsonBody'
 import type { MediaContext } from '../server/media/mediaContext'
 import type { SpaceSettings } from '../server/media/spacesHls'
+import { withApiKeyCeiling } from '../server/middleware/apiKeyCeiling'
 import { withAudit } from '../server/middleware/withAudit'
 import { withActor } from '../server/middleware/withAuth'
 import { errorHandler } from '../server/middleware/withErrors'
@@ -207,6 +208,7 @@ export async function accountHarness(
   }
   const app = express()
   app.use(withActor(db))
+  app.use(withApiKeyCeiling())
   app.use(jsonBody)
   app.use(withAudit(db))
   configure?.(app, { tokens, db, space, media, sendCode })
