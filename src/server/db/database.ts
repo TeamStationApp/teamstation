@@ -535,6 +535,42 @@ export interface ApiTokensTable {
   revoked_at: Timestamp | null
 }
 
+/** One plate appearance and the state it began in. See 090plateAppearances. */
+export interface PlateAppearancesTable {
+  id: string
+  game_id: string
+  is_pa: Generated<boolean>
+  at_bat_index: number
+  inning: number
+  half_inning: 'top' | 'bottom'
+  batter_gumbo_id: number | null
+  pitcher_gumbo_id: number | null
+  batting_team_id: string | null
+  pitching_team_id: string | null
+  outs_before: number | null
+  on_first: boolean | null
+  on_second: boolean | null
+  on_third: boolean | null
+  first_pitch: 'ball' | 'strike' | 'inPlay' | 'other' | null
+  pitches: Generated<number>
+  first_pitch_thrown: 'ball' | 'strike' | 'inPlay' | 'other' | null
+  pitches_thrown: Generated<number>
+  ab: Generated<number>
+  h: Generated<number>
+  singles: Generated<number>
+  doubles: Generated<number>
+  triples: Generated<number>
+  hr: Generated<number>
+  bb: Generated<number>
+  k: Generated<number>
+  hbp: Generated<number>
+  ci: Generated<number>
+  sf: Generated<number>
+  sh: Generated<number>
+  rbi: Generated<number>
+  outs_made: Generated<number>
+}
+
 /** An API key a person made under Account. See 089userApiKeys. */
 export interface UserApiKeysTable {
   id: string
@@ -1471,6 +1507,7 @@ export interface Database {
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
   user_api_keys: UserApiKeysTable
+  plate_appearances: PlateAppearancesTable
   game_play_archives: GamePlayArchivesTable
   auth_sessions: AuthSessionsTable
   chat_attachments: ChatAttachmentsTable

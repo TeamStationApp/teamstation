@@ -184,6 +184,37 @@ describe('statsBuilder drain', function () {
     const pit = rows.find(row => Number(row.gumbo_id) === pitcher)!
     expect(pit.pitch_bf).equals(1)
     expect(pit.team_id).equals(home)
+    // And its plate appearance, with the state it began in.
+    const appearances = await db
+      .selectFrom('plate_appearances')
+      .selectAll()
+      .where('game_id', '=', gameId)
+      .execute()
+    expect(appearances).to.have.length(1)
+    expect(appearances[0]).deep.include({
+      batting_team_id: away,
+      pitching_team_id: home,
+      outs_before: 0,
+      on_first: false,
+      singles: 1
+    })
+    expect(Number(appearances[0].batter_gumbo_id)).equals(batter)
+    expect(Number(appearances[0].pitcher_gumbo_id)).equals(pitcher)
+    // A game rebuilt with no plays keeps none.
+    await db.deleteFrom('events').where('gameId', '=', gameId).execute()
+    await db
+      .updateTable('game_stats_state')
+      .set(eb => ({ requested_generation: eb('requested_generation', '+', 1) }))
+      .where('game_id', '=', gameId)
+      .execute()
+    await drain(db, clock)
+    expect(
+      await db
+        .selectFrom('plate_appearances')
+        .select('id')
+        .where('game_id', '=', gameId)
+        .execute()
+    ).deep.equals([])
   })
 
   it('persists expanded details and replaces them after an edit', async function () {

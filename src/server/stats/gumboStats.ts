@@ -85,18 +85,18 @@ const NON_AB = new Set([
   'ts_manual_placement'
 ])
 
-const HIT_TYPES = new Set(['single', 'double', 'triple', 'home_run'])
+export const HIT_TYPES = new Set(['single', 'double', 'triple', 'home_run'])
 
-const STRIKEOUTS = new Set([
+export const STRIKEOUTS = new Set([
   'strikeout',
   'strike_out',
   'strikeout_double_play',
   'strikeout_triple_play'
 ])
 
-const SAC_FLIES = new Set(['sac_fly', 'sac_fly_double_play'])
+export const SAC_FLIES = new Set(['sac_fly', 'sac_fly_double_play'])
 
-const SAC_BUNTS = new Set(['sac_bunt', 'sac_bunt_double_play'])
+export const SAC_BUNTS = new Set(['sac_bunt', 'sac_bunt_double_play'])
 
 /**
  * How a play of an event type counts on the batter's line: a plate
@@ -347,10 +347,44 @@ function addFigure(
   line[field] += n
 }
 
+/**
+ * One counted play as `gameStatLines` charged it: whom it charged with the
+ * plate appearance, if it was one, and to whom it gave its outs. The plate
+ * appearances table is written from these, so its figures are the lines'.
+ */
+export interface ChargedPlay {
+  /** The play's place in the list `gameStatLines` was given. */
+  playIndex: number
+  atBatIndex: number
+  inning: number
+  halfInning: 'top' | 'bottom'
+  outsBefore: number
+  battingTeamId: string | null
+  pitchingTeamId: string | null
+  eventType: string
+  isPa: boolean
+  isAb: boolean
+  /** Whose plate appearance it was: the batter a two-strike strikeout is charged to. */
+  batterId: number | null
+  /** Who batted, for a hit: the same man unless a pinch hitter struck out. */
+  hitterId: number | null
+  /** The pitcher charged with the batter faced (and a walk). */
+  pitcherId: number | null
+  /** Each pitcher's outs on this play, in order. */
+  outs: Array<{ pitcherId: number | null; outs: number }>
+  rbi: number
+  /**
+   * Who threw a pitch: the event's own pitcher when he is a known user, as
+   * on the lines, else who was on the mound at its index.
+   */
+  pitcherAt: (eventIndex: number, player?: unknown) => number | null
+}
+
 export function gameStatLines(
   plays: GumboPlay[],
   teams: GameTeams,
-  knownGumboIds: ReadonlySet<number>
+  knownGumboIds: ReadonlySet<number>,
+  charged?: (play: ChargedPlay) => void
 ): GameStatResult {
   const lines = new Map<number, PlayerGameLine>()
   let awayRuns = 0
@@ -360,7 +394,7 @@ export function gameStatLines(
   /** The pitcher each half's last play ended with: who begins the next. */
   const lastPitcher = new Map<string, number | null>()
 
-  for (const play of plays) {
+  for (const [playIndex, play] of plays.entries()) {
     const about = play.about
     const atBatIndex =
       typeof about.atBatIndex === 'number' ? about.atBatIndex : 0
@@ -461,6 +495,7 @@ export function gameStatLines(
       outsHalfKey = halfKey
       outsBefore = 0
     }
+    const outsAtStart = outsBefore
     const outsDelta = outsAfter - outsBefore
     outsBefore = outsAfter
 
@@ -570,16 +605,20 @@ export function gameStatLines(
     }
 
     // pitch_outs
+    const outsCharged: ChargedPlay['outs'] = []
     let assignedOverrides = 0
     for (const pitcherId of outPitcherOverrides) {
       if (assignedOverrides >= outsDelta) break
       addFigure(lines, pitcherId, pitchingTeam, 'pitch_outs', 1)
+      outsCharged.push({ pitcherId, outs: 1 })
       assignedOverrides++
     }
     const restOuts = outsDelta - assignedOverrides
     if (restOuts > 0) {
       addFigure(lines, matchupPitcherId, pitchingTeam, 'pitch_outs', restOuts)
+      outsCharged.push({ pitcherId: matchupPitcherId, outs: restOuts })
     }
+    let rbi = 0
 
     if (isPa) {
       addFigure(lines, strikeoutId, battingTeam, 'pa', 1)
@@ -651,6 +690,7 @@ export function gameStatLines(
         addFigure(lines, creditedRunner, battingTeam, 'r', 1)
         if (details.rbi === true) {
           addFigure(lines, batterId, battingTeam, 'rbi', 1)
+          rbi++
         }
 
         const rp = isRecord(details.responsiblePitcher)
@@ -668,6 +708,28 @@ export function gameStatLines(
         }
       }
     }
+
+    charged?.({
+      playIndex,
+      atBatIndex,
+      inning,
+      halfInning,
+      outsBefore: outsAtStart,
+      battingTeamId: battingTeam,
+      pitchingTeamId: pitchingTeam,
+      eventType,
+      isPa,
+      isAb: counts.ab,
+      batterId: isPa ? strikeoutId : null,
+      hitterId: isPa ? batterId : null,
+      pitcherId: isPa ? walkOwnerId : null,
+      outs: outsCharged,
+      rbi,
+      pitcherAt: (index, player) => {
+        const id = isRecord(player) ? player.id : undefined
+        return isSafeUserId(id) && knownGumboIds.has(id) ? id : moundAt(index)
+      }
+    })
   }
 
   if (plays.length > 0) {

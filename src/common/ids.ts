@@ -32,6 +32,7 @@ export const idPrefixes = {
   liveStream: 'liv',
   loginRequest: 'lgr',
   membership: 'mem',
+  plateAppearance: 'pap',
   rateEvent: 'rte',
   scopeRole: 'rol',
   schedulePreview: 'spv',

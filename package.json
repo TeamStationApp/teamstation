@@ -34,6 +34,7 @@
     "android": "react-native run-android",
     "audit-videos": "node -r sucrase/register src/server/dev/auditVideos.ts",
     "backfill-linescore": "node -r sucrase/register src/server/dev/backfillLinescore.ts",
+    "backfill-plate-appearances": "node -r sucrase/register src/server/dev/backfillPlateAppearances.ts",
     "build": "node scripts/chatCryptoBuild.mjs node && tsc -p tsconfig.server.json && mkdir -p lib/server/stats/fixtures lib/server/location lib/server/tess && cp src/server/stats/fixtures/*.json lib/server/stats/fixtures/ && cp src/server/location/placesCatalog.json.gz lib/server/location/ && cp src/server/tess/sitemap.generated.json lib/server/tess/ && mkdir -p lib/common/chatCrypto/node && rm -f lib/common/chatCrypto/node/chat_crypto.node && cp src/common/chatCrypto/node/chat_crypto.node lib/common/chatCrypto/node/",
     "build.field": "TS_FIELD_PREVIEW=1 node src/build.mjs",
     "build.web": "node src/build.mjs",

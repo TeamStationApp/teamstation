@@ -3,6 +3,7 @@ import type { GumboPlay } from '../../common/gumboPlay'
 import { emptyStatExtras, type StatExtras } from '../../common/statExtras'
 import { battingTeamForHalf, type GameTeams } from '../events/eventWrite'
 import {
+  type ChargedPlay,
   emptyLine,
   eventTypeCounts,
   gameStatLines,
@@ -33,11 +34,12 @@ export interface ExpandedGameLine extends PlayerGameLine {
 export function expandedGameStatLines(
   plays: GumboPlay[],
   teams: GameTeams,
-  knownGumboIds: ReadonlySet<number>
+  knownGumboIds: ReadonlySet<number>,
+  charged?: (play: ChargedPlay) => void
 ):
   | { kind: 'lines'; lines: ExpandedGameLine[] }
   | { kind: 'incomplete'; detail: string } {
-  const base = gameStatLines(plays, teams, knownGumboIds)
+  const base = gameStatLines(plays, teams, knownGumboIds, charged)
   if (base.kind === 'incomplete') return base
   const lines = new Map<number, ExpandedGameLine>(
     base.lines.map(line => [

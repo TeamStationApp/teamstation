@@ -4,6 +4,8 @@ import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
 import { expandedGameStatLines } from '../stats/expandedStats'
+import type { ChargedPlay } from '../stats/gumboStats'
+import { type PlateAppearance, rowsOf } from '../stats/plateAppearances'
 
 export type Clock = () => Date
 
@@ -179,6 +181,7 @@ export async function buildNext(
           .deleteFrom('game_player_stats')
           .where('game_id', '=', gameId)
           .execute()
+        await writePlateAppearances(trx, gameId, [])
         await updateState(trx, gameId, gen, {
           status: 'built',
           detail: null,
@@ -190,7 +193,10 @@ export async function buildNext(
         return { kind: 'done' as const }
       }
 
-      const result = expandedGameStatLines(plays, teams, knownUsers)
+      const charges: ChargedPlay[] = []
+      const result = expandedGameStatLines(plays, teams, knownUsers, play => {
+        charges.push(play)
+      })
       if (result.kind === 'incomplete') {
         await updateState(trx, gameId, gen, {
           status: 'incomplete',
@@ -246,6 +252,7 @@ export async function buildNext(
           })
           .execute()
       }
+      await writePlateAppearances(trx, gameId, rowsOf(plays, charges))
       await updateState(trx, gameId, gen, {
         status: 'built',
         detail: null,
@@ -264,6 +271,58 @@ export async function buildNext(
     await markFailed(db, picked.gameId, picked.gen, message, clock)
     return { kind: 'failed' }
   }
+}
+
+/** A game's plate appearances, in place of the ones it had. */
+export async function writePlateAppearances(
+  db: Kysely<Database>,
+  gameId: string,
+  rows: PlateAppearance[]
+): Promise<void> {
+  await db
+    .deleteFrom('plate_appearances')
+    .where('game_id', '=', gameId)
+    .execute()
+  if (rows.length === 0) return
+  await db
+    .insertInto('plate_appearances')
+    .values(
+      rows.map(row => ({
+        id: makeId('plateAppearance'),
+        game_id: gameId,
+        is_pa: row.isPa,
+        at_bat_index: row.atBatIndex,
+        inning: row.inning,
+        half_inning: row.halfInning,
+        batter_gumbo_id: row.batterGumboId,
+        pitcher_gumbo_id: row.pitcherGumboId,
+        batting_team_id: row.battingTeamId,
+        pitching_team_id: row.pitchingTeamId,
+        outs_before: row.outsBefore,
+        on_first: row.onFirst,
+        on_second: row.onSecond,
+        on_third: row.onThird,
+        first_pitch: row.firstPitch,
+        pitches: row.pitches,
+        first_pitch_thrown: row.firstPitchThrown,
+        pitches_thrown: row.pitchesThrown,
+        ab: row.ab,
+        h: row.h,
+        singles: row.singles,
+        doubles: row.doubles,
+        triples: row.triples,
+        hr: row.hr,
+        bb: row.bb,
+        k: row.k,
+        hbp: row.hbp,
+        ci: row.ci,
+        sf: row.sf,
+        sh: row.sh,
+        rbi: row.rbi,
+        outs_made: row.outsMade
+      }))
+    )
+    .execute()
 }
 
 async function updateState(
