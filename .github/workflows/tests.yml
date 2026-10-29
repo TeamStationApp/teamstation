@@ -57,7 +57,7 @@ jobs:
         run: |
           echo "$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin" >> "$GITHUB_PATH"
           echo "TS_FFMPEG=$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
-          node -e 'require("fs").writeFileSync("serverConfig.json", JSON.stringify({ffmpegPath: process.cwd() + "/.test-tools/ffmpeg/bin/ffmpeg", ffmpegVersion: "9.0.1"}))'
+          node -e 'require("fs").writeFileSync("serverConfig.json", JSON.stringify({ffmpegPath: process.cwd() + "/.test-tools/ffmpeg/bin/ffmpeg", ffmpegVersion: "n9.0.1-30-g9258bacca5-20260915"}))'
           .test-tools/ffmpeg/bin/ffmpeg -version
           .test-tools/ffmpeg/bin/ffprobe -version
           .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx264
