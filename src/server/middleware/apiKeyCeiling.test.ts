@@ -172,6 +172,18 @@ describe('the API key ceiling', function () {
     expect(outside.status).equals(403)
   })
 
+  it('lets any read through to GraphQL, and only a read', async function () {
+    const reader = await keyFor(101, ['umpire:read'])
+    const query = await f.h.request(
+      'POST',
+      '/graphql',
+      { query: '{ __typename }' },
+      reader
+    )
+    // GraphQL is not mounted here: past the ceiling, nothing answers.
+    expect(query.status).equals(404)
+  })
+
   it('lets the time ignore the key', async function () {
     const key = await keyFor(101, ['team:read'])
     expect(await status('GET', '/time', key)).equals(200)

@@ -168,4 +168,9 @@ describe('what an API key may call', function () {
     expect(keyNeeds('GET', '/openapi.json')).equals('keyless')
     expect(keyNeeds('POST', '/health')).equals(null)
   })
+
+  it('lets any read send a GraphQL query, which asks each field’s family itself', function () {
+    expect(keyNeeds('POST', '/graphql')).equals('anyRead')
+    expect(keyNeeds('GET', '/graphql')).equals(null)
+  })
 })

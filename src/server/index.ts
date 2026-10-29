@@ -68,6 +68,7 @@ import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
+import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
 import { healthRoutes } from './routes/health'
@@ -640,6 +641,12 @@ function runWorker(): void {
       settings: tessSettings(serverConfig),
       origin: () => loopbackOrigin(serverConfig)
     })
+  )
+  // Each field of a query is read from its REST route on this same server,
+  // as the caller.
+  app.use(
+    '/api/v1',
+    graphqlRoutes({ origin: () => loopbackOrigin(serverConfig) })
   )
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))

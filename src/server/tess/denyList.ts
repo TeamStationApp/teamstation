@@ -12,6 +12,9 @@
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
+/** The GraphQL API, which Tess reads with `graphql_query`. */
+export const GRAPHQL_PATH = '/graphql'
+
 /** A path as the loopback sends it: under `/api/v1`, already checked. */
 export interface ApiPath {
   /** The path below `/api/v1`, starting with `/`, exactly as it will be sent. */

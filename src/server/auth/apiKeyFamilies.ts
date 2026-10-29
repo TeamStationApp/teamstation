@@ -147,6 +147,12 @@ export const API_KEY_FAMILIES: Record<ApiKeyArea, readonly string[]> = {
  */
 const NEVER: readonly string[] = ['GET /teams/search']
 
+/**
+ * Routes a key may call with any read it holds. GraphQL is one: each field
+ * is then read from its own REST route, which asks that field's family.
+ */
+export const ANY_READ: readonly string[] = ['POST /graphql']
+
 /** Routes any key may call, whatever it holds: they ignore the key. */
 export const KEYLESS: readonly string[] = [
   'GET /health',
@@ -175,6 +181,7 @@ function entryOf(route: string, area: ApiKeyArea | null): Entry {
 
 const NEVER_ENTRIES = NEVER.map(route => entryOf(route, null))
 const KEYLESS_ENTRIES = KEYLESS.map(route => entryOf(route, null))
+const ANY_READ_ENTRIES = ANY_READ.map(route => entryOf(route, null))
 const ENTRIES: Entry[] = (
   Object.entries(API_KEY_FAMILIES) as Array<[ApiKeyArea, readonly string[]]>
 ).flatMap(([area, routes]) => routes.map(route => entryOf(route, area)))
@@ -186,18 +193,19 @@ function accessOf(method: string): 'read' | 'write' {
 
 /**
  * A key on `method path` (below `/api/v1`): `keyless` for a route that
- * ignores the key, the permission it needs, or null for a route no key may
- * call.
+ * ignores the key, `anyRead` for one any read permission opens, the
+ * permission it needs, or null for a route no key may call.
  */
 export function keyNeeds(
   method: string,
   path: string
-): ApiKeyPermission | 'keyless' | null {
+): ApiKeyPermission | 'keyless' | 'anyRead' | null {
   const upper = method.toUpperCase()
   const asGet = upper === 'HEAD' ? 'GET' : upper
   const matches = (entry: Entry): boolean =>
     entry.method === asGet && entry.pattern.test(path)
   if (KEYLESS_ENTRIES.some(matches)) return 'keyless'
+  if (ANY_READ_ENTRIES.some(matches)) return 'anyRead'
   if (NEVER_ENTRIES.some(matches)) return null
   const entry = ENTRIES.find(matches)
   if (entry?.area == null) return null

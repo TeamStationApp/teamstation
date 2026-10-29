@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import type { TessScreen } from '../../common/api'
 import { openApiDocument } from '../openapi'
-import { type ApiMethod, refusalOf } from './denyList'
+import { type ApiMethod, GRAPHQL_PATH, refusalOf } from './denyList'
 import type { SystemBlock } from './messagesApi'
 import type { UserContext } from './userContext'
 
@@ -118,6 +118,8 @@ function apiIndex(): string {
   for (const [path, entry] of Object.entries(
     document.paths as Record<string, Record<string, Schema>>
   )) {
+    // A query is a read through its own tool, never a change to propose.
+    if (path === GRAPHQL_PATH) continue
     for (const [method, operation] of Object.entries(entry)) {
       const upper = method.toUpperCase() as ApiMethod
       if (refusalOf(upper, path.replace(/\{[^}]+\}/g, 'x')) != null) continue

@@ -34,7 +34,11 @@ export function withApiKeyCeiling(): RequestHandler {
       next()
       return
     }
-    if (needs == null || !keyAllows(actor, needs)) {
+    const allowed =
+      needs === 'anyRead'
+        ? [...actor.apiKey.permissions].some(held => held.endsWith(':read'))
+        : needs != null && keyAllows(actor, needs)
+    if (!allowed) {
       next(forbidden('This API key cannot do that'))
       return
     }

@@ -17,6 +17,7 @@ import { eventInfoRoutes } from '../server/routes/eventInfo'
 import { eventListRoutes } from '../server/routes/eventList'
 import { eventRoutes } from '../server/routes/events'
 import { gameApprovalRoutes } from '../server/routes/gameApprovals'
+import { graphqlRoutes } from '../server/routes/graphql'
 import { groupRoutes } from '../server/routes/groups'
 import { healthRoutes } from '../server/routes/health'
 import { inviteRoutes } from '../server/routes/invites'
@@ -120,6 +121,7 @@ export function apiRoutes(): string[] {
     ...routesOf(authRoutes(db, { sendCode })),
     ...routesOf(accountRoutes(db, { ...media, sendCode })),
     ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
+    ...routesOf(graphqlRoutes({ origin: () => 'http://127.0.0.1' })),
     ...routesOf(seasonRoutes(db, media)),
     ...routesOf(eventInfoRoutes(db, media)),
     ...routesOf(eventListRoutes(db, media)),
