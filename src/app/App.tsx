@@ -42,6 +42,7 @@ import {
 } from './chat/chatWorkspaceModel'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { leaveChat } from './chat/engine/links'
+import { entityChats, entityPreviewLoader } from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
@@ -925,7 +926,7 @@ function Shell(props: AppProps): React.ReactElement {
   /**
    * The chat engine, for as long as somebody is signed in. It hears the
    * socket's chat hints from the start, so they arrive on every screen; it
-   * touches no keys until a chat screen starts it.
+   * restores saved keys when a chat section requests readable previews.
    */
   const chatEngine = useMemo(
     () =>
@@ -977,10 +978,14 @@ function Shell(props: AppProps): React.ReactElement {
       unsubscribe()
     }
   }, [chatEngine])
-  const chatsOf = (type: 'team' | 'season', id: string): ChatLink[] =>
-    chatList
-      .filter(chat => chat.scope?.type === type && chat.scope.id === id)
-      .map(chat => ({ id: chat.id, title: chat.title }))
+  const chatsOf = (kind: GroupRef['kind'], id: string): ChatLink[] =>
+    entityChats(chatList, { kind, id })
+  const loadChatPreviews = useMemo(() => {
+    const load = entityPreviewLoader(chatEngine, keyStore, signedInAs)
+    return (ids: string[]): void => {
+      load(ids).catch(() => undefined)
+    }
+  }, [chatEngine, signedInAs])
   useEffect(() => {
     if (chatEngine == null) return
     let stopListening = (): void => {}
@@ -1754,7 +1759,7 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /** A chat, from the list or from a team's, season's or league's page. */
   const openChat = (chat: { id: string; title: string }): void => {
-    push({ name: 'conversation', conversationId: chat.id, title: chat.title })
+    goFromAddress({ name: 'conversation', conversationId: chat.id })
   }
   /**
    * What every chat screen stands behind: chat's crypto core on this
@@ -2135,18 +2140,6 @@ function Shell(props: AppProps): React.ReactElement {
           onCreateGroup={kind => {
             push({ name: 'createGroup', kind })
           }}
-          leagueChats={chatList.flatMap(chat =>
-            chat.kind === 'leagueOrg'
-              ? [
-                  {
-                    id: chat.id,
-                    title: chat.title,
-                    league: chat.scopeName ?? chat.title
-                  }
-                ]
-              : []
-          )}
-          onOpenChat={openChat}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
           onLoaded={prefetchAfterHome}
@@ -2314,6 +2307,9 @@ function Shell(props: AppProps): React.ReactElement {
         onSignIn={signInHere}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
+        chats={chatsOf(top.kind, top.id)}
+        onOpenChat={openChat}
+        onLoadChatPreview={loadChatPreviews}
         initialTab={top.tab}
         onTab={setTopTab}
         initialWhen={top.when}
@@ -2904,6 +2900,7 @@ function Shell(props: AppProps): React.ReactElement {
         onTab={setTopTab}
         chats={chatsOf('team', top.team.id)}
         onOpenChat={openChat}
+        onLoadChatPreview={loadChatPreviews}
       />
     ) : top.name === 'season' ? (
       <SeasonScreen
@@ -2922,6 +2919,7 @@ function Shell(props: AppProps): React.ReactElement {
         onTab={setTopTab}
         chats={chatsOf('season', top.season.id)}
         onOpenChat={openChat}
+        onLoadChatPreview={loadChatPreviews}
         initialWhen={top.when}
         onWhen={next => {
           setStacks(current => {

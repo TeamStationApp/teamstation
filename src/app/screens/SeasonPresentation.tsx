@@ -67,6 +67,7 @@ export interface SeasonPresentationProps {
   client: TeamStationClient
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
+  onLoadChatPreview?: (ids: string[]) => void
   season: SeasonSummary
   onOpenGame: (
     gameId: string,
@@ -93,7 +94,8 @@ export interface SeasonPresentationProps {
   scheduleActions?: React.ReactNode
 }
 
-type TabId = 'standings' | 'schedule' | 'stats' | 'videos' | 'teams' | 'people'
+type TabId =
+  'standings' | 'schedule' | 'stats' | 'videos' | 'teams' | 'chats' | 'people'
 const TABS = [
   { id: 'standings' as const, label: 'Standings' },
   { id: 'schedule' as const, label: 'Schedule' },
@@ -163,6 +165,7 @@ export function SeasonPresentation(
     ...(mayView
       ? TABS
       : TABS.filter(item => item.id === 'schedule' || item.id === 'teams')),
+    { id: 'chats' as const, label: 'Chats' },
     ...(seesPeople ? [PEOPLE_TAB] : [])
   ]
   const defaultTab = mayView ? 'standings' : 'schedule'
@@ -544,9 +547,6 @@ export function SeasonPresentation(
         />
       }
     >
-      {props.chats != null && props.onOpenChat != null && (
-        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
-      )}
       {error !== '' && (
         <View style={styles.section}>
           <Text accessibilityRole="alert" style={styles.error}>
@@ -915,6 +915,13 @@ export function SeasonPresentation(
             </>
           )}
         </View>
+      )}
+      {tab === 'chats' && (
+        <ChatLinks
+          chats={props.chats ?? []}
+          onOpen={props.onOpenChat}
+          onLoadPreview={props.onLoadChatPreview}
+        />
       )}
       {tab === 'people' && seesPeople && (
         <LevelPeopleTab

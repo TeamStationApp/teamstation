@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import type { TeamStationClient, TeamSummary } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
+import type { ChatLink } from '../chat/ChatLinks'
 import { Button, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -51,6 +52,9 @@ export interface GroupScreenProps {
     title: string,
     options?: GameListOpenOptions
   ) => void
+  chats?: ChatLink[]
+  onOpenChat?: (chat: ChatLink) => void
+  onLoadChatPreview?: (ids: string[]) => void
   initialTab?: string
   onTab?: (tab: string, correcting?: boolean) => void
   initialWhen?: When
@@ -65,6 +69,9 @@ export function GroupScreen(props: GroupScreenProps): React.ReactElement {
         onSignIn={props.onSignIn}
         client={props.client}
         id={props.groupRef.id}
+        chats={props.chats}
+        onOpenChat={props.onOpenChat}
+        onLoadChatPreview={props.onLoadChatPreview}
         initialTab={props.initialTab}
         onTab={props.onTab}
         onOpenGame={props.onOpenGame ?? (() => undefined)}
@@ -113,6 +120,9 @@ function GroupContent({
   onAutoScheduler,
   onOpenRequest,
   onOpenGame,
+  chats,
+  onOpenChat,
+  onLoadChatPreview,
   initialTab,
   onTab,
   initialWhen,
@@ -219,6 +229,9 @@ function GroupContent({
               }
             : undefined
         }
+        chats={chats}
+        onOpenChat={onOpenChat}
+        onLoadChatPreview={onLoadChatPreview}
         initialTab={initialTab}
         onTab={onTab}
         initialWhen={initialWhen}
@@ -296,6 +309,9 @@ function GroupContent({
       onChanged={() => {
         load().catch(() => undefined)
       }}
+      chats={chats}
+      onOpenChat={onOpenChat}
+      onLoadChatPreview={onLoadChatPreview}
       initialTab={initialTab}
       onTab={onTab}
     />

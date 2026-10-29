@@ -253,7 +253,7 @@ describe('TeamScreen for a fan', function () {
         }}
       />
     )
-    expect(tabs()).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+    expect(tabs()).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
     expect(tabsSaid).deep.equals([])
     expect([...calls.asked].sort()).deep.equals([
       'follows',
@@ -330,11 +330,13 @@ describe('TeamScreen for a fan', function () {
         nonMemberView
         team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
         onOpenGame={() => undefined}
-        chats={[{ id: 'cnv_fans', title: 'Hawks Fans' }]}
+        chats={[{ id: 'cnv_fans', title: 'Hawks Fans', label: 'Fans' }]}
         onOpenChat={chat => opened.push(chat.id)}
       />
     )
-    await press('Open Hawks Fans')
+    expect(control('Open Fans')).equals(undefined)
+    await press('Chats')
+    await press('Open Fans')
     expect(opened).deep.equals(['cnv_fans'])
   })
 
@@ -394,7 +396,7 @@ describe('TeamScreen for the team’s own people', function () {
       await render(
         <TeamScreen client={client} team={team} onOpenGame={() => undefined} />
       )
-      expect(tabs()).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+      expect(tabs()).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
       expect(control('Follow Hawks')).equals(undefined)
       expect(control('Following Hawks')).equals(undefined)
       expect(calls.asked).to.include('teamGames')
