@@ -5,6 +5,7 @@ import {
   appendFileSync,
   chmodSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -83,11 +84,11 @@ const OTHER_KEY = 'ts_otherkeyotherkeyother'
 let events: LiveEvent[] = []
 let logs: string[] = []
 
-function configure(): void {
+function configure(ffmpegPath = FAKE_FFMPEG): void {
   events = []
   logs = []
   configureIngest({
-    ffmpegPath: FAKE_FFMPEG,
+    ffmpegPath,
     bindHost: '127.0.0.1',
     port: 19_361,
     app: 'live',
@@ -814,8 +815,20 @@ describe('a stream that comes back', function () {
 
 describe('a live playlist through a reconnect', function () {
   this.timeout(30000)
-  const dir = spec().hlsDir
-  const argsFile = join(tmpdir(), 'ts-live-test-reconnect-args.txt')
+  let dir: string
+  let argsFile: string
+  let ffmpegPath: string
+  let writerStartedAt: number
+  const processes = require('child_process') as { spawn: typeof spawn }
+  let originalSpawn: typeof spawn
+
+  function spec(destinations: string[] = []): {
+    liveStreamId: string
+    hlsDir: string
+    destinations: string[]
+  } {
+    return { liveStreamId: 'liv_test', hlsDir: dir, destinations }
+  }
 
   /** The arguments the stand-in ffmpeg was started with, once it has been. */
   async function writerArgs(): Promise<string[]> {
@@ -834,21 +847,31 @@ describe('a live playlist through a reconnect', function () {
   }
 
   beforeEach(function () {
-    rmSync(dir, { recursive: true, force: true })
-    mkdirSync(dir, { recursive: true })
-    rmSync(argsFile, { force: true })
+    // Each writer owns its files, including while a previous child exits.
+    dir = mkdtempSync(join(tmpdir(), 'ts-live-reconnect-'))
+    argsFile = join(dir, 'writer-args.txt')
+    ffmpegPath = join(dir, 'ffmpeg.sh')
+    writerStartedAt = 0
+    originalSpawn = processes.spawn
+    processes.spawn = ((...args: Parameters<typeof spawn>) => {
+      if (args[0] === ffmpegPath) writerStartedAt = Date.now()
+      return originalSpawn(...args)
+    }) as typeof spawn
     writeFileSync(
-      FAKE_FFMPEG,
-      `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\nexec sleep 30\n`
+      ffmpegPath,
+      // Real FFmpeg emits progress as well as filesystem events. Exercise
+      // that transport without depending on platform watcher delivery.
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\nwhile true; do echo out_time_us=0; sleep 0.05; done\n`
     )
-    chmodSync(FAKE_FFMPEG, 0o755)
+    chmodSync(ffmpegPath, 0o755)
     resetForTest()
-    configure()
+    configure(ffmpegPath)
   })
 
   afterEach(function () {
+    processes.spawn = originalSpawn
     resetForTest()
-    const pidFile = join(tmpdir(), 'ts-live-test-reconnect-pids.txt')
+    const pidFile = join(dir, 'writer-pids.txt')
     try {
       for (const pid of readFileSync(pidFile, 'utf8').trim().split('\n')) {
         const n = Number(pid)
@@ -867,7 +890,6 @@ describe('a live playlist through a reconnect', function () {
       // No writer recorded a pid.
     }
     rmSync(pidFile, { force: true })
-    writeFileSync(FAKE_FFMPEG, '#!/bin/sh\nexec sleep 30\n')
     rmSync(argsFile, { force: true })
     rmSync(dir, { recursive: true, force: true })
   })
@@ -1214,7 +1236,10 @@ describe('a live playlist through a reconnect', function () {
       hevcSegment(0, [wallClockNal(back - 5000, false), IDR_SLICE])
     )
     const wall = await placedAt(init, 'seg000003.m4s')
-    expect(wall ?? 0).closeTo(40.86, 0.25)
+    expect(wall ?? 0).closeTo(
+      (writerStartedAt - videoStartMs - 1400) / 1000,
+      0.25
+    )
     writeFileSync(
       join(dir, 'seg000004.m4s'),
       hevcSegment(4, [wallClockNal(back + 4000), IDR_SLICE])
@@ -1240,10 +1265,14 @@ describe('a live playlist through a reconnect', function () {
       join(dir, 'seg000003.m4s'),
       hevcSegment(0, [wallClockNal(back - 3_600_000), IDR_SLICE])
     )
-    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(40.86, 0.25)
+    const expectedSec = (writerStartedAt - videoStartMs - 1400) / 1000
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(
+      expectedSec,
+      0.25
+    )
     writeFileSync(join(dir, 'seg000004.m4s'), hevcSegment(4, [IDR_SLICE]))
     expect((await placedAt(init, 'seg000004.m4s', 10)) ?? 0).closeTo(
-      44.86,
+      expectedSec + 4,
       0.25
     )
     expect(events.some(event => event.type === 'publisherPlaced')).equals(false)
@@ -1268,7 +1297,7 @@ describe('a live playlist through a reconnect', function () {
       setLive(KEY, { ...spec(), videoStartMs })
       forcePublishForTest(KEY, true)
       await writerArgs()
-      startedAt = Date.now()
+      startedAt = writerStartedAt
     } finally {
       promises.open = open
     }
@@ -1427,7 +1456,7 @@ describe('a live playlist through a reconnect', function () {
 
   /** How many times the stand-in ffmpeg was started. */
   function spawnCount(): number {
-    const path = join(tmpdir(), 'ts-live-test-reconnect-spawns.txt')
+    const path = join(dir, 'writer-spawns.txt')
     try {
       return readFileSync(path, 'utf8').trim().split('\n').filter(Boolean)
         .length
@@ -1437,13 +1466,13 @@ describe('a live playlist through a reconnect', function () {
   }
 
   function countSpawns(): void {
-    const path = join(tmpdir(), 'ts-live-test-reconnect-spawns.txt')
+    const path = join(dir, 'writer-spawns.txt')
     rmSync(path, { force: true })
     writeFileSync(
-      FAKE_FFMPEG,
+      ffmpegPath,
       `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\necho spawn >> ${path}\nexec sleep 30\n`
     )
-    chmodSync(FAKE_FFMPEG, 0o755)
+    chmodSync(ffmpegPath, 0o755)
   }
 
   it('does not start a writer when the publisher leaves while the playlist is being read', async function () {
@@ -1482,17 +1511,17 @@ describe('a live playlist through a reconnect', function () {
 
   it('starts the next writer after one that has not exited yet', async function () {
     this.timeout(25000)
-    const pids = join(tmpdir(), 'ts-live-test-reconnect-pids.txt')
+    const pids = join(dir, 'writer-pids.txt')
     rmSync(pids, { force: true })
-    const spawns = join(tmpdir(), 'ts-live-test-reconnect-spawns.txt')
+    const spawns = join(dir, 'writer-spawns.txt')
     rmSync(spawns, { force: true })
     // SIGTERM is ignored, which is a writer still flushing when its stop
     // arrives. The shell stays, so the stop cannot be mistaken for an exit.
     writeFileSync(
-      FAKE_FFMPEG,
+      ffmpegPath,
       `#!/bin/sh\necho $$ >> ${pids}\nprintf '%s\\n' "$@" > ${argsFile}\necho spawn >> ${spawns}\ntrap 'true' TERM\nwhile true; do sleep 30; done\n`
     )
-    chmodSync(FAKE_FFMPEG, 0o755)
+    chmodSync(ffmpegPath, 0o755)
     setLive(KEY, spec())
     forcePublishForTest(KEY, true)
     await writerArgs()
@@ -1588,7 +1617,7 @@ describe('a live playlist through a reconnect', function () {
       setLive(KEY, { ...spec(), videoStartMs })
       forcePublishForTest(KEY, true)
       await writerArgs()
-      startedAt = Date.now()
+      startedAt = writerStartedAt
     } finally {
       processes.spawn = spawnReal
       files.watch = watchReal
@@ -1824,12 +1853,12 @@ describe('a live playlist through a reconnect', function () {
     const last = join(dir, 'last-word.txt')
     // A writer that, told to stop, takes a moment and then writes once more.
     writeFileSync(
-      FAKE_FFMPEG,
-      `#!/bin/sh\ntrap 'sleep 0.3; echo done > ${last}; exit 0' TERM\nsleep 30 &\nwait\n`
+      ffmpegPath,
+      `#!/bin/sh\ntrap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; sleep 0.3; echo done > ${last}; exit 0' TERM\nsleep 30 &\nchild=$!\nprintf '%s\\n' "$@" > ${argsFile}\nwait\n`
     )
     setLive(KEY, spec())
     forcePublishForTest(KEY, true)
-    await new Promise(resolve => setTimeout(resolve, 300))
+    await writerArgs()
     await clearLiveSettled(KEY, 'the stream was ended')
     expect(readFileSync(last, 'utf8').trim()).equals('done')
     expect(statusFor(KEY)).equals(undefined)
