@@ -10,11 +10,16 @@ import {
 } from '../../common/api'
 import { tagTargets } from '../../common/eventTags'
 import type { ScoringAction } from '../../common/scoring/actions'
+import { storedRecordOf } from '../../common/scoring/gumbo'
 import { baseIds, freshGame, overrideOf } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
+import {
+  priorRunnerFixture,
+  priorRunnerRoster
+} from '../../test/priorRunnerFixture'
 import { F } from '../../test/scoringGames'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import type { BaseballScreen } from '../field/BaseballScreen'
@@ -2910,4 +2915,187 @@ describe('scoring screen field wiring', function () {
     })
     expect(props().summary).includes('1 balls')
   })
+})
+
+describe('prior-play runner field corrections and scoring sheet', () => {
+  it('keeps a runner on second after a single and the actual Done countdown', async () => {
+    const originalClock = { ...scoringClock }
+    let time = 0
+    let serial = 0
+    const timers = new Map<number, () => void>()
+    scoringClock.now = () => time
+    scoringClock.schedule = callback => {
+      timers.set(++serial, callback)
+      return serial
+    }
+    scoringClock.cancel = id => {
+      timers.delete(id as number)
+    }
+    try {
+      const { session } = priorRunnerFixture('second')
+      expect(session.sync([])).deep.equals([])
+      await mount(
+        { persistent: false, open: async () => session },
+        { away: priorRunnerRoster('away'), home: priorRunnerRoster('home') }
+      )
+      for (const hit of ['Double', 'Single']) {
+        const outcome = props().ballInPlayControl as React.ReactElement<{
+          onChoose: (outcome: string) => void
+        }>
+        await step(() => {
+          outcome.props.onChoose(hit)
+        })
+        const fielder = players().find(player => player.playerId === 207)!
+        await step(() => field().onFieldPlacement?.(placement(fielder.id)))
+        await step(() =>
+          field().onTrajectoryAccepted?.(25, field().interaction!.generation)
+        )
+        await settle()
+        expect(props().remainingMs).to.be.a('number')
+        await step(() => {
+          time += 10000
+          const due = [...timers.values()]
+          timers.clear()
+          for (const callback of due) callback()
+        })
+      }
+      expect(baseIds(session.state)).deep.equals([101, null, 100])
+      expect(field().interaction!.retreatIds).includes('offense-100')
+      await step(() => field().onGestureActive?.(true))
+      await step(() =>
+        field().onRunnerDrop?.(
+          'offense-100',
+          2,
+          'safe',
+          field().interaction!.generation
+        )
+      )
+      await step(() => field().onGestureActive?.(false))
+      expect(baseIds(session.state)).deep.equals([101, 100, null])
+      expect(document.body.textContent).includes(
+        'Runner did not advance on prior play. Sent back to 2nd.'
+      )
+    } finally {
+      Object.assign(scoringClock, originalClock)
+    }
+  })
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    HTMLCanvasElement.prototype.getContext = getContext
+    container?.remove()
+    container = undefined
+  })
+  const drop = async (to: number): Promise<void> => {
+    await step(() =>
+      field().onRunnerDrop?.(
+        'offense-100',
+        to,
+        'safe',
+        field().interaction!.generation
+      )
+    )
+  }
+  const click = async (label: string): Promise<void> => {
+    await step(() => {
+      document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+    })
+  }
+  for (const [scenario, to] of [
+    ['first', 1],
+    ['second', 2],
+    ['home', 3]
+  ] as const)
+    it(`returns the closed ${scenario} runner and displays the notice`, async () => {
+      const { session } = priorRunnerFixture(scenario)
+      await mount(
+        { persistent: false, open: async () => session },
+        { away: priorRunnerRoster('away'), home: priorRunnerRoster('home') }
+      )
+      expect(field().interaction!.retreatIds).includes('offense-100')
+      expect(field().runnerSafeError?.('offense-100', to)).equals(undefined)
+      if (scenario === 'home') {
+        expect(
+          players().some(p => p.playerId === 100 && p.team === 'runner')
+        ).equals(true)
+        expect(field().interaction!.advanceIds).not.includes('offense-100')
+      }
+      const beforeDrag = field().players
+      await step(() => field().onGestureActive?.(true))
+      expect(field().players).equals(beforeDrag)
+      await drop(to)
+      await step(() => field().onGestureActive?.(false))
+      expect(baseIds(session.state)[to - 1]).equals(100)
+      expect(document.body.textContent).includes(
+        `Runner did not advance on prior play. Sent back to ${['', '1st', '2nd', '3rd'][to]}.`
+      )
+      expect(
+        document.querySelector('[aria-label="Yes, send back runner"]')
+      ).equals(null)
+      await step(() => {
+        document.querySelector<HTMLElement>('[role="alert"]')!.click()
+      })
+      expect(document.body.textContent).not.includes('Runner did not advance')
+    })
+  it('cancels without changing the game, then confirms with the same pitches and times', async () => {
+    const { session } = priorRunnerFixture('pitched')
+    await mount(
+      { persistent: false, open: async () => session },
+      { away: priorRunnerRoster('away'), home: priorRunnerRoster('home') }
+    )
+    const original = JSON.stringify(session.picture().current)
+    const log = JSON.stringify(session.actions)
+    await step(() => field().onGestureActive?.(true))
+    await drop(1)
+    await step(() => field().onGestureActive?.(false))
+    expect(JSON.stringify(session.actions)).equals(log)
+    expect(document.querySelector('[role="heading"]')?.textContent).equals(
+      'Pitch events have occurred since the runner advanced. Are you sure you want to send back the runner from the prior play?'
+    )
+    await click('Cancel')
+    expect(JSON.stringify(session.picture().current)).equals(original)
+    await drop(1)
+    await click('Yes, send back runner')
+    expect(baseIds(session.state)[0]).equals(100)
+    const before = JSON.parse(original)
+    expect(session.picture().current!.playEvents).deep.equals(before.playEvents)
+    expect(storedRecordOf(session.picture().current)!.actionTimes).deep.equals(
+      before.teamStation.actionTimes
+    )
+    await step(() => {
+      props().onUndo?.()
+    })
+    expect(baseIds(session.state)[0]).equals(100)
+    expect(session.state.liveData.linescore.balls).equals(1)
+  })
+
+  for (const cause of ['pitch', 'inactive', 'readonly', 'unmounted'] as const)
+    it(`ignores a confirmation that became stale after ${cause}`, async () => {
+      const { session } = priorRunnerFixture('pitched')
+      const render = await mount(
+        { persistent: false, open: async () => session },
+        { away: priorRunnerRoster('away'), home: priorRunnerRoster('home') }
+      )
+      await drop(1)
+      const confirm = componentProps<{ confirm: () => void }>(
+        'PriorRunnerOverlay'
+      ).confirm
+      if (cause === 'pitch')
+        await step(() => {
+          props().onPitch('ball')
+        })
+      if (cause === 'inactive') await render({ active: false })
+      if (cause === 'readonly')
+        Object.defineProperty(session, 'readOnly', { get: () => true })
+      if (cause === 'unmounted')
+        await step(() => {
+          root!.unmount()
+        })
+      const log = JSON.stringify(session.actions)
+      await step(confirm)
+      expect(JSON.stringify(session.actions)).equals(log)
+      expect(baseIds(session.state)[1]).equals(100)
+    })
 })

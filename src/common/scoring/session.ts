@@ -1,8 +1,10 @@
 import { HttpError } from '../errors'
 import {
+  eventSignature,
   historyTargets,
   type TagDocument,
   TagIdentityRegistry,
+  tagMetadata,
   type TagTarget,
   tagTargets
 } from '../eventTags'
@@ -24,6 +26,7 @@ import type { SwapEffect } from './playsLost'
 import { awaitingResult, nextDecision } from './rules'
 import {
   copyGame,
+  copyState,
   type GamePlay,
   type GameSetup,
   type GameState,
@@ -309,6 +312,8 @@ export class ScoringSession {
   private isOffline = false
   private readonly now: () => Date
   private readActions = new WeakSet<ScoringAction>()
+  /** Unchanged history carried through a correction and any save retry. */
+  private readonly retainedHistory = new WeakSet<ScoringAction>()
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
 
@@ -731,7 +736,11 @@ export class ScoringSession {
     return this.append(action, true)
   }
 
-  private append(action: ScoringAction, save: boolean): Applied {
+  private append(
+    action: ScoringAction,
+    save: boolean,
+    replay = false
+  ): Applied {
     if (this.refusal != null) {
       return {
         state: this.game,
@@ -756,7 +765,8 @@ export class ScoringSession {
     // applied to it in place: `applyAction`'s own copy is of the whole game.
     const applied = applyAction(copyGame(this.game), action, {
       inPlace: true,
-      requireCurrentSetup: this.options.requireCurrentSetup === true
+      replay,
+      requireCurrentSetup: !replay && this.options.requireCurrentSetup === true
     })
     if (applied.problems.length > 0)
       return {
@@ -821,8 +831,36 @@ export class ScoringSession {
    * agree, then applies the rest. A screen that keeps its own history calls
    * this after every change to it.
    */
-  sync(target: readonly ScoringAction[]): Problem[] {
+  sync(
+    target: readonly ScoringAction[],
+    retainedEvents: ReadonlyArray<{
+      atBatIndex: number
+      before: number
+      after: number
+    }> = [],
+    preserveHistory = false
+  ): Problem[] {
     if (this.refusal != null) return [{ code: 'notNow', message: this.refusal }]
+    // Corrections may retain actions from older scoring versions. Only exact
+    // actions already in this session qualify; edited/new actions stay strict.
+    const history = new Set(preserveHistory ? this.log : [])
+    if (preserveHistory) {
+      let trial = copyState(this.base)
+      for (const action of target) {
+        const applied = applyAction(trial, action, {
+          inPlace: true,
+          replay: history.has(action),
+          requireCurrentSetup:
+            !history.has(action) && this.options.requireCurrentSetup === true
+        })
+        if (applied.problems.length > 0) return applied.problems
+        trial = applied.state
+      }
+    }
+    const original =
+      retainedEvents.length === 0
+        ? null
+        : { game: this.game, picture: this.picture() }
     let same = 0
     while (
       same < this.log.length &&
@@ -840,18 +878,21 @@ export class ScoringSession {
       same++
     }
     let cut: Displaced | null = null
-    if (same < this.log.length) {
-      cut = this.cut(same)
-      this.rebuild()
-      this.changed()
-    }
+    let changed = false
     // The run is matched against what the cut displaced once, at its end:
     // a correction far back re-applies hundreds of actions.
     this.holding = true
     try {
+      if (same < this.log.length) {
+        cut = this.cut(same)
+        this.rebuild()
+        changed = true
+      }
       for (const action of target.slice(same)) {
-        const applied = this.apply(action)
+        const applied = this.append(action, false, history.has(action))
         if (applied.problems.length > 0) return applied.problems
+        if (history.has(action)) this.retainedHistory.add(action)
+        changed = true
       }
       return []
     } finally {
@@ -863,6 +904,89 @@ export class ScoringSession {
       // Then that history is settled, and what the cut took off within the
       // minute is let go.
       if (cut != null) this.settle(cut)
+      // Publish the completed rewrite once. Intermediate pictures would prune
+      // tag identities belonging to the unchanged at-bats being replayed.
+      if (changed) {
+        if (original != null) {
+          const folded = this.fold()
+          for (const atBatIndex of new Set(
+            retainedEvents.map(event => event.atBatIndex)
+          )) {
+            const oldPlay = original.game.liveData.plays.allPlays.find(
+              play => play.about.atBatIndex === atBatIndex
+            )
+            const newPlay = this.game.liveData.plays.allPlays.find(
+              play => play.about.atBatIndex === atBatIndex
+            )
+            const before = original.picture.plays.get(atBatIndex)
+            const after = folded.plays.get(atBatIndex)
+            if (
+              oldPlay == null ||
+              newPlay == null ||
+              before == null ||
+              after == null
+            )
+              continue
+            // Stored documents may insert substitution announcements or omit
+            // provisional runner events. Match the retained engine events to
+            // their stored positions without treating ordinals as identities.
+            const indexes = (
+              play: GamePlay,
+              document: GumboPlay
+            ): Map<number, number> => {
+              const stored = (
+                document.playEvents as Array<Record<string, unknown>>
+              )
+                .map((event, index) => ({ event, index }))
+                .filter(({ event }) => event.isSubstitution !== true)
+              const engine = play.playEvents.filter(
+                event =>
+                  event.isSubstitution !== true &&
+                  (event.details.runnerEntry == null ||
+                    play.runners[event.details.runnerEntry]?.details
+                      .byAction === true)
+              )
+              return new Map(
+                engine.flatMap((event, i) =>
+                  stored[i] == null ? [] : [[event.index, stored[i].index]]
+                )
+              )
+            }
+            const oldIndexes = indexes(oldPlay, before)
+            const newIndexes = indexes(newPlay, after)
+            const metadata = tagMetadata(before)
+            const events = retainedEvents
+              .filter(event => event.atBatIndex === atBatIndex)
+              .flatMap(event => {
+                const oldIndex = oldIndexes.get(event.before)
+                const index = newIndexes.get(event.after)
+                const identity = metadata.events.find(
+                  target => target.index === oldIndex
+                )
+                return identity == null ||
+                  index == null ||
+                  identity.signature !==
+                    eventSignature((after.playEvents as unknown[])[index])
+                  ? []
+                  : [{ ...identity, index }]
+              })
+            const substitutions = tagMetadata(
+              this.tagIdentities.decorate(after, true)
+            ).events.filter(
+              event =>
+                (after.playEvents as Array<Record<string, unknown>>)[
+                  event.index
+                ].isSubstitution === true
+            )
+            this.tagIdentities.restore({
+              ...after,
+              tagTargets: { ...metadata, events: [...substitutions, ...events] }
+            })
+          }
+        }
+        this.picture()
+        this.changed()
+      }
     }
   }
 
@@ -1039,10 +1163,14 @@ export class ScoringSession {
       // follows is scored from that lineup.
       const roster = reconcileShownLineup(action, this.log, this.game)
       if (roster == null) continue
+      const historical =
+        index < stored ||
+        (roster === action && this.retainedHistory.has(action))
       const applied = applyAction(copyGame(this.game), roster, {
         inPlace: true,
-        requireCurrentSetup: this.options.requireCurrentSetup === true,
-        replay: index < stored
+        requireCurrentSetup:
+          !historical && this.options.requireCurrentSetup === true,
+        replay: historical
       })
       if (applied.problems.length > 0) {
         refused.push(applied.problems[0].message)
@@ -1051,6 +1179,7 @@ export class ScoringSession {
       // An action that had no time, scored by an app before actions carried
       // them, stays without one; its play keeps only its own times.
       const time = replayTimes[index]
+      if (historical) this.retainedHistory.add(roster)
       this.log.push(roster)
       this.actionTimes.push(time)
       this.playbackTimes.push(replayPlaybackTimes[index])
@@ -1285,7 +1414,7 @@ export class ScoringSession {
     this.segment = segment
     this.revision++
     // Reconcile now, before a redo can reuse the position of an undone pitch.
-    this.picture()
+    if (!this.holding) this.picture()
   }
 
   // ---- What the server should hold, and what it does not yet ----

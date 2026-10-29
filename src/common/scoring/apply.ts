@@ -1338,6 +1338,7 @@ function runnerMovement(
   }
   const pending = state.pending
   const to = destinationBase(action.to)
+  if (action.reason === 'Back' && returnHitAdvance(ctx, action, to)) return
   let where = locate(ctx, action.runner)
   if (where < 0) refuse('unknownPlayer', 'That runner is not on the play')
   const decision = nextDecision(state)
@@ -1467,6 +1468,94 @@ function runnerMovement(
     )
   }
   commitSafe(ctx, action, where, to, joining)
+}
+
+/** An explicit correction edits the hit's movement, without an action event. */
+function returnHitAdvance(
+  ctx: Ctx,
+  action: RunnerMovementAction,
+  to: number
+): boolean {
+  const pending = ctx.state.pending
+  if (pending == null || HIT_BASES[pending.outcome] == null) return false
+  if (
+    pending.outcome === 'Home Run' &&
+    current(ctx).matchup.batter.id !== action.runner
+  )
+    refuse('illegal', 'A home run awards every preceding runner home')
+  const move = pending.movements.find(item => item.playerId === action.runner)
+  if (
+    move == null ||
+    move.force ||
+    move.decision !== 'safe' ||
+    action.out === true ||
+    to < 1 ||
+    to !== move.to - 1 ||
+    to < (move.start ?? move.from) ||
+    baseIds(ctx.state)[to - 1] != null
+  )
+    return false
+  const play = current(ctx)
+  const row = [...play.runners]
+    .reverse()
+    .find(
+      item =>
+        item.details.runner.id === action.runner &&
+        !item.movement.isOut &&
+        item.movement.end === move.to &&
+        item.details.byAction !== true
+    )
+  if (row?.movement.start == null || row.movement.start > to) return false
+  const from = move.to
+  const source = [...(play.source.teamstation.runnerActions ?? [])]
+    .reverse()
+    .find(
+      item =>
+        item.runner.id === action.runner &&
+        item.origin === row.movement.start &&
+        item.destination === from &&
+        !item.isOut
+    )
+  if (row.movement.runScored === true) {
+    line(ctx).teams[battingSide(ctx.state)].runs--
+    ctx.out.push({ type: 'runsTakenBack', runs: 1 })
+  }
+  if (row.movement.start === to) removeAdvanceRow(play, action.runner, to, from)
+  else {
+    row.movement.end = to
+    row.movement.runScored = false
+    row.details.rbi = false
+    row.details.earned = false
+    row.details.teamUnearned = false
+    if (source != null) {
+      source.destination = to
+      source.runScored = false
+    }
+  }
+  // Returning the hit itself also corrects the batter's extra-base credit.
+  if (row.movement.start === 0 && play.matchup.batter.id === action.runner) {
+    const old = pending.outcome
+    const outcome = (['Single', 'Double', 'Triple'] as const)[to - 1]
+    pending.outcome = outcome
+    play.result.event = outcome
+    play.result.eventType = (['single', 'double', 'triple'] as const)[to - 1]
+    play.result.description = outcome
+    play.source.teamstation.outcome = outcome
+    delete play.source.teamstation.homeRunKind
+    delete play.source.teamstation.landingHeight
+    for (const item of play.runners)
+      if (item.details.movementReason === old)
+        item.details.movementReason = outcome
+    for (const item of play.source.teamstation.runnerActions ?? [])
+      if (item.reason === old) item.reason = outcome
+  }
+  move.to = to
+  move.resolved = true
+  move.automaticHome = false
+  setBase(ctx, action.runner, to)
+  countRbi(play)
+  ctx.out.push({ type: 'runnerReturned', runner: action.runner, from, to })
+  return true
 }
 
 function commitSafe(
@@ -1619,12 +1708,32 @@ function undoHitOffer(
   if (move?.offeredTo == null) refuse('illegal', 'A runner cannot go back')
   const start = move.start ?? to
   const play = current(ctx)
+  removeAdvanceRow(play, runnerId, start, from)
+  for (const key of BASE_KEYS) line(ctx).offense[key] = null
+  move.to = to
+  move.from = start
+  move.decision = 'safe'
+  move.resolved = true
+  for (const other of pending.movements) {
+    if (other.decision === 'out') continue
+    if (other.to > 0 && other.to < 4) setBase(ctx, other.playerId, other.to)
+  }
+  ctx.out.push({ type: 'runnerReturned', runner: runnerId, from, to })
+  settle(ctx)
+}
+
+function removeAdvanceRow(
+  play: GamePlay,
+  runnerId: number,
+  start: number,
+  end: number
+): void {
   for (let i = play.runners.length - 1; i >= 0; i--) {
     const row = play.runners[i]
     if (
       row.details.runner.id === runnerId &&
       !row.movement.isOut &&
-      row.movement.end === from &&
+      row.movement.end === end &&
       row.movement.start === start
     ) {
       play.runners.splice(i, 1)
@@ -1633,7 +1742,7 @@ function undoHitOffer(
         for (let j = actions.length - 1; j >= 0; j--) {
           if (
             actions[j].runner.id === runnerId &&
-            actions[j].destination === from &&
+            actions[j].destination === end &&
             actions[j].origin === start
           ) {
             actions.splice(j, 1)
@@ -1645,22 +1754,6 @@ function undoHitOffer(
     }
   }
   countRbi(play)
-  for (const key of BASE_KEYS) line(ctx).offense[key] = null
-  move.to = to
-  move.from = start
-  move.decision = 'safe'
-  move.resolved = true
-  for (const other of pending.movements) {
-    if (other.decision === 'out') continue
-    if (other.to > 0 && other.to < 4) setBase(ctx, other.playerId, other.to)
-  }
-  ctx.out.push({
-    type: 'runnerReturned',
-    runner: runnerId,
-    from,
-    to
-  })
-  settle(ctx)
 }
 
 /** The lead runner headed home: safe, out, or sent back to third. */
@@ -1717,7 +1810,9 @@ function homeMovement(
       setBase(ctx, move.playerId, move.to)
       const old = before.find(item => item.playerId === move.playerId)!
       if (old.to !== move.to) {
-        recordRunner(ctx, move, { reason: 'Back' })
+        // A return to the starting base is no advance in the saved play.
+        if (move.from !== move.to) recordRunner(ctx, move, { reason: 'Back' })
+        else removeAdvanceRow(current(ctx), move.playerId, move.from, old.to)
         ctx.out.push({
           type: 'runnerReturned',
           runner: move.playerId,

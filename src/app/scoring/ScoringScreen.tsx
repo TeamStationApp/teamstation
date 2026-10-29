@@ -118,6 +118,10 @@ import {
   type PlayerDraft,
   rosterPlayerBody
 } from './playerDraft'
+import {
+  priorRunnerPlayers,
+  usePriorRunnerCorrection
+} from './priorRunnerCorrection'
 import { useDictationHandover } from './rosterDictation'
 import { sameValue } from './rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
@@ -2194,6 +2198,13 @@ function ScoringPanel(props: {
         setRosterProblem('Unable to refresh the game. Please try again.')
       })
   }
+  const priorRunner = usePriorRunnerCorrection(
+    props.game,
+    state,
+    props.active && !status.readOnly,
+    `${props.gameId}:${props.userId}`,
+    dispatch
+  )
   const { phase, pendingPlay, motions, runnerAction, presentation } = state
   const previousPlayers = useRef<FieldPlayer[]>([])
   const players = useMemo(() => {
@@ -2211,23 +2222,26 @@ function ScoringPanel(props: {
     const labels = shortPlayerNames(
       Object.values(displaySession.gameData.players)
     )
-    const named = next.map(player => {
-      const person = displaySession.gameData.players[player.playerId ?? 0]
-      if (person == null) return player
-      const label = labels.get(person.id) ?? ''
-      return {
-        ...player,
-        name: label,
-        displayName: label,
-        jersey: person.jersey
+    const named = priorRunnerPlayers(next, priorRunner.candidates, session).map(
+      player => {
+        const person = displaySession.gameData.players[player.playerId ?? 0]
+        if (person == null) return player
+        const label = labels.get(person.id) ?? ''
+        return {
+          ...player,
+          name: label,
+          displayName: label,
+          jersey: person.jersey
+        }
       }
-    })
+    )
     const complete = [...named, ...emptyDefensePlayers(session)]
     previousPlayers.current = complete
     return complete
   }, [
     session,
     displaySession,
+    priorRunner.candidates,
     phase,
     pendingPlay,
     motions,
@@ -2366,8 +2380,17 @@ function ScoringPanel(props: {
   const retreatIds =
     state.phase === 'correctionWindow' || state.phase === 'homeDecision'
       ? hitOfferRetreatIds
-      : []
-  const advanceIds = homeWaiting ? hitOfferAdvanceIds : undefined
+      : priorRunner.candidates.map(item => `offense-${item.runner}`)
+  const advanceIds = homeWaiting
+    ? hitOfferAdvanceIds
+    : priorRunner.candidates.some(item => item.from === 4)
+      ? runnerIds.filter(
+          id =>
+            !priorRunner.candidates.some(
+              item => item.from === 4 && id === `offense-${item.runner}`
+            )
+        )
+      : undefined
   const instruction =
     state.presentation != null
       ? undefined
@@ -2526,6 +2549,13 @@ function ScoringPanel(props: {
         runnerSafeError: (id, to) => {
           const player = players.find(item => item.id === id)
           if (player?.playerId == null) return 'Runner unavailable'
+          if (
+            priorRunner.candidates.some(
+              candidate =>
+                candidate.runner === player.playerId && candidate.to === to
+            )
+          )
+            return undefined
           return runnerDecisionError({
             ...state,
             runnerAction: {
@@ -2541,6 +2571,7 @@ function ScoringPanel(props: {
           if (tiebreaker.active || generation !== state.generation) return
           const player = players.find(item => item.id === id)
           if (player?.playerId == null) return
+          if (priorRunner.drop(player.playerId, to)) return
           dispatch({
             type: 'RUNNER_DROP',
             id: player.playerId,
@@ -2979,6 +3010,7 @@ function ScoringPanel(props: {
           onRefresh={refreshDefensiveRoster}
         />
       )}
+      {priorRunner.overlay}
       <ErrorCreditSheet state={state} dispatch={dispatch} />
       <RelayedRunnerDragTargets
         relay={runnerDrag}
