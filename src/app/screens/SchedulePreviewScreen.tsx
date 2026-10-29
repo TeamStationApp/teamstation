@@ -1,6 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -35,7 +38,8 @@ import {
   SectionHeader,
   useHeaderHandoff,
   usePinnedHandoff,
-  usePinnedTabs
+  usePinnedTabs,
+  webStyle
 } from '../components'
 import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
@@ -196,6 +200,37 @@ export function SchedulePreviewScreen({
   // column, so the calendar is given the pane's width, or the seven
   // narrowest columns' when that is wider, and its columns share it.
   const [paneWidth, setPaneWidth] = useState(0)
+  // How tall the pinned tabs and filter rows are: each week's header sticks
+  // just under them until the next week's header takes its place.
+  const [pinnedHeight, setPinnedHeight] = useState(0)
+  // Each week's day headers and rows scroll sideways in a scroller of their
+  // own, outside which the header can stick; the scrollers move together.
+  const scrollers = useRef(
+    new Map<string, React.ComponentRef<typeof ScrollView>>()
+  )
+  const scrollX = useRef(0)
+  const register = useCallback(
+    (id: string) =>
+      (scroller: React.ComponentRef<typeof ScrollView> | null): void => {
+        if (scroller == null) {
+          scrollers.current.delete(id)
+          return
+        }
+        scrollers.current.set(id, scroller)
+        scroller.scrollTo({ x: scrollX.current, animated: false })
+      },
+    []
+  )
+  const followSideways = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
+      const x = event.nativeEvent.contentOffset.x
+      if (Math.abs(x - scrollX.current) < 1) return
+      scrollX.current = x
+      for (const scroller of scrollers.current.values())
+        scroller.scrollTo({ x, animated: false })
+    },
+    []
+  )
   const begin = useLatestRequest()
   const confirmation = useConfirmedAction(client, previewId)
   const published = preview?.status === 'published'
@@ -391,26 +426,29 @@ export function SchedulePreviewScreen({
       <View style={styles.box} testID="preview-game">
         <View style={styles.boxTop}>
           <Text style={styles.boxTime}>{time?.box}</Text>
-          {game.exhibition && (
-            <View style={styles.exhibition} accessibilityLabel="Exhibition">
-              <Text style={styles.exhibitionText}>EXH</Text>
-            </View>
-          )}
         </View>
         {/* Wrapped, never cut: two fields at one park differ at the end. */}
         <Text style={styles.boxDetail}>
           {field == null ? '' : view.labels.get(field.id)}
           {field == null ? '' : ` · ${fieldSizeLabel(game.size)}`}
         </Text>
-        <Text style={styles.boxTeam} numberOfLines={2}>
-          Home: {teamName(game.homeTeamId)}
-        </Text>
-        <Text style={styles.boxTeam} numberOfLines={2}>
-          Away: {teamName(game.awayTeamId)}
-        </Text>
         {state != null && (
           <Text style={styles.boxDetail}>{STATE_LABELS[state]}</Text>
         )}
+        {/* The away team over the home team, as a score line reads. */}
+        <Text style={styles.boxTeam} numberOfLines={2}>
+          {teamName(game.awayTeamId)} @
+        </Text>
+        <View style={styles.boxBottom}>
+          <Text style={[styles.boxTeam, styles.boxHome]} numberOfLines={2}>
+            {teamName(game.homeTeamId)}
+          </Text>
+          {game.exhibition && (
+            <View style={styles.exhibition} accessibilityLabel="Exhibition">
+              <Text style={styles.exhibitionText}>EXH</Text>
+            </View>
+          )}
+        </View>
         {/*
           Last, so it is drawn over the box: a 44-point target in the box's
           top right corner, wholly inside it, whatever lies beneath.
@@ -437,25 +475,62 @@ export function SchedulePreviewScreen({
       </View>
     )
   }
+  const calendarWidth = Math.max(
+    paneWidth,
+    theme.rem(7 * COLUMN_REM + 6 * COLUMN_GAP_REM)
+  )
+  // On the web a week's header is sticky under the pinned rows, within its
+  // own week, so the next week's header pushes it away.
+  const weekHeadPin =
+    Platform.OS === 'web'
+      ? webStyle({
+          position: 'sticky',
+          top: head.headerHeight + pinnedHeight,
+          zIndex: 1
+        })
+      : undefined
   const week = (shown: CalendarWeek): React.ReactElement => (
     <View key={shown.number} style={styles.week} testID="preview-week">
-      <Text style={styles.weekTitle}>{weekTitle(shown)}</Text>
-      <View style={styles.weekRow}>
-        {shown.days.map(day => (
-          <View key={day} style={styles.cell}>
-            <Text style={styles.dayHeader}>{dayHeader(day)}</Text>
+      <View style={[styles.weekHead, weekHeadPin]} testID="preview-week-head">
+        <Text style={styles.weekTitle} testID="preview-week-title">
+          {weekTitle(shown)}
+        </Text>
+        <ScrollView
+          horizontal
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          ref={register(`days-${shown.number}`)}
+        >
+          <View
+            style={[styles.weekRow, { width: calendarWidth }]}
+            testID="preview-week-days"
+          >
+            {shown.days.map(day => (
+              <View key={day} style={styles.cell}>
+                <Text style={styles.dayHeader}>{dayHeader(day)}</Text>
+              </View>
+            ))}
           </View>
-        ))}
+        </ScrollView>
       </View>
-      {shown.rows.map((row, index) => (
-        <View key={index} style={styles.weekRow}>
-          {row.map((game, day) => (
-            <View key={day} style={styles.cell}>
-              {game == null ? <View style={styles.emptyBox} /> : box(game)}
+      <ScrollView
+        horizontal
+        ref={register(`rows-${shown.number}`)}
+        onScroll={followSideways}
+        scrollEventThrottle={16}
+      >
+        <View style={[styles.weekRows, { width: calendarWidth }]}>
+          {shown.rows.map((row, index) => (
+            <View key={index} style={styles.weekRow} testID="preview-week-row">
+              {row.map((game, day) => (
+                <View key={day} style={styles.cell}>
+                  {game == null ? <View style={styles.emptyBox} /> : box(game)}
+                </View>
+              ))}
             </View>
           ))}
         </View>
-      ))}
+      </ScrollView>
     </View>
   )
   const seasonPills = (all: boolean): Array<{ id: string; label: string }> => [
@@ -496,7 +571,12 @@ export function SchedulePreviewScreen({
       </CardBand>
 
       <PillBand part={pinned.pillBand}>
-        <View testID="previewPinnedRows">
+        <View
+          testID="previewPinnedRows"
+          onLayout={event => {
+            setPinnedHeight(event.nativeEvent.layout.height)
+          }}
+        >
           <PillTabs
             accessibilityLabel="Preview sections"
             tabs={TABS}
@@ -620,26 +700,14 @@ export function SchedulePreviewScreen({
                 weeks.length === 0 ? (
                   <Text style={styles.meta}>No games match these filters.</Text>
                 ) : (
-                  <ScrollView
-                    horizontal
+                  <View
+                    style={styles.calendar}
                     onLayout={event => {
                       setPaneWidth(event.nativeEvent.layout.width)
                     }}
                   >
-                    <View
-                      style={[
-                        styles.calendar,
-                        {
-                          width: Math.max(
-                            paneWidth,
-                            theme.rem(7 * COLUMN_REM + 6 * COLUMN_GAP_REM)
-                          )
-                        }
-                      ]}
-                    >
-                      {weeks.map(week)}
-                    </View>
-                  </ScrollView>
+                    {weeks.map(week)}
+                  </View>
                 )
               ) : (
                 shownOption != null && (
@@ -1041,12 +1109,19 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.8125),
     color: theme.secondaryTextColor
   },
-  // Every week scrolls sideways together on a phone; on a wide pane the
-  // seven columns share its whole width.
+  // The weeks, one under another. Each week's columns share the pane's
+  // width, or scroll sideways together on a phone.
   calendar: {
     gap: theme.rem(1.25)
   },
   week: { gap: theme.rem(COLUMN_GAP_REM) },
+  // The page shows through nowhere: rows scroll under a stuck header.
+  weekHead: {
+    gap: theme.rem(COLUMN_GAP_REM),
+    paddingVertical: theme.rem(0.25),
+    backgroundColor: theme.backgroundColor
+  },
+  weekRows: { gap: theme.rem(COLUMN_GAP_REM) },
   weekTitle: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
@@ -1102,6 +1177,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.75),
     color: theme.secondaryTextColor
   },
+  // The home team, with an exhibition game's EXH at the box's bottom right.
+  boxBottom: {
+    flexDirection: 'row' as const,
+    alignItems: 'flex-end' as const,
+    gap: theme.rem(0.25)
+  },
+  boxHome: { flex: 1 },
   boxTeam: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.75),

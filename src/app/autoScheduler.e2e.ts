@@ -1212,8 +1212,8 @@ async function e7(run: Run): Promise<void> {
     await contains(admin.page, all)
   await contains(admin.page, 'EXH')
   const weekTitles = await admin.page.evaluate(() =>
-    [...document.querySelectorAll('[data-testid="preview-week"]')].map(
-      week => (week.firstElementChild as HTMLElement).innerText
+    [...document.querySelectorAll('[data-testid="preview-week-title"]')].map(
+      title => (title as HTMLElement).innerText
     )
   )
   expect(weekTitles.length).greaterThan(0)
@@ -1228,10 +1228,7 @@ async function e7(run: Run): Promise<void> {
   // boxes hold, and the weeks scroll sideways.
   const columns = await admin.page.evaluate(() =>
     [
-      ...(
-        document.querySelector('[data-testid="preview-week"]')!
-          .children[1] as HTMLElement
-      ).children
+      ...document.querySelector('[data-testid="preview-week-days"]')!.children
     ].map(cell => Math.round(cell.getBoundingClientRect().width))
   )
   expect(columns).deep.equals(Array(7).fill(108))
@@ -1276,6 +1273,32 @@ async function e7(run: Run): Promise<void> {
   })
   expect(twice.recalculateBottom).lessThan(twice.headerBottom + 1)
   expect(twice.titleInHeader).greaterThan(0.9)
+  // The week under the pinned rows keeps its title and days stuck just
+  // below them, until the next week's head takes its place.
+  const stuck = async (): Promise<string | null> =>
+    await admin.page.evaluate(() => {
+      const bottom = document
+        .querySelector('[data-testid="previewPinnedRows"]')!
+        .getBoundingClientRect().bottom
+      const head = [
+        ...document.querySelectorAll('[data-testid="preview-week-head"]')
+      ].find(node => Math.abs(node.getBoundingClientRect().top - bottom) <= 1)
+      const title =
+        head === undefined
+          ? null
+          : head.querySelector<HTMLElement>(
+              '[data-testid="preview-week-title"]'
+            )
+      return title == null ? null : title.innerText
+    })
+  const firstStuck = await stuck()
+  expect(firstStuck).matches(/^Week \d+ · /)
+  await wheel(admin, 900)
+  const laterStuck = await stuck()
+  expect(laterStuck).matches(/^Week \d+ · /)
+  expect(Number(/\d+/.exec(laterStuck!)![0])).greaterThan(
+    Number(/\d+/.exec(firstStuck!)![0])
+  )
   await capture(admin.m, artifacts, 'preview-phone-scrolled.png')
   await wheel(admin, -5000)
   await tapText(admin, 'Fairness', '[role="tab"]')
@@ -1300,8 +1323,9 @@ async function e7(run: Run): Promise<void> {
   await contains(desktop.page, 'All seasons')
   const fits = await desktop.page.evaluate(() => {
     const week = document.querySelector('[data-testid="preview-week"]')
-    if (week === null) return null
-    let scroller = week.parentElement
+    const row = document.querySelector('[data-testid="preview-week-row"]')
+    if (week === null || row === null) return null
+    let scroller = row.parentElement
     while (
       scroller !== null &&
       getComputedStyle(scroller).overflowX !== 'auto' &&

@@ -399,7 +399,12 @@ describe('a schedule preview', () => {
     const weeks = [
       ...document.querySelectorAll<HTMLElement>('[data-testid="preview-week"]')
     ]
-    expect(weeks.map(week => week.firstElementChild!.textContent)).deep.equals([
+    expect(
+      weeks.map(
+        week =>
+          week.querySelector('[data-testid="preview-week-title"]')!.textContent
+      )
+    ).deep.equals([
       'Week 7 · Apr 12 – Apr 18',
       'Week 8 · Apr 19 – Apr 25',
       'Week 11 · May 10 – May 16'
@@ -407,27 +412,45 @@ describe('a schedule preview', () => {
     // A header per day, and a second row of boxes for Saturday's second game.
     expect(weeks[0].textContent).includes('Mon · Apr · 12')
     expect(weeks[0].textContent).includes('Sat · Apr · 17')
-    const rows = [...weeks[0].children].slice(1)
-    expect(rows.length).equals(3)
+    // The title and the day headers are the week's head, apart from its rows.
+    const weekHead = weeks[0].querySelector(
+      '[data-testid="preview-week-head"]'
+    )!
+    expect(weekHead.textContent).includes('Week 7')
+    expect(weekHead.textContent).includes('Sat · Apr · 17')
+    expect(weekHead.querySelector('[data-testid="preview-game"]')).equals(null)
+    const rows = [
+      ...weeks[0].querySelectorAll('[data-testid="preview-week-row"]')
+    ]
+    expect(rows.length).equals(2)
     expect(
-      rows[1].querySelectorAll('[data-testid="preview-game"]').length
+      rows[0].querySelectorAll('[data-testid="preview-game"]').length
     ).equals(1)
-    expect(rows[2].textContent).includes('Home: Demo Foxes')
-    expect(rows[2].textContent).includes('Away: Demo Hawks')
+    expect(rows[1].textContent).includes('Demo Foxes')
+    expect(rows[1].textContent).includes('Demo Hawks @')
     // Each box: the viewer's time with the field's, the field, home and away,
     // and no date of its own.
-    const first = rows[1].querySelector<HTMLElement>(
+    const first = rows[0].querySelector<HTMLElement>(
       '[data-testid="preview-game"]'
     )!
     expect(first.textContent).includes('5:00 AM · 8:00 AM EDT at the field')
     expect(first.textContent).includes('XMPL PRK/Field 1 · 50/70')
-    expect(first.textContent).includes('Home: Demo Hawks')
-    expect(first.textContent).includes('Away: Demo Owls')
+    // The away team over the home team, names as they are, no Home or Away.
+    expect(first.textContent).includes('Demo Owls @Demo Hawks')
+    expect(first.textContent).not.includes('Home:')
     expect(first.textContent).not.includes('Apr')
     expect(first.textContent).not.includes('EXH')
     // An exhibition game is tagged.
     expect(weeks[1].textContent).includes('EXH')
-    expect(weeks[1].textContent).includes('Home: Demo Foxes')
+    // EXH is at the bottom right, beside the home team.
+    const exhibition = weeks[1].querySelector<HTMLElement>(
+      '[aria-label="Exhibition"]'
+    )!
+    expect(exhibition.previousElementSibling!.textContent).equals('Demo Foxes')
+    expect(
+      exhibition.parentElement!.nextElementSibling!.getAttribute('aria-label')
+    ).matches(/^Reject /)
+    expect(weeks[1].textContent).includes('Demo Foxes')
     // A Tuesday 4:00 PM game in Los Angeles sits under Tuesday.
     expect(weeks[2].textContent).includes('4:00 PM · 7:00 PM EDT at the field')
   })
