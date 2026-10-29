@@ -55,7 +55,11 @@ import {
 export { type Applied, applyAction }
 
 // Prior-play corrections use the same session boundary as other scoring edits.
-export { type PriorRunner, priorRunners, returnPriorRunner } from './priorRunner'
+export {
+  type PriorRunner,
+  priorRunners,
+  returnPriorRunner
+} from './priorRunner'
 
 /**
  * The game as the next action will find it. A decided play stays open for
