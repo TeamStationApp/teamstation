@@ -25,7 +25,7 @@ export function ManagePlayers({
   const [pictures, setPictures] = useState<Record<string, string | null>>({})
   const players = people
     .filter(person =>
-      person.teams.some(team => team.id === teamId && team.isPlayer)
+      person.teams.some(team => team.id === teamId && team.isPlayer === true)
     )
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
   const confirmation = useConfirmedAction(

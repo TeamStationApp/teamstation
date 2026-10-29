@@ -57,7 +57,7 @@ import {
   unb64
 } from './keyRecord'
 import { keyStore } from './keyStore'
-import { LinkDeviceScreen } from './LinkDeviceScreen'
+import { LINK_POLL_MS, LinkDeviceScreen } from './LinkDeviceScreen'
 import { browserName, thisDevice } from './thisDevice'
 import { thisDevice as phoneDevice } from './thisDevice.native'
 
@@ -105,8 +105,12 @@ async function settle(ms = 30): Promise<void> {
   })
 }
 
-async function until(what: string, check: () => boolean): Promise<void> {
-  for (let i = 0; i < 100; i++) {
+async function until(
+  what: string,
+  check: () => boolean,
+  timeoutMs = 2000
+): Promise<void> {
+  for (let i = 0; i < Math.ceil(timeoutMs / 20); i++) {
     if (check()) return
     await settle(20)
   }
@@ -1447,7 +1451,11 @@ describe('chat devices in the app', function () {
     await until('the code', () => text().includes('Waiting for approval'))
     expect(currentRoute()).deep.equals({ name: 'chatLink' })
     fake.approve(fake.links[0].id)
-    await until('the devices', () => text().includes('YOUR DEVICES'))
+    await until(
+      'the devices',
+      () => text().includes('YOUR DEVICES'),
+      LINK_POLL_MS * 3
+    )
     expect(currentRoute()).deep.equals({ name: 'chatDevices' })
   })
 

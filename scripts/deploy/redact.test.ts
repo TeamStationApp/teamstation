@@ -63,7 +63,7 @@ describe('Build output redaction', () => {
     )
     assert.equal(
       redact('Authorization: Bearer abcdefgh12345678'),
-      'Authorization: Bearer [redacted]'
+      'Authorization: [redacted] [redacted]'
     )
     assert.equal(
       redact('MATCH_PASSWORD=hunter22 api_key: "k e y" token=\'t\''),

@@ -66,6 +66,10 @@ describe('the scope the visible route holds', () => {
       dictationModels: []
     })
     api.hasNotifications = async () => false
+    // The shell loads its chat list before any screen scope is acknowledged.
+    // Keep that background request online; a missing fetch stub otherwise
+    // marks the caching client offline and bypasses the scope's wait.
+    api.chatConversations = async () => []
     api.teams = async () => {
       reads.push('teams')
       return []
@@ -182,6 +186,9 @@ describe('the scope the visible route holds', () => {
     const asked: string[] = []
     globalThis.fetch = (async (input: string) => {
       asked.push(input)
+      // Refuse the scoped read, not unrelated shell or analytics requests.
+      if (!input.endsWith('/seasons'))
+        return new Response('{}', { status: 404 })
       return new Response('{"error":"unauthorized","message":"Sign in"}', {
         status: 401
       })
@@ -208,9 +215,15 @@ describe('the scope the visible route holds', () => {
       type: 'unsubscribe',
       scope: 'home'
     })
-    // Nothing else held it open, and nothing reconnects until a new token.
-    expect(socket.closedWith).equals(1000)
+    // The shell's chat listener still owns the shared socket. Only the
+    // refused screen scope stops; it must not subscribe again on a notice.
+    expect(socket.readyState).equals(1)
+    const stopped = scopeFrames(socket)
+    await act(async () => {
+      socket.receive({ type: 'changed', scope: 'home', revision: '4' })
+    })
     await settle(1200)
+    expect(scopeFrames(socket)).deep.equals(stopped)
     expect(sockets.sockets).has.lengthOf(1)
   })
 })

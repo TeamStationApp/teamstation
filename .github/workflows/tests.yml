@@ -1,7 +1,6 @@
 name: Tests
 
 on:
-  push:
   pull_request:
 
 permissions:
@@ -48,29 +47,24 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - name: Install FFmpeg build dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential nasm pkg-config libx264-dev libx265-dev
-      - uses: actions/cache@v4
-        id: ffmpeg
+      - uses: actions/setup-python@v5
         with:
-          path: .test-tools/ffmpeg
-          key: ffmpeg-9.0.1-ubuntu24.04-${{ runner.arch }}-x264-x265-v1
-      - name: Build the pinned FFmpeg release
-        if: steps.ffmpeg.outputs.cache-hit != 'true'
+          python-version: '3.13'
+      - name: Install image test dependency
+        run: python -m pip install Pillow==12.0.0
+      - name: Install the pinned FFmpeg binary
         run: |
-          curl --fail --location --retry 3 https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz -o "$RUNNER_TEMP/ffmpeg.tar.xz"
-          echo "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum --check
-          tar -xf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP"
-          cd "$RUNNER_TEMP/ffmpeg-9.0.1"
-          ./configure --prefix="$GITHUB_WORKSPACE/.test-tools/ffmpeg" --enable-gpl --enable-libx264 --enable-libx265 --disable-doc --disable-debug --disable-ffplay
-          make -j2
-          make install
+          curl --fail --location --retry 3 https://github.com/TeamStationApp/teamstation/releases/download/tools-ffmpeg-9.0.1/ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          echo "82916751d9858ec7672f4b4a3552eacb345bc9f80c96df1b16a4ae8d8f25960a  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum --check
+          mkdir -p .test-tools/ffmpeg
+          tar -xf "$RUNNER_TEMP/ffmpeg.tar.xz" -C .test-tools/ffmpeg --strip-components=1
       - name: Configure the synthetic test environment
         run: |
           echo "$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin" >> "$GITHUB_PATH"
           echo "TS_FFMPEG=$GITHUB_WORKSPACE/.test-tools/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
-          node -e 'require("fs").writeFileSync("serverConfig.json", JSON.stringify({ffmpegPath: process.cwd() + "/.test-tools/ffmpeg/bin/ffmpeg", ffmpegVersion: "9.0.1"}))'
+          node -e 'require("fs").writeFileSync("serverConfig.json", JSON.stringify({ffmpegPath: process.cwd() + "/.test-tools/ffmpeg/bin/ffmpeg", ffmpegVersion: "n9.0.1-30-g9258bacca5-20260915"}))'
           .test-tools/ffmpeg/bin/ffmpeg -version
+          .test-tools/ffmpeg/bin/ffprobe -version
           .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx264
           .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx265
       - run: npm ci

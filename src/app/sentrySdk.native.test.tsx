@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { apiBaseUrl } from './native/config'
 import { sdkOptions, sentryHost } from './sentrySdk.native'
 
 describe('native crash host configuration', () => {
@@ -14,6 +15,6 @@ describe('native crash host configuration', () => {
       attachViewHierarchy: false,
       enableNetworkBreadcrumbs: false
     })
-    expect(sentryHost()).equals('app.example.test')
+    expect(sentryHost()).equals(new URL(apiBaseUrl).hostname)
   })
 })

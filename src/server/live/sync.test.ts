@@ -1,4 +1,11 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -432,12 +439,32 @@ describe('what the ingest is told', function () {
 
   it('finishes angles ended together side by side, not one after another', async function () {
     if (options == null || db == null) this.skip()
-    // Writers that each take 0.6 s to exit once told to stop.
+    // Both writers must receive their stop before either is allowed to exit.
     const writer = join(mediaRoot, 'slow-writer.sh')
+    const ready = join(mediaRoot, 'writers-ready')
+    const stopping = join(mediaRoot, 'writers-stopping')
+    const completed = join(mediaRoot, 'writers-completed')
+    const release = join(mediaRoot, 'release-writers')
+    await writeFile(ready, '')
+    await writeFile(stopping, '')
+    await writeFile(completed, '')
     await writeFile(
       writer,
-      `#!/bin/sh\ntrap 'sleep 0.6; exit 0' TERM\nsleep 30 &\nwait\n`
+      `#!/bin/sh\ntrap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; echo stopping >> "${stopping}"; while [ ! -f "${release}" ]; do sleep 0.01; done; echo completed >> "${completed}"; exit 0' TERM\nsleep 30 &\nchild=$!\necho ready >> '${ready}'\nwait\n`
     )
+    const waitForBoth = async (path: string): Promise<number> => {
+      const deadline = Date.now() + 5000
+      let count = 0
+      while (Date.now() < deadline) {
+        count = (await readFile(path, 'utf8'))
+          .trim()
+          .split('\n')
+          .filter(Boolean).length
+        if (count === 2) break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      return count
+    }
     await chmod(writer, 0o755)
     configureIngest({
       ffmpegPath: writer,
@@ -495,19 +522,30 @@ describe('what the ingest is told', function () {
       }
       await sync(options)
       for (const [, , key] of angles) forcePublishForTest(key, true)
-      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(await waitForBoth(ready), 'both writers ready').equals(2)
 
       await db
         .updateTable('live_streams')
         .set({ closes_at: new Date(Date.now() - 1000) })
         .where('id', 'in', ['liv_3', 'liv_4'])
         .execute()
-      const started = Date.now()
-      await sync(options)
-      const took = Date.now() - started
-      // In turn, the two waits add up to 1.2 s at the least.
-      expect(took).lessThan(1100)
-      expect(took).greaterThan(500)
+      const finished = sync(options)
+      // Observe rejection immediately while checking the stop barrier.
+      finished.catch(() => undefined)
+      let stoppedTogether = 0
+      try {
+        stoppedTogether = await waitForBoth(stopping)
+      } finally {
+        await writeFile(release, '')
+        await finished
+      }
+      expect(stoppedTogether, 'both stops precede either exit').equals(2)
+      // A sequential stop can reach the second writer after force-killing
+      // the first. Both must instead survive until the barrier is released.
+      expect(
+        (await readFile(completed, 'utf8')).trim().split('\n').filter(Boolean),
+        'both writers finish gracefully after release'
+      ).has.length(2)
       expect(liveKeys()).not.contains(FOURTH_KEY)
       expect(liveKeys()).not.contains(FIFTH_KEY)
       const ended = await db
@@ -517,6 +555,7 @@ describe('what the ingest is told', function () {
         .execute()
       expect(ended.map(row => row.state)).deep.equals(['ended', 'ended'])
     } finally {
+      await writeFile(release, '')
       configureIngest({
         ffmpegPath: '/does/not/matter',
         bindHost: '127.0.0.1',

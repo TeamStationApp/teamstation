@@ -54,6 +54,13 @@ import {
  */
 export { type Applied, applyAction }
 
+// Prior-play corrections use the same session boundary as other scoring edits.
+export {
+  type PriorRunner,
+  priorRunners,
+  returnPriorRunner
+} from './priorRunner'
+
 /**
  * The game as the next action will find it. A decided play stays open for
  * correction until the next pitch or play is reported, which closes it, so
