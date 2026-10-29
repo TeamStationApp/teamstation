@@ -119,8 +119,9 @@ export interface PlayerScreenProps {
    */
   onRemovedFromTeam?: (teamId: string, teamName: string, notice: string) => void
   /**
-   * Opens the game's video at the moment of one of their highlights, in the
-   * full-screen player, stopping at `untilSec` where the server says.
+   * Opens the game's video at the moment of one of their highlights: in the
+   * app in the full-screen player, stopping at `untilSec` where the server
+   * says; in a browser in the game page's picture, playing from the moment.
    */
   onOpenMoment?: (
     gameId: string,

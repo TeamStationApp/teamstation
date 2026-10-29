@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
+import { Platform } from 'react-native'
 
 import {
   asHighlightsResponse,
@@ -124,86 +125,114 @@ describe('the full-screen player in the shell (U12)', () => {
     expect(window.location.search).includes('angles=v1')
   })
 
-  it('opens a highlight chosen on a player page straight into the player, and Back returns there', async () => {
-    const api = TeamStationClient.prototype
-    const player = userIdOfGumbo(7)
-    // Signed in: a player's page is for members.
-    api.whoAmI = async () =>
-      asSessionUser({
-        id: userIdOfGumbo(1),
-        displayName: 'Babe Ruth',
-        isAdmin: false
-      })
-    api.player = async () =>
-      asPlayerDetail({
-        userId: player,
-        name: 'Mookie B',
-        bats: 'right',
-        throws: 'right',
-        teams: [],
-        guardianInviteAs: null
-      })
-    api.playerHighlights = async () => ({
-      highlights: [
-        {
-          tag: null,
-          eventId: 'e1',
-          gameId: 'g1',
-          videoId: 'v1',
-          teamId: null,
-          teamName: 'Dodgers',
-          outcome: 'Double',
-          title: 'Double: Mookie B',
-          playAt: '2026-10-19T18:02:52Z',
-          startOffsetSec: 142,
-          playOffsetSec: 172,
-          endOffsetSec: 177,
-          stillUrl: ''
+  for (const platform of ['ios', 'web'] as const)
+    it(`${platform === 'ios' ? 'in the app, opens a highlight chosen on a player page straight into the player' : 'in a browser, opens a highlight chosen on a player page in the game page’s picture'}, and Back returns there`, async () => {
+      const was = Platform.OS
+      Platform.OS = platform
+      try {
+        const api = TeamStationClient.prototype
+        const player = userIdOfGumbo(7)
+        // Signed in: a player's page is for members.
+        api.whoAmI = async () =>
+          asSessionUser({
+            id: userIdOfGumbo(1),
+            displayName: 'Babe Ruth',
+            isAdmin: false
+          })
+        api.player = async () =>
+          asPlayerDetail({
+            userId: player,
+            name: 'Mookie B',
+            bats: 'right',
+            throws: 'right',
+            teams: [],
+            guardianInviteAs: null
+          })
+        api.playerHighlights = async () => ({
+          highlights: [
+            {
+              tag: null,
+              eventId: 'e1',
+              gameId: 'g1',
+              videoId: 'v1',
+              teamId: null,
+              teamName: 'Dodgers',
+              outcome: 'Double',
+              title: 'Double: Mookie B',
+              playAt: '2026-10-19T18:02:52Z',
+              startOffsetSec: 142,
+              playOffsetSec: 172,
+              endOffsetSec: 177,
+              stillUrl: ''
+            }
+          ],
+          nextBefore: null,
+          withoutVideo: 0
+        })
+        api.playerStats = async () => ({
+          userId: player,
+          filter: { seasonId: null, teamId: null, year: null },
+          games: 1,
+          batting: null,
+          pitching: null,
+          options: { seasons: [], teams: [], years: [] }
+        })
+        showRoute({ name: 'player', userId: player }, true)
+        await mount(<App />)
+        await settle(200)
+        const row = [
+          ...document.querySelectorAll<HTMLElement>('[role="button"]')
+        ].find(node => (node.textContent ?? '').includes('Double'))
+        expect(row, 'the highlight').not.equals(undefined)
+        await act(async () => {
+          row!.click()
+        })
+        await settle(400)
+        if (platform === 'ios') {
+          // The game page, and over it the player already open on the highlight.
+          expect(currentRoute()).deep.include({
+            name: 'game',
+            angles: ['v1'],
+            audio: 'v1'
+          })
+          expect(
+            document.querySelector(`[aria-label="${lstrings.angles_close}"]`)
+          ).not.equals(null)
+          await act(async () => {
+            document
+              .querySelector<HTMLElement>(
+                `[aria-label="${lstrings.angles_close}"]`
+              )!
+              .click()
+          })
+          await settle(200)
+        } else {
+          // The game page, with no player over it, and its picture at the
+          // highlight, playing.
+          expect(currentRoute()).deep.include({ name: 'game', gameId: 'g1' })
+          expect(
+            document.querySelector(`[aria-label="${lstrings.angles_close}"]`)
+          ).equals(null)
+          const video = document.querySelector('video')!
+          let played = 0
+          video.play = async () => {
+            played += 1
+          }
+          await act(async () => {
+            video.dispatchEvent(new window.Event('loadedmetadata'))
+          })
+          expect(video.currentTime).equals(142)
+          expect(played).greaterThan(0)
         }
-      ],
-      nextBefore: null,
-      withoutVideo: 0
+        expect(currentRoute()).deep.include({ name: 'game' })
+        expect(window.location.search).not.includes('angles=')
+        await act(async () => {
+          window.history.back()
+        })
+        await settle(200)
+        expect(currentRoute()).deep.include({ name: 'player', userId: player })
+      } finally {
+        Platform.OS = was
+      }
     })
-    api.playerStats = async () => ({
-      userId: player,
-      filter: { seasonId: null, teamId: null, year: null },
-      games: 1,
-      batting: null,
-      pitching: null,
-      options: { seasons: [], teams: [], years: [] }
-    })
-    showRoute({ name: 'player', userId: player }, true)
-    await mount(<App />)
-    await settle(200)
-    const row = [
-      ...document.querySelectorAll<HTMLElement>('[role="button"]')
-    ].find(node => (node.textContent ?? '').includes('Double'))
-    expect(row, 'the highlight').not.equals(undefined)
-    await act(async () => {
-      row!.click()
-    })
-    await settle(400)
-    // The game page, and over it the player already open on the highlight.
-    expect(currentRoute()).deep.include({
-      name: 'game',
-      angles: ['v1'],
-      audio: 'v1'
-    })
-    expect(
-      document.querySelector(`[aria-label="${lstrings.angles_close}"]`)
-    ).not.equals(null)
-    await act(async () => {
-      document
-        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
-        .click()
-    })
-    await settle(200)
-    expect(currentRoute()).deep.include({ name: 'game' })
-    expect(window.location.search).not.includes('angles=')
-    await act(async () => {
-      window.history.back()
-    })
-    await settle(200)
-    expect(currentRoute()).deep.include({ name: 'player', userId: player })
-  })
 })

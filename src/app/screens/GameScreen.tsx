@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -207,15 +208,21 @@ export interface GameScreenProps {
      * the player opens on that moment. `null` clears it, on the way out.
      */
     from?: PlayerFrom | null
-    /** `null`: the highlight `highlightUntil` asked for has been opened. */
+    /**
+     * `null`: the highlight `highlightUntil` asked for is done with — opened
+     * in the full-screen player in the app, or, in a browser, left to the
+     * picture, which plays from it.
+     */
     highlightUntil?: null
   }) => void
   /** Where the open player was opened from (`onAngles`'s `from`). */
   from?: PlayerFrom
   /**
-   * A highlight chosen on another page: once `initialVideoId` can play, the
-   * player opens on it at `startAtSec`, playing, and stops here, in that
-   * video's seconds — as a highlight chosen on this page does.
+   * A highlight chosen on another page, ending here in `initialVideoId`'s
+   * seconds. In the app, once that video can play, the full-screen player
+   * opens on it at `startAtSec`, playing, and stops here — as a highlight
+   * chosen on this page does. In a browser it plays in the picture from
+   * `startAtSec`, which the page does for any moment, and is dropped.
    */
   highlightUntil?: number
   /** Opens one of the two teams, from its name or its mark on the card. */
@@ -327,6 +334,14 @@ const HEADER_SCORE_WIDTH = 201
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
+
+/**
+ * A highlight chosen in the app opens in the full-screen player, which closes
+ * at its end; in a browser it plays in the page's own picture.
+ */
+function highlightOpensFullScreen(): boolean {
+  return Platform.OS !== 'web'
+}
 
 /**
  * One game: its videos, the highlights under them, and the box score.
@@ -1045,8 +1060,19 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * screen owns it.
    */
   const viewerWants = useRef(false)
-  /** The card plays silent until its own sound square turns it on. */
-  const [cardSound, setCardSound] = useState(false)
+  /**
+   * The card plays silent until its own sound square turns it on — or, in a
+   * browser, a highlight chosen here or on a player's page, which is heard as
+   * the full-screen player it stands in for was.
+   */
+  const [cardSound, setCardSound] = useState(
+    () => props.highlightUntil != null && !highlightOpensFullScreen()
+  )
+  /**
+   * In a browser, a highlight chosen before the picture has its metadata:
+   * where it lands once it has, which a seek made sooner may not have done.
+   */
+  const aimedAt = useRef<number | null>(null)
   /**
    * The card is on its way back from the full-screen player, to the moment
    * it left: covered until it lands there.
@@ -1335,28 +1361,63 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // A link to a moment: start there, and start playing, because that is
     // what the person who sent the link meant by sending it. An explicit
     // paused return from another page keeps that intent instead.
+    // This run's own: a play refused after it has been stood down is not
+    // this run's to answer.
+    let current = true
+    // Played as it is set to be heard; a browser that will not start it
+    // with its sound (a refusal, not an interruption) gets it silent rather
+    // than not at all.
+    const play = (): void => {
+      Promise.resolve(element.play()).catch((error: unknown) => {
+        const refused =
+          error instanceof Error && error.name === 'NotAllowedError'
+        if (!refused || !current || element.muted) return
+        element.muted = true
+        setCardSound(false)
+        element.play().catch(() => undefined)
+      })
+    }
+    const stand = (): void => {
+      current = false
+      detach()
+    }
+
     const linkAt = startAtSecRef.current
     if (linkAt != null && linkAt > 0 && !startedFromLink.current) {
-      startedFromLink.current = true
+      // Started once it has run: a source swapped before its metadata (an
+      // address failing over) waits again for the next one's.
       const jump = (): void => {
+        startedFromLink.current = true
+        // A highlight chosen while it waited is where the viewer wants to
+        // be, and lands there itself.
+        if (aimedAt.current != null) return
         element.currentTime = linkAt
-        if (autoPlayRef.current !== false) element.play().catch(() => undefined)
+        if (autoPlayRef.current !== false) play()
       }
       if (element.readyState >= HAVE_METADATA) jump()
       else element.addEventListener('loadedmetadata', jump, { once: true })
-      return detach
+      return () => {
+        element.removeEventListener('loadedmetadata', jump)
+        stand()
+      }
     }
 
     if (autoPlayRef.current === true) {
-      // Silent, which every browser lets start on its own. If it refuses
-      // anyway, a tap opens the player, and saying so would be noise.
+      // Silent unless a highlight brought it here, which every browser lets
+      // start on its own; heard, it falls back to silent if refused. If it
+      // will not start at all, a tap opens the player, and saying so would
+      // be noise.
       const start = (): void => {
-        element.play().catch(() => undefined)
+        play()
       }
       element.addEventListener('loadedmetadata', start, { once: true })
       start()
+      return () => {
+        element.removeEventListener('loadedmetadata', start)
+        stand()
+      }
     }
-    return detach
+    return stand
   }, [playbackUrl, playerNode, showAngles])
 
   /**
@@ -1446,18 +1507,47 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // they can send to somebody else.
     if (video != null)
       onMoment?.(video.id, Math.round(highlight.startOffsetSec))
-    // The picture behind goes there too, so it is there on the way back.
+    // The picture goes there too: in the app so it is there on the way back,
+    // in a browser because that is where it is watched.
     const player = playerRef.current
     if (player != null) seekTo(player, highlight.startOffsetSec)
-    // Watched in the player, from the play on — when it can play here at
-    // all, as the picture's own tap: otherwise the player opens on a picture
-    // that can only say it cannot.
-    if (playback?.url != null && playable)
+    // Only when it can play here at all, as the picture's own tap: otherwise
+    // the player opens on a picture that can only say it cannot.
+    if (playback?.url == null || !playable) return
+    // In the app, watched in the full-screen player from the play on, which
+    // closes at the highlight's end. In a browser, in the picture, where it is.
+    if (highlightOpensFullScreen()) {
       openPlayer(highlight.startOffsetSec, highlight.endOffsetSec)
+      return
+    }
+    // The viewer has chosen where to be: a re-attach later (an address
+    // failing over) is not to send them back to a link's moment, this
+    // highlight's included, once they have watched on.
+    startedFromLink.current = true
+    // Heard, as the full-screen player would have been: the sound goes on
+    // inside the tap, the one moment a browser lets it start.
+    setCardSound(true)
+    if (player == null) return
+    player.muted = false
+    player.play().catch(() => undefined)
+    // A seek made before the stream has said how long it is can be dropped:
+    // made again, and played, once it has.
+    if (player.readyState < HAVE_METADATA) {
+      const at = highlight.startOffsetSec
+      aimedAt.current = at
+      const land = (): void => {
+        if (aimedAt.current !== at) return
+        aimedAt.current = null
+        player.currentTime = at
+        player.play().catch(() => undefined)
+      }
+      player.addEventListener('loadedmetadata', land, { once: true })
+    }
   }
 
-  // A highlight chosen on another page opens here straight into the player,
-  // once its video can play: the same open as one chosen in the list.
+  // A highlight chosen on another page opens here straight into the player in
+  // the app, once its video can play: the same open as one chosen in the
+  // list. (In a browser the picture plays it from the moment, and it is dropped.)
   // Its end is in the seconds of the video it was chosen on, which is the
   // address's video as the page opened: another camera chosen before it can
   // play is another recording, and the highlight is not opened on it (and is
@@ -1471,6 +1561,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     if (highlightUntil == null || video == null || showAngles) return
     if (video.id !== highlightVideo.current) return
     if (playback?.url == null || !playable) return
+    // The web plays it in the picture, which the page already opens at the
+    // highlight and plays: there is no full screen to open, only the frame
+    // to take it off — once its video is here, as the app's open is, and not
+    // while the shell is still putting this page in the history, which an
+    // update in place then would overwrite.
+    if (!highlightOpensFullScreen()) {
+      onAngles?.({ highlightUntil: null })
+      return
+    }
     openPlayer(startAtSec ?? 0, highlightUntil)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightUntil, video?.id, playback?.url, playable, showAngles])

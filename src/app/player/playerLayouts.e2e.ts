@@ -497,7 +497,8 @@ describe('player layouts in a browser', function () {
         )
     }
 
-    // A highlight opens the player at its own time.
+    // In a browser a highlight plays in the page's own picture, at its own
+    // time and with its sound, and no full-screen player opens.
     await open(session, `/games/${S.id}?tab=watch&video=${S.videos[1]}`)
     await inlineReady()
     const firstHighlight = await page.waitForSelector(
@@ -516,32 +517,14 @@ describe('player layouts in a browser', function () {
     const chosen = highlights.find(one => one.title === title)!
     await firstHighlight!.click()
     await page.waitForFunction(
-      `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 })()`,
-      { timeout: 60_000 }
+      `(() => { const v = document.querySelector('#root video'); return v != null && !v.paused && Math.abs(v.currentTime - ${chosen.startOffsetSec}) < 1.5 })()`,
+      { timeout: 30_000 }
     )
-    expect((await tiles())[0].t, 'the player at the highlight').closeTo(
-      chosen.startOffsetSec,
-      0.5
-    )
-
-    // Reloaded, the address names the angle and nothing of where it came
-    // from; Back is the videos page, and forward the player again.
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(
-      `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 })()`,
-      { timeout: 60_000 }
-    )
-    const search = (await page.evaluate('location.search')) as string
-    expect(search).includes('angles=')
-    expect(search).not.includes('from')
-    await page.goBack({ waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(`(() => ${GRID_VIDEOS}.length === 0)()`, {
-      timeout: 30_000
-    })
-    await page.goForward({ waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(`(() => ${GRID_VIDEOS}.length === 1)()`, {
-      timeout: 30_000
-    })
+    const card = (await page.evaluate(
+      `(() => ({ muted: document.querySelector('#root video').muted, grid: ${GRID_VIDEOS}.length }))()`
+    )) as { muted: boolean; grid: number }
+    expect(card.grid, 'no full-screen player').equals(0)
+    expect(card.muted, 'heard').equals(false)
   })
 
   it('scrubs on a drag, crawls on a hold, picks a tile up, and keys Right as a tap or a hold (E4)', async function () {

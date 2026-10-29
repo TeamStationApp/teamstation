@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -184,41 +185,49 @@ describe('a live video whose first segment is not written yet', function () {
 })
 
 describe('starting a live game at the latest footage', function () {
-  it('puts the picture at a highlight selected before the first Play, for the player it opens', async function () {
-    const prototype = window.HTMLMediaElement.prototype
-    const original = Object.getOwnPropertyDescriptor(prototype, 'canPlayType')!
-    prototype.canPlayType = () => 'maybe'
-    try {
-      await page('live', [there], undefined, true)
-      const video = document.querySelector('video')!
-      let paused = true
-      video.play = async () => {
-        paused = false
-        video.dispatchEvent(new window.Event('play'))
+  for (const platform of ['ios', 'web'] as const)
+    it(`puts the picture at a highlight selected before the first Play, ${platform === 'ios' ? 'for the player it opens in the app' : 'playing it there in a browser'}`, async function () {
+      const was = Platform.OS
+      Platform.OS = platform
+      const prototype = window.HTMLMediaElement.prototype
+      const original = Object.getOwnPropertyDescriptor(
+        prototype,
+        'canPlayType'
+      )!
+      prototype.canPlayType = () => 'maybe'
+      try {
+        await page('live', [there], undefined, true)
+        const video = document.querySelector('video')!
+        let paused = true
+        video.play = async () => {
+          paused = false
+          video.dispatchEvent(new window.Event('play'))
+        }
+        video.load = () => undefined
+        Object.defineProperty(video, 'paused', { get: () => paused })
+        Object.defineProperty(video, 'seekable', {
+          value: { length: 1, start: () => 0, end: () => 7200 }
+        })
+        await act(async () => {
+          video.dispatchEvent(new window.Event('loadedmetadata'))
+        })
+        const highlight = document.querySelector<HTMLElement>(
+          '[aria-label="Play highlight: Selected single"]'
+        )
+        expect(highlight, 'the highlight is available').not.equals(null)
+        await act(async () => {
+          highlight!.click()
+        })
+        // In the app, watched in the full-screen player, which opens there:
+        // the picture behind it waits at the play rather than jumping to the
+        // live edge. In a browser the picture plays it, from the play.
+        expect(video.paused).equals(platform === 'ios')
+        expect(video.currentTime).equals(300)
+      } finally {
+        Object.defineProperty(prototype, 'canPlayType', original)
+        Platform.OS = was
       }
-      video.load = () => undefined
-      Object.defineProperty(video, 'paused', { get: () => paused })
-      Object.defineProperty(video, 'seekable', {
-        value: { length: 1, start: () => 0, end: () => 7200 }
-      })
-      await act(async () => {
-        video.dispatchEvent(new window.Event('loadedmetadata'))
-      })
-      const highlight = document.querySelector<HTMLElement>(
-        '[aria-label="Play highlight: Selected single"]'
-      )
-      expect(highlight, 'the highlight is available').not.equals(null)
-      await act(async () => {
-        highlight!.click()
-      })
-      // Watched in the full-screen player, which opens there: the picture
-      // behind it waits at the play rather than jumping to the live edge.
-      expect(video.paused).equals(true)
-      expect(video.currentTime).equals(300)
-    } finally {
-      Object.defineProperty(prototype, 'canPlayType', original)
-    }
-  })
+    })
 
   it('joins on first play while leaving a timestamp link at its selected moment', async function () {
     const prototype = window.HTMLMediaElement.prototype
