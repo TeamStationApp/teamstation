@@ -73,7 +73,13 @@ export function PlayerEntrySheet({
         }
       : initialDraft == null
         ? emptyPlayerDraft()
-        : { ...initialDraft, throws: initialDraft.throws ?? 'right' }
+        : {
+            ...initialDraft,
+            // A pool player's hands are shown as held, unknown included.
+            throws: ownIdentity
+              ? initialDraft.throws
+              : (initialDraft.throws ?? 'right')
+          }
   )
   const editing = initialDraft != null
   const [pending, setPending] = useState(false)
@@ -101,11 +107,12 @@ export function PlayerEntrySheet({
     }
   }, [])
   const focus = (): void => {
-    first.current?.focus()
+    const field = ownIdentity ? jersey : first
+    field.current?.focus()
     // The web modal activates its focus trap after onShow; focus after that commit.
     if (focusFrame.current != null) cancelAnimationFrame(focusFrame.current)
     focusFrame.current = requestAnimationFrame(() => {
-      first.current?.focus()
+      field.current?.focus()
     })
   }
   const add = async (another: boolean): Promise<void> => {
@@ -306,7 +313,10 @@ export function PlayerEntrySheet({
                         else if (key === 'lastName') jersey.current?.focus()
                         else jersey.current?.blur()
                       }}
-                      autoFocus={editing && key === 'firstName'}
+                      autoFocus={
+                        editing &&
+                        key === (ownIdentity ? 'jersey' : 'firstName')
+                      }
                       accessibilityLabel={label}
                       editable={
                         (existing == null && !ownIdentity) || key === 'jersey'

@@ -251,7 +251,7 @@ describe('player entry sheet', function () {
               lastName: 'B',
               jersey: '50',
               bats: 'right',
-              throws: 'right',
+              throws: null,
               positions: ['RF']
             }}
             onAdd={() => undefined}
@@ -263,7 +263,7 @@ describe('player entry sheet', function () {
     expect((node('First Name') as HTMLInputElement).readOnly).equals(true)
     expect((node('Last Name') as HTMLInputElement).readOnly).equals(true)
     expect((node('Jersey Number') as HTMLInputElement).readOnly).equals(false)
-    expect(node('Throws right')).not.equals(null)
+    expect(node('Throws unknown')).not.equals(null)
     expect(node('Bats right')).not.equals(null)
     expect(document.querySelector('[aria-label="Throws L"]')).equals(null)
   })

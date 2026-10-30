@@ -3247,7 +3247,7 @@ function ScoringPanel(props: {
                 scorekeeperSide={props.scorekeeperSide}
                 state={state}
                 rosters={props.rosters}
-                guests={props.guests}
+                guests={[...props.guests, ...createdGuests.current]}
                 unaccepted={lineupsUnaccepted(state, props.visibleDefaults)}
                 onDraftChange={setRosterInitial}
                 conflict={rosterLive.conflict}
@@ -3273,14 +3273,17 @@ function ScoringPanel(props: {
                 onAddExistingRosterPlayer={async (teamId, body) =>
                   await props.client.addExistingRosterPlayer(teamId, body)
                 }
-                onAddExistingGuest={async (side, body) =>
-                  await props.client.addExistingGuest(
+                onAddExistingGuest={async (side, body) => {
+                  const answer = await props.client.addExistingGuest(
                     state.session.gamePk,
                     side,
                     body,
                     openedTeam(side, state.session.gameData.teams[side].id)
                   )
-                }
+                  if ('entry' in answer)
+                    createdGuests.current.push(answer.entry)
+                  return answer
+                }}
                 canEditTeams={props.rosterRights}
                 rosterLoading={props.detailsLoading}
                 rosterError={props.detailsProblem}

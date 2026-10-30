@@ -190,4 +190,21 @@ describe('game-only player renames', function () {
       expect(sent).has.length(3)
     }
   })
+
+  it('sends nothing for a pool player, who keeps their own name', async function () {
+    const sent: string[] = []
+    const client = {
+      renameGuestPlayer: async (_game: string, userId: string) => {
+        sent.push(userId)
+        return undefined as never
+      }
+    }
+    await sendGuestRenames(
+      client,
+      'g1',
+      [{ gumboId: 904, firstName: 'Mookie', lastName: 'Betts' }],
+      [{ userId: userIdOfGumbo(904), gumboId: 904, pool: true }]
+    )
+    expect(sent).deep.equals([])
+  })
 })
