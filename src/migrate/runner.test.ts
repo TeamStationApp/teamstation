@@ -410,7 +410,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '095spentCodeNames',
           '096rosterCandidateNames',
           '097noticeRequests',
-          '098streamManagement'
+          '098streamManagement',
+          '099videographerRequests'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
