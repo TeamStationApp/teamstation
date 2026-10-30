@@ -26,8 +26,9 @@ import {
  * - 30 game invitations wait on 101, and 25 sent by 101 wait on the other
  *   side: pending rows in the schedule, and the Pending and Sent notices. 25
  *   more notices are History.
- * - Mookie Betts has plays in games with video, a run of games without, and
- *   hidden plays among them, so a page of his highlights can come up short.
+ * - Mookie Betts has plays in games with video, a run of games without, longer
+ *   than a request scans, and hidden plays among them, so a page of his
+ *   highlights can come up short, or empty, with more to read.
  * - One game has 300 highlights.
  * - Demo League A manages umpires: a Field 2 optional in the regular season
  *   and required in the playoffs, two kinds of note, and assignments.
@@ -46,6 +47,8 @@ export interface LongListsSeed {
   nextGameId: string
   /** The player with hidden and uncovered highlights. */
   playerId: string
+  /** How many highlights of his the viewer can see, to the last. */
+  playerHighlights: number
   highlightsGameId: string
   highlightsVideoId: string
   publicTeamId: string
@@ -60,6 +63,8 @@ export interface LongListsSeed {
 /** Rows of each kind, for scenarios that count them. */
 export const LONG_LISTS_SHAPE = {
   highlights: 300,
+  /** Past what a request scans, so pages across them come back short. */
+  uncoveredPlays: 1200,
   pendingNotices: 30,
   sentNotices: 25,
   historyNotices: 25,
@@ -400,6 +405,17 @@ export async function seedLongLists(f: GroupFixture): Promise<LongListsSeed> {
       })
       played++
     }
+  const uncovered = final.slice(60, 100).find(game => !game.video)!
+  for (let index = 0; index < LONG_LISTS_SHAPE.uncoveredPlays; index++)
+    plays.push({
+      id: `evt_long_u_${index}`,
+      game: uncovered.id,
+      at: new Date(uncovered.at.getTime() + (index + 1) * 1000),
+      person: roster[0],
+      // After the four innings it already has.
+      index: index + 4,
+      hidden: false
+    })
   const words = [
     ['single', 'Single'],
     ['double', 'Double'],
@@ -444,6 +460,7 @@ export async function seedLongLists(f: GroupFixture): Promise<LongListsSeed> {
       )
       .execute()
   })
+  let playerHighlights = 0
   const highlightStills = async (route: string): Promise<string | null> => {
     const answer = await f.h.request('GET', route, undefined, 101)
     assert.equal(answer.status, 200, route)
@@ -456,6 +473,7 @@ export async function seedLongLists(f: GroupFixture): Promise<LongListsSeed> {
       assert.ok(second != null, highlight.stillUrl)
       keep(highlight.videoId ?? highlightsVideoId, Number(second))
     }
+    if (route.startsWith('/players/')) playerHighlights += highlights.length
     return nextBefore ?? null
   }
   await highlightStills(`/videos/${highlightsVideoId}/highlights`)
@@ -675,6 +693,7 @@ export async function seedLongLists(f: GroupFixture): Promise<LongListsSeed> {
     teamId: f.teamA,
     nextGameId: ahead[0].id,
     playerId,
+    playerHighlights,
     highlightsGameId,
     highlightsVideoId,
     publicTeamId: f.standaloneTeam,
