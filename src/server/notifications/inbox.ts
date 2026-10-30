@@ -3,6 +3,7 @@ import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
+  CHAT_DEVICE_APPROVAL,
   isSchedulingNews,
   type Notification,
   RECORDING_UPLOAD
@@ -25,7 +26,8 @@ import { titleAndDescription } from './requestInformation'
 async function informationFor(
   db: Kysely<Database>,
   actor: Actor,
-  event: Selectable<NotificationEventsTable>
+  event: Selectable<NotificationEventsTable>,
+  clock: Clock
 ): Promise<Notification | null> {
   if (
     event.source_type === 'groupRequest' ||
@@ -60,16 +62,45 @@ async function informationFor(
   // which settles it the same way.
   const reminder = event.source_type === RECORDING_UPLOAD
   const waiting = reminder && receipt?.dismissed_at == null
+  let link: { status: Notification['status']; expiresAt: string } | undefined
+  if (event.source_type === CHAT_DEVICE_APPROVAL) {
+    const request = await db
+      .selectFrom('chat_links')
+      .innerJoin('chat_devices', 'chat_devices.id', 'chat_links.new_device_id')
+      .select([
+        'chat_links.box',
+        'chat_links.declined_at',
+        'chat_links.expires_at',
+        'chat_devices.revoked_at'
+      ])
+      .where('chat_links.id', '=', event.source_id)
+      .where('chat_links.user_id', '=', actor.userId)
+      .executeTakeFirst()
+    if (request == null) return null
+    link = {
+      expiresAt: new Date(request.expires_at).toISOString(),
+      status:
+        request.box != null
+          ? 'accepted'
+          : request.declined_at != null
+            ? 'declined'
+            : request.revoked_at != null
+              ? 'cancelled'
+              : new Date(request.expires_at).getTime() <= clock.now().getTime()
+                ? 'expired'
+                : 'pending'
+    }
+  }
   return {
     id: event.id,
-    requestId: event.id,
+    requestId: link == null ? event.id : event.source_id,
     type: event.source_type,
     title: metadata.title ?? 'Organization update',
     description: metadata.description ?? '',
     sentAt: event.created_at.toISOString(),
-    expiresAt: event.created_at.toISOString(),
-    status: waiting ? 'pending' : 'accepted',
-    canAct: waiting,
+    expiresAt: link?.expiresAt ?? event.created_at.toISOString(),
+    status: link?.status ?? (waiting ? 'pending' : 'accepted'),
+    canAct: link == null ? waiting : link.status === 'pending',
     canWithdraw: false,
     canResend: false,
     viewed: receipt != null,
@@ -433,22 +464,25 @@ export async function inbox(
     .where('source_type', '!=', 'groupRequest')
     .$if(options.history !== true, query =>
       query.where(eb =>
-        eb.and([
-          eb('source_type', '=', RECORDING_UPLOAD),
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('notification_receipts')
-                .select('notification_receipts.event_id')
-                .whereRef(
-                  'notification_receipts.event_id',
-                  '=',
-                  'notification_events.id'
-                )
-                .where('notification_receipts.user_id', '=', fresh.userId)
-                .where('notification_receipts.dismissed_at', 'is not', null)
+        eb.or([
+          eb('source_type', '=', CHAT_DEVICE_APPROVAL),
+          eb.and([
+            eb('source_type', '=', RECORDING_UPLOAD),
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('notification_receipts')
+                  .select('notification_receipts.event_id')
+                  .whereRef(
+                    'notification_receipts.event_id',
+                    '=',
+                    'notification_events.id'
+                  )
+                  .where('notification_receipts.user_id', '=', fresh.userId)
+                  .where('notification_receipts.dismissed_at', 'is not', null)
+              )
             )
-          )
+          ])
         ])
       )
     )
@@ -457,7 +491,7 @@ export async function inbox(
     )
     .execute()
   for (const event of information) {
-    const row = await informationFor(db, fresh, event)
+    const row = await informationFor(db, fresh, event, clock)
     if (row != null) projected.push(row)
   }
   projected.sort((a, b) =>
@@ -529,7 +563,7 @@ export async function notificationDetail(
       .where('id', '=', id)
       .executeTakeFirst()
     if (event == null) throw notFound()
-    const information = await informationFor(db, fresh, event)
+    const information = await informationFor(db, fresh, event, clock)
     if (information == null) throw notFound()
     return information
   }
@@ -573,6 +607,8 @@ export async function dismissNotification(
   clock: Clock = realClock
 ): Promise<void> {
   const detail = await notificationDetail(db, actor, id, clock)
+  if (detail.type === CHAT_DEVICE_APPROVAL)
+    throw forbidden('Approve or decline this device request instead')
   const event = await db
     .selectFrom('notification_events')
     .select('id')

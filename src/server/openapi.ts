@@ -6957,7 +6957,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             "asks the user's linked devices for the identity. 409 " +
             '`noIdentity` or `noLinkedDevice` (reset instead), 403 ' +
             '`noDevice`. Lasts ten minutes. Answers `{id, newDeviceId, ' +
-            'createdAt, expiresAt, approved, expired, approvedByDeviceId, ' +
+            'createdAt, expiresAt, approved, declined, expired, approvedByDeviceId, ' +
             'box}`. Notifies `{u, k: link}`. Audited.',
           security: [{ bearer: [] }],
           responses: {
@@ -7006,7 +7006,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'pukBoxes: [{generation, box}]}`, the identity private key boxed ' +
             'to the new device (HPKE `link`) and one PUK box per generation ' +
             '(HPKE `puk`; 400 `boxSet` otherwise). 409 `linkExpired`, ' +
-            '`linkApproved`; 403 `deviceRevoked` for a revoked new device. ' +
+            '`linkDeclined`; 403 `deviceRevoked` for a revoked new device. ' +
+            'Repeated approval returns the original decision without replacing boxes. ' +
             'Answers the link. Notifies `{u, k: link}`. Audited.',
           security: [{ bearer: [] }],
           parameters: [pathParam('linkId')],
@@ -7023,6 +7024,22 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: 'The approved link' },
             400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/chat/links/{linkId}/decline': {
+        post: {
+          summary: 'Decline a chat device link request',
+          description:
+            'A linked device of the same user declines the request. This does not revoke any device. First decision wins: 409 linkApproved or linkExpired; repeated decline returns the original result. The inbox and live prompts share this state.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('linkId')],
+          responses: {
+            200: { description: 'The declined link' },
             401: errorResponse,
             403: errorResponse,
             404: errorResponse,

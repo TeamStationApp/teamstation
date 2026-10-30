@@ -104,6 +104,7 @@ export interface RelationshipInvitation {
  * one camera angle. One per stream, to the stream's owner only.
  */
 export const RECORDING_UPLOAD = 'recordingUpload'
+export const CHAT_DEVICE_APPROVAL = 'chatDeviceApproval'
 
 /**
  * The Auto-Scheduler's notices: claims on a venue, a game's field warnings

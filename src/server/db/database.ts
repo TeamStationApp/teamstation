@@ -1298,6 +1298,7 @@ export interface ChatLinksTable {
   new_device_id: string
   approved_by_device_id: string | null
   box: Bytes | null
+  declined_at: Generated<Date | null>
   created_at: Generated<Date>
   expires_at: Timestamp
 }
