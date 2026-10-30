@@ -216,6 +216,9 @@ await copyFile('src/app/web/favicon.png', `${out}/favicon.png`)
 // The privacy policy is a plain page, readable without loading the app; the
 // stores link to https://web.teamstation.app/privacy.html.
 await copyFile('src/app/web/privacy.html', `${out}/privacy.html`)
+// The page the web maps draw in, on its own URL so that it takes no policy from
+// the app's page (`MapFrame.tsx`).
+await copyFile('src/app/web/mapFrame.html', `${out}/mapFrame.html`)
 // The text fonts the phones carry, so the web draws the very same faces
 // (`index.html` declares them); never a system font. In production each is
 // renamed `<Family>-<Style>-<hash>.ttf`, its content's hash as the bundle's

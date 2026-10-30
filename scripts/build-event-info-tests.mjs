@@ -28,6 +28,7 @@ const suites = [
   'src/app/platform/eventDirections.test.ts',
   'src/app/platform/eventDirections.native.test.tsx',
   'src/app/platform/eventDirections.web.test.ts',
+  'src/app/components/MapFrame.test.tsx',
   'src/app/screens/EventInfoTab.test.tsx',
   'src/app/screens/EventRsvpModal.test.tsx',
   'src/app/screens/ScheduleRsvpControl.test.tsx',
