@@ -212,6 +212,15 @@ describe('names derived from accounts', function () {
   const freeman = (): NamesFixture['players']['home'][number] =>
     f.players.home[1]
 
+  /** An events answer, without what only names the roster as it is now. */
+  const withoutModelNames = (answer: unknown): unknown => {
+    const { modelNames: _modelNames, ...rest } = answer as Record<
+      string,
+      unknown
+    >
+    return rest
+  }
+
   /**
    * Every surface that names the game's players, read by the visitors'
    * second administrator.
@@ -220,10 +229,11 @@ describe('names derived from accounts', function () {
     const rizzo = f.people.deletable.userId
     const timeline = await boardTimeline(db!, f.gameId)
     return comparable({
-      events: await read('secondAdmin', `/games/${f.gameId}/events`),
-      outsideEvents: await read(
-        'secondAdmin',
-        `/games/${f.outsideGameId}/events`
+      events: withoutModelNames(
+        await read('secondAdmin', `/games/${f.gameId}/events`)
+      ),
+      outsideEvents: withoutModelNames(
+        await read('secondAdmin', `/games/${f.outsideGameId}/events`)
       ),
       highlights: await read('secondAdmin', `/videos/${f.videoId}/highlights`),
       sotoPage: await read('secondAdmin', `/players/${soto().userId}`),

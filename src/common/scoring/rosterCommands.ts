@@ -8,7 +8,14 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
-import { type Base, BASES, type JsonSchema, shortName } from './actions'
+import {
+  type Base,
+  BASES,
+  drawnName,
+  type JsonSchema,
+  modelNameOf,
+  shortName
+} from './actions'
 import { addPlayer, baseIds, battingSide, begun, ordinal } from './lineup'
 import {
   asSessionId,
@@ -372,7 +379,7 @@ interface Staging {
 }
 
 const nameOf = (state: GameState, id: number): string =>
-  shortName(state.gameData.players[id])
+  drawnName(state.gameData.players[id])
 
 /** The player, refused unless he is on the side's roster. */
 function member(staging: Staging, id: number): number {
@@ -383,7 +390,7 @@ function member(staging: Staging, id: number): number {
     !state.liveData.boxscore.teams[side].players.includes(id)
   )
     refuse(
-      `${player == null ? `Player ${id}` : shortName(player)} is not on the ${state.gameData.teams[side].name} roster`
+      `${player == null ? `Player ${id}` : drawnName(player)} is not on the ${state.gameData.teams[side].name} roster`
     )
   return id
 }
@@ -602,9 +609,10 @@ const fold = (text: string): string =>
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
 
-/** The names a player answers to: last, first, full and short. */
-function namesOf(player: GamePlayer): Set<string> {
+/** The names a player answers to: last, first, full, short and the model's. */
+function namesOf(state: GameState, player: GamePlayer): Set<string> {
   const words = player.fullName.trim().split(/\s+/)
+  const model = state.meta.modelNames?.[player.id]
   const or = (name: string | undefined, word: string | undefined): string =>
     name == null || name.trim() === '' ? (word ?? '') : name
   return new Set(
@@ -612,7 +620,8 @@ function namesOf(player: GamePlayer): Set<string> {
       or(player.lastName, words.at(-1)),
       or(player.firstName, words[0]),
       player.fullName,
-      shortName(player)
+      shortName(player),
+      ...(model == null ? [] : [model, model.split(' ')[0]])
     ]
       .map(fold)
       .filter(name => name !== '')
@@ -634,7 +643,7 @@ function matches(
     const player = state.gameData.players[id]
     return (
       (said.jersey == null || player.jersey.trim() === said.jersey) &&
-      (name == null || namesOf(player).has(name))
+      (name == null || namesOf(state, player).has(name))
     )
   })
 }
@@ -643,7 +652,7 @@ function matches(
 function spoken(state: GameState, said: PlayerSaid | number): string {
   if (typeof said === 'number') {
     const player = state.gameData.players[said]
-    return player == null ? `player ${said}` : shortName(player)
+    return player == null ? `player ${said}` : drawnName(player)
   }
   return [said.name, said.jersey == null ? undefined : `#${said.jersey}`]
     .filter(part => part != null)
@@ -740,7 +749,7 @@ export function resolveRosterCommands(
             const resolved = resolveRosterCommands(state, chosen, situation)
             const person = state.gameData.players[id]
             return {
-              label: `${shortName(person)}${person.jersey.trim() === '' ? '' : ` #${person.jersey.trim()}`}${both ? `, ${teamName(side)}` : ''}`,
+              label: `${drawnName(person)}${person.jersey.trim() === '' ? '' : ` #${person.jersey.trim()}`}${both ? `, ${teamName(side)}` : ''}`,
               side,
               commands: 'commands' in resolved ? resolved.commands : chosen
             }
@@ -798,7 +807,7 @@ export function rosterPrompt(state: GameState, sides: readonly Side[]): string {
             ...(slot < 0 ? [] : [`bats ${ordinal(slot + 1)}`]),
             ...(position == null ? [] : [`plays ${position}`])
           ]
-          return `  ${shortName(player)}${jersey === '' ? '' : ` #${jersey}`} — ${roles.length === 0 ? 'bench' : roles.join(', ')}`
+          return `  ${modelNameOf(state, player)}${jersey === '' ? '' : ` #${jersey}`} — ${roles.length === 0 ? 'bench' : roles.join(', ')}`
         })
       return [`${side.toUpperCase()} — ${name}`, ...lines].join('\n')
     })

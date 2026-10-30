@@ -2,13 +2,14 @@ import type { Kysely } from 'kysely'
 
 import { asRosterEntry, type RosterEntry } from '../../common/api'
 import { type Guests, storedGuests } from '../../common/guests'
-import { shortNames } from '../../common/names'
+import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { recordOf } from '../../common/scoring/gumbo'
 import type { Side } from '../../common/scoring/state'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered, type Unrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
+import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { teamRoster } from '../teams/teamRoster'
 
@@ -80,13 +81,29 @@ export async function gameAvailability(
           .map(play => recordOf(play, teamsOfRow(game)))
           .filter(record => record != null)
   const guestPlayers: GameAvailability['guestPlayers'] = { away: [], home: [] }
-  const names = shortNames(
-    profiles.map(user => ({
+  const teamOf = new Map(
+    (['away', 'home'] as const).flatMap(side =>
+      guests[side].map(
+        original =>
+          [
+            resolve(original),
+            side === 'away' ? game.away_team_id : game.home_team_id
+          ] as const
+      )
+    )
+  )
+  const people = profiles.map(user => ({
+    person: {
       id: user.id,
       displayName: user.display_name,
       firstName: user.first_name,
       lastName: user.last_name
-    }))
+    },
+    teamId: teamOf.get(user.gumbo_id)
+  }))
+  const formats = await publicFormats(db, people)
+  const names = formatForReader(
+    people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
   for (const side of ['away', 'home'] as const) {
     for (const original of guests[side]) {
@@ -104,6 +121,10 @@ export async function gameAvailability(
           userId: user.id,
           gumboId: id,
           shortName: names.get(user.id)!,
+          nameFormat:
+            formats.get(user.id) === DEFAULT_PLAYER_NAME_PRIVACY
+              ? undefined
+              : formats.get(user.id),
           jersey: detail?.jersey ?? held?.jersey ?? null,
           positions: detail?.positions ?? held?.positions ?? [],
           bats: user.bats,

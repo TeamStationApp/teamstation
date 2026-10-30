@@ -86,6 +86,12 @@ export interface StoredGame {
   plays: GumboPlay[]
   currentPlay: CurrentPlay | null
   /**
+   * What a model calls each player, for a reader who may dictate about them.
+   * The session holds it beside its setups, in `meta`, never in one: a setup
+   * is compared and saved, and this is neither.
+   */
+  modelNames?: Record<string, string>
+  /**
    * The digest the server keeps of the game's lineups, as it read them or as
    * this save left them: what the next save names as its `lineupsBase`.
    * Absent from a store that keeps none.
@@ -446,7 +452,17 @@ export class ScoringSession {
   ): Promise<ScoringSession> {
     const loaded = await store.load(gameId)
     const replayed = replayPlays(loaded, loaded.context ?? context)
-    const session = new ScoringSession(store, gameId, replayed.base, options)
+    const session = new ScoringSession(
+      store,
+      gameId,
+      loaded.modelNames == null
+        ? replayed.base
+        : {
+            ...replayed.base,
+            meta: { ...replayed.base.meta, modelNames: loaded.modelNames }
+          },
+      options
+    )
     session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
     session.openedGeneration = loaded.generation

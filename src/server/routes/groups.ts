@@ -24,12 +24,12 @@ import {
 import { asParentActions } from '../../common/groupLinks'
 import { makeId } from '../../common/ids'
 import { asLocality } from '../../common/locality'
-import { shortName } from '../../common/names'
 import type {
   GuardianTerms,
   RelationshipInvitation
 } from '../../common/notifications'
 import { asCatalogId, catalogPicture } from '../../common/pictureCatalog'
+import { asPlayerNamePrivacy } from '../../common/playerNamePrivacy'
 import type { PublicGroup } from '../../common/publicGroups'
 import { asRoleFlags } from '../../common/roles'
 import { asUserId } from '../../common/userId'
@@ -47,6 +47,7 @@ import {
   type OwnershipChoice,
   ownershipPreflight
 } from '../groups/ownershipPreflight'
+import { publicNames, teamsFormattedBy } from '../groups/playerNamePrivacy'
 import {
   discoverGroups,
   groupDetail,
@@ -83,12 +84,15 @@ import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { completionNotice } from '../notifications/completionNotice'
+import { gamesAround, rewriteTeamBoards } from '../scoreboard/gameSource'
+import type { ScoreboardStore } from '../scoreboard/scoreboardStore'
 import {
   groupScopeIds,
   noteScopeChange,
   withRevision
 } from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
+import { outsideSpoken } from '../users/readerNames'
 import { inviteUrl } from './invites'
 
 function clean<T>(fn: (raw: unknown) => T, raw: unknown): T {
@@ -339,6 +343,11 @@ export function groupRoutes(
       invitation: GuardianInvitation
     ) => Promise<void>
     sendAdded?: AddedMail['sendAdded']
+  },
+  /** The live boards a privacy change writes again. */
+  scoreboard?: {
+    store: ScoreboardStore
+    log: (message: string) => void
   }
 ): Router {
   const router = Router()
@@ -417,7 +426,20 @@ export function groupRoutes(
       .executeTakeFirstOrThrow()
     const base = (personMail.publicUrl ?? '').replace(/\/$/, '')
     await personMail.sendGuardianInvite(email, {
-      playerName: shortName(player),
+      playerName: (
+        await outsideSpoken(
+          async () =>
+            await publicNames(db, [
+              {
+                person: player,
+                teamId:
+                  request.sender_scope_type === 'team'
+                    ? request.sender_scope_id
+                    : undefined
+              }
+            ])
+        )
+      ).get(player.id)!,
       ...(team == null ? {} : { teamName: team.name }),
       invitedBy: sender.display_name,
       link: `${base}/notifications/${encodeURIComponent(request.id)}`
@@ -1112,6 +1134,8 @@ export function groupRoutes(
         id: String(req.params.id)
       }
       const actor = actorOf(req)
+      const privacyChange = Object.hasOwn(req.body ?? {}, 'playerNamePrivacy')
+      let affected: string[] = []
       await atomic(db, async trx => {
         await lockKeys(trx, [
           'creation:parent-graph',
@@ -1135,6 +1159,29 @@ export function groupRoutes(
             })
             .where('id', '=', ref.id)
             .execute()
+        const privacy = privacyChange
+          ? req.body.playerNamePrivacy === null
+            ? null
+            : clean(asPlayerNamePrivacy, req.body.playerNamePrivacy)
+          : undefined
+        const held = await trx
+          .selectFrom(table)
+          .select('player_name_privacy')
+          .where('id', '=', ref.id)
+          .executeTakeFirst()
+        if (privacy !== undefined && privacy !== held?.player_name_privacy) {
+          await trx
+            .updateTable(table)
+            .set({ player_name_privacy: privacy, updated_at: clock.now() })
+            .where('id', '=', ref.id)
+            .execute()
+          // Everything below this level is named differently now.
+          affected = await teamsFormattedBy(trx, ref)
+          for (const teamId of affected) noteScopeChange(trx, { teamId })
+          // A game's screen hears only of its own game.
+          for (const gameId of await gamesAround(trx, affected, clock.now()))
+            noteScopeChange(trx, { gameId })
+        }
         if (ref.kind !== 'season' && req.body?.locality != null)
           await trx
             .updateTable(ref.kind === 'team' ? 'teams' : 'leagues')
@@ -1243,6 +1290,12 @@ export function groupRoutes(
           else throw badRequest('Choose a photo or initials')
         }
       })
+      // In the background: a save is done once it commits, however many
+      // boards a league has open.
+      if (scoreboard != null)
+        rewriteTeamBoards({ db, ...scoreboard }, affected).catch(
+          () => undefined
+        )
       res.json(await publicGroup(db, ref, media.space))
     })
   )

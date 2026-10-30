@@ -55,6 +55,7 @@ function rosterOf(rows: RosterEntry[]): RosterPlayer[] {
     .map(row => ({
       gumboId: asGumboId(row.gumboId),
       shortName: row.shortName,
+      ...(row.nameFormat == null ? {} : { nameFormat: row.nameFormat }),
       jersey: row.jersey,
       bats: row.bats,
       throws: row.throws,

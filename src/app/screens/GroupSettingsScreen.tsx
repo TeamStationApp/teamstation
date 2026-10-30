@@ -28,6 +28,7 @@ import { InvitationsWaiting } from './InvitationsWaiting'
 import { ManagementCard, type ManagementCardProps } from './ManagementCard'
 import { ParentOrganizations } from './ParentOrganizations'
 import { ParticipationList } from './ParticipationList'
+import { PlayerNamePrivacyRow } from './PlayerNamePrivacyRow'
 import { SeasonParticipations } from './SeasonParticipations'
 
 export function GroupSettingsScreen({
@@ -271,6 +272,13 @@ export function GroupSettingsScreen({
                     </Text>
                   </>
                 )}
+                <PlayerNamePrivacyRow
+                  detail={detail}
+                  disabled={busy}
+                  onChoose={playerNamePrivacy => {
+                    update({ playerNamePrivacy }).catch(() => undefined)
+                  }}
+                />
               </ListCard>
             </View>
             <ManagementCard

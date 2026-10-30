@@ -25,7 +25,7 @@ import {
   scored
 } from '../../test/replayGameFixture'
 import { migrateDown, migrateUp } from '../runner'
-import { testDatabaseUrl } from '../testDatabase'
+import { addPlayerNamePrivacy, testDatabaseUrl } from '../testDatabase'
 import { migrations } from './index'
 
 type Json = Record<string, unknown>
@@ -295,6 +295,7 @@ describe('092 player names from users', function () {
     })
     db = makeDatabase(url)
     await migrateUp(pool, before092)
+    await addPlayerNamePrivacy(pool)
     for (const person of PEOPLE) {
       const userId = userIdOfGumbo(person.gumboId)
       await pool.query(

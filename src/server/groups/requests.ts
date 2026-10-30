@@ -35,6 +35,7 @@ import { noteScopeChange } from '../socket/syncRevision'
 import { authorizePersonChange } from './adminGuard'
 import { checkGuardianLimits, isGuardianRequest } from './guardianLimits'
 import { decidePlayerAdd } from './noticePolicy'
+import { publicNames } from './playerNamePrivacy'
 import { applyParents, previewParents } from './relationships'
 import {
   canAdminister,
@@ -377,7 +378,8 @@ async function hasGuardianAlready(
     ])
     .where('id', '=', (await onePerson(db, playerUserId)).userId)
     .executeTakeFirstOrThrow()
-  return `${shortName(player)} has a guardian already. Ask them to invite another guardian.`
+  const name = (await publicNames(db, [{ person: player }])).get(player.id)
+  return `${name} has a guardian already. Ask them to invite another guardian.`
 }
 
 /**
@@ -578,10 +580,11 @@ async function refuseGuardianAgain(
           .executeTakeFirstOrThrow()
     )
   )
+  const name = (await publicNames(db, [{ person: player }])).get(player.id)
   throw conflict(
     invitation
-      ? `${shortName(guardian)} is already ${shortName(player)}'s guardian`
-      : `You are already ${shortName(player)}'s guardian`
+      ? `${shortName(guardian)} is already ${name}'s guardian`
+      : `You are already ${name}'s guardian`
   )
 }
 

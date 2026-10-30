@@ -111,6 +111,7 @@ export async function createDictatedPlayers(
     Object.assign(result.draft.gameData.players[asGumboId(entry.gumboId)], {
       ...player,
       fullName: entry.shortName,
+      ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat }),
       local: command.placeholder === true
     })
   }

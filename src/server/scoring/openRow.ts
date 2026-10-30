@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { conflict } from '../../common/errors'
+import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { StoredGame } from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
 import { UnresolvedAccount } from '../admin/people'
@@ -8,6 +9,7 @@ import type { Database } from '../db/database'
 import {
   booksOver,
   gamePlayers,
+  type GameScope,
   type NameBook,
   type NameHalves,
   nameHalves,
@@ -36,6 +38,11 @@ export interface ScoringReadOptions {
    * named over (`scopeOf`), as every surface of the game names them.
    */
   gameId?: string
+  /**
+   * The names go to a speech model as well as the public: narration. Each
+   * format is taken down to its spoken form (`spokenFormat`).
+   */
+  spoken?: boolean
 }
 
 type GumboDocument = StoredGame['plays'][number] | StoredGame['currentPlay']
@@ -46,12 +53,15 @@ function object(value: unknown): value is Record<string, unknown> {
 
 /**
  * A named record's setups with no first or last name on any player, but a
- * player of one of `teams`, who has them from his account.
+ * player of one of `teams`, who has them from his account. A player in
+ * anything but the built-in format says so, because the label is final: a
+ * client draws it as sent and never shortens it again.
  */
 function withHalves(
   record: unknown,
   teams: ReadonlySet<string>,
-  halves: ReadonlyMap<number, NameHalves>
+  halves: ReadonlyMap<number, NameHalves>,
+  book: NameBook
 ): unknown {
   if (!object(record)) return record
   const players = (raw: unknown): unknown => {
@@ -69,7 +79,15 @@ function withHalves(
         typeof player.id === 'number'
           ? halves.get(player.id)
           : undefined
-      out[key] = parts == null ? rest : { ...rest, ...parts }
+      const format =
+        typeof player.id === 'number' ? book.formatOf(player.id) : undefined
+      out[key] = {
+        ...rest,
+        ...parts,
+        ...(format == null || format === DEFAULT_PLAYER_NAME_PRIVACY
+          ? {}
+          : { nameFormat: format })
+      }
     }
     return out
   }
@@ -131,7 +149,7 @@ export async function namedScoringGame<T extends StoredGame>(
   db: Kysely<Database>,
   stored: T,
   options: ScoringReadOptions = {}
-): Promise<{ game: T; names: NameBook; scope: number[] }> {
+): Promise<{ game: T; names: NameBook; scope: GameScope }> {
   const resolved = await resolveGumboIds(db, scoringIdsIn(stored)).catch(
     (error: unknown) => {
       if (error instanceof UnresolvedAccount)
@@ -156,7 +174,9 @@ export async function namedScoringGame<T extends StoredGame>(
   // everyone in the game without adding private name parts to the projection.
   // Ids as stored and their survivors' read as the same accounts.
   const names = (
-    await booksOver(db, new Map([[0, scopeOf(projected, players)]]))
+    await booksOver(db, new Map([[0, scopeOf(projected, players)]]), {
+      spoken: options.spoken
+    })
   ).get(0)!
   const teams = new Set(options.halves ?? [])
   const halves =
@@ -168,7 +188,7 @@ export async function namedScoringGame<T extends StoredGame>(
     const named = withNames(document, names.nameOf)
     const record = (named as { teamStation?: unknown }).teamStation
     if (record == null) return named
-    return { ...named, teamStation: withHalves(record, teams, halves) }
+    return { ...named, teamStation: withHalves(record, teams, halves, names) }
   }
   return {
     game: {

@@ -1,10 +1,13 @@
 import type { Kysely } from 'kysely'
 
+import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { publicStaffName } from '../../common/publicStaffName'
 import { ROLES } from '../../common/roles'
 import { guardedPlayers, roleScopes } from '../access'
 import type { Database } from '../db/database'
+import { publicFormats, publicNames } from '../groups/playerNamePrivacy'
 import { umpireLeagues } from '../umpires/schedule'
+import { runSpoken } from '../users/readerNames'
 
 /**
  * Who Tess is answering, as she reads it with every request: enough to start
@@ -136,11 +139,41 @@ export async function userContext(
     umpireLeagues: (await umpireLeagues(db, { userId, isAdmin, scopes: [] }))
       .slice(0, MAX_ITEMS)
       .map(league => ({ leagueId: league.id, name: league.name })),
-    guardianOf: guarded.map(child => ({
-      userId: child.id,
-      name: publicName(child)
-    }))
+    guardianOf: await guardedNames(db, guarded)
   }
+}
+
+/** A guardian's children: a chosen format holds here as it does on any read. */
+async function guardedNames(
+  db: Kysely<Database>,
+  children: ReadonlyArray<
+    Parameters<typeof publicName>[0] & {
+      id: string
+      first_name: string | null
+      last_name: string | null
+      display_name: string
+    }
+  >
+): Promise<Array<{ userId: string; name: string }>> {
+  const people = children.map(child => ({
+    person: {
+      id: child.id,
+      firstName: child.first_name,
+      lastName: child.last_name,
+      displayName: child.display_name
+    }
+  }))
+  const [formats, names] = await runSpoken(
+    async () =>
+      await Promise.all([publicFormats(db, people), publicNames(db, people)])
+  )
+  return children.map(child => ({
+    userId: child.id,
+    name:
+      formats.get(child.id) === DEFAULT_PLAYER_NAME_PRIVACY
+        ? publicName(child)
+        : (names.get(child.id) ?? '')
+  }))
 }
 
 function publicName(

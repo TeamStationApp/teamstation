@@ -179,6 +179,28 @@ export function scoringIdsIn(stored: {
   return [...ids]
 }
 
+/** The team each player of a game's setups appears for, the latest setup last. */
+export function playerTeamsIn(stored: {
+  plays: readonly unknown[]
+  currentPlay: unknown
+}): Map<number, string> {
+  const teams = new Map<number, string>()
+  const collect = (setup: GameSetup): void => {
+    for (const player of Object.values(setup.players))
+      teams.set(player.id, player.teamId)
+  }
+  for (const document of [...stored.plays, stored.currentPlay]) {
+    const value = (document as { teamStation?: unknown } | null)?.teamStation
+    if (value == null) continue
+    const record = recordOf({ teamStation: value }, ownTeams(value))
+    if (record == null) continue
+    collect(record.setupBefore)
+    for (const action of record.actions)
+      if ('setup' in action && action.setup != null) collect(action.setup)
+  }
+  return teams
+}
+
 type GumboDocument = StoredGame['plays'][number] | StoredGame['currentPlay']
 
 /** The same pure projection is used for reads and for a proposed merge. */

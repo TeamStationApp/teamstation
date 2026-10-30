@@ -21,7 +21,7 @@ import type { MediaContext } from '../server/media/mediaContext'
 import type { SpaceSettings } from '../server/media/spacesHls'
 import { withApiKeyCeiling } from '../server/middleware/apiKeyCeiling'
 import { withAudit } from '../server/middleware/withAudit'
-import { withActor } from '../server/middleware/withAuth'
+import { spokenRequests, withActor } from '../server/middleware/withAuth'
 import { errorHandler } from '../server/middleware/withErrors'
 import { accountRoutes } from '../server/routes/account'
 import { authRoutes } from '../server/routes/auth'
@@ -214,6 +214,7 @@ export async function accountHarness(
     publicUrl: ''
   }
   const app = express()
+  app.use(spokenRequests())
   app.use(withActor(db))
   app.use(withApiKeyCeiling())
   app.use(jsonBody)

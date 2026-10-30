@@ -1,10 +1,10 @@
 import { type Expression, type Kysely, sql, type SqlBool } from 'kysely'
 
-import { shortNames } from '../../common/names'
 import { inningsPitched } from '../../common/statExtras'
 import { visibleGamesWhere, type VisibleScopes } from '../access'
 import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { battingRates, DEFAULT_ERA_INNINGS, pitchingRates } from '../stats'
 
 /**
@@ -456,7 +456,7 @@ export async function statSplits(
     return keyOf(a).localeCompare(keyOf(b))
   })
   // Only the lines returned are named.
-  return await named(db, rated.slice(0, query.limit))
+  return await named(db, rated.slice(0, query.limit), filter)
 }
 
 /**
@@ -511,7 +511,8 @@ const isCount = (name: string): boolean =>
 /** Each line's names: the player's short name, and the teams' and season's. */
 async function named(
   db: Kysely<Database>,
-  rows: Array<SplitKey & SplitCounts & SplitRates>
+  rows: Array<SplitKey & SplitCounts & SplitRates>,
+  filter: SplitFilter
 ): Promise<SplitRow[]> {
   const userIds = [
     ...new Set(rows.flatMap(row => (row.userId == null ? [] : [row.userId])))
@@ -529,7 +530,15 @@ async function named(
           ])
           .where('id', 'in', userIds)
           .execute()
-  const short = shortNames(people)
+  const short = await publicNames(
+    db,
+    rows.flatMap(row => {
+      const person = people.find(one => one.id === row.userId)
+      return person == null
+        ? []
+        : [{ person, teamId: row.teamId ?? filter.teamId }]
+    })
+  )
   const teamIds = [
     ...new Set(
       rows.flatMap(row =>

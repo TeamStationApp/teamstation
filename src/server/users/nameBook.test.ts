@@ -81,7 +81,8 @@ describe('name books', function () {
         ['one', [people.jordanPujols.userId, people.babe.userId]]
       ])
     )
-    expect(queries).equals(1)
+    // One for the people of every scope, and one for their teams' formats.
+    expect(queries).equals(2)
     const both = books.get('both')!
     const one = books.get('one')!
     expect(both.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
@@ -401,9 +402,9 @@ describe('name books', function () {
     expect([...first.values()]).deep.equals(['Jordan P', 'Jordan P'])
     // Both games' documents in one read.
     expect(plays()).equals(1)
-    // Again: the stamps and the names, no document.
+    // Again: the stamps, the names and the formats, no document.
     expect(await page()).deep.equals(first)
-    expect(queries).has.length(2)
+    expect(queries).has.length(3)
     expect(plays()).equals(0)
     // One game tagged since: only its scope is read again, and a player its
     // tag names joins it.

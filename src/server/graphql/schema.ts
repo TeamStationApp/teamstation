@@ -386,7 +386,7 @@ const PlayerType: GraphQLObjectType = new GraphQLObjectType({
     name: {
       type: GraphQLString,
       description:
-        'The short name, first name and last initial, as every screen draws it.',
+        "The public name, as every screen draws it: first name and last initial unless the player's team chose another format.",
       resolve: async (player: PlayerSource, _args, context: GraphqlContext) =>
         player.shortName ?? (await playerDetail(player, context)).name
     },

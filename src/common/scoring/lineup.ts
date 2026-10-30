@@ -1,4 +1,5 @@
 import { DEFAULT_FENCE_DISTANCE_FT } from '../fenceDistance'
+import type { PlayerNamePrivacy } from '../playerNamePrivacy'
 import { asGumboId } from '../userId'
 import {
   asGamePlay,
@@ -1183,6 +1184,8 @@ export function applyOverride(
 export interface RosterPlayer {
   gumboId: number | null
   shortName: string
+  /** The public format `shortName` was written in, unless the built-in one. */
+  nameFormat?: PlayerNamePrivacy
   jersey?: string | null
   bats?: 'left' | 'right' | 'switch' | null
   throws?: 'left' | 'right' | null
@@ -1304,6 +1307,7 @@ export function newSetup(
         id,
         teamId: teams[side].id,
         fullName: row.shortName,
+        ...(row.nameFormat == null ? {} : { nameFormat: row.nameFormat }),
         jersey: row.jersey ?? '',
         bats: row.bats ?? 'right',
         throws: row.throws ?? null,

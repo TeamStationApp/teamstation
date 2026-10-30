@@ -100,11 +100,12 @@ async function narrated(
     return cached
   }
   const rows = await readPlays(db, gameId)
-  // Spoken with the names the game's players have now.
+  // Spoken with the names the game's players have now, in a form a speech
+  // model may be given: no surname, and no first name the format withholds.
   const stored: StoredGame = await resolveScoringGame(
     db,
     { plays: rows.map(row => row.gumbo as GumboPlay), currentPlay },
-    { gameId }
+    { gameId, spoken: true }
   )
   const context = await contextOf(db, gameId, game, stored, parts)
   const timeline = context == null ? null : replayTimelineOf(stored, context)

@@ -28,6 +28,7 @@ import {
   scopeStampOf,
   scopeUnder
 } from '../users/nameBook'
+import { isSpoken } from '../users/readerNames'
 
 /**
  * A game's board at every moment, rebuilt from what Postgres keeps: the
@@ -307,7 +308,7 @@ function versionOf(base: string, digest: string): string {
 
 /**
  * The version, when the game's scope is kept under its stamp: the parts
- * and the names of the kept scope, two queries and no play. Otherwise only
+ * and the names and formats of the kept scope, and no play. Otherwise only
  * the parts: something the board shows was written since it was built, and
  * the build reads it.
  */
@@ -389,7 +390,8 @@ export function makeBoardTimelineCache(
       const { version } = checked
       let timeline = held.get(gameId)
       if (version == null || timeline?.version !== version) {
-        const key = `${gameId} ${version ?? `${checked.base} ${checked.stamp}`}`
+        // A reader whose names go to a model never shares a public build.
+        const key = `${gameId} ${version ?? `${checked.base} ${checked.stamp} ${isSpoken()}`}`
         let build = building.get(key)
         if (build == null) {
           build = compute(db, gameId, log).finally(() => {

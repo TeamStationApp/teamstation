@@ -39,7 +39,7 @@ import type { MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
-import { withActor } from './middleware/withAuth'
+import { spokenRequests, withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
 import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
@@ -470,13 +470,14 @@ function runWorker(): void {
   }
   // Redis is connected to and not waited for: the API comes up without it,
   // and only the scoreboard notices that it is away.
+  const log = (message: string): void => {
+    console.error(`worker ${process.pid}: ${message}`)
+  }
   const scoreboard = startScoreboard({
     db,
     redis: serverConfig.redis,
     databaseUrl: serverConfig.databaseUrl,
-    log: message => {
-      console.error(`worker ${process.pid}: ${message}`)
-    }
+    log
   })
   const app = express()
 
@@ -488,6 +489,7 @@ function runWorker(): void {
   // Who is calling, and the ceiling of an API key, then their body, which
   // for a picture is read only when somebody is signed in, then what they
   // changed, then the routes.
+  app.use(spokenRequests())
   app.use(withActor(db))
   app.use(withApiKeyCeiling())
   if (serverConfig.oauth?.enabled === true) {
@@ -558,12 +560,18 @@ function runWorker(): void {
   app.use('/api/v1', peopleRoutes(db, mediaContext, { sendAdded, publicUrl }))
   app.use(
     '/api/v1',
-    groupRoutes(db, mediaContext, undefined, {
-      sendInvite: sendAccountInvite,
-      sendGuardianInvite,
-      sendAdded,
-      publicUrl
-    })
+    groupRoutes(
+      db,
+      mediaContext,
+      undefined,
+      {
+        sendInvite: sendAccountInvite,
+        sendGuardianInvite,
+        sendAdded,
+        publicUrl
+      },
+      { store: scoreboard.store, log }
+    )
   )
   app.use('/api/v1', nodeAdministrationRoutes(db, mediaContext.space))
   app.use(

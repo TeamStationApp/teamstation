@@ -8,9 +8,13 @@ import type {
   ChatMember,
   ChatPerson
 } from '../../common/api'
-import { shortNames } from '../../common/names'
 import { hasRole, roleScopes } from '../access'
 import type { ChatKind, Database } from '../db/database'
+import {
+  formatForReader,
+  publicFormats,
+  publicNames
+} from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
@@ -70,7 +74,10 @@ export async function chatPeople(
     ])
     .where('id', 'in', ids)
     .execute()
-  const names = shortNames(rows)
+  const names = await publicNames(
+    db,
+    rows.map(person => ({ person }))
+  )
   return new Map(
     rows.map(row => [
       row.id,
@@ -346,13 +353,19 @@ async function dmPeople(
     list.push(row)
     byConversation.set(row.conversationId, list)
   }
+  const formats = await publicFormats(
+    db,
+    [...userOf.values()].map(person => ({ person }))
+  )
   const result = new Map<string, ChatDmPerson[]>()
   for (const [conversationId, list] of byConversation) {
     const named = [userId, ...list.map(row => row.userId)].flatMap(id => {
       const user = userOf.get(id)
       return user == null ? [] : [user]
     })
-    const names = shortNames(named)
+    const names = formatForReader(
+      named.map(person => ({ person, format: formats.get(person.id)! }))
+    )
     result.set(
       conversationId,
       list

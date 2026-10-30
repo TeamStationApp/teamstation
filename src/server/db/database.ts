@@ -85,6 +85,7 @@ export interface UserLinksTable {
 }
 
 export interface LeaguesTable {
+  player_name_privacy: Generated<string | null>
   umpire_management: Generated<boolean>
   umpire_credits: Generated<boolean>
   id: string
@@ -116,6 +117,7 @@ export interface LeaguesTable {
 }
 
 export interface SeasonsTable {
+  player_name_privacy: Generated<string | null>
   id: string
   timezone: Generated<string>
   picture_catalog_id: Generated<string | null>
@@ -149,6 +151,7 @@ export type TeamCreatedFrom =
   'import' | 'peertube' | 'manual' | 'videoTitle' | 'api'
 
 export interface TeamsTable {
+  player_name_privacy: Generated<string | null>
   id: string
   league_id: Generated<string | null>
   locality: Json | null

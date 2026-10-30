@@ -1,3 +1,4 @@
+import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { userIdSchema } from '../userIdSchema'
 const ref = {
   type: 'object',
@@ -354,7 +355,14 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
             startsOn: { type: 'string', format: 'date' },
             endsOn: { type: 'string', format: 'date' },
             timezone: { type: 'string' },
-            picture: { type: 'object' }
+            picture: { type: 'object' },
+            playerNamePrivacy: {
+              type: 'string',
+              nullable: true,
+              enum: [...PLAYER_NAME_PRIVACY, null],
+              description:
+                "How the public reads this level's player names. Null is Default, which inherits from the seasons and leagues that manage it. Group detail answers the stored value, the resolved format and the levels it was inherited from."
+            }
           }
         }),
         responses

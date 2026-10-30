@@ -3,8 +3,8 @@ import {
   BASES,
   type Destination,
   type Direction,
-  type ScoringAction,
-  shortName
+  drawnName,
+  type ScoringAction
 } from '../../common/scoring/actions'
 import { overrideOf, trajectoryOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
@@ -83,7 +83,7 @@ class Words {
 
   name(id: number): string {
     const player = this.game.gameData.players[id]
-    return player == null ? `Player ${id}` : shortName(player)
+    return player == null ? `Player ${id}` : drawnName(player)
   }
 
   position(id: number): Position | undefined {

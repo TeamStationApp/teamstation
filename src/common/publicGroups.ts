@@ -1,15 +1,22 @@
 import {
   asArray,
   asBoolean,
+  asEither,
+  asNull,
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asValue
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
 import { withEventMetadata } from './eventInfo'
 import { asLocality } from './locality'
+import {
+  asPlayerNamePrivacy,
+  DEFAULT_PLAYER_NAME_PRIVACY
+} from './playerNamePrivacy'
 import { asRole } from './roles'
 
 const nullable =
@@ -122,6 +129,24 @@ export const asGroupDetail = asObject({
    * An administrator, coach, assistant or scorekeeper of this team: they add
    * and create its players. False on every season and league.
    */
-  canManageRoster: asOptional(asBoolean, false)
+  canManageRoster: asOptional(asBoolean, false),
+  /** What this level stores: null is Default, which inherits. */
+  playerNamePrivacy: asOptional(asEither(asNull, asPlayerNamePrivacy), null),
+  /** The format this level's players are shown in. */
+  playerNamePrivacyFormat: asOptional(
+    asPlayerNamePrivacy,
+    DEFAULT_PLAYER_NAME_PRIVACY
+  ),
+  /** The closest levels whose value won; empty for no inheritance. */
+  playerNamePrivacyInheritedFrom: asOptional(
+    asArray(
+      asObject({
+        kind: asValue('league', 'season', 'team'),
+        id: asString,
+        name: asString
+      })
+    ),
+    () => []
+  )
 })
 export type GroupDetail = ReturnType<typeof asGroupDetail>

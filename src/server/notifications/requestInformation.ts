@@ -2,11 +2,11 @@ import { type Kysely, sql } from 'kysely'
 
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
-import { shortName } from '../../common/names'
 import type { PlayerAddTerms, RequestTerms } from '../../common/notifications'
 import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
 import { isGuardianRequest } from '../groups/guardianLimits'
+import { publicNames } from '../groups/playerNamePrivacy'
 import type { StoredRequest } from '../groups/requests'
 import { shortNamesOf, userNames } from '../users/nameBook'
 
@@ -387,7 +387,17 @@ async function rendered(
       ])
       .where('id', '=', terms.playerUserId)
       .executeTakeFirstOrThrow()
-    const short = shortName(player)
+    const short = (
+      await publicNames(db, [
+        {
+          person: player,
+          teamId:
+            request.sender_scope_type === 'team'
+              ? request.sender_scope_id
+              : undefined
+        }
+      ])
+    ).get(player.id)!
     if (isGuardianRequest(request))
       return {
         title: `${sender} asks to be ${short}'s guardian`,

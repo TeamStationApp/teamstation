@@ -1,5 +1,6 @@
 import type { RosterEntry } from '../../common/api'
-import { shortName, shortNames } from '../../common/names'
+import { shortName } from '../../common/names'
+import { gamePlayerNames } from '../../common/replay/replayNames'
 import { begun } from '../../common/scoring/lineup'
 import { awaitingResult, battingLineupKey } from '../../common/scoring/rules'
 import {
@@ -115,18 +116,14 @@ export function defensiveRosterName(player: ScoringPlayer): string {
  */
 export function shortPlayerNames(
   players: Iterable<
-    Pick<ScoringPlayer, 'id' | 'fullName' | 'firstName' | 'lastName'>
+    Pick<
+      ScoringPlayer,
+      'id' | 'fullName' | 'firstName' | 'lastName' | 'nameFormat'
+    >
   >
 ): Map<number, string> {
   const list = [...players]
-  const names = shortNames(
-    list.map(player => ({
-      id: player.id,
-      firstName: player.firstName,
-      lastName: player.lastName,
-      displayName: player.fullName
-    }))
-  )
+  const names = gamePlayerNames(list)
   const out = new Map<number, string>()
   for (const player of list) {
     const stored = player.fullName.trim()
@@ -160,8 +157,20 @@ export function withRosterDetails(
     const currentName = entry.shortName.trim()
     const fullName = currentName === '' ? player.fullName : currentName
     const jersey = entry.jersey?.trim() ?? ''
-    if (fullName === player.fullName && jersey === player.jersey) continue
-    players[player.id] = { ...player, fullName, jersey }
+    if (
+      fullName === player.fullName &&
+      jersey === player.jersey &&
+      entry.nameFormat === player.nameFormat
+    )
+      continue
+    // The format travels with the label: one without the other misreads it.
+    const { nameFormat: _held, ...rest } = player
+    players[player.id] = {
+      ...rest,
+      fullName,
+      jersey,
+      ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat })
+    }
     changed = true
   }
   return changed

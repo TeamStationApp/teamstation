@@ -128,13 +128,31 @@ function eventsHalves(stored: Json): Map<number, Halves> {
   return halves
 }
 
+/** The format each player's label is written in, by the cached game. */
+function eventsFormats(stored: Json): Map<number, unknown> {
+  const formats = new Map<number, unknown>()
+  for (const play of [
+    ...arrayOf(stored.plays).map(row => objectOf(row).gumbo),
+    stored.currentPlay
+  ])
+    for (const setup of setupsOf(play))
+      for (const raw of Object.values(objectOf(setup.players))) {
+        const player = objectOf(raw)
+        if (typeof player.id === 'number' && player.nameFormat != null)
+          formats.set(player.id, player.nameFormat)
+      }
+  return formats
+}
+
 /** `play` with each setup player whose halves are known holding them. */
 function withHalves(
   play: unknown,
-  halves: ReadonlyMap<number, Halves>
+  halves: ReadonlyMap<number, Halves>,
+  formats: ReadonlyMap<number, unknown>
 ): unknown {
   const document = objectOf(play)
-  if (halves.size === 0 || !('teamStation' in document)) return play
+  if ((halves.size === 0 && formats.size === 0) || !('teamStation' in document))
+    return play
   const record = objectOf(document.teamStation)
   const setup = (raw: unknown): unknown => {
     const held = objectOf(raw)
@@ -146,7 +164,16 @@ function withHalves(
         typeof player.id === 'number' && !('firstName' in player)
           ? halves.get(player.id)
           : undefined
-      players[key] = parts == null ? entry : { ...player, ...parts }
+      const format =
+        typeof player.id === 'number' ? formats.get(player.id) : undefined
+      players[key] =
+        parts == null && format == null
+          ? entry
+          : {
+              ...player,
+              ...parts,
+              ...(format == null ? {} : { nameFormat: format })
+            }
     }
     return { ...held, players }
   }
@@ -196,11 +223,12 @@ export function appliedEvents(
   const body = objectOf(post)
   const held = eventsNames(stored)
   const halves = eventsHalves(stored)
+  const formats = eventsFormats(stored)
   const sent = game.names ?? {}
   const nameOf = (id: number): string | undefined =>
     Object.hasOwn(sent, String(id)) ? sent[String(id)] : held.get(id)
   const named = (play: unknown): unknown =>
-    play == null ? play : withHalves(withNames(play, nameOf), halves)
+    play == null ? play : withHalves(withNames(play, nameOf), halves, formats)
   const rows = new Map<number, Json>()
   for (const raw of arrayOf(stored.plays)) {
     const row = objectOf(raw)
@@ -300,7 +328,8 @@ export function renamedEvents(
     const names = namesIn(next)
     return withHalves(
       withNames(next, id => (id === gumboId ? short : names.get(id))),
-      his
+      his,
+      new Map()
     )
   }
   return {

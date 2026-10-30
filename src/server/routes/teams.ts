@@ -9,7 +9,6 @@ import {
   unauthorized
 } from '../../common/errors'
 import type { PlayerRsvpCounts } from '../../common/eventInfo'
-import { shortNames } from '../../common/names'
 import { scoreboardOpen } from '../../common/scoreboard'
 import { inningsPitched } from '../../common/statExtras'
 import {
@@ -40,6 +39,7 @@ import { gameIsLive } from '../games/gameLive'
 import { gameAvailability } from '../games/rosterAvailability'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import { isWithdrawnKey, publicUserId } from '../games/withdrawn'
+import { publicNames } from '../groups/playerNamePrivacy'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -881,12 +881,16 @@ export function teamRoutes(
         typeof req.query.seasonId === 'string' ? req.query.seasonId : undefined
 
       const rows = await statRows(db, { teamId, seasonId })
-      const names = shortNames(
+      const names = await publicNames(
+        db,
         rows.map(row => ({
-          id: row.userId,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          displayName: row.displayName
+          person: {
+            id: row.userId,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            displayName: row.displayName
+          },
+          teamId
         }))
       )
 
@@ -938,12 +942,16 @@ export function teamRoutes(
       if (!canSeeGame(scopes, scope)) throw membersOnly()
 
       const rows = await statRows(db, { gameId })
-      const names = shortNames(
+      const names = await publicNames(
+        db,
         rows.map(row => ({
-          id: row.userId,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          displayName: row.displayName
+          person: {
+            id: row.userId,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            displayName: row.displayName
+          },
+          teamId: row.teamId
         }))
       )
 
