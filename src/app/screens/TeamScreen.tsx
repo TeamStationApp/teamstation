@@ -1,9 +1,17 @@
-import React, { memo, useEffect, useMemo, useState } from 'react'
-import { Text, useWindowDimensions, View } from 'react-native'
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  ActivityIndicator,
+  type LayoutChangeEvent,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
 
 import type {
   BattingRow,
+  GamesPageQuery,
   GameSummary,
+  Page,
   PitchingRow,
   RosterEntry,
   StaffEntry,
@@ -12,7 +20,7 @@ import type {
   TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { eventName } from '../../common/eventInfo'
+import { eventName, type PlayerRsvpCounts } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
 import type { Role } from '../../common/roles'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
@@ -43,14 +51,18 @@ import {
 } from '../components'
 import { AddEventCard } from '../components/AddEventCard'
 import { FollowButton } from '../components/FollowButton'
+import { PagedList } from '../components/PagedList'
+import { PagedListEnd } from '../components/PagedListEnd'
 import {
   inheritedPill,
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
+import type { PinnedHead } from '../components/pinnedHead'
 import { flagLabel } from '../components/roleLabels'
 import { StatisticsTable } from '../components/StatisticsTable'
 import { ActiveView, TabPages } from '../components/TabPages'
+import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -67,7 +79,23 @@ import { MembershipAccess } from './MembershipAccess'
 import { PublicTeamContent } from './PublicTeamContent'
 import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import { battingColumns, pitchingColumns } from './statColumns'
-import { chronological, gamesFor, nextGameIndex } from './whenFilter'
+
+/** The first read of each list, which the screen makes as it opens. */
+const SCHEDULE_OPENS: GamesPageQuery = { around: 'next', order: 'asc' }
+const VIDEOS_OPEN: GamesPageQuery = { hasVideo: true }
+
+const NO_GAMES: Page<GameSummary> = {
+  items: [],
+  nextCursor: null,
+  prevCursor: null,
+  anchorId: null,
+  counts: null
+}
+
+/** A row's height before it has been measured, as each list draws them. */
+const ROW_HEIGHT = { schedule: 150, videos: 130 }
+
+const gameId = (game: GameSummary): string => game.id
 
 export interface TeamScreenProps {
   client: TeamStationClient
@@ -230,7 +258,28 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   )
 
   const [tab, setTab] = useState<TabId>(tabOf(initialTab))
-  const [games, setGames] = useState<GameSummary[]>([])
+  const schedule = usePagedList<GameSummary>({
+    listKey: `${team.id}:schedule`,
+    auto: false,
+    keyOf: gameId,
+    read: async cursor =>
+      await client.teamGamesPage(
+        team.id,
+        cursor == null ? SCHEDULE_OPENS : { cursor }
+      )
+  })
+  const videos = usePagedList<GameSummary>({
+    listKey: `${team.id}:videos`,
+    auto: false,
+    keyOf: gameId,
+    read: async cursor =>
+      await client.teamGamesPage(
+        team.id,
+        cursor == null ? VIDEOS_OPEN : { ...VIDEOS_OPEN, cursor }
+      )
+  })
+  const { apply: applySchedule } = schedule
+  const { apply: applyVideos } = videos
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [pitching, setPitching] = useState<PitchingRow[]>([])
@@ -257,11 +306,15 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     }
     setError(undefined)
     const load = async (): Promise<void> => {
-      const loadedGames = await client.teamGames(team.id)
+      const [firstGames, firstVideos] = await Promise.all([
+        client.teamGamesPage(team.id, SCHEDULE_OPENS),
+        client.teamGamesPage(team.id, VIDEOS_OPEN)
+      ])
       if (cancelled) return
-      setGames(loadedGames)
+      await Promise.all([applySchedule(firstGames), applyVideos(firstVideos)])
+      if (cancelled) return
 
-      const seasonId = loadedGames.find(game => game.seasonId != null)?.seasonId
+      const seasonId = firstGames.counts?.newestSeasonId
       // A non-member is refused the figures, so they are not asked for.
       const noRows = Promise.resolve([])
       const [loadedRoster, loadedBatting, loadedPitching, standings] =
@@ -304,7 +357,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             caught instanceof HttpError &&
             ['forbidden', 'notFound'].includes(caught.code)
           ) {
-            setGames([])
+            applySchedule(NO_GAMES).catch(() => undefined)
+            applyVideos(NO_GAMES).catch(() => undefined)
             setRoster([])
             setBatting([])
             setPitching([])
@@ -320,7 +374,15 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, team.id, publicDetail, nonMemberView, refreshRevision])
+  }, [
+    applySchedule,
+    applyVideos,
+    client,
+    team.id,
+    publicDetail,
+    nonMemberView,
+    refreshRevision
+  ])
 
   const follows = onManage == null && (publicDetail != null || nonMemberView)
   // A name needs room of its own when both corner controls are present.
@@ -340,16 +402,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       )}
     </View>
   )
-  const withVideo = games.filter(game => game.videoCount > 0)
-  // The same rule as the schedule and the season page, not a fourth copy of
-  // it. Counting the unscored ones made a February fixture nobody ever scored
-  // one of the games still to play, on both sides' pages — and the list below
-  // sorts it to the bottom as a past game, so the screen disagreed with its
-  // own header.
-  const upcoming = gamesFor(games, 'upcoming')
-  // The season in the order it is played, as the nav bar's schedule draws it.
-  const schedule = chronological(games)
-  const next = nextGameIndex(schedule)
+  // The whole list's, whichever of its rows are loaded.
+  const counts = schedule.counts ?? videos.counts
 
   // The card scrolls away and the pills pin under the header; a selected tab
   // starts directly under them, the schedule at its next game.
@@ -357,7 +411,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     head,
     ready: !loading,
     tab,
-    anchorOnRow: tab === 'schedule' && next >= 0
+    anchorOnRow: tab === 'schedule' && schedule.anchorId != null
   })
 
   // Which way a pill change slides the content.
@@ -377,7 +431,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         }
 
   return (
-    <Screen {...pinned.screen}>
+    <Screen {...pinned.screen} pagedList>
       <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
           <View
@@ -494,22 +548,14 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               <View style={styles.section}>
                 <SectionHeader
                   title="Game video library"
-                  note={`${withVideo.length} with video`}
+                  note={`${counts?.withVideo ?? 0} with video`}
                 />
-                {withVideo.length === 0 ? (
-                  <Empty text="No game has a video attached yet." />
-                ) : (
-                  withVideo.map(game => (
-                    <GameCard
-                      key={game.id}
-                      game={game}
-                      mode="videos"
-                      nonMemberView={nonMemberView}
-                      teamId={team.id}
-                      onOpen={openGame}
-                    />
-                  ))
-                )}
+                <VideoRows
+                  list={videos}
+                  teamId={team.id}
+                  nonMemberView={nonMemberView}
+                  onOpen={openGame}
+                />
               </View>
             )}
 
@@ -522,46 +568,17 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               >
                 <SectionHeader
                   title="Schedule"
-                  note={`${games.length} games, ${upcoming.length} to play`}
+                  note={`${counts?.total ?? 0} games, ${counts?.upcoming ?? 0} to play`}
                 />
-                {schedule.length === 0 ? (
-                  <Empty text="No games scheduled." />
-                ) : (
-                  schedule.map((game, index) => (
-                    <ActiveView
-                      // The next game's row is its own element, so it is laid
-                      // out, and measured, again when the next game changes.
-                      key={index === next ? `${game.id}:next` : game.id}
-                      testID="scheduleGame"
-                      ref={index === next ? pinned.nextRow.ref : undefined}
-                      onLayout={
-                        index === next ? pinned.nextRow.handleLayout : undefined
-                      }
-                    >
-                      {nonMemberView ? (
-                        // Visitors can open every published game without
-                        // receiving member-only RSVP controls.
-                        <GameCard
-                          game={game}
-                          mode="schedule"
-                          teamId={team.id}
-                          nonMemberView
-                          onOpen={openGame}
-                        />
-                      ) : (
-                        <ScheduleCard
-                          client={client}
-                          game={game}
-                          teamId={team.id}
-                          onOpen={openGame}
-                        />
-                      )}
-                    </ActiveView>
-                  ))
-                )}
-                {onCreateGame != null && (
-                  <AddEventCard variant="game" onPress={onCreateGame} />
-                )}
+                <ScheduleRows
+                  client={client}
+                  list={schedule}
+                  teamId={team.id}
+                  nonMemberView={nonMemberView}
+                  nextRow={pinned.nextRow}
+                  onOpen={openGame}
+                  onCreateGame={onCreateGame}
+                />
               </ActiveView>
             )}
 
@@ -651,6 +668,176 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       )}
       <PinnedSpacer part={pinned.spacer} />
     </Screen>
+  )
+}
+
+/** The row a list opens on, and a screen of those after it. */
+export function rowsKeptDrawn(
+  rows: readonly GameSummary[],
+  anchorId: string | null,
+  screenHeight: number
+): string[] | undefined {
+  const at = rows.findIndex(game => game.id === anchorId)
+  if (at < 0) return undefined
+  const screen = Math.ceil(screenHeight / ROW_HEIGHT.schedule)
+  return rows.slice(at, at + 1 + screen).map(gameId)
+}
+
+/**
+ * The schedule in the order it is played, opened on its next game. That row
+ * and the screen after it stay drawn, so the page lands on rows of their real
+ * height, and older rows load as the reader goes up past the first.
+ */
+export function ScheduleRows(props: {
+  client: TeamStationClient
+  list: PagedRows<GameSummary>
+  teamId: string
+  nonMemberView: boolean
+  nextRow: PinnedHead['nextRow']
+  onOpen: TeamScreenProps['onOpenGame']
+  onCreateGame?: () => void
+}): React.ReactElement {
+  const { client, list, teamId, nonMemberView, nextRow, onOpen } = props
+  const { rows, anchorId, loading, empty, loadMore, loadOlder, update } = list
+  const { onCreateGame } = props
+  const styles = getStyles(useTheme())
+  const { height } = useWindowDimensions()
+  const alwaysRenderKeys = useMemo(
+    () => rowsKeptDrawn(rows, anchorId, height),
+    [anchorId, height, rows]
+  )
+  const answered = useCallback(
+    (id: string, counts: PlayerRsvpCounts): void => {
+      update(id, game => ({ ...game, playerRsvps: counts }))
+    },
+    [update]
+  )
+  const { ref: nextRowRef } = nextRow
+  const renderRow = useCallback(
+    (game: GameSummary) => (
+      <ActiveView
+        testID="scheduleGame"
+        ref={game.id === anchorId ? nextRowRef : undefined}
+        style={styles.row}
+      >
+        {nonMemberView ? (
+          // Visitors can open every published game without receiving
+          // member-only RSVP controls.
+          <GameCard
+            game={game}
+            mode="schedule"
+            teamId={teamId}
+            nonMemberView
+            onOpen={onOpen}
+          />
+        ) : (
+          <ScheduleCard
+            client={client}
+            game={game}
+            teamId={teamId}
+            onOpen={onOpen}
+            onAnswered={answered}
+          />
+        )}
+      </ActiveView>
+    ),
+    [
+      anchorId,
+      answered,
+      client,
+      nextRowRef,
+      nonMemberView,
+      onOpen,
+      styles.row,
+      teamId
+    ]
+  )
+  const extraData = useMemo(
+    () => ({ anchorId, nonMemberView }),
+    [anchorId, nonMemberView]
+  )
+  const anchorMoved = useStableCallback((y: number): void => {
+    const event = { nativeEvent: { layout: { x: 0, y, width: 0, height: 0 } } }
+    nextRow.handleLayout?.(event as unknown as LayoutChangeEvent)
+  })
+  return (
+    <PagedList
+      data={rows}
+      keyOf={gameId}
+      renderItem={renderRow}
+      extraData={extraData}
+      estimatedItemSize={ROW_HEIGHT.schedule}
+      alwaysRenderKeys={alwaysRenderKeys}
+      anchorKey={anchorId}
+      onAnchorPosition={anchorMoved}
+      empty={
+        loading ? (
+          <ActivityIndicator accessibilityLabel="Loading games" />
+        ) : empty ? (
+          <Empty text="No games scheduled." />
+        ) : null
+      }
+      footer={
+        <>
+          <PagedListEnd list={list} />
+          {onCreateGame != null && (
+            <AddEventCard variant="game" onPress={onCreateGame} />
+          )}
+        </>
+      }
+      onEndReached={() => {
+        loadMore().catch(() => undefined)
+      }}
+      onStartReached={atRest => {
+        loadOlder(atRest).catch(() => undefined)
+      }}
+    />
+  )
+}
+
+/** The games with a video, newest first. */
+function VideoRows(props: {
+  list: PagedRows<GameSummary>
+  teamId: string
+  nonMemberView: boolean
+  onOpen: TeamScreenProps['onOpenGame']
+}): React.ReactElement {
+  const { list, teamId, nonMemberView, onOpen } = props
+  const { rows, loading, empty, loadMore } = list
+  const styles = getStyles(useTheme())
+  const renderRow = useCallback(
+    (game: GameSummary) => (
+      <View style={styles.row}>
+        <GameCard
+          game={game}
+          mode="videos"
+          nonMemberView={nonMemberView}
+          teamId={teamId}
+          onOpen={onOpen}
+        />
+      </View>
+    ),
+    [nonMemberView, onOpen, styles.row, teamId]
+  )
+  return (
+    <PagedList
+      data={rows}
+      keyOf={gameId}
+      renderItem={renderRow}
+      extraData={nonMemberView}
+      estimatedItemSize={ROW_HEIGHT.videos}
+      empty={
+        loading ? (
+          <ActivityIndicator accessibilityLabel="Loading games" />
+        ) : empty ? (
+          <Empty text="No game has a video attached yet." />
+        ) : null
+      }
+      footer={<PagedListEnd list={list} />}
+      onEndReached={() => {
+        loadMore().catch(() => undefined)
+      }}
+    />
   )
 }
 
@@ -787,8 +974,9 @@ const ScheduleCard = memo(function ScheduleCard(props: {
   game: GameSummary
   teamId: string
   onOpen: TeamScreenProps['onOpenGame']
+  onAnswered: (gameId: string, counts: PlayerRsvpCounts) => void
 }): React.ReactElement {
-  const { client, game, teamId, onOpen } = props
+  const { client, game, teamId, onOpen, onAnswered } = props
   const lines = matchupLines(game, teamId)
   // A pending game opens its proposal, and only for those allowed to see it.
   const options = gameListOptions(game, 'schedule')
@@ -833,6 +1021,9 @@ const ScheduleCard = memo(function ScheduleCard(props: {
                 game={game}
                 teamId={teamId}
                 label={eventName(game) ?? lines.second}
+                onAnswered={counts => {
+                  onAnswered(game.id, counts)
+                }}
               />
             ) : null
           }
@@ -905,6 +1096,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   section: {
     gap: theme.rem(theme.spaceMdRem)
+  },
+  // A list's rows are placed one by one, so its gap is on each of them.
+  row: {
+    paddingBottom: theme.rem(theme.spaceMdRem)
   },
   identity: {
     gap: theme.rem(theme.spaceMdRem)

@@ -395,6 +395,44 @@ describe('usePagedList', function () {
       expect(ids(list.rows)).deep.equals(ids(rows))
     })
 
+    it('drops a refresh that a later one overtakes', async function () {
+      const reading = held()
+      await open(reading.read)
+      await reading.answer(pageOf(rowsOf(0, 3)))
+      const first = list.refresh()
+      const second = list.refresh()
+      await settled()
+      await reading.answer(pageOf(rowsOf(10, 3)))
+      await reading.answer(pageOf(rowsOf(20, 3)))
+      await act(async () => {
+        await Promise.all([first, second])
+      })
+      expect(ids(list.rows)).deep.equals(['r20', 'r21', 'r22'])
+    })
+
+    it('lays a first page the screen read over the list', async function () {
+      const reading = held()
+      await open(reading.read)
+      await reading.answer(pageOf(rowsOf(0, 3)))
+      await act(async () => {
+        await list.apply(pageOf(rowsOf(0, 4), { limit: 4 }))
+      })
+      expect(ids(list.rows)).deep.equals(['r0', 'r1', 'r2', 'r3'])
+    })
+
+    it('reads the first page when nothing is held to read again', async function () {
+      const reading = held()
+      await open(reading.read)
+      await reading.answer(pageOf([]))
+      const again = list.refreshHeld()
+      await settled()
+      await reading.answer(pageOf(rowsOf(0, 2)))
+      await act(async () => {
+        await again
+      })
+      expect(ids(list.rows)).deep.equals(['r0', 'r1'])
+    })
+
     it('keeps the rows when a refresh fails', async function () {
       let down = false
       await open(async cursor => {

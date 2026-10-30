@@ -1,4 +1,6 @@
-import type { ListCounts, Page } from '../common/api'
+import { chronological, gamesFor } from '../app/screens/whenFilter'
+import type { GamesPageQuery, ListCounts, Page } from '../common/api'
+import { nextGameIndex } from '../common/nextGame'
 
 export interface PageQuery {
   cursor?: string | null
@@ -54,4 +56,69 @@ export function pageOf<T>(
     return answer(Math.max(0, end - limit), end, false)
   }
   throw new Error(`pageOf: not one of its cursors: ${cursor}`)
+}
+
+interface ListedGame {
+  id: string
+  startAt: string | null
+  awayScore: number | null
+  status: string
+  endAt?: string | null
+  videoCount?: number
+  seasonId?: string | null
+}
+
+/** What a first page says of a whole list, newest season first. */
+export function countsOf(games: readonly ListedGame[]): ListCounts {
+  return {
+    total: games.length,
+    upcoming: gamesFor(games, 'upcoming').length,
+    withVideo: games.filter(game => (game.videoCount ?? 0) > 0).length,
+    videos: games.reduce((total, game) => total + (game.videoCount ?? 0), 0),
+    newestSeasonId:
+      gamesFor(games, 'all').find(game => game.seasonId != null)?.seasonId ??
+      null
+  }
+}
+
+/** A cursor's order is carried in it, as the server's is. */
+const ORDER = /^(asc|desc)~/
+
+/**
+ * A fake of a read of games with `paged=1`: `games` as the server lists them
+ * for `query`, cut with `pageOf`.
+ */
+export function pageOfGames<T extends ListedGame>(
+  games: readonly T[],
+  query: GamesPageQuery = {}
+): Page<T> {
+  const { when = 'all', hasVideo, around, cursor, limit } = query
+  const order =
+    cursor?.match(ORDER)?.[1] ??
+    query.order ??
+    (around != null || when === 'upcoming' ? 'asc' : 'desc')
+  const filtered = gamesFor(
+    hasVideo === true
+      ? games.filter(game => (game.videoCount ?? 0) > 0)
+      : games,
+    when
+  )
+  const rows = chronological(filtered)
+  if (order === 'desc') rows.reverse()
+  const carry = (at: string | null): string | null =>
+    at == null ? null : `${order}~${at}`
+  const index = around == null ? -1 : nextGameIndex(rows)
+  const page = pageOf(
+    rows,
+    { cursor: cursor?.replace(ORDER, ''), limit },
+    {
+      counts: countsOf(games),
+      ...(index < 0 ? {} : { anchorIndex: index, anchorId: rows[index].id })
+    }
+  )
+  return {
+    ...page,
+    nextCursor: carry(page.nextCursor),
+    prevCursor: carry(page.prevCursor)
+  }
 }

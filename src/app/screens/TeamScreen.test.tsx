@@ -8,6 +8,8 @@ import {
   asGameSummary,
   asPitchingRow,
   asRosterEntry,
+  type GamesPageQuery,
+  type GameSummary,
   type ScheduleEntry,
   type StaffEntry,
   type TeamStationClient,
@@ -15,6 +17,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
@@ -171,42 +174,44 @@ function fakeClient(patch: Record<string, unknown> = {}): {
       calls.asked.push(name)
       return answer
     }
+  const gamesOnList = [
+    asGameSummary({
+      id: 'gam_final',
+      homeTeamId: 'tem_hawks',
+      awayTeamId: 'tem_owls',
+      homeTeamName: 'Hawks',
+      awayTeamName: 'Owls',
+      seasonId: 'sea_1',
+      startAt: '2027-04-03T17:00:00.000Z',
+      venue: 'Northpoint Field 1',
+      status: 'final',
+      homeScore: 6,
+      awayScore: 3,
+      ingestStatus: 'ok',
+      videoCount: 1
+    }),
+    asGameSummary({
+      id: 'gam_next',
+      homeTeamId: 'tem_owls',
+      awayTeamId: 'tem_hawks',
+      homeTeamName: 'Owls',
+      awayTeamName: 'Hawks',
+      seasonId: 'sea_1',
+      startAt: '2027-04-17T17:00:00.000Z',
+      venue: null,
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'ok',
+      videoCount: 0
+    })
+  ]
   const client = {
     teamSchedule: asked('teamSchedule', schedule),
     teamStaff: asked('teamStaff', staff),
     roster: asked('roster', roster),
-    teamGames: asked('teamGames', [
-      asGameSummary({
-        id: 'gam_final',
-        homeTeamId: 'tem_hawks',
-        awayTeamId: 'tem_owls',
-        homeTeamName: 'Hawks',
-        awayTeamName: 'Owls',
-        seasonId: 'sea_1',
-        startAt: '2027-04-03T17:00:00.000Z',
-        venue: 'Northpoint Field 1',
-        status: 'final',
-        homeScore: 6,
-        awayScore: 3,
-        ingestStatus: 'ok',
-        videoCount: 1
-      }),
-      asGameSummary({
-        id: 'gam_next',
-        homeTeamId: 'tem_owls',
-        awayTeamId: 'tem_hawks',
-        homeTeamName: 'Owls',
-        awayTeamName: 'Hawks',
-        seasonId: 'sea_1',
-        startAt: '2027-04-17T17:00:00.000Z',
-        venue: null,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        ingestStatus: 'ok',
-        videoCount: 0
-      })
-    ]),
+    teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+      await asked('teamGamesPage', pageOfGames(gamesOnList, query))(),
     teamStats: asked('teamStats', []),
     teamPitchingStats: asked('teamPitchingStats', []),
     standings: asked('standings', []),
@@ -261,7 +266,8 @@ describe('TeamScreen for a fan', function () {
       'follows',
       'roster',
       'standings',
-      'teamGames'
+      'teamGamesPage',
+      'teamGamesPage'
     ])
 
     await press('Hawks vs Owls')
@@ -298,14 +304,16 @@ describe('TeamScreen for a fan', function () {
       'follows',
       'roster',
       'standings',
-      'teamGames'
+      'teamGamesPage',
+      'teamGamesPage'
     ])
   })
 
   it('opens on the Team tab when the address says roster', async function () {
     const { client } = fakeClient({
       teamSchedule: async () => [],
-      teamGames: async () => [],
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+        pageOfGames([], query),
       roster: async () => [],
       teamStaff: async () => []
     })
@@ -344,7 +352,7 @@ describe('TeamScreen for a fan', function () {
 
   it('shows its chats while the team is still loading', async function () {
     const { client } = fakeClient({
-      teamGames: async () => await new Promise(() => undefined)
+      teamGamesPage: async () => await new Promise(() => undefined)
     })
     await render(
       <TeamScreen
@@ -426,7 +434,7 @@ describe('TeamScreen for the team’s own people', function () {
       ])
       expect(control('Follow Hawks')).equals(undefined)
       expect(control('Following Hawks')).equals(undefined)
-      expect(calls.asked).to.include('teamGames')
+      expect(calls.asked).to.include('teamGamesPage')
       expect(calls.asked).not.to.include('teamSchedule')
       await act(async () => {
         root?.unmount()
@@ -577,5 +585,94 @@ describe('staffSubtitle', function () {
         roles: ['songkeeper', 'videographer']
       })
     ).equals('Songkeeper · Videographer')
+  })
+})
+
+describe('a team’s page, from the first page of its lists', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  const rows = (ids: string[], seasonId: string): GameSummary[] =>
+    ids.map(id =>
+      asGameSummary({
+        id,
+        homeTeamId: 'tem_hawks',
+        awayTeamId: 'tem_owls',
+        homeTeamName: 'Hawks',
+        awayTeamName: 'Owls',
+        seasonId,
+        startAt: '2027-04-03T17:00:00.000Z',
+        venue: 'Northpoint Field 1',
+        status: 'scheduled',
+        homeScore: null,
+        awayScore: null,
+        videoCount: 0,
+        ingestStatus: 'none',
+        pendingApproval: false,
+        pendingRequestId: null
+      })
+    )
+  const counts = {
+    total: 345,
+    upcoming: 120,
+    withVideo: 65,
+    videos: 80,
+    newestSeasonId: 'sea_newest'
+  }
+  const read = async (
+    tab: string
+  ): Promise<{
+    asked: Array<GamesPageQuery | undefined>
+    stats: unknown[]
+  }> => {
+    const asked: Array<GamesPageQuery | undefined> = []
+    const stats: unknown[] = []
+    const { client } = fakeClient({
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) => {
+        asked.push(query)
+        return {
+          // Rows of an older season, which the list's counts see past.
+          items: rows(['gam_a'], 'sea_older'),
+          nextCursor: null,
+          prevCursor: null,
+          anchorId: query?.around == null ? null : 'gam_a',
+          counts
+        }
+      },
+      teamStats: async (_id: string, seasonId?: string) => {
+        stats.push(seasonId)
+        return []
+      },
+      teamPitchingStats: async () => [],
+      standings: async () => []
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab={tab}
+        onOpenGame={() => undefined}
+      />
+    )
+    return { asked, stats }
+  }
+
+  it('says what the whole list holds, and reads the newest season’s figures', async function () {
+    const { asked, stats } = await read('schedule')
+    expect(asked).deep.equals([
+      { around: 'next', order: 'asc' },
+      { hasVideo: true }
+    ])
+    expect(text()).contains('345 games, 120 to play')
+    expect(stats).deep.equals(['sea_newest'])
+  })
+
+  it('counts the library from the same answer', async function () {
+    await read('videos')
+    expect(text()).contains('65 with video')
   })
 })

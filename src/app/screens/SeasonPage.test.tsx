@@ -16,6 +16,7 @@ import {
   type PublicGroup
 } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
@@ -111,7 +112,7 @@ function client(manage = true): TeamStationClient {
     canManagePeople: manage,
     canSeePeople: manage
   })
-  api.seasonGames = async () => []
+  api.seasonGamesPage = async (_id, query) => pageOfGames([], query)
   api.seasonTeams = async () => [
     summary('team_hawks', 'Demo Hawks'),
     summary('team_eagles', 'Demo Eagles')
@@ -308,7 +309,7 @@ describe('a season’s People tab, and a team’s roster, through the group page
       canManagePeople: true
     })
     api.group = async () => hawks
-    api.teamGames = async () => []
+    api.teamGamesPage = async (_id, query) => pageOfGames([], query)
     api.roster = async () => people
     api.teamStats = async () => []
     api.teamPitchingStats = async () => []

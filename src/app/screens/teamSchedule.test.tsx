@@ -3,16 +3,34 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import type { TeamStationClient, TeamSummary } from '../../common/api'
+import type {
+  GamesPageQuery,
+  GameSummary,
+  TeamStationClient,
+  TeamSummary
+} from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
+  listProps,
+  reachEnd,
+  reachStart,
+  reportAnchor
+} from '../../test/PagedListStandIn'
+import { pageOfGames } from '../../test/pageOf'
+import {
+  FIRST_ROW,
+  type FixtureGame,
   type FixtureSeason,
+  LAST_ROW,
   NEXT_ROW,
   TEAM_ID,
   TEAM_NAME,
   teamScheduleAnswer
 } from '../../test/teamScheduleFixture'
+import { Screen } from '../components/Screen'
+import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { TeamScreen } from './TeamScreen'
+import { rowsKeptDrawn, ScheduleRows, TeamScreen } from './TeamScreen'
 
 /**
  * The team's own schedule: the nav bar schedule's rows, one line each, in the
@@ -36,8 +54,11 @@ function fixtureClient(
   const get = (path: string): unknown =>
     teamScheduleAnswer('GET', `/api/v1${path}`, NOW, undefined, season).body
   return {
-    teamGames: async (teamId: string) =>
-      extra(get(`/teams/${teamId}/games`) as Array<Record<string, unknown>>),
+    teamGamesPage: async (_teamId: string, query?: GamesPageQuery) =>
+      pageOfGames(
+        extra(get(`/teams/${TEAM_ID}/games`) as never[]) as FixtureGame[],
+        query
+      ),
     roster: async (teamId: string) => get(`/teams/${teamId}/roster`),
     teamStats: async (teamId: string) => get(`/teams/${teamId}/stats`),
     teamPitchingStats: async (teamId: string) =>
@@ -423,6 +444,169 @@ describe('a team’s schedule', function () {
     await mount('empty')
     expect(rows()).deep.equals([])
     expect(document.body.textContent).includes('No games scheduled.')
+  })
+})
+
+describe('a team’s schedule, a page at a time', function () {
+  /** An upcoming game with replies to answer, among the rest. */
+  const answering = (games: Array<Record<string, unknown>>): unknown[] =>
+    games.map(game =>
+      game.status === 'scheduled'
+        ? { ...game, playerRsvps: { yes: 0, unknown: 1, no: 0 } }
+        : game
+    )
+  const attendee = {
+    userId: userIdOfGumbo(102),
+    gumboId: 102,
+    name: 'Babe R',
+    response: null,
+    canReply: true,
+    isPlayer: true,
+    isTeamParticipant: true,
+    avatarUrl: null
+  }
+
+  it('asks for the next game, and opens on the row the server names', async function () {
+    const asked: Array<GamesPageQuery | undefined> = []
+    const client = fixtureClient()
+    const reads = client.teamGamesPage.bind(client)
+    client.teamGamesPage = async (id, query) => {
+      asked.push(query)
+      return await reads(id, query)
+    }
+    await mount('normal', 'schedule', client)
+    expect(asked).deep.includes({ around: 'next', order: 'asc' })
+    const { anchorKey, alwaysRenderKeys, data } = listProps() as unknown as {
+      anchorKey: string
+      alwaysRenderKeys: string[]
+      data: GameSummary[]
+    }
+    const next = data.findIndex(game => game.id === anchorKey)
+    expect(linesOf(rows()[next])).includes(NEXT_ROW)
+    expect(alwaysRenderKeys[0]).equals(anchorKey)
+    expect(rowsKeptDrawn(data, anchorKey, 800)).deep.equals(
+      data.slice(next, next + 7).map(game => game.id)
+    )
+    expect(rowsKeptDrawn(data, null, 800)).equals(undefined)
+  })
+
+  it('tells the pinned head where the row is, on a phone', async function () {
+    const heard: number[] = []
+    const client = fixtureClient()
+    const list = { current: undefined as PagedRows<GameSummary> | undefined }
+    function Rows(): React.ReactElement {
+      list.current = usePagedList<GameSummary>({
+        listKey: 'rows',
+        keyOf: game => game.id,
+        read: async cursor =>
+          await client.teamGamesPage(
+            TEAM_ID,
+            cursor == null ? { around: 'next' } : { cursor }
+          )
+      })
+      return (
+        <Screen pagedList>
+          <ScheduleRows
+            client={client}
+            list={list.current}
+            teamId={TEAM_ID}
+            nonMemberView={false}
+            nextRow={{
+              handleLayout: event => {
+                heard.push(event.nativeEvent.layout.y)
+              }
+            }}
+            onOpen={() => undefined}
+          />
+        </Screen>
+      )
+    }
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <Rows />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    await act(async () => {
+      reportAnchor(420)
+    })
+    expect(heard).deep.equals([420])
+  })
+
+  /** The fixture's rows, a few at a time. */
+  const paging = (limit = 3, client = fixtureClient()): TeamStationClient => {
+    const reads = client.teamGamesPage.bind(client)
+    client.teamGamesPage = async (id, query) =>
+      await reads(id, { ...query, limit })
+    return client
+  }
+
+  it('walks up to older rows and down to later ones as the list reports its ends', async function () {
+    await mount('normal', 'schedule', paging())
+    await act(async () => {
+      reachStart()
+      await delay(10)
+    })
+    expect(linesOf(rows()[0])).includes(FIRST_ROW)
+    await act(async () => {
+      reachEnd()
+      await delay(10)
+    })
+    expect(linesOf(rows().at(-1)!)).includes(LAST_ROW)
+  })
+
+  it('reads on through the library as it reports its end', async function () {
+    const recorded = fixtureClient('normal', games =>
+      games.map(game => ({ ...game, videoCount: 1 }))
+    )
+    await mount('normal', 'videos', paging(10, recorded))
+    const held = (): number =>
+      (listProps() as unknown as { data: unknown[] }).data.length
+    const first = held()
+    await act(async () => {
+      reachEnd()
+      await delay(10)
+    })
+    expect(held()).greaterThan(first)
+  })
+
+  it('holds an answer in the list, so a row drawn afresh shows it', async function () {
+    const client = fixtureClient('normal', answering)
+    client.eventInfo = (async () => ({
+      replyUserIds: [attendee.userId],
+      attendees: [attendee]
+    })) as unknown as TeamStationClient['eventInfo']
+    client.saveRsvp = async (_id, userId, response) => ({ userId, response })
+    await mount('normal', 'schedule', client)
+    const { data } = listProps() as unknown as {
+      data: Array<{ id: string; playerRsvps?: { yes: number } }>
+    }
+    const game = data.find(row => row.playerRsvps != null)!
+    const press = async (id: string): Promise<void> => {
+      await act(async () => {
+        document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+        await delay(10)
+      })
+    }
+    await press(`schedule-rsvp-control-${game.id}`)
+    await press(`event-rsvp-${attendee.userId}-0`)
+    await act(async () => {
+      ;[...document.querySelectorAll<HTMLElement>('[role="button"]')]
+        .find(button => button.textContent === 'Done')!
+        .click()
+      await delay(10)
+    })
+    const after = (
+      listProps() as unknown as {
+        data: Array<{ id: string; playerRsvps: { yes: number } }>
+      }
+    ).data.find(row => row.id === game.id)!
+    expect(after.playerRsvps).deep.equals({ yes: 1, unknown: 0, no: 0 })
   })
 })
 

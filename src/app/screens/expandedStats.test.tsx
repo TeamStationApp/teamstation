@@ -8,10 +8,12 @@ import {
   asPlayerDetail,
   asPlayerStats,
   asTeamSummary,
+  type GamesPageQuery,
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
 import { battingColumns, pitchingColumns } from './statColumns'
@@ -41,7 +43,8 @@ const stats = asPlayerStats({
 })
 function client(over: Record<string, unknown> = {}): TeamStationClient {
   return {
-    teamGames: async () => [],
+    teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+      pageOfGames([], query),
     roster: async () => [],
     teamStats: async () => [battingFixture],
     teamPitchingStats: async () => [pitchingFixture],
@@ -83,23 +86,27 @@ describe('expanded statistics screens', function () {
     await render(
       <TeamScreen
         client={client({
-          teamGames: async () => [
-            asGameSummary({
-              id: 'gam_demo_optional_standing',
-              seasonId: 'sea_demo_guest',
-              startAt: '2027-04-01T19:00:00Z',
-              homeTeamId: team.id,
-              awayTeamId: 'tem_demo_opponent',
-              homeTeamName: team.name,
-              awayTeamName: 'Demo Opponent',
-              venue: null,
-              homeScore: null,
-              awayScore: null,
-              ingestStatus: 'none',
-              videoCount: 0,
-              status: 'scheduled'
-            })
-          ],
+          teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+            pageOfGames(
+              [
+                asGameSummary({
+                  id: 'gam_demo_optional_standing',
+                  seasonId: 'sea_demo_guest',
+                  startAt: '2027-04-01T19:00:00Z',
+                  homeTeamId: team.id,
+                  awayTeamId: 'tem_demo_opponent',
+                  homeTeamName: team.name,
+                  awayTeamName: 'Demo Opponent',
+                  venue: null,
+                  homeScore: null,
+                  awayScore: null,
+                  ingestStatus: 'none',
+                  videoCount: 0,
+                  status: 'scheduled'
+                })
+              ],
+              query
+            ),
           standings: async () => {
             throw new HttpError('notFound', 'Host standings unavailable')
           }
@@ -202,7 +209,7 @@ describe('expanded statistics screens', function () {
         <ThemeProvider>
           <TeamScreen
             client={client({
-              teamGames: async () => {
+              teamGamesPage: async () => {
                 throw new Error('Synthetic failure')
               }
             })}

@@ -1,7 +1,6 @@
-import { gamesFor, type When } from '../app/screens/whenFilter'
-import type { ListCounts, Page } from '../common/api'
+import type { GamesPageQuery, Page } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
-import { pageOf } from './pageOf'
+import { pageOfGames } from './pageOf'
 /**
  * A team with a season either side of today, for the team screen's
  * end-to-end tests: the browser run answers the app's API from this, and the
@@ -309,17 +308,6 @@ export interface FixtureAnswer {
   body: unknown
 }
 
-/** What a first page says of the whole list. */
-function fixtureCounts(games: readonly FixtureGame[]): ListCounts {
-  return {
-    total: games.length,
-    upcoming: gamesFor(games, 'upcoming').length,
-    withVideo: games.filter(game => game.videoCount > 0).length,
-    videos: games.reduce((total, game) => total + game.videoCount, 0),
-    newestSeasonId: games.at(-1)?.seasonId ?? null
-  }
-}
-
 /**
  * A list as the server answers it: the bare array, or a `Page` of it on
  * `paged=1`, whose cursors walk the same rows.
@@ -329,29 +317,15 @@ function listAnswer<T extends FixtureGame>(
   query: URLSearchParams
 ): T[] | Page<T> {
   if (query.get('paged') !== '1') return games
-  const when = (query.get('when') ?? 'all') as When
-  const listed = gamesFor(
-    query.get('hasVideo') === '1'
-      ? games.filter(game => game.videoCount > 0)
-      : games,
-    when
-  )
-  const order = query.get('order')
-  if (order != null)
-    listed.sort((a, b) =>
-      order === 'asc'
-        ? a.startAt.localeCompare(b.startAt)
-        : b.startAt.localeCompare(a.startAt)
-    )
   const limit = query.get('limit')
-  return pageOf(
-    listed,
-    {
-      cursor: query.get('cursor'),
-      ...(limit == null ? {} : { limit: Number(limit) })
-    },
-    { counts: fixtureCounts(games) }
-  )
+  return pageOfGames(games, {
+    when: (query.get('when') ?? 'all') as GamesPageQuery['when'],
+    order: (query.get('order') ?? undefined) as GamesPageQuery['order'],
+    hasVideo: query.get('hasVideo') === '1',
+    around: query.get('around') == null ? undefined : 'next',
+    cursor: query.get('cursor') ?? undefined,
+    limit: limit == null ? undefined : Number(limit)
+  })
 }
 
 /**
