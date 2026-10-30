@@ -332,6 +332,59 @@ describe('the GraphQL API', function () {
       })
     })
 
+    it('gives a withdrawn line its placeholder and no player', async function () {
+      const { db } = f.h
+      const game = f.games[0].id
+      const row = await db
+        .selectFrom('games')
+        .select(['home_team_id', 'away_team_id'])
+        .where('id', '=', game)
+        .executeTakeFirstOrThrow()
+      await db
+        .insertInto('group_requests')
+        .values({
+          id: 'grq_graphql_withdrawn',
+          kind: 'playerAdd',
+          sender_id: userIdOfGumbo(202),
+          sender_scope_type: 'team',
+          sender_scope_id: row.home_team_id,
+          terms: '{}',
+          status: 'declined',
+          sent_at: new Date(0),
+          expires_at: new Date(1)
+        })
+        .execute()
+      const lines = `query ($game: ID!) {
+        game(id: $game) {
+          statLines { player { id } batting { name h } pitching { name k } }
+        }
+      }`
+      await db
+        .insertInto('game_withdrawn_players')
+        .values({
+          game_id: game,
+          user_id: userIdOfGumbo(202),
+          side: 'home',
+          request_id: 'grq_graphql_withdrawn',
+          label: 'HWKS A'
+        })
+        .execute()
+      try {
+        const answer = await ask(104, lines, { game })
+        expect(answer.body.errors).equals(undefined)
+        const gone = answer.body.data.game.statLines.filter(
+          (line: { player: unknown }) => line.player == null
+        )
+        expect(gone).has.length(1)
+        expect(gone[0].pitching).deep.equals({ name: 'HWKS A', k: 7 })
+      } finally {
+        await db
+          .deleteFrom('group_requests')
+          .where('id', '=', 'grq_graphql_withdrawn')
+          .execute()
+      }
+    })
+
     it('counts a player’s games over the lines the caller may see', async function () {
       const query = `{ player(id: "${alfonso}") { stats { games batting { h hr avg } } } }`
       expect((await ask(104, query)).body.data.player.stats).deep.include({
