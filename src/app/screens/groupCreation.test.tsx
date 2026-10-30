@@ -11,10 +11,15 @@ import {
 import { HttpError } from '../../common/errors'
 import type { NodeAccount } from '../../common/nodeAdministration'
 import type { Notification } from '../../common/notifications'
-import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import {
+  asGroupDetail,
+  asPublicGame,
+  asPublicGroup
+} from '../../common/publicGroups'
 import { seasonTimeFrames } from '../../common/seasonTimeFrames'
 import { userIdOfGumbo } from '../../common/userId'
-import { pageOfGames } from '../../test/pageOf'
+import { reachEnd } from '../../test/PagedListStandIn'
+import { pageOf, pageOfGames } from '../../test/pageOf'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
@@ -98,6 +103,7 @@ function client(): TeamStationClient {
   api.ownGroups = async () => [group]
   api.discoverGroups = async () => [group]
   api.group = async () => detail
+  api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
   return api
 }
 const notification: Notification = {
@@ -252,36 +258,38 @@ describe('creation and organization interface behavior', () => {
       pendingApproval: false,
       pendingRequestId: null
     }
+    const games = [
+      {
+        ...base,
+        id: 'gam_approved',
+        status: 'final',
+        cancellationReason: null
+      },
+      {
+        ...base,
+        id: 'gam_withdrawn',
+        status: 'cancelled',
+        cancellationReason: 'withdrawal',
+        withdrawnByTeamName: 'Demo Guest'
+      },
+      {
+        ...base,
+        id: 'gam_replaced',
+        status: 'cancelled',
+        cancellationReason: 'replacement',
+        homeScore: null,
+        awayScore: null
+      }
+    ]
     api.group = async () =>
       asGroupDetail({
         ...detail,
         canViewPrivate: false,
         canManage: false,
-
-        games: [
-          {
-            ...base,
-            id: 'gam_approved',
-            status: 'final',
-            cancellationReason: null
-          },
-          {
-            ...base,
-            id: 'gam_withdrawn',
-            status: 'cancelled',
-            cancellationReason: 'withdrawal',
-            withdrawnByTeamName: 'Demo Guest'
-          },
-          {
-            ...base,
-            id: 'gam_replaced',
-            status: 'cancelled',
-            cancellationReason: 'replacement',
-            homeScore: null,
-            awayScore: null
-          }
-        ]
+        games
       })
+    api.publicGamesPage = async (_kind, _id, query) =>
+      pageOf(games.map(asPublicGame), query)
     const opened: Array<{ id: string; options: unknown }> = []
     await mount(
       <GroupScreen
@@ -1288,7 +1296,9 @@ describe('creation and organization interface behavior', () => {
       nextCursor: options?.cursor == null ? 'next' : null
     })
     await press('Retry notifications')
-    await press('Load more')
+    await act(async () => {
+      reachEnd()
+    })
     await act(async () => {
       window.dispatchEvent(new window.Event('focus'))
     })

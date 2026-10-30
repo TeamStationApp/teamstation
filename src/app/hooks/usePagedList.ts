@@ -46,10 +46,17 @@ interface Held<T> {
   failed: Way | undefined
   /** A first page or a refresh that failed. */
   error: unknown
+  /** How many first pages have replaced the list, rather than laid over it. */
+  opened: number
 }
 
 export interface PagedRows<T> {
   rows: T[]
+  /**
+   * Counts each first page that replaced what was held, so that a screen can
+   * tell a fresh list from the same one read on or read again.
+   */
+  opened: number
   counts: ListCounts | null
   anchorId: string | null
   /** No rows yet, and some may come: the spinner, not the empty message. */
@@ -96,7 +103,8 @@ function nothingHeld<T>(listKey: string): Held<T> {
     opening: true,
     walking: { next: false, previous: false },
     failed: undefined,
-    error: undefined
+    error: undefined,
+    opened: 0
   }
 }
 
@@ -147,16 +155,10 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
     })
   }, [])
 
-  /** The rows, each key once, whichever end a repeat came in from. */
+  /** The rows, each key once: where it first came, as it last read. */
   const unique = useCallback((rows: T[]): T[] => {
     const { keyOf } = latest.current
-    const seen = new Set<string>()
-    return rows.filter(row => {
-      const key = keyOf(row)
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+    return [...new Map(rows.map(row => [keyOf(row), row])).values()]
   }, [])
 
   const add = useCallback(
@@ -241,32 +243,51 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
         counts: page.counts,
         anchorId: page.anchorId,
         answered: true,
-        opening: false
+        opening: false,
+        opened: held.current.opened + 1
       })
     },
     [begin, kept, set, unique]
   )
 
-  /** A page's rows laid over those they cover, or `undefined` if none. */
+  /**
+   * A page's rows laid over those they cover, or `undefined` if none.
+   *
+   * A first page around the next game starts later once a game has passed.
+   * The held rows before its first one stay, as rows above it, since no
+   * cursor would read them again.
+   */
   const spliced = useCallback(
     (page: Page<T>): Partial<Held<T>> | undefined => {
       const { keyOf } = latest.current
       const { rows, above, nextCursor, prevCursor } = held.current
-      const last = page.items.at(-1)
-      if (last == null) return undefined
-      const lastKey = keyOf(last)
-      const end = rows.findIndex(row => keyOf(row) === lastKey)
-      if (end < above) return undefined
+      const first = page.items.at(0)
+      if (first == null) return undefined
+      const at = new Map(rows.map((row, index) => [keyOf(row), index]))
+      // The page covers held rows up to its last one that is held: a row
+      // new in its last slot does not throw away the pages read past it.
+      let end = -1
+      for (let index = page.items.length - 1; index >= 0; index--) {
+        const heldAt = at.get(keyOf(page.items[index])) ?? -1
+        if (heldAt >= above) {
+          end = heldAt
+          break
+        }
+      }
+      if (end < 0) return undefined
+      const start = at.get(keyOf(first)) ?? -1
+      const from = start > above && start <= end ? start : above
       return {
         rows: unique([
-          ...rows.slice(0, above),
+          ...rows.slice(0, from),
           ...kept(page.items),
           ...rows.slice(end + 1)
         ]),
         nextCursor: end === rows.length - 1 ? page.nextCursor : nextCursor,
-        prevCursor: above > 0 ? prevCursor : page.prevCursor,
+        prevCursor: from > 0 ? prevCursor : page.prevCursor,
         counts: page.counts ?? held.current.counts,
-        anchorId: page.anchorId
+        anchorId: page.anchorId,
+        above: from
       }
     },
     [kept, unique]
@@ -288,6 +309,7 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
         over.nextCursor === now.nextCursor &&
         over.prevCursor === now.prevCursor &&
         over.anchorId === now.anchorId &&
+        over.above === now.above &&
         JSON.stringify(over.counts) === JSON.stringify(now.counts)
       change({
         ...(unchanged ? {} : over),
@@ -322,6 +344,7 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       return
     }
     const lastKey = keyOf(lastRow)
+    const firstHeldKey = keyOf(held.current.rows[0])
     const heldRows = held.current.rows.length
     const topCursor = held.current.topCursor
     const rows: T[] = []
@@ -351,13 +374,33 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       if (current()) change({ error: caught })
       return
     }
+    // A page that landed behind these reads stays, with the cursor after it.
     const now = held.current
+    const lastAt = now.rows.findIndex(row => keyOf(row) === lastKey)
+    const behind = lastAt < 0 ? [] : now.rows.slice(lastAt + 1)
+    // A first page around the next game that starts later leaves the held
+    // rows before it above it, as `apply` does. Read from an older page,
+    // the rows start at the top row held when the reads began: an older page
+    // that landed above it meanwhile stays, with the cursors that read it.
+    const firstKey =
+      topCursor != null
+        ? firstHeldKey
+        : rows.length === 0
+          ? undefined
+          : keyOf(rows[0])
+    const startAt =
+      firstKey == null ? -1 : now.rows.findIndex(row => keyOf(row) === firstKey)
+    const before =
+      startAt > 0 && (lastAt < 0 || startAt <= lastAt)
+        ? now.rows.slice(0, startAt)
+        : []
     change({
-      rows: unique(kept(rows)),
-      nextCursor: next,
-      prevCursor: top?.prevCursor ?? null,
+      rows: unique(kept([...before, ...rows, ...behind])),
+      nextCursor: behind.length > 0 ? now.nextCursor : next,
+      prevCursor:
+        before.length > 0 ? now.prevCursor : (top?.prevCursor ?? null),
       counts: top?.counts ?? now.counts,
-      above: topCursor == null ? 0 : now.above,
+      above: topCursor == null ? before.length : now.above,
       error: undefined
     })
   }, [change, kept, refresh, unique])
@@ -398,8 +441,12 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
         rows: rows.filter((_row, index) => index !== at),
         above: at < above ? above - 1 : above
       })
+      // Left short with a cursor, as a short page would: nothing else reads
+      // on, since Legend List has already reported this end.
+      const { screenRows = SCREEN_ROWS } = latest.current
+      if (rows.length - 1 < screenRows) walk('next').catch(() => undefined)
     },
-    [change]
+    [change, walk]
   )
 
   useEffect(() => {
@@ -432,6 +479,7 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       rows.length === 0 && (opening || walking.next || walking.previous)
     return {
       rows,
+      opened: shown.opened,
       counts: shown.counts,
       anchorId: shown.anchorId,
       loading: loading && error == null,

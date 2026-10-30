@@ -285,6 +285,31 @@ describe('usePagedList', function () {
       expect(ids(list.rows)).deep.equals(['r0', 'r1', 'r2', 'r3', 'r4'])
     })
 
+    it('keeps a repeated row where it first came, as it last read', async function () {
+      const pages: Array<Page<Row>> = [
+        {
+          items: rowsOf(0, 3),
+          nextCursor: 'more',
+          prevCursor: null,
+          anchorId: null,
+          counts
+        },
+        {
+          items: [{ id: 'r1', note: 'read again' }, ...rowsOf(3, 1)],
+          nextCursor: null,
+          prevCursor: null,
+          anchorId: null,
+          counts: null
+        }
+      ]
+      await open(async () => pages.shift()!, 2)
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(ids(list.rows)).deep.equals(['r0', 'r1', 'r2', 'r3'])
+      expect(list.rows[1].note).equals('read again')
+    })
+
     it('drops a page still on its way for the last filter', async function () {
       const read = held()
       await open(read.read)
@@ -335,6 +360,38 @@ describe('usePagedList', function () {
         await list.loadMore()
       })
       expect(calls.at(-1)).equals('next:6')
+    })
+
+    it('keeps the pages past a first page whose last slot holds a new row', async function () {
+      let rows = rowsOf(0, 12)
+      const { read, calls } = over(() => rows, 3)
+      await open(read)
+      await act(async () => {
+        await list.loadMore()
+      })
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(0, 9)))
+      const before = list.rows
+      rows = [...rows.slice(0, 2), { id: 'new' }, ...rows.slice(2)]
+      await act(async () => {
+        await list.refresh()
+      })
+      expect(ids(list.rows)).deep.equals([
+        'r0',
+        'r1',
+        'new',
+        ...ids(before.slice(2))
+      ])
+      expect(list.rows[0]).equals(before[0])
+      expect(list.rows[9]).equals(before[8])
+      // The cursor is still the end of what is held.
+      calls.length = 0
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(calls).deep.equals(['next:9'])
     })
 
     it('replaces the list when the page does not reach a held row', async function () {
@@ -394,6 +451,25 @@ describe('usePagedList', function () {
       expect(ids(list.rows)).deep.equals(['r3', 'r4', 'r5', 'r6', 'r7'])
     })
 
+    it('reads on when a removal leaves the list short, as a short page does', async function () {
+      const rows = rowsOf(0, 9)
+      const { read, calls } = over(() => rows, 3)
+      await open(read, 3)
+      calls.length = 0
+      await act(async () => {
+        list.remove('r0')
+      })
+      await settled()
+      expect(calls).deep.equals(['next:3'])
+      expect(ids(list.rows)).deep.equals(['r1', 'r2', 'r3', 'r4', 'r5'])
+      calls.length = 0
+      await act(async () => {
+        list.remove('r1')
+      })
+      await settled()
+      expect(calls).deep.equals([])
+    })
+
     it('re-reads every held page in place', async function () {
       let rows = rowsOf(0, 9)
       const { read, calls } = over(() => rows, 3)
@@ -420,6 +496,101 @@ describe('usePagedList', function () {
       expect(calls.at(-1)).equals('next:6')
     })
 
+    it('keeps a page that landed behind a read of the held pages', async function () {
+      const rows = rowsOf(0, 9)
+      const gate: { hold?: Promise<void> } = {}
+      let release: () => void = () => undefined
+      const calls: Array<string | null> = []
+      await open(async cursor => {
+        calls.push(cursor)
+        const page = pageOf(rows, { cursor, limit: 3 })
+        // Only the read of the held pages waits, not the page that overtakes.
+        if (cursor == null) await gate.hold
+        return page
+      })
+      gate.hold = new Promise(resolve => {
+        release = resolve
+      })
+      const reading = list.refreshHeld()
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(0, 6)))
+      await act(async () => {
+        release()
+        await reading
+      })
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(0, 6)))
+      calls.length = 0
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(calls).deep.equals(['next:6'])
+      expect(list.rows).has.length(9)
+    })
+
+    it('keeps an older page that lands during a refresh', async function () {
+      let rows = rowsOf(0, 12)
+      const gate: { hold?: Promise<void> } = {}
+      let release: () => void = () => undefined
+      const calls: Array<string | null> = []
+      await open(async cursor => {
+        calls.push(cursor)
+        const page = pageOf(rows, { cursor, limit: 3 }, { anchorIndex: 9 })
+        // Only the refresh's read of the top held page waits.
+        if (cursor === 'prev:8') await gate.hold
+        return page
+      })
+      await act(async () => {
+        await list.loadOlder()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(5, 7)))
+      gate.hold = new Promise(resolve => {
+        release = resolve
+      })
+      const reading = list.refreshHeld()
+      await settled()
+      // The reader reaches the top while the refresh is out.
+      await act(async () => {
+        await list.loadOlder()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(2, 10)))
+      const landed = list.rows[0]
+      gate.hold = undefined
+      await act(async () => {
+        release()
+        await reading
+      })
+      // The older page stays above, in order.
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(2, 10)))
+      expect(list.rows[0]).equals(landed)
+      // The next refresh reads from that page, and adds nothing above it.
+      calls.length = 0
+      await act(async () => {
+        await list.refreshHeld()
+      })
+      expect(calls[0]).equals('prev:5')
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(2, 10)))
+      expect(list.rows[0]).equals(landed)
+      // The first page still starts six rows down: a row new at its top
+      // goes in there.
+      rows = [...rows.slice(0, 8), { id: 'n' }, ...rows.slice(8)]
+      await act(async () => {
+        await list.refresh()
+      })
+      expect(ids(list.rows)).deep.equals([
+        ...ids(rowsOf(2, 6)),
+        'n',
+        ...ids(rowsOf(8, 4))
+      ])
+      calls.length = 0
+      await act(async () => {
+        await list.loadOlder()
+      })
+      expect(calls).deep.equals(['prev:2'])
+      expect(list.rows[0].id).equals('r0')
+    })
+
     it('re-reads from the older rows held above the first page', async function () {
       let rows = rowsOf(0, 9)
       await open(async cursor =>
@@ -441,6 +612,63 @@ describe('usePagedList', function () {
         await list.loadOlder()
       })
       expect(ids(list.rows)).deep.equals(ids(rows))
+    })
+
+    it('keeps the rows above a first page whose start moved on', async function () {
+      const rows = rowsOf(0, 20)
+      // The next game: a first page has two rows before it and four from it.
+      let next = 10
+      const { read, calls } = over(() => rows, 4)
+      await open(async (cursor: string | null) =>
+        cursor == null
+          ? pageOf(rows, { limit: 4 }, { anchorIndex: next })
+          : await read(cursor)
+      )
+      await act(async () => {
+        await list.loadOlder()
+      })
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(4, 18)))
+      // Three games have passed, so the first page starts three rows later.
+      next = 13
+      await act(async () => {
+        await list.refresh()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(4, 18)))
+      calls.length = 0
+      await act(async () => {
+        await list.loadOlder()
+      })
+      expect(calls).deep.equals(['prev:4'])
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(0, 18)))
+    })
+
+    it('keeps the rows above when the held pages are read again from a later start', async function () {
+      const rows = rowsOf(0, 20)
+      let next = 10
+      const { read, calls } = over(() => rows, 4)
+      await open(async (cursor: string | null) =>
+        cursor == null
+          ? pageOf(rows, { limit: 4 }, { anchorIndex: next })
+          : await read(cursor)
+      )
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(8, 18)))
+      next = 13
+      await act(async () => {
+        await list.refreshHeld()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(8, 20)))
+      calls.length = 0
+      await act(async () => {
+        await list.loadOlder()
+      })
+      expect(calls).deep.equals(['prev:8'])
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(4, 20)))
     })
 
     it('drops a refresh that a later one overtakes', async function () {

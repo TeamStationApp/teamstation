@@ -1043,7 +1043,7 @@ function PublicGames(props: {
   const styles = getStyles(useTheme())
   const renderRow = useCallback(
     (game: PublicGame) => (
-      <View style={styles.row}>
+      <View style={styles.row} testID={`public-game-${game.id}`}>
         <PublicGameCard game={game} onOpenGame={onOpenGame} />
       </View>
     ),
