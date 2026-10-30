@@ -13,11 +13,12 @@ import Animated from 'react-native-reanimated'
 import type { TeamStationClient } from '../../common/api'
 import { initialUmpireGame } from '../../common/nextGame'
 import { umpirePositionName } from '../../common/umpires'
-import type {
-  UmpireGameRow,
-  UmpireLeaderboard,
-  UmpireLeague,
-  UmpireSchedule
+import {
+  optionalPositionHeader,
+  type UmpireGameRow,
+  type UmpireLeaderboard,
+  type UmpireLeague,
+  type UmpireSchedule
 } from '../../common/umpireSchedule'
 import { umpireFilterError } from '../../common/umpireTime'
 import { Button, TextWidthButton } from '../components'
@@ -84,20 +85,6 @@ export function umpireFilterLabel(
     .filter(Boolean)
     .join(' · ')
 }
-export function optionalPositionHeader(
-  games: UmpireGameRow[],
-  slot: string
-): string | undefined {
-  const offering = games.filter(g => g.positions.some(p => p.slot === slot))
-  const optional = offering.filter(
-    g => !g.positions.find(p => p.slot === slot)!.required
-  ).length
-  return optional === 0
-    ? undefined
-    : optional === offering.length
-      ? 'Optional'
-      : 'Optional in some games'
-}
 /** An admin may always clear a slot. Anyone else may only before the cutoff. */
 export function assignmentRemovable(
   assignment: { canRemove: boolean },
@@ -110,7 +97,7 @@ export function assignmentRemovable(
   )
 }
 
-export { initialUmpireGame }
+export { initialUmpireGame, optionalPositionHeader }
 export function UmpireScheduleScreen({
   client,
   route,

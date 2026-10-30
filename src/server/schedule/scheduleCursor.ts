@@ -77,15 +77,29 @@ export function readingOrder(cursor: ScheduleCursor): ListOrder {
   return cursor.order === 'asc' ? 'desc' : 'asc'
 }
 
+/** Which of two places runs first in `asc`, by start and then by `id`. */
+function comparePlaces(a: Placed, b: Placed): number {
+  const date = Date.parse(a.startAt!) - Date.parse(b.startAt!)
+  if (date !== 0) return date
+  return a.id === b.id ? 0 : a.id < b.id ? -1 : 1
+}
+
 /**
  * Whether `row` comes after the cursor's place as the cursor reads, by what
  * JavaScript sees of a start, to the millisecond.
  */
 export function pastCursor(row: Placed, cursor: ScheduleCursor): boolean {
-  const date = Date.parse(row.startAt!) - Date.parse(cursor.startAt)
-  const id = row.id === cursor.id ? 0 : row.id < cursor.id ? -1 : 1
   const sign = readingOrder(cursor) === 'asc' ? 1 : -1
-  return (date !== 0 ? date : id) * sign > 0
+  return comparePlaces(row, cursor) * sign > 0
+}
+
+/** Rows as a list of `order` runs, which is the order a cursor walks. */
+export function inListOrder<T extends Placed>(
+  rows: readonly T[],
+  order: ListOrder
+): T[] {
+  const sign = order === 'asc' ? 1 : -1
+  return [...rows].sort((a, b) => comparePlaces(a, b) * sign)
 }
 
 function cursorAt(
@@ -141,6 +155,20 @@ export function pageFromCursor<T extends Placed>(
     nextCursor: cursorAt(items.at(-1) ?? cursor, 'next', order),
     prevCursor: more ? cursorAt(items[0], 'prev', order) : null
   }
+}
+
+/** A page of a list held whole: its first in `order`, or the cursor's. */
+export function pageOfHeld<T extends Placed>(
+  rows: readonly T[],
+  order: ListOrder,
+  limit: number,
+  cursor?: ScheduleCursor
+): PageCut<T> {
+  if (cursor == null) return firstPage(inListOrder(rows, order), limit, order)
+  const read = inListOrder(rows, readingOrder(cursor)).filter(row =>
+    pastCursor(row, cursor)
+  )
+  return pageFromCursor(read.slice(0, limit + 1), limit, cursor)
 }
 
 /**
