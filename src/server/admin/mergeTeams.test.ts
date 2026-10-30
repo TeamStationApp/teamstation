@@ -285,6 +285,41 @@ describe('merging two rows that are one team', function () {
         initiating_team_id: houser
       })
       .execute()
+    // A roster add of somebody the team that stays already had.
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: sender,
+        team_id: hawks,
+        role: 'member',
+        is_player: true
+      })
+      .onConflict(oc =>
+        oc.columns(['team_id', 'user_id']).doUpdateSet({ is_player: true })
+      )
+      .execute()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_kept',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: houser,
+          userId: sender,
+          createdMembership: true
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
     const report = await mergeTeams(db, {
@@ -304,6 +339,25 @@ describe('merging two rows that are one team', function () {
       game_id: scoredGame
     })
     expect(add.terms).to.include({ teamId: hawks, gameId: scoredGame })
+    expect((add.terms as { teamName: string }).teamName).equals(
+      (
+        await db
+          .selectFrom('teams')
+          .select('name')
+          .where('id', '=', hawks)
+          .executeTakeFirstOrThrow()
+      ).name
+    )
+    // A rejection could only take them off the team they were on.
+    expect(
+      (
+        await db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', 'grq_merge_kept')
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('superseded')
     // Both teams' screens are told, and the game that moved.
     try {
       for (const ids of [

@@ -299,10 +299,23 @@ export async function mergeTeams(
     await keepPrivacy(trx, intoTeamId, stricter)
     // A player add is the team's: its rejection undoes it there, and the
     // team's next add reads what became of the last.
+    // Unless the team that stays had the player anyway: the add made nothing
+    // there, and rejecting it must not take them off their own team.
+    await sql`update group_requests set status = 'superseded', resolved_at = now()
+      where kind = 'playerAdd' and status = 'applied'
+        and initiating_team_id = ${fromTeamId} and terms->>'mode' = 'roster'
+        and exists (
+          select 1 from memberships
+          where memberships.team_id = ${intoTeamId} and memberships.is_player
+            and memberships.user_id = group_requests.terms->>'userId')`.execute(
+      trx
+    )
     await sql`update group_requests set
       initiating_team_id = ${intoTeamId},
       sender_scope_id = ${intoTeamId},
-      terms = jsonb_set(terms, '{teamId}', to_jsonb(${intoTeamId}::text))
+      terms = jsonb_set(
+        jsonb_set(terms, '{teamId}', to_jsonb(${intoTeamId}::text)),
+        '{teamName}', to_jsonb(${into.name}::text))
       where kind = 'playerAdd' and initiating_team_id = ${fromTeamId}`.execute(
       trx
     )
