@@ -440,6 +440,15 @@ describe('adding a player who already exists', function () {
     expect((await roster({ userId: off })).status).equals(404)
   })
 
+  it('answers two adds of one person at once as one add', async function () {
+    await person('Twice At Once', TEAM.owls)
+    const answers = await Promise.all([
+      roster({ userId: ids['Twice At Once'] }),
+      roster({ userId: ids['Twice At Once'] })
+    ])
+    expect(answers.map(answer => answer.status)).has.members([200, 201])
+  })
+
   it('adds an existing player to one side of a game as a pool player', async function () {
     const added = await guest({
       side: 'away',

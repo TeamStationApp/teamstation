@@ -9,6 +9,7 @@ import {
 import type { ExistingRosterPlayer } from '../../common/playerSettings'
 import { lockPlayerEdits, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
@@ -176,6 +177,9 @@ export async function addExistingRosterPlayer(
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     const person = await candidatePerson(trx, teamId, body.userId)
+    // The merge lock is shared: two adds of one person run together without
+    // this, and the second would meet the first's row or make a second ask.
+    await lockKeys(trx, [`playerAdd:${teamId}:${person.userId}`])
     const playing = await trx
       .selectFrom('memberships')
       .select('id')
