@@ -2,8 +2,10 @@ import type { Kysely } from 'kysely'
 
 import type { GumboPlay } from '../../common/gumboPlay'
 import type { Database } from '../db/database'
+import { withdrawnKey, withdrawnPlayers } from '../games/withdrawn'
 import { scoringUsers } from '../scoring/gumboIds'
 import type { BattingLine, PitchingLine } from '../stats'
+import { survivorsOf } from '../users/survivors'
 import { eventTypeCounts } from './gumboStats'
 
 type Doc = Record<string, unknown>
@@ -35,6 +37,28 @@ async function gamePlays(
  */
 const byUserId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
+/**
+ * Who each withdrawn line of a game stands for, by its key: the plays name
+ * that person, and the line keeps the place they took in the order.
+ */
+async function standsFor(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<Map<string, string>> {
+  const rows = await withdrawnPlayers(db, [gameId])
+  if (rows.length === 0) return new Map()
+  const survivors = await survivorsOf(
+    db,
+    rows.map(row => row.userId)
+  )
+  return new Map(
+    rows.map(row => [
+      withdrawnKey(row.requestId, gameId),
+      survivors.get(row.userId)!
+    ])
+  )
+}
+
 /** Stored first appearances, with a play fallback while old rows rebuild. */
 export async function boxScoreOrder(
   db: Kysely<Database>,
@@ -64,9 +88,13 @@ export async function boxScoreOrder(
       )
     }
   }
+  const people = await standsFor(db, gameId)
+  const place = (line: BattingLine): number =>
+    first.get(line.userId) ??
+    first.get(people.get(line.userId) ?? '') ??
+    Infinity
   return [...lines].sort((a, b) => {
-    const delta =
-      (first.get(a.userId) ?? Infinity) - (first.get(b.userId) ?? Infinity)
+    const delta = place(a) - place(b)
     return Number.isNaN(delta) || delta === 0
       ? byUserId(a.userId, b.userId)
       : delta
@@ -121,9 +149,11 @@ export async function pitchingOrder(
     const user = users.get(id)
     if (user != null && !rank.has(user)) rank.set(user, index)
   })
+  const people = await standsFor(db, gameId)
+  const place = (line: PitchingLine): number =>
+    rank.get(people.get(line.userId) ?? line.userId) ?? Infinity
   return [...lines].sort((a, b) => {
-    const delta =
-      (rank.get(a.userId) ?? Infinity) - (rank.get(b.userId) ?? Infinity)
+    const delta = place(a) - place(b)
     if (!Number.isNaN(delta) && delta !== 0) return delta
     return b.outs !== a.outs ? b.outs - a.outs : byUserId(a.userId, b.userId)
   })

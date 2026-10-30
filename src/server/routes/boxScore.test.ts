@@ -377,4 +377,43 @@ describe('GET /games/:gameId/box-score stats', function () {
       outs: 6
     })
   })
+
+  it('keeps a withdrawn starter ahead of the reliever who followed', async function () {
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_box_withdrawn',
+        kind: 'playerAdd',
+        sender_id: userIdOfGumbo(reliever),
+        sender_scope_type: 'team',
+        sender_scope_id: home,
+        terms: '{}',
+        status: 'declined',
+        sent_at: new Date(0),
+        expires_at: new Date(1)
+      })
+      .execute()
+    await db!
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: gameId,
+        user_id: userIdOfGumbo(pitcher),
+        side: 'home',
+        request_id: 'grq_box_withdrawn',
+        label: 'HWKS A'
+      })
+      .execute()
+    try {
+      const box = await ask()
+      expect(box.pitching.map(line => line.userId)).deep.equals([
+        null,
+        userIdOfGumbo(reliever)
+      ])
+    } finally {
+      await db!
+        .deleteFrom('group_requests')
+        .where('id', '=', 'grq_box_withdrawn')
+        .execute()
+    }
+  })
 })
