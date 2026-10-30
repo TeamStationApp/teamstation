@@ -1148,12 +1148,7 @@ function ConversationRow(props: {
     pointer: false,
     nativeStart: undefined as ReturnType<typeof pressStamp>
   })
-  const title =
-    chat.scope?.type === 'season' &&
-    chat.avatarName != null &&
-    chat.avatarName !== ''
-      ? chat.avatarName
-      : conversationTitle(chat)
+  const title = conversationTitle(chat)
   const pill = conversationPill(chat)
   const unread = chat.unread > 0 || chat.preferences?.manualUnread === true
   const preview = chat.locked
@@ -1193,7 +1188,7 @@ function ConversationRow(props: {
         styles.row,
         {
           paddingLeft: props.gutter.left,
-          paddingRight: props.gutter.right
+          paddingRight: 0
         },
         props.selected && styles.selected
       ]}
@@ -1361,7 +1356,15 @@ function ConversationRow(props: {
           lstrings.chat_conversation_actions + ': ' + chat.title
         }
         onPress={props.onMenu}
-        style={styles.more}
+        style={[
+          styles.more,
+          {
+            width: Math.max(
+              theme.rem(3),
+              props.gutter.right * 2 + theme.rem(0.1875)
+            )
+          }
+        ]}
       >
         <View accessible={false} style={styles.ellipsis}>
           {[0, 1, 2].map(dot => (
@@ -1407,6 +1410,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   selected: { backgroundColor: theme.containerBackgroundColor },
   openRow: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(0.625),
@@ -1459,9 +1463,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.75)
   },
   more: {
-    minWidth: theme.rem(2.75),
-    minHeight: theme.rem(2.75),
-    alignItems: 'flex-end',
+    flexShrink: 0,
+    minHeight: theme.rem(3),
+    alignItems: 'center',
     justifyContent: 'center'
   },
   ellipsis: { gap: theme.rem(0.1875), alignItems: 'center' },

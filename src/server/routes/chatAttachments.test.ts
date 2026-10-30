@@ -75,7 +75,10 @@ describe('chat attachments (U10)', function () {
     spaceDir = await mkdtemp(join(tmpdir(), 'tsChatSpace-'))
     spaceServer = await listen('127.0.0.1', 0, { space, dir: spaceDir })
     space.endpoint = `http://127.0.0.1:${(spaceServer.address() as AddressInfo).port}`
-    const opened = await openChatFixture('attachments', { space })
+    const opened = await openChatFixture('attachments', {
+      space,
+      leagueName: 'Harbor League'
+    })
     if (opened == null) {
       this.skip()
       return
@@ -240,7 +243,10 @@ describe('chat attachments (U10)', function () {
       expect(
         (await create('B', { conversationId: 'cnv_none', size, digest })).status
       ).equals(404)
-      const announcements = await chatId('A', 'QPLL Spring 2027 Announcements')
+      const announcements = await chatId(
+        'A',
+        'Spring 2027 - Harbor League Announcements'
+      )
       refused(
         await create('A', { conversationId: announcements, size, digest }),
         403,
