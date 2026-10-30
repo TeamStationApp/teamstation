@@ -175,6 +175,7 @@ export const enUs = {
     'You need to be a member of one of these teams to see individual player stats.',
   /** Under a coach's empty line score, before the game has a line score. */
   box_score_not_started: 'The game has not started',
+  box_score_totals: 'Totals',
 
   // Four angles at once
   angles_open: 'All angles',

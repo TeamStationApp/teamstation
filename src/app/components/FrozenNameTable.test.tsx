@@ -5,7 +5,8 @@ import { Text } from 'react-native'
 
 import { render, unmount, windowSize } from '../../test/tessTestKit'
 import type { StatColumn } from '../screens/statColumns'
-import { FrozenNameTable } from './FrozenNameTable'
+import { FrozenNameTable, scaledSize } from './FrozenNameTable'
+import { StatisticsTable } from './StatisticsTable'
 import { type PaneFrame, PaneFrameProvider } from './useBreakpoint'
 
 interface Row {
@@ -191,5 +192,118 @@ describe('the frozen names column, with a total', () => {
         node => node.textContent === 'Same' && node.childElementCount === 0
       )
     ).length(2)
+  })
+
+  it('gives a compact table’s spare width to the names and sets its figures close, under a rule', async () => {
+    await render(
+      <FrozenNameTable
+        compact
+        nameWidth={6.5}
+        rows={rows}
+        columns={[
+          { label: 'R', value: row => String(row.runs) },
+          { label: 'H', value: () => '7' }
+        ]}
+        rowKey={row => row.name}
+        name={row => <Text>{row.name}</Text>}
+      />
+    )
+    const names = document.querySelector<HTMLElement>(
+      '[data-testid="frozen-names"]'
+    )!
+    const figures = document.querySelector<HTMLElement>(
+      '[data-testid="frozen-figures"]'
+    )!
+    expect(getComputedStyle(names).flexGrow).equals('1')
+    expect(getComputedStyle(names).flexShrink).equals('0')
+    expect(names.style.width).equals('')
+    expect(getComputedStyle(figures).flexGrow).equals('0')
+    expect(getComputedStyle(figures).flexShrink).equals('1')
+    const head = figures.querySelector<HTMLElement>('div > div > div')
+    const cell = (label: string): HTMLElement =>
+      [...figures.querySelectorAll<HTMLElement>('*')].find(
+        node => node.textContent === label && node.childElementCount === 0
+      )!
+    expect(getComputedStyle(cell('R')).paddingLeft).equals('0px')
+    expect(getComputedStyle(cell('H')).paddingLeft).not.equals('0px')
+    expect(head).not.equals(null)
+    expect(getComputedStyle(cell('H').parentElement!).borderBottomWidth).equals(
+      '1px'
+    )
+  })
+
+  it('holds a compact table’s columns to the width it is given', async () => {
+    await render(
+      <FrozenNameTable
+        compact
+        namesGrow={false}
+        nameMaxWidth={10}
+        columnWidth={2}
+        rows={rows}
+        columns={[{ label: 'R', value: row => String(row.runs) }]}
+        rowKey={row => row.name}
+        name={row => <Text>{row.name}</Text>}
+      />
+    )
+    const cell = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node => node.textContent === 'R' && node.childElementCount === 0
+    )!
+    expect(getComputedStyle(cell).paddingLeft).equals('0px')
+    expect(parseFloat(getComputedStyle(cell).width)).greaterThan(20)
+    // Beside its figures, not across the pane from them, with the floor for
+    // the name's text clear of the row's padding.
+    const names = document.querySelector<HTMLElement>(
+      '[data-testid="frozen-names"]'
+    )!
+    expect(getComputedStyle(names).flexGrow).equals('0')
+    expect(getComputedStyle(names).flexBasis).not.equals('116px')
+    expect(getComputedStyle(names).minWidth).equals('116px')
+    expect(getComputedStyle(names).maxWidth).equals('160px')
+  })
+
+  it('grows a row with the reader’s text, and never shrinks it', () => {
+    expect(scaledSize(2, 2)).equals(4)
+    expect(scaledSize(3.5, 1)).equals(3.5)
+    expect(scaledSize(2, 0.8)).equals(2)
+  })
+
+  it('makes a statistics table’s name a button only when it opens someone', async () => {
+    const opened: string[] = []
+    await render(
+      <StatisticsTable
+        rows={[{ userId: 'usr_1', shortName: 'Alex L' }, { userId: 'usr_2' }]}
+        columns={[{ label: 'G', value: () => '1' }]}
+        onOpen={row => opened.push(row.userId)}
+      />
+    )
+    document
+      .querySelector<HTMLElement>('[role="button"][aria-label="Open Alex L"]')!
+      .click()
+    expect(opened).deep.equals(['usr_1'])
+    expect(document.querySelector('[aria-label="Open Unknown"]')).not.equals(
+      null
+    )
+  })
+
+  it('tells a screen reader whose figure it is and what it counts', async () => {
+    await render(
+      <FrozenNameTable
+        rows={rows}
+        columns={[{ label: 'R', value: row => String(row.runs) }]}
+        rowKey={row => row.name}
+        rowLabel={row => row.name}
+        name={row => <Text>{row.name}</Text>}
+        total={{
+          row: { name: 'Total', runs: 55 },
+          name: <Text>Total</Text>,
+          label: 'Total'
+        }}
+      />
+    )
+    const labelled = [...document.querySelectorAll('[aria-label]')].map(node =>
+      node.getAttribute('aria-label')
+    )
+    expect(labelled).includes('Demo Hawks, R, 31')
+    expect(labelled).includes('Total, R, 55')
   })
 })

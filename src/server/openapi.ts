@@ -5588,7 +5588,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'under a placeholder name) has `standsFor`, the gumbo id of the ' +
             'batter it stands in for in this game, so a batting order that ' +
             'still names him shows the line instead; every other line has ' +
-            '`standsFor` null. Anybody signed in ' +
+            '`standsFor` null. `gumboIds` are the ids a line goes by in the ' +
+            "game's plays. Anybody signed in " +
             'who is a member of neither team is answered 403 `membersOnly`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],

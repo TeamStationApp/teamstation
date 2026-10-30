@@ -161,7 +161,7 @@ describe('expanded statistics screens', function () {
     expect(getComputedStyle(header).width).equals(getComputedStyle(value).width)
     expect(getComputedStyle(header).paddingLeft).equals('0px')
     expect(getComputedStyle(value).paddingLeft).equals('0px')
-    expect(parseFloat(getComputedStyle(second).paddingLeft)).at.most(6)
+    expect(parseFloat(getComputedStyle(second).paddingLeft)).at.most(8)
     expect(getComputedStyle(header.parentElement!).columnGap).not.equals('4px')
     expect(getComputedStyle(value).whiteSpace).equals('nowrap')
   })

@@ -487,13 +487,63 @@ describe('TeamScreen batting and pitching tables', function () {
       ).equals(true)
       expect(getComputedStyle(cell).position).not.equals('sticky')
     }
-    // The team page opens nobody: a name is text, not a disabled control.
+    // With nothing to open a player, a name is text, not a disabled control.
     for (const names of document.querySelectorAll(
       '[data-testid="frozen-names"]'
     )) {
       expect(names.querySelector('[aria-disabled]')).equals(null)
       expect(names.querySelector('[role="button"]')).equals(null)
     }
+  })
+})
+
+describe('TeamScreen’s stat tables for a member', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  it('opens a player from their name, with the team', async function () {
+    const line = {
+      userId: userIdOfGumbo(31),
+      shortName: 'Mookie B',
+      teamId: hawks.id,
+      pa: 4,
+      ab: 3,
+      h: 2,
+      singles: 2,
+      doubles: 0,
+      triples: 0,
+      hr: 0,
+      bb: 1,
+      k: 0,
+      hbp: 0,
+      rbi: 1,
+      rates: { avg: 0.667 }
+    }
+    const { client } = fakeClient({
+      teamStats: async () => [asBattingRow(line)]
+    })
+    const opened: unknown[] = []
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="stats"
+        onOpenGame={() => undefined}
+        onOpenPlayer={(userId, name, from) => opened.push([userId, name, from])}
+      />
+    )
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Open Mookie B"]')!
+        .click()
+    })
+    expect(opened).deep.equals([
+      [line.userId, 'Mookie B', { teamId: hawks.id }]
+    ])
   })
 })
 

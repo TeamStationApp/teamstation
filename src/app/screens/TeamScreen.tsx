@@ -358,6 +358,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     anchorOnRow: tab === 'schedule' && next >= 0
   })
 
+  // As on the roster: a non-member is answered `404` on a player's page.
+  const openStatsPlayer =
+    nonMemberView || onOpenPlayer == null
+      ? undefined
+      : (row: { userId: string; shortName?: string }): void => {
+          onOpenPlayer(row.userId, row.shortName ?? 'Unknown', {
+            teamId: team.id
+          })
+        }
+
   return (
     <Screen {...pinned.screen}>
       <CardBand part={pinned.cardBand}>
@@ -582,6 +592,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                       <StatisticsTable
                         rows={batting}
                         columns={battingColumns}
+                        onOpen={openStatsPlayer}
                       />
                     </Card>
                   )}
@@ -595,6 +606,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         <StatisticsTable
                           rows={pitching}
                           columns={pitchingColumns}
+                          onOpen={openStatsPlayer}
                         />
                       </Card>
                     </>

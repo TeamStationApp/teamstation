@@ -2,11 +2,9 @@ import React from 'react'
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   type TextStyle,
-  useWindowDimensions,
   View,
   type ViewStyle
 } from 'react-native'
@@ -19,16 +17,24 @@ import type {
   PitchingRow
 } from '../../common/api'
 import type { Side } from '../../common/scoring/state'
-import { webStyle } from '../components/glass'
-import { WideTable } from '../components/WideTable'
+import { FrozenNameTable } from '../components/FrozenNameTable'
+import { TickerText } from '../components/TickerText'
+import { usePaneWidth } from '../components/useBreakpoint'
 import { lstrings } from '../locales/strings'
 import { cacheStyles } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
-import {
-  STAT_COLUMN_GAP_REM,
-  type StatColumn,
-  statColumnWidths
-} from './statColumns'
+import { battingTotals, pitchingTotals } from './boxScoreTotals'
+import type { StatColumn } from './statColumns'
+
+/** A player's name, below the line score's: all nine figures fit a phone. */
+const PLAYER_NAME_REM = 5.75
+
+/**
+ * The line score's names take the width of the longer name, from a floor, and
+ * never so much of a phone that the innings have nowhere to scroll.
+ */
+const LINE_NAME_MIN_REM = 6.5
+const LINE_NAME_MAX_SHARE = 0.45
 
 export interface BoxScoreProps {
   game: GameDetail
@@ -89,7 +95,11 @@ export type BattingLine = Omit<BattingRow, 'userId'> & {
  * first, which is a scroll rather than four decisions.
  *
  * A side with no batting lines, or no pitching lines, leaves that section
- * out. The totals are still in the line score above.
+ * out. A side's batting and pitching each end with their totals, and the
+ * line score above totals the game.
+ *
+ * Every table keeps its names outside the sideways scroll, so a row scrolled
+ * to its last column is still somebody's, on the phone as in a browser.
  *
  * A coach reads his own team's first (`first`), whatever the width, and
  * before the game an empty line score over "The game has not started", so
@@ -281,7 +291,8 @@ function emptyLine(batter: LineupBatter, teamId: string | null): BattingLine {
       sbPct: undefined
     },
     seasonAvg: null,
-    standsFor: null
+    standsFor: null,
+    gumboIds: []
   }
 }
 
@@ -301,71 +312,73 @@ function LineScore(props: {
 }): React.ReactElement | null {
   const { game, theme, empty = false } = props
   const styles = getStyles(theme)
+  const paneWidth = usePaneWidth()
   const line: Record<'away' | 'home', ShownSide> | null =
     game.linescore ?? (empty ? { away: NO_RUNS, home: NO_RUNS } : null)
   if (line == null) return null
 
   const innings = Math.max(line.away.runs.length, line.home.runs.length)
-  const sides = [
-    { name: game.awayTeamName, side: line.away },
-    { name: game.homeTeamName, side: line.home }
+  const rows: LineScoreRow[] = [
+    { key: 'away', name: game.awayTeamName, side: line.away },
+    { key: 'home', name: game.homeTeamName, side: line.home }
   ]
   // Runs, hits, errors and home runs. A hit batter belongs in the pitcher's
   // line and the batter's, not up here beside the innings. A non-member is sent
   // the runs alone.
   const counted = !game.nonMemberView
-  const totals = counted ? ['R', 'H', 'E', 'HR'] : ['R']
+  const columns: Array<StatColumn<LineScoreRow>> = [
+    ...Array.from({ length: innings }, (unused, index) => ({
+      label: String(index + 1),
+      sample: '9',
+      value: (row: LineScoreRow) => String(row.side.runs[index] ?? '–')
+    })),
+    {
+      label: 'R',
+      sample: '99',
+      strong: true,
+      value: row => String(row.side.r ?? '–')
+    },
+    ...(counted
+      ? [
+          {
+            label: 'H',
+            value: (row: LineScoreRow) => String(row.side.h ?? '–')
+          },
+          {
+            label: 'E',
+            value: (row: LineScoreRow) => String(row.side.e ?? '–')
+          },
+          {
+            label: 'HR',
+            value: (row: LineScoreRow) => String(row.side.hr ?? '–')
+          }
+        ]
+      : [])
+  ]
 
   return (
-    // Seven innings and five totals is wider than a phone. It scrolls sideways
-    // rather than being cut off at the runs column, which is the half somebody
-    // opened the box score for.
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.lineScore}
-      contentContainerStyle={styles.lineScoreContent}
-    >
-      <View style={[styles.tableRow, styles.tableHead]}>
-        <Text
-          style={[styles.cellName, styles.cellHead, styles.lineScoreName]}
-          numberOfLines={1}
-        />
-        {Array.from({ length: innings }, (unused, index) => (
-          <Text key={index} style={[styles.cell, styles.cellHead]}>
-            {index + 1}
-          </Text>
-        ))}
-        {totals.map(label => (
-          <Text key={label} style={[styles.cell, styles.cellHead]}>
-            {label}
-          </Text>
-        ))}
-      </View>
-      {sides.map(({ name, side }) => (
-        <View key={name} style={styles.tableRow}>
-          <Text
-            style={[styles.cellName, styles.lineScoreName]}
-            numberOfLines={1}
-          >
-            {name}
-          </Text>
-          {Array.from({ length: innings }, (unused, index) => (
-            <Text key={index} style={styles.cell}>
-              {side.runs[index] ?? '–'}
-            </Text>
-          ))}
-          <Text style={[styles.cell, styles.cellStrong]}>{side.r ?? '–'}</Text>
-          {counted && (
-            <>
-              <Text style={styles.cell}>{side.h ?? '–'}</Text>
-              <Text style={styles.cell}>{side.e ?? '–'}</Text>
-              <Text style={styles.cell}>{side.hr ?? '–'}</Text>
-            </>
-          )}
-        </View>
-      ))}
-    </ScrollView>
+    // Seven innings and five totals is wider than a phone. The innings scroll
+    // sideways under the team names rather than being cut off at the runs
+    // column, which is the half somebody opened the box score for.
+    <View style={styles.lineScore}>
+      <FrozenNameTable
+        heading=""
+        rows={rows}
+        columns={columns}
+        rowKey={row => row.key}
+        rowLabel={row => row.name}
+        compact
+        namesGrow={false}
+        nameWidth={LINE_NAME_MIN_REM}
+        nameMaxWidth={(LINE_NAME_MAX_SHARE * paneWidth) / theme.rem(1)}
+        columnWidth={2}
+        headBackground={theme.cardBackgroundColor}
+        nameBackground={theme.cardBackgroundColor}
+        name={row => (
+          <TickerText style={styles.cellName}>{row.name}</TickerText>
+        )}
+      />
+    </View>
   )
 }
 
@@ -375,69 +388,52 @@ type ShownSide = Pick<LineScoreSide, 'runs' | 'h' | 'e' | 'hr'> & {
 }
 const NO_RUNS: ShownSide = { runs: [], r: null, h: null, e: null, hr: null }
 
-function statCellSize(
-  theme: Theme,
-  width: number,
-  index: number
-): { width: number; paddingLeft: number; fontVariant: Array<'tabular-nums'> } {
-  const gap = index === 0 ? 0 : STAT_COLUMN_GAP_REM
-  return {
-    width: theme.rem(width + gap),
-    paddingLeft: theme.rem(gap),
-    fontVariant: ['tabular-nums']
-  }
+/** One side's row of the line score. */
+interface LineScoreRow {
+  key: 'away' | 'home'
+  name: string
+  side: ShownSide
 }
 
 /**
- * One person's line, in any of the four tables.
+ * A person's name, frozen beside their figures: the target that opens them.
  *
- * The whole row is the target rather than the name: a name is a few characters
- * at one end of a row read on a phone at the edge of a field, and the rest of
- * the row is the part the thumb actually lands on.
+ * At least 44 points tall and the width of the column, so the thumb that
+ * lands near a name lands on it. A line with no one to open is plain text.
  */
-function StatRow(props: {
+function NameCell(props: {
   name: string
-  cells: string[]
-  widths: number[]
   theme: Theme
   onPress?: () => void
 }): React.ReactElement {
-  const { name, cells, widths, theme, onPress } = props
+  const { name, theme, onPress } = props
   const styles = getStyles(theme)
-  const content = (
-    <>
-      <Text style={[styles.cellName, styles.statName]} numberOfLines={1}>
-        {name}
-      </Text>
-      {cells.map((value, index) => (
-        <Text
-          key={index}
-          style={[styles.cell, statCellSize(theme, widths[index], index)]}
-          // A figure is one line. Whatever it measures, it must not be
-          // allowed to make its row taller than the row above.
-          numberOfLines={1}
-        >
-          {value}
-        </Text>
-      ))}
-    </>
-  )
-  if (onPress == null) {
-    return <View style={[styles.tableRow, styles.playerRow]}>{content}</View>
-  }
+  const text = <TickerText style={styles.cellName}>{name}</TickerText>
+  if (onPress == null) return <View style={styles.nameCell}>{text}</View>
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={name}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.tableRow,
-        styles.playerRow,
+        styles.nameCell,
         pressed && styles.playerRowPressed
       ]}
     >
-      {content}
+      {text}
     </Pressable>
+  )
+}
+
+/** The totals line's name, which is nobody and opens nothing. */
+function TotalsCell(props: { theme: Theme }): React.ReactElement {
+  const styles = getStyles(props.theme)
+  return (
+    <View style={styles.nameCell}>
+      <Text style={[styles.cellName, styles.cellStrong]} numberOfLines={1}>
+        {lstrings.box_score_totals}
+      </Text>
+    </View>
   )
 }
 
@@ -448,63 +444,47 @@ function BattingTable(props: {
   onOpenPlayer?: (userId: string, name: string) => void
 }): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
-  const { fontScale } = useWindowDimensions()
   if (rows.length === 0) return null
   const styles = getStyles(theme)
   // The server preserves each side’s first plate-appearance order.
-  const lines = rows
-  const widths = statColumnWidths(
-    battingColumns,
-    rows,
-    0.8125,
-    0.8125,
-    0,
-    fontScale
-  )
   return (
     <View style={styles.table}>
       <Text style={styles.heading}>
         {lstrings.game_batting} — {name}
       </Text>
-      <WideTable>
-        <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.statName, styles.cellHead]}>
-            {lstrings.stats_player}
-          </Text>
-          {battingColumns.map((column, index) => (
-            <Text
-              key={column.label}
-              style={[
-                styles.cell,
-                styles.cellHead,
-                statCellSize(theme, widths[index], index)
-              ]}
-              numberOfLines={1}
-            >
-              {column.label}
-            </Text>
-          ))}
-        </View>
-        {lines.map((line, index) => {
+      <FrozenNameTable
+        heading={lstrings.stats_player}
+        rows={rows}
+        columns={battingColumns}
+        rowKey={(line, index) => line.userId ?? `made-up-${index}`}
+        rowLabel={line => line.shortName ?? ''}
+        compact
+        nameWidth={PLAYER_NAME_REM}
+        headBackground={theme.backgroundColor}
+        nameBackground={theme.backgroundColor}
+        total={{
+          row: battingTotals(rows),
+          label: lstrings.box_score_totals,
+          name: <TotalsCell theme={theme} />
+        }}
+        name={line => {
           const { userId } = line
+          const shown = line.shortName ?? ''
           return (
-            <StatRow
-              key={userId ?? `made-up-${index}`}
-              name={line.shortName ?? ''}
-              cells={battingColumns.map(column => column.value(line))}
-              widths={widths}
+            <NameCell
+              name={shown}
               theme={theme}
               onPress={
                 onOpenPlayer == null || userId == null || !line.openable
                   ? undefined
                   : () => {
-                      onOpenPlayer(userId, line.shortName ?? '')
+                      onOpenPlayer(userId, shown)
                     }
               }
             />
           )
-        })}
-      </WideTable>
+        }}
+      />
     </View>
   )
 }
@@ -516,61 +496,46 @@ function PitchingTable(props: {
   onOpenPlayer?: (userId: string, name: string) => void
 }): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
-  const { fontScale } = useWindowDimensions()
   if (rows.length === 0) return null
   const styles = getStyles(theme)
-  const widths = statColumnWidths(
-    pitchingColumns,
-    rows,
-    0.8125,
-    0.8125,
-    0,
-    fontScale
-  )
   return (
     <View style={styles.table}>
       <Text style={styles.heading}>
         {lstrings.game_pitching} — {name}
       </Text>
-      <WideTable>
-        <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.statName, styles.cellHead]}>
-            {lstrings.stats_player}
-          </Text>
-          {pitchingColumns.map((column, index) => (
-            <Text
-              key={column.label}
-              style={[
-                styles.cell,
-                styles.cellHead,
-                statCellSize(theme, widths[index], index)
-              ]}
-              numberOfLines={1}
-            >
-              {column.label}
-            </Text>
-          ))}
-        </View>
-        {rows.map((line, index) => {
-          const userId = line.userId
+      <FrozenNameTable
+        heading={lstrings.stats_player}
+        rows={rows}
+        columns={pitchingColumns}
+        rowKey={(line, index) => line.userId ?? `withdrawn-${index}`}
+        rowLabel={line => line.shortName ?? ''}
+        compact
+        nameWidth={PLAYER_NAME_REM}
+        headBackground={theme.backgroundColor}
+        nameBackground={theme.backgroundColor}
+        total={{
+          row: pitchingTotals(rows),
+          label: lstrings.box_score_totals,
+          name: <TotalsCell theme={theme} />
+        }}
+        name={line => {
+          const { userId } = line
+          const shown = line.shortName ?? ''
           return (
-            <StatRow
-              key={userId ?? `withdrawn-${index}`}
-              name={line.shortName ?? ''}
-              cells={pitchingColumns.map(column => column.value(line))}
-              widths={widths}
+            <NameCell
+              name={shown}
               theme={theme}
               onPress={
                 onOpenPlayer == null || userId == null || !line.openable
                   ? undefined
                   : () => {
-                      onOpenPlayer(userId, line.shortName ?? '')
+                      onOpenPlayer(userId, shown)
                     }
               }
             />
           )
-        })}
-      </WideTable>
+        }}
+      />
     </View>
   )
 }
@@ -628,19 +593,12 @@ type BoxStyles = Record<
   | 'boxColumns'
   | 'boxColumn'
   | 'lineScore'
-  | 'lineScoreContent'
-  | 'lineScoreName'
   | 'cellStrong'
   | 'boxScore'
   | 'table'
-  | 'tableRow'
-  | 'tableHead'
-  | 'playerRow'
+  | 'nameCell'
   | 'playerRowPressed'
   | 'cellName'
-  | 'statName'
-  | 'cell'
-  | 'cellHead'
   | 'notice',
   ViewStyle & TextStyle
 >
@@ -681,21 +639,12 @@ const getStyles = cacheStyles((theme: Theme) =>
       minWidth: 0
     },
     lineScore: {
-      flexGrow: 0,
       borderWidth: 1,
       borderColor: theme.defaultBorderColor,
       borderRadius: theme.rem(theme.radiusRem),
       backgroundColor: theme.cardBackgroundColor,
-      paddingHorizontal: theme.rem(theme.spaceSmRem),
+      overflow: 'hidden',
       paddingVertical: theme.rem(theme.spaceXsRem)
-    },
-    lineScoreContent: {
-      flexDirection: 'column'
-    },
-    // The line score is a white card, so its pinned names are white too. The
-    // page colour `cellName` paints is for the tables that sit on the page.
-    lineScoreName: {
-      backgroundColor: theme.cardBackgroundColor
     },
     cellStrong: {
       fontFamily: theme.boldTextFont,
@@ -710,60 +659,23 @@ const getStyles = cacheStyles((theme: Theme) =>
       gap: theme.rem(theme.spaceMdRem),
       paddingBottom: theme.rem(1)
     },
-    table: { paddingBottom: theme.rem(0.5), overflow: 'hidden' },
-    tableRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.3)
-    },
-    tableHead: {
-      borderBottomColor: theme.defaultBorderColor,
-      borderBottomWidth: 1
-    },
-    // A line about a person, which opens their page. The head row and the
-    // line score keep the tighter `tableRow`: neither is a target, and
-    // growing them would spend the height these rows just took.
-    playerRow: {
-      minHeight: theme.rem(2.75),
-      paddingVertical: theme.rem(theme.spaceSmRem)
+    table: { paddingBottom: theme.rem(0.5) },
+    // A person's name, which opens their page: the whole cell is the target.
+    nameCell: {
+      flex: 1,
+      alignSelf: 'stretch',
+      minHeight: 44,
+      // A taller target than its row, overhanging both sides.
+      marginVertical: -5,
+      justifyContent: 'center'
     },
     playerRowPressed: {
       backgroundColor: theme.highlightRowActiveBackground
     },
     cellName: {
       color: theme.primaryTextColor,
-      // Wide enough for a name before anything else gets a say, and greedy
-      // for whatever a wide window has left over. It never gives any back:
-      // inside a horizontal scroll a shrinking name is a column of ellipses
-      // where there was room to scroll instead.
-      flexBasis: theme.rem(6.5),
-      flexGrow: 1,
-      flexShrink: 0,
-      // And pinned, so a row scrolled to its last column is still somebody's.
-      // `sticky` is a position React Native has no name for; this app renders
-      // to the DOM, where it does. The background is what the numbers pass
-      // under rather than through.
-      ...webStyle({ position: 'sticky', left: 0, zIndex: 1 }),
-      backgroundColor: theme.backgroundColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.9)
-    },
-    statName: { minWidth: theme.rem(6.5) },
-    cell: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.8125),
-      // Fixed, so the columns of two tables beside each other line up and
-      // neither can push the other out of its half.
-      width: theme.rem(2),
-      flexGrow: 0,
-      flexShrink: 0,
-      textAlign: 'right'
-    },
-    cellHead: {
-      color: theme.secondaryTextColor,
-      fontFamily: theme.semiBoldTextFont
     },
     // A notice the reader has to read, not a hint: the page's own text
     // colour on the page's own background.

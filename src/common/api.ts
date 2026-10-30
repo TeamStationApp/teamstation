@@ -1073,6 +1073,8 @@ const asPitchingRates = asObject({
 })
 
 export const asBattingRow = asObject({
+  /** The ids this line goes by in the game's plays, on a box score. */
+  gumboIds: asOptional(asArray(asNumber), () => []),
   /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
   userId: asNullable(asUserId),
   /**
@@ -1128,6 +1130,8 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  * neither sets one.
  */
 export const asPitchingRow = asObject({
+  /** The ids this line goes by in the game's plays, on a box score. */
+  gumboIds: asOptional(asArray(asNumber), () => []),
   /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
   userId: asNullable(asUserId),
   /**

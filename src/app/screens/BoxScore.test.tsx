@@ -13,6 +13,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { PaneFrameProvider } from '../components/useBreakpoint'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -38,16 +39,51 @@ function rgb(hex: string): string {
 }
 
 /**
- * The pinned cells showing `text`: the leaves `position: sticky` holds. The
- * text is checked first, because computing every element's style is slow.
+ * The frozen cells showing `text`: leaves in a table's names column, which
+ * sits beside the horizontal scroll rather than in it.
  */
-function pinned(container: HTMLElement, text: string): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>('*')).filter(
-    node =>
-      node.children.length === 0 &&
-      node.textContent === text &&
-      getComputedStyle(node).position === 'sticky'
-  )
+function frozen(container: HTMLElement, text: string): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-testid="frozen-names"] *')
+  ).filter(node => node.children.length === 0 && node.textContent === text)
+}
+
+/** The table a frozen cell belongs to: its names and its figures. */
+function tableOf(cell: HTMLElement): {
+  names: HTMLElement[]
+  figures: HTMLElement[]
+  scroller: HTMLElement
+} {
+  const column = cell.closest<HTMLElement>('[data-testid="frozen-names"]')!
+  const scroller = column.parentElement!.querySelector<HTMLElement>(
+    ':scope > [data-testid="frozen-figures"]'
+  )!
+  return {
+    names: Array.from(column.children) as HTMLElement[],
+    figures: Array.from(
+      scroller.firstElementChild!.firstElementChild!.children
+    ) as HTMLElement[],
+    scroller
+  }
+}
+
+/**
+ * A row read across both halves: its name, then its figures at the same
+ * index beside the scroll. `row` 0 is the head.
+ */
+function rowAcross(
+  container: HTMLElement,
+  name: string,
+  row?: number
+): string[] {
+  const [cell] = frozen(container, name)
+  expect(cell, `frozen ${name}`).not.equals(undefined)
+  const { names, figures } = tableOf(cell)
+  const index = row ?? names.findIndex(each => each.contains(cell))
+  return [
+    names[index].textContent ?? '',
+    ...Array.from(figures[index].children).map(each => each.textContent ?? '')
+  ]
 }
 
 const BLAIR = asPitchingRow({
@@ -211,19 +247,8 @@ describe('a non-member’s box score', function () {
     )
     // The innings and the runs come first, and the counts the server kept
     // back are not drawn as dashes.
-    const [owls] = pinned(container, 'Owls')
-    expect(owls, 'line score row').not.equals(undefined)
-    const row = owls.parentElement!
-    expect(Array.from(row.children).map(cell => cell.textContent)).deep.equals([
-      'Owls',
-      '1',
-      '0',
-      '1'
-    ])
-    const head = row.previousElementSibling!
-    expect(Array.from(head.children).map(cell => cell.textContent)).deep.equals(
-      ['', '1', '2', 'R']
-    )
+    expect(rowAcross(container, 'Owls')).deep.equals(['Owls', '1', '0', '1'])
+    expect(rowAcross(container, 'Owls', 0)).deep.equals(['', '1', '2', 'R'])
     expect(text.indexOf('Hawks')).lessThan(text.indexOf(message))
     expect(text).not.includes('Batting —')
     expect(text).not.includes('Pitching —')
@@ -232,29 +257,66 @@ describe('a non-member’s box score', function () {
 })
 
 describe('the box score', function () {
-  it('draws the line score’s pinned names, and the cell above them, on the card’s white', async function () {
+  it('draws the line score’s frozen names, and the cell above them, on the card’s white', async function () {
     this.timeout(10000)
     const container = await boxScore()
     const card = rgb(tsBallpark.cardBackgroundColor)
     for (const name of ['Owls', 'Hawks']) {
-      const [cell] = pinned(container, name)
-      expect(cell, `pinned ${name}`).not.equals(undefined)
-      expect(getComputedStyle(cell).backgroundColor, name).equals(card)
+      const [cell] = frozen(container, name)
+      expect(cell, `frozen ${name}`).not.equals(undefined)
+      const { names } = tableOf(cell)
+      const row = names.find(each => each.contains(cell))!
+      expect(getComputedStyle(row).backgroundColor, name).equals(card)
+      // The line score's head row comes first; its frozen cell is empty.
+      expect(names[0].textContent).equals('')
+      expect(getComputedStyle(names[0]).backgroundColor).equals(card)
     }
-    // The line score's head row comes first; its pinned cell is empty.
-    const [head] = pinned(container, '')
-    expect(head, 'pinned head cell').not.equals(undefined)
-    expect(getComputedStyle(head).backgroundColor).equals(card)
   })
 
-  it('keeps the page colour behind a batting table’s pinned names', async function () {
+  it('keeps the page colour behind a batting table’s frozen names', async function () {
     this.timeout(10000)
     const container = await boxScore()
-    const [alex] = pinned(container, 'Alex L')
-    expect(alex, 'pinned Alex L').not.equals(undefined)
-    expect(getComputedStyle(alex).backgroundColor).equals(
-      rgb(tsBallpark.backgroundColor)
-    )
+    const [alex] = frozen(container, 'Alex L')
+    expect(alex, 'frozen Alex L').not.equals(undefined)
+    const { names } = tableOf(alex)
+    const page = rgb(tsBallpark.backgroundColor)
+    expect(
+      getComputedStyle(names.find(each => each.contains(alex))!).backgroundColor
+    ).equals(page)
+    expect(getComputedStyle(names[0]).backgroundColor).equals(page)
+  })
+
+  it('keeps every table’s names outside its sideways scroll, and its figures in it', async function () {
+    this.timeout(10000)
+    const container = await boxScore([BLAIR])
+    for (const name of ['Owls', 'Alex L', 'Blair']) {
+      const [cell] = frozen(container, name)
+      expect(cell, name).not.equals(undefined)
+      const { scroller } = tableOf(cell)
+      expect(scroller.contains(cell), name).equals(false)
+      expect(getComputedStyle(scroller).overflowX, name).not.equals('visible')
+      expect(cell.closest('[data-testid="frozen-figures"]'), name).equals(null)
+    }
+    expect(rowAcross(container, 'Alex L')).deep.equals([
+      'Alex L',
+      '2',
+      '1',
+      '0',
+      '1',
+      '0',
+      '1',
+      '0',
+      '0',
+      '–'
+    ])
+    // Nothing in the tables is pinned the old way any more.
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>(
+          '[data-testid="frozen-names"] *, [data-testid="frozen-figures"] *'
+        )
+      ).some(node => getComputedStyle(node).position === 'sticky')
+    ).equals(false)
   })
 
   it('omits a table with no lines and keeps the batting that has them', async function () {
@@ -389,6 +451,47 @@ async function moduleBoxScore(
   })
   return host.textContent ?? ''
 }
+
+describe('the line score’s team names', function () {
+  const side = (): LineScoreSide => ({
+    runs: [1],
+    r: 1,
+    h: 1,
+    e: 0,
+    bb: 0,
+    k: 0,
+    hr: 0,
+    hbp: 0
+  })
+
+  it('sizes the column to its names, from a floor, up to a share of the pane', async function () {
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <PaneFrameProvider frame={{ x: 0, y: 0, width: 400, height: 800 }}>
+          <BoxScore
+            game={{
+              ...gameFixture,
+              linescore: { away: side(), home: side() }
+            }}
+            box={{ stats: undefined, batting: [], pitching: [] }}
+            theme={tsBallpark}
+            sideBySide={false}
+          />
+        </PaneFrameProvider>
+      )
+    })
+    const names = document.querySelector<HTMLElement>(
+      '[data-testid="frozen-names"]'
+    )!
+    const style = getComputedStyle(names)
+    expect(style.flexGrow).equals('0')
+    expect(style.minWidth).equals('116px')
+    expect(style.maxWidth).equals('180px')
+  })
+})
 
 describe('the box score module (U24)', function () {
   const rows = [
@@ -655,9 +758,13 @@ describe('the box score module (U24)', function () {
     // Pitchers only once they have pitched.
     expect(text).not.includes('Pitching')
     // A made-up player has no page to open; the others do.
-    expect(host!.querySelector('[aria-label="Emil B"]')).equals(null)
+    expect(host!.querySelector('[role="button"][aria-label="Emil B"]')).equals(
+      null
+    )
     await act(async () => {
-      host!.querySelector<HTMLElement>('[aria-label="Dana E"]')!.click()
+      host!
+        .querySelector<HTMLElement>('[role="button"][aria-label="Dana E"]')!
+        .click()
     })
     expect(opened).deep.equals([userIdOfGumbo(5)])
   })
@@ -686,11 +793,17 @@ describe('the box score module (U24)', function () {
         opened.push(userId)
       }
     })
-    expect(host!.querySelector('[aria-label="RFlcns A"]')).equals(null)
-    expect(host!.querySelector('[aria-label="Freddie F"]')).equals(null)
+    expect(
+      host!.querySelector('[role="button"][aria-label="RFlcns A"]')
+    ).equals(null)
+    expect(
+      host!.querySelector('[role="button"][aria-label="Freddie F"]')
+    ).equals(null)
     expect(host!.textContent).includes('Freddie F')
     await act(async () => {
-      host!.querySelector<HTMLElement>('[aria-label="Blair"]')!.click()
+      host!
+        .querySelector<HTMLElement>('[role="button"][aria-label="Blair"]')!
+        .click()
     })
     expect(opened).deep.equals([BLAIR.userId])
   })
@@ -722,5 +835,168 @@ describe('the box score module (U24)', function () {
       box: { batting: [], pitching: [], stats: undefined }
     })
     expect(text).equals('')
+  })
+})
+
+describe('box score totals', function () {
+  /** A batter with a season average that is nothing like the afternoon's. */
+  const hitter = (
+    id: number,
+    ab: number,
+    h: number,
+    seasonAvg: number
+  ): BattingRow =>
+    asBattingRow({
+      userId: userIdOfGumbo(id),
+      gumboId: id,
+      shortName: `Hitter ${id}`,
+      teamId: 'away',
+      pa: ab + 1,
+      ab,
+      h,
+      singles: h,
+      doubles: 0,
+      triples: 0,
+      hr: 0,
+      bb: 1,
+      k: 1,
+      hbp: 0,
+      rbi: h,
+      r: 1,
+      rates: {},
+      seasonAvg
+    })
+  const arm = (id: number, outs: number, ip: string): PitchingRow =>
+    asPitchingRow({
+      ...BLAIR,
+      userId: userIdOfGumbo(id),
+      gumboId: id,
+      shortName: `Arm ${id}`,
+      ip,
+      outs,
+      bf: outs + 1,
+      h: 1,
+      r: 1,
+      er: 0,
+      bb: 1,
+      k: 2
+    })
+
+  it('ends a side’s batting with Totals: the summed counts, and hits over at-bats', async function () {
+    await moduleBoxScore({
+      box: {
+        batting: [hitter(1, 3, 2, 0.111), hitter(2, 4, 1, 0.222)],
+        pitching: [],
+        stats: undefined
+      }
+    })
+    const container = host!
+    const total = rowAcross(container, 'Totals')
+    // AB H R RBI BB K HR HBP AVG
+    expect(total).deep.equals([
+      'Totals',
+      '7',
+      '3',
+      '2',
+      '3',
+      '2',
+      '2',
+      '0',
+      '0',
+      '.429'
+    ])
+    // Not the mean of the season averages on the rows.
+    expect(total[9]).not.equals('.167')
+    const { names } = tableOf(frozen(container, 'Totals')[0])
+    expect(names.at(-1)!.textContent).equals('Totals')
+    // The totals line opens nobody; a named player's row still does.
+    expect(container.querySelector('[aria-label="Totals"]')).equals(null)
+  })
+
+  it('shows the empty mark for a side with no at-bats', async function () {
+    await moduleBoxScore({
+      box: {
+        batting: [batter(5, 'Patient', 'away', 0)],
+        pitching: [],
+        stats: undefined
+      }
+    })
+    expect(rowAcross(host!, 'Totals').at(-1)).equals('–')
+  })
+
+  it('ends a side’s pitching with Totals, its innings added as outs', async function () {
+    await moduleBoxScore({
+      box: {
+        batting: [],
+        pitching: [arm(7, 4, '1.1'), arm(8, 5, '1.2')],
+        stats: undefined
+      }
+    })
+    // IP BF H R ER BB K HR HBP
+    expect(rowAcross(host!, 'Totals')).deep.equals([
+      'Totals',
+      '3.0',
+      '11',
+      '2',
+      '2',
+      '0',
+      '2',
+      '4',
+      '0',
+      '0'
+    ])
+  })
+
+  it('totals one pitching line too, and grows no table for a side with none', async function () {
+    const text = await moduleBoxScore({
+      box: { batting: [], pitching: [BLAIR], stats: undefined }
+    })
+    expect(rowAcross(host!, 'Totals')[1]).equals('5.0')
+    expect(text).includes('Pitching — Owls')
+    expect(text).not.includes('Pitching — Hawks')
+    expect(text.split('Totals').length - 1).equals(1)
+  })
+
+  it('leaves the line score as it was', async function () {
+    await moduleBoxScore({
+      box: { batting: [], pitching: [BLAIR], stats: undefined }
+    })
+    expect(rowAcross(host!, 'Owls')).deep.equals([
+      'Owls',
+      '1',
+      '0',
+      '1',
+      '2',
+      '0',
+      '0'
+    ])
+  })
+
+  it('keys made-up batters by their place, so two of them are two lines', async function () {
+    const errors: unknown[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => {
+      errors.push(args.join(' '))
+    }
+    try {
+      await moduleBoxScore({
+        box: { batting: [], pitching: [], stats: undefined },
+        first: 'away',
+        lineups: {
+          away: [
+            { userId: null, shortName: 'Made Up' },
+            { userId: null, shortName: 'Made Up Too' }
+          ],
+          home: []
+        }
+      })
+    } finally {
+      console.error = original
+    }
+    expect(frozen(host!, 'Made Up')).length(1)
+    expect(frozen(host!, 'Made Up Too')).length(1)
+    expect(
+      errors.filter(error => String(error).includes('same key'))
+    ).deep.equals([])
   })
 })

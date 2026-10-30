@@ -59,7 +59,9 @@ const tsSuites = [
   'src/server/dev/userIdApiCapture.test.ts',
   // The column formats every table shares, and the fixture (M2).
   'src/app/screens/statColumns.test.ts',
-  'src/server/dev/statsTablesSeed.test.ts'
+  'src/server/dev/statsTablesSeed.test.ts',
+  // The box score's totals (M4).
+  'src/app/screens/boxScoreTotals.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -70,7 +72,10 @@ const appSuites = [
   'src/app/screens/expandedStats.test.tsx',
   'src/app/screens/SeasonStandings.test.tsx',
   'src/app/screens/SeasonScreen.test.tsx',
-  'src/app/components/WideTable.test.tsx'
+  'src/app/components/WideTable.test.tsx',
+  // The box score and the coach's (M3, M4).
+  'src/app/screens/BoxScore.test.tsx',
+  'src/app/screens/CoachGameScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

@@ -91,6 +91,8 @@ export function playerStats<T>(
 
 /** A quarter rem separates adjacent figures; the first column has no gutter. */
 export const STAT_COLUMN_GAP_REM = 0.25
+/** Between a compact table's columns, whose widths have no slack in them. */
+export const COMPACT_COLUMN_GAP_REM = 0.45
 
 /** Conservative glyph advances for the app's proportional text fonts. */
 function textWidth(text: string, fontSize: number, letterSpacing = 0): number {
@@ -103,6 +105,40 @@ function textWidth(text: string, fontSize: number, letterSpacing = 0): number {
     else em += 0.75
   }
   return em * fontSize + Math.max(0, text.length - 1) * letterSpacing
+}
+
+/** The same text's real advances, near enough to sit figures close together. */
+function fittedTextWidth(text: string, fontSize: number): number {
+  let em = 0
+  for (const character of text) {
+    if (/[0-9]/.test(character)) em += 0.62
+    else if (character === '.') em += 0.28
+    else if (/[MW%—–]/.test(character)) em += 1.1
+    else if (character === 'I' || character === '-') em += 0.36
+    else if (/[A-Z#]/.test(character)) em += 0.68
+    else em += 0.56
+  }
+  // A little over, for the bold of a total row.
+  return em * fontSize * 1.08
+}
+
+/**
+ * Compact columns, as wide as what they hold now: the head and the rows, and
+ * no room kept for a figure nobody on the page has.
+ */
+export function fittedColumnWidths<T>(
+  columns: Array<StatColumn<T>>,
+  rows: T[],
+  fontSize: number,
+  fontScale = 1
+): number[] {
+  const size = fontSize * fontScale
+  return columns.map(column =>
+    Math.max(
+      fittedTextWidth(column.label, size),
+      ...rows.map(row => fittedTextWidth(column.value(row), size))
+    )
+  )
 }
 
 /** Shared by the header and every row so outliers never shift a column. */
