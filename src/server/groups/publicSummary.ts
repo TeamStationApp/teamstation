@@ -31,6 +31,7 @@ import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { followMerges } from '../teams/followMerges'
 import { assignedUmpireGames } from '../umpires/presence'
+import { loadPlayerNamePrivacy } from './playerNamePrivacy'
 import { canAdminister, canManagePeople } from './rights'
 
 export async function publicGroup(
@@ -538,6 +539,7 @@ export async function groupDetail(
     })
   const visible =
     actor == null ? null : await visibleScopes(db, actor.userId, actor.isAdmin)
+  const privacy = await loadPlayerNamePrivacy(db, ref)
   const canViewPrivate =
     visible != null &&
     (visible.isAdmin ||
@@ -561,6 +563,9 @@ export async function groupDetail(
     staff,
     custodian,
     games: await publicGames(db, ref, actor),
+    playerNamePrivacy: privacy.stored,
+    playerNamePrivacyFormat: privacy.format,
+    playerNamePrivacyInheritedFrom: privacy.inheritedFrom,
     canManage:
       actor == null || actor.apiTokenId != null
         ? false

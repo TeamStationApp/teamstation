@@ -9,6 +9,7 @@ import { atBatInProgress } from '../events/atBatInProgress'
 import { readPlays } from '../events/postPlays'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
+import { outsideSpoken } from '../users/readerNames'
 import {
   type ScoreboardStore,
   ScoreboardUnavailable,
@@ -136,31 +137,107 @@ export async function writeGameScoreboard(
   gameId: string
 ): Promise<WriteResult | undefined> {
   const { db, store, log } = options
-  try {
-    if (!store.isReady()) throw new ScoreboardUnavailable()
-    const source = await scoreboardFromGame(db, gameId, log)
-    if (source == null) {
-      // A game reset to nothing loses the board its plays left.
-      const blank = await blankGame(db, gameId)
-      if (blank == null) return undefined
-      const cleared = await store.clearGame(
+  return await outsideSpoken(async () => await writeBoard())
+  async function writeBoard(): Promise<WriteResult | undefined> {
+    try {
+      if (!store.isReady()) throw new ScoreboardUnavailable()
+      const source = await scoreboardFromGame(db, gameId, log)
+      if (source == null) {
+        // A game reset to nothing loses the board its plays left.
+        const blank = await blankGame(db, gameId)
+        if (blank == null) return undefined
+        const cleared = await store.clearGame(
+          gameId,
+          blank.startAt,
+          blank.sourceVersion
+        )
+        return cleared.kind === 'closed' ? undefined : cleared
+      }
+      return await store.writeGame(
         gameId,
-        blank.startAt,
-        blank.sourceVersion
+        source.state,
+        source.startAt,
+        source.sourceVersion
       )
-      return cleared.kind === 'closed' ? undefined : cleared
+    } catch (error) {
+      log(
+        `scoreboard: game ${gameId} not written: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return undefined
     }
-    return await store.writeGame(
-      gameId,
-      source.state,
-      source.startAt,
-      source.sourceVersion
+  }
+}
+
+/** The longest a game's board can live after its start. */
+const DAY_MS = 24 * 60 * 60 * 1000
+const LONGEST_BOARD_MS = 3 * DAY_MS
+
+/** Games of these teams somebody could have open now: today's, give or take. */
+export async function gamesAround(
+  db: Kysely<Database>,
+  teamIds: readonly string[],
+  now: Date
+): Promise<string[]> {
+  if (teamIds.length === 0) return []
+  const games = await db
+    .selectFrom('games')
+    .select('id')
+    .where(eb =>
+      eb.or([
+        eb('home_team_id', 'in', [...teamIds]),
+        eb('away_team_id', 'in', [...teamIds])
+      ])
     )
-  } catch (error) {
+    .where('start_at', '>=', new Date(now.getTime() - LONGEST_BOARD_MS))
+    .where('start_at', '<=', new Date(now.getTime() + DAY_MS))
+    .execute()
+  return games.map(game => game.id)
+}
+
+/**
+ * Writes again every open board of these teams' games, and announces their
+ * timelines: what a privacy change does, because the hash holds the names as
+ * they were written. A board that has closed stays closed.
+ */
+export async function rewriteTeamBoards(
+  options: {
+    db: Kysely<Database>
+    store: ScoreboardStore
+    log: (message: string) => void
+  },
+  teamIds: readonly string[]
+): Promise<void> {
+  if (teamIds.length === 0) return
+  const { db, store, log } = options
+  const failed = (what: string, error: unknown): void => {
     log(
-      `scoreboard: game ${gameId} not written: ${error instanceof Error ? error.message : String(error)}`
+      `scoreboard: ${what} not rewritten: ${error instanceof Error ? error.message : String(error)}`
     )
-    return undefined
+  }
+  try {
+    const games = await db
+      .selectFrom('games')
+      .select('id')
+      .where(eb =>
+        eb.or([
+          eb('home_team_id', 'in', [...teamIds]),
+          eb('away_team_id', 'in', [...teamIds])
+        ])
+      )
+      .where('start_at', '>=', new Date(store.now() - LONGEST_BOARD_MS))
+      .execute()
+    for (const game of games) {
+      // One board's failure costs one board.
+      try {
+        if (!(await store.exists(game.id))) continue
+        await writeGameScoreboard(options, game.id)
+        await store.announceTimeline(game.id)
+      } catch (error) {
+        failed(`game ${game.id}`, error)
+      }
+    }
+  } catch (error) {
+    failed('boards', error)
   }
 }
 

@@ -6,6 +6,7 @@ import { forbidden, unauthorized } from '../../common/errors'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
+import { runSpoken } from '../users/readerNames'
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -21,6 +22,19 @@ declare module 'express-serve-static-core' {
  * a request of Tess's whose secret did not match would pass as the person.
  */
 export const TESS_HEADER = 'x-teamstation-tess'
+
+/**
+ * A request Tess's tools sent is answered with names a model may be given, a
+ * change she confirms included: what the change writes for everybody else
+ * leaves this (`outsideSpoken`). Sending the header on purpose only narrows
+ * what comes back.
+ */
+export function spokenRequests(): RequestHandler {
+  return (req, _res, next) => {
+    if (req.header(TESS_HEADER) != null) runSpoken(next)
+    else next()
+  }
+}
 
 /**
  * Attaches the caller to the request when a token is present and good. It does

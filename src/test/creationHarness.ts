@@ -24,12 +24,15 @@ import { pictureRoutes } from '../server/routes/pictures'
 import { scheduleRoutes } from '../server/routes/schedule'
 import { schedulePreviewRoutes } from '../server/routes/schedulePreviews'
 import { schedulingSetupRoutes } from '../server/routes/schedulingSetup'
+import { scoreboardRoutes } from '../server/routes/scoreboard'
 import { seasonRoutes } from '../server/routes/seasons'
 import { statsRoutes } from '../server/routes/stats'
 import { teamMemberRoutes } from '../server/routes/teamMembers'
 import { userRoutes } from '../server/routes/users'
 import { venueRoutes } from '../server/routes/venues'
 import { walkUpSongRoutes } from '../server/routes/walkUpSongs'
+import { gameWrittenHook } from '../server/scoreboard/gameSource'
+import type { ScoreboardStore } from '../server/scoreboard/scoreboardStore'
 import {
   type AccountHarness,
   accountHarness,
@@ -45,7 +48,12 @@ export async function creationHarness(
   cityLookup?: GooglePlaces,
   eventOptions: Parameters<typeof eventInfoRoutes>[2] = {},
   /** The venue map's Google key: none unless a test serves Google's stub. */
-  venueOptions: { googleMapsApiKey?: string } = {}
+  venueOptions: { googleMapsApiKey?: string } = {},
+  /** Mounts the public scoreboard, and writes the board after each post. */
+  scoreboard?: {
+    store: ScoreboardStore
+    log: (message: string) => void
+  }
 ): Promise<AccountHarness> {
   const h: AccountHarness = await accountHarness(
     webRoot,
@@ -82,11 +90,13 @@ export async function creationHarness(
       }
       app.use(
         '/api/v1',
-        groupRoutes(db, media, clock, {
-          sendInvite,
-          sendGuardianInvite,
-          sendAdded
-        })
+        groupRoutes(
+          db,
+          media,
+          clock,
+          { sendInvite, sendGuardianInvite, sendAdded },
+          scoreboard
+        )
       )
       app.use('/api/v1', manageRoutes(db, { sendInvite, sendAdded, clock }))
       app.use('/api/v1', peopleRoutes(db, media, { sendAdded, clock }))
@@ -101,7 +111,17 @@ export async function creationHarness(
       app.use('/api/v1', walkUpSongRoutes(db))
       app.use('/api/v1', lineupRoutes(db))
       app.use('/api/v1', teamMemberRoutes(db, media))
-      app.use('/api/v1', eventRoutes(db))
+      app.use(
+        '/api/v1',
+        eventRoutes(
+          db,
+          scoreboard == null
+            ? undefined
+            : { onGameWritten: gameWrittenHook({ db, ...scoreboard }) }
+        )
+      )
+      if (scoreboard != null)
+        app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
       app.use(
         '/api/v1',
         eventInfoRoutes(db, media, {
