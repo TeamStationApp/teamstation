@@ -81,7 +81,16 @@ const pitchingCounts = [
   'k'
 ]
 const statIdentity = {
-  userId: userIdSchema,
+  userId: {
+    ...userIdSchema,
+    type: ['string', 'null'],
+    description: 'Null on a withdrawn line, which has nobody to open.'
+  },
+  openable: {
+    type: 'boolean',
+    description:
+      'Whether the line opens its player\u2019s page for this viewer. Absent from team tables, which is true.'
+  },
   shortName: { type: 'string' },
   teamId: { type: ['string', 'null'] }
 }
@@ -90,6 +99,11 @@ const battingSchema = {
   required: ['userId', 'teamId', ...battingCounts, 'rates'],
   properties: {
     ...statIdentity,
+    standsFor: {
+      type: ['number', 'null'],
+      description:
+        'On a withdrawn line of a box score, the gumbo id of the batter it stands in for.'
+    },
     ...Object.fromEntries(
       battingCounts.map(name => [name, { type: 'number' }])
     ),
