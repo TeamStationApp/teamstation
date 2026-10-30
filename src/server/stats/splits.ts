@@ -361,6 +361,21 @@ export async function statSplits(
     )
   if (filter.userIds != null)
     q = q.where('gumbo_ids.user_id', 'in', filter.userIds)
+  // A person's figures leave out a game their part in was withdrawn from,
+  // for the team it was withdrawn from (`withdrawnGames`).
+  if (filter.userIds != null || groups.has('player')) {
+    const held = sql.join(filter.userIds ?? [''])
+    q = q.where(
+      sql<SqlBool>`not exists (
+        select 1 from game_withdrawn_players
+        where game_withdrawn_players.game_id = plate_appearances.game_id
+          and (game_withdrawn_players.user_id = gumbo_ids.user_id
+            or game_withdrawn_players.user_id in (${held}))
+          and ${team} = case game_withdrawn_players.side
+            when 'home' then games.home_team_id
+            else games.away_team_id end)`
+    )
+  }
   if (filter.teamId != null)
     q = q.where(sql<SqlBool>`${team} = ${filter.teamId}`)
   if (filter.opponentId != null)

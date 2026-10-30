@@ -4,8 +4,11 @@ import { after, before, describe, it } from 'mocha'
 import { asApiKey } from '../../common/apiKeys'
 import { userIdOfGumbo } from '../../common/userId'
 import { type ApiFixture, apiFixture } from '../../test/apiFixture'
+import { withdrawnKey } from '../games/withdrawn'
 import { apiKeyRoutes } from '../routes/apiKeys'
 import { graphqlRoutes, MAX_QUERY_LENGTH } from '../routes/graphql'
+import type { BattingLine, PitchingLine } from '../stats'
+import { boxScoreOrder, pitchingOrder } from '../stats/boxScoreOrder'
 import { MAX_READS } from './restReader'
 import { MAX_DEPTH } from './schema'
 
@@ -377,6 +380,10 @@ describe('the GraphQL API', function () {
         )
         expect(gone).has.length(1)
         expect(gone[0].pitching).deep.equals({ name: 'HWKS A', k: 7 })
+        // Their own figures leave the game out.
+        const own = `{ stats(perspective: PITCHING, filter: { playerId: "${userIdOfGumbo(202)}" }) { pa k } }`
+        const figures = (await ask(104, own)).body.data.stats
+        expect(figures.map((row: { k: number }) => row.k)).not.includes(7)
       } finally {
         await db
           .deleteFrom('group_requests')
