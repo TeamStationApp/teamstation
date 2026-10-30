@@ -49,6 +49,11 @@ import {
   ChatListNavigationCapture,
   newChatWorkspaceState
 } from './chat/chatWorkspaceModel'
+import {
+  DeviceApprovalContext,
+  DeviceApprovalPrompt
+} from './chat/DeviceApprovalPrompt'
+import { DeviceApprovals } from './chat/deviceApprovals'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { leaveChat } from './chat/engine/links'
 import { entityChats, entityPreviewLoader } from './chat/entityChats'
@@ -544,15 +549,28 @@ function Shell(props: AppProps): React.ReactElement {
   const [session, setSession] = useState<Session | undefined>(undefined)
   const [hasPending, setHasPending] = useState(false)
   const notificationUser = session?.user.id
+  const notificationOwner = useRef(notificationUser)
+  notificationOwner.current = notificationUser
+  const notificationRead = useRef(0)
   const refreshNotifications = useCallback(async (): Promise<void> => {
+    const version = ++notificationRead.current
     if (notificationUser == null) {
       setHasPending(false)
       return
     }
     try {
-      setHasPending(await client.hasNotifications())
+      const pending = await client.hasNotifications()
+      if (
+        notificationOwner.current === notificationUser &&
+        version === notificationRead.current
+      )
+        setHasPending(pending)
     } catch {
-      setHasPending(false)
+      if (
+        notificationOwner.current === notificationUser &&
+        version === notificationRead.current
+      )
+        setHasPending(false)
     }
   }, [client, notificationUser])
   useForegroundRefresh(refreshNotifications)
@@ -997,6 +1015,44 @@ function Shell(props: AppProps): React.ReactElement {
       ? index
       : undefined
   }
+  const approvalOwner = useRef(signedInAs)
+  approvalOwner.current = signedInAs
+  const deviceApprovals = useMemo(
+    () =>
+      signedInAs == null
+        ? undefined
+        : new DeviceApprovals(
+            {
+              client,
+              store: keyStore,
+              userId: signedInAs,
+              device: thisDevice(),
+              current: () => approvalOwner.current === signedInAs
+            },
+            gameSocket
+          ),
+    [client, signedInAs, gameSocket]
+  )
+  useEffect(() => {
+    deviceApprovals?.start()
+    return () => {
+      deviceApprovals?.stop()
+    }
+  }, [deviceApprovals])
+  const refreshApprovals = useCallback(async () => {
+    await deviceApprovals?.refresh()
+  }, [deviceApprovals])
+  useForegroundRefresh(refreshApprovals)
+  useEffect(() => {
+    let revision = deviceApprovals?.snapshot().revision
+    return deviceApprovals?.subscribe(() => {
+      const next = deviceApprovals.snapshot().revision
+      if (next !== revision) {
+        revision = next
+        refreshNotifications().catch(() => undefined)
+      }
+    })
+  }, [deviceApprovals, refreshNotifications])
   const chatListNavigation = useMemo(
     () => new ChatListNavigationCapture(chatEngine),
     [chatEngine]
@@ -3820,95 +3876,98 @@ function Shell(props: AppProps): React.ReactElement {
 
   return withChatKeyboard(
     <GestureHandlerRootView style={styles.root}>
-      <ChatOverlayHost>
-        <TessOverlayProvider active={tessColumn}>
-          <View style={[styles.app, tessColumn && styles.split]}>
-            {tessPanel}
-            <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-              <PaneBesideTess open={tessColumn}>
-                <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
-                  <StackNavigator
-                    top={topScene}
-                    retained={retainedScene}
-                    // The field preview is one scene, with nothing beneath.
-                    renderBelow={() =>
-                      props.fieldPreview !== true && stack.length > 0
-                        ? sceneOf(stack.length - 2)
-                        : undefined
+      <DeviceApprovalContext.Provider value={deviceApprovals}>
+        <ChatOverlayHost>
+          <TessOverlayProvider active={tessColumn}>
+            <View style={[styles.app, tessColumn && styles.split]}>
+              {tessPanel}
+              <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
+                <PaneBesideTess open={tessColumn}>
+                  <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
+                    <StackNavigator
+                      top={topScene}
+                      retained={retainedScene}
+                      // The field preview is one scene, with nothing beneath.
+                      renderBelow={() =>
+                        props.fieldPreview !== true && stack.length > 0
+                          ? sceneOf(stack.length - 2)
+                          : undefined
+                      }
+                      chrome={chrome}
+                      onForget={key => sceneVisits.current.delete(key)}
+                      onSwipeBack={swipeBack ? popFromDrag : undefined}
+                      intent={navigationIntent}
+                      // Not under Tess's layer: there Back closes the chat
+                      // (`useTessBack`), and must not drag away the screen it
+                      // covers.
+                      predictiveBack={predictiveBack && !tessLayer}
+                      predictiveBackNow={predictiveBackNow}
+                      popPending={popPending}
+                      headerHeight={
+                        headerHeight + (bannerShown ? bannerHeight : 0)
+                      }
+                      navigationHeight={isWide ? 0 : navigationHeight}
+                      onHandoff={setHandoff}
+                      onHandoffHeight={setHandoffHeight}
+                      onBackOverride={setBack}
+                    />
+                  </ScreenScopeProvider>
+                  <TessOverlayHost />
+                </PaneBesideTess>
+              </View>
+              <SuccessToast notice={successNotice} />
+              <DeviceApprovalPrompt />
+              {confirmingSignOut && (
+                <ChoiceSheet
+                  title="Sign Out?"
+                  choices={[
+                    {
+                      label: 'Sign Out',
+                      detail: unsentLossText(outbox?.count ?? 0),
+                      destructive: true,
+                      onPress: signOutNow
                     }
-                    chrome={chrome}
-                    onForget={key => sceneVisits.current.delete(key)}
-                    onSwipeBack={swipeBack ? popFromDrag : undefined}
-                    intent={navigationIntent}
-                    // Not under Tess's layer: there Back closes the chat
-                    // (`useTessBack`), and must not drag away the screen it
-                    // covers.
-                    predictiveBack={predictiveBack && !tessLayer}
-                    predictiveBackNow={predictiveBackNow}
-                    popPending={popPending}
-                    headerHeight={
-                      headerHeight + (bannerShown ? bannerHeight : 0)
-                    }
-                    navigationHeight={isWide ? 0 : navigationHeight}
-                    onHandoff={setHandoff}
-                    onHandoffHeight={setHandoffHeight}
-                    onBackOverride={setBack}
-                  />
-                </ScreenScopeProvider>
-                <TessOverlayHost />
-              </PaneBesideTess>
-            </View>
-            <SuccessToast notice={successNotice} />
-            {confirmingSignOut && (
-              <ChoiceSheet
-                title="Sign Out?"
-                choices={[
-                  {
-                    label: 'Sign Out',
-                    detail: unsentLossText(outbox?.count ?? 0),
-                    destructive: true,
-                    onPress: signOutNow
-                  }
-                ]}
-                onClose={() => {
-                  setConfirmingSignOut(false)
-                }}
-              />
-            )}
-            {askingTeam != null && caching != null && (
-              <ChoiceSheet
-                title="Player Not Saved"
-                choices={[
-                  ...(askingTeam.state === 'dead'
-                    ? [
-                        {
-                          label: 'Try Again',
-                          onPress: () => {
-                            caching
-                              .retryTeam(askingTeam.id)
-                              .catch(() => undefined)
+                  ]}
+                  onClose={() => {
+                    setConfirmingSignOut(false)
+                  }}
+                />
+              )}
+              {askingTeam != null && caching != null && (
+                <ChoiceSheet
+                  title="Player Not Saved"
+                  choices={[
+                    ...(askingTeam.state === 'dead'
+                      ? [
+                          {
+                            label: 'Try Again',
+                            onPress: () => {
+                              caching
+                                .retryTeam(askingTeam.id)
+                                .catch(() => undefined)
+                            }
                           }
-                        }
-                      ]
-                    : []),
-                  {
-                    label: "Use Server's Copy",
-                    detail:
-                      "Takes the player off this phone and shows the team's roster as the server has it.",
-                    destructive: true,
-                    onPress: () => {
-                      caching.discardTeam(askingTeam.id).catch(() => false)
+                        ]
+                      : []),
+                    {
+                      label: "Use Server's Copy",
+                      detail:
+                        "Takes the player off this phone and shows the team's roster as the server has it.",
+                      destructive: true,
+                      onPress: () => {
+                        caching.discardTeam(askingTeam.id).catch(() => false)
+                      }
                     }
-                  }
-                ]}
-                onClose={() => {
-                  setAskingTeam(undefined)
-                }}
-              />
-            )}
-          </View>
-        </TessOverlayProvider>
-      </ChatOverlayHost>
+                  ]}
+                  onClose={() => {
+                    setAskingTeam(undefined)
+                  }}
+                />
+              )}
+            </View>
+          </TessOverlayProvider>
+        </ChatOverlayHost>
+      </DeviceApprovalContext.Provider>
     </GestureHandlerRootView>
   )
 }

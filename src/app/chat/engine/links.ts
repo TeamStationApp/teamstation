@@ -90,6 +90,7 @@ export type ChatKeysClient = Pick<
   | 'chatLinks'
   | 'chatLink'
   | 'approveChatLink'
+  | 'declineChatLink'
 >
 
 export interface ChatSetup {
@@ -419,6 +420,13 @@ async function syncPuks(
   start: ChatKeyRecord,
   mine: ChatMyKeys
 ): Promise<ChatKeyRecord> {
+  const record = readPuks(start, mine)
+  if (record !== start) await keep(setup, record)
+  return record
+}
+
+/** Opens published keys without changing the engine's stored record. */
+function readPuks(start: ChatKeyRecord, mine: ChatMyKeys): ChatKeyRecord {
   const identity = start.identity
   if (identity == null) return start
   const held = new Map(start.puks.map(puk => [puk.generation, puk.keys]))
@@ -479,8 +487,61 @@ async function syncPuks(
       .sort(([a], [b]) => a - b)
       .map(([generation, keys]) => ({ generation, keys }))
   }
-  await keep(setup, record)
   return record
+}
+
+/**
+ * Keys for an approval outside Chat. Never enrolls, rotates, wipes or saves:
+ * the engine owns the live record and may be updating pins or history while
+ * these reads are in flight. Missing published PUKs are opened only in memory.
+ */
+export async function readApprovalKeys(
+  setup: ChatSetup
+): Promise<ChatKeyRecord | undefined> {
+  const current = (): boolean =>
+    setup.current?.() !== false && holdsStore(setup.store, setup.userId)
+  if (!current()) return
+  const record = await setup.store.load()
+  if (!current() || record?.userId !== setup.userId || record.identity == null)
+    return
+  const core = await loadChatCore()
+  if (!current()) return
+  if (!core.ready)
+    throw new Error('Chat encryption could not be loaded. Try again.')
+  let mine = await setup.client.myChatKeys()
+  if (!current()) return
+  if (mine.deviceId !== record.deviceId) {
+    try {
+      const challenge = await setup.client.chatResumeChallenge(record.deviceId)
+      if (!current()) return
+      const signature = signResume(
+        {
+          nonce: unb64(challenge.nonce),
+          deviceId: record.deviceId,
+          sessionId: challenge.sessionId
+        },
+        record.device.sign.secretKey
+      )
+      await setup.client.resumeChatDevice(record.deviceId, {
+        nonce: challenge.nonce,
+        signature: b64(signature)
+      })
+      if (!current()) return
+      mine = await setup.client.myChatKeys()
+    } catch (error) {
+      if (['deviceRevoked', 'unknownDevice'].includes(reasonOf(error) ?? ''))
+        return
+      throw error
+    }
+  }
+  if (
+    !current() ||
+    mine.deviceId !== record.deviceId ||
+    !mine.linked ||
+    mine.identity?.id !== record.identity.id
+  )
+    return
+  return readPuks(record, mine)
 }
 
 /**
@@ -569,7 +630,12 @@ export async function startLink(
   const { client } = setup
   if (start.pendingLinkId != null) {
     const open = await client.chatLink(start.pendingLinkId).catch(() => null)
-    if (open != null && !open.expired && !open.approved) {
+    if (
+      open != null &&
+      !open.expired &&
+      !open.approved &&
+      open.declined !== true
+    ) {
       return {
         record: start,
         link: open,
@@ -587,6 +653,7 @@ export async function startLink(
 export type LinkPoll =
   | { state: 'waiting' }
   | { state: 'expired'; record: ChatKeyRecord }
+  | { state: 'declined'; record: ChatKeyRecord }
   | { state: 'installed'; record: ChatKeyRecord }
 
 /**
@@ -611,7 +678,9 @@ export async function pollLink(
     return { state: 'expired', record }
   }
   if (link.box == null) {
-    if (!link.expired) return { state: 'waiting' }
+    if (!link.expired && link.declined !== true) return { state: 'waiting' }
+    // Keep a decline across navigation/restart until the person asks again.
+    if (link.declined === true) return { state: 'declined', record: start }
     const record = { ...start, pendingLinkId: undefined }
     await keep(setup, record)
     return { state: 'expired', record }
