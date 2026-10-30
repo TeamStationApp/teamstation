@@ -27,7 +27,10 @@ import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
-import { playerRemovedWords } from '../notifications/requestInformation'
+import {
+  playerRemovedWords,
+  type PlayerRemover
+} from '../notifications/requestInformation'
 import { groupRoutes } from '../routes/groups'
 import { notificationRoutes } from '../routes/notifications'
 import { playerRoutes, teamsOf } from '../routes/players'
@@ -42,6 +45,7 @@ import { gameNames, gameNamesDigest } from '../users/nameBook'
 import {
   applyPlayerAdd,
   decidePlayerAdd,
+  mayAnswerPlayerAdd,
   NOTICE_DAYS,
   playerAddApprovers,
   playerAddPolicy,
@@ -154,7 +158,12 @@ describe('adds made with a notice', function () {
         start_at: options.startedAt ?? now,
         status: 'scheduled',
         ...(options.current === true
-          ? { currentPlay: JSON.stringify({ about: { atBatIndex: 0 } }) }
+          ? {
+              currentPlay: JSON.stringify({
+                about: { atBatIndex: 0 },
+                playEvents: [{ isPitch: true }]
+              })
+            }
           : {})
       })
       .execute()
@@ -1600,5 +1609,102 @@ describe('adds made with a notice', function () {
       kind: 'pending',
       requestId: asked.requestId
     })
+  })
+
+  it('reads who removed a player in their own words', function () {
+    const words = (remover: PlayerRemover): string =>
+      playerRemovedWords(
+        {
+          teamId: TEAM.falcons,
+          userId: 'usr_any',
+          teamName: 'Ridgeview Falcons',
+          mode: 'roster',
+          games: 0,
+          remover
+        },
+        'Mookie B'
+      ).title
+    expect(words('self')).equals(
+      'Mookie B removed themselves from Ridgeview Falcons'
+    )
+    expect(words('guardian')).equals(
+      'A guardian removed Mookie B from Ridgeview Falcons'
+    )
+    expect(words('coach')).equals(
+      'A coach of another of their teams removed Mookie B from Ridgeview Falcons'
+    )
+  })
+
+  it('answers to the player’s side as it is now, not as it was at the add', async function () {
+    await person('Side Changes')
+    await person('First Guardian', { login: true })
+    await person('Next Guardian', { login: true })
+    const link = async (guardian: string): Promise<void> => {
+      await db!
+        .insertInto('user_links')
+        .values({
+          id: makeId('userLink'),
+          user_id: ids[guardian],
+          related_user_id: ids['Side Changes'],
+          kind: 'guardian',
+          can_manage: true
+        })
+        .execute()
+    }
+    await link('First Guardian')
+    const added = await add('roster', 'Side Changes')
+    const stored = await request(added.requestId!)
+    const may = async (name: string): Promise<boolean> =>
+      await mayAnswerPlayerAdd(
+        db!,
+        { userId: ids[name], isAdmin: false, scopes: [] },
+        stored
+      )
+    expect(await may('First Guardian')).equals(true)
+    // One guardian leaves and another joins, after the add.
+    await db!
+      .deleteFrom('user_links')
+      .where('user_id', '=', ids['First Guardian'])
+      .where('related_user_id', '=', ids['Side Changes'])
+      .execute()
+    await link('Next Guardian')
+    expect(await may('First Guardian')).equals(false)
+    expect(await may('Next Guardian')).equals(true)
+    let refused: unknown
+    try {
+      await decide('First Guardian', added.requestId!, 'decline')
+    } catch (error) {
+      refused = error
+    }
+    expect(String(refused)).includes('side')
+    expect(await decide('Next Guardian', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+  })
+
+  it('keeps a game with only setup plays unbegun for a pool add', async function () {
+    const fresh = await game()
+    await db!
+      .updateTable('games')
+      .set({
+        currentPlay: JSON.stringify({
+          about: { atBatIndex: 0 },
+          playEvents: [{ details: { eventType: 'defensive_switch' } }]
+        })
+      })
+      .where('id', '=', fresh)
+      .execute()
+    await person('Setup Only', { login: true })
+    const pool = await add('pool', 'Setup Only', {
+      gameId: fresh,
+      side: 'home'
+    })
+    await decide('Setup Only', pool.requestId!, 'decline')
+    const withdrawn = await db!
+      .selectFrom('game_withdrawn_players')
+      .select('game_id')
+      .where('game_id', '=', fresh)
+      .execute()
+    expect(withdrawn).deep.equals([])
   })
 })

@@ -11,7 +11,7 @@ import type { Role } from '../../common/roles'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
-import { supersededPlayerAdd } from '../groups/noticePolicy'
+import { mayAnswerPlayerAdd, supersededPlayerAdd } from '../groups/noticePolicy'
 import {
   approvesSide,
   type Clock,
@@ -283,7 +283,12 @@ export async function notificationFor(
   let eligible = false
   let actionable = false
   let representedConsent = false
-  for (const side of sides) {
+  // A player add answers to the player's side as it is now.
+  if (request.kind === 'playerAdd') {
+    eligible = await mayAnswerPlayerAdd(db, fresh, request)
+    actionable = eligible
+  }
+  for (const side of request.kind === 'playerAdd' ? [] : sides) {
     const sideRef = { kind: side.scope_type, id: side.scope_id }
     if (!(await approvesSide(db, fresh, sideRef, request))) continue
     eligible = true
@@ -564,6 +569,11 @@ export async function inbox(
                   'in',
                   guarded.map(String)
                 )
+              ]),
+              // A guardian added since a player add was made answers it too.
+              eb.and([
+                eb('kind', '=', 'playerAdd'),
+                eb(sql<string>`terms->>'userId'`, 'in', guarded.map(String))
               ])
             ]),
         ...(teamIds.length === 0

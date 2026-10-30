@@ -425,6 +425,22 @@ async function moveAndClose(
   // devices are revoked, and the survivor takes its place in its open DMs.
   await mergeChats(db, closing, keeping)
 
+  // What they were asked to answer waits for them under the account that
+  // stays, unless it was asked of that one too.
+  await sql`update group_request_sides closed set scope_id = ${keeping}
+    where closed.scope_type = 'user' and closed.scope_id = ${closing}
+      and not exists (
+        select 1 from group_request_sides kept
+        where kept.request_id = closed.request_id
+          and kept.scope_type = 'user' and kept.scope_id = ${keeping})`.execute(
+    db
+  )
+  await db
+    .deleteFrom('group_request_sides')
+    .where('scope_type', '=', 'user')
+    .where('scope_id', '=', closing)
+    .execute()
+
   await db
     .updateTable('users')
     .set({ merged_into: keeping })

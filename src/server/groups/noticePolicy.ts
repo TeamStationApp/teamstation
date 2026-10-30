@@ -15,8 +15,8 @@ import { guardiansWhoCanAct } from '../access'
 import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
-import { readPlays } from '../events/postPlays'
 import { guestGameOpen, inGameAs } from '../games/guestChecks'
+import { hasScoringEventsSql } from '../games/scoringActivity'
 import { reconcileUnbegunLineup } from '../games/unroster'
 import {
   type PlayerRemovedMetadata,
@@ -28,7 +28,6 @@ import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId } from '../users/insertUser'
 import { shortNamesOf } from '../users/nameBook'
 import type { Clock, StoredRequest } from './requests'
-import { approvesSide } from './requests'
 
 type Db = Kysely<Database>
 
@@ -382,12 +381,13 @@ export async function recordPlayerAdd(
 }
 
 /** Whether the game has begun: a play stored, or one under way. */
-async function gameStarted(
-  trx: Db,
-  game: { id: string; currentPlay: unknown }
-): Promise<boolean> {
-  if (game.currentPlay != null) return true
-  return (await readPlays(trx, game.id)).length > 0
+async function gameStarted(trx: Db, game: { id: string }): Promise<boolean> {
+  const row = await trx
+    .selectFrom('games')
+    .select(hasScoringEventsSql.as('begun'))
+    .where('id', '=', game.id)
+    .executeTakeFirst()
+  return row?.begun === true
 }
 
 /**
@@ -857,6 +857,23 @@ async function noticeRemoval(
 }
 
 /**
+ * Whether this person is the player's side now, whoever was told at the add:
+ * a guardian removed since, or a stand-in who has left the player's other
+ * team, may no longer reject it, and a guardian added since may. Whoever made
+ * the add is never the side that answers it.
+ */
+export async function mayAnswerPlayerAdd(
+  db: Db,
+  actor: Actor,
+  request: StoredRequest
+): Promise<boolean> {
+  const terms = request.terms as PlayerAddTerms
+  const { userIds } = await playerAddApprovers(db, terms.userId, terms.teamId)
+  const rows = (await personOf(db, actor.userId)).userIds
+  return userIds.some(id => id !== request.sender_id && rows.includes(id))
+}
+
+/**
  * Decides a `playerAdd` request for one of its approvers. A notice
  * (`applied`) can only be rejected, within its 90 days, which undoes it; a
  * pending one is accepted, which makes the add then, or declined.
@@ -883,23 +900,8 @@ async function decideOnce(
   decision: 'accept' | 'decline',
   clock: Clock
 ): Promise<void> {
-  const sides = await trx
-    .selectFrom('group_request_sides')
-    .selectAll()
-    .where('request_id', '=', request.id)
-    .execute()
-  let permitted = false
-  for (const side of sides)
-    if (
-      await approvesSide(
-        trx,
-        actor,
-        { kind: side.scope_type, id: side.scope_id },
-        request
-      )
-    )
-      permitted = true
-  if (!permitted) throw forbidden('Only the player’s side can decide this')
+  if (!(await mayAnswerPlayerAdd(trx, actor, request)))
+    throw forbidden('Only the player’s side can decide this')
   const terms = request.terms as PlayerAddTerms
   const now = clock.now()
   const open = request.expires_at.getTime() > now.getTime()
