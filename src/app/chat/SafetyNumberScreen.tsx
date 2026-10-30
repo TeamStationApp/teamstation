@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Text } from 'react-native'
 
 import { Button, Card, Screen } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { safetyGroups } from './chatModel'
+import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'
+import { SafetyWordsGrid } from './SafetyWordsGrid'
 import type { ChatScreenEngine } from './screenEngine'
 
 export interface SafetyNumberScreenProps {
@@ -16,8 +16,7 @@ export interface SafetyNumberScreenProps {
 }
 
 /**
- * The 60-digit safety number the person shares with someone, in 12 groups
- * of five, to read aloud or hold side by side. The same on both phones means
+ * The sixteen safety words the person shares with someone, in four rows, to read aloud or hold side by side. The same on both phones means
  * nobody has put a key between them.
  */
 export function SafetyNumberScreen(
@@ -25,7 +24,6 @@ export function SafetyNumberScreen(
 ): React.ReactElement {
   const { engine, userId, name, onDone } = props
   const theme = useTheme()
-  const styles = getStyles(theme)
   const shared = getChatStyles(theme)
   const [digits, setDigits] = useState<string | null | undefined>(undefined)
   const [failed, setFailed] = useState(false)
@@ -64,24 +62,10 @@ export function SafetyNumberScreen(
             {sprintf(lstrings.chat_safety_number_detail, name)}
           </Text>
           <Card>
-            <View
-              testID="chat-safety-number"
-              style={styles.grid}
-              accessibilityLabel={sprintf(
-                lstrings.chat_safety_number_with,
-                name
-              )}
-            >
-              {safetyGroups(digits).map((group, index) => (
-                <Text
-                  key={index}
-                  testID={'chat-safety-group-' + index}
-                  style={styles.group}
-                >
-                  {group}
-                </Text>
-              ))}
-            </View>
+            <SafetyWordsGrid
+              words={digits}
+              label={sprintf(lstrings.chat_safety_number_with, name)}
+            />
           </Card>
         </>
       )}
@@ -89,21 +73,3 @@ export function SafetyNumberScreen(
     </Screen>
   )
 }
-
-const getStyles = cacheStyles((theme: Theme) => ({
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    rowGap: theme.rem(theme.spaceSmRem)
-  },
-  group: {
-    width: '33%',
-    textAlign: 'center',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1.25),
-    fontWeight: '600',
-    letterSpacing: theme.rem(0.08),
-    color: theme.primaryTextColor
-  }
-}))

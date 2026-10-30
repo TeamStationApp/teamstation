@@ -327,12 +327,11 @@ describe('the small words of the chat screens', function () {
     })
   })
 
-  it('shows a safety number as 12 groups of five', function () {
-    const digits = '0123456789'.repeat(6)
-    const groups = safetyGroups(digits)
-    expect(groups).length(12)
-    expect(groups.every(group => /^\d{5}$/.test(group))).equals(true)
-    expect(groups.join('')).equals(digits)
+  it('keeps comparison words in reading order and ignores surrounding whitespace', function () {
+    const words =
+      'help layer drink return length country village brisk grief demise hint road sing helmet wheat minor'
+    expect(safetyGroups('  ' + words + '\n')).deep.equals(words.split(' '))
+    expect(safetyGroups('')).deep.equals([])
   })
 
   it('replies to a drag of 60 points to the right, and follows it a little', function () {

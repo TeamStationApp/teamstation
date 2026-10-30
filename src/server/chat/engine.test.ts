@@ -716,7 +716,7 @@ describe('the chat engine (U12)', function () {
     ])
     const members = await chatId('Hc', 'Hawks Members')
     const oldNumber = await a.engine.safetyNumber(id('G1'))
-    expect(oldNumber).matches(/^\d{60}$/)
+    expect(oldNumber).matches(/^[a-z]+(?: [a-z]+){15}$/)
     expect(await g1.engine.safetyNumber(id('A'))).equals(oldNumber)
 
     // G1 cannot reach the first device and resets from a second one.
@@ -759,7 +759,7 @@ describe('the chat engine (U12)', function () {
     const [approval] = asked
     expect(approval.userId).equals(id('G1'))
     expect(approval.oldSafetyNumber).equals(oldNumber)
-    expect(approval.newSafetyNumber).matches(/^\d{60}$/)
+    expect(approval.newSafetyNumber).matches(/^[a-z]+(?: [a-z]+){15}$/)
     expect(approval.newSafetyNumber).not.equals(oldNumber)
     expect(await a.engine.safetyNumber(id('G1'))).equals(
       approval.newSafetyNumber

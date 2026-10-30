@@ -1101,7 +1101,7 @@ describe('chat follow-up reply and personal pin views', function () {
     expect(document.body.textContent)
       .contains('Read by Shohei Ohtani')
       .and.contains('edited')
-      .and.contains('safety number changed')
+      .and.contains('safety words changed')
   })
 
   it('renders a current sender, You or Former member and jumps by the encrypted reference id', async function () {
