@@ -3,7 +3,6 @@ import type { Kysely, Selectable, Transaction } from 'kysely'
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { calendarDateText } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
-import { shortNames } from '../../common/names'
 import {
   type UmpireCertification,
   type UmpireLevel,
@@ -15,6 +14,7 @@ import {
 } from '../../common/umpires'
 import { onePerson } from '../admin/people'
 import type { Database, UmpireLevelsTable } from '../db/database'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireType, types } from './types'
@@ -363,14 +363,33 @@ export async function people(
             n => n?.toLowerCase().includes(query.trim().toLowerCase()) === true
           ))
   )
-  const names = shortNames(
+  // The list's people and those it names beside them: a player is shown in
+  // their format, the adults in the built-in one.
+  const listed = new Set(rows.map(u => u.id))
+  const named = new Set(listed)
+  for (const l of links) {
+    if (l.kind !== 'guardian') continue
+    if (listed.has(canon(l.user_id))) named.add(canon(l.related_user_id))
+    if (listed.has(canon(l.related_user_id))) named.add(canon(l.user_id))
+  }
+  const players = new Set([
+    ...links
+      .filter(l => l.kind === 'guardian')
+      .map(l => canon(l.related_user_id)),
+    ...members.filter(m => m.is_player).map(m => canon(m.user_id))
+  ])
+  const names = await publicNames(
+    db,
     users
-      .filter(u => u.merged_into == null)
+      .filter(u => u.merged_into == null && named.has(u.id))
       .map(u => ({
-        id: u.id,
-        firstName: u.first_name,
-        lastName: u.last_name,
-        displayName: u.display_name
+        person: {
+          id: u.id,
+          firstName: u.first_name,
+          lastName: u.last_name,
+          displayName: u.display_name
+        },
+        player: players.has(u.id)
       }))
   )
   const certifications = await db

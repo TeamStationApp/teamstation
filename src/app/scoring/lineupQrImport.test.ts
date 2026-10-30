@@ -119,6 +119,37 @@ const empty = (): ScoringSessionState => {
   return state
 }
 
+describe('lineup QR import under a chosen format', function () {
+  /** Whether a scanned player lands on the roster row labelled `label`. */
+  const matched = async (
+    label: string,
+    nameFormat: 'initials' | 'initialLast' | undefined,
+    first: string,
+    last: string
+  ): Promise<boolean> => {
+    const entry = { ...ROSTER[0], shortName: label, nameFormat, jersey: '77' }
+    const { draft } = await scan(
+      empty(),
+      'away',
+      { ...lineupQrFixture4.lineup, h: [scanned(first, last, '77', 6)] },
+      [entry]
+    )
+    return draft.gameData.players[entry.gumboId!] != null
+  }
+
+  it('matches a label the format abbreviated', async function () {
+    expect(await matched('A L', 'initials', 'Alex', 'Lee')).equals(true)
+    expect(await matched('A Lee', 'initialLast', 'Alex', 'Lee')).equals(true)
+    expect(await matched('B L', 'initials', 'Alex', 'Lee')).equals(false)
+    expect(await matched('A', 'initials', 'Alex', 'Lee')).equals(false)
+  })
+
+  it('keeps the built-in rule', async function () {
+    expect(await matched('Alex L', undefined, 'Alex', 'Lee')).equals(true)
+    expect(await matched('Alex L', undefined, 'Alexander', 'Lee')).equals(false)
+  })
+})
+
 describe('lineup QR import', function () {
   it('adds every player of a code to an empty side, in order and in place', async function () {
     const { draft, added, reused, benched } = await scan(

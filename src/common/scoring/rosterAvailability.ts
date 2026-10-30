@@ -14,6 +14,7 @@ export type ScoringRosterEntry = Pick<
   | 'gumboId'
   | 'isPlayer'
   | 'shortName'
+  | 'nameFormat'
   | 'jersey'
   | 'positions'
   | 'bats'
@@ -51,6 +52,7 @@ export function reconcileRoster(
               id,
               teamId: teams[side].id,
               fullName: row.shortName,
+              ...(row.nameFormat == null ? {} : { nameFormat: row.nameFormat }),
               jersey: row.jersey ?? '',
               bats: row.bats ?? 'right',
               throws: row.throws,

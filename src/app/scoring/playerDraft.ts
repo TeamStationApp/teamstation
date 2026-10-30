@@ -99,7 +99,7 @@ export function rosterPlayerBody(draft: PlayerDraft): NewRosterPlayer {
 export function addRosteredPlayer(
   session: ScoringSessionState,
   side: Side,
-  entry: Pick<RosterEntry, 'gumboId' | 'shortName'>,
+  entry: Pick<RosterEntry, 'gumboId' | 'shortName' | 'nameFormat'>,
   draft: PlayerDraft
 ): number {
   const error = playerDraftError(draft)
@@ -113,6 +113,7 @@ export function addRosteredPlayer(
     id,
     teamId: session.gameData.teams[side].id,
     fullName: entry.shortName,
+    ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat }),
     firstName,
     lastName,
     jersey: draft.jersey.trim(),

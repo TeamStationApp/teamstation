@@ -1,8 +1,11 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
 import { notFound } from '../../common/errors'
-import { shortNames } from '../../common/names'
 import type { PlayerAddTerms } from '../../common/notifications'
+import {
+  DEFAULT_PLAYER_NAME_PRIVACY,
+  type PlayerNamePrivacy
+} from '../../common/playerNamePrivacy'
 import type { ExistingRosterPlayer } from '../../common/playerSettings'
 import { lockPlayerEdits, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
@@ -15,6 +18,7 @@ import {
   recordPlayerAdd,
   refuseOtherSide
 } from '../groups/noticePolicy'
+import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { type Clock, realClock } from '../groups/requests'
 import { fullAccount } from '../users/rosterCandidates'
 
@@ -28,8 +32,15 @@ type Trx = Transaction<Database>
  */
 export async function candidatePerson(
   trx: Kysely<Database>,
+  /** The team they are being added to, whose format their label takes. */
+  teamId: string,
   userId: string
-): Promise<{ userId: string; userIds: string[]; shortName: string }> {
+): Promise<{
+  userId: string
+  userIds: string[]
+  shortName: string
+  nameFormat?: PlayerNamePrivacy
+}> {
   let person
   try {
     person = await personOf(trx, userId)
@@ -60,16 +71,23 @@ export async function candidatePerson(
       .executeTakeFirst()
     if (account == null) throw notFound()
   }
+  const named = {
+    id: user.id,
+    firstName: user.first_name,
+    lastName: user.last_name,
+    displayName: user.display_name
+  }
+  const formats = await publicFormats(trx, [{ person: named, teamId }])
   const shortName =
-    shortNames([
-      {
-        id: user.id,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        displayName: user.display_name
-      }
-    ]).get(user.id) ?? ''
-  return { ...person, shortName }
+    formatForReader([{ person: named, format: formats.get(user.id)! }]).get(
+      user.id
+    ) ?? ''
+  const format = formats.get(user.id)
+  return {
+    ...person,
+    shortName,
+    ...(format === DEFAULT_PLAYER_NAME_PRIVACY ? {} : { nameFormat: format })
+  }
 }
 
 export async function teamName(
@@ -153,7 +171,7 @@ export async function addExistingRosterPlayer(
 ): Promise<ExistingAdd> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
-    const person = await candidatePerson(trx, body.userId)
+    const person = await candidatePerson(trx, teamId, body.userId)
     const playing = await trx
       .selectFrom('memberships')
       .select('id')

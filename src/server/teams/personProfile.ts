@@ -3,7 +3,6 @@ import type { Kysely } from 'kysely'
 import type { PersonProfile, ProfileSection } from '../../common/api'
 import { notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
-import { shortNames } from '../../common/names'
 import { ROLES } from '../../common/roles'
 import {
   guardedPlayers,
@@ -15,6 +14,7 @@ import {
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { canAdminister, canManagePeople, currentActor } from '../groups/rights'
 import { canHoldRoles, groupName, heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
@@ -95,7 +95,19 @@ export async function personProfile(
     context: { kind: ref.kind, id: ref.id, name },
     person: {
       userId,
-      shortName: shortNames([person]).get(userId) ?? person.displayName,
+      shortName:
+        (
+          await publicNames(db, [
+            {
+              person,
+              teamId:
+                ref.kind === 'team' &&
+                (await teamsPlayedOnNow(db, [userId])).includes(ref.id)
+                  ? ref.id
+                  : undefined
+            }
+          ])
+        ).get(userId) ?? person.displayName,
       fullName: readsName ? whole : null,
       avatarUrl: space == null ? null : imageUrl(space, person.avatarPath),
       canHoldRoles: await canHoldRoles(db, userId)
@@ -170,7 +182,13 @@ async function guardianRows(
       found.map(row => row.userId)
     )
     .execute()
-  const names = shortNames(people)
+  const names = await publicNames(
+    db,
+    found.map(row => ({
+      person: people.find(one => one.id === row.userId)!,
+      teamId: row.teamId
+    }))
+  )
   return found
     .map(row => {
       const child = people.find(one => one.id === row.userId)!

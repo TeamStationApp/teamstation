@@ -20,7 +20,6 @@ import {
 import { asGameTimezone } from '../../common/gameApprovals'
 import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
-import { shortName } from '../../common/names'
 import { type Role, ROLES } from '../../common/roles'
 import { asFieldSize } from '../../common/venues'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
@@ -29,6 +28,11 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, TeamEventsTable } from '../db/database'
+import {
+  formatForReader,
+  publicFormats,
+  type PublicPerson
+} from '../groups/playerNamePrivacy'
 import { type Clock, realClock } from '../groups/requests'
 import { canScheduleFor, currentActor } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
@@ -292,7 +296,7 @@ async function eventPeople(
   // from a season/league, site administration, or guardianship alone.
   const eventMembers = await db
     .selectFrom('memberships')
-    .select(['user_id', 'is_player'])
+    .select(['user_id', 'is_player', 'team_id'])
     .where('team_id', 'in', event.teamIds)
     .execute()
   const eventStaff = await db
@@ -302,11 +306,12 @@ async function eventPeople(
     .where('scope_id', 'in', event.teamIds)
     .where('role', 'in', ['admin', 'coach', 'assistant'])
     .execute()
-  const rostered = new Set<string>()
+  const rostered = new Map<string, string[]>()
   let mayReplySelf = false
   for (const member of eventMembers) {
     const id = (await identity(member.user_id)).userId
-    if (member.is_player) rostered.add(id)
+    if (member.is_player)
+      rostered.set(id, [...(rostered.get(id) ?? []), member.team_id])
     if (id === parent.userId) mayReplySelf = true
   }
   for (const staff of eventStaff)
@@ -336,16 +341,33 @@ async function eventPeople(
           .where('disabled_at', 'is', null)
           .where('merged_into', 'is', null)
           .execute()
+  // Each named alone, as a reply is: a player in their team's format.
+  const formats = await publicFormats(
+    db,
+    // One entry a team: somebody on both takes the more restrictive.
+    users.flatMap((user): PublicPerson[] => {
+      const person = { id: user.id, displayName: user.display_name }
+      const teams = rostered.get(user.id)
+      return teams == null
+        ? [{ person, player: false }]
+        : teams.map(teamId => ({ person, teamId }))
+    })
+  )
   const names = new Map(
-    users.map(user => [
-      user.id,
-      shortName({
+    users.map(user => {
+      const person = {
         id: user.id,
         displayName: user.display_name,
         firstName: user.first_name,
         lastName: user.last_name
-      })
-    ])
+      }
+      return [
+        user.id,
+        formatForReader([{ person, format: formats.get(user.id)! }]).get(
+          user.id
+        )!
+      ]
+    })
   )
   const aliases = new Set<string>()
   for (const user of users)

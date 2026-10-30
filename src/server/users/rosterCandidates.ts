@@ -2,7 +2,7 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
-import { shortNames, shortParts } from '../../common/names'
+import { shortParts } from '../../common/names'
 import { teamsOfRow } from '../../common/teamLists'
 import {
   canManageRoster,
@@ -14,6 +14,7 @@ import {
 } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 
@@ -406,7 +407,11 @@ export async function rosterCandidates(
     lastName: row.last_name,
     displayName: row.display_name
   }))
-  const names = shortNames(named)
+  // Anybody's player, from anywhere: the formats of the teams they play for.
+  const names = await publicNames(
+    db,
+    named.map(person => ({ person }))
+  )
   return people.map((row, index) => {
     const short = names.get(row.user_id) ?? ''
     return {

@@ -3,7 +3,6 @@ import type { Kysely } from 'kysely'
 
 import { birthMonthText } from '../../common/age'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import {
   asPersonSettings,
@@ -33,6 +32,7 @@ import {
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
 import { withdrawnGames } from '../games/withdrawn'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { guardianInviteAs } from '../groups/requests'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
@@ -133,8 +133,23 @@ export function playerRoutes(
         throw notFound()
       }
 
-      // `Jordan P` for everybody, whoever is asking. The whole name is never
-      // in this answer: it is only behind `/name` below, for the person
+      // A page opened for a team the reader can see the player on shows the
+      // name that team's roster already shows them. Anything else asked for
+      // is ignored: a client never picks a wider name than the server would.
+      const teamForPage = async (
+        forTeam: string | undefined
+      ): Promise<string | undefined> => {
+        if (forTeam == null) return undefined
+        const team = teams.find(held => held.teamId === forTeam)
+        if (team == null || !(ownPage || canSeePlayedFor(scopes, team)))
+          return undefined
+        return (await teamsPlayedOnNow(db, person.userIds)).includes(forTeam)
+          ? forTeam
+          : undefined
+      }
+
+      // The public format, for everybody, whoever is asking. The whole name is
+      // never in this answer: it is only behind `/name` below, for the person
       // editing it, which `mayEditName` decides.
       const mayEdit = await mayEditName(
         db,
@@ -157,7 +172,18 @@ export function playerRoutes(
       res.json({
         userId,
         gumboId: await gumboIdOf(db, userId),
-        name: shortName({ ...user, id: userId }),
+        name: (
+          await publicNames(db, [
+            {
+              person: { ...user, id: userId },
+              teamId: await teamForPage(
+                typeof req.query.forTeam === 'string'
+                  ? req.query.forTeam
+                  : undefined
+              )
+            }
+          ])
+        ).get(userId),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
         /**

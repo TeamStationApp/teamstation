@@ -1,4 +1,5 @@
 import type { RosterEntry } from '../../common/api'
+import type { PlayerNamePrivacy } from '../../common/playerNamePrivacy'
 import { JERSEY_MAX_LENGTH } from '../../common/playerSettings'
 import { asGumboId } from '../../common/userId'
 import type { GameChangerLineup, GameChangerPlayer } from './lineupQrCodec'
@@ -63,8 +64,23 @@ export function scannedJersey(jersey: string): string {
  * Whether a TeamStation short name ("Jordan P", or "Jordan Pu" where two
  * would collide) is this first name and the start of this last name.
  */
-function shortNameMatches(short: string, first: string, last: string): boolean {
+function shortNameMatches(
+  short: string,
+  first: string,
+  last: string,
+  format: PlayerNamePrivacy | undefined
+): boolean {
   const name = fold(short)
+  // A format that abbreviates the first name: each word starts its part.
+  if (format === 'initials' || format === 'initialLast') {
+    const [given = '', family = ''] = name.split(' ')
+    return (
+      given !== '' &&
+      family !== '' &&
+      fold(first).startsWith(given) &&
+      fold(last).startsWith(family)
+    )
+  }
   const lead = fold(first) + ' '
   if (!name.startsWith(lead)) return false
   const rest = name.slice(lead.length)
@@ -74,7 +90,8 @@ function shortNameMatches(short: string, first: string, last: string): boolean {
 function namesMatch(
   scanned: GameChangerPlayer,
   parts: { firstName?: string | null; lastName?: string | null },
-  name: string
+  name: string,
+  format: PlayerNamePrivacy | undefined
 ): boolean {
   const full = fold(`${scanned.f} ${scanned.l}`)
   const hasParts =
@@ -85,7 +102,7 @@ function namesMatch(
   )
     return true
   if (fold(name) === full) return true
-  return !hasParts && shortNameMatches(name, scanned.f, scanned.l)
+  return !hasParts && shortNameMatches(name, scanned.f, scanned.l, format)
 }
 
 const nameOf = (player: ScoringPlayer): string => player.fullName
@@ -160,7 +177,7 @@ export async function applyLineupQr(
       return (
         !claimed.has(id) &&
         player.jersey.trim() === jersey &&
-        namesMatch(scanned, player, player.fullName)
+        namesMatch(scanned, player, player.fullName, player.nameFormat)
       )
     })
     if (existing != null) {
@@ -173,7 +190,12 @@ export async function applyLineupQr(
         entry.gumboId != null &&
         !claimed.has(entry.gumboId) &&
         (entry.jersey?.trim() ?? '') === jersey &&
-        namesMatch(scanned, entry.nameDetails ?? {}, entry.shortName)
+        namesMatch(
+          scanned,
+          entry.nameDetails ?? {},
+          entry.shortName,
+          entry.nameFormat
+        )
     )
     if (entry?.gumboId != null) {
       // Already in the game (his game jersey or name differs from the

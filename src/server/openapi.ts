@@ -37,6 +37,9 @@ import { umpirePaths } from './umpires/openApi'
 import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 import { venuePaths } from './venues/venuesOpenApi'
 
+const PUBLIC_NAME =
+  "The public name: first name and last initial, unless the player's league, season or team chose another format."
+
 const recordSchema = {
   type: 'object',
   required: ['w', 'l', 't'],
@@ -2255,7 +2258,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             shortName: {
               type: 'string',
-              description: 'First name and last initial.'
+              description: PUBLIC_NAME
             },
             nameDetails: {
               type: 'object',
@@ -5434,7 +5437,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'lineups, guests and unavailable players are kept by team and ' +
             'follow it. The lineups digest changes, so a post built on the ' +
             'old sides is refused as stale. What the call does is the `swap` ' +
-            '`GET /games/{gameId}/events` answers. `swap`: an at-bat of ' +
+            '`GET /games/{gameId}/events` answers, which also carries `modelNames` ' +
+            'for a reader who may dictate about a team: each player by gumbo id, ' +
+            'first name and last initial, never drawn. `swap`: an at-bat of ' +
             'lineups only, or none, and no play: the teams exchange. ' +
             '`reset`: a play or an at-bat TeamStation scored. The game is ' +
             'reset first, and the body must name the `playsDigest` and ' +
@@ -5630,14 +5635,25 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'One person, for their own page',
           description:
-            'Their short name, avatar, bats and throws, whether the caller ' +
+            'Their public name, avatar, bats and throws, whether the caller ' +
             'may change their name (`canEditName`), how the caller may ' +
             'invite a guardian of them (`guardianInviteAs`), and the teams ' +
             'they have played for that the caller may see: every one to the ' +
             'person and their guardians. A merged row answers 303 to the ' +
-            'person it was merged into.',
+            'person it was merged into. `forTeam` names a team the caller may ' +
+            'see them on now, and the name then follows that team; anything ' +
+            'else is ignored, and the name follows the most restrictive ' +
+            'format of the teams they play for.',
           security: [{ bearer: [] }],
-          parameters: [userIdParam],
+          parameters: [
+            userIdParam,
+            {
+              name: 'forTeam',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' }
+            }
+          ],
           responses: {
             200: {
               description: 'The person, with `teams` newest season first',
@@ -5651,7 +5667,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                       gumboId: nullableGumboIdSchema,
                       name: {
                         type: 'string',
-                        description: 'First name and last initial.'
+                        description: PUBLIC_NAME
                       },
                       canEditName: { type: 'boolean' },
                       guardianInviteAs: {
@@ -6290,7 +6306,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'name. Anybody signed in who is not a member of the team (the ' +
             'non-member view) reads the same roster, followers included, ' +
             'with `avatarUrl` null on every entry. ' +
-            'Names default to a first name and last initial. includeFullNames=true ' +
+            "Names follow the team's player name privacy, a first name and last " +
+            'initial by default, and a row in another format says so in ' +
+            '`nameFormat`. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
             'coach, assistant, scorekeeper or admin on this team or its parents. Others get 404. ' +
             '`walkUpSong` is the WalkUpSong the person has ' +

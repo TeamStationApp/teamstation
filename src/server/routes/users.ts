@@ -2,7 +2,6 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
-import { shortNames } from '../../common/names'
 import { asUserId } from '../../common/userId'
 import {
   canSeePerson,
@@ -12,6 +11,7 @@ import {
 } from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
@@ -132,7 +132,10 @@ async function describe(
       people.map(person => person.userId)
     )
     .execute()
-  const names = shortNames(rows)
+  const names = await publicNames(
+    db,
+    rows.map(person => ({ person }))
+  )
   const byId = new Map(rows.map(row => [row.id, row]))
   return people.map(person => {
     const row = byId.get(person.userId)

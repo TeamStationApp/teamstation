@@ -1,7 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { RosterEntry, RosterSection } from '../../common/api'
-import { shortNames } from '../../common/names'
+import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { type Role, ROLE_FLAGS } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
@@ -13,6 +13,7 @@ import {
   teamsUnder
 } from '../access'
 import type { Database } from '../db/database'
+import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
@@ -104,6 +105,7 @@ export async function teamRoster(
       memberLevels,
       family,
       songs: await teamWalkUpSongs(db, teamId),
+      teamId,
       includeFullNames
     }
   )
@@ -326,6 +328,8 @@ async function sectionPeople(
     /** Each guardian of a player on this list, and the players they guard. */
     family: Map<string, string[]>
     songs?: Map<string, WalkUpSong>
+    /** The team these people are shown on: a roster's, not a level's list. */
+    teamId?: string
     /**
      * Whether the players carry their whole names (`nameDetails`): only for
      * a team's roster read by whoever manages it, as the route decides.
@@ -348,15 +352,22 @@ async function sectionPeople(
   const gumboIds = new Map(mappings.map(row => [row.user_id, row.gumbo_id]))
   const { ownLevel, given, memberLevels, family, songs, includeFullNames } =
     facts
-  // First name, last initial, worked out across the whole list so two
-  // children called Jordan do not both come out `Jordan P`.
-  const names = shortNames(
-    rows.map(row => ({
+  // Worked out across the whole list so two children called Jordan do not
+  // both come out `Jordan P`. Players take the setting: the team's on its
+  // roster, and with no single team, the teams they play for.
+  const people = rows.map(row => ({
+    person: {
       id: row.userId,
       firstName: row.firstName,
       lastName: row.lastName,
       displayName: row.displayName
-    }))
+    },
+    teamId: facts.teamId,
+    player: row.isPlayer
+  }))
+  const formats = await publicFormats(db, people)
+  const names = formatForReader(
+    people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
   const above = (level: RoleLevel | undefined): level is 'season' | 'league' =>
     level != null && level !== ownLevel && level !== 'team'
@@ -438,6 +449,9 @@ async function sectionPeople(
         bats: row.bats,
         throws: row.throws,
         shortName: names.get(row.userId) ?? row.displayName,
+        ...(formats.get(row.userId) === DEFAULT_PLAYER_NAME_PRIVACY
+          ? {}
+          : { nameFormat: formats.get(row.userId) }),
         avatarUrl: space == null ? null : imageUrl(space, row.avatarPath),
         jersey: row.jersey,
         positions: row.positions,

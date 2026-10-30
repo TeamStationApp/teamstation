@@ -288,7 +288,11 @@ export async function addExistingGuest(
       side,
       expectedTeamId
     )
-    const person = await candidatePerson(trx, body.userId)
+    const person = await candidatePerson(
+      trx,
+      side === 'away' ? game.away_team_id : game.home_team_id,
+      body.userId
+    )
     await guestAlreadyInGame(trx, game, person.userIds)
     const result = await addByPolicy(
       trx,
@@ -325,6 +329,7 @@ export async function addExistingGuest(
         userId: person.userId,
         gumboId,
         shortName: person.shortName,
+        ...(person.nameFormat == null ? {} : { nameFormat: person.nameFormat }),
         nameDetails: {
           firstName: parts.first,
           lastName: parts.last,

@@ -2,7 +2,6 @@ import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { shortNames } from '../../common/names'
 import { seasonStandings } from '../../common/seasonStandings'
 import { inningsPitched } from '../../common/statExtras'
 import { asUserId } from '../../common/userId'
@@ -14,6 +13,7 @@ import {
   publicUserId,
   withdrawnGames
 } from '../games/withdrawn'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
@@ -248,12 +248,16 @@ export function statsRoutes(
         actor.userId,
         rows.map(row => row.userId).filter(id => !isWithdrawnKey(id))
       )
-      const names = shortNames(
+      const names = await publicNames(
+        db,
         rows.map(row => ({
-          id: row.userId,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          displayName: row.displayName
+          person: {
+            id: row.userId,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            displayName: row.displayName
+          },
+          teamId: row.teamId
         }))
       )
       res.json({

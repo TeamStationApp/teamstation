@@ -1,10 +1,15 @@
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 
+import {
+  mostRestrictive,
+  type PlayerNamePrivacy
+} from '../../common/playerNamePrivacy'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { retargetGameTeams } from '../games/retargetTeams'
 import { requireDirectAdmin } from '../groups/adminGuard'
+import { teamFormats } from '../groups/playerNamePrivacy'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
@@ -286,10 +291,12 @@ export async function mergeTeams(
     // Again under the teams' locks: a game between them may have been
     // scheduled since the report.
     await refuseGamesBetween(trx, from, into)
-    // The exhibition flags first, while both teams' seasons still read as
+    // The flags and privacy first, while both teams' seasons still read as
     // they were: `mergeParents` is about to move the source's parent rows.
     await mergeSeasonFlags(trx, fromTeamId, intoTeamId)
+    const stricter = await stricterOfTeams(trx, fromTeamId, intoTeamId)
     await mergeParents(trx, fromTeamId, intoTeamId, true)
+    await keepPrivacy(trx, intoTeamId, stricter)
     // Merge overlapping rows before repointing, so unique constraints remain valid.
     await sql`update memberships target set
       role = case when target.role = 'owner' or source.role = 'owner' then 'owner'
@@ -654,4 +661,38 @@ async function countExternalIds(
     .where('entity_id', '=', gameId)
     .executeTakeFirst()
   return Number(row?.n ?? 0)
+}
+
+/**
+ * The stricter of two teams' formats, read while each still has its own
+ * parents: what a merge of them must not read wider than.
+ */
+export async function stricterOfTeams(
+  trx: Kysely<Database>,
+  fromTeamId: string,
+  intoTeamId: string
+): Promise<PlayerNamePrivacy | undefined> {
+  const formats = await teamFormats(trx, [fromTeamId, intoTeamId])
+  const held = [...formats.values()]
+  return held.length === 0 ? undefined : mostRestrictive(held)
+}
+
+/**
+ * The merged team's players and games read as the survivor's from now on, and
+ * the survivor has taken on its parents, so a merge can widen either side. The
+ * survivor stores `stricter` when it would otherwise read wider.
+ */
+export async function keepPrivacy(
+  trx: Kysely<Database>,
+  intoTeamId: string,
+  stricter: PlayerNamePrivacy | undefined
+): Promise<void> {
+  const reads = (await teamFormats(trx, [intoTeamId])).get(intoTeamId)
+  if (stricter == null || reads == null) return
+  if (mostRestrictive([reads, stricter]) === reads) return
+  await trx
+    .updateTable('teams')
+    .set({ player_name_privacy: stricter })
+    .where('id', '=', intoTeamId)
+    .execute()
 }

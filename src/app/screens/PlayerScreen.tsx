@@ -428,7 +428,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   useEffect(() => {
     let cancelled = false
     client
-      .player(userId)
+      .player(userId, forTeam)
       .then(loaded => {
         if (!cancelled) {
           const saved = savedPlayer.current
@@ -461,7 +461,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [client, userId])
+  }, [client, userId, forTeam])
 
   // Their highlights, a page at a time: every play they are credited on in
   // the games the Videos filter is on. A new filter starts again from the
@@ -753,8 +753,23 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                   const profileName =
                     entry.nameDetails == null
                       ? entry.shortName
-                      : shortName({ id: entry.userId, ...entry.nameDetails })
-                  savedPlayer.current = { userId, entry, profileName }
+                      : entry.nameFormat != null
+                        ? (player?.name ?? entry.shortName)
+                        : shortName({ id: entry.userId, ...entry.nameDetails })
+                  const saved = { userId, entry, profileName }
+                  savedPlayer.current = saved
+                  // In a chosen format only the server can write it.
+                  if (entry.nameFormat != null)
+                    client
+                      .player(userId, forTeam)
+                      .then(({ name }) => {
+                        saved.profileName = name
+                        if (savedPlayer.current === saved)
+                          setPlayer(held =>
+                            held == null ? held : { ...held, name }
+                          )
+                      })
+                      .catch(() => undefined)
                   props.onSettingsSaved?.(entry)
                   if (entry.nameDetails != null) {
                     privateNameGeneration.current++

@@ -28,7 +28,6 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { shortNames } from '../../common/names'
 import {
   asPlayerSettingsName,
   asRosterPlayerBody
@@ -90,6 +89,7 @@ import {
 } from '../games/guestPlayers'
 import { gameAvailability } from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
+import { publicNames } from '../groups/playerNamePrivacy'
 import { cleanBody } from '../jsonBody'
 import { setAudit, skipAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -986,12 +986,16 @@ async function djBatters(
     .where('memberships.is_player', '=', true)
     .where('users.merged_into', 'is', null)
     .execute()
-  const names = shortNames(
+  const names = await publicNames(
+    db,
     rows.map(row => ({
-      id: row.userId,
-      firstName: row.firstName,
-      lastName: row.lastName,
-      displayName: row.displayName
+      person: {
+        id: row.userId,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        displayName: row.displayName
+      },
+      teamId: read.teamId
     }))
   )
   const nameOf = (row: (typeof rows)[number]): string =>
