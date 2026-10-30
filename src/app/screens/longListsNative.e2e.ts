@@ -3,7 +3,11 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { type LongListsSeed, longListsSupport } from '../../test/longListsSeed'
+import {
+  LONG_LISTS_SHAPE,
+  type LongListsSeed,
+  longListsSupport
+} from '../../test/longListsSeed'
 import { log, maestro } from '../../test/refinementsMaestro.e2e'
 
 /**
@@ -841,9 +845,88 @@ async function main(): Promise<void> {
     },
     E8: webOnly('E8'),
     E9: async () => {
+      const ROW = 'notification-row-'
+      const rowsOnShow = async (): Promise<string[]> =>
+        (await all())
+          .map(node => node.id ?? '')
+          .filter(id => id.startsWith(ROW))
+      /** Up until the mode pills stand on the screen, not just in the tree. */
+      const toPills = async (): Promise<void> => {
+        for (let swipe = 0; swipe < 80; swipe++) {
+          const pill = (await all()).find(
+            node => node.text === 'Pending' && node.bounds != null
+          )?.bounds
+          if (pill != null && pill.y > 90 && pill.y < 700) return
+          await m.swipe({ start: '50%, 25%', end: '50%, 85%', duration: 200 })
+        await pause(800)
+        const seen = new Set<string>()
+        for (let still = 0; still < 3;) {
+        }
+        throw new Error('E9: the mode pills never came back')
+      }
+      /** Down the list to its end, from the top. */
+      const readDown = async (): Promise<Set<string>> => {
+        await toPills()
+          const before = seen.size
+          for (const row of await rowsOnShow()) seen.add(row)
+          assert.ok(!(await shown('Load more', 300)), 'E9: no Load more')
+          await m.swipe({ start: '50%, 70%', end: '50%, 30%', duration: 800 })
+          await pause(800)
+          still = seen.size === before ? still + 1 : 0
+        }
+        return seen
+      }
+      const pagesRead = async (mode: string): Promise<number> =>
+        new Set(
+          (await phoneNetwork()).filter(
+            url =>
+              url.includes('/me/notifications?') &&
+              url.includes(mode) &&
+              url.includes('cursor=')
+          )
+        ).size
+
       await m.openLink({ link: 'teamstation://notifications' })
       await visible('Pending')
-      later('M7: pages in each mode; a dismissed row leaves; no Load more')
+      await pause(1500)
+      const { pendingNotices, sentNotices, reminders } = LONG_LISTS_SHAPE
+      const opening = await rowsOnShow()
+      assert.equal(
+        opening[0],
+        `${ROW}nev_long_reminder_1`,
+        `E9: reminders come first, in ${opening.join(' ')}`
+      )
+      await tap('Dismiss')
+      await pause(1200)
+      assert.ok(
+        !(await rowsOnShow()).includes(opening[0]),
+        'E9: the dismissed row leaves'
+      )
+      await shot(`${platform}-notifications.png`)
+      const pending = await readDown()
+      assert.equal(pending.size, pendingNotices + reminders - 1, 'E9: Pending')
+      assert.ok(!pending.has(opening[0]), 'E9: it stays gone')
+      assert.ok((await pagesRead('')) >= 1, 'E9: Pending reads its next page')
+      await note(`E9: Pending showed ${pending.size} rows by page`)
+
+      await toPills()
+      await tap('Sent')
+      await pause(1200)
+      const sent = await readDown()
+      assert.equal(sent.size, sentNotices, 'E9: Sent')
+      await note(`E9: Sent showed ${sent.size} rows`)
+
+      await toPills()
+      await tap('History')
+      await pause(1200)
+      const history = await readDown()
+      assert.ok(history.has(opening[0]), 'E9: dismissed, it is in History')
+      assert.ok(
+        (await pagesRead('history=1')) >= 1,
+        'E9: History reads its next page'
+      )
+      await shot(`${platform}-notifications-history.png`)
+      await note(`E9: History showed ${history.size} rows by page`)
     },
     E10: async () => {
       await m.openLink({ link: `teamstation://players/${manifest.playerId}` })

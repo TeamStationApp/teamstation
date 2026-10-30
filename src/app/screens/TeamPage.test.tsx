@@ -11,7 +11,7 @@ import {
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
-import { pageOfGames } from '../../test/pageOf'
+import { pageOf, pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ManagementCard } from './ManagementCard'
 import { TeamPage } from './TeamPage'
@@ -219,6 +219,7 @@ describe('restored access-aware team presentation', () => {
     })
   it('uses the original four-tab shell without private requests for somebody signed out', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     api.group = async () => detail()
     let privateReads = 0
     for (const method of [
@@ -242,6 +243,10 @@ describe('restored access-aware team presentation', () => {
     expect(document.body.textContent).includes(
       'No game has a video attached yet.'
     )
+    // The pinned head waits for this, and would hold still with no tab in it.
+    expect(document.querySelector('[data-testid="teamTabContent"]')).not.equals(
+      null
+    )
     await press('Schedule')
     expect(document.body.textContent).includes('No games scheduled.')
     await press('Team')
@@ -251,6 +256,8 @@ describe('restored access-aware team presentation', () => {
       'You need to be a member of this team to see individual player stats.'
     )
     expect(document.body.textContent).not.includes('Create Game')
+    await press('Chats')
+    expect(document.body.textContent).includes('No chats available.')
     expect(privateReads).equals(0)
   })
   for (const following of [true, false])
@@ -374,6 +381,7 @@ describe('restored access-aware team presentation', () => {
   })
   it('discards an older access answer and clears a private page after revocation', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     let first!: (value: GroupDetail) => void
     let calls = 0
     api.group = async () =>
@@ -462,6 +470,7 @@ describe('restored access-aware team presentation', () => {
   })
   it('keeps custodial settings available without granting private collections', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     api.group = async () => detail({ canManage: true })
     let settings = ''
     await mount(

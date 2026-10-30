@@ -11,6 +11,7 @@ import { applyParents, previewParents } from '../server/groups/relationships'
 import { rolesAt } from '../server/invites/people'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { actor, demoLocality, groupFixture } from '../test/groupFixtures'
+import { scrollToRow } from '../test/scrollToRow'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 import {
   fill,
@@ -448,22 +449,36 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded'
     })
     await text(owner, cached.title)
-    await press(owner, 'Load more')
-    await owner.waitForFunction(
-      title =>
-        [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
-          node => node.getAttribute('aria-label') === `Accept ${title}`
-        ).length > 25,
-      {},
-      cached.title
-    )
-    const loadedCount = await owner.evaluate(
-      title =>
-        [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
-          node => node.getAttribute('aria-label') === `Accept ${title}`
-        ).length,
-      cached.title
-    )
+    const inbox = (await (
+      await f.h.request('GET', '/me/notifications?limit=100', undefined, 103)
+    ).json()) as { items: Array<{ requestId: string; title: string }> }
+    const rowOf = (id: string): string =>
+      `[data-testid="notification-row-${id}"]`
+    const titled = inbox.items
+      .filter(item => item.title === cached.title)
+      .map(item => item.requestId)
+    expect(titled.length).greaterThan(25)
+    // Rows mount near the screen, so a count is of those seen on the way.
+    const rowsSeen = async (): Promise<number> => {
+      const seen = new Set<string>()
+      for (const id of titled) {
+        await scrollToRow(owner, rowOf(id))
+        const mounted = await owner.$$eval(
+          '[data-testid^="notification-row-"]',
+          (rows, title) =>
+            rows
+              .filter(
+                row =>
+                  row.querySelector(`[aria-label="Accept ${title}"]`) !== null
+              )
+              .map(row => row.getAttribute('data-testid')!),
+          cached.title
+        )
+        for (const row of mounted) seen.add(row)
+      }
+      return seen.size
+    }
+    const loadedCount = await rowsSeen()
     expect(loadedCount).greaterThan(25)
     const refreshedSecondPage = owner.waitForResponse(
       response =>
@@ -472,15 +487,7 @@ async function main(): Promise<void> {
     )
     await owner.evaluate(() => window.dispatchEvent(new Event('focus')))
     await refreshedSecondPage
-    await owner.waitForFunction(
-      (title, count) =>
-        [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
-          node => node.getAttribute('aria-label') === `Accept ${title}`
-        ).length === count,
-      {},
-      cached.title,
-      loadedCount
-    )
+    expect(await rowsSeen()).equals(loadedCount)
     lines.push(
       'E10 review PASS: an inbox with more than twenty-five actual pending requests retains its loaded second page after a foreground refresh'
     )
@@ -528,13 +535,11 @@ async function main(): Promise<void> {
     notificationFailure = 'none'
     // A refused Accept leaves the card, says why, and can be pressed again.
     refuseDecision = true
-    const firstAccept = await owner.$(`[aria-label="Accept ${cached.title}"]`)
-    expect(firstAccept).not.equals(null)
-    await owner.evaluate(
-      label =>
-        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.click(),
-      `Accept ${cached.title}`
-    )
+    const accept = `${rowOf(cacheId)} [aria-label="Accept ${cached.title}"]`
+    await scrollToRow(owner, accept)
+    await owner.evaluate(css => {
+      document.querySelector<HTMLElement>(css)!.click()
+    }, accept)
     await text(owner, 'This request was already decided')
     await text(owner, cached.title)
     refuseDecision = false

@@ -143,16 +143,10 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
     })
   }, [])
 
-  /** The rows, each key once, whichever end a repeat came in from. */
+  /** The rows, each key once: where it first came, as it last read. */
   const unique = useCallback((rows: T[]): T[] => {
     const { keyOf } = latest.current
-    const seen = new Set<string>()
-    return rows.filter(row => {
-      const key = keyOf(row)
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+    return [...new Map(rows.map(row => [keyOf(row), row])).values()]
   }, [])
 
   const add = useCallback(
@@ -326,10 +320,13 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       if (current()) change({ error: caught })
       return
     }
+    // A page that landed behind these reads stays, with the cursor after it.
     const now = held.current
+    const lastAt = now.rows.findIndex(row => keyOf(row) === lastKey)
+    const behind = lastAt < 0 ? [] : now.rows.slice(lastAt + 1)
     change({
-      rows: unique(kept(rows)),
-      nextCursor: next,
+      rows: unique(kept([...rows, ...behind])),
+      nextCursor: behind.length > 0 ? now.nextCursor : next,
       prevCursor: top?.prevCursor ?? null,
       counts: top?.counts ?? now.counts,
       above: topCursor == null ? 0 : now.above,
@@ -373,8 +370,12 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
         rows: rows.filter((_row, index) => index !== at),
         above: at < above ? above - 1 : above
       })
+      // Left short with a cursor, as a short page would: nothing else reads
+      // on, since Legend List has already reported this end.
+      const { screenRows = SCREEN_ROWS } = latest.current
+      if (rows.length - 1 < screenRows) walk('next').catch(() => undefined)
     },
-    [change]
+    [change, walk]
   )
 
   useEffect(() => {

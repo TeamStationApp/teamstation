@@ -511,22 +511,27 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {/* Kept built: a team's schedule runs the length of its season. */}
       {publicDetail != null && (
         <TabPages keep page={tab} index={tabIndex}>
-          {tab === 'chats' ? (
-            <ChatLinks
-              key={tab}
-              chats={props.chats ?? []}
-              onOpen={props.onOpenChat}
-              onLoadPreview={props.onLoadChatPreview}
-            />
-          ) : (
-            <PublicTeamContent
-              key={tab}
-              membershipAccess={membershipAccess}
-              detail={publicDetail}
-              tab={tab}
-              onOpenGame={openGame}
-            />
-          )}
+          <PinnedContent
+            key={tab}
+            part={pinned.content}
+            testID="teamTabContent"
+          >
+            {tab === 'chats' ? (
+              <ChatLinks
+                chats={props.chats ?? []}
+                onOpen={props.onOpenChat}
+                onLoadPreview={props.onLoadChatPreview}
+              />
+            ) : (
+              <PublicTeamContent
+                client={client}
+                membershipAccess={membershipAccess}
+                detail={publicDetail}
+                tab={tab}
+                onOpenGame={openGame}
+              />
+            )}
+          </PinnedContent>
         </TabPages>
       )}
 
