@@ -1713,7 +1713,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     fill(tiles.B, [60, 260])
     Object.assign(tiles.B, { seekable: { length: 1, end: () => 260 } })
     held.B = dated(260)
-    await ticks(2)
+    await until(() => mc().tiles.B?.parked === null, 5000)
     expect(mc().tiles.B?.parked ?? null).equals(null)
     expect(tiles.B.currentTime).greaterThan(140)
   })
