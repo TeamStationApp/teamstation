@@ -7,6 +7,10 @@ import Animated, {
   useSharedValue
 } from 'react-native-reanimated'
 
+import {
+  pageScroller,
+  type PageScrollViewProps
+} from '../components/PageScrollView'
 import { PinnedSpacer } from '../components/PinnedBands'
 import {
   SlidingContent,
@@ -47,7 +51,8 @@ export function GameWatchLayout(
     tabsHeight,
     height,
     style,
-    contentStyle
+    contentStyle,
+    pagedList
   } = props
   const theme = useTheme()
   // A pane sliding out lets go of the pinned head's scroller and its
@@ -100,8 +105,12 @@ export function GameWatchLayout(
     pegTop.value = event.nativeEvent.layout.y
     pegHeight.value = event.nativeEvent.layout.height
   }
+  const Scroller = pageScroller(pagedList)
+  // Upright the pane does not scroll, and its list follows the page.
+  const paneScroll: PageScrollViewProps =
+    pagedList === true ? { inert: !sideBySide } : {}
   return (
-    <Animated.ScrollView
+    <Scroller
       ref={useActiveRef(pinned.screen.scrollRef)}
       onLayout={handleLayout}
       style={style}
@@ -163,7 +172,8 @@ export function GameWatchLayout(
             {player}
             {short ? null : description}
           </Animated.View>
-          <Animated.ScrollView
+          <Scroller
+            {...paneScroll}
             scrollEnabled={sideBySide}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
@@ -191,7 +201,7 @@ export function GameWatchLayout(
             {short ? description : null}
             {highlightList}
             {footer}
-          </Animated.ScrollView>
+          </Scroller>
         </SlidingContent>
         <PinnedSpacer
           part={{
@@ -207,6 +217,6 @@ export function GameWatchLayout(
           }}
         />
       </View>
-    </Animated.ScrollView>
+    </Scroller>
   )
 }

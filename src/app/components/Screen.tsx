@@ -6,7 +6,7 @@ import {
   View,
   type ViewStyle
 } from 'react-native'
-import Animated from 'react-native-reanimated'
+import type Animated from 'react-native-reanimated'
 
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
@@ -15,6 +15,7 @@ import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
 import { type ContentInset, ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import { navClearanceAboveInset } from './navClearance'
+import { pageScroller } from './PageScrollView'
 import { useActiveRef, usePageSliding } from './TabPages'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -68,6 +69,8 @@ export interface ScreenProps {
   scrollRef?: React.Ref<React.ComponentRef<typeof Animated.ScrollView>>
   /** The scroll view's own size: how much of the page is in view. */
   onLayout?: (event: LayoutChangeEvent) => void
+  /** A `PagedList` is somewhere on this screen, and follows this scroller. */
+  pagedList?: boolean
 }
 
 /**
@@ -141,7 +144,8 @@ export function Screen(props: ScreenProps): React.ReactElement {
     contentStyle,
     onScroll,
     scrollRef,
-    onLayout
+    onLayout,
+    pagedList
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -208,8 +212,9 @@ export function Screen(props: ScreenProps): React.ReactElement {
     )
   }
 
+  const Scroller = pageScroller(pagedList)
   return (
-    <Animated.ScrollView
+    <Scroller
       ref={scroller}
       style={[styles.fill, clear && styles.clear]}
       onScroll={handleScroll}
@@ -241,7 +246,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
       ]}
     >
       {inner}
-    </Animated.ScrollView>
+    </Scroller>
   )
 }
 

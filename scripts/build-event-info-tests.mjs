@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 
 import { build } from 'esbuild'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const suites = [
@@ -56,6 +57,7 @@ const suites = [
 mkdirSync('lib', { recursive: true })
 await build({
   ...webSettings,
+  plugins: [...webSettings.plugins, pagedListStandInPlugin()],
   alias: {
     ...webSettings.alias,
     'react-native-webview': './src/test/eventWebViewStub.tsx',

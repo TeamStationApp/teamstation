@@ -1,10 +1,15 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React, { act, useRef } from 'react'
+import React, { act, useContext, useRef } from 'react'
+import { Platform, View } from 'react-native'
 import { useSharedValue } from 'react-native-reanimated'
 
 import { mount, settle, unmount } from '../../test/gameFormDom'
 import type { Handoff } from '../components/handoff'
+import {
+  PageScrollContext,
+  type PageScrollSource
+} from '../components/pageScroll'
 import type { PinnedHead } from '../components/pinnedHead'
 import { usePinnedHead } from '../components/usePinnedHead.native'
 import { watchLayout } from '../layout/watch'
@@ -27,148 +32,169 @@ function handler(node: Element, name: string): unknown {
   throw new Error(`Missing native handler ${name}`)
 }
 describe('native event section and picture pinning', () => {
-  afterEach(unmount)
-  for (const [width, height] of [
-    [402, 874],
-    [874, 402],
-    [1440, 900]
-  ])
-    it(`keeps sections before the same video/list at ${width}x${height}`, async () => {
-      let scrolled = 0
-      let measured = 0
-      let head!: PinnedHead
-      let handoff!: Handoff
-      const layout = watchLayout({
-        width,
-        height,
-        chromeHeight: 108,
-        aspect: 16 / 9,
-        previous: 'stacked'
-      })
-      function Harness(): React.ReactElement {
-        const progress = useSharedValue(0)
-        const shortWindow = useRef(layout.short)
-        handoff = watchHandoff(
-          {
-            progress,
-            ref: () => {},
-            handleScroll: () => {
-              measured++
-              // An empty hero at the header's edge produces a half handoff.
-              progress.value = 0.5
-            }
-          },
-          shortWindow
-        )
-        const pinned = usePinnedHead({
-          headerHeight: 48,
-          ready: true,
-          tab: 'watch',
-          anchorOnRow: false,
-          tail: 80,
-          onScroll: () => {
-            scrolled++
-            handoff.handleScroll()
-          }
+  let phone: (() => void) | undefined
+  /** The phone's publishing scroller, rather than the browser's. */
+  const asPhone = (): void => {
+    const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
+    phone = () => {
+      Object.defineProperty(Platform, 'OS', saved)
+    }
+  }
+  afterEach(async () => {
+    phone?.()
+    phone = undefined
+    await unmount()
+  })
+  for (const pagedList of [false, true])
+    for (const [width, height] of [
+      [402, 874],
+      [874, 402],
+      [1440, 900]
+    ])
+      it(`keeps sections before the same video/list at ${width}x${height}${pagedList ? ' with a paged list' : ''}`, async () => {
+        if (pagedList) asPhone()
+        let scrolled = 0
+        let measured = 0
+        let head!: PinnedHead
+        let handoff!: Handoff
+        const layout = watchLayout({
+          width,
+          height,
+          chromeHeight: 108,
+          aspect: 16 / 9,
+          previous: 'stacked'
         })
-        head = pinned
-        return (
-          <GameWatchLayout
-            pinned={pinned}
-            head={<div>Event hero</div>}
-            player={<div data-testid="fixture-player">Picture</div>}
-            description={<div>Description</div>}
-            sections={<div>Event sections</div>}
-            highlightList={<div>Highlights</div>}
-            footer={<div>Stream</div>}
-            layout={layout}
-            short={layout.short}
-            sideBySide={layout.mode === 'sideBySide'}
-            headerHeight={48}
-            tabsHeight={60}
-            height={height}
-          />
-        )
-      }
-      await mount(<Harness />)
-      const body = document.querySelector('[data-testid="eventTabContent"]')!
-      const band = document.querySelector('[data-testid="event-pill-band"]')!
-      const video = document.querySelector(
-        '[data-testid="event-pegged-video"]'
-      )!
-      const deliver = (node: Element, y: number, h: number): void => {
-        const call = handler(node, 'onLayout') as (event: unknown) => void
-        call({ nativeEvent: { layout: { x: 0, y, width, height: h } } })
-      }
-      await act(async () => {
-        const viewportEvent: unknown = {
-          nativeEvent: { layout: { x: 0, y: 0, width, height } }
+        function Harness(): React.ReactElement {
+          const progress = useSharedValue(0)
+          const shortWindow = useRef(layout.short)
+          handoff = watchHandoff(
+            {
+              progress,
+              ref: () => {},
+              handleScroll: () => {
+                measured++
+                // An empty hero at the header's edge produces a half handoff.
+                progress.value = 0.5
+              }
+            },
+            shortWindow
+          )
+          const pinned = usePinnedHead({
+            headerHeight: 48,
+            ready: true,
+            tab: 'watch',
+            anchorOnRow: false,
+            tail: 80,
+            onScroll: () => {
+              scrolled++
+              handoff.handleScroll()
+            }
+          })
+          head = pinned
+          return (
+            <GameWatchLayout
+              pinned={pinned}
+              head={<div>Event hero</div>}
+              player={<div data-testid="fixture-player">Picture</div>}
+              description={<div>Description</div>}
+              sections={<div>Event sections</div>}
+              highlightList={<div>Highlights</div>}
+              footer={<div>Stream</div>}
+              layout={layout}
+              short={layout.short}
+              sideBySide={layout.mode === 'sideBySide'}
+              headerHeight={48}
+              tabsHeight={60}
+              height={height}
+              pagedList={pagedList}
+            />
+          )
         }
-        head.screen.onLayout!(viewportEvent as never)
-        deliver(band, layout.short ? 0 : 200, 60)
-        deliver(body, layout.short ? 60 : 260, 1200)
-        deliver(video, 0, 260)
-        const list = video.nextElementSibling!
-        deliver(list, layout.mode === 'sideBySide' ? 0 : 260, 1200)
-        const size = handler(body, 'onContentSizeChange') as (
-          width: number,
-          height: number
-        ) => void
-        size(width, 1600)
-      })
-      await act(async () => {
-        const spacerEvent: unknown = {
-          nativeEvent: {
-            layout: {
-              x: 0,
-              y: 0,
-              width,
-              height: (head.spacer.style as { height: number }).height
+        await mount(<Harness />)
+        const body = document.querySelector('[data-testid="eventTabContent"]')!
+        const band = document.querySelector('[data-testid="event-pill-band"]')!
+        const video = document.querySelector(
+          '[data-testid="event-pegged-video"]'
+        )!
+        const deliver = (node: Element, y: number, h: number): void => {
+          const call = handler(node, 'onLayout') as (event: unknown) => void
+          call({ nativeEvent: { layout: { x: 0, y, width, height: h } } })
+        }
+        await act(async () => {
+          const viewportEvent: unknown = {
+            nativeEvent: { layout: { x: 0, y: 0, width, height } }
+          }
+          head.screen.onLayout!(viewportEvent as never)
+          deliver(band, layout.short ? 0 : 200, 60)
+          deliver(body, layout.short ? 60 : 260, 1200)
+          deliver(video, 0, 260)
+          const list = video.nextElementSibling!
+          deliver(list, layout.mode === 'sideBySide' ? 0 : 260, 1200)
+          const size = handler(body, 'onContentSizeChange') as (
+            width: number,
+            height: number
+          ) => void
+          size(width, 1600)
+        })
+        await act(async () => {
+          const spacerEvent: unknown = {
+            nativeEvent: {
+              layout: {
+                x: 0,
+                y: 0,
+                width,
+                height: (head.spacer.style as { height: number }).height
+              }
             }
           }
-        }
-        head.spacer.handleLayout!(spacerEvent as never)
-      })
-      await settle(100)
-      expect(scrolled).greaterThan(0)
-      expect(handoff.progress.value).equals(layout.short ? 1 : 0.5)
-      const beforeScroll = scrolled
-      handoff.progress.value = 0
-      await act(async () => {
-        const scroll = handler(body, 'onScroll') as {
-          workletEventHandler: { worklet: (event: unknown) => void }
-        }
-        const event = {
-          contentOffset: { x: 0, y: 500 },
-          contentSize: { width, height: 1600 },
-          layoutMeasurement: { width, height }
-        }
-        scroll.workletEventHandler.worklet({
-          ...event,
-          eventName: 'onScrollBeginDrag'
+          head.spacer.handleLayout!(spacerEvent as never)
         })
-        scroll.workletEventHandler.worklet({ ...event, eventName: 'onScroll' })
+        await settle(100)
+        expect(scrolled).greaterThan(0)
+        expect(handoff.progress.value).equals(layout.short ? 1 : 0.5)
+        const beforeScroll = scrolled
+        handoff.progress.value = 0
+        await act(async () => {
+          const scroll = handler(body, 'onScroll') as {
+            workletEventHandler: { worklet: (event: unknown) => void }
+          }
+          const event = {
+            contentOffset: { x: 0, y: 500 },
+            contentSize: { width, height: 1600 },
+            layoutMeasurement: { width, height }
+          }
+          scroll.workletEventHandler.worklet({
+            ...event,
+            eventName: 'onScrollBeginDrag'
+          })
+          scroll.workletEventHandler.worklet({
+            ...event,
+            eventName: 'onScroll'
+          })
+        })
+        await settle()
+        expect(scrolled - beforeScroll).equals(1)
+        expect(handoff.progress.value).equals(layout.short ? 1 : 0.5)
+        expect(measured === 0).equals(layout.short)
+        // The sections' band in the same column as the video, and before it,
+        // held either way: the column's own child, as in `Screen`.
+        expect(band.parentElement).equals(body.parentElement)
+        expect(
+          band.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).not.equals(0)
+        expect(
+          video.contains(
+            document.querySelector('[data-testid="fixture-player"]')
+          )
+        ).equals(true)
+        expect(document.body.textContent)
+          .includes('Highlights')
+          .and.includes('Description')
+        expect(document.body.textContent!.includes('Event hero')).equals(
+          !layout.short
+        )
       })
-      await settle()
-      expect(scrolled - beforeScroll).equals(1)
-      expect(handoff.progress.value).equals(layout.short ? 1 : 0.5)
-      expect(measured === 0).equals(layout.short)
-      // The sections' band in the same column as the video, and before it,
-      // held either way: the column's own child, as in `Screen`.
-      expect(band.parentElement).equals(body.parentElement)
-      expect(
-        band.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
-      ).not.equals(0)
-      expect(
-        video.contains(document.querySelector('[data-testid="fixture-player"]'))
-      ).equals(true)
-      expect(document.body.textContent)
-        .includes('Highlights')
-        .and.includes('Description')
-      expect(document.body.textContent!.includes('Event hero')).equals(
-        !layout.short
-      )
-    })
 
   it('lets the list run its full length again once the phone is upright after being held sideways', async () => {
     // The streaming screen turns an Android phone sideways under the game, and
@@ -233,5 +259,75 @@ describe('native event section and picture pinning', () => {
       upright = getComputedStyle(list()).maxHeight
     }
     expect(uncapped(upright), `max-height ${upright}`).equals(true)
+  })
+
+  describe('a paged list in the highlights', () => {
+    let list: PageScrollSource | undefined
+    let page: PageScrollSource | undefined
+    function List(): React.ReactElement {
+      list = useContext(PageScrollContext)
+      return <View testID="highlights" />
+    }
+    function Beside(): null {
+      page = useContext(PageScrollContext)
+      return null
+    }
+    function Watch(props: {
+      sideways: boolean
+      pagedList: boolean
+    }): React.ReactElement {
+      const { sideways, pagedList } = props
+      const [width, height] = sideways ? [874, 402] : [402, 874]
+      const layout = watchLayout({
+        width,
+        height,
+        chromeHeight: 108,
+        aspect: 16 / 9,
+        previous: sideways ? 'sideBySide' : 'stacked'
+      })
+      const pinned = usePinnedHead({
+        headerHeight: 48,
+        ready: true,
+        tab: 'watch',
+        anchorOnRow: false,
+        tail: 80,
+        onScroll: () => {}
+      })
+      return (
+        <GameWatchLayout
+          pinned={pinned}
+          head={<Beside />}
+          player={<div />}
+          description={<div />}
+          sections={<div />}
+          highlightList={<List />}
+          footer={<div />}
+          layout={layout}
+          short={layout.short}
+          sideBySide={layout.mode === 'sideBySide'}
+          headerHeight={48}
+          tabsHeight={60}
+          height={height}
+          pagedList={pagedList}
+        />
+      )
+    }
+
+    it('follows the page upright and its own pane side by side', async () => {
+      asPhone()
+      await mount(<Watch sideways={false} pagedList />)
+      expect(list).not.equals(undefined)
+      expect(list).equals(page)
+      await unmount()
+      await mount(<Watch sideways pagedList />)
+      expect(list).not.equals(undefined)
+      expect(list).not.equals(page)
+    })
+
+    it('has no scroller to follow without `pagedList`', async () => {
+      list = undefined
+      await mount(<Watch sideways pagedList={false} />)
+      expect(list).equals(undefined)
+    })
   })
 })

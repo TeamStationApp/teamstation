@@ -122,6 +122,8 @@ if (!process.argv.includes('--report-only')) {
     { NODE_V8_COVERAGE: temp }
   )
   const { build } = await import('esbuild')
+  const { pagedListStandInPlugin } =
+    await import('./pagedListStandInPlugin.mjs')
   const { webSettings } = await import('./web-build-settings.mjs')
   for (const suite of [
     'NodeSettingsCard',
@@ -133,6 +135,7 @@ if (!process.argv.includes('--report-only')) {
     const bundle = `lib/scoring-tweaks-${suite}.cjs`
     await build({
       ...webSettings,
+      plugins: [...webSettings.plugins, pagedListStandInPlugin()],
       entryPoints: [file],
       outfile: bundle,
       bundle: true,

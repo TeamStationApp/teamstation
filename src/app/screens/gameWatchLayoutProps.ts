@@ -59,4 +59,9 @@ export interface GameWatchLayoutProps {
   height: number
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
+  /**
+   * The highlights are a `PagedList`: it follows the page, or side by side
+   * the list pane's own scroller.
+   */
+  pagedList?: boolean
 }

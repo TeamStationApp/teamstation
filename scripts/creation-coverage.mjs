@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const report = resolve('coverage/creation')
@@ -194,6 +195,7 @@ mkdirSync('lib', { recursive: true })
 if (!reportOnly)
   await build({
     ...webSettings,
+    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
     alias: {
       ...webSettings.alias,
       'react-native-webview': './src/test/eventWebViewStub.tsx',
