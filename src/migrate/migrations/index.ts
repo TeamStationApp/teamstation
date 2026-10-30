@@ -111,6 +111,7 @@ import { migration097NoticeRequests } from './097noticeRequests'
 import { migration098PlayerNamePrivacy } from './098playerNamePrivacy'
 import { migration099ChatLinkDecisions } from './099ChatLinkDecisions'
 import { migration100StreamManagement } from './100streamManagement'
+import { migration101VideographerRequests } from './101videographerRequests'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -225,5 +226,6 @@ export const migrations: Migration[] = [
   migration097NoticeRequests,
   migration098PlayerNamePrivacy,
   migration099ChatLinkDecisions,
-  migration100StreamManagement
+  migration100StreamManagement,
+  migration101VideographerRequests
 ]

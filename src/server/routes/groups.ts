@@ -119,11 +119,11 @@ async function invitation(
     raw.idempotencyKey.length > 120
   )
     throw badRequest('Sending needs a retry key')
-  if (raw.kind === 'membership') {
+  if (raw.kind === 'membership' || raw.kind === 'videographer') {
     if (userId == null) throw unauthorized()
     return {
       terms: {
-        kind: 'membership',
+        kind: raw.kind,
         teamId: clean(asString, raw.teamId),
         userId
       },
@@ -871,7 +871,11 @@ export function groupRoutes(
     requireActor,
     withAsync(async (req, res) => {
       // Guardian kinds are authorized when the request is made.
-      if (req.body?.kind !== 'guardian' && req.body?.kind !== 'membership')
+      if (
+        req.body?.kind !== 'guardian' &&
+        req.body?.kind !== 'membership' &&
+        req.body?.kind !== 'videographer'
+      )
         await requireGroupAdmin(
           db,
           actorOf(req),
@@ -987,7 +991,11 @@ export function groupRoutes(
           .selectAll()
           .where('id', '=', id)
           .executeTakeFirstOrThrow()
-        if (original.kind === 'guardian' || original.kind === 'membership')
+        if (
+          original.kind === 'guardian' ||
+          original.kind === 'membership' ||
+          original.kind === 'videographer'
+        )
           throw conflict('A personal request is not resent. Send a new one.')
         await requireGroupAdmin(trx, actor, {
           kind: original.sender_scope_type!,
