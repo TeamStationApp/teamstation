@@ -384,6 +384,7 @@ export async function notificationFor(
       senderAdmin &&
       request.kind !== 'guardian' &&
       request.kind !== 'membership' &&
+      request.kind !== 'videographer' &&
       // A player add is made or asked once; a refused one is asked again by
       // adding the player again.
       request.kind !== 'playerAdd',
@@ -398,8 +399,9 @@ export async function notificationFor(
 
 /**
  * The teams whose players' guardian requests this person may answer, while
- * those players have no guardian: every team they administer, coach or
- * assist. Whether a player has one is read per request, by `approvesSide`.
+ * those players have no guardian, and whose videographer requests they may
+ * answer: every team they administer, coach or assist. Whether a player has
+ * one is read per request, by `approvesSide`.
  */
 async function coachedTeams(
   db: Kysely<Database>,
@@ -538,7 +540,7 @@ export async function inbox(
       eb.or([
         eb('id', 'in', candidateSides),
         eb.and([
-          eb('kind', 'in', ['game', 'gameChange']),
+          eb('kind', 'in', ['game', 'gameChange', 'videographer']),
           eb('id', 'in', schedulingSides)
         ]),
         ...(scopes.seasonIds.size === 0

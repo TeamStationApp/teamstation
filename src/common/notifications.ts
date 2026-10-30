@@ -19,12 +19,13 @@ export type GuardianInput = { userId: string } | { email: string }
 
 /**
  * The body of `POST /relationship-requests`. A guardian invitation comes from
- * a team its sender coaches; a guardian or membership request, which a person sends for
- * themselves, has no sender.
+ * a team its sender coaches; a guardian, membership or videographer request,
+ * which a person sends for themselves, has no sender.
  */
 export type RelationshipRequestInput =
   | GroupRequestInput
   | { kind: 'membership'; teamId: string; idempotencyKey: string }
+  | { kind: 'videographer'; teamId: string; idempotencyKey: string }
   | {
       kind: 'guardian'
       playerUserId: string
@@ -59,6 +60,7 @@ type GroupRequestInput = {
 export type RequestTerms =
   | GameRequestTerms
   | { kind: 'membership'; teamId: string; userId: string }
+  | { kind: 'videographer'; teamId: string; userId: string }
   | { kind: 'parent'; preview: ParentPreview }
   | {
       kind: 'participation'
