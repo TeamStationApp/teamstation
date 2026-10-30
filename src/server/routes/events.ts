@@ -53,6 +53,8 @@ import {
   readSyncClock,
   REVISION_HEADER
 } from '../socket/syncRevision'
+import { modelNames } from '../users/nameBook'
+import { isSpoken } from '../users/readerNames'
 import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
@@ -305,6 +307,7 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+      let teams: readonly string[] = []
       const result = await db.transaction().execute(async trx => {
         const locked = await trx
           .selectFrom('games')
@@ -318,12 +321,22 @@ export function eventRoutes(
         res.setHeader(REVISION_HEADER, await readSyncClock(trx))
         await reconcileEventTags(trx, gameId)
         // Players' halves for whoever may save their lineups.
-        return await storedGameRead(trx, gameId, async game =>
-          lineupTeams(await roleScopes(trx, actor.userId, actor.isAdmin), game)
-        )
+        return await storedGameRead(trx, gameId, async game => {
+          teams = lineupTeams(
+            await roleScopes(trx, actor.userId, actor.isAdmin),
+            game
+          )
+          return teams
+        })
       })
-      // The pregame fold replays once the game row is let go.
-      res.json(await folded(result))
+      // A game with nothing stored has no setup to hold anyone's halves, and
+      // whoever may dictate still needs their first names.
+      // Dictation's, so nothing Tess, who does not dictate, is told.
+      const spoken = isSpoken() ? {} : await modelNames(db, teams)
+      res.json({
+        ...(await folded(result)),
+        ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken })
+      })
     })
   )
 
@@ -490,13 +503,14 @@ async function storedGameRead(
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
   const current = atBatOf(game, stored.length > 0)
+  const lineups = await halves(game)
   const resolved = await resolveScoringGame(
     db,
     {
       plays: stored.map(row => row.gumbo as GumboPlay),
       currentPlay: current as CurrentPlay | null
     },
-    { halves: await halves(game), gameId }
+    { halves: lineups, gameId }
   )
   const teams = teamsOfRow(game)
   const answer: StoredGameAnswer = {

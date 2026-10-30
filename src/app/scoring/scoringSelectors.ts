@@ -21,11 +21,17 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
   const board = scoreboardOfGame(session)
   const batter = session.liveData.linescore.offense.batter
   const pitcher = session.liveData.linescore.defense.P
+  const players = session.gameData.players
   // The board's own formatter takes a first name and a last name. A stored
   // label may already be a short name, or it may be the whole name.
   const person = (
-    fullName: string
+    fullName: string,
+    id: number | undefined
   ): { firstName: string; lastName: string } => {
+    // A label that shows a surname is printed whole.
+    const format = id == null ? undefined : players[id]?.nameFormat
+    if (format === 'full' || format === 'initialLast')
+      return { firstName: fullName.trim(), lastName: '' }
     const shown = shortName({ id: 0, displayName: fullName })
     const words = shown.split(/\s+/).filter(word => word !== '')
     if (words.length <= 1) return { firstName: words[0] ?? '', lastName: '' }
@@ -39,12 +45,12 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
     homeTeam: session.gameData.teams.home.name,
     awayScore: board.awayScore,
     homeScore: board.homeScore,
-    batter: person(board.batterName),
+    batter: person(board.batterName, batter?.id),
     batterHits: board.batterNumHits,
     batterAtBats: board.batterAtBats,
     batterJersey:
       batter == null ? undefined : session.gameData.players[batter.id]?.jersey,
-    pitcher: person(board.pitcherName),
+    pitcher: person(board.pitcherName, pitcher?.id),
     pitcherJersey:
       pitcher == null
         ? undefined

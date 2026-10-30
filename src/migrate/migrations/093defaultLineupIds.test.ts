@@ -7,7 +7,11 @@ import { userIdOfGumbo } from '../../common/userId'
 import { makeDatabase } from '../../server/db/database'
 import { resolvedDefaultOf } from '../../server/events/teamLineups'
 import { migrateDown, migrateUp } from '../runner'
-import { dropScratchDatabase, testDatabaseUrl } from '../testDatabase'
+import {
+  addPlayerNamePrivacy,
+  dropScratchDatabase,
+  testDatabaseUrl
+} from '../testDatabase'
 import { migration093DefaultLineupIds } from './093defaultLineupIds'
 import { migrations } from './index'
 
@@ -80,6 +84,7 @@ describe('093 default lineups keep ids', function () {
     await admin.query(`create database ${name}`)
     pool = new Pool({ connectionString: url })
     await migrateUp(pool, through092)
+    await addPlayerNamePrivacy(pool)
     for (const [gumboId, first, last] of [
       [JUDGE, 'Aaron', 'Judge'],
       [BETTS, 'Mookie', 'Betts']

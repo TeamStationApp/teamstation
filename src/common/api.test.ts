@@ -2075,6 +2075,13 @@ describe('api client', function () {
     expect(calls[0].url).equals('http://x/api/v1/games/gam%201/events')
     expect(JSON.parse(JSON.stringify(stored.plays))).deep.equals([play])
     expect(stored.currentPlay).deep.equals(current)
+    const dictating = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], modelNames: { 7: 'Alex L.' } }).fetch
+    })
+    expect((await dictating.gameEvents('g')).modelNames).deep.equals({
+      7: 'Alex L.'
+    })
     const none = stubFetch(200, { plays: [] })
     const bare = new TeamStationClient({
       baseUrl: 'http://x/api/v1',

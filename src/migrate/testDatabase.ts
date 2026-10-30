@@ -10,6 +10,17 @@ import type { Pool } from 'pg'
 export const testDatabaseUrl =
   process.env.TS_TEST_DATABASE_URL ?? 'postgres://localhost:5433/postgres'
 
+/**
+ * Today's read code on an older schema: what a test of an old migration needs
+ * to read its result as the server does.
+ */
+export async function addPlayerNamePrivacy(pool: Pool): Promise<void> {
+  await pool.query(`
+    alter table leagues add column player_name_privacy text;
+    alter table seasons add column player_name_privacy text;
+    alter table teams add column player_name_privacy text`)
+}
+
 /** Waits for graceful client shutdown; never terminates a leaked test session. */
 export async function dropScratchDatabase(
   admin: Pool,

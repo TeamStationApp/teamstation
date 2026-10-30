@@ -3050,9 +3050,13 @@ function namesPlayer(game: GameState, id: number, words: string): boolean {
 }
 
 /** The ways the words may name a player, as regular expressions. */
-function playerPatterns(game: GameState, id: number): string[] {
+export function playerPatterns(game: GameState, id: number): string[] {
   const player = game.gameData.players[id]
-  const first = player?.firstName ?? player?.fullName.split(' ')[0]
+  const model = game.meta.modelNames?.[id]?.split(' ')[0]
+  const first =
+    player?.firstName ??
+    (model == null || model === '' ? undefined : model) ??
+    player?.fullName.split(' ')[0]
   const jersey = player?.jersey.trim() ?? ''
   const escape = (text: string): string =>
     text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

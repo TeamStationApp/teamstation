@@ -28,6 +28,7 @@ import {
   ScoreboardUnavailable
 } from '../scoreboard/scoreboardStore'
 import { lineStepsFor, lineTimeline } from '../scoring/lineTimeline'
+import { isSpoken } from '../users/readerNames'
 
 /**
  * A game's scoreboard over HTTP. Its sockets, which carry every change as it
@@ -199,6 +200,15 @@ interface OpenBoard {
   watcherAt?: number
 }
 
+/**
+ * A board as this reader may have it. The hash holds the public names, and no
+ * read formats them: a model gets the score and the situation, and its names
+ * from the timeline.
+ */
+function readable(board: ScoreboardState): ScoreboardState {
+  return isSpoken() ? { ...board, batterName: '', pitcherName: '' } : board
+}
+
 /** The game's board, or 404 when there is no game or its board has closed. */
 async function openBoard(
   db: Kysely<Database>,
@@ -210,13 +220,15 @@ async function openBoard(
   const hash = await store.readScoreboard(gameId)
   if (!scoreboardOpen(record, hash != null, store.now())) throw notFound()
   const overrides = hash?.overrides ?? NO_OVERRIDES
+  const composed = composeScoreboard({
+    baseline: record,
+    game: hash?.game,
+    watcher: hash?.watcher,
+    overrides
+  })
   return {
-    ...composeScoreboard({
-      baseline: record,
-      game: hash?.game,
-      watcher: hash?.watcher,
-      overrides
-    }),
+    automated: readable(composed.automated),
+    final: readable(composed.final),
     record,
     overrides,
     gameAt: hash?.game?.receivedAt,

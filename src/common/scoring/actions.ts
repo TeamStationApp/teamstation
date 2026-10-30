@@ -9,6 +9,7 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
+import type { PlayerNamePrivacy } from '../playerNamePrivacy'
 import { DEPTHS, FOUL_DEPTHS, FOUL_SIDES } from './depth'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
@@ -895,6 +896,7 @@ export function shortName(player: {
   fullName: string
   firstName?: string
   lastName?: string
+  nameFormat?: PlayerNamePrivacy
 }): string {
   const first = player.firstName?.trim() ?? ''
   const last = player.lastName?.trim() ?? ''
@@ -905,7 +907,30 @@ export function shortName(player: {
     .filter(word => word !== '')
   if (words.length === 0) return first
   if (words.length === 1) return words[0]
+  // A label that shows the surname: the whole of it stays out of the prompt,
+  // however many words it is.
+  if (player.nameFormat === 'full' || player.nameFormat === 'initialLast')
+    return `${words[0]} ${initial(words[words.length - 1])}`
   return `${words.slice(0, -1).join(' ')} ${initial(words[words.length - 1])}`
+}
+
+/**
+ * What a prompt prints: the first name and last initial a reader who may
+ * dictate was told (`meta.modelNames`), or `shortName`.
+ */
+export function modelNameOf(
+  state: { meta: { modelNames?: Record<string, string> } },
+  player: Parameters<typeof shortName>[0] & { id: number }
+): string {
+  return state.meta.modelNames?.[player.id] ?? shortName(player)
+}
+
+/**
+ * What a screen draws. A label in a chosen format is final, whatever else the
+ * reader's device holds; otherwise the first name and last initial.
+ */
+export function drawnName(player: Parameters<typeof shortName>[0]): string {
+  return player.nameFormat == null ? shortName(player) : player.fullName.trim()
 }
 function initial(word: string): string {
   const letter = word.replace(/^[^\p{L}\p{N}]+/u, '').charAt(0)
@@ -939,7 +964,7 @@ export function promptContext(state: GameState): string {
     if (ref == null) return 'nobody'
     const player = players[ref.id]
     const jersey = player?.jersey.trim() ?? ''
-    return `${shortName(player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} ${writtenTag(state.meta.tagOrder.indexOf(ref.id))}`
+    return `${modelNameOf(state, player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} ${writtenTag(state.meta.tagOrder.indexOf(ref.id))}`
   }
   const batting = line.isTopInning ? 'away' : 'home'
   const fielding = batting === 'away' ? 'home' : 'away'
@@ -1004,7 +1029,7 @@ export function keyterms(state: GameState, side?: Side): string[] {
     if (ref == null) continue
     const id = typeof ref === 'number' ? ref : ref.id
     const player = players[id] ?? (typeof ref === 'number' ? undefined : ref)
-    if (player != null) add(shortName(player))
+    if (player != null) add(modelNameOf(state, player))
   }
   if (side == null) {
     add(state.gameData.teams.away.name)

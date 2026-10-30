@@ -89,6 +89,10 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
+import {
+  asPlayerNamePrivacy,
+  type PlayerNamePrivacy
+} from './playerNamePrivacy'
 import type {
   ExistingRosterPlayer,
   NewRosterPlayer,
@@ -1264,11 +1268,14 @@ const cleanRosterEntry = asObject({
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   /**
-   * First name, last initial. The field is named for what it is so a full
-   * name cannot be shipped here by accident — the compiler visits every call
-   * site, where a reviewer might not.
+   * The public name: first name, last initial, unless the team has chosen
+   * another format. The field is named for what it is so a stored full name
+   * cannot be shipped here by accident — the compiler visits every call site,
+   * where a reviewer might not.
    */
   shortName: asString,
+  /** The public format of `shortName`, unless it is the built-in one. */
+  nameFormat: asOptional(asPlayerNamePrivacy),
   avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
@@ -1305,8 +1312,12 @@ const cleanRosterEntry = asObject({
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
-  'teamNames' | 'guardianOf'
-> & { teamNames?: string[]; guardianOf?: string[] }
+  'teamNames' | 'guardianOf' | 'nameFormat'
+> & {
+  teamNames?: string[]
+  guardianOf?: string[]
+  nameFormat?: PlayerNamePrivacy
+}
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
@@ -1318,7 +1329,8 @@ const asStoredGame = asObject({
   priorPlaysDigest: asOptional(asNullable(asString), null),
   lineupsDigest: asOptional(asNullable(asString), null),
   generation: asOptional(asNullable(asNumber), null),
-  swap: asSwapEffect
+  swap: asSwapEffect,
+  modelNames: asOptional(asObject(asString))
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -1334,7 +1346,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
       ? {}
       : { lineupsDigest: stored.lineupsDigest }),
     ...(stored.generation == null ? {} : { generation: stored.generation }),
-    ...(stored.swap === undefined ? {} : { swap: stored.swap })
+    ...(stored.swap === undefined ? {} : { swap: stored.swap }),
+    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames })
   }
 }
 
@@ -3830,7 +3843,10 @@ export class TeamStationClient {
 
   async updateGroup(
     ref: GroupRef,
-    fields: Partial<Omit<CreateGroup, 'kind' | 'parent' | 'idempotencyKey'>>
+    fields: Partial<Omit<CreateGroup, 'kind' | 'parent' | 'idempotencyKey'>> & {
+      /** Null goes back to Default. */
+      playerNamePrivacy?: PlayerNamePrivacy | null
+    }
   ): Promise<PublicGroup> {
     return await this.request(
       'PUT',
@@ -5766,10 +5782,10 @@ export class TeamStationClient {
   }
 
   /** One person: their picture, their name, their handedness, their teams. */
-  async player(userId: string): Promise<PlayerDetail> {
+  async player(userId: string, forTeam?: string): Promise<PlayerDetail> {
     return await this.request(
       'GET',
-      `/players/${encodeURIComponent(userId)}`,
+      `/players/${encodeURIComponent(userId)}${forTeam == null ? '' : `?forTeam=${encodeURIComponent(forTeam)}`}`,
       asPlayerDetail
     )
   }

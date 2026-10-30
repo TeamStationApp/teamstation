@@ -1562,10 +1562,10 @@ describe('the board timeline', function () {
         queries.filter(query => query.includes('"name":"gumbo"')).length
       const first = await cache.get(watched, gameId)
       expect(plays()).equals(1)
-      // Asked again: the version query and one names query, no play.
+      // Asked again: the version, the names and the formats, no play.
       queries = []
       expect(await cache.get(watched, gameId)).equals(first)
-      expect(queries).has.length(2)
+      expect(queries).has.length(5)
       expect(plays()).equals(0)
       // A post: the check reads no play, and the build reads them once,
       // naming the board with the book its version holds.
@@ -1579,7 +1579,7 @@ describe('the board timeline', function () {
       expect(scored?.version).equals(await timelineVersion(db, gameId))
       queries = []
       expect(await cache.get(watched, gameId)).equals(scored)
-      expect(queries).has.length(2)
+      expect(queries).has.length(5)
     })
 
     it('builds a new version once for every viewer asking at once, and again after a build that failed', async function () {

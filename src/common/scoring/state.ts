@@ -12,6 +12,10 @@ import {
 
 import { asLiteral } from '../asLiteral'
 import { DEFAULT_FENCE_DISTANCE_FT } from '../fenceDistance'
+import {
+  asPlayerNamePrivacy,
+  type PlayerNamePrivacy
+} from '../playerNamePrivacy'
 import { asGumboId } from '../userId'
 import { asPitchLocation, type PitchLocation } from './pitchLocation'
 
@@ -322,6 +326,11 @@ export interface GamePlayer {
   fullName: string
   firstName?: string
   lastName?: string
+  /**
+   * The public format `fullName` was written in, when it is not the built-in
+   * one: the label is final, drawn as sent. Only a read carries it.
+   */
+  nameFormat?: PlayerNamePrivacy
   jersey: string
   bats: 'left' | 'right' | 'switch'
   throws: 'left' | 'right' | null
@@ -526,6 +535,11 @@ export interface GameState {
     source?: 'local-development' | 'api'
     sequence: number
     tagOrder: number[]
+    /**
+     * What a model calls each player, by id, for a reader who may dictate
+     * about them. Never drawn, and never part of a setup.
+     */
+    modelNames?: Record<string, string>
     /** Some plays were rebuilt from their documents rather than their actions. */
     derived?: boolean
   }
@@ -607,6 +621,7 @@ const playerShape = {
   fullName: asOptional(asString, ''),
   firstName: asOptional(asString),
   lastName: asOptional(asString),
+  nameFormat: asOptional(asPlayerNamePrivacy),
   jersey: asString,
   bats: asLiteral('left', 'right', 'switch'),
   throws: asEither(asNull, asLiteral('left', 'right')),
@@ -614,8 +629,9 @@ const playerShape = {
   local: asBoolean
 }
 const asPlayer = asObject(playerShape)
+const { nameFormat: _readOnly, ...legacyPlayerShape } = playerShape
 const asLegacyPlayer = asObject({
-  ...playerShape,
+  ...legacyPlayerShape,
   userId: asEither(asNull, asNumber)
 })
 const asIdentities = asObject({
@@ -808,6 +824,7 @@ export const asGameState: Cleaner<GameState> = exactly(
       source: asOptional(asLiteral('local-development', 'api')),
       sequence: asNumber,
       tagOrder: asArray(asGumboId),
+      modelNames: asOptional(asObject(asString)),
       derived: asOptional(asBoolean)
     })
   })
