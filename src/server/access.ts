@@ -1129,15 +1129,32 @@ export async function openablePeople(
   viewerUserId: string,
   userIds: readonly string[]
 ): Promise<Set<string>> {
-  const ids = [...new Set(userIds)]
-  if (scopes.isAdmin) return new Set(ids)
+  const asked = [...new Set(userIds)]
+  if (scopes.isAdmin) return new Set(asked)
+  if (asked.length === 0) return new Set()
+  // A person's lines and memberships may sit on rows merged into them, as
+  // `teamsOf` counts them: each row answers for the person asked about.
+  const rows = await sql<{ id: string; person: string }>`
+    with recursive family as (
+      select id, id as person from users where id in (${sql.join(asked)})
+      union
+      select u.id, f.person from users u
+        join family f on u.merged_into = f.id
+    )
+    select id, person from family`.execute(db)
+  const personOf = new Map(rows.rows.map(row => [row.id, row.person]))
+  const ids = [...personOf.keys()]
   // Themselves, and anybody they guard: their page is theirs to open
   // wherever the line is from.
   const guarded =
     scopes.guardedIds ?? new Set(await guardedPlayers(db, viewerUserId))
-  const open = new Set(ids.filter(id => id === viewerUserId || guarded.has(id)))
+  const open = new Set(
+    ids
+      .filter(id => id === viewerUserId || guarded.has(id))
+      .map(id => personOf.get(id)!)
+  )
   const teams = [...scopes.teamIds]
-  if (teams.length === 0 || ids.length === 0) return open
+  if (teams.length === 0) return open
   // As `teamsOf` counts the teams a person played for: a player's
   // membership, on a team not merged away.
   const members = await db
@@ -1150,7 +1167,7 @@ export async function openablePeople(
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
-  for (const row of members) open.add(row.user_id)
+  for (const row of members) open.add(personOf.get(row.user_id)!)
   const played = await db
     .selectFrom('game_player_stats')
     .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
@@ -1194,7 +1211,7 @@ export async function openablePeople(
       )
     )
     .execute()
-  for (const row of played) open.add(row.user_id)
+  for (const row of played) open.add(personOf.get(row.user_id)!)
   return open
 }
 

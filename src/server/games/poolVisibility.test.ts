@@ -308,6 +308,18 @@ describe('a pool player and who may open their page', function () {
     )
     // Nobody to see: nothing to ask.
     expect([...(await openablePeople(db!, scopes, heron, []))]).deep.equals([])
+    // A merged player's membership sits on the row merged into them.
+    const closed = await person('Closed Row', true)
+    await member(closed, TEAM.herons, true)
+    const kept = await person('Kept Row', true)
+    await db!
+      .updateTable('users')
+      .set({ merged_into: kept })
+      .where('id', '=', closed)
+      .execute()
+    expect([...(await openablePeople(db!, scopes, heron, [kept]))]).deep.equals(
+      [kept]
+    )
     const outsider = await person('Out Sider', true)
     expect([
       ...(await openablePeople(
