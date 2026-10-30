@@ -3,10 +3,15 @@ import assert from 'node:assert/strict'
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+import type { HTTPRequest } from 'puppeteer'
+
+import { scheduleDate, shortDate } from '../app/screens/format'
+import type { SeasonGame } from '../common/api'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { startLongLists } from './longListsFixture.e2e'
 import { longListsSupport } from './longListsSeed'
 import {
+  absent,
   browserSession,
   contains,
   log,
@@ -62,8 +67,16 @@ const PHONE = {
   isMobile: true
 }
 const DESKTOP = { width: 1280, height: 800 }
+const FOUR_COLUMNS = { width: 1800, height: 1000 }
+const TWO_COLUMNS = { width: 900, height: 1000 }
 /** How far down a list the at-depth proofs are taken. */
 const DEPTH = 6000
+/** The rows of a page the server answers. */
+const PAGE_ROWS = 50
+/** A row on the phone's screen, with what a list keeps drawn around it. */
+const MOST_ROWS_AT_ONCE = 60
+/** The section title and its space, from the pills to a pill's first row. */
+const MOST_BELOW_PILLS = 110
 
 /** One of a milestone's steps, empty until that milestone. */
 function later(step: string): void {
@@ -120,6 +133,13 @@ async function main(): Promise<void> {
       await page.screenshot({ type: 'png' })
     )
   }
+  /** A look at a state, for the support directory rather than the proofs. */
+  const shotOf = async (name: string): Promise<void> => {
+    await writeFile(
+      join(support, `${name}.png`),
+      await page.screenshot({ type: 'png' })
+    )
+  }
   /** The page's own scroller: the tallest one on the top scene. */
   const scroll = async (to: number | 'end'): Promise<number> =>
     await page.evaluate(wanted => {
@@ -151,13 +171,14 @@ async function main(): Promise<void> {
     await pause(400)
   }
   /** To the last row, however many pages it takes. */
-  const scrollToEnd = async (): Promise<void> => {
+  const scrollToEnd = async (onStep?: () => Promise<void>): Promise<void> => {
     let height = -1
     for (let still = 0; still < 3;) {
       const next = await scroll('end')
       await page
         .waitForNetworkIdle({ idleTime: 200, timeout: 5000 })
         .catch(() => undefined)
+      await onStep?.()
       still = next === height ? still + 1 : 0
       height = next
     }
@@ -179,6 +200,103 @@ async function main(): Promise<void> {
   const scheduleRowNodes = async (): Promise<number> =>
     await page.$$eval('[data-testid="schedule-date"]', nodes => nodes.length)
 
+  /** The reads of a paged list since the last look. */
+  const reads: URL[] = []
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.pathname.endsWith('/events') && url.searchParams.has('paged'))
+      reads.push(url)
+  })
+  /** The whole list, as an unpaged read answers it. */
+  const wholeList = async (query: string): Promise<SeasonGame[]> => {
+    const answer = await f.h.request('GET', `/events${query}`, undefined, 101)
+    return (await answer.json()) as SeasonGame[]
+  }
+  /** The pills, and where a pill's rows start beneath them. */
+  const head = async (): Promise<{ pills: number; firstRow: number }> =>
+    await page.evaluate(() => {
+      const pills = [...document.querySelectorAll('[role="tablist"]')]
+        .find(node => node.querySelector('[aria-label="Past"]') !== null)!
+        .getBoundingClientRect()
+      const rows = [
+        ...document.querySelectorAll(
+          '[data-page-role="top"] [data-testid="schedule-date"]'
+        )
+      ].map(node => node.getBoundingClientRect().top)
+      return {
+        pills: pills.bottom,
+        firstRow: Math.min(...rows.filter(top => top >= pills.bottom))
+      }
+    })
+  /**
+   * Tapping a pill while every frame of its slide is read: how many rows
+   * stand in the page's height on each side, at the worst frame.
+   */
+  const fewestRowsSliding = async (
+    label: string
+  ): Promise<{ arriving: number; leaving: number; frames: number }> => {
+    await page.evaluate(() => {
+      const watch = { arriving: 1e9, leaving: 1e9, frames: 0, done: false }
+      const shownIn = (frame: Element): number =>
+        [...frame.querySelectorAll('[data-testid="schedule-date"]')].filter(
+          node => {
+            const { top, bottom } = node.getBoundingClientRect()
+            return bottom > 0 && top < window.innerHeight
+          }
+        ).length
+      const look = (): void => {
+        const arriving = document.querySelector('[data-page-role="incoming"]')
+        const leaving = document.querySelector('[data-page-role="outgoing"]')
+        if (arriving !== null) {
+          watch.frames++
+          watch.arriving = Math.min(watch.arriving, shownIn(arriving))
+        }
+        if (leaving !== null)
+          watch.leaving = Math.min(watch.leaving, shownIn(leaving))
+        if (!watch.done) requestAnimationFrame(look)
+      }
+      ;(window as unknown as { slideWatch: typeof watch }).slideWatch = watch
+      requestAnimationFrame(look)
+    })
+    await tapCss(`[role="tablist"] [role="tab"][aria-label="${label}"]`)
+    await settle('Demo Owls')
+    return await page.evaluate(() => {
+      const { slideWatch } = window as unknown as {
+        slideWatch: {
+          arriving: number
+          leaving: number
+          frames: number
+          done: boolean
+        }
+      }
+      slideWatch.done = true
+      return slideWatch
+    })
+  }
+  /** The cards on the top page, in reading order. */
+  const cards = async (): Promise<
+    Array<{ left: number; top: number; width: number; text: string }>
+  > =>
+    await page.evaluate(() =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-page-role="top"] [role="button"][aria-label*=" @ "]'
+        )
+      ]
+        .map(node => {
+          const { left, top, width } = node.getBoundingClientRect()
+          return {
+            left: Math.round(left),
+            top: Math.round(top),
+            width,
+            text: node.textContent === null ? '' : node.textContent
+          }
+        })
+        .sort((a, b) => (a.top === b.top ? a.left - b.left : a.top - b.top))
+    )
+  const columnsDrawn = async (): Promise<number> =>
+    new Set((await cards()).map(card => card.left)).size
+
   const guestSeesNoPrivateEvent = async (): Promise<void> => {
     const text = await page.evaluate(() => document.body.textContent!)
     assert.ok(!text.includes(seeded.privateEventTitle), 'E8: a private event')
@@ -187,11 +305,15 @@ async function main(): Promise<void> {
   const cases: Record<string, () => Promise<void>> = {
     E1: async () => {
       await onSchedule()
+      reads.length = 0
       await scrollDown(DEPTH)
       await shot('schedule-past')
-      later('M5: rows arrive with no button, one request per page')
+      let most = 0
+      const countRows = async (): Promise<void> => {
+        most = Math.max(most, await scheduleRowNodes())
+      }
       // schedule-dom-count
-      await scrollToEnd()
+      await scrollToEnd(countRows)
       const count = await scheduleRowNodes()
       await appendFile(
         join(artifacts!, 'schedule-dom-count.log'),
@@ -199,29 +321,155 @@ async function main(): Promise<void> {
       )
       console.log(`  row nodes at the end of Past: ${count}`)
       assert.ok(count > 0, 'E1: the end of Past holds rows')
-      later('M5: fewer than 60 row nodes at once; the last seeded game shows')
+      if (before) return
+      await absent(page, 'Load more')
+      const past = await wholeList('?when=past')
+      const pages = Math.ceil(past.length / PAGE_ROWS)
+      const cursors = reads
+        .filter(url => url.searchParams.get('when') === 'past')
+        .map(url => url.searchParams.get('cursor'))
+        .filter(cursor => cursor !== null)
+      console.log(
+        `  ${past.length} games, ${cursors.length + 1} pages, most rows at once ${most}`
+      )
+      assert.ok(pages >= 3, 'E1: at least three pages')
+      assert.equal(cursors.length, pages - 1, 'E1: every page, read once')
+      assert.equal(new Set(cursors).size, cursors.length, 'E1: no page twice')
+      assert.ok(most < MOST_ROWS_AT_ONCE, `E1: ${most} row nodes at once`)
+      for (const card of await cards())
+        assert.ok(card.width > PHONE.width * 0.8, 'E1: a row across the screen')
+      const { month, day } = scheduleDate(past.at(-1)!.startAt)
+      const lastRow = await page.$$eval(
+        '[data-page-role="top"] [data-testid="schedule-date"]',
+        nodes => nodes.at(-1)!.textContent
+      )
+      assert.ok(
+        lastRow?.includes(month) === true && lastRow.includes(day),
+        `E1: the last row is ${lastRow}, not the oldest game`
+      )
     },
     E2: async () => {
       await onSchedule()
       await scrollDown(DEPTH)
+      const deep = await head()
       await tapCss('[role="tablist"] [role="tab"][aria-label="All"]')
       await settle('Demo Owls')
-      await tapCss('[role="tablist"] [role="tab"][aria-label="Past"]')
-      await settle('Demo Owls')
-      later('M5: the head holds; each pill starts under the pills; no blanks')
+      await pause(600)
+      const all = await head()
+      const toPast = await fewestRowsSliding('Past')
+      await pause(600)
+      const past = await head()
+      const toAll = await fewestRowsSliding('All')
+      await pause(600)
+      console.log('  head', { deep, all, past }, 'slides', { toPast, toAll })
+      if (before) return
+      assert.ok(Math.abs(all.pills - deep.pills) < 1, 'E2: All holds the head')
+      assert.ok(Math.abs(past.pills - deep.pills) < 1, 'E2: Past holds it')
+      for (const shown of [all, past])
+        assert.ok(
+          shown.firstRow - shown.pills < MOST_BELOW_PILLS,
+          `E2: a pill starts ${shown.firstRow - shown.pills} under the pills`
+        )
+      for (const slide of [toPast, toAll]) {
+        assert.ok(slide.frames > 0, 'E2: no slide seen')
+        assert.ok(slide.arriving > 0, 'E2: a blank page slid in')
+        assert.ok(slide.leaving > 0, 'E2: a blank page slid out')
+      }
     },
     E3: async () => {
       await page.setViewport(DESKTOP)
+      reads.length = 0
       await open('/videos', 'Game videos')
       await settle('Demo Owls')
       await pause(600)
       await shot('videos-grid')
-      later('M5: grid order; resize to two columns; next page loads')
+      if (before) {
+        await page.setViewport(PHONE)
+        return
+      }
+      await page.setViewport(FOUR_COLUMNS)
+      await pause(600)
+      assert.equal(await columnsDrawn(), 4, 'E3: four columns')
+      for (const card of await cards())
+        assert.ok(
+          card.width > (FOUR_COLUMNS.width / 4) * 0.8,
+          `E3: a card ${card.width} wide in four columns`
+        )
+      const videos = (await wholeList(''))
+        .filter(game => game.videoCount > 0)
+        .sort((a, b) => b.startAt!.localeCompare(a.startAt!))
+      const shown = await cards()
+      for (const [index, card] of shown.slice(0, 8).entries())
+        assert.ok(
+          card.text.includes(shortDate(videos[index].startAt)),
+          `E3: card ${index} reads ${card.text}, not newest first`
+        )
+      await page.setViewport(TWO_COLUMNS)
+      await pause(600)
+      assert.equal(await columnsDrawn(), 2, 'E3: two columns')
+      for (const card of await cards())
+        assert.ok(
+          card.width > (TWO_COLUMNS.width / 2) * 0.8,
+          `E3: a card ${card.width} wide in two columns`
+        )
+      await scrollToEnd()
+      const next = reads.filter(
+        url =>
+          url.searchParams.get('hasVideo') === '1' &&
+          url.searchParams.has('cursor')
+      )
+      assert.ok(next.length > 0, 'E3: the next page loads')
+      const end = await cards()
+      assert.ok(
+        end.at(-1)!.text.includes(shortDate(videos.at(-1)!.startAt)),
+        'E3: the last video shows'
+      )
       await page.setViewport(PHONE)
     },
     E4: async () => {
       await onSchedule()
-      later('M5: refuse a page; rows stay; Retry shows; next page loads')
+      if (before) return
+      let refusing = true
+      const gate = (request: HTTPRequest): void => {
+        const url = new URL(request.url())
+        const answer =
+          refusing && url.searchParams.has('cursor')
+            ? request.respond({
+                status: 503,
+                contentType: 'application/json',
+                body: '{"code":"unavailable","message":"Refused"}'
+              })
+            : request.continue()
+        answer.catch(() => undefined)
+      }
+      await page.setRequestInterception(true)
+      page.on('request', gate)
+      try {
+        const rowsAtEnd = await scroll('end')
+        await contains(page, 'Could not load more')
+        await pause(300)
+        assert.ok((await scheduleRowNodes()) > 0, 'E4: the rows stay')
+        await scroll('end')
+        await pause(300)
+        await shotOf('schedule-retry')
+        refusing = false
+        await m.tapOn({ text: 'Retry', timeout: 15000 })
+        await page.waitForFunction(
+          text => !document.body.textContent!.includes(text),
+          { timeout: 15000 },
+          'Could not load more'
+        )
+        await page
+          .waitForNetworkIdle({ idleTime: 250, timeout: 10000 })
+          .catch(() => undefined)
+        assert.ok(
+          (await scroll('end')) > rowsAtEnd,
+          'E4: the next page arrived'
+        )
+      } finally {
+        page.off('request', gate)
+        await page.setRequestInterception(false)
+      }
     },
     E5: async () => {
       later('M5: iOS only, in src/app/screens/longListsNative.e2e.ts')

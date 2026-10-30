@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { DICTATION_MODELS, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOf } from '../../test/pageOf'
 import { scoringRoster } from '../../test/scoringSession'
 import { App, stackFor } from '../App'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -107,17 +108,19 @@ function navigationFixture(past = false): void {
     ).split('?')[0]
     if (path.endsWith('/events') && !path.includes('/games/')) {
       return new Response(
-        JSON.stringify([
-          {
-            ...gameFixture,
-            startAt: new Date(
-              Date.now() + (past ? -1 : 1) * 86400000
-            ).toISOString(),
-            homeTeamExternal: false,
-            awayTeamExternal: false,
-            videoCount: 1
-          }
-        ]),
+        JSON.stringify(
+          pageOf([
+            {
+              ...gameFixture,
+              startAt: new Date(
+                Date.now() + (past ? -1 : 1) * 86400000
+              ).toISOString(),
+              homeTeamExternal: false,
+              awayTeamExternal: false,
+              videoCount: 1
+            }
+          ])
+        ),
         { headers: { 'Content-Type': 'application/json' } }
       )
     }

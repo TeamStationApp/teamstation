@@ -3,7 +3,9 @@ import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 import { userIdOfGumbo } from '../common/userId'
+import { pageOf } from '../test/pageOf'
 import { scheduleDate } from './screens/format'
+import { gamesFor, type When } from './screens/whenFilter'
 
 /**
  * The list-screen checks, against the web app on :8080 with the API
@@ -26,7 +28,7 @@ const SIZES: Size[] = [
 ]
 
 const USER = {
-  id: 7,
+  id: userIdOfGumbo(7),
   displayName: 'Pat Neshek',
   email: 'pat@example.com',
   isAdmin: false
@@ -84,13 +86,30 @@ const OTHER_CAMERA = {
   closesAt: null
 }
 
+/** A game that has not been played, whenever the suite runs. */
+const AHEAD = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString()
+
 let listed: Array<
   Omit<typeof GAME, 'awayScore' | 'homeScore' | 'venue'> & {
     awayScore: number | null
     homeScore: number | null
     venue: string | null
+    isGameLive?: boolean
   }
 > = [GAME]
+
+/** `GET /events` as the server answers it: a list a page at a time. */
+function eventsAnswer(url: URL): unknown {
+  const query = url.searchParams
+  if (query.get('paged') !== '1') return listed
+  const rows = gamesFor(
+    query.get('hasVideo') === '1'
+      ? listed.filter(game => game.videoCount > 0)
+      : listed,
+    (query.get('when') ?? 'all') as When
+  )
+  return pageOf(rows, { cursor: query.get('cursor') })
+}
 
 let browser: Browser | undefined
 
@@ -178,7 +197,7 @@ async function open(path: string, size: Size): Promise<Page> {
       pathName === '/api/v1/events' ||
       pathName.startsWith('/api/v1/events?')
     ) {
-      request.respond(cors(200, listed)).catch(() => undefined)
+      request.respond(cors(200, eventsAnswer(url))).catch(() => undefined)
       return
     }
     if (pathName === '/api/v1/games/gam_box') {
@@ -421,8 +440,9 @@ describe('list screens', function () {
             const row = document.querySelector(`[aria-label^="${name}"]`)
             if (row == null) return undefined
             const img = row.querySelector('img')
-            if (img?.parentElement == null) return undefined
-            const frame = img.parentElement.parentElement
+            const holder = img === null ? null : img.parentElement
+            if (holder === null) return undefined
+            const frame = holder.parentElement
             if (frame == null) return undefined
             const frameBox = frame.getBoundingClientRect()
             const rowBox = row.getBoundingClientRect()
@@ -575,6 +595,7 @@ describe('list screens', function () {
           homeTeamName: 'Hawks',
           startAt: '2026-10-04T20:00:00.000Z',
           status: 'inProgress',
+          isGameLive: true,
           awayScore: 2,
           homeScore: 1,
           videoCount: 0,
@@ -585,7 +606,7 @@ describe('list screens', function () {
           id: 'gam_next',
           awayTeamName: 'Rivals',
           homeTeamName: 'Oaks',
-          startAt: '2026-10-20T23:00:00.000Z',
+          startAt: AHEAD,
           status: 'scheduled',
           awayScore: null,
           homeScore: null,
@@ -700,7 +721,7 @@ describe('list screens', function () {
           id: 'gam_next',
           awayTeamName: 'Rivals',
           homeTeamName: 'Oaks',
-          startAt: '2026-10-20T23:00:00.000Z',
+          startAt: AHEAD,
           status: 'scheduled',
           awayScore: null,
           homeScore: null,
@@ -899,6 +920,10 @@ async function whenStrip(page: Page): Promise<WhenStrip | undefined> {
 async function rowLabels(page: Page): Promise<string[]> {
   return await page.evaluate(() => {
     return Array.from(document.querySelectorAll('[role="button"]'))
+      .filter(function (node) {
+        // A pill's page kept beside the one on show is out of sight.
+        return node.closest('[data-page-role="kept"]') === null
+      })
       .map(function (node) {
         const label = node.getAttribute('aria-label')
         if (label === null) return ''

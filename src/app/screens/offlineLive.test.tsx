@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import { asLiveNow, asSeasonGame, asTeamSummary } from '../../common/api'
+import { pageOf } from '../../test/pageOf'
 import { CachingClient } from '../sync/cachingClient'
 import { OFFLINE_UNPLAYABLE } from '../sync/useOffline'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -77,7 +78,7 @@ describe('a live game the phone read before it lost signal', function () {
   for (const offline of [true, false])
     it(`is ${offline ? 'not ' : ''}offered to play on Videos ${offline ? 'offline' : 'online'}`, async function () {
       const client = phone(offline)
-      client.games = async () => [streaming]
+      client.gamesPage = async () => pageOf([streaming])
       const opened: unknown[] = []
       await draw(
         <GamesFeedScreen
@@ -96,6 +97,24 @@ describe('a live game the phone read before it lost signal', function () {
       })
       expect(opened).deep.equals([{ tab: 'watch', autoPlay: !offline }])
     })
+
+  it('tells a row already on the screen when the signal goes', async function () {
+    const client = phone(false)
+    client.gamesPage = async () => pageOf([streaming])
+    await draw(
+      <GamesFeedScreen
+        client={client}
+        mode="videos"
+        onOpenGame={() => undefined}
+      />
+    )
+    expect(text().includes(OFFLINE_UNPLAYABLE)).equals(false)
+    await act(async () => {
+      client.offline = true
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(text().includes(OFFLINE_UNPLAYABLE)).equals(true)
+  })
 
   it('is not offered on Home offline: no Live now, and no Watch on the recent game', async function () {
     const client = phone(true)

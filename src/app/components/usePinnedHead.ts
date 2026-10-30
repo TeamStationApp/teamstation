@@ -147,8 +147,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     pinAt.current = pin
     const bottom = contentBottom + latest.current.tail
     // A kept page's first time in is a spinner, with no rows to anchor on:
-    // it stands at its top until they are drawn, and is anchored again then.
-    const drawing = latest.current.anchorOnRow && content.current == null
+    // it stands at its top until they are drawn, and is anchored again then,
+    // since drawing a long list can take the page's height away for a moment.
+    const drawing = content.current == null
     const onRow = latest.current.anchorOnRow && !drawing
     const target = onRow
       ? rowAnchored(from, rowOffset, pin, bottom, viewport)
