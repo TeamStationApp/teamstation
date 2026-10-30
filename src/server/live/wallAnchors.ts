@@ -43,6 +43,8 @@ export interface ScanCursor {
   startMs: number
   /** Where the run the last segment was in sits on the playlist. */
   placement?: Placement
+  /** Index of the segment that established placement, reread after restamps. */
+  placementSegment?: number
   /** The last SEI point kept, which the next segment's thinning carries on from. */
   last?: WallPoint
   /** The newest point of either kind, which an arrival point never goes behind. */
@@ -110,8 +112,29 @@ export async function scanNewSegments(
 
   const points: StoredWallPoint[] = []
   const unreadable: string[] = []
-  let { startMs, last, placement, latest } = cursor
-  for (const segment of fresh) {
+  let { last, placement, placementSegment, latest } = cursor
+  const starts: number[] = []
+  let end = 0
+  for (const segment of playlist.segments) {
+    starts.push(end)
+    end += segment.durationSec * 1000
+  }
+  let startMs = starts[cursor.segments] ?? end
+  if (track != null && placementSegment != null) {
+    const reference = playlist.segments[placementSegment]
+    if (reference != null) {
+      placement = scanSegment(
+        await readPart(join(directory, reference.uri)),
+        track,
+        {
+          startMs: starts[placementSegment],
+          durationMs: reference.durationSec * 1000,
+          discontinuity: true
+        }
+      ).placement
+    }
+  }
+  for (const [index, segment] of fresh.entries()) {
     const lengthMs = segment.durationSec * 1000
     let frames: ScannedFrame[] = []
     if (track != null) {
@@ -128,6 +151,8 @@ export async function scanNewSegments(
           placement
         )
         frames = scanned.frames
+        if (scanned.placement !== placement)
+          placementSegment = cursor.segments + index
         placement = scanned.placement
       } catch (error) {
         unreadable.push(`${segment.uri}: ${String(error)}`)
@@ -161,6 +186,7 @@ export async function scanNewSegments(
       segments: cursor.segments + fresh.length,
       startMs,
       placement,
+      placementSegment,
       last,
       latest
     },
@@ -240,6 +266,7 @@ export async function resumeScan(
     segments: held,
     startMs: starts[held],
     placement,
+    placementSegment: placement == null ? undefined : runStart,
     last: { ...latest, corrected: newest.corrected },
     latest
   }

@@ -235,11 +235,15 @@ describe('live multi-angle in a browser', function () {
     await pause(5000)
     await ready()
     const back = await inlineWall()
-    // Where the player had got to when it was closed.
+    const readBackAt = Date.now()
+    // The inline picture resumes playing. Its first moment is the one at
+    // close, but this reading comes after it has had time to play again.
     const expected = lastTile.wall! + (closedAt - lastAt)
     print('E6 player closed', { closedAt: expected, back })
-    expect(Math.abs(back! - expected), 'back at the player’s moment').lessThan(
-      500 + 250
+    expect(await session.page.evaluate(`${inline}.paused`)).equals(false)
+    expect(back! - expected, 'resumes from the player’s moment').within(
+      -750,
+      readBackAt - closedAt + 750
     )
   })
 

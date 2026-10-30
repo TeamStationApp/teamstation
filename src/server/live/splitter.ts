@@ -292,6 +292,8 @@ interface OutputRuntime {
   stampSegments?: () => void
   /** Where the current writer's segments go; see `WriterPlacement`. */
   placement?: WriterPlacement
+  /** First number owned by the writer being prepared or currently running. */
+  firstSegmentNumber?: number
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
 }
@@ -750,7 +752,7 @@ function ingressUrl(entry: LiveEntry, output: OutputRuntime): string {
   // The HLS writer says which reader it is, so a cut at a jump can end its
   // input and leave an onward destination's alone.
   const marker = output.kind === 'hls' ? '?writer=hls' : ''
-  return `rtmp://${host}:${port}/${path}${marker}`
+  return `rtmp://${host}:${port === 0 ? ingestPort() : port}/${path}${marker}`
 }
 
 /**
@@ -981,6 +983,7 @@ async function spawnPrepared(
   let installStamp: (() => void) | undefined
   if (output.kind === 'hls') {
     const next = nextSegmentNumber(entry.hlsDir)
+    output.firstSegmentNumber = next
     let placement: WriterPlacement | undefined
     if (next > 0) {
       output.hlsRestarted = true
@@ -2325,7 +2328,11 @@ export function startIngest(): boolean {
   }
 
   try {
-    nmsInstance = new NodeMediaServer({ bind: bindHost, rtmp: { port } })
+    // NMS tests the port for truthiness when constructing its listener.
+    // Create that listener, then let listen(0) allocate the test's free port.
+    const rtmp = { port: port === 0 ? 1 : port }
+    nmsInstance = new NodeMediaServer({ bind: bindHost, rtmp })
+    rtmp.port = port
   } catch (error) {
     log(`live ingest disabled: ${String(error)}`)
     return false
@@ -2389,6 +2396,41 @@ export function startIngest(): boolean {
  */
 export function rtmpBound(): boolean {
   return nmsInstance?.rtmpServer?.tcpServer?.listening === true
+}
+
+/** The actual port, including a listener allocated with port zero. */
+export function ingestPort(): number | undefined {
+  const address = nmsInstance?.rtmpServer?.tcpServer?.address()
+  return address != null && typeof address !== 'string'
+    ? address.port
+    : undefined
+}
+
+/** Listed fragments that the current writer has placed on the timeline. */
+export function finalSegments(
+  liveStreamId: string
+): ReadonlySet<string> | undefined {
+  const entry = [...entries.values()].find(
+    entry => entry.liveStreamId === liveStreamId
+  )
+  const output = entry?.outputs.find(output => output.kind === 'hls')
+  if (
+    entry == null ||
+    output == null ||
+    (output.child == null && output.preparing !== true)
+  )
+    return undefined
+  const first = output.firstSegmentNumber ?? 0
+  return new Set(
+    listedSegments(readPlaylist(entry.hlsDir) ?? '')
+      .filter(
+        segment =>
+          first === 0 ||
+          Number(segment.name.slice(3, -4)) < first ||
+          output.placement?.stamped.has(segment.name) === true
+      )
+      .map(segment => segment.name)
+  )
 }
 
 /**

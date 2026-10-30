@@ -17,9 +17,11 @@ import { changeNodeAccount } from '../admin/nodeAdministration'
 import { setScopeRoles } from '../invites/people'
 import {
   beganPublishing,
+  drainPublishForTest,
   type LiveControllerOptions,
   resolveKey,
   settleLiveWork,
+  stopLiveController,
   sync
 } from '../live/controller'
 import {
@@ -84,6 +86,7 @@ describe('revoked streams retain and finalize actual recordings', function () {
     )
   })
   afterEach(async () => {
+    stopLiveController()
     await settleLiveWork()
     resetForTest()
     await f?.h.close()
@@ -94,7 +97,7 @@ describe('revoked streams retain and finalize actual recordings', function () {
     'cold-role-loss',
     'sync-role-loss'
   ] as const) {
-    it(`disconnects and retains a playable uploaded recording after ${mode}, with the key permanently revoked`, async () => {
+    it(`disconnects and closes the published Space recording after ${mode}, with the key permanently revoked`, async () => {
       const stream = await createLiveStream(f.h.db, {
         gameId: 'gam_demo_recorded_revocation',
         teamId: f.teamA,
@@ -149,6 +152,8 @@ describe('revoked streams retain and finalize actual recordings', function () {
         'fmp4',
         '-hls_flags',
         'omit_endlist',
+        '-hls_segment_filename',
+        join(spec.hlsDir, 'seg%06d.m4s'),
         join(spec.hlsDir, 'master.m3u8')
       ])
       expect(
@@ -156,6 +161,14 @@ describe('revoked streams retain and finalize actual recordings', function () {
           '#EXT-X-ENDLIST'
         )
       ).equals(false)
+      await drainPublishForTest(stream.videoId!)
+      expect(
+        await f.h.db
+          .selectFrom('videos')
+          .select('storage')
+          .where('id', '=', stream.videoId!)
+          .executeTakeFirstOrThrow()
+      ).includes({ storage: 'spaces' })
       if (mode === 'suspended')
         await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
           suspended: true
@@ -193,11 +206,13 @@ describe('revoked streams retain and finalize actual recordings', function () {
       expect(retained.status).equals('ready')
       expect(retained.hidden).equals(false)
       expect(retained.duration_sec ?? 0).greaterThan(1.5)
-      expect(await readFile(join(spec.hlsDir, 'master.m3u8'), 'utf8')).includes(
-        '#EXT-X-ENDLIST'
-      )
       await settleLiveWork()
-      expect((await stat(join(spec.hlsDir, 'video.mp4'))).size).greaterThan(0)
+      expect(await stat(spec.hlsDir).catch(() => undefined)).equals(undefined)
+      expect(
+        f.h.objects
+          .get(`/${f.h.space.bucket}/videos/${stream.videoId!}/index.m3u8`)
+          ?.toString()
+      ).includes('#EXT-X-ENDLIST')
       const uploaded = await f.h.db
         .selectFrom('videos')
         .select(['status', 'storage', 'spaces_verified_at'])
@@ -209,7 +224,7 @@ describe('revoked streams retain and finalize actual recordings', function () {
         [...f.h.objects.keys()].some(
           key => key.includes(stream.videoId!) && key.endsWith('/video.mp4')
         )
-      ).equals(true)
+      ).equals(false)
       const detail = await f.h.request(
         'GET',
         '/games/gam_demo_recorded_revocation',

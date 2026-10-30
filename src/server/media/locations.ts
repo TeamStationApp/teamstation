@@ -31,12 +31,12 @@ export interface VideoLocation {
  * fetched when a still is actually cut.
  */
 export async function videoFrameSource(
-  options: LocateOptions & { space: SpaceSettings }
+  options: LocateOptions & { space: SpaceSettings; verified?: boolean }
 ): Promise<FrameSource | undefined> {
   const { space, storage, videoId } = options
   if (storage === 'spaces') {
     if (!spaceConfigured(space)) return undefined
-    return { kind: 'space', space, videoId }
+    return { kind: 'space', space, videoId, verified: options.verified }
   }
   const path = await locateVideoFile(options)
   return path == null ? undefined : { kind: 'file', path }

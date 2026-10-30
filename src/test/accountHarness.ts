@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
@@ -141,7 +142,13 @@ export async function accountHarness(
         .map(held => held.slice(bucket.length + 1))
       res.writeHead(200, { 'content-type': 'application/xml' })
       res.end(
-        `<ListBucketResult>${keys.map(listed => `<Contents><Key>${listed}</Key></Contents>`).join('')}<IsTruncated>false</IsTruncated></ListBucketResult>`
+        `<ListBucketResult>${keys
+          .map(listed => {
+            const bytes = objects.get(`${bucket}/${listed}`)!
+            const etag = createHash('md5').update(bytes).digest('hex')
+            return `<Contents><Key>${listed}</Key><Size>${bytes.length}</Size><ETag>"${etag}"</ETag></Contents>`
+          })
+          .join('')}<IsTruncated>false</IsTruncated></ListBucketResult>`
       )
       return
     }

@@ -17,7 +17,7 @@ import {
   MAPPING_WAIT_MS,
   type WallMapping
 } from '../wallMapping'
-import { JOIN_LEAD_SEC } from './align'
+import { JOIN_LEAD_SEC, LIVE_OPEN_WAIT_MS, WATCHDOG_MS } from './align'
 import { tileRects } from './layout'
 import {
   type MultiCam,
@@ -1090,6 +1090,31 @@ describe('useMultiCam on live angles', function () {
     expect(asked.filter(one => one === 'B').length).equals(1)
   })
 
+  it('retries a finished angle awaiting publication through a failed request', async function () {
+    this.timeout(5000)
+    let asked = 0
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async id => {
+      if (id === 'B') {
+        asked++
+        if (asked === 2) throw new Error('offline')
+      }
+      const pending = id === 'B' && asked < 3
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: pending ? null : `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: pending,
+        pending
+      }
+    }
+    const { mc } = await grid({ client }, { liveRetryDelay: quickRetry })
+    await until(() => mc().urls.B != null)
+    expect(asked).equals(3)
+  })
+
   it('asks once for each address, and waits once for a timeline that never comes', async function () {
     this.timeout(8000)
     const asked: string[] = []
@@ -1124,15 +1149,55 @@ describe('useMultiCam on live angles', function () {
   })
 
   it('waits a moment for a tile with no picture yet, and then opens without it', async function () {
-    this.timeout(8000)
-    const { mc } = await grid(live, {}, tiles => {
-      atTheirEdges(tiles)
-      tiles.B.readyState = 1
-    })
-    await ticks(2)
-    expect(mc().atWallMs).equals(null)
-    await ticks(2)
-    expect(mc().atWallMs).equals(T0 + 135_000)
+    const realNow = Date.now
+    const realSet = globalThis.setInterval
+    const realClear = globalThis.clearInterval
+    const looks = new Map<unknown, () => void>()
+    let now = T0
+    Date.now = () => now
+    globalThis.setInterval = ((
+      callback: () => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      if (ms !== WATCHDOG_MS) return realSet(callback, ms, ...rest)
+      const id = {}
+      looks.set(id, callback)
+      return id
+    }) as unknown as typeof setInterval
+    globalThis.clearInterval = (id: unknown) => {
+      if (!looks.delete(id))
+        realClear(id as Parameters<typeof clearInterval>[0])
+    }
+    const tick = async (elapsed: number): Promise<void> => {
+      now = T0 + elapsed
+      await act(async () => {
+        for (const look of looks.values()) look()
+      })
+    }
+    try {
+      const { mc } = await grid(live, {}, tiles => {
+        atTheirEdges(tiles)
+        tiles.B.readyState = 1
+      })
+      expect(looks.size).equals(1)
+      // Start the grace period at the first observed picture, then check
+      // its boundary without assuming the runner schedules ticks on time.
+      await tick(0)
+      await tick(LIVE_OPEN_WAIT_MS - 1)
+      expect(mc().atWallMs).equals(null)
+      await tick(LIVE_OPEN_WAIT_MS)
+      expect(mc().atWallMs).equals(T0 + 135_000)
+    } finally {
+      try {
+        await act(async () => root?.unmount())
+      } finally {
+        root = undefined
+        Date.now = realNow
+        globalThis.setInterval = realSet
+        globalThis.clearInterval = realClear
+      }
+    }
   })
 })
 

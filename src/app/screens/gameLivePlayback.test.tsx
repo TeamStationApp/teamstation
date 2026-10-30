@@ -182,6 +182,28 @@ describe('a live video whose first segment is not written yet', function () {
     expect(asked()).equals(1)
     expect(text()).includes(UNAVAILABLE)
   })
+
+  it('keeps retrying a finished recording whose origin publication is pending, including a failed ask', async function () {
+    const { asked } = await page('ready', [
+      { ...missing, pending: true },
+      new Error('offline'),
+      there
+    ])
+    await until(() => document.querySelector('video') != null)
+    expect(asked()).equals(3)
+  })
+
+  it('stops retrying a finished recording when the server no longer reports pending publication', async function () {
+    const { asked } = await page('ready', [
+      { ...missing, pending: true },
+      missing,
+      there
+    ])
+    await until(() => asked() === 2)
+    await wait(4200)
+    expect(asked()).equals(2)
+    expect(document.querySelector('video')).equals(null)
+  })
 })
 
 describe('starting a live game at the latest footage', function () {

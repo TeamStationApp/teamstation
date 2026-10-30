@@ -3,11 +3,8 @@ import { presignGetUrl, type ReadOnlySpaceSource } from './presign'
 /**
  * Serving a video that lives in the Space.
  *
- * The API serves the two playlists — they are a few KB — and rewrites the one
- * media entry in them to a **presigned URL** for the Space. The player then
- * range-requests `video.mp4` straight from the Space, so the video bytes never
- * pass through the server. That is the whole reason the remux writes a single
- * file: one object needs one signature, however long the game is.
+ * The API serves playlists and signs their media objects. Players read live
+ * fragments or byte ranges of a finished MP4 directly from the Space.
  */
 
 export interface SpaceSettings {
@@ -59,22 +56,28 @@ export function rewriteMasterPlaylist(
 }
 
 /**
- * Replaces every reference to the video file with its presigned URL, in the
- * `EXT-X-MAP` and in each byte-range entry alike. Everything else — the
- * durations, the ranges, the tags — is left exactly as the muxer wrote it.
+ * Rewrites media and init-map URIs, retaining durations, ranges and tags.
+ * The string overload keeps existing single-file callers working.
  */
 export function rewriteMediaPlaylist(
   body: string,
-  videoFile: string,
-  presignedUrl: string
+  videoFile: string | ((uri: string) => string),
+  presignedUrl?: string
 ): string {
+  const sign =
+    typeof videoFile === 'function'
+      ? videoFile
+      : (uri: string): string => (uri === videoFile ? presignedUrl! : uri)
   return body
     .split('\n')
     .map(line => {
       const trimmed = line.trim()
-      if (trimmed === videoFile) return presignedUrl
+      if (trimmed !== '' && !trimmed.startsWith('#')) return sign(trimmed)
       if (trimmed.startsWith('#EXT-X-MAP:')) {
-        return line.replace(`URI="${videoFile}"`, `URI="${presignedUrl}"`)
+        return line.replace(
+          /URI="([^"]+)"/,
+          (_match, uri: string) => `URI="${sign(uri)}"`
+        )
       }
       return line
     })
@@ -118,9 +121,127 @@ export class PlaylistCache {
     const url = presignGetUrl({ ...space, key, expiresSec })
 
     const response = await doFetch(url)
-    if (!response.ok) return undefined
+    if (!response.ok) {
+      await response.body?.cancel()
+      return undefined
+    }
     const body = await response.text()
     this.cache.set(key, body)
     return body
+  }
+}
+
+/** The single variant written by either recording pipeline. */
+export function mediaVariant(
+  body: string
+): 'index.m3u8' | 'video.m3u8' | undefined {
+  const variants = body
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '' && !line.startsWith('#'))
+  if (variants.length !== 1) return undefined
+  const variant = variants[0]
+  return variant === 'index.m3u8' || variant === 'video.m3u8'
+    ? variant
+    : undefined
+}
+
+const SIGNING_WINDOW_MS = 15 * 60_000
+
+/** Shared by the viewers on one API worker, including their in-flight reads. */
+export class SpacePlayback {
+  readonly playlists: PlaylistCache
+  private window = -1
+  private readonly signed = new Map<string, string>()
+  private readonly open = new Map<
+    string,
+    { at: number; body: Promise<string | undefined> }
+  >()
+
+  private readonly rewritten = new Map<
+    string,
+    { body: string; window: number; result: string }
+  >()
+
+  constructor(
+    private readonly source: PlaylistSource,
+    private readonly now: () => number = Date.now
+  ) {
+    this.playlists = new PlaylistCache(source)
+  }
+
+  sign(videoId: string, uri: string): string {
+    // Objects must remain inside this video's prefix, including init maps.
+    if (!/^(?:video\.mp4|init\.mp4|seg\d{6,}\.m4s)$/.test(uri))
+      throw new Error('Invalid media object URI')
+    const window =
+      Math.floor(this.now() / SIGNING_WINDOW_MS) * SIGNING_WINDOW_MS
+    if (window !== this.window) {
+      this.signed.clear()
+      this.rewritten.clear()
+      this.window = window
+    }
+    const key = spaceKey(videoId, uri)
+    let url = this.signed.get(key)
+    if (url == null) {
+      url = presignGetUrl({
+        ...this.source.space,
+        key,
+        now: new Date(window),
+        expiresSec: this.source.expiresSec + SIGNING_WINDOW_MS / 1000
+      })
+      this.signed.set(key, url)
+    }
+    return url
+  }
+
+  async get(
+    videoId: string,
+    file: string,
+    verified: boolean
+  ): Promise<string | undefined> {
+    if (file !== 'index.m3u8' || verified)
+      return await this.playlists.get(videoId, file)
+    const at = this.now()
+    const held = this.open.get(videoId)
+    if (held != null && at - held.at < 1000) return await held.body
+    // An unresolved request stays shared even if the store takes over a second.
+    const pending = { at: Infinity, body: this.readOpen(videoId) }
+    this.open.set(videoId, pending)
+    try {
+      return await pending.body
+    } finally {
+      pending.at = this.now()
+      // Bound retention of idle live entries without an additional timer.
+      for (const [id, entry] of this.open) {
+        if (this.now() - entry.at > 60_000) this.open.delete(id)
+      }
+    }
+  }
+
+  rewrite(videoId: string, file: string, body: string): string {
+    // Rotate the signature window before consulting the rewritten body.
+    this.sign(videoId, 'init.mp4')
+    const key = spaceKey(videoId, file)
+    const held = this.rewritten.get(key)
+    if (held?.body === body && held.window === this.window) return held.result
+    const result = rewriteMediaPlaylist(body, uri => this.sign(videoId, uri))
+    this.rewritten.set(key, { body, window: this.window, result })
+    return result
+  }
+
+  private async readOpen(videoId: string): Promise<string | undefined> {
+    const response = await (this.source.fetch ?? globalThis.fetch)(
+      presignGetUrl({
+        ...this.source.space,
+        key: spaceKey(videoId, 'index.m3u8'),
+        expiresSec: this.source.expiresSec
+      })
+    )
+    if (!response.ok) {
+      await response.body?.cancel()
+      return undefined
+    }
+    return await response.text()
   }
 }

@@ -39,6 +39,7 @@ import {
   codecRefusal,
   configureIngest,
   continuationFromCapture,
+  finalSegments,
   forcePublishForTest,
   hideKey,
   ingestBound,
@@ -65,6 +66,10 @@ import {
   writerForTest,
   writerZeroCapturedAt
 } from './splitter'
+import {
+  firstPublishOnDisk as firstOnDisk,
+  placedAt as placedIn
+} from './splitterFixtures'
 
 /**
  * The ingest's state machine, without an RTMP server and without ffmpeg.
@@ -829,6 +834,21 @@ describe('a live playlist through a reconnect', function () {
   } {
     return { liveStreamId: 'liv_test', hlsDir: dir, destinations }
   }
+  const firstPublishOnDisk = (
+    videoStartMs: number,
+    pdtLagMs?: number
+  ): ReturnType<typeof firstOnDisk> => firstOnDisk(dir, videoStartMs, pdtLagMs)
+  const placedAt = async (
+    init: Buffer,
+    name: string,
+    beyond?: number
+  ): Promise<number | undefined> =>
+    await placedIn(dir, init, name, beyond, () => {
+      writerForTest(KEY)?.stderr?.emit(
+        'data',
+        Buffer.from('out_time_us=1000000\n')
+      )
+    })
 
   /** The arguments the stand-in ffmpeg was started with, once it has been. */
   async function writerArgs(): Promise<string[]> {
@@ -1066,6 +1086,10 @@ describe('a live playlist through a reconnect', function () {
     writeFileSync(join(dir, 'seg000001.m4s'), segment(0))
     const placed = async (name: string): Promise<number | undefined> =>
       timelineStartSec(init, readFileSync(join(dir, name)))
+    writerForTest(KEY)?.stderr?.emit(
+      'data',
+      Buffer.from('out_time_us=1000000\n')
+    )
     let moved = await placed('seg000001.m4s')
     try {
       for (let i = 0; i < 50 && !(moved != null && moved > 10); i++) {
@@ -1098,62 +1122,6 @@ describe('a live playlist through a reconnect', function () {
    * nought, with the program dates an HLS writer gives them: `pdtLagMs` after
    * the video's start, which is how far the writer trailed the capture.
    */
-  function firstPublishOnDisk(
-    videoStartMs: number,
-    pdtLagMs = 1400
-  ): {
-    init: Buffer
-    listed: Buffer[]
-  } {
-    const init = hevcInit()
-    writeFileSync(join(dir, 'init.mp4'), init)
-    const listed = [0, 4, 8].map(at =>
-      hevcSegment(at, [wallClockNal(videoStartMs + at * 1000), IDR_SLICE])
-    )
-    listed.forEach((bytes, at) => {
-      writeFileSync(join(dir, `seg00000${at}.m4s`), bytes)
-    })
-    writeFileSync(
-      join(dir, 'master.m3u8'),
-      [
-        '#EXTM3U',
-        '#EXT-X-VERSION:7',
-        '#EXT-X-TARGETDURATION:4',
-        '#EXT-X-MEDIA-SEQUENCE:0',
-        '#EXT-X-PLAYLIST-TYPE:EVENT',
-        '#EXT-X-MAP:URI="init.mp4"',
-        `#EXT-X-PROGRAM-DATE-TIME:${new Date(videoStartMs + pdtLagMs).toISOString()}`,
-        '#EXTINF:4.000000,',
-        'seg000000.m4s',
-        '#EXTINF:4.000000,',
-        'seg000001.m4s',
-        '#EXTINF:3.960000,',
-        'seg000002.m4s',
-        ''
-      ].join('\n')
-    )
-    return { init, listed }
-  }
-
-  /** Where a segment sits on the timeline, once something has stamped it. */
-  async function placedAt(
-    init: Buffer,
-    name: string,
-    beyond = 1
-  ): Promise<number | undefined> {
-    let at: number | undefined
-    for (let i = 0; i < 100; i++) {
-      try {
-        at = timelineStartSec(init, readFileSync(join(dir, name)))
-      } catch {
-        at = undefined
-      }
-      if (at != null && at > beyond) return at
-      await new Promise(resolve => setTimeout(resolve, 30))
-    }
-    return at
-  }
-
   it('places a returning publish where its frame wall clocks say, so the hole is the absence', async function () {
     // The publisher was away for 30 s, and its first picture back was
     // captured 0.3 s ago. The writer's program date trailed the first
@@ -1161,6 +1129,7 @@ describe('a live playlist through a reconnect', function () {
     const back = Date.now() - 300
     const videoStartMs = back - 41_960
     const { init, listed } = firstPublishOnDisk(videoStartMs)
+    expect(finalSegments('missing')).equals(undefined)
     const initBefore = readFileSync(join(dir, 'init.mp4'))
     setLive(KEY, { ...spec(), videoStartMs })
     forcePublishForTest(KEY, true)
@@ -1170,6 +1139,11 @@ describe('a live playlist through a reconnect', function () {
       hevcSegment(0, [wallClockNal(back), IDR_SLICE])
     )
     const start = await placedAt(init, 'seg000003.m4s')
+    expect([...finalSegments('liv_test')!]).include.members([
+      'seg000000.m4s',
+      'seg000001.m4s',
+      'seg000002.m4s'
+    ])
     expect(start ?? 0).closeTo(41.96, 0.001)
     expect((start ?? 0) - 11.96).closeTo(30, 0.001)
     // The init segment and everything listed before the return are as they were.
@@ -1383,6 +1357,10 @@ describe('a live playlist through a reconnect', function () {
     writeFileSync(
       join(dir, 'seg000000.m4s'),
       hevcSegment(0.2, [wallClockNal(captured), IDR_SLICE])
+    )
+    writerForTest(KEY)?.stderr?.emit(
+      'data',
+      Buffer.from('out_time_us=1000000\n')
     )
     let placed: LiveEvent | undefined
     for (let i = 0; i < 100 && placed == null; i++) {

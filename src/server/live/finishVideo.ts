@@ -296,7 +296,8 @@ export async function isRecordingShape(dir: string): Promise<boolean> {
 export async function replaceAnchorsFromRecording(
   db: Kysely<Database>,
   videoId: string,
-  dir: string
+  dir: string,
+  playlistFile: string = MEDIA_PLAYLIST
 ): Promise<number> {
   const stamped = await db
     .selectFrom('video_wall_anchors')
@@ -306,7 +307,7 @@ export async function replaceAnchorsFromRecording(
     .limit(1)
     .executeTakeFirst()
   if (stamped == null) return 0
-  const scan = await readRecordingStamps(dir)
+  const scan = await readRecordingStamps(dir, { playlistFile })
   if (scan.points.length === 0) return 0
   await db.transaction().execute(async trx => {
     // Each arrival point, with the media time of the point after it.

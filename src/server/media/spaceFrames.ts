@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { MEDIA_PLAYLIST, VIDEO_FILE } from './ffmpeg'
+import { MASTER_PLAYLIST } from './ffmpeg'
 import { presignGetUrl } from './presign'
 import type { SpaceSettings } from './spacesHls'
-import { PlaylistCache, spaceKey } from './spacesHls'
+import { mediaVariant, spaceKey, SpacePlayback } from './spacesHls'
 
 /**
  * Reading one frame out of a video that lives in the Space.
@@ -17,11 +17,10 @@ import { PlaylistCache, spaceKey } from './spacesHls'
  * asking for the frame an hour into a two-hour game read 1.2 GB and had not
  * produced a picture two minutes later.
  *
- * The media playlist is the index the file lacks. It lists every fragment with
- * its duration and its byte range, which is enough to say exactly which
- * megabyte of a 2.3 GB object holds a given second. So the frame is cut from
- * that one fragment, with the init segment in front of it — about a megabyte
- * and a second, rather than the whole file and no end in sight.
+ * The media playlist identifies the fragment holding a given second. Uploaded
+ * recordings use byte ranges of one file; live recordings use one object per
+ * fragment. Both are read with their init segment and sought relative to the
+ * selected fragment, without downloading the whole recording.
  */
 
 export interface ByteRange {
@@ -34,13 +33,15 @@ export interface FrameFragment {
   /** Where the fragment starts, in seconds from the start of the video. */
   startSec: number
   /** The init segment, which every fragment needs in front of it. */
-  init: ByteRange
+  init?: ByteRange
   /** The fragment's own bytes. */
-  segment: ByteRange
+  segment?: ByteRange
+  initFile: string
+  segmentFile: string
 }
 
 /**
- * The fragment holding a given second, from a byte-range media playlist.
+ * The fragment holding a given second, from either recording playlist shape.
  *
  * `#EXT-X-BYTERANGE` may leave its offset out, which HLS defines as carrying
  * on from the end of the previous range. Our own remux always writes one, but
@@ -51,7 +52,9 @@ export function fragmentAt(
   playlist: string,
   atSec: number
 ): FrameFragment | undefined {
+  if (!Number.isFinite(atSec) || atSec < 0) return undefined
   let init: ByteRange | undefined
+  let initFile: string | undefined
   let startSec = 0
   let duration: number | undefined
   let range: ByteRange | undefined
@@ -60,6 +63,8 @@ export function fragmentAt(
   for (const line of playlist.split('\n')) {
     const text = line.trim()
     if (text.startsWith('#EXT-X-MAP:')) {
+      initFile = /URI="([^"]+)"/.exec(text)?.[1]
+      init = undefined
       const found = /BYTERANGE="(\d+)@(\d+)"/.exec(text)
       if (found != null) {
         init = { length: Number(found[1]), offset: Number(found[2]) }
@@ -84,10 +89,26 @@ export function fragmentAt(
     if (text === '' || text.startsWith('#')) continue
 
     // A media segment's URI, which ends the entry the tags above described.
-    if (init == null || duration == null || range == null) return undefined
-    nextOffset = range.offset + range.length
+    if (
+      initFile == null ||
+      duration == null ||
+      !Number.isFinite(duration) ||
+      duration <= 0
+    )
+      return undefined
+    if (
+      !/^(?:init|video)\.mp4$/.test(initFile) ||
+      !/^(?:video\.mp4|seg\d{6,}\.m4s)$/.test(text)
+    )
+      return undefined
+    if (
+      (initFile === 'video.mp4' && init == null) ||
+      (text === 'video.mp4' && range == null)
+    )
+      return undefined
+    if (range != null) nextOffset = range.offset + range.length
     if (atSec < startSec + duration) {
-      return { startSec, init, segment: range }
+      return { startSec, init, segment: range, initFile, segmentFile: text }
     }
     startSec += duration
     duration = undefined
@@ -113,6 +134,8 @@ export interface SpaceFrameOptions {
   atSec: number
   /** The work directory the fragment is written under. */
   workDir: string
+  /** Only a verified final live playlist may be cached indefinitely. */
+  verified?: boolean
   /** Swapped out in tests. */
   fetch?: typeof fetch
 }
@@ -120,30 +143,30 @@ export interface SpaceFrameOptions {
 /**
  * How long a presigned URL for a fragment is good for.
  *
- * Two range requests follow it immediately and nothing keeps it, so this only
+ * Two object or range requests follow it immediately and nothing keeps it, so this only
  * has to outlast a slow pair of round trips.
  */
 const FRAGMENT_URL_TTL_SEC = 300
 
 /**
- * VOD playlists never change, and one is read for every still of the same
- * game. Per worker, like the one the playback route keeps, and for the same
- * reason: the cost of a miss is a single small GET.
+ * Share the playback route's cache policy: permanent recording playlists,
+ * and one-second refreshes for live playlists not yet verified as final.
  */
-const playlists = new Map<string, PlaylistCache>()
+const playlists = new Map<string, SpacePlayback>()
 
 function playlistsFor(
   space: SpaceSettings,
   doFetch?: typeof fetch
-): PlaylistCache {
-  const held = playlists.get(space.bucket)
+): SpacePlayback {
+  const key = JSON.stringify(space)
+  const held = playlists.get(key)
   if (held != null) return held
-  const made = new PlaylistCache({
+  const made = new SpacePlayback({
     space,
     expiresSec: FRAGMENT_URL_TTL_SEC,
     fetch: doFetch
   })
-  playlists.set(space.bucket, made)
+  playlists.set(key, made)
   return made
 }
 
@@ -163,26 +186,36 @@ export async function fetchSpaceFrame(
   const { space, videoId, atSec, workDir } = options
   const doFetch = options.fetch ?? globalThis.fetch
 
-  const playlist = await playlistsFor(space, options.fetch).get(
-    videoId,
-    MEDIA_PLAYLIST
-  )
+  const cache = playlistsFor(space, options.fetch)
+  const master = await cache.get(videoId, MASTER_PLAYLIST, true)
+  const variant = master == null ? undefined : mediaVariant(master)
+  if (variant == null) return undefined
+  const playlist = await cache.get(videoId, variant, options.verified === true)
   if (playlist == null) return undefined
   const fragment = fragmentAt(playlist, atSec)
   if (fragment == null) return undefined
 
-  const url = presignGetUrl({
-    ...space,
-    key: spaceKey(videoId, VIDEO_FILE),
-    expiresSec: FRAGMENT_URL_TTL_SEC
-  })
-
   // The init segment and the fragment, in that order: a fragment on its own
   // has no codec description and FFmpeg cannot open it.
+  const objects: Array<[string, ByteRange | undefined]> = [
+    [fragment.initFile, fragment.init],
+    [fragment.segmentFile, fragment.segment]
+  ]
   const parts = await Promise.all(
-    [fragment.init, fragment.segment].map(
-      async range => await range_(doFetch, url, range)
-    )
+    objects.map(async ([file, range]) => {
+      const url = presignGetUrl({
+        ...space,
+        key: spaceKey(videoId, file),
+        expiresSec: FRAGMENT_URL_TTL_SEC
+      })
+      if (range != null) return await range_(doFetch, url, range)
+      const response = await doFetch(url)
+      if (!response.ok) {
+        await response.body?.cancel()
+        return undefined
+      }
+      return new Uint8Array(await response.arrayBuffer())
+    })
   )
   if (parts.some(part => part == null)) return undefined
 
@@ -213,6 +246,9 @@ async function range_(
   })
   // 206 is the only right answer: a 200 means the Space ignored the range and
   // is about to hand over the whole object, which is the thing being avoided.
-  if (response.status !== 206) return undefined
+  if (response.status !== 206) {
+    await response.body?.cancel()
+    return undefined
+  }
   return new Uint8Array(await response.arrayBuffer())
 }

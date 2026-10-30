@@ -505,6 +505,7 @@ export function useMultiCam(
   }, [videos])
 
   const [urls, setUrls] = useState<Record<string, string | null>>({})
+  const [pendingUrls, setPendingUrls] = useState<Record<string, boolean>>({})
   const [tiles, setTiles] = useState<Record<string, TileState>>({})
   const [playing, setPlaying] = useState(true)
   const [atWallMs, setAtWallMs] = useState<number | null>(atMs ?? null)
@@ -769,16 +770,18 @@ export function useMultiCam(
       if (urls[id] !== undefined || asking.current.get(id) === client) continue
       asking.current.set(id, client)
       // Only the newest ask's answer, and none once the grid has gone.
-      const answer = (url: string | null): void => {
+      const answer = (url: string | null, pending?: boolean): void => {
         if (asking.current.get(id) !== client) return
         asking.current.delete(id)
         setUrls(current => ({ ...current, [id]: url }))
+        if (pending != null)
+          setPendingUrls(current => ({ ...current, [id]: pending }))
       }
       client
         .playback(id)
         .then(async found => {
           await timelineAnswered(id)
-          answer(found.url)
+          answer(found.url, found.pending ?? false)
         })
         .catch(() => {
           answer(null)
@@ -797,7 +800,11 @@ export function useMultiCam(
   useEffect(() => {
     const timers: Array<ReturnType<typeof setTimeout>> = []
     for (const video of chosen) {
-      if (video.status !== 'live' || urls[video.id] !== null) continue
+      if (
+        (video.status !== 'live' && !pendingUrls[video.id]) ||
+        urls[video.id] !== null
+      )
+        continue
       const asks = liveAsks[video.id] ?? 0
       const wait = liveRetryDelay(asks)
       if (wait == null) continue
@@ -811,7 +818,7 @@ export function useMultiCam(
     return () => {
       for (const timer of timers) clearTimeout(timer)
     }
-  }, [askAgain, chosen, liveAsks, liveRetryDelay, urls])
+  }, [askAgain, chosen, liveAsks, liveRetryDelay, pendingUrls, urls])
 
   const takeElement = useCallback(
     (id: string) =>

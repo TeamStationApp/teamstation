@@ -124,27 +124,51 @@ export async function verifyVideoDirectory(options: {
       continue
     }
 
-    const response = await doFetch(url, { headers: { range: 'bytes=0-0' } })
-    if (!response.ok) {
-      return { ok: false, reason: `${name} answered ${response.status}` }
-    }
-    const length = lengthFromContentRange(
-      response.headers.get('content-range') ?? ''
-    )
-    if (length == null) {
-      return { ok: false, reason: `${name} did not answer a byte range` }
-    }
-    if (length !== local.size) {
-      return {
-        ok: false,
-        reason: `${name} is ${length} bytes there and ${local.size} here`
-      }
-    }
+    const result = await verifyObjectLength({
+      space,
+      key: spaceKey(videoId, name),
+      size: local.size,
+      expiresSec,
+      fetch: doFetch
+    })
+    if (!result.ok) return result
     checked += 1
   }
 
   if (checked === 0) return { ok: false, reason: 'nothing to verify' }
   return { ok: true, checked }
+}
+
+/** Confirms an object with one byte, and releases even a misbehaving response. */
+export async function verifyObjectLength(options: {
+  space: SpaceSettings
+  key: string
+  size: number
+  expiresSec?: number
+  fetch?: typeof fetch
+}): Promise<VerifyResult> {
+  const { space, key, size, expiresSec = 300 } = options
+  const response = await (options.fetch ?? globalThis.fetch)(
+    presignGetUrl({ ...space, key, expiresSec }),
+    { headers: { range: 'bytes=0-0' } }
+  )
+  try {
+    if (!response.ok)
+      return { ok: false, reason: `${key} answered ${response.status}` }
+    const length = lengthFromContentRange(
+      response.headers.get('content-range') ?? ''
+    )
+    if (response.status !== 206 || length == null)
+      return { ok: false, reason: `${key} did not answer a byte range` }
+    if (length !== size)
+      return {
+        ok: false,
+        reason: `${key} is ${length} bytes there and ${size} here`
+      }
+    return { ok: true, checked: 1 }
+  } finally {
+    await response.body?.cancel()
+  }
 }
 
 function sha256(bytes: Buffer): string {
@@ -196,32 +220,64 @@ export async function listSpaceObjects(
   space: SpaceSettings,
   prefix: string
 ): Promise<string[]> {
-  const keys: string[] = []
+  return (await listSpaceObjectEntries(space, prefix)).map(entry => entry.key)
+}
+
+export interface SpaceObjectEntry {
+  key: string
+  size: number
+  etag: string
+}
+
+/** List metadata lets a restarted publisher recognize unchanged single PUTs. */
+export async function listSpaceObjectEntries(
+  space: SpaceSettings,
+  prefix: string
+): Promise<SpaceObjectEntry[]> {
+  const entries: SpaceObjectEntry[] = []
   let token: string | undefined
-  // A bounded loop: a thousand keys per page, and a video that somehow has
-  // more than fifty thousand parts is a bug rather than a video.
-  for (let page = 0; page < 50; page += 1) {
+  const seen = new Set<string>()
+  for (let page = 0; page < 50; page++) {
     const query: Record<string, string> = { 'list-type': '2', prefix }
     if (token != null) query['continuation-token'] = token
     const response = await fetch(
       signed(space, { method: 'GET', key: '', query })
     )
     if (!response.ok) {
+      await response.body?.cancel()
       throw new Error(`Listing ${prefix} answered ${response.status}`)
     }
     const xml = await response.text()
-    for (const match of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
-      if (match[1] != null) keys.push(decodeXml(match[1]))
+    if (
+      !/<ListBucketResult(?:\s[^>]*)?>[\s\S]*<\/ListBucketResult>/.test(xml) ||
+      !/<IsTruncated>(?:true|false)<\/IsTruncated>/.test(xml)
+    )
+      throw new Error('Invalid object listing')
+    for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const key = /<Key>([^<]+)<\/Key>/.exec(match[1])?.[1]
+      const size = /<Size>(\d+)<\/Size>/.exec(match[1])?.[1]
+      const etag = /<ETag>([^<]*)<\/ETag>/.exec(match[1])?.[1]
+      if (key == null || size == null || etag == null)
+        throw new Error('Incomplete object listing')
+      const decoded = decodeXml(key)
+      if (!decoded.startsWith(prefix))
+        throw new Error('Object listing escaped its prefix')
+      entries.push({
+        key: decoded,
+        size: Number(size),
+        etag: decodeXml(etag).replace(/^"|"$/g, '')
+      })
     }
-    const truncated = xml.includes('<IsTruncated>true</IsTruncated>')
-    if (!truncated) break
-    token = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(
+    if (!xml.includes('<IsTruncated>true</IsTruncated>')) return entries
+    const next = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(
       xml
     )?.[1]
-    if (token == null) break
-    token = decodeXml(token)
+    if (next == null || seen.has(next))
+      throw new Error('Incomplete object listing continuation')
+    seen.add(next)
+    token = decodeXml(next)
   }
-  return keys
+  throw new Error('Object listing exceeded fifty pages')
 }
 
 /** The five entities an S3 listing escapes, and nothing else. */
@@ -237,9 +293,8 @@ function decodeXml(value: string): string {
 /**
  * Removes everything the Space holds for one video.
  *
- * One key at a time rather than the batch delete, which needs a signed body
- * and an MD5 of it; a finished game is a handful of objects, and the batch
- * form would be the only place in this project that signs a payload.
+ * Individual signed deletes with bounded concurrency avoid a separate signed
+ * batch-payload implementation while keeping large fragment sets practical.
  */
 export async function deleteVideoFromSpace(options: {
   space: SpaceSettings
@@ -248,23 +303,36 @@ export async function deleteVideoFromSpace(options: {
   return await deleteSpacePrefix(options.space, `videos/${options.videoId}/`)
 }
 
-/** Removes every object under a prefix, one key at a time, as above. */
+/** Removes a prefix with at most 32 requests in flight, draining before failure. */
 export async function deleteSpacePrefix(
   space: SpaceSettings,
   prefix: string
 ): Promise<{ deleted: number }> {
   const keys = await listSpaceObjects(space, prefix)
   let deleted = 0
-  for (const key of keys) {
-    const response = await fetch(signed(space, { method: 'DELETE', key }), {
-      method: 'DELETE'
+  let next = 0
+  let failure: unknown
+  let failed = false
+  await Promise.all(
+    Array.from({ length: Math.min(32, keys.length) }, async () => {
+      while (!failed && next < keys.length) {
+        const key = keys[next++]
+        try {
+          const response = await fetch(
+            signed(space, { method: 'DELETE', key }),
+            { method: 'DELETE' }
+          )
+          await response.body?.cancel()
+          if (!response.ok && response.status !== 404)
+            throw new Error(`Deleting ${key} answered ${response.status}`)
+          deleted++
+        } catch (error) {
+          if (!failed) failure = error
+          failed = true
+        }
+      }
     })
-    // 204 is the success; 404 means somebody else got there first, which is
-    // the same outcome and not worth failing a delete over.
-    if (!response.ok && response.status !== 404) {
-      throw new Error(`Deleting ${key} answered ${response.status}`)
-    }
-    deleted += 1
-  }
+  )
+  if (failed) throw failure
   return { deleted }
 }

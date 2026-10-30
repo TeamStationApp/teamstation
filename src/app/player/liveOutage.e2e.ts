@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
   cpSync,
@@ -19,6 +19,7 @@ import pg from 'pg'
 import { TeamStationClient } from '../../common/api'
 import { serverConfig } from '../../server/serverConfig'
 import { signInTestAccount } from '../../test/passwordFixtures'
+import { createLiveHarness } from './liveHarness.e2e'
 
 /**
  * E20: live viewers ride through a publisher's outage. Real server, real RTMP
@@ -141,122 +142,16 @@ let token = ''
 let daemon: Daemon | undefined
 const cameras: Array<{ gameId: string; streamId: string; videoId: string }> = []
 
-function dev(script: string, ...args: string[]): string {
-  return execFileSync(
-    process.execPath,
-    ['-r', 'sucrase/register', `src/server/dev/${script}.ts`, ...args],
-    { encoding: 'utf8' }
-  )
-}
-
-async function ask(
-  path: string,
-  init: RequestInit = {}
-): Promise<{ status: number; json: unknown }> {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json'
-    }
-  })
-  const text = await response.text()
-  return {
-    status: response.status,
-    json: text === '' ? null : JSON.parse(text)
-  }
-}
-
-/** A camera for a game, with its key on this machine's ingest. */
-async function camera(
-  gameId: string,
-  label: string
-): Promise<{ videoId: string; streamId: string; url: string }> {
-  const made = await ask(`/games/${gameId}/live-streams`, {
-    method: 'POST',
-    body: JSON.stringify({ label })
-  })
-  const body = made.json as { id: string; videoId: string; url: string }
-  if (made.status !== 201) throw new Error(`no camera: ${made.status}`)
-  cameras.push({ gameId, streamId: body.id, videoId: body.videoId })
-  const key = new URL(body.url.replace(/^rtmp:/, 'http:')).pathname
-    .split('/')
-    .pop()!
-  const { live } = serverConfig
-  return {
-    videoId: body.videoId,
-    streamId: body.id,
-    url: `rtmp://127.0.0.1:${live.port}/${live.app}/${key}`
-  }
-}
-
-interface BroadcastEvent {
-  at: number
-  event: string
-  t0?: number
-  fromSec?: number
-}
-
-/** The fake broadcaster publishing into `url`, and what it says it did. */
-function broadcast(
-  url: string,
-  args: string[]
-): { t0: Promise<number>; done: Promise<number>; events: BroadcastEvent[] } {
-  const child = spawn(
-    process.execPath,
-    ['scripts/e2e/liveOutage/fakeBroadcaster.mjs', '--url', url, ...args],
-    { stdio: ['ignore', 'pipe', 'inherit'] }
-  )
-  const events: BroadcastEvent[] = []
-  let buffer = ''
-  const t0 = new Promise<number>(resolve => {
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString('utf8')
-      let at
-      while ((at = buffer.indexOf('\n')) >= 0) {
-        const event = JSON.parse(buffer.slice(0, at)) as BroadcastEvent
-        buffer = buffer.slice(at + 1)
-        events.push(event)
-        if (event.event === 'planned') resolve(event.t0!)
-      }
-    })
-  })
-  const done = new Promise<number>(resolve =>
-    child.on('exit', code => {
-      resolve(code ?? 1)
-    })
-  )
-  return { t0, done, events }
-}
-
-/** A browser signed in as the administrator. */
-async function browser(name: string): Promise<Page> {
-  const page = await daemon!.attach({
-    device: `liveOutage-${name}-${stamp}`,
-    platform: 'web',
-    appId: APP,
-    stepDelay: 0,
-    artifacts: 'on-failure',
-    extra: {
-      browser: process.env.E20_BROWSER ?? 'chrome',
-      windowSize: '1280x720'
-    }
-  })
-  await page.blockNetwork({
-    patterns: ['*fonts.googleapis.com*', '*fonts.gstatic.com*']
-  })
-  await page.setCookies({
-    cookies: [
-      {
-        name: 'ts_session',
-        value: encodeURIComponent(token),
-        domain: new URL(API).hostname,
-        path: '/'
-      }
-    ]
-  })
-  return page
-}
+const { dev, ask, camera, broadcast, browser } = createLiveHarness({
+  serverRoot: process.env.TS_E2E_SERVER_ROOT,
+  configDir: process.cwd(),
+  api: API,
+  app: APP,
+  token: () => token,
+  live: serverConfig.live,
+  daemon: () => daemon!,
+  onCamera: one => cameras.push(one)
+})
 
 async function probe<T>(page: Page, script: string): Promise<T> {
   await page.evalBrowserScript({
@@ -472,7 +367,9 @@ describe('E20: live viewers through a publisher outage', function () {
       '--duration',
       String(DURATION_SEC),
       '--outage',
-      `${OUTAGE_AT_SEC}:${OUTAGE_SEC}`
+      `${OUTAGE_AT_SEC}:${OUTAGE_SEC}`,
+      '--ffmpeg',
+      process.env.TS_E2E_FFMPEG ?? 'ffmpeg'
     ])
     const t0 = await show.t0
     print('T0', iso(t0))
@@ -637,6 +534,15 @@ describe('E20: live viewers through a publisher outage', function () {
       total - 10
     ]
     let inStep = 0
+    const recordingSeeks =
+      artifacts == null
+        ? Promise.resolve()
+        : film(
+            pages.C,
+            Date.now(),
+            Date.now() + 60000,
+            join(artifacts, 'recording-seek.mp4')
+          )
     for (const atSec of seeks) {
       const read = await probe<{ low: number | null; frameSec: number | null }>(
         pages.C,
@@ -676,6 +582,7 @@ describe('E20: live viewers through a publisher outage', function () {
       `the recording is in step at ${inStep} of ${seeks.length} seeks`
     )
 
+    await recordingSeeks
     for (const page of Object.values(pages)) await page.detach()
     expect(failures).deep.equals([])
   })

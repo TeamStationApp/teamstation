@@ -106,3 +106,13 @@ policy; an old reply cannot keep a removed player eligible.
 ## Umpire schedule timezones
 
 `GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query parameter. Clients send their local IANA timezone for row and conflict dates and weekday/time filtering. Invalid zones return400. When omitted, each game's stored timezone is used. Stored ISO instants and conflict intervals are unchanged.
+
+## Pending video publication
+
+A member's playback response can include `pending: true` with `url: null`
+while a live recording is waiting for its first publication to Spaces, even
+when the stream has ended and the video is `ready`. Both the single player
+and multi-angle view retry with their existing bounded backoff. An omitted
+flag is false for older servers. With Spaces configured, playback never
+exposes the ingest machine's temporary live files; no-Space playback keeps
+its local path.
