@@ -227,6 +227,10 @@ pub fn dispatch(op: u32, input: &[u8]) -> Result<Vec<Vec<u8>>> {
             a.count(2)?;
             Ok(vec![digits::safety_half(a.bytes(0), a.identity(1, false)?).into_bytes()])
         }
+        ops::SAFETY_BYTES => {
+            a.count(2)?;
+            Ok(vec![digits::safety_bytes(a.bytes(0), a.identity(1, false)?)])
+        }
         ops::LINK_CODE => {
             a.count(2)?;
             Ok(vec![digits::link_code(a.bytes(0), a.bytes(1)).into_bytes()])
@@ -441,6 +445,9 @@ mod tests {
         assert_eq!(one(ops::OPEN_PREVIOUS_PUK_KEYS, &[&n(42), b"cid", &n(3), &[5u8; 32], &older])[0], b"older");
         assert_eq!(one(ops::LOG_ROW_HASH, &[&[0u8; 32], b"cnv", &n(1), b"join", &n(42), &n(0), b"", &n(5)])[0].len(), 32);
         assert_eq!(one(ops::SAFETY_HALF, &[&[1u8; 32], &n(7)])[0].len(), 30);
+        assert_eq!(one(ops::SAFETY_BYTES, &[&[1u8; 32], &n(7)])[0],
+            vec![0x6b, 0x0f, 0xc9, 0x0c, 0x5c, 0x18, 0x00, 0x62, 0x3d, 0x00, 0xe2]);
+        assert_eq!(refusal(&call_bytes(ops::SAFETY_BYTES, &input(&[&[1u8; 32]]))), "malformed");
         assert_eq!(one(ops::LINK_CODE, &[&[1u8; 32], b"clk"])[0].len(), 6);
         assert!(one(ops::NEW_MESSAGE_ID, &[])[0].starts_with(b"msg_"));
         assert!(one(ops::NEW_IDENTITY_ID, &[])[0].starts_with(b"cid_"));

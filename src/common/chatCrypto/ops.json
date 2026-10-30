@@ -272,6 +272,12 @@
       "name": "sha256Finish",
       "args": ["state"],
       "results": ["digest"]
+    },
+    {
+      "id": 34,
+      "name": "safetyBytes",
+      "args": ["identityKey", "userId:identity"],
+      "results": ["bytes"]
     }
   ],
   "refusals": [

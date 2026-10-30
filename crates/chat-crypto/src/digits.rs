@@ -35,16 +35,26 @@ const SAFETY_ITERATIONS: usize = 5200;
 /// result read as six 5-digit groups (each 5 bytes as a big-endian number,
 /// mod 100,000, zero-padded).
 pub fn safety_half(identity_key: &[u8], user_id: u128) -> String {
-    let mut hash = join(&[&[0u8], &lp(identity_key), &user_id::encode(user_id)]);
-    for _ in 0..SAFETY_ITERATIONS {
-        hash = prim::sha512(&hash).to_vec();
-    }
+    let hash = safety_hash(identity_key, user_id);
     let mut digits = String::with_capacity(30);
     for group in hash[..30].chunks(5) {
         let value = group.iter().fold(0u64, |value, &byte| value * 256 + byte as u64);
         digits.push_str(&format!("{:05}", value % 100_000));
     }
     digits
+}
+
+/// Eight 11-bit word indices, preserving the existing identity hash chain.
+pub fn safety_bytes(identity_key: &[u8], user_id: u128) -> Vec<u8> {
+    safety_hash(identity_key, user_id)[..11].to_vec()
+}
+
+fn safety_hash(identity_key: &[u8], user_id: u128) -> Vec<u8> {
+    let mut hash = join(&[&[0u8], &lp(identity_key), &user_id::encode(user_id)]);
+    for _ in 0..SAFETY_ITERATIONS {
+        hash = prim::sha512(&hash).to_vec();
+    }
+    hash
 }
 
 /// The six digits both screens show while a device is linked: the first 8

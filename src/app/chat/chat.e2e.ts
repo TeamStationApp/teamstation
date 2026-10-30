@@ -1062,16 +1062,16 @@ describe('chat scenarios in the browser', function () {
 
     const back = await signedIn('Ec')
     await openChat(back, 'Drew D')
-    await waitForText(back, 'Drew D’s safety number changed')
+    await waitForText(back, 'safety words changed')
     await waitForText(back, 'reset their chat keys')
     await shot(back, 'e8-3-ec-sees-change')
     await pressText(back, 'Review')
-    await waitForText(back, 'OLD SAFETY NUMBER')
-    await waitForText(back, 'NEW SAFETY NUMBER')
+    await waitForText(back, 'OLD SAFETY WORDS')
+    await waitForText(back, 'NEW SAFETY WORDS')
     await shot(back, 'e8-4-ec-approval')
     await press(back, 'Approve Drew D')
     await until('the approval to go', async () =>
-      (await bodyText(back)).includes('OLD SAFETY NUMBER') ? undefined : true
+      (await bodyText(back)).includes('OLD SAFETY WORDS') ? undefined : true
     )
     await waitForText(fresh, 'Ec to D2: practice moved')
     await shot(fresh, 'e8-5-d2-history')

@@ -77,7 +77,7 @@ class InfoEngine implements EngineContract {
   }
 
   async safetyNumber(_userId: string): Promise<string> {
-    return '12345'.repeat(12)
+    return 'abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid'
   }
 
   async refresh(): Promise<ConversationListItem[]> {
@@ -166,7 +166,7 @@ async function pressMember(userId: string): Promise<void> {
 }
 
 describe('conversation information', function () {
-  it('exposes distinct short-name roles and canonical row identities before opening the exact peer safety digits', async function () {
+  it('exposes distinct short-name roles and canonical row identities before opening the exact peer safety words', async function () {
     const engine = new InfoEngine()
     const coach = userIdOfValue((1n << 127n) + 29n)
     engine.current = view({
@@ -178,15 +178,16 @@ describe('conversation information', function () {
       ]
     })
     const called: string[] = []
-    const digits = '01234'.repeat(12)
+    const words =
+      'help layer drink return length country village brisk grief demise hint road sing helmet wheat minor'
     engine.safetyNumber = async id => {
       called.push(id)
-      return id === coach ? digits : '98765'.repeat(12)
+      return id === coach ? words : 'abandon '.repeat(16).trim()
     }
     const node = await render(engine)
     expect(
       node.querySelectorAll(
-        '[role="button"][aria-label="Safety number with Aaron J"]'
+        '[role="button"][aria-label="Safety words with Aaron J"]'
       )
     ).has.length(0)
     const row = (id: string): HTMLElement =>
@@ -196,13 +197,13 @@ describe('conversation information', function () {
     )
     expect(row(userIdOfGumbo(1)).getAttribute('aria-disabled')).equals('true')
     expect(row(userIdOfGumbo(2)).getAttribute('aria-label')).equals(
-      'Safety number with Aaron J, Member'
+      'Safety words with Aaron J, Member'
     )
     expect(row(coach).getAttribute('aria-label')).equals(
-      'Safety number with Aaron J, Coach, Moderator'
+      'Safety words with Aaron J, Coach, Moderator'
     )
     expect(row(userIdOfGumbo(4)).getAttribute('aria-label')).equals(
-      'Safety number with Mookie Betts'
+      'Safety words with Mookie Betts'
     )
     await pressMember(userIdOfGumbo(1))
     expect(called).deep.equals([])
@@ -211,11 +212,11 @@ describe('conversation information', function () {
     const groups = [
       ...node.querySelectorAll('[data-testid^="chat-safety-group-"]')
     ]
-    expect(groups).has.length(12)
+    expect(groups).has.length(16)
     expect(
-      groups.every(group => /^[0-9]{5}$/.test(group.textContent ?? ''))
+      groups.every(group => /^[a-z]+$/.test(group.textContent ?? ''))
     ).equals(true)
-    expect(groups.map(group => group.textContent).join('')).equals(digits)
+    expect(groups.map(group => group.textContent).join(' ')).equals(words)
   })
   it('shows scope identity, personal mute and rounded current members without fixed-group editing controls', async function () {
     const engine = new InfoEngine()
@@ -325,9 +326,9 @@ describe('conversation information', function () {
     )
     await pressMember(userIdOfGumbo(2))
     expect(
-      node.querySelector('[aria-label="Safety number with Aaron Judge"]')
+      node.querySelector('[aria-label="Safety words with Aaron Judge"]')
         ?.children.length
-    ).equals(12)
+    ).equals(16)
     await act(async () => {
       engine.current = undefined
       engine.emit({ type: 'conversation', conversationId: 'cnv_1' })
