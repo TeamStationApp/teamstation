@@ -196,9 +196,10 @@ export function NotificationsScreen({
     setDeciding({ id: item.requestId, action })
     setError('')
     try {
-      if (item.type === 'game')
-        await client.decideGameRequest(item.requestId, action)
-      else await client.decideRelationship(item.requestId, action)
+      const answer =
+        item.type === 'game'
+          ? await client.decideGameRequest(item.requestId, action)
+          : await client.decideRelationship(item.requestId, action)
       const kept = (list: Notification[]): Notification[] =>
         list.filter(other => other.requestId !== item.requestId)
       setItems(kept)
@@ -207,6 +208,11 @@ export function NotificationsScreen({
         cache.current.pending = { ...pending, items: kept(pending.items) }
       delete cache.current.history
       onDecided?.()
+      // Accepted too late to happen: say so, or it reads as done.
+      if (action === 'accept' && answer.status === 'expired')
+        setError(
+          'That could no longer be made: the game is over or has changed.'
+        )
     } catch (error) {
       setError(
         error instanceof Error

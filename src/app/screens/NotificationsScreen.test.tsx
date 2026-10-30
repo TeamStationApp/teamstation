@@ -697,6 +697,29 @@ describe('a player added with a notice', function () {
     rejectUntil: '2027-01-26T12:00:00Z'
   }
 
+  it('says so when an accepted add could no longer be made', async function () {
+    const waiting: Notification = {
+      ...notice,
+      status: 'pending',
+      canAct: true,
+      canReject: false,
+      rejectUntil: null
+    }
+    const client = {
+      notifications: async () => ({
+        items: [waiting],
+        hasPending: true,
+        nextCursor: null
+      }),
+      decideRelationship: async (id: string) => ({ id, status: 'expired' })
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    await press(`Accept ${waiting.title}`)
+    expect(text()).includes('could no longer be made')
+  })
+
   it('offers Reject without Accept, and Dismiss only while it is pending', async function () {
     const decided: string[] = []
     const dismissed: string[] = []
