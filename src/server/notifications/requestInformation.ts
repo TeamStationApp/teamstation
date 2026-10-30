@@ -368,6 +368,13 @@ async function rendered(
       description: `Approving gives ${sender} member access to ${team}, including game videos. It does not grant staff roles.`
     }
   }
+  if (terms.kind === 'videographer') {
+    const team = await name({ kind: 'team', id: terms.teamId })
+    return {
+      title: `${sender} asks to film ${team}'s games`,
+      description: `Approving makes ${sender} a Videographer of ${team}, for all of its games.`
+    }
+  }
   if (terms.kind === 'person') {
     const group = await name(terms.scope)
     const roles = [...(terms.admin ? ['administrator'] : []), ...terms.flags]
