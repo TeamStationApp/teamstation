@@ -16,6 +16,7 @@ import { newSetup } from '../../common/scoring/lineup'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mayEditName, mayManagePlayer } from '../access'
 import { MERGE_LOCK } from '../admin/people'
 import { hashToken } from '../auth/tokens'
 import { lockKeys } from '../db/advisoryLocks'
@@ -31,6 +32,7 @@ import {
   playerRemovedWords,
   type PlayerRemover
 } from '../notifications/requestInformation'
+import { mayKeepBirthMonth } from '../people/guardians'
 import { groupRoutes } from '../routes/groups'
 import { notificationRoutes } from '../routes/notifications'
 import { playerRoutes, teamsOf } from '../routes/players'
@@ -40,6 +42,7 @@ import { resolveScoringGame } from '../scoring/openRow'
 import { battingLines } from '../stats'
 import { statRows } from '../stats/rows'
 import { addByPolicy } from '../teams/addExistingPlayer'
+import { personProfile } from '../teams/personProfile'
 import { teamRoster } from '../teams/teamRoster'
 import { ensureGumboId, insertUser } from '../users/insertUser'
 import { gameNames, gameNamesDigest } from '../users/nameBook'
@@ -1736,6 +1739,30 @@ describe('adds made with a notice', function () {
     const entry = roster.find(row => row.userId === ids['Open Add'])!
     expect(entry.ownIdentity).equals(true)
     expect(entry.nameDetails).equals(undefined)
+    // Nor by the routes with no team in them, or anywhere else it is read.
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    expect(await mayManagePlayer(db!, coach, ids['Open Add'], null)).equals(
+      false
+    )
+    expect(
+      await mayManagePlayer(db!, coach, ids['Open Add'], TEAM.falcons)
+    ).equals(true)
+    expect(await mayKeepBirthMonth(db!, coach, ids['Open Add'])).equals(false)
+    expect(await mayEditName(db!, ids.coach, ids['Open Add'], coach)).equals(
+      false
+    )
+    const detail = (
+      await call(TOKENS.coach, 'GET', `/players/${ids['Open Add']}`)
+    ).body
+    expect(detail.openAddTeams).deep.equals([TEAM.falcons])
+    const profile = await personProfile(
+      db!,
+      undefined,
+      coach,
+      { kind: 'team', id: TEAM.falcons },
+      ids['Open Add']
+    )
+    expect(profile.person.fullName).equals(null)
     // Past its window the add stands, and the team may maintain them.
     await db!
       .updateTable('group_requests')
@@ -1743,5 +1770,8 @@ describe('adds made with a notice', function () {
       .where('id', '=', added.requestId!)
       .execute()
     expect(await settings({ throws: 'left' })).equals(200)
+    expect(await mayManagePlayer(db!, coach, ids['Open Add'], null)).equals(
+      true
+    )
   })
 })

@@ -685,12 +685,40 @@ describe('naming a scoring game from the accounts', function () {
       })
       .execute()
     expect(await halvesOf()).equals(undefined)
+    await db
+      .deleteFrom('game_withdrawn_players')
+      .where('game_id', '=', 'gam_borrowed')
+      .execute()
+    expect(await halvesOf()).equals('Ichiro')
+    // On the side's team only by an add their side may still reject.
+    await db
+      .insertInto('teams')
+      .values({ id: REPLAY_TEAMS.away.id, name: REPLAY_TEAMS.away.name })
+      .execute()
+    await db
+      .updateTable('group_requests')
+      .set({
+        status: 'applied',
+        expires_at: new Date(Date.now() + 86_400_000),
+        initiating_team_id: REPLAY_TEAMS.away.id,
+        terms: JSON.stringify({
+          mode: 'roster',
+          userId,
+          createdMembership: true
+        })
+      })
+      .where('id', '=', 'grq_borrowed')
+      .execute()
+    expect(await halvesOf()).equals(undefined)
     await db.deleteFrom('games').where('id', '=', 'gam_borrowed').execute()
     await db
       .deleteFrom('group_requests')
       .where('id', '=', 'grq_borrowed')
       .execute()
-    await db.deleteFrom('teams').where('id', 'in', teams).execute()
+    await db
+      .deleteFrom('teams')
+      .where('id', 'in', [...teams, REPLAY_TEAMS.away.id])
+      .execute()
   })
 
   it('stores no name from a build that sends named sentences and no said, and reads its sentences back the same', async () => {

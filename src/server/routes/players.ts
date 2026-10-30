@@ -23,6 +23,7 @@ import {
   heldByOpenAdd,
   mayEditName,
   mayManagePlayer,
+  openAddTeams,
   roleScopes,
   teamsPlayedOnNow,
   visibleScopes
@@ -192,6 +193,7 @@ export function playerRoutes(
         ).get(userId),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
+        openAddTeams: await openAddTeams(db, person.userIds),
         /**
          * How this person may invite a guardian of the player: as a guardian,
          * with no sending team; from a team they coach, while the player has

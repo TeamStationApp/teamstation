@@ -284,7 +284,15 @@ export async function mayManagePlayer(
   if (teamId != null) return canManageRoster(scopes, teamId)
   const player = await onePerson(db, playerUserId)
   const plays = await teamsPlayedOnNow(db, player.userIds)
-  return plays.some(teamId => canManageRoster(scopes, teamId))
+  // A team holding them only by an open add manages what is the team's, by
+  // the route with its id: not what is the person's.
+  for (const team of plays)
+    if (
+      canManageRoster(scopes, team) &&
+      !(await heldByOpenAdd(db, team, player.userIds))
+    )
+      return true
+  return false
 }
 
 /**
@@ -1375,6 +1383,17 @@ export async function openAdds(
     .where(sql<string>`terms->>'createdMembership'`, '=', 'true')
     .execute()
   return new Set(rows.map(row => row.userId))
+}
+
+/** The teams holding a person only by an open add (`openAdds`). */
+export async function openAddTeams(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<string[]> {
+  const held: string[] = []
+  for (const team of await teamsPlayedOnNow(db, userIds))
+    if (await heldByOpenAdd(db, team, userIds)) held.push(team)
+  return held
 }
 
 /** Whether any of a person's rows is held only by an open add (`openAdds`). */

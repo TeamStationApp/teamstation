@@ -5690,6 +5690,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                         description: PUBLIC_NAME
                       },
                       canEditName: { type: 'boolean' },
+                      openAddTeams: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description:
+                          'Teams that hold them only by an add their side may still reject.'
+                      },
                       guardianInviteAs: {
                         type: ['string', 'null'],
                         enum: ['guardian', 'team', null],

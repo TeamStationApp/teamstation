@@ -4,6 +4,7 @@ import { conflict } from '../../common/errors'
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { StoredGame } from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
+import { openAdds } from '../access'
 import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
 import {
@@ -115,30 +116,38 @@ function withHalves(
 }
 
 /**
- * `ids` without the game's pool players and the players withdrawn from it:
- * people who already exist, whose whole names an add never gave the game, and
- * who are nobody's here to correct (`renameGuestPlayer`).
+ * `ids` without the game's pool players, the players withdrawn from it, and
+ * those a side's team holds only by an open add: people who already exist,
+ * whose whole names an add never gave the game, and who are nobody's here to
+ * correct (`renameGuestPlayer`).
  */
 async function withoutBorrowed(
   db: Kysely<Database>,
   gameId: string | undefined,
-  ids: number[]
+  ids: number[],
+  teams: ReadonlySet<string>
 ): Promise<number[]> {
-  if (gameId == null || ids.length === 0) return ids
-  const [pool, withdrawn] = await Promise.all([
-    db
-      .selectFrom('game_guest_details')
-      .select('user_id')
-      .where('game_id', '=', gameId)
-      .where('pool', '=', true)
-      .execute(),
-    db
-      .selectFrom('game_withdrawn_players')
-      .select('user_id')
-      .where('game_id', '=', gameId)
-      .execute()
-  ])
-  const users = [...pool, ...withdrawn].map(row => row.user_id)
+  if (ids.length === 0) return ids
+  const held = (
+    await Promise.all([...teams].map(async team => await openAdds(db, team)))
+  ).flatMap(open => [...open])
+  const [pool, withdrawn] =
+    gameId == null
+      ? [[], []]
+      : await Promise.all([
+          db
+            .selectFrom('game_guest_details')
+            .select('user_id')
+            .where('game_id', '=', gameId)
+            .where('pool', '=', true)
+            .execute(),
+          db
+            .selectFrom('game_withdrawn_players')
+            .select('user_id')
+            .where('game_id', '=', gameId)
+            .execute()
+        ])
+  const users = [...held, ...[...pool, ...withdrawn].map(row => row.user_id)]
   if (users.length === 0) return ids
   const survivors = await survivorsOf(db, users)
   const borrowed = await db
@@ -227,7 +236,12 @@ export async function namedScoringGame<T extends StoredGame>(
       ? new Map<number, NameHalves>()
       : await nameHalves(
           db,
-          await withoutBorrowed(db, options.gameId, playersOf(projected, teams))
+          await withoutBorrowed(
+            db,
+            options.gameId,
+            playersOf(projected, teams),
+            teams
+          )
         )
   const name = <D extends GumboDocument>(document: D): D => {
     if (document == null) return document

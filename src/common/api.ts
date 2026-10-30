@@ -1461,6 +1461,11 @@ export const asPlayerDetail = asObject({
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
   /**
+   * Teams that hold them only by an add their side may still reject: what is
+   * the person's is not offered for those.
+   */
+  openAddTeams: asOptional(asArray(asString), []),
+  /**
    * How the viewer may invite a guardian of this person: `guardian`, as one
    * of their guardians, with no sending team; `team`, from a team the viewer
    * coaches that the person plays on, while they have no guardian; `null`,
