@@ -377,6 +377,7 @@ describe('the phone shell offline', () => {
         />
       )
       await settle(100)
+      const startupReads = trace.slice()
       await press('Sign out')
       expect(document.body.textContent).includes(
         '1 change on this phone has not been sent and will be lost.'
@@ -389,8 +390,9 @@ describe('the phone shell offline', () => {
       )
       expect(
         trace,
-        'cancellation neither reads, revokes nor wipes chat keys'
-      ).deep.equals([])
+        'cancellation leaves the approval controller’s initial key reads unchanged'
+      ).deep.equals(startupReads)
+      trace.length = 0
       expect(find('Sign out'), 'still signed in').not.equals(undefined)
       await press('Sign out')
       await press('Sign Out')

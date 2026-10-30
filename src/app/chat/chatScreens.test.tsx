@@ -31,13 +31,25 @@ import {
 } from '../../common/chatCrypto/keys'
 import { linkCode } from '../../common/chatCrypto/linkCode'
 import { HttpError } from '../../common/errors'
+import type { ChatSocketEvent } from '../../common/gameSocket'
+import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
 import { windowSize } from '../../test/tessTestKit'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { AccountScreen } from '../screens/AccountScreen'
+import {
+  NotificationDetailScreen,
+  NotificationsScreen
+} from '../screens/NotificationsScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatDevicesScreen } from './ChatDevicesScreen'
+import {
+  DeviceApprovalActions,
+  DeviceApprovalContext,
+  DeviceApprovalPrompt
+} from './DeviceApprovalPrompt'
+import { DeviceApprovals } from './deviceApprovals'
 import { type EngineContext, KeyHolder } from './engine/context'
 import { ChatEngine } from './engine/engine'
 import {
@@ -45,6 +57,7 @@ import {
   type ChatSetup,
   ensureEnrolled,
   leaveChat,
+  readApprovalKeys,
   StaleChatSetupError,
   startLink
 } from './engine/links'
@@ -474,12 +487,560 @@ class FakeKeys {
         }
         this.links.push(link)
         return link
+      },
+      declineChatLink: async linkId => {
+        call('declineChatLink')
+        const pending = this.pending.find(item => item.id === linkId)
+        if (pending == null) throw new HttpError('notFound', 'no')
+        this.pending = this.pending.filter(item => item.id !== linkId)
+        const link = {
+          id: linkId,
+          newDeviceId: pending.newDevice.id,
+          createdAt: '',
+          expiresAt: '',
+          approved: false,
+          declined: true,
+          expired: false,
+          approvedByDeviceId: null,
+          box: null
+        }
+        this.links.push(link)
+        return link
       }
     }
   }
 }
 
 const DEVICE = { name: 'Chrome on macOS', platform: 'web' as const }
+
+describe('shared chat device approvals', function () {
+  this.timeout(15000)
+  const controllers: DeviceApprovals[] = []
+  afterEach(async () => {
+    await act(async () => {
+      for (const controller of controllers.splice(0)) controller.stop()
+    })
+  })
+
+  function request(fake: FakeKeys, id = 'clk_request'): ChatPendingLink {
+    const keys = newBoxKeyPair()
+    const deviceId = fake.addDevice('Test phone', 'ios', keys.publicKey)
+    const pending: ChatPendingLink = {
+      id,
+      newDevice: {
+        id: deviceId,
+        name: 'Test phone',
+        platform: 'ios',
+        boxPublicKey: b64(keys.publicKey)
+      },
+      createdAt: '2027-04-10T12:00:00.000Z',
+      expiresAt: '2027-04-10T12:10:00.000Z'
+    }
+    fake.pending.push(pending)
+    return pending
+  }
+
+  async function fixture(enroll = true): Promise<{
+    fake: FakeKeys
+    controller: DeviceApprovals
+    client: TeamStationClient
+    hint: (event: ChatSocketEvent) => void
+    pending: ChatPendingLink
+  }> {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const keys = fake.client()
+    const setup = { client: keys, userId: USER, store, device: DEVICE }
+    if (enroll) await ensureEnrolled(setup)
+    const pending = request(fake)
+    let listener: ((event: ChatSocketEvent) => void) | undefined
+    const controller = new DeviceApprovals(setup, {
+      onChat: next => {
+        listener = next
+        return () => {
+          listener = undefined
+        }
+      }
+    })
+    controllers.push(controller)
+    const notice = (): Notification => {
+      const done = fake.links.find(link => link.id === pending.id)
+      return {
+        id: 'aud_request',
+        requestId: pending.id,
+        type: 'chatDeviceApproval',
+        title: 'Approve chat device',
+        description: 'Test phone (ios) asks to read your chats.',
+        sentAt: pending.createdAt,
+        expiresAt: pending.expiresAt,
+        status:
+          done?.approved === true
+            ? 'accepted'
+            : done?.declined === true
+              ? 'declined'
+              : 'pending',
+        canAct: done == null,
+        canWithdraw: false,
+        canResend: false,
+        viewed: false
+      }
+    }
+    const client = {
+      ...keys,
+      notifications: async (options: { history?: boolean }) => ({
+        items:
+          (options.history === true) === !notice().canAct ? [notice()] : [],
+        hasPending: notice().canAct,
+        nextCursor: null
+      }),
+      notification: async () => notice(),
+      viewNotification: async () => {}
+    } as unknown as TeamStationClient
+    controller.start()
+    await until('approval state', () => controller.snapshot().revision > 0)
+    return {
+      fake,
+      controller,
+      client,
+      hint: event => {
+        listener?.(event)
+      },
+      pending
+    }
+  }
+
+  it('never enrolls a new device merely to display its inbox', async function () {
+    const { fake, controller } = await fixture(false)
+    expect(controller.snapshot().ready).equals(false)
+    expect(fake.calls).not.includes('registerChatDevice')
+    expect(fake.calls).not.includes('enrolChat')
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <DeviceApprovalPrompt />
+      </DeviceApprovalContext.Provider>
+    )
+    expect(
+      document.querySelector('[data-testid="chat-device-approval-prompt"]')
+    ).equals(null)
+    let rejected = false
+    try {
+      await controller.decide('clk_request', 'approve')
+    } catch {
+      rejected = true
+    }
+    expect(rejected).equals(true)
+    expect(fake.calls).not.includes('approveChatLink')
+  })
+
+  it('dismisses only the modal, then approves in Notifications and shows Approved in History and detail', async function () {
+    const { fake, controller, client } = await fixture()
+    let opened: string | undefined
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <DeviceApprovalPrompt />
+        <NotificationsScreen
+          client={client}
+          onOpen={id => {
+            opened = id
+          }}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    await until(
+      'live modal',
+      () =>
+        document.querySelector('[data-testid="chat-device-approval-prompt"]') !=
+        null
+    )
+    expect(text()).includes('Test phone asks to read your chats')
+    await press('Later')
+    await until(
+      'dismissed modal',
+      () =>
+        document.querySelector('[data-testid="chat-device-approval-prompt"]') ==
+        null
+    )
+    await press('Approve chat device')
+    expect(opened).equals('aud_request')
+    await press('Approve Test phone')
+    await until('decision', () => fake.links.some(link => link.approved))
+    expect(controller.snapshot().links).length(0)
+    await press('History')
+    await until('approved history', () => text().includes('Approved'))
+    await act(async () => {
+      root?.unmount()
+      root = undefined
+    })
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <NotificationDetailScreen
+          client={client}
+          id="aud_request"
+          onChanged={() => {}}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    await until('approved detail', () => text().includes('Approved'))
+    expect(button('Accept invitation')).equals(undefined)
+  })
+
+  it('approves in the modal, closes it and refreshes the mounted notification detail', async function () {
+    const { controller, client, fake } = await fixture()
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <DeviceApprovalPrompt />
+        <NotificationDetailScreen
+          client={client}
+          id="aud_request"
+          onChanged={() => {}}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    await until(
+      'prompt',
+      () =>
+        document.querySelector('[data-testid="chat-device-approval-prompt"]') !=
+        null
+    )
+    const modal = document.querySelector(
+      '[data-testid="chat-device-approval-prompt"]'
+    )!
+    const approve = [
+      ...modal.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Approve')!
+    await act(async () => {
+      approve.click()
+      await delay(30)
+    })
+    await until('resolved detail', () => text().includes('Approved'))
+    expect(fake.calls.filter(call => call === 'approveChatLink')).length(1)
+    expect(
+      document.querySelector('[data-testid="chat-device-approval-prompt"]')
+    ).equals(null)
+  })
+
+  it('declines in notification detail and reports the canonical result to its owner', async function () {
+    const { controller, client, fake, pending } = await fixture()
+    controller.dismiss(pending.id)
+    let changed = 0
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <NotificationDetailScreen
+          client={client}
+          id="aud_request"
+          onChanged={() => {
+            changed++
+          }}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    await until('detail actions', () => button('Decline Test phone') != null)
+    await press('Decline Test phone')
+    await until('declined detail', () => text().includes('Declined'))
+    expect(changed).equals(1)
+    expect(fake.links[0].declined).equals(true)
+    expect(controller.snapshot().links).length(0)
+  })
+
+  it('queues requests, catches up on socket hints, retries errors and ignores results after stop', async function () {
+    const { fake, controller, hint, pending } = await fixture()
+    controller.start()
+    controller.dismiss(pending.id)
+    request(fake, 'clk_next')
+    hint({ type: 'resync' })
+    await until(
+      'second request',
+      () => controller.snapshot().links.length === 2
+    )
+    fake.fail.add('declineChatLink')
+    let rejected = false
+    try {
+      await controller.decide('clk_next', 'decline')
+    } catch {
+      rejected = true
+    }
+    expect(rejected).equals(true)
+    expect(controller.snapshot().error).equals('declineChatLink failed')
+    expect(controller.snapshot().errorFor).equals('clk_next')
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <DeviceApprovalActions id={pending.id} />
+        <DeviceApprovalActions id="clk_next" />
+      </DeviceApprovalContext.Provider>
+    )
+    expect(text().split('declineChatLink failed').length - 1).equals(1)
+    await act(async () => {
+      root?.unmount()
+      root = undefined
+    })
+    fake.fail.delete('declineChatLink')
+    await controller.decide('clk_next', 'decline')
+    expect(controller.snapshot().links.map(link => link.id)).deep.equals([
+      pending.id
+    ])
+    expect(fake.calls).not.includes('revokeChatDevice')
+    fake.pending = []
+    hint({ type: 'chatUser', kind: 'link' })
+    await until(
+      'resolved elsewhere',
+      () => controller.snapshot().links.length === 0
+    )
+    controller.stop()
+    await controller.refresh()
+    await controller.decide(pending.id, 'approve')
+    expect(controller.snapshot().ready).equals(false)
+  })
+
+  it('submits only once while an approval is in flight and discards a stopped account’s reads', async function () {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, store, userId: USER, device: DEVICE }
+    await ensureEnrolled(setup)
+    const pending = request(fake)
+    const controller = new DeviceApprovals(setup)
+    controllers.push(controller)
+    controller.start()
+    await until('ready controller', () => controller.snapshot().ready)
+    const approve = client.approveChatLink
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => {
+      release = resolve
+    })
+    client.approveChatLink = async (...args) => {
+      await blocked
+      return await approve(...args)
+    }
+    const first = controller.decide(pending.id, 'approve')
+    await until('busy decision', () => controller.snapshot().busy != null)
+    await controller.decide(pending.id, 'decline')
+    release()
+    await first
+    expect(fake.calls.filter(call => call === 'approveChatLink')).length(1)
+    expect(fake.calls).not.includes('declineChatLink')
+
+    let releaseRead!: (links: ChatPendingLink[]) => void
+    client.chatLinks = async () =>
+      await new Promise(resolve => {
+        releaseRead = resolve
+      })
+    const read = controller.refresh()
+    await until('delayed read', () => releaseRead != null)
+    controller.stop()
+    releaseRead([pending])
+    await read
+    expect(controller.snapshot().links).length(0)
+    expect(controller.snapshot().ready).equals(false)
+  })
+
+  it('reads approval keys without overwriting concurrent engine pins, epochs or PUKs', async function () {
+    for (const action of ['refresh', 'approve'] as const) {
+      const fake = new FakeKeys()
+      const store = new MemoryStore()
+      const client = fake.client()
+      const setup = { client, store, userId: USER, device: DEVICE }
+      const enrolled = await ensureEnrolled(setup)
+      fake.identity = enrolled.record.identity
+      fake.puks = [enrolled.record.puks[0].keys, newPukKey()]
+      fake.held.set(enrolled.record.deviceId, new Set([1, 2]))
+      const pending = request(fake)
+      const holder = new KeyHolder(store, enrolled.record)
+      const controller = new DeviceApprovals(setup)
+      controllers.push(controller)
+      controller.start()
+      await until('ready approval', () => controller.snapshot().ready)
+      const mine = client.myChatKeys
+      let release!: () => void
+      let reading = false
+      const blocked = new Promise<void>(resolve => {
+        release = resolve
+      })
+      client.myChatKeys = async () => {
+        reading = true
+        await blocked
+        return await mine()
+      }
+      const run =
+        action === 'refresh'
+          ? controller.refresh()
+          : controller.decide(pending.id, 'approve')
+      await until('delayed key read', () => reading)
+      const pin = b64(new Uint8Array(32).fill(3))
+      const epoch = b64(new Uint8Array(32).fill(4))
+      await holder.update(record => ({
+        ...record,
+        pins: { [BEFORE]: pin },
+        epochKeys: { cnv_history: { '1': epoch } },
+        puks: [...record.puks, { generation: 2, keys: fake.puks[1] }]
+      }))
+      release()
+      await run
+      expect(store.record()).deep.equals(holder.record)
+      expect(store.record().pins[BEFORE]).equals(pin)
+      expect(store.record().epochKeys.cnv_history['1']).equals(epoch)
+      expect(store.record().puks.map(puk => puk.generation)).deep.equals([1, 2])
+      expect(fake.calls).not.includes('postChatPuk')
+      if (action === 'approve') {
+        expect(
+          fake.links[0].approval?.pukBoxes.map(box => box.generation)
+        ).deep.equals([1, 2])
+      }
+      controller.stop()
+    }
+  })
+
+  it('publishes the later read when a poll arrives during a slow one', async function () {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, store, userId: USER, device: DEVICE }
+    await ensureEnrolled(setup)
+    const pending = request(fake)
+    let calls = 0
+    const releases: Array<(links: ChatPendingLink[]) => void> = []
+    client.chatLinks = async () => {
+      calls++
+      return await new Promise(resolve => {
+        releases.push(resolve)
+      })
+    }
+    const controller = new DeviceApprovals(setup)
+    controllers.push(controller)
+    controller.start()
+    await until('request', () => calls === 1)
+    await delay(5100)
+    const joined = controller.refresh()
+    expect(calls).equals(1)
+    releases[0]([])
+    await until('trailing read', () => calls === 2)
+    releases[1]([pending])
+    await joined
+    expect(controller.snapshot().links).deep.equals([pending])
+    expect(calls).equals(2)
+  })
+
+  it('keeps a slow inbox read alive across unchanged polls and refreshes it after a decision', async function () {
+    const { fake, controller, client, pending } = await fixture()
+    const notifications = client.notifications.bind(client)
+    let calls = 0
+    let release!: () => void
+    let released = false
+    const blocked = new Promise<void>(resolve => {
+      release = resolve
+    })
+    client.notifications = async options => {
+      calls++
+      if (!released) await blocked
+      return await notifications(options)
+    }
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <NotificationsScreen client={client} onOpen={() => {}} />
+      </DeviceApprovalContext.Provider>
+    )
+    await until('inbox request', () => calls > 0)
+    const initialCalls = calls
+    const revision = controller.snapshot().revision
+    await act(async () => {
+      await delay(5100)
+      await controller.refresh()
+      released = true
+      release()
+    })
+    await until('slow inbox result', () => button('Approve Test phone') != null)
+    expect(calls).equals(initialCalls)
+    expect(controller.snapshot().revision).equals(revision)
+    await press('Decline Test phone')
+    await until('decision refresh', () => calls > initialCalls)
+    expect(fake.links.find(link => link.id === pending.id)?.declined).equals(
+      true
+    )
+    await press('History')
+    await until('declined history', () => text().includes('Declined'))
+  })
+
+  it('refreshes notification consumers when an own-device request disappears', async function () {
+    const { fake, controller } = await fixture()
+    const own = request(fake, 'clk_own')
+    own.newDevice.id = fake.bound!
+    await controller.refresh()
+    const revision = controller.snapshot().revision
+    expect(controller.snapshot().links.some(link => link.id === own.id)).equals(
+      false
+    )
+    fake.pending = fake.pending.filter(link => link.id !== own.id)
+    await controller.refresh()
+    expect(controller.snapshot().revision).equals(revision + 1)
+  })
+
+  it('names each decision button for its requesting device', async function () {
+    const { fake, controller, pending } = await fixture()
+    const second = request(fake, 'clk_second')
+    second.newDevice.name = 'Test tablet'
+    await controller.refresh()
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <DeviceApprovalActions id={pending.id} />
+        <DeviceApprovalActions id={second.id} />
+      </DeviceApprovalContext.Provider>
+    )
+    expect(button('Approve Test phone')).not.equals(undefined)
+    expect(button('Decline Test phone')).not.equals(undefined)
+    expect(button('Approve Test tablet')).not.equals(undefined)
+    await press('Decline Test tablet')
+    expect(fake.links.find(link => link.id === second.id)?.declined).equals(
+      true
+    )
+    expect(controller.snapshot().links.map(link => link.id)).deep.equals([
+      pending.id
+    ])
+  })
+
+  it('resumes saved approval devices without replacing or wiping their key record', async function () {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, store, userId: USER, device: DEVICE }
+    const enrolled = await ensureEnrolled(setup)
+    const original = store.text
+    fake.bound = undefined
+    client.chatResumeChallenge = async () => ({
+      nonce: b64(new Uint8Array(32)),
+      sessionId: 'session',
+      expiresAt: ''
+    })
+    client.resumeChatDevice = async id => {
+      fake.bound = id
+      return fake.devices.find(device => device.id === id)!
+    }
+    expect((await readApprovalKeys(setup))?.deviceId).equals(
+      enrolled.record.deviceId
+    )
+    fake.bound = undefined
+    client.chatResumeChallenge = async () => {
+      throw new HttpError('forbidden', 'revoked', { reason: 'deviceRevoked' })
+    }
+    expect(await readApprovalKeys(setup)).equals(undefined)
+    client.chatResumeChallenge = async () => {
+      throw new Error('offline')
+    }
+    let failure: unknown
+    try {
+      await readApprovalKeys(setup)
+    } catch (error) {
+      failure = error
+    }
+    expect((failure as Error).message).equals('offline')
+    expect(await readApprovalKeys({ ...setup, current: () => false })).equals(
+      undefined
+    )
+    fake.bound = enrolled.record.deviceId
+    fake.held.clear()
+    expect(await readApprovalKeys(setup)).equals(undefined)
+    expect(store.text).equals(original)
+    expect(store.wiped).equals(0)
+  })
+})
 
 describe('Chat devices', function () {
   this.timeout(15000)
@@ -556,7 +1117,7 @@ describe('Chat devices', function () {
     expect(store.record().puks.map(puk => puk.generation)).deep.equals([1, 2])
   })
 
-  it('declines a request by removing the device that made it', async function () {
+  it('declines only the request and leaves the device registered', async function () {
     const fake = new FakeKeys()
     const store = new MemoryStore()
     const phone = newBoxKeyPair()
@@ -585,12 +1146,16 @@ describe('Chat devices', function () {
     )
     await until('the request', () => text().includes('iPhone asks to read'))
     expect(text()).contains('iPhone or iPad · Not linked yet')
-    fake.pending = []
     await press('Decline iPhone')
-    await until('the device gone', () => !text().includes('iPhone'))
+    await until(
+      'the request gone',
+      () => !text().includes('iPhone asks to read')
+    )
     expect(
       fake.devices.find(device => device.id === phoneId)?.revokedAt
-    ).not.equals(null)
+    ).equals(null)
+    expect(fake.calls).includes('declineChatLink')
+    expect(fake.calls).not.includes('revokeChatDevice')
     expect(fake.calls).not.includes('postChatPuk')
   })
 
@@ -648,6 +1213,115 @@ describe('Chat devices', function () {
       />
     )
     await until('the failure', () => text().includes('could not be loaded'))
+  })
+
+  it('keeps this device’s buttons while the shared reader is loading or has failed', async function () {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, store, userId: USER, device: DEVICE }
+    await ensureEnrolled(setup)
+    const phone = newBoxKeyPair()
+    const phoneId = fake.addDevice('Pixel 10', 'android', phone.publicKey)
+    fake.pending = [
+      {
+        id: 'clk_phone',
+        newDevice: {
+          id: phoneId,
+          name: 'Pixel 10',
+          platform: 'android',
+          boxPublicKey: b64(phone.publicKey)
+        },
+        createdAt: '',
+        expiresAt: ''
+      }
+    ]
+    const screenClient = fake.client()
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const mine = client.myChatKeys.bind(client)
+    client.myChatKeys = async () => {
+      await blocked
+      return await mine()
+    }
+    const controller = new DeviceApprovals({
+      client,
+      store,
+      userId: USER,
+      device: DEVICE
+    })
+    controller.start()
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <ChatDevicesScreen
+          client={screenClient}
+          userId={USER}
+          store={store}
+          device={DEVICE}
+          pollMs={40}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    await until('the request', () => text().includes('Pixel 10 asks to read'))
+    expect(text()).not.includes(
+      'Open this request on a device already approved for chat.'
+    )
+    expect(button('Approve Pixel 10')).not.equals(undefined)
+    release()
+    await until('shared actions', () => controller.snapshot().ready)
+    await press('Decline Pixel 10')
+    await until('declined', () => fake.pending.length === 0)
+    controller.stop()
+  })
+
+  it('shows a failed shared read and still offers this device’s decision', async function () {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, store, userId: USER, device: DEVICE }
+    await ensureEnrolled(setup)
+    const phone = newBoxKeyPair()
+    const phoneId = fake.addDevice('Pixel 10', 'android', phone.publicKey)
+    fake.pending = [
+      {
+        id: 'clk_phone',
+        newDevice: {
+          id: phoneId,
+          name: 'Pixel 10',
+          platform: 'android',
+          boxPublicKey: b64(phone.publicKey)
+        },
+        createdAt: '',
+        expiresAt: ''
+      }
+    ]
+    const screenClient = fake.client()
+    client.myChatKeys = async () => {
+      throw new Error('offline')
+    }
+    const controller = new DeviceApprovals(setup)
+    controller.start()
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <ChatDevicesScreen
+          client={screenClient}
+          userId={USER}
+          store={store}
+          device={DEVICE}
+          pollMs={40}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    await until('the request', () => text().includes('Pixel 10 asks to read'))
+    await until('the read error', () => text().includes('offline'))
+    expect(text()).not.includes(
+      'Open this request on a device already approved for chat.'
+    )
+    await press('Decline Pixel 10')
+    await until('declined', () => fake.pending.length === 0)
+    controller.stop()
   })
 
   it('shows Link this device in its place on a new device, then the list once linked', async function () {
@@ -767,6 +1441,63 @@ describe('Link this device', function () {
     expect(store.record().pendingLinkId).equals(fake.links[1].id)
   })
 
+  for (const offline of [false, true])
+    it(`preserves a decline across remount until explicit retry (offline: ${offline})`, async function () {
+      const fake = new FakeKeys()
+      fake.withOtherDevice('Pixel 10')
+      const store = new MemoryStore()
+      await render(
+        <LinkDeviceScreen
+          client={fake.client()}
+          userId={USER}
+          store={store}
+          device={DEVICE}
+          pollMs={40}
+          onDone={() => undefined}
+        />
+      )
+      await until('the code', () => text().includes('Waiting for approval'))
+      if (offline) await render(<></>)
+      fake.links[0].declined = true
+      if (offline)
+        await render(
+          <LinkDeviceScreen
+            client={fake.client()}
+            userId={USER}
+            store={store}
+            device={DEVICE}
+            pollMs={40}
+            onDone={() => undefined}
+          />
+        )
+      await until('the decline', () => button('Ask again') != null)
+      expect(text()).includes('declined')
+      expect(store.record().pendingLinkId).equals(fake.links[0].id)
+      await render(<></>)
+      await render(
+        <LinkDeviceScreen
+          client={fake.client()}
+          userId={USER}
+          store={store}
+          device={DEVICE}
+          pollMs={40}
+          onDone={() => undefined}
+        />
+      )
+      await until('retained decline', () => button('Ask again') != null)
+      expect(text()).includes('declined')
+      await press('I can’t reach my other devices')
+      await press('Back to linking')
+      await until(
+        'decline after cancelling reset',
+        () => button('Ask again') != null
+      )
+      expect(fake.calls.filter(name => name === 'requestChatLink')).length(1)
+      await press('Ask again')
+      await until('a new code', () => text().includes('Waiting for approval'))
+      expect(store.record().pendingLinkId).equals(fake.links[1].id)
+    })
+
   it('says a linked device is linked, and when nothing can be read', async function () {
     const fake = new FakeKeys()
     const store = new MemoryStore()
@@ -824,6 +1555,46 @@ describe('Link this device', function () {
       />
     )
     await until('the warning', () => text().includes('None of your devices'))
+  })
+
+  it('does not ask again when a decline arrives after the waiting poll', async function () {
+    const fake = new FakeKeys()
+    fake.withOtherDevice('Pixel 10')
+    const store = new MemoryStore()
+    const client = fake.client()
+    let arm = false
+    const asking: ChatKeysClient = {
+      ...client,
+      chatLink: async linkId => {
+        const link = await client.chatLink(linkId)
+        if (arm && link.declined !== true && !link.approved && !link.expired) {
+          const stored = fake.links.find(item => item.id === linkId)
+          if (stored != null) stored.declined = true
+        }
+        return link
+      }
+    }
+    const screen = (
+      <LinkDeviceScreen
+        client={asking}
+        userId={USER}
+        store={store}
+        device={DEVICE}
+        pollMs={40}
+        onDone={() => undefined}
+      />
+    )
+    await render(screen)
+    await until('the code', () => text().includes('Waiting for approval'))
+    await act(async () => {
+      root?.unmount()
+    })
+    arm = true
+    await render(screen)
+    await until('the decline', () => button('Ask again') != null)
+    expect(fake.calls.filter(name => name === 'requestChatLink')).length(1)
+    expect(fake.links).length(1)
+    expect(store.record().pendingLinkId).equals(fake.links[0].id)
   })
 })
 

@@ -527,6 +527,10 @@ export const enUs = {
   chat_link_code_label: 'Six-digit code %s',
   chat_link_waiting: 'Waiting for approval…',
   chat_link_expired: 'That request expired.',
+  chat_link_declined: 'That request was declined. You can ask again.',
+  chat_approval_on_linked_device:
+    'Open this request on a device already approved for chat.',
+  chat_approval_later: 'Later',
   chat_link_again: 'Ask again',
   chat_link_cant_reach: 'I can’t reach my other devices',
   chat_link_done: 'This device is linked.',
