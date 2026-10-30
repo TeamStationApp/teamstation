@@ -17,9 +17,10 @@ import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { guestGameOpen, inGameAs } from '../games/guestChecks'
 import { reconcileUnbegunLineup } from '../games/unroster'
-import type {
-  PlayerRemovedMetadata,
-  PlayerRemover
+import {
+  type PlayerRemovedMetadata,
+  type PlayerRemover,
+  shortDate
 } from '../notifications/requestInformation'
 import { noteScopeChange } from '../socket/syncRevision'
 import { refuseDeleted } from '../users/deleted'
@@ -242,7 +243,15 @@ export async function refuseOtherSide(
 ): Promise<void> {
   const games = await trx
     .selectFrom('games')
-    .select(['id', 'home_team_id', 'away_team_id', 'guests', 'unrostered'])
+    .select([
+      'id',
+      'home_team_id',
+      'away_team_id',
+      'guests',
+      'unrostered',
+      'start_at',
+      'timezone'
+    ])
     .where(eb =>
       eb.or([
         eb('home_team_id', '=', terms.teamId),
@@ -250,6 +259,14 @@ export async function refuseOtherSide(
       ])
     )
     .where('status', 'not in', ['final', 'cancelled'])
+    // Nothing moves a game nobody scored out of `scheduled`: one long past
+    // never holds an add up.
+    .where(eb =>
+      eb.or([
+        eb('status', '=', 'inProgress'),
+        eb('start_at', '>=', new Date(Date.now() - DAY))
+      ])
+    )
     .execute()
   if (games.length === 0) return
   const gumbos = (
@@ -285,7 +302,7 @@ export async function refuseOtherSide(
     if (member || gumbos.some(id => guest.includes(id))) {
       const name = (await shortNamesOf(trx, [terms.userId])).get(terms.userId)
       throw conflict(
-        `${name} plays for the other team in a game against ${terms.teamName}`,
+        `${name} plays for the other team in the game on ${shortDate(game.start_at, game.timezone)} against ${terms.teamName}`,
         { gameId: game.id }
       )
     }
@@ -373,22 +390,31 @@ async function gameStarted(
 }
 
 /**
+ * The side of a game an add's player is on now: the list that holds them, for
+ * sides swap before a first pitch and a game can move to another team; else
+ * the team's side, and the side the add joined last.
+ */
+function sideOf(
+  game: { home_team_id: string; away_team_id: string; guests: unknown },
+  terms: PlayerAddTerms,
+  gumbos: ReadonlySet<number>
+): 'away' | 'home' {
+  const guests = storedGuests(game.guests, teamsOfRow(game))
+  const holding = (['away', 'home'] as const).find(side =>
+    guests[side].some(id => gumbos.has(id))
+  )
+  if (holding != null) return holding
+  if (game.home_team_id === terms.teamId) return 'home'
+  if (game.away_team_id === terms.teamId) return 'away'
+  return terms.side ?? 'away'
+}
+
+/**
  * The games this add covers that were played: for a roster add, each game the
  * team played from the day before the add on with a stat line for them, but
  * not one they played as a pool guest, which a pool add of its own covers;
  * for a pool add, that game once it has begun.
  */
-/**
- * The side a team is on in a game now. The add's `side` is the one it joined,
- * and a game's sides can swap before its first pitch.
- */
-function sideOf(
-  game: { home_team_id: string },
-  teamId: string
-): 'away' | 'home' {
-  return game.home_team_id === teamId ? 'home' : 'away'
-}
-
 async function playedGames(
   trx: Db,
   request: StoredRequest,
@@ -403,6 +429,12 @@ async function playedGames(
     away_team_id: string
   }>
 > {
+  const gumbos = await trx
+    .selectFrom('gumbo_ids')
+    .select('gumbo_id')
+    .where('user_id', 'in', userIds)
+    .execute()
+  const held = new Set(gumbos.map(row => row.gumbo_id))
   if (terms.mode === 'pool') {
     const game = await trx
       .selectFrom('games')
@@ -410,13 +442,8 @@ async function playedGames(
       .where('id', '=', terms.gameId!)
       .executeTakeFirst()
     if (game == null || !(await gameStarted(trx, game))) return []
-    return [{ ...game, side: sideOf(game, terms.teamId) }]
+    return [{ ...game, side: sideOf(game, terms, held) }]
   }
-  const gumbos = await trx
-    .selectFrom('gumbo_ids')
-    .select('gumbo_id')
-    .where('user_id', 'in', userIds)
-    .execute()
   if (gumbos.length === 0) return []
   // Games of the team from the day before the add on where they played for
   // it.
@@ -478,7 +505,7 @@ async function playedGames(
     .execute()
   return games.map(game => ({
     ...game,
-    side: sideOf(game, terms.teamId)
+    side: sideOf(game, terms, new Set())
   }))
 }
 
@@ -660,7 +687,7 @@ export async function undoPlayerAdd(
     if (game != null) {
       const teams = teamsOfRow(game)
       const guests = storedGuests(game.guests, teams)
-      const side = sideOf(game, terms.teamId)
+      const side = sideOf(game, terms, gumboIds)
       guests[side] = guests[side].filter(id => !gumboIds.has(id))
       await trx
         .updateTable('games')

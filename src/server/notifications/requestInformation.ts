@@ -221,7 +221,7 @@ export async function titleAndDescription(
 }
 
 /** `Oct 30`, the game's own day where it is played. */
-function shortDate(at: Date, timeZone: string): string {
+export function shortDate(at: Date, timeZone: string): string {
   const options = { month: 'short', day: 'numeric' } as const
   try {
     return at.toLocaleDateString('en-US', { ...options, timeZone })

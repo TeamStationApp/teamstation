@@ -14,9 +14,11 @@ import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { gameAvailability } from '../games/rosterAvailability'
+import { refuseOtherSide } from '../groups/noticePolicy'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
@@ -489,16 +491,45 @@ describe('adding a player who already exists', function () {
     const across = await roster({ userId: ids['Freddie Freeman'] })
     expect(across.status).equals(409)
     expect(JSON.stringify(across.body)).includes(
-      'plays for the other team in a game against Ridgeview Falcons'
+      'plays for the other team in the game on'
     )
     expect(await membership('Freddie Freeman', TEAM.falcons)).equals(undefined)
     // Nor from the other team's roster: a scoring read of that game would throw.
     const opposing = await roster({ userId: ids['Ryan Helsley'] })
     expect(opposing.status).equals(409)
     expect(JSON.stringify(opposing.body)).includes(
-      'plays for the other team in a game against Ridgeview Falcons'
+      'plays for the other team in the game on'
     )
     expect(await membership('Ryan Helsley', TEAM.falcons)).equals(undefined)
+    // A game long past that nobody scored holds nothing up.
+    const { start_at: starts } = await db!
+      .selectFrom('games')
+      .select('start_at')
+      .where('id', '=', GAME)
+      .executeTakeFirstOrThrow()
+    await db!
+      .updateTable('games')
+      .set({ start_at: new Date(Date.now() - 30 * 86_400_000) })
+      .where('id', '=', GAME)
+      .execute()
+    const stale = await atomic(db!, async trx => {
+      await refuseOtherSide(trx, [ids['Ryan Helsley']], {
+        kind: 'playerAdd',
+        mode: 'roster',
+        userId: ids['Ryan Helsley'],
+        teamId: TEAM.falcons,
+        jersey: null,
+        positions: [],
+        teamName: 'Ridgeview Falcons'
+      })
+      return 'allowed'
+    })
+    expect(stale).equals('allowed')
+    await db!
+      .updateTable('games')
+      .set({ start_at: starts })
+      .where('id', '=', GAME)
+      .execute()
     // Unless that game left them out of it.
     await db!
       .updateTable('games')

@@ -114,7 +114,6 @@ function withHalves(
   }
 }
 
-/** The players of `teams` a game's setups hold. */
 /**
  * `ids` without the game's pool players and the players withdrawn from it:
  * people who already exist, whose whole names an add never gave the game, and
@@ -151,6 +150,7 @@ async function withoutBorrowed(
   return ids.filter(id => !gone.has(id))
 }
 
+/** The players of `teams` a game's setups hold. */
 function playersOf(stored: StoredGame, teams: ReadonlySet<string>): number[] {
   const ids = new Set<number>()
   const collect = (setup: unknown): void => {
