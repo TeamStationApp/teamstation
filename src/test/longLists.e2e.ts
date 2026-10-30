@@ -81,6 +81,8 @@ const TWO_COLUMNS = { width: 900, height: 1000 }
 const DEPTH = 6000
 /** The rows of a page the server answers. */
 const PAGE_ROWS = 50
+/** A full page of a player's highlights. */
+const HIGHLIGHT_ROWS = 20
 /** The rows of a page of notifications. */
 const INBOX_ROWS = 25
 /** Where the last row of Notifications' first page ended on the old screen. */
@@ -220,8 +222,11 @@ async function main(): Promise<void> {
   const teamReads: URL[] = []
   const publicReads: URL[] = []
   const inboxReads: URL[] = []
+  const highlightReads: URL[] = []
   page.on('request', request => {
     const url = new URL(request.url())
+    if (url.pathname.endsWith(`/players/${seeded.playerId}/highlights`))
+      highlightReads.push(url)
     if (url.searchParams.get('public') === '1') publicReads.push(url)
     if (url.pathname.endsWith('/me/notifications')) inboxReads.push(url)
     if (url.pathname.endsWith('/events') && url.searchParams.has('paged'))
@@ -491,6 +496,33 @@ async function main(): Promise<void> {
       cursor = found.nextCursor
     } while (cursor !== null)
     return { ids, counts: counts! }
+  }
+  /** Mookie's highlights, as the server walks them for 101: rows per page. */
+  const playerHighlights = async (): Promise<{
+    ids: string[]
+    pages: number[]
+  }> => {
+    const ids: string[] = []
+    const pages: number[] = []
+    let cursor: string | null = null
+    do {
+      const after: string =
+        cursor === null ? '' : `?before=${encodeURIComponent(cursor)}`
+      const answer = await f.h.request(
+        'GET',
+        `/players/${seeded.playerId}/highlights${after}`,
+        undefined,
+        101
+      )
+      const found = (await answer.json()) as {
+        highlights: Array<{ eventId: string }>
+        nextBefore: string | null
+      }
+      ids.push(...found.highlights.map(row => row.eventId))
+      pages.push(found.highlights.length)
+      cursor = found.nextBefore
+    } while (cursor !== null)
+    return { ids, pages }
   }
   /** A mode's rows, as the server walks them for 101. */
   const inbox = async (query: string): Promise<string[]> => {
@@ -1084,22 +1116,224 @@ async function main(): Promise<void> {
       )
     },
     E10: async () => {
+      highlightReads.length = 0
       await open(`/players/${seeded.playerId}`, 'Mookie')
       await settle('Single')
+      if (before) {
+        await scrollToEnd()
+        await contains(page, 'Show more')
+        await shot('player-videos')
+        return
+      }
+      const PREFIX = 'player-highlight-'
+      const served = await playerHighlights()
+      const short =
+        served.pages.filter(rows => rows < HIGHLIGHT_ROWS).length - 1
+      assert.ok(short > 0, 'E10: the server has short pages to read across')
+      const read = await readDown(PREFIX)
+      sameRows(read.seen, served.ids, 'E10: every highlight')
+      assert.equal(served.ids.length, seeded.playerHighlights)
+      await absent(page, 'Show more')
       await scrollToEnd()
-      if (before) await contains(page, 'Show more')
+      const cursors = highlightReads.map(url => url.searchParams.get('before'))
+      assert.equal(
+        cursors.length,
+        served.pages.length,
+        `E10: each page read once: ${cursors.join(' ')}`
+      )
+      assert.equal(new Set(cursors).size, served.pages.length)
+      assert.ok(read.most < MOST_ROWS_AT_ONCE, `E10: ${read.most} rows at once`)
+      await absent(page, 'Show more')
       await shot('player-videos')
-      later('M8: auto-loads to the last highlight; no Show more')
+      await log(
+        support,
+        'longLists-web.log',
+        `E10: ${served.ids.length} highlights over ${served.pages.length} pages, ${short} short, ${read.most} at once`
+      )
     },
     E11: async () => {
-      await open(`/games/${seeded.highlightsGameId}`, 'Demo Owls')
-      await tapCss(
-        '[data-scene-role="top"] [aria-label="Game sections"] [aria-label="Videos"]'
-      )
-      await settle('Mookie')
-      await pause(600)
+      const onVideos = async (): Promise<void> => {
+        await open(`/games/${seeded.highlightsGameId}`, 'Demo Owls')
+        await tapCss(
+          '[data-scene-role="top"] [aria-label="Game sections"] [aria-label="Videos"]'
+        )
+        await settle('Mookie')
+        await pause(600)
+      }
+      await onVideos()
       await shot('game-highlights')
-      later('M8: current row marks; jumpTo seeks; side-by-side layout')
+      if (before) return
+
+      const PREFIX = 'game-highlight-'
+      const answer = await f.h.request(
+        'GET',
+        `/videos/${seeded.highlightsVideoId}/highlights`,
+        undefined,
+        101
+      )
+      const { highlights } = (await answer.json()) as {
+        highlights: Array<{ eventId: string; startOffsetSec: number }>
+      }
+      assert.equal(highlights.length, 300, 'E11: the 300')
+      const ids = highlights.map(highlight => highlight.eventId)
+      const rowCss = (id: string): string =>
+        `[data-scene-role="top"] [data-testid="${PREFIX}${id}"]`
+      const pictureTop = async (): Promise<number> =>
+        await page.$eval(
+          '[data-scene-role="top"] [data-testid="event-pegged-video"]',
+          node => Math.round(node.getBoundingClientRect().top)
+        )
+      const shade = async (id: string): Promise<string> =>
+        await page.$eval(
+          rowCss(id),
+          node => getComputedStyle(node).backgroundColor
+        )
+      const seeks = async (): Promise<number> =>
+        await page.$eval(
+          '[data-scene-role="top"] [data-testid="event-pegged-video"] video',
+          node => node.currentTime
+        )
+      // This Chromium has no HEVC, and there is no stream here to decode: told
+      // otherwise the page draws its picture, which takes a seek all the same.
+      const { identifier } = await page.evaluateOnNewDocument(`(() => {
+        const supported = MediaSource.isTypeSupported.bind(MediaSource)
+        MediaSource.isTypeSupported = type =>
+          /hvc1/.test(type) || supported(type)
+      })()`)
+      /** Reads the whole list, then plays a row deep in it and one more. */
+      const prove = async (layout: string): Promise<void> => {
+        await scroll(500)
+        await pause(300)
+        const pinned = await pictureTop()
+        const tops = new Set<number>()
+        await scroll(0)
+        const read = await readDown(PREFIX, async () => {
+          if ((await scroll('here')) >= 500) tops.add(await pictureTop())
+        })
+        sameRows(read.seen, ids, `E11: ${layout}: every highlight`)
+        assert.ok(
+          read.most < MOST_ROWS_AT_ONCE,
+          `E11: ${layout}: ${read.most} rows at once`
+        )
+        assert.deepEqual([...tops], [pinned], `E11: ${layout}: picture pegged`)
+
+        const chosen = highlights[210]
+        const other = highlights[212]
+        await scrollToRow(page, rowCss(chosen.eventId))
+        await pause(300)
+        const plain = await shade(other.eventId)
+        const rowTop = async (): Promise<number> =>
+          await page.$eval(rowCss(chosen.eventId), node =>
+            Math.round(node.getBoundingClientRect().top)
+          )
+        const placeBefore = await rowTop()
+        const topBefore = await pictureTop()
+        await tapCss(rowCss(chosen.eventId))
+        await pause(300)
+        const marked = await shade(chosen.eventId)
+        assert.notEqual(marked, plain, `E11: ${layout}: current row marks`)
+        assert.equal(await shade(other.eventId), plain)
+        assert.equal(
+          await seeks(),
+          chosen.startOffsetSec,
+          `E11: ${layout}: the tap seeks`
+        )
+        assert.ok(
+          page.url().includes(`t=${Math.round(chosen.startOffsetSec)}`),
+          `E11: ${layout}: the address follows, ${page.url()}`
+        )
+        assert.equal(await pictureTop(), topBefore, `E11: ${layout}: held`)
+        assert.equal(
+          await rowTop(),
+          placeBefore,
+          `E11: ${layout}: the row stays where it was`
+        )
+        // A row that left the draw distance is marked when it comes back.
+        await scroll(0)
+        await pause(300)
+        await scrollToRow(page, rowCss(highlights[60].eventId))
+        await pause(300)
+        assert.equal(await page.$(rowCss(chosen.eventId)), null)
+        await scrollToRow(page, rowCss(chosen.eventId))
+        await pause(300)
+        assert.equal(await shade(chosen.eventId), marked)
+        await tapCss(rowCss(other.eventId))
+        await pause(300)
+        assert.equal(await shade(other.eventId), marked)
+        assert.equal(await shade(chosen.eventId), plain)
+        assert.equal(await seeks(), other.startOffsetSec)
+        await log(
+          support,
+          'longLists-web.log',
+          `E11: ${layout}: ${read.seen.size} rows, ${read.most} at once, picture held at ${pinned}`
+        )
+      }
+      await onVideos()
+      await prove('page')
+
+      await page.setViewport(TWO_COLUMNS)
+      await onVideos()
+      await pause(600)
+      const lefts = await page.$$eval(
+        `[data-scene-role="top"] [data-testid^="${PREFIX}"]`,
+        nodes => nodes.map(node => node.getBoundingClientRect().left)
+      )
+      assert.equal(new Set(lefts).size, 2, 'E11: two columns at this width')
+
+      await page.setViewport(DESKTOP)
+      await onVideos()
+      const beside = await page.$eval(
+        '[data-scene-role="top"] [data-testid="event-pegged-video"]',
+        node => {
+          const row = document.querySelector(
+            '[data-scene-role="top"] [aria-label^="Play highlight: "]'
+          )!
+          return (
+            row.getBoundingClientRect().left >=
+            node.getBoundingClientRect().right
+          )
+        }
+      )
+      assert.ok(beside, 'E11: the list is beside the picture')
+      await shotOf('game-highlights-beside')
+      await prove('side by side')
+
+      // Scrolled by the page, the pane grows, and its rows reach its foot.
+      await scroll(0)
+      await pause(300)
+      const shortfall = await page.$eval(
+        `[data-scene-role="top"] [data-testid^="${PREFIX}"]`,
+        async node => {
+          const scrolls = (element: Element): boolean =>
+            ['auto', 'scroll'].includes(getComputedStyle(element).overflowY)
+          let pane = node.parentElement!
+          while (!scrolls(pane)) pane = pane.parentElement!
+          let outer = pane.parentElement!
+          while (!scrolls(outer)) outer = outer.parentElement!
+          outer.scrollTop = outer.scrollHeight
+          await new Promise(resolve => setTimeout(resolve, 500))
+          const rows = [...pane.querySelectorAll('[data-testid]')]
+          const foot = Math.max(
+            ...rows.map(row => row.getBoundingClientRect().bottom)
+          )
+          outer.scrollTop = 0
+          return pane.getBoundingClientRect().bottom - foot
+        }
+      )
+      assert.ok(shortfall <= 0, `E11: the pane's foot is ${shortfall} short`)
+
+      // Dragged across, the same page goes from one scroller to the other.
+      const anyRow = `[data-scene-role="top"] [data-testid^="${PREFIX}"]`
+      for (const [viewport, row] of [
+        [PHONE, 150],
+        [DESKTOP, 250]
+      ] as const) {
+        await page.setViewport(viewport)
+        await page.waitForSelector(anyRow, { timeout: 10000 })
+        await scrollToRow(page, rowCss(highlights[row].eventId))
+      }
+      await page.setViewport(PHONE)
+      await page.removeScriptToEvaluateOnNewDocument(identifier)
     },
     E12: async () => {
       await open(`/umpires/${seeded.leagueId}`, 'Umpire')

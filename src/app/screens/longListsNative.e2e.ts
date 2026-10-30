@@ -35,6 +35,7 @@ interface Device {
   swipe: (options: unknown) => Promise<unknown>
   hierarchy: () => Promise<ViewNode>
   tapOnPoint: (options: { point: string }) => Promise<unknown>
+  setOrientation: (options: { orientation: string }) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
   detach: () => Promise<unknown>
 }
@@ -929,17 +930,136 @@ async function main(): Promise<void> {
       await note(`E9: History showed ${history.size} rows by page`)
     },
     E10: async () => {
+      const ROW = 'player-highlight-'
       await m.openLink({ link: `teamstation://players/${manifest.playerId}` })
       await visible('Player sections')
-      later('M8: auto-loads to the last highlight; no Show more')
+      await pause(1500)
+      const seen = new Set<string>()
+      for (let still = 0; still < 3;) {
+        const before = seen.size
+        for (const node of await settled())
+          if (node.id?.startsWith(ROW) === true) seen.add(node.id)
+        assert.ok(!(await shown('Show more', 300)), 'E10: no Show more')
+        await m.swipe({ start: '50%, 70%', end: '50%, 30%', duration: 800 })
+        await pause(800)
+        still = seen.size === before ? still + 1 : 0
+      }
+      assert.equal(seen.size, manifest.playerHighlights, 'E10: the last one')
+      const pages = new Set(
+        (await phoneNetwork()).filter(
+          url =>
+            url.includes(`/players/${manifest.playerId}/highlights`) &&
+            url.includes('before=')
+        )
+      )
+      assert.ok(pages.size > 0, 'E10: pages read with no button')
+      await shot(`${platform}-player-videos.png`)
+      await note(`E10: ${seen.size} highlights over ${pages.size + 1} pages`)
     },
     E11: async () => {
+      const ROW = 'game-highlight-'
+      const picture = (nodes: ViewNode[]): number => {
+        const found = nodes.find(node => node.id === 'event-pegged-video')
+        assert.ok(found?.bounds != null, 'E11: no picture on the screen')
+        return found.bounds.y
+      }
+      /** To the list's end from `from`, holding the picture where it pins. */
+      const readDown = async (
+        layout: string,
+        from: string,
+        to: string
+      ): Promise<void> => {
+        await m.swipe({ start: from, end: to, duration: 800 })
+        await pause(800)
+        const pinned = picture(await settled())
+        const seen = new Set<string>()
+        let most = 0
+        for (let still = 0; still < 3;) {
+          const before = seen.size
+          const nodes = await settled()
+          const rows = nodes.filter(node => node.id?.startsWith(ROW) === true)
+          most = Math.max(most, rows.length)
+          for (const row of rows) seen.add(row.id!)
+          assert.ok(
+            Math.abs(picture(nodes) - pinned) <= PINNED_SLACK,
+            `E11: ${layout}: the picture moved from ${pinned}`
+          )
+          await m.swipe({ start: from, end: to, duration: 800 })
+          await pause(600)
+          still = seen.size === before ? still + 1 : 0
+        }
+        assert.equal(seen.size, LONG_LISTS_SHAPE.highlights, `E11: ${layout}`)
+        await note(`E11: ${layout}: ${seen.size} rows, ${most} at once`)
+      }
+      /** A tap opens the full-screen player; closing it leaves the row marked. */
+      const playRow = async (layout: string): Promise<void> => {
+        const nodes = await settled()
+        const row = nodes.find(
+          ({ id, bounds }) =>
+            id?.startsWith(ROW) === true &&
+            bounds != null &&
+            bounds.y > 60 &&
+            bounds.y + bounds.height < nodes[0].bounds!.height - 60 &&
+            (bounds.y >= frame.y + frame.height ||
+              bounds.x >= frame.x + frame.width)
+        )
+        // On the screen and clear of the picture, the first in the tree being
+        // any row the list holds.
+        const frame = nodes.find(
+          node => node.id === 'event-pegged-video'
+        )!.bounds!
+        assert.ok(row?.bounds != null, `E11: ${layout}: no row to tap`)
+        const place = picture(nodes)
+        const { x, y, width, height } = row.bounds
+        await m.tapOnPoint({
+          point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+        })
+        await visible('Close')
+        // Pressed with the player's controls faded, it only brings them back.
+        for (let press = 0; await shown('Close', 1500); press++) {
+          assert.ok(press < 5, `E11: ${layout}: the player will not close`)
+          await tap('Close')
+          await pause(800)
+        }
+        assert.ok(
+          Math.abs(picture(await settled()) - place) <= PINNED_SLACK,
+          `E11: ${layout}: the picture stays`
+        )
+        await shot(`${platform}-game-highlight-${layout}.png`)
+      }
       await m.openLink({
         link: `teamstation://games/${manifest.highlightsGameId}`
       })
       await visible('Game sections')
-      await tap('Videos')
-      later('M8: current row marks; jumpTo seeks; the player does not move')
+      // The section pill, in Box score's row, not the tab bar's Videos.
+      const sections = await all()
+      const row = sections.find(node => node.text === 'Box score')?.bounds?.y
+      const pill = sections.find(
+        ({ text, bounds }) =>
+          text === 'Videos' &&
+          bounds != null &&
+          row != null &&
+          Math.abs(bounds.y - row) < 20
+      )
+      assert.ok(pill?.bounds != null, 'E11: no Videos pill')
+      await m.tapOnPoint({
+        point: `${Math.round(pill.bounds.x + pill.bounds.width / 2)},${Math.round(pill.bounds.y + pill.bounds.height / 2)}`
+      })
+      await pause(1500)
+      await readDown('page', '50%, 75%', '50%, 45%')
+      await playRow('page')
+      await m.setOrientation({ orientation: 'LANDSCAPE_LEFT' })
+      await pause(1500)
+      await readDown('beside', '85%, 75%', '85%, 25%')
+      // An iPhone stands upright on every screen but the camera and the
+      // full-screen sheet, so side by side is an iPad's or an Android phone's.
+      if (platform === 'ios' && (await all())[0].bounds!.width < 700) {
+        await note('E11: an iPhone stays upright, with no side by side')
+        return
+      }
+      await playRow('beside')
+      await m.setOrientation({ orientation: 'PORTRAIT' })
+      await pause(1000)
     },
     E12: async () => {
       await m.openLink({ link: `teamstation://umpires/${manifest.leagueId}` })

@@ -1,4 +1,5 @@
 import React, {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -58,6 +59,7 @@ import {
   useContentInset
 } from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
+import { PagedList } from '../components/PagedList'
 import {
   CardBand,
   PillBand,
@@ -362,6 +364,11 @@ function ScoreRow(props: {
 const ALL_ANGLES = '\u0000allAngles'
 
 const HEADER_SCORE_WIDTH = 201
+
+/** A highlight's height before it has been measured. */
+const HIGHLIGHT_ROW_HEIGHT = 75
+
+const highlightKey = (highlight: Highlight): string => highlight.eventId
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
@@ -1617,6 +1624,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }
 
+  // A mounted row keeps the handler it was drawn with, and this one reads what
+  // the page is showing.
+  const latestJump = useRef(jumpTo)
+  latestJump.current = jumpTo
+  const jump = useCallback((highlight: Highlight) => {
+    latestJump.current(highlight)
+  }, [])
+  const renderHighlight = useCallback(
+    (highlight: Highlight) => (
+      <HighlightRow
+        highlight={highlight}
+        active={highlight.eventId === activeEventId}
+        onJump={jump}
+      />
+    ),
+    [activeEventId, jump]
+  )
+
   // A highlight chosen on another page opens here straight into the player in
   // the app, once its video can play: the same open as one chosen in the
   // list. (In a browser the picture plays it from the moment, and it is dropped.)
@@ -2140,40 +2165,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             : lstrings.highlights_none}
         </Text>
       ) : (
-        <View style={styles.grid}>
-          {highlights.map(highlight => (
-            <Pressable
-              key={highlight.eventId}
-              accessibilityRole="button"
-              accessibilityLabel={`Play highlight: ${highlight.title}`}
-              style={[
-                styles.highlight,
-                { width: `${100 / columns}%` },
-                highlight.eventId === activeEventId
-                  ? styles.highlightActive
-                  : undefined
-              ]}
-              onPress={() => {
-                jumpTo(highlight)
-              }}
-            >
-              <VideoPoster
-                uri={highlight.stillUrl}
-                time={timecode(highlight.startOffsetSec)}
-              />
-              <EventTagText
-                text={highlight.title}
-                fillRow
-                tag={highlight.tag}
-                numberOfLines={2}
-                style={[
-                  styles.highlightTitle,
-                  highlight.isScoringPlay ? styles.scoring : undefined
-                ]}
-              />
-            </Pressable>
-          ))}
-        </View>
+        <PagedList
+          // Another layout is another scroller to follow, and starts afresh.
+          key={sideBySide ? 'beside' : 'below'}
+          data={highlights}
+          keyOf={highlightKey}
+          renderItem={renderHighlight}
+          extraData={activeEventId}
+          numColumns={columns}
+          estimatedItemSize={HIGHLIGHT_ROW_HEIGHT}
+        />
       )}
     </View>
   )
@@ -2426,6 +2427,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 headerHeight={headerHeight}
                 tabsHeight={tabsHeight}
                 height={height}
+                pagedList
                 style={styles.tabPane}
                 contentStyle={[
                   styles.watchContent,
@@ -2496,6 +2498,42 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </>
   )
 }
+
+/** One play: its picture and what happened, which seeks the video to it. */
+const HighlightRow = memo(function HighlightRow(props: {
+  highlight: Highlight
+  active: boolean
+  onJump: (highlight: Highlight) => void
+}): React.ReactElement {
+  const { highlight, active, onJump } = props
+  const styles = getStyles(useTheme())
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Play highlight: ${highlight.title}`}
+      testID={`game-highlight-${highlight.eventId}`}
+      style={[styles.highlight, active ? styles.highlightActive : undefined]}
+      onPress={() => {
+        onJump(highlight)
+      }}
+    >
+      <VideoPoster
+        uri={highlight.stillUrl}
+        time={timecode(highlight.startOffsetSec)}
+      />
+      <EventTagText
+        text={highlight.title}
+        fillRow
+        tag={highlight.tag}
+        numberOfLines={2}
+        style={[
+          styles.highlightTitle,
+          highlight.isScoringPlay ? styles.scoring : undefined
+        ]}
+      />
+    </Pressable>
+  )
+})
 
 export function timecode(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds))
@@ -2626,10 +2664,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       color: theme.primaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.9375)
-    },
-    grid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap'
     },
     tabs: {
       flexDirection: 'row',

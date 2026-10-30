@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { Text, View } from 'react-native'
 
 import type {
@@ -35,8 +42,11 @@ import {
   usePinnedHandoff,
   usePinnedTabs
 } from '../components'
+import { PagedList } from '../components/PagedList'
+import { PagedListEnd } from '../components/PagedListEnd'
 import { useSceneReveals } from '../components/sceneShown'
 import { TabPages } from '../components/TabPages'
+import { usePagedList } from '../hooks/usePagedList'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
@@ -136,6 +146,12 @@ export interface PlayerScreenProps {
 }
 
 export type PlayerTab = 'videos' | 'stats' | 'teams' | 'settings' | 'walkup'
+
+/** A highlight's height before it has been measured. */
+const HIGHLIGHT_ROW_HEIGHT = 131
+
+const highlightKey = (highlight: PlayerHighlight): string =>
+  `${highlight.eventId} ${highlight.videoId}`
 
 const TABS: Array<{ id: PlayerTab; label: string }> = [
   { id: 'videos', label: lstrings.player_videos },
@@ -340,12 +356,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   // A profile the viewer may not see, or that is gone: the server answers
   // 404 for both, so that it never says which.
   const [denied, setDenied] = useState(false)
-  const [highlights, setHighlights] = useState<PlayerHighlight[]>([])
-  const [nextBefore, setNextBefore] = useState<string | undefined>(undefined)
   const [withoutVideo, setWithoutVideo] = useState(0)
-  const [loadingVideos, setLoadingVideos] = useState(true)
-  /** The page being asked for. Undefined is the first one. */
-  const [before, setBefore] = useState<string | undefined>(undefined)
   const [stats, setStats] = useState<PlayerStats | undefined>(undefined)
   // Each tab keeps a filter of its own, starting from what the address or
   // the tap asked for, else the team the page was opened for, else a career.
@@ -361,6 +372,55 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     undefined
   )
   const [loadingStats, setLoadingStats] = useState(true)
+
+  // Their highlights, a page at a time: every play they are credited on in
+  // the games the Videos filter is on. Held here, so that they outlast a turn
+  // on another tab; a new filter or player is a new list.
+  const highlightsKey = JSON.stringify([userId, videoFilter])
+  const showingHighlights = useRef(highlightsKey)
+  showingHighlights.current = highlightsKey
+  const highlights = usePagedList<PlayerHighlight>({
+    listKey: highlightsKey,
+    keyOf: highlightKey,
+    read: async cursor => {
+      const page = await client.playerHighlights(userId, {
+        before: cursor ?? undefined,
+        ...videoFilter
+      })
+      // Added up across pages, since a page of nothing but plays with no
+      // video is still why the list is empty.
+      if (showingHighlights.current === highlightsKey)
+        setWithoutVideo(held => (cursor == null ? 0 : held) + page.withoutVideo)
+      return {
+        items: page.highlights,
+        nextCursor: page.nextBefore ?? null,
+        prevCursor: null,
+        anchorId: null,
+        counts: null
+      }
+    }
+  })
+  const openMoment = useRef(onOpenMoment)
+  openMoment.current = onOpenMoment
+  const openHighlight = useCallback((highlight: PlayerHighlight) => {
+    openMoment.current?.(
+      highlight.gameId,
+      highlight.videoId,
+      highlight.startOffsetSec,
+      highlight.outcome,
+      highlight.endOffsetSec
+    )
+  }, [])
+  const renderHighlight = useCallback(
+    (highlight: PlayerHighlight) => (
+      <HighlightRow highlight={highlight} onOpen={openHighlight} />
+    ),
+    [openHighlight]
+  )
+  const { loadMore } = highlights
+  const readMoreHighlights = useCallback(() => {
+    loadMore().catch(() => undefined)
+  }, [loadMore])
 
   // The name slides up into the header as the card goes under it, the way a
   // team's does. Until the request lands, the name the tapped row showed is
@@ -415,10 +475,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     if (showing.current === userId) return
     showing.current = userId
     setPlayer(undefined)
-    setHighlights([])
-    setNextBefore(undefined)
     setWithoutVideo(0)
-    setBefore(undefined)
     setStats(undefined)
     setError(undefined)
     setDenied(false)
@@ -469,36 +526,6 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     }
   }, [client, userId, forTeam, reveals])
 
-  // Their highlights, a page at a time: every play they are credited on in
-  // the games the Videos filter is on. A new filter starts again from the
-  // first page, which `before` is set back to alongside it.
-  useEffect(() => {
-    let cancelled = false
-    setLoadingVideos(true)
-    client
-      .playerHighlights(userId, { before, ...videoFilter })
-      .then(page => {
-        if (cancelled) return
-        // Appended rather than replaced: `Show more` is another page of the
-        // same list, not a new one.
-        setHighlights(held =>
-          before == null ? page.highlights : [...held, ...page.highlights]
-        )
-        setNextBefore(page.nextBefore ?? undefined)
-        setWithoutVideo(held => (before == null ? 0 : held) + page.withoutVideo)
-      })
-      .catch(() => {
-        // The hero card and the stats are still worth showing without them.
-        if (!cancelled) setNextBefore(undefined)
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingVideos(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [client, userId, before, videoFilter])
-
   // Their figures, for whichever games the filter is on. Asked for again when
   // the filter changes rather than added up here: the arithmetic has one home,
   // and it is the one that was measured against published box scores.
@@ -524,7 +551,6 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const handedness = player == null ? undefined : battingLine(player)
   const applyVideoFilter = (next: StatFilter): void => {
     setVideoFilter(next)
-    setBefore(undefined)
     onVideoFilter?.(next)
   }
 
@@ -561,7 +587,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     )
 
   return (
-    <Screen {...pinned.screen}>
+    <Screen {...pinned.screen} pagedList>
       <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
           <View style={styles.identityTop}>
@@ -656,59 +682,44 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                   }}
                 />
               </View>
-              {loadingVideos && highlights.length === 0 && (
-                <Card>
-                  <Text style={styles.muted}>{lstrings.player_loading}</Text>
-                </Card>
-              )}
-              {!loadingVideos && highlights.length === 0 && (
-                <Card>
-                  <Text style={styles.muted}>
-                    {withoutVideo > 0
-                      ? lstrings.player_videos_none_recorded
-                      : isNarrowed(videoFilter)
-                        ? lstrings.player_videos_filter_empty
-                        : lstrings.player_videos_empty}
-                  </Text>
-                  {isNarrowed(videoFilter) && (
-                    <Button
-                      label={lstrings.player_filter_clear}
-                      kind="secondary"
-                      onPress={() => {
-                        applyVideoFilter({})
-                      }}
-                    />
-                  )}
-                </Card>
-              )}
-              {highlights.map(highlight => (
-                <Card key={`${highlight.eventId} ${highlight.videoId}`}>
-                  <GameRow
-                    first={highlight.teamName ?? ''}
-                    second={highlight.outcome}
-                    detail={exactDateTime(highlight.playAt)}
-                    posterUrl={highlight.stillUrl}
-                    onPress={() => {
-                      onOpenMoment?.(
-                        highlight.gameId,
-                        highlight.videoId,
-                        highlight.startOffsetSec,
-                        highlight.outcome,
-                        highlight.endOffsetSec
-                      )
-                    }}
-                  />
-                </Card>
-              ))}
-              {nextBefore != null && (
-                <Button
-                  label={lstrings.player_show_more}
-                  kind="secondary"
-                  onPress={() => {
-                    setBefore(nextBefore)
-                  }}
-                />
-              )}
+              <PagedList
+                data={highlights.rows}
+                keyOf={highlightKey}
+                renderItem={renderHighlight}
+                estimatedItemSize={HIGHLIGHT_ROW_HEIGHT}
+                empty={
+                  highlights.loading ? (
+                    <Card>
+                      <Text style={styles.muted}>
+                        {lstrings.player_loading}
+                      </Text>
+                    </Card>
+                  ) : highlights.failed ? null : (
+                    // A first page that could not be read lands here too:
+                    // the hero card and the stats are still worth showing.
+                    <Card>
+                      <Text style={styles.muted}>
+                        {withoutVideo > 0
+                          ? lstrings.player_videos_none_recorded
+                          : isNarrowed(videoFilter)
+                            ? lstrings.player_videos_filter_empty
+                            : lstrings.player_videos_empty}
+                      </Text>
+                      {isNarrowed(videoFilter) && (
+                        <Button
+                          label={lstrings.player_filter_clear}
+                          kind="secondary"
+                          onPress={() => {
+                            applyVideoFilter({})
+                          }}
+                        />
+                      )}
+                    </Card>
+                  )
+                }
+                footer={<PagedListEnd list={highlights} />}
+                onEndReached={readMoreHighlights}
+              />
             </View>
           )}
 
@@ -1013,6 +1024,33 @@ function filterName(
         : lstrings.player_filter_career
 }
 
+/** One play they are credited on, which opens the game's video at it. */
+const HighlightRow = memo(function HighlightRow(props: {
+  highlight: PlayerHighlight
+  onOpen: (highlight: PlayerHighlight) => void
+}): React.ReactElement {
+  const { highlight, onOpen } = props
+  const styles = getStyles(useTheme())
+  return (
+    <View
+      style={styles.highlightRow}
+      testID={`player-highlight-${highlight.eventId}`}
+    >
+      <Card>
+        <GameRow
+          first={highlight.teamName ?? ''}
+          second={highlight.outcome}
+          detail={exactDateTime(highlight.playAt)}
+          posterUrl={highlight.stillUrl}
+          onPress={() => {
+            onOpen(highlight)
+          }}
+        />
+      </Card>
+    </View>
+  )
+})
+
 const getStyles = cacheStyles((theme: Theme) => ({
   pillRow: {
     flexDirection: 'row',
@@ -1051,6 +1089,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   section: {
     gap: theme.rem(theme.spaceMdRem)
+  },
+  highlightRow: {
+    paddingBottom: theme.rem(theme.spaceMdRem)
   },
   identity: {
     gap: theme.rem(theme.spaceMdRem)

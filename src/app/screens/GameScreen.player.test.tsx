@@ -12,7 +12,9 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { wallTimelineOf } from '../../test/overlayFixtures'
+import { listProps } from '../../test/PagedListStandIn'
 import { SceneShownProvider } from '../components/sceneShown'
+import { type PaneFrame, PaneFrameProvider } from '../components/useBreakpoint'
 import { lstrings } from '../locales/strings'
 import type { AnglesChange } from '../navigation/gameAngles'
 import { HAVE_METADATA } from '../player/videoHandle'
@@ -86,6 +88,10 @@ async function page(
   options: {
     nonMember?: boolean
     highlight?: boolean
+    /** Plays to list, by title, in place of the one `highlight` gives. */
+    highlights?: string[]
+    /** The pane the page is drawn in, changed between draws. */
+    frame?: PaneFrame
     timeline?: Array<[number, number]>
     /** Each video's own wall timeline, by id. */
     timelines?: Record<string, Array<[number, number]>>
@@ -104,23 +110,21 @@ async function page(
     asHighlightsResponse({
       withheld: null,
       droppedCount: 0,
-      highlights:
-        options.highlight === true
-          ? [
-              {
-                eventId: 'e1',
-                atBatIndex: 1,
-                title: 'Selected single',
-                startOffsetSec: 120,
-                playOffsetSec: 123,
-                endOffsetSec: 128,
-                eventType: 'single',
-                isScoringPlay: true,
-                stillUrl: '',
-                description: 'The batter reaches first.'
-              }
-            ]
-          : []
+      highlights: (
+        options.highlights ??
+        (options.highlight === true ? ['Selected single'] : [])
+      ).map((title, index) => ({
+        eventId: `e${index + 1}`,
+        atBatIndex: index + 1,
+        title,
+        startOffsetSec: 120 * (index + 1),
+        playOffsetSec: 120 * (index + 1) + 3,
+        endOffsetSec: 120 * (index + 1) + 8,
+        eventType: 'single',
+        isScoringPlay: true,
+        stillUrl: '',
+        description: 'The batter reaches first.'
+      }))
     })
   client.teams = async () => []
   client.gameScheduling = async () => {
@@ -143,15 +147,19 @@ async function page(
         <ThemeProvider>
           <GestureHandlerRootView>
             <SceneShownProvider value={sceneShown}>
-              <GameScreen
-                client={client}
-                gameId="g1"
-                initialTab="watch"
-                onAngles={next => {
-                  changes.push(next)
-                }}
-                {...current}
-              />
+              <PaneFrameProvider
+                frame={options.frame == null ? null : { ...options.frame }}
+              >
+                <GameScreen
+                  client={client}
+                  gameId="g1"
+                  initialTab="watch"
+                  onAngles={next => {
+                    changes.push(next)
+                  }}
+                  {...current}
+                />
+              </PaneFrameProvider>
             </SceneShownProvider>
           </GestureHandlerRootView>
         </ThemeProvider>
@@ -823,6 +831,110 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     await page([videoOf('v1', START)], {}, { nonMember: true })
     expect(document.querySelector('[data-testid="gameVideoOpen"]')).equals(null)
     expect(document.querySelector('video')).equals(null)
+  })
+})
+
+describe('a game’s highlights (U26)', function () {
+  this.timeout(15_000)
+
+  const TITLES = ['First single', 'Second single', 'Third single']
+  const row = (title: string): HTMLElement =>
+    document.querySelector<HTMLElement>(
+      `[aria-label="Play highlight: ${title}"]`
+    )!
+  const titles = (): string[] =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[aria-label^="Play highlight: "]'
+      )
+    ].map(node => node.getAttribute('aria-label')!)
+  const paneOf = (width: number): PaneFrame => ({
+    x: 0,
+    y: 0,
+    width,
+    height: 800
+  })
+
+  for (const [layout, width, columns] of [
+    ['the page', 800, 2],
+    ['the side-by-side pane', 1280, 1]
+  ] as const)
+    it(`marks the chosen row and seeks to it in ${layout}`, async function () {
+      await page(
+        [videoOf('v1', START)],
+        {},
+        { highlights: TITLES, frame: paneOf(width) }
+      )
+      expect(listProps().numColumns).equals(columns)
+      const video = inline()
+      drive(video, 0)
+      const unmarked = row('First single').className
+      await act(async () => {
+        row('Second single').click()
+      })
+      expect(listProps().extraData).equals('e2')
+      expect(row('Second single').className).not.equals(unmarked)
+      expect(row('First single').className).equals(unmarked)
+      expect(video.currentTime).equals(240)
+      await act(async () => {
+        row('Third single').click()
+      })
+      expect(listProps().extraData).equals('e3')
+      expect(row('Second single').className).equals(unmarked)
+      expect(row('Third single').className).not.equals(unmarked)
+      expect(video.currentTime).equals(360)
+    })
+
+  it('follows its width, and every row comes along to another layout', async function () {
+    const frame = paneOf(390)
+    const view = await page(
+      [videoOf('v1', START)],
+      {},
+      { highlights: TITLES, frame }
+    )
+    expect(listProps().numColumns).equals(1)
+    frame.width = 800
+    await view.rerender({})
+    expect(listProps().numColumns).equals(2)
+    frame.width = 1280
+    await view.rerender({})
+    expect(listProps().numColumns).equals(1)
+    expect(titles()).length(3)
+  })
+
+  it('plays from a row drawn before the stream had answered', async function () {
+    let answer: () => void = () => undefined
+    await page(
+      [videoOf('v1', START)],
+      {},
+      {
+        highlights: TITLES,
+        playback: async videoId => {
+          await new Promise<void>(resolve => {
+            answer = resolve
+          })
+          return playable(videoId)
+        }
+      }
+    )
+    expect(titles()).length(3)
+    await act(async () => {
+      answer()
+      await new Promise(resolve => setTimeout(resolve, 30))
+    })
+    const video = inline()
+    const { played } = drive(video, 0)
+    await act(async () => {
+      row('First single').click()
+    })
+    expect(played()).greaterThan(0)
+    expect(video.muted).equals(false)
+  })
+
+  it('says why in place of a list with nothing to draw', async function () {
+    await page([videoOf('v1', START)])
+    expect(titles()).length(0)
+    expect(document.body.textContent).includes(lstrings.highlights_none)
   })
 })
 
