@@ -1148,7 +1148,12 @@ function ConversationRow(props: {
     pointer: false,
     nativeStart: undefined as ReturnType<typeof pressStamp>
   })
-  const title = conversationTitle(chat)
+  const title =
+    chat.scope?.type === 'season' &&
+    chat.avatarName != null &&
+    chat.avatarName !== ''
+      ? chat.avatarName
+      : conversationTitle(chat)
   const pill = conversationPill(chat)
   const unread = chat.unread > 0 || chat.preferences?.manualUnread === true
   const preview = chat.locked
@@ -1199,7 +1204,11 @@ function ConversationRow(props: {
         style={styles.openRow}
         accessibilityRole="button"
         // The row is one button to screen readers: name what it shows.
-        accessibilityLabel={[chat.title, preview, unreadLabel]
+        accessibilityLabel={[
+          chat.scope?.type === 'season' ? title : chat.title,
+          preview,
+          unreadLabel
+        ]
           .filter(part => part != null && part !== '')
           .join(', ')}
         accessibilityHint={pill}

@@ -135,9 +135,10 @@ export interface TeamScreenProps {
   /** This team's chats the person is in, each opening from the page. */
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
+  onLoadChatPreview?: (ids: string[]) => void
 }
 
-type TabId = 'videos' | 'schedule' | 'team' | 'stats'
+type TabId = 'videos' | 'schedule' | 'team' | 'stats' | 'chats'
 
 /**
  * The section a `?tab=` names, or the one this screen opens on.
@@ -155,7 +156,8 @@ const TABS = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'schedule' as const, label: 'Schedule' },
   { id: 'team' as const, label: 'Team' },
-  { id: 'stats' as const, label: 'Stats' }
+  { id: 'stats' as const, label: 'Stats' },
+  { id: 'chats' as const, label: 'Chats' }
 ]
 
 /**
@@ -424,10 +426,6 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         </Card>
       </CardBand>
 
-      {props.chats != null && props.onOpenChat != null && (
-        <ChatLinks chats={props.chats} onOpen={props.onOpenChat} />
-      )}
-
       <PillBand part={pinned.pillBand}>
         <PillTabs
           tabs={TABS}
@@ -445,7 +443,14 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {error != null && <Text style={styles.error}>{error}</Text>}
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
-      {publicDetail != null && (
+      {tab === 'chats' && (
+        <ChatLinks
+          chats={props.chats ?? []}
+          onOpen={props.onOpenChat}
+          onLoadPreview={props.onLoadChatPreview}
+        />
+      )}
+      {publicDetail != null && tab !== 'chats' && (
         <PublicTeamContent
           membershipAccess={membershipAccess}
           detail={publicDetail}

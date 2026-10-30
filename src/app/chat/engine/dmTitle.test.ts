@@ -20,6 +20,7 @@ import {
   newMessageId
 } from '../../../common/chatCrypto/messageIds'
 import { sealMessage } from '../../../common/chatCrypto/seal'
+import { HttpError } from '../../../common/errors'
 import { userIdOfGumbo, userIdOfValue } from '../../../common/userId'
 import { lstrings } from '../../locales/strings'
 import { b64, type ChatKeyStore, newRecord, withEpochKey } from '../keyRecord'
@@ -330,6 +331,8 @@ describe('public chat engine list summaries', () => {
   })
 
   function previewFixture(invalid = false): {
+    api: TeamStationClient
+    store: ChatKeyStore
     chat: ChatEngine
     latest: ChatMessage
     expected: string
@@ -508,6 +511,8 @@ describe('public chat engine list summaries', () => {
       throw new Error('Preview must not fetch attachment bytes')
     }
     return {
+      api,
+      store,
       chat: engine(api, store),
       latest,
       expected,
@@ -523,9 +528,119 @@ describe('public chat engine list summaries', () => {
       await f.chat.loadPreview(conversationId)
       const [item] = f.chat.conversations()
       expect(item.preview).equals(f.expected)
+      expect(item.previewReadable).equals(true)
       expect(item.lastPostId).equals(f.latest.id)
       expect(item.lastPostSeq).equals(2)
       expect(item.lastSeq).equals(4)
+      expect(f.readCalls()).equals(0)
+    } finally {
+      f.chat.stop()
+      await f.chat.idle()
+    }
+  })
+
+  it('restores linked preview keys without enrolling and refuses missing local keys', async () => {
+    const f = previewFixture()
+    try {
+      expect(await f.chat.start(true)).equals('ready')
+      await f.chat.loadPreview(conversationId, false)
+      expect(f.chat.conversations()[0].previewReadable).equals(true)
+      const missing = engine(client())
+      try {
+        await missing.start(true)
+        expect.fail('Missing keys must not enroll')
+      } catch (error) {
+        expect(String(error)).contains(
+          'Existing linked chat keys are unavailable'
+        )
+      } finally {
+        missing.stop()
+      }
+    } finally {
+      f.chat.stop()
+      await f.chat.idle()
+    }
+  })
+
+  for (const reason of ['deviceRevoked', 'unknownDevice']) {
+    it(`does not replace a ${reason} device while starting previews`, async () => {
+      const f = previewFixture()
+      const original = await f.store.load()
+      const mine = await f.api.myChatKeys()
+      f.api.myChatKeys = async () => ({ ...mine, deviceId: null })
+      f.api.chatResumeChallenge = async () => {
+        throw new HttpError('forbidden', reason, { reason })
+      }
+      let registrations = 0
+      f.api.registerChatDevice = async () => {
+        registrations++
+        throw new Error('Must not register')
+      }
+      try {
+        await f.chat.start(true)
+        expect.fail('Revoked keys must not start')
+      } catch (error) {
+        expect(error).instanceOf(HttpError)
+        expect(registrations).equals(0)
+        expect(await f.store.load()).equals(original)
+        expect(f.chat.status).equals('idle')
+      } finally {
+        f.chat.stop()
+      }
+    })
+  }
+
+  for (const state of ['missing', 'replaced', 'unlinked']) {
+    it(`does not enroll a ${state} server identity while starting previews`, async () => {
+      const f = previewFixture()
+      const original = await f.store.load()
+      const mine = await f.api.myChatKeys()
+      f.api.myChatKeys = async () => ({
+        ...mine,
+        identity:
+          state === 'missing'
+            ? null
+            : state === 'replaced'
+              ? { ...mine.identity!, id: newIdentityId() }
+              : mine.identity,
+        linked: state !== 'unlinked'
+      })
+      let enrollments = 0
+      f.api.enrolChat = async () => {
+        enrollments++
+        throw new Error('Must not enroll')
+      }
+      try {
+        await f.chat.start(true)
+        expect.fail('Unavailable identity must not start')
+      } catch (error) {
+        expect(String(error)).contains('Existing chat identity is unavailable')
+        expect(enrollments).equals(0)
+        expect(await f.store.load()).equals(original)
+        expect(f.chat.status).equals('idle')
+      } finally {
+        f.chat.stop()
+      }
+    })
+  }
+
+  it('keeps failed automatic preview demands quiet across list refreshes', async () => {
+    const f = previewFixture()
+    let attempts = 0
+    f.api.chatMessages = async () => {
+      attempts++
+      throw new Error('offline')
+    }
+    try {
+      await f.chat.start()
+      await f.chat.loadPreview(conversationId, false).catch(() => undefined)
+      const failedAttempts = attempts
+      expect(failedAttempts).greaterThan(0)
+      await f.chat.refresh()
+      await f.chat.loadPreview(conversationId, false)
+      await f.chat.loadPreview(conversationId, false)
+      expect(attempts).equals(failedAttempts)
+      expect(f.chat.conversations()[0].previewReadable).equals(false)
       expect(f.readCalls()).equals(0)
     } finally {
       f.chat.stop()
@@ -542,6 +657,7 @@ describe('public chat engine list summaries', () => {
         lstrings.chat_invalid_message
       )
       expect(f.chat.conversations()[0].preview).not.equals(f.expected)
+      expect(f.chat.conversations()[0].previewReadable).equals(false)
       expect(f.readCalls()).equals(0)
     } finally {
       f.chat.stop()

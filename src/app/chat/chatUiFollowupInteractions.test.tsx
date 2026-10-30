@@ -435,6 +435,11 @@ describe('chat UI follow-up conversation menu', function () {
 })
 
 describe('chat UI follow-up conversation hold', function () {
+  afterEach(async function () {
+    // Suite cleanup runs before the shared root hooks, which await real timers.
+    await resetTimeouts()
+  })
+
   async function mount(onOpen: () => void = () => {}): Promise<HTMLElement> {
     const list = [sample()]
     await render(

@@ -5220,10 +5220,10 @@ export class TeamStationClient {
   }
 
   /** The people the caller may start a DM with, matching `query`. */
-  async dmCandidates(query = ''): Promise<ChatPerson[]> {
+  async dmCandidates(query = '', userId?: string): Promise<ChatPerson[]> {
     return await this.request(
       'GET',
-      `/chat/dm-candidates?q=${encodeURIComponent(query)}`,
+      `/chat/dm-candidates?q=${encodeURIComponent(query)}${userId == null ? '' : `&userId=${encodeURIComponent(userId)}`}`,
       asArray(asChatPerson)
     )
   }

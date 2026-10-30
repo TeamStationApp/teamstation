@@ -144,6 +144,7 @@ export function popRoute(): void {
 
 /** Where a step back taken by `stepBackTo` is to land, until it has. */
 let landing: Route | null = null
+let replaceChatChild = false
 
 /**
  * Drops a straight-line history suffix of `frames` when what remains is the
@@ -179,11 +180,23 @@ export function dropRouteSuffix(
  * Back to walk into. The shell has already drawn `route`; the pop that
  * follows is not handed back to it.
  */
-export function stepBackTo(route: Route): void {
+export function stepBackTo(route: Route, origin?: number): void {
   if (typeof window === 'undefined') return
   initializeHistory()
   landing = route
-  window.history.back()
+  window.history.go(origin == null ? -1 : origin - position)
+}
+
+/** Replace a workspace and its completed New message child with one chat. */
+export function finishChatChild(route: Route, origin: number): void {
+  initializeHistory()
+  if (origin === position) {
+    showRoute(route)
+    return
+  }
+  landing = route
+  replaceChatChild = true
+  window.history.go(origin - position)
 }
 
 /**
@@ -210,7 +223,8 @@ export function backFromScoringPlayer(origin?: number): boolean {
 /** Calls back when the reader presses Back or Forward. */
 export function useBrowserBack(
   onRoute: (route: Route) => void,
-  beforeLeave?: () => Promise<boolean>
+  beforeLeave?: () => Promise<boolean>,
+  _beforeNewHistory?: (position: number) => void
 ): void {
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -222,6 +236,13 @@ export function useBrowserBack(
         const route = landing
         landing = null
         position = indexOfHistory() ?? position - 1
+        if (replaceChatChild) {
+          replaceChatChild = false
+          // Push over the origin to discard both old workspace and form,
+          // including the browser's Forward entry for the completed form.
+          showRoute(route)
+          return
+        }
         const path = routePath(route)
         noteTrail(path)
         trail.length = position + 1

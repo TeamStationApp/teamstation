@@ -80,6 +80,8 @@ const delay = async (ms: number): Promise<void> => {
 }
 
 const text = (): string => document.body.textContent ?? ''
+const locationPath = (): string =>
+  window.location.pathname + window.location.search
 
 async function render(element: React.ReactElement): Promise<void> {
   const host = document.createElement('div')
@@ -1612,6 +1614,467 @@ describe('chat devices in the app', function () {
     })
   })
 
+  for (const [width, player] of [
+    [1200, false],
+    [390, false],
+    [390, true]
+  ] as const) {
+    it(`person Message returns directly to its ${player ? 'player' : 'person'} profile at width ${width}`, async function () {
+      const viewport = await windowSize(width)
+      const recipient = userIdOfGumbo(203)
+      const dm = summary({
+        id: 'cnv_profile',
+        kind: 'dm',
+        title: 'Mike T',
+        scope: null,
+        scopeName: null
+      })
+      const route = player
+        ? ({ name: 'player', userId: recipient } as const)
+        : ({
+            name: 'person',
+            kind: 'team',
+            id: 'tem_demo',
+            userId: recipient
+          } as const)
+      let creates = 0
+      fakeApi(new FakeKeys(), (method, path, body) => {
+        if (path === `/players/${recipient}`)
+          return {
+            userId: recipient,
+            name: 'Mike Trout',
+            bats: null,
+            throws: null,
+            teams: []
+          }
+        if (path === `/players/${recipient}/highlights`)
+          return { highlights: [], nextBefore: null, withoutVideo: 0 }
+        if (path === `/teams/tem_demo/people/${recipient}`)
+          return {
+            context: { kind: 'team', id: 'tem_demo', name: 'Demo Team' },
+            person: {
+              userId: recipient,
+              gumboId: 203,
+              shortName: 'Mike T',
+              fullName: 'Mike Trout',
+              avatarUrl: null,
+              canHoldRoles: true
+            },
+            guardianOf: [],
+            sections: [],
+            viewer: { manages: true, admin: false }
+          }
+        if (path === '/chat/dm-candidates')
+          return [{ userId: recipient, shortName: 'Mike T', avatarUrl: null }]
+        if (path === '/chat/dms' && method === 'POST') {
+          expect(body).deep.equals({ userIds: [recipient] })
+          creates++
+          return dm
+        }
+        return chats(creates === 0 ? [] : [dm])(method, path, body)
+      })
+      try {
+        showRoute(route, true)
+        await render(<App />)
+        await until(
+          'profile Message',
+          () => document.querySelector('[data-testid="person-message"]') != null
+        )
+        await press('Message')
+        await until('direct conversation', () =>
+          text().includes('No messages yet')
+        )
+        expect(currentRoute()).deep.equals({
+          name: 'conversation',
+          conversationId: dm.id
+        })
+        expect(creates).equals(1)
+        await press('Back')
+        await until(
+          'original profile',
+          () => currentRoute().name === route.name
+        )
+        expect(currentRoute()).deep.equals(route)
+        expect(text()).contains('Mike Trout')
+      } finally {
+        await act(async () => root?.unmount())
+        root = undefined
+        await viewport.restore()
+      }
+    })
+  }
+
+  for (const [width, retained, nested] of [
+    [1200, false, false],
+    [390, false, false],
+    [1200, true, false],
+    [1200, false, true]
+  ] as const) {
+    it(`entity chat workspace returns to its Search origin at width ${width}${retained ? ' with another retained workspace' : ''}${nested ? ' through a nested season workspace' : ''}`, async function () {
+      const wide = await windowSize(width)
+      const group = {
+        kind: 'league',
+        id: 'league_demo',
+        name: 'Demo League',
+        imageUrl: null,
+        locality: null
+      }
+      const first = summary({
+        id: 'cnv_first',
+        kind: 'leagueOrg',
+        title: 'Demo Org',
+        scope: { type: 'league', id: group.id },
+        scopeName: group.name
+      })
+      const second = summary({
+        id: 'cnv_second',
+        title: 'Other Members',
+        kind: 'seasonStaff',
+        scope: { type: 'season', id: 'season_demo' },
+        scopeName: 'Demo Season'
+      })
+      const dm = summary({
+        id: 'cnv_dm',
+        kind: 'dm',
+        title: 'Pat P',
+        scope: null,
+        scopeName: null
+      })
+      let pendingDm: Promise<unknown> | undefined
+      fakeApi(new FakeKeys(), (method, path, body) => {
+        if (nested && path === '/me/notifications')
+          return {
+            items: [
+              {
+                id: 'n_demo',
+                requestId: 'n_demo',
+                type: 'schedulePublished',
+                title: 'Demo schedule',
+                description: '',
+                sentAt: '2026-01-01T00:00:00Z',
+                expiresAt: '2027-01-01T00:00:00Z',
+                status: 'pending',
+                canAct: false,
+                canWithdraw: false,
+                canResend: false,
+                viewed: false,
+                seasonId: 'season_demo'
+              }
+            ],
+            hasPending: true,
+            nextCursor: null
+          }
+        if (path === '/leagues') return [group]
+        if (path === '/leagues/league_demo' || path === '/seasons/season_demo')
+          return {
+            group:
+              path === '/seasons/season_demo'
+                ? {
+                    ...group,
+                    kind: 'season',
+                    id: 'season_demo',
+                    name: 'Demo Season'
+                  }
+                : group,
+            parents: [],
+            children: [],
+            participatingSeasons: [],
+            competingTeams: [],
+            games: [],
+            staff: [],
+            canViewPrivate: false,
+            canManage: false,
+            canSeePeople: true,
+            nonMemberView: true
+          }
+        if (path === '/chat/dms' && method === 'POST') return pendingDm ?? dm
+        return chats([first, second, dm])(method, path, body)
+      })
+      const click = async (selector: string): Promise<void> => {
+        await until(selector, () => document.querySelector(selector) != null)
+        await act(async () => {
+          document.querySelector<HTMLElement>(selector)!.click()
+        })
+        await settle()
+      }
+      const source = '/groups/league/league_demo?tab=chats'
+      try {
+        showRoute(
+          retained
+            ? { name: 'group', kind: 'league', id: group.id, tab: 'chats' }
+            : { name: 'discover', kind: 'league' },
+          true
+        )
+        await render(<App />)
+        if (retained) {
+          await click('[data-testid="entity-chat-cnv_first"]')
+          await click('[role="tab"][aria-label="Search"]')
+        }
+        await press('Leagues')
+        await until('league result', () => button('Open Demo League') != null)
+        await press('Open Demo League')
+        await click('[role="tab"][aria-label="Chats"]')
+        const selected = document.querySelector(
+          '[role="tab"][aria-label="Search"]'
+        )!.innerHTML
+        const open = async (): Promise<void> => {
+          await click('[data-testid="entity-chat-cnv_first"]')
+          await until('conversation', () => text().includes('No messages yet'))
+          expect(
+            document.querySelector('[role="tab"][aria-label="Search"]')!
+              .innerHTML
+          ).equals(selected)
+        }
+        const origin = async (): Promise<void> => {
+          await until('source address', () => locationPath() === source)
+          await until(
+            'source rows',
+            () =>
+              document.querySelector('[data-testid="entity-chat-cnv_first"]') !=
+              null
+          )
+        }
+        await open()
+        if (nested) {
+          await press('Notifications')
+          await until('season notice', () => button('Demo schedule') != null)
+          await press('Demo schedule')
+          await click('[role="tab"][aria-label="Chats"]')
+          await click('[data-testid="entity-chat-cnv_second"]')
+          await until('nested chat', () => text().includes('No messages yet'))
+          await press('New message')
+          await until(
+            'nested DM candidates',
+            () => button('Pick Pat P') != null
+          )
+          await press('Pick Pat P')
+          await press('Start conversation')
+          await until('nested DM', () => locationPath() === '/chat/cnv_dm')
+          await settle()
+          await press('Back')
+          const seasonSource = '/groups/season/season_demo?tab=chats'
+          await until('nearest origin', () => locationPath() === seasonSource)
+          expect(
+            document.querySelector('[data-testid="entity-chat-cnv_second"]')
+          ).not.equals(null)
+          await act(async () => {
+            window.history.forward()
+          })
+          await until(
+            'nested DM Forward',
+            () => locationPath() === '/chat/cnv_dm'
+          )
+          await press('Back')
+          await until(
+            'nearest origin again',
+            () => locationPath() === seasonSource
+          )
+          expect(
+            document.querySelector('[role="tab"][aria-label="Search"]')!
+              .innerHTML
+          ).equals(selected)
+          return
+        }
+        if (retained) {
+          for (const owner of ['Home', 'Search', 'Home']) {
+            await click(`[role="tab"][aria-label="${owner}"]`)
+            await press('New message')
+            await until(
+              'retained-tab DM candidates',
+              () => button('Pick Pat P') != null
+            )
+            await press('Pick Pat P')
+            await press('Start conversation')
+            await until(
+              'retained-tab DM address',
+              () => window.location.pathname === '/chat/cnv_dm'
+            )
+            await settle()
+          }
+          await click('[role="tab"][aria-label="Search"]')
+          await press('Back')
+          await origin()
+          const sourcePosition = window.history.state.tsRouteIndex
+          await act(async () => {
+            window.history.back()
+          })
+          await until(
+            'previous tab entry',
+            () => window.history.state.tsRouteIndex !== sourcePosition
+          )
+          await act(async () => {
+            window.history.forward()
+          })
+          await until(
+            'forward source entry',
+            () => window.history.state.tsRouteIndex === sourcePosition
+          )
+          await settle()
+          await origin()
+          expect(
+            document.querySelector('[role="tab"][aria-label="Search"]')!
+              .innerHTML
+          ).equals(selected)
+          await press('Back')
+          await until(
+            'retained Search root',
+            () => currentRoute().name === 'discover'
+          )
+          return
+        }
+        await click('[role="tab"][aria-label="Home"]')
+        await click('[role="tab"][aria-label="Search"]')
+        await press('Back')
+        await origin()
+        await act(async () => {
+          window.history.back()
+        })
+        await until('previous address', () => locationPath() !== source)
+        await act(async () => {
+          window.history.forward()
+        })
+        await origin()
+        expect(
+          document.querySelector('[role="tab"][aria-label="Search"]')!.innerHTML
+        ).equals(selected)
+        await act(async () => {
+          window.history.forward()
+        })
+        await until(
+          'forward conversation',
+          () => currentRoute().name === 'conversation'
+        )
+        await until('forward content', () => text().includes('No messages yet'))
+        await act(async () => {
+          window.history.back()
+        })
+        await origin()
+        await open()
+        await press('Demo League, League Org')
+        await until('info', () => currentRoute().name === 'chatInfo')
+        await press('Back')
+        await until(
+          'workspace again',
+          () => currentRoute().name === 'conversation'
+        )
+        if (width >= 960) {
+          await press('Demo Season')
+          await until(
+            'second conversation',
+            () => window.location.pathname === '/chat/cnv_second'
+          )
+        }
+        await press('Back')
+        await origin()
+        // A new push after Back must not restore a stale Forward visit.
+        await open()
+        // New message lives in the wide sidebar; complete after narrowing too.
+        const expanded = await windowSize(1200)
+        try {
+          await press('New message')
+          await until('DM candidates', () => button('Pick Pat P') != null)
+          await click('[role="tab"][aria-label="Home"]')
+          await click('[role="tab"][aria-label="Search"]')
+          await until('retained DM form', () => button('Pick Pat P') != null)
+          const completionSize = await windowSize(width)
+          try {
+            if (width === 1200) {
+              let complete!: () => void
+              pendingDm = new Promise(resolve => {
+                complete = () => {
+                  resolve(dm)
+                }
+              })
+              await press('Pick Pat P')
+              await press('Start conversation')
+              await click('[role="tab"][aria-label="Home"]')
+              const awayPath = locationPath()
+              const awayIndex = window.history.state.tsRouteIndex
+              await act(async () => {
+                complete()
+              })
+              await settle(100)
+              expect(locationPath()).equals(awayPath)
+              expect(window.history.state.tsRouteIndex).equals(awayIndex)
+              pendingDm = undefined
+              await click('[role="tab"][aria-label="Search"]')
+              await until(
+                'returned DM form',
+                () => button('Pick Pat P') != null
+              )
+            }
+            await press('Pick Pat P')
+            await press('Start conversation')
+            await until(
+              'new DM',
+              () => window.location.pathname === '/chat/cnv_dm'
+            )
+            await settle()
+            await act(async () => {
+              window.history.back()
+            })
+            await origin()
+            await act(async () => {
+              window.history.forward()
+            })
+            await until(
+              'completed DM on Forward',
+              () => window.location.pathname === '/chat/cnv_dm'
+            )
+            await act(async () => {
+              window.history.forward()
+            })
+            await settle()
+            expect(window.location.pathname).equals('/chat/cnv_dm')
+            await press('Back')
+            await origin()
+          } finally {
+            await completionSize.restore()
+          }
+        } finally {
+          await expanded.restore()
+        }
+        await press('Back')
+        await until('Search root', () => currentRoute().name === 'discover')
+        if (width === 390) {
+          await press('Leagues')
+          await until(
+            'league result again',
+            () => button('Open Demo League') != null
+          )
+          await press('Open Demo League')
+          await click('[role="tab"][aria-label="Chats"]')
+          await open()
+          await press('Account, Blair B')
+          await until('account', () => text().includes('Sign out'))
+          await press('Sign out')
+          await until('signed out', () =>
+            text().includes('Sign in to TeamStation')
+          )
+          await act(async () => {
+            window.history.back()
+          })
+          await until(
+            'old conversation address',
+            () => currentRoute().name === 'conversation'
+          )
+          await settle()
+          // A prior session's visit must use the cold Chat route, never restore
+          // its private Search stack or its remembered entity page.
+          expect(
+            document.querySelector('[role="tab"][aria-label="Search"]')!
+              .innerHTML
+          ).not.equals(selected)
+          expect(
+            document.querySelector('[data-testid="chat-message-pane"]')
+          ).equals(null)
+        }
+      } finally {
+        await wide.restore()
+      }
+    })
+  }
+
   it('starts a DM at /chat/new, which takes the form’s place', async function () {
     const fake = new FakeKeys()
     const dm = summary({
@@ -1659,9 +2122,9 @@ describe('chat devices in the app', function () {
     expect(currentRoute()).deep.equals({ name: 'chat' })
   })
 
-  it('opens a league’s Org chat from its card on Home', async function () {
+  it('keeps league chats off Home and opens them from Chats', async function () {
     const fake = new FakeKeys()
-    fakeApi(
+    const asked = fakeApi(
       fake,
       chats([
         summary({
@@ -1675,8 +2138,17 @@ describe('chat devices in the app', function () {
     )
     showRoute({ name: 'home' }, true)
     await render(<App />)
-    await until('the league card', () => text().includes('LEAGUES'))
-    await press('QPLL, QPLL Org')
+    await until('chat summaries', () =>
+      asked.includes('GET /chat/conversations')
+    )
+    expect(text()).not.contains('QPLL Org')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[role="tab"][aria-label="Chat"]')!
+        .click()
+    })
+    await until('the chat list', () => text().includes('QPLL'))
+    await press('QPLL Org')
     await until('the chat', () => text().includes('No messages yet'))
     expect(currentRoute()).deep.equals({
       name: 'conversation',

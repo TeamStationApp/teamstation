@@ -234,7 +234,7 @@ describe('restored access-aware team presentation', () => {
     )
     expect(
       [...document.querySelectorAll('[role="tab"]')].map(n => n.textContent)
-    ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+    ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
     expect(document.body.textContent).includes(
       'No game has a video attached yet.'
     )
@@ -296,7 +296,7 @@ describe('restored access-aware team presentation', () => {
       )
       expect(
         [...document.querySelectorAll('[role="tab"]')].map(n => n.textContent)
-      ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+      ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
       // The members' roster, not the public page's staff list.
       expect(document.body.textContent).includes('Alfonso S')
       expect(document.body.textContent).not.includes('Standalone team')

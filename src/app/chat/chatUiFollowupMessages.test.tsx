@@ -595,6 +595,11 @@ describe('chat follow-up message overlay', function () {
 })
 
 describe('chat follow-up message hold', function () {
+  afterEach(async function () {
+    // Restore owned timers before shared root hooks await real-time cleanup.
+    await resetTimeouts()
+  })
+
   async function mount(generation = { current: 0 }): Promise<{
     target: HTMLElement
     opens: MessageView[]
@@ -1579,6 +1584,10 @@ function renderedScrollHandler(
 }
 
 describe('chat follow-up conversation message integration', function () {
+  afterEach(async function () {
+    await resetTimeouts()
+  })
+
   it('keeps the genuine scroll offset and measured-pane reading anchor when a scroll event carries stale viewport and content geometry', async function () {
     pointer(true)
     const engine = new FakeEngine()

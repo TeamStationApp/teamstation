@@ -6,6 +6,7 @@ import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
+import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Card,
   Emblem,
@@ -49,11 +50,14 @@ export interface LeaguePageProps {
   onOpenPerson?: (userId: string, name: string) => void
   /** Called after a relationship is broken, to load the page again. */
   onChanged: () => void
+  chats?: ChatLink[]
+  onOpenChat?: (chat: ChatLink) => void
+  onLoadChatPreview?: (ids: string[]) => void
   initialTab?: string
   onTab?: (tab: string, correcting?: boolean) => void
 }
 
-type TabId = 'seasons' | 'teams' | 'people'
+type TabId = 'seasons' | 'teams' | 'chats' | 'people'
 
 /**
  * A league: its seasons, its teams and its people, one tab each; the people
@@ -72,6 +76,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
   const tabs = [
     { id: 'seasons' as const, label: 'Seasons' },
     { id: 'teams' as const, label: 'Teams' },
+    { id: 'chats' as const, label: 'Chats' },
     // Its members and role holders read the league's people.
     ...(detail.canSeePeople === true
       ? [{ id: 'people' as const, label: 'People' }]
@@ -340,6 +345,13 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
             ))}
           </ActionList>
         </View>
+      )}
+      {tab === 'chats' && (
+        <ChatLinks
+          chats={props.chats ?? []}
+          onOpen={props.onOpenChat}
+          onLoadPreview={props.onLoadChatPreview}
+        />
       )}
       {tab === 'people' && detail.canSeePeople === true && (
         <LevelPeopleTab

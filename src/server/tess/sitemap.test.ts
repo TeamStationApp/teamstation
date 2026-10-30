@@ -194,7 +194,8 @@ describe('Tess sitemap', function () {
       ['Videos', '/teams/:teamId'],
       ['Schedule', '/teams/:teamId?tab=schedule'],
       ['Team', '/teams/:teamId?tab=team'],
-      ['Stats', '/teams/:teamId?tab=stats']
+      ['Stats', '/teams/:teamId?tab=stats'],
+      ['Chats', '/teams/:teamId?tab=chats']
     ])
   })
 
@@ -216,7 +217,8 @@ describe('Tess sitemap', function () {
       'stats',
       'videos',
       'teams',
-      'people'
+      'people',
+      'chats'
     ])
     expect(tabs.find(tab => tab.id === 'people')).deep.equals({
       param: 'tab',

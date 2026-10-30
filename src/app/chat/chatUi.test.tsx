@@ -418,6 +418,34 @@ const attachment = (over: Partial<AttachmentRef> = {}): AttachmentRef => ({
 })
 
 describe('the chat list', function () {
+  it('shows only the season name while retaining the audience label', async function () {
+    const engine = new FakeEngine()
+    engine.list = [
+      chat({
+        id: 'season',
+        kind: 'seasonStaff',
+        scope: { type: 'season', id: 'sea_spring' },
+        title: 'Demo League Spring Staff',
+        scopeName: 'Demo League Spring',
+        avatarName: 'Spring'
+      })
+    ]
+    const opened: string[] = []
+    await render(
+      <ChatListScreen
+        engine={engine}
+        onOpen={item => opened.push(item.id)}
+        onNewMessage={() => {}}
+      />
+    )
+    await until('the season row', () => button('Spring') != null)
+    expect(text()).contains('Spring')
+    expect(text()).contains('Season Staff')
+    expect(text()).not.contains('Demo League')
+    await press('Spring')
+    expect(opened).deep.equals(['season'])
+  })
+
   it('groups chats, counts unread, badges locked and closed, and opens one', async function () {
     const engine = new FakeEngine()
     engine.list = [
@@ -1950,8 +1978,8 @@ describe('members, approvals and safety numbers', function () {
   })
 })
 
-describe('chat links on a team or season page', function () {
-  it('opens each chat, and draws nothing without one', async function () {
+describe('entity chat links on a team or season page', function () {
+  it('opens each chat, and shows an empty section without one', async function () {
     const opened: string[] = []
     await render(
       <ChatLinks
@@ -1968,7 +1996,7 @@ describe('chat links on a team or season page', function () {
       root?.unmount()
     })
     await render(<ChatLinks chats={[]} onOpen={() => {}} />)
-    expect(text()).equals('')
+    expect(text()).contains('No chats available.')
   })
 })
 

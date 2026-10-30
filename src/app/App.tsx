@@ -42,6 +42,7 @@ import {
 } from './chat/chatWorkspaceModel'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { leaveChat } from './chat/engine/links'
+import { entityChats, entityPreviewLoader } from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
@@ -98,6 +99,7 @@ import {
   backFromScoringPlayer,
   currentRoute,
   dropRouteSuffix,
+  finishChatChild,
   popRoute,
   scoringOriginHistory,
   showRoute,
@@ -302,7 +304,12 @@ type Pushed =
   /** Starting a direct message. */
   | { name: 'chatNew' }
   /** One chat, and what it is called once known. */
-  | { name: 'conversation'; conversationId: string; title: string }
+  | {
+      name: 'conversation'
+      conversationId: string
+      title: string
+      originHistory?: number
+    }
   /** Information and member security, including compatible member links. */
   | { name: 'chatMembers'; conversationId: string }
   | { name: 'chatInfo'; conversationId: string }
@@ -925,7 +932,7 @@ function Shell(props: AppProps): React.ReactElement {
   /**
    * The chat engine, for as long as somebody is signed in. It hears the
    * socket's chat hints from the start, so they arrive on every screen; it
-   * touches no keys until a chat screen starts it.
+   * restores saved keys when a chat section requests readable previews.
    */
   const chatEngine = useMemo(
     () =>
@@ -941,6 +948,35 @@ function Shell(props: AppProps): React.ReactElement {
     [client, gameSocket, signedInAs]
   )
   const chatWorkspaceState = useMemo(newChatWorkspaceState, [chatEngine])
+  // Only in-app chat visits carry an owning tab; cold links keep their usual tab.
+  const chatHistory = useMemo(
+    () => new Map<number, { path: string; tab: NavTabId; frames: Pushed[] }>(),
+    // A new engine marks a new signed-in chat session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chatEngine]
+  )
+  const discardChatHistoryFrom = useCallback(
+    (position: number): void => {
+      for (const index of chatHistory.keys())
+        if (index >= position) chatHistory.delete(index)
+    },
+    [chatHistory]
+  )
+  const retainedChatOrigin = (
+    frame: Extract<Pushed, { name: 'conversation' }>,
+    frames: Pushed[]
+  ): number | undefined => {
+    const index = frame.originHistory
+    const saved = index == null ? undefined : chatHistory.get(index)
+    return index != null &&
+      index < scoringOriginHistory() &&
+      saved?.tab === tab &&
+      saved.path === routePath(routeOf(tab, frames.at(-1), filters)) &&
+      saved.frames.length === frames.length &&
+      saved.frames.every((item, at) => item === frames[at])
+      ? index
+      : undefined
+  }
   const chatListNavigation = useMemo(
     () => new ChatListNavigationCapture(chatEngine),
     [chatEngine]
@@ -977,10 +1013,14 @@ function Shell(props: AppProps): React.ReactElement {
       unsubscribe()
     }
   }, [chatEngine])
-  const chatsOf = (type: 'team' | 'season', id: string): ChatLink[] =>
-    chatList
-      .filter(chat => chat.scope?.type === type && chat.scope.id === id)
-      .map(chat => ({ id: chat.id, title: chat.title }))
+  const chatsOf = (kind: GroupRef['kind'], id: string): ChatLink[] =>
+    entityChats(chatList, { kind, id })
+  const loadChatPreviews = useMemo(() => {
+    const load = entityPreviewLoader(chatEngine, keyStore, signedInAs)
+    return (ids: string[]): void => {
+      load(ids).catch(() => undefined)
+    }
+  }, [chatEngine, signedInAs])
   useEffect(() => {
     if (chatEngine == null) return
     let stopListening = (): void => {}
@@ -1099,6 +1139,9 @@ function Shell(props: AppProps): React.ReactElement {
   useEffect(() => {
     if (props.fieldPreview === true) return
     if (route.name !== 'season') return
+    // A remembered chat origin already contains the resolved season frame.
+    if (chatHistory.get(scoringOriginHistory())?.path === routePath(route))
+      return
     let live = true
     resolvingLink.current = true
     const find = async (): Promise<void> => {
@@ -1206,13 +1249,31 @@ function Shell(props: AppProps): React.ReactElement {
       inPlace.current = false
       return
     }
-    showRoute(
-      routeOf(tab, top, filters),
-      firstRender.current || inPlace.current
-    )
+    const address = routeOf(tab, top, filters)
+    const before = scoringOriginHistory()
+    showRoute(address, firstRender.current || inPlace.current)
+    const position = scoringOriginHistory()
+    // A new branch of browser history invalidates the old Forward visits.
+    if (position > before) discardChatHistoryFrom(position)
+    if (tab !== 'chat' && stack.some(frame => frame.name === 'conversation'))
+      chatHistory.set(scoringOriginHistory(), {
+        path: routePath(address),
+        tab,
+        frames: stack
+      })
     firstRender.current = false
     inPlace.current = false
-  }, [joining, session, tab, top, filters, route.name])
+  }, [
+    joining,
+    session,
+    tab,
+    top,
+    filters,
+    route.name,
+    stack,
+    chatHistory,
+    discardChatHistoryFrom
+  ])
 
   const goToRoute = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
@@ -1272,11 +1333,17 @@ function Shell(props: AppProps): React.ReactElement {
         : returningToScoreOptions
           ? 'scoreOptions'
           : undefined
+      const remembered = chatHistory.get(scoringOriginHistory())
+      const chatReturn =
+        remembered?.path === routePath(route) ? remembered : undefined
       const next =
-        returnFrame != null ? previous.tab : (visit?.tab ?? tabOf(route))
+        chatReturn?.tab ??
+        (returnFrame != null ? previous.tab : (visit?.tab ?? tabOf(route)))
+      if (chatReturn != null) inPlace.current = true
       if (returnFrame != null) inPlace.current = true
       setTab(next)
       setStacks(current => {
+        if (chatReturn != null) return { ...current, [next]: chatReturn.frames }
         if (returnFrame != null && 'gameId' in route) {
           const held = current[next]
           const at = held.findLastIndex(
@@ -1322,7 +1389,7 @@ function Shell(props: AppProps): React.ReactElement {
       setFilters(current => filtersForRoute(current, route))
       onHandled?.(true)
     },
-    [clearScoringVisit, guardUmpireLeave]
+    [clearScoringVisit, guardUmpireLeave, chatHistory]
   )
   const goFromAddress = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
@@ -1339,7 +1406,8 @@ function Shell(props: AppProps): React.ReactElement {
   )
   useBrowserBack(
     goFromAddress,
-    top?.name === 'umpireSchedule' ? checkUmpireLeave : undefined
+    top?.name === 'umpireSchedule' ? checkUmpireLeave : undefined,
+    discardChatHistoryFrom
   )
 
   // DJ Game as an iPhone draws it, its own screen; elsewhere its address
@@ -1536,8 +1604,24 @@ function Shell(props: AppProps): React.ReactElement {
     // a chevron that left a step behind would make the next press of the
     // system Back button appear to do nothing.
     captureChatLeave(() => {
-      popRoute()
-      setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
+      const frames = stacks[tab].slice(0, -1)
+      if (
+        tab !== 'chat' &&
+        stacks[tab].some(frame => frame.name === 'conversation')
+      ) {
+        const address = routeOf(tab, frames.at(-1), filters)
+        const current = stacks[tab].at(-1)
+        const origin =
+          current?.name === 'conversation'
+            ? retainedChatOrigin(current, frames)
+            : undefined
+        const position = origin ?? scoringOriginHistory() - 1
+        // A retained tab can be revisited after its original browser entry
+        // was removed. Own the replacement entry as well as the UI stack.
+        chatHistory.set(position, { path: routePath(address), tab, frames })
+        stepBackTo(address, position)
+      } else popRoute()
+      setStacks(current => ({ ...current, [tab]: frames }))
     })
   }
 
@@ -1754,7 +1838,45 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /** A chat, from the list or from a team's, season's or league's page. */
   const openChat = (chat: { id: string; title: string }): void => {
-    push({ name: 'conversation', conversationId: chat.id, title: chat.title })
+    const next: Pushed = {
+      name: 'conversation',
+      conversationId: chat.id,
+      title: chat.title,
+      originHistory:
+        top?.name === 'conversation'
+          ? top.originHistory
+          : tab === 'chat'
+            ? undefined
+            : scoringOriginHistory()
+    }
+    if (top?.name === 'conversation') {
+      inPlace.current = true
+      replace(next)
+    } else {
+      if (tab !== 'chat')
+        chatHistory.set(scoringOriginHistory(), {
+          path: routePath(routeOf(tab, top, filters)),
+          tab,
+          frames: stacks[tab]
+        })
+      push(next)
+    }
+  }
+  const openPersonChat = async (chat: {
+    id: string
+    title: string
+  }): Promise<void> => {
+    const owner = navigationRef.current
+    await chatEngine
+      ?.refresh()
+      .catch(() => undefined)
+      .then(() => {
+        if (
+          navigationRef.current.tab === owner.tab &&
+          navigationRef.current.top === owner.top
+        )
+          openChat(chat)
+      })
   }
   /**
    * What every chat screen stands behind: chat's crypto core on this
@@ -2135,18 +2257,6 @@ function Shell(props: AppProps): React.ReactElement {
           onCreateGroup={kind => {
             push({ name: 'createGroup', kind })
           }}
-          leagueChats={chatList.flatMap(chat =>
-            chat.kind === 'leagueOrg'
-              ? [
-                  {
-                    id: chat.id,
-                    title: chat.title,
-                    league: chat.scopeName ?? chat.title
-                  }
-                ]
-              : []
-          )}
-          onOpenChat={openChat}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
           onLoaded={prefetchAfterHome}
@@ -2314,6 +2424,9 @@ function Shell(props: AppProps): React.ReactElement {
         onSignIn={signInHere}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
+        chats={chatsOf(top.kind, top.id)}
+        onOpenChat={openChat}
+        onLoadChatPreview={loadChatPreviews}
         initialTab={top.tab}
         onTab={setTopTab}
         initialWhen={top.when}
@@ -2696,20 +2809,67 @@ function Shell(props: AppProps): React.ReactElement {
           client={client}
           engine={chatEngine!}
           onCreated={conversation => {
+            // A completed request must not navigate a scene already left.
+            if (
+              navigationRef.current.tab !== tab ||
+              navigationRef.current.top !== top
+            )
+              return
             const listed = chatEngine
               ?.conversations()
               .find(chat => chat.id === conversation.id)
-            // The new chat takes this screen's place, so Back goes to the
-            // list rather than to a finished form.
+            const workspace =
+              tab === 'chat'
+                ? -1
+                : stacks[tab].findLastIndex(
+                    frame => frame.name === 'conversation'
+                  )
+            const frame = stacks[tab][workspace] as
+              Extract<Pushed, { name: 'conversation' }> | undefined
+            const sourceFrames = stacks[tab].slice(0, workspace)
+            let originHistory =
+              frame == null
+                ? undefined
+                : retainedChatOrigin(frame, sourceFrames)
+            if (workspace >= 0 && originHistory == null) {
+              // Completing a chat on another retained tab may have removed
+              // this visit's history. Re-establish its source before the DM.
+              const address = routeOf(tab, sourceFrames.at(-1), filters)
+              showRoute(address, true)
+              originHistory = scoringOriginHistory()
+              chatHistory.set(originHistory, {
+                path: routePath(address),
+                tab,
+                frames: sourceFrames
+              })
+            }
+            const destination: Pushed = {
+              name: 'conversation',
+              conversationId: conversation.id,
+              title: listed?.title ?? conversation.title ?? '',
+              originHistory
+            }
+            if (originHistory != null) {
+              discardChatHistoryFrom(originHistory + 1)
+              chatHistory.set(originHistory + 1, {
+                path: routePath(destination),
+                tab,
+                frames: [...stacks[tab].slice(0, workspace), destination]
+              })
+              finishChatChild(
+                {
+                  name: 'conversation',
+                  conversationId: conversation.id
+                },
+                originHistory
+              )
+            } else inPlace.current = true
+            // Completing the child updates the one workspace above its origin.
             setStacks(current => ({
               ...current,
               [tab]: [
-                ...current[tab].slice(0, -1),
-                {
-                  name: 'conversation',
-                  conversationId: conversation.id,
-                  title: listed?.title ?? conversation.title ?? ''
-                }
+                ...current[tab].slice(0, workspace >= 0 ? workspace : -1),
+                destination
               ]
             }))
           }}
@@ -2782,6 +2942,7 @@ function Shell(props: AppProps): React.ReactElement {
       <PlayerScreen
         key={`${signedInAs ?? 'signed-out'}:${top.userId}:${top.onTeam ?? ''}:${visit == null ? '' : settingsVisit}`}
         client={client}
+        onOpenChat={chatEngine == null ? undefined : openPersonChat}
         userId={top.userId}
         title={top.title}
         initialTab={top.tab}
@@ -2904,6 +3065,7 @@ function Shell(props: AppProps): React.ReactElement {
         onTab={setTopTab}
         chats={chatsOf('team', top.team.id)}
         onOpenChat={openChat}
+        onLoadChatPreview={loadChatPreviews}
       />
     ) : top.name === 'season' ? (
       <SeasonScreen
@@ -2922,6 +3084,7 @@ function Shell(props: AppProps): React.ReactElement {
         onTab={setTopTab}
         chats={chatsOf('season', top.season.id)}
         onOpenChat={openChat}
+        onLoadChatPreview={loadChatPreviews}
         initialWhen={top.when}
         onWhen={next => {
           setStacks(current => {
@@ -2939,6 +3102,7 @@ function Shell(props: AppProps): React.ReactElement {
       <PersonProfileScreen
         key={`${top.kind}:${top.id}:${top.userId}`}
         client={client}
+        onOpenChat={chatEngine == null ? undefined : openPersonChat}
         kind={top.kind}
         id={top.id}
         userId={top.userId}

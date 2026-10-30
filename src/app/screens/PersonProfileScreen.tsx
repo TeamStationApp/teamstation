@@ -7,6 +7,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { PersonMessageButton } from '../chat/PersonMessageButton'
 import {
   Button,
   Card,
@@ -38,6 +39,7 @@ export interface PersonProfileScreenProps {
   onTitle?: (name: string) => void
   /** After a role changes, for anything that shows the viewer's own. */
   onChanged?: () => void
+  onOpenChat?: (chat: { id: string; title: string }) => void | Promise<void>
 }
 
 /**
@@ -189,21 +191,31 @@ export function PersonProfileScreen(
   return (
     <Screen>
       <View style={styles.page}>
-        <Card style={styles.hero}>
-          <Emblem
-            uri={person.avatarUrl}
-            fallback={initialsOf(person.shortName)}
-            shape="circle"
-            size={4.5}
-          />
-          <View style={styles.heroText}>
-            <Text style={styles.name} accessibilityRole="header">
-              {name}
-            </Text>
-            <Text style={styles.context}>
-              {sprintf(contextLine(context.kind), context.name)}
-            </Text>
+        <Card>
+          <View style={styles.hero}>
+            <Emblem
+              uri={person.avatarUrl}
+              fallback={initialsOf(person.shortName)}
+              shape="circle"
+              size={4.5}
+            />
+            <View style={styles.heroText}>
+              <Text style={styles.name} accessibilityRole="header">
+                {name}
+              </Text>
+              <Text style={styles.context}>
+                {sprintf(contextLine(context.kind), context.name)}
+              </Text>
+            </View>
           </View>
+          {props.onOpenChat != null && (
+            <PersonMessageButton
+              key={person.userId}
+              client={client}
+              userId={person.userId}
+              onOpenChat={props.onOpenChat}
+            />
+          )}
         </Card>
 
         {guardianOf.length > 0 && (

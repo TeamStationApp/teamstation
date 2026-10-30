@@ -103,9 +103,18 @@ export function popRoute(): void {
  * page closed by its own button, so Android's Back does not walk into a copy
  * of the page underneath. As in a browser; the shell has already drawn it.
  */
-export function stepBackTo(route: Route): void {
-  history.back()
+export function stepBackTo(route: Route, origin?: number): void {
+  const steps = origin == null ? 1 : Math.max(1, history.depth() - origin)
+  for (let index = 0; index < steps; index++) history.back()
   history.show(route, true)
+}
+
+/** Replace a workspace and its completed New message child with one chat. */
+export function finishChatChild(route: Route, origin: number): void {
+  while (history.depth() > origin && history.back()) {
+    // Tab visits may have added entries between the workspace and its child.
+  }
+  history.show(route)
 }
 
 /** Never: a phone's step back lands at once. */
@@ -136,7 +145,8 @@ export function backFromScoringPlayer(origin?: number): boolean {
 export function useBrowserBack(
   onRoute: (route: Route, onHandled?: (accepted: boolean) => void) => void,
   // The shell checks before leaving and reports rejection through onHandled.
-  _beforeLeave?: () => Promise<boolean>
+  _beforeLeave?: () => Promise<boolean>,
+  beforeNewHistory?: (position: number) => void
 ): void {
   useEffect(() => {
     let pending = false
@@ -158,6 +168,9 @@ export function useBrowserBack(
       const route = routeOfUrl(event.url, { appOrigin })
       const previous = history.current()
       const depth = history.depth()
+      // A new link truncates the native Forward suffix before its route is
+      // delivered, so the shell must forget snapshots at those reused depths.
+      beforeNewHistory?.(depth + 1)
       for (const step of linkSteps(route, previous)) history.show(step)
       deliver(route, () => {
         if (history.depth() <= depth) history.show(previous, true)
@@ -187,5 +200,5 @@ export function useBrowserBack(
       link.remove()
       back.remove()
     }
-  }, [onRoute])
+  }, [onRoute, beforeNewHistory])
 }

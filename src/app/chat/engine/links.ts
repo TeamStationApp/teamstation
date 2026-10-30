@@ -104,6 +104,8 @@ export interface ChatSetup {
    * Once it is not, `ensureEnrolled` starts nothing for it.
    */
   current?: () => boolean
+  /** Restore linked keys only; never replace a device or create an identity. */
+  existingOnly?: boolean
 }
 
 export type Enrolment =
@@ -144,7 +146,7 @@ const SIGNED_OUT = ''
 
 const inFlight = new Map<
   ChatKeyStore,
-  { userId: string; run: Promise<Enrolment> }
+  { userId: string; existingOnly: boolean; run: Promise<Enrolment> }
 >()
 
 /**
@@ -185,10 +187,15 @@ export async function ensureEnrolled(setup: ChatSetup): Promise<Enrolment> {
   if (setup.current?.() === false) throw new StaleChatSetupError()
   owners.set(setup.store, setup.userId)
   const running = inFlight.get(setup.store)
-  if (running?.userId === setup.userId) return await running.run
+  if (
+    running?.userId === setup.userId &&
+    running.existingOnly === (setup.existingOnly === true)
+  )
+    return await running.run
   const before = running?.run.catch(() => undefined)
   const entry = {
     userId: setup.userId,
+    existingOnly: setup.existingOnly === true,
     run: (async () => {
       await before
       return await enrolOnce(setup)
@@ -203,6 +210,13 @@ export async function ensureEnrolled(setup: ChatSetup): Promise<Enrolment> {
 async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
   const { client, store, userId } = setup
   let record = await store.load()
+  if (
+    setup.existingOnly === true &&
+    (record?.userId !== userId ||
+      record.identity == null ||
+      record.puks.length === 0)
+  )
+    throw new Error('Existing linked chat keys are unavailable')
   if (record != null && record.userId !== userId) {
     stillOwner(setup)
     await store.wipe()
@@ -231,7 +245,9 @@ async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
  * the device back.
  */
 async function bindDevice(
-  setup: Pick<ChatSetup, 'client' | 'store'> & { userId?: string },
+  setup: Pick<ChatSetup, 'client' | 'store' | 'existingOnly'> & {
+    userId?: string
+  },
   record: ChatKeyRecord
 ): Promise<ChatMyKeys | undefined> {
   const { client, store } = setup
@@ -256,6 +272,7 @@ async function bindDevice(
   } catch (error) {
     const reason = reasonOf(error)
     if (reason === 'deviceRevoked' || reason === 'unknownDevice') {
+      if (setup.existingOnly === true) throw error
       stillOwner(setup)
       await store.wipe()
       return undefined
@@ -273,6 +290,13 @@ async function settle(
 ): Promise<Enrolment> {
   const { client } = setup
   let record = start
+  if (
+    setup.existingOnly === true &&
+    (mine.identity == null ||
+      record.identity?.id !== mine.identity.id ||
+      !mine.linked)
+  )
+    throw new Error('Existing chat identity is unavailable')
   if (mine.identity == null) return await enrol(setup, record)
   if (record.identity?.id !== mine.identity.id) {
     // Keys of an identity that is no longer the user's (replaced by a reset

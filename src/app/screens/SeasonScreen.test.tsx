@@ -526,7 +526,11 @@ describe('the season screen', function () {
     const calls = await mount({ publicDetail: detail, initialTab: 'schedule' })
     await calls.refresh!({ ...detail })
     expect(calls.loads).deep.equals([])
-    expect(tabNames('Season sections')).deep.equals(['Schedule', 'Teams'])
+    expect(tabNames('Season sections')).deep.equals([
+      'Schedule',
+      'Teams',
+      'Chats'
+    ])
   })
 
   it('keeps public approved scores and cancellation history informational without private reads', async function () {
@@ -650,7 +654,11 @@ describe('the season screen', function () {
         initialWhen: 'all'
       })
       expect(calls.loads).deep.equals([])
-      expect(tabNames('Season sections')).deep.equals(['Schedule', 'Teams'])
+      expect(tabNames('Season sections')).deep.equals([
+        'Schedule',
+        'Teams',
+        'Chats'
+      ])
       expect(text()).includes('Pending approval')
       expect(text()).includes('Demo Visitor at Demo Host')
       const marker = document.querySelector(
@@ -814,7 +822,8 @@ describe('the season screen', function () {
       'Schedule',
       'Stats',
       'Videos',
-      'Teams'
+      'Teams',
+      'Chats'
     ])
     expect(
       labelled('Season sections').querySelector('[aria-selected="true"]')
@@ -856,7 +865,11 @@ describe('the season screen', function () {
     const calls = await mount({ publicDetail, initialTab: 'stats' })
     expect(calls.loads).deep.equals([])
     expect(calls.tabs).deep.equals([['schedule', true]])
-    expect(tabNames('Season sections')).deep.equals(['Schedule', 'Teams'])
+    expect(tabNames('Season sections')).deep.equals([
+      'Schedule',
+      'Teams',
+      'Chats'
+    ])
     expect(text()).not.includes('Batting')
     expect(text()).not.includes('VIDEOS12')
   })
@@ -914,7 +927,11 @@ describe('the season screen', function () {
       await delay(10)
     })
     expect(calls.loads).deep.equals(before)
-    expect(tabNames('Season sections')).deep.equals(['Schedule', 'Teams'])
+    expect(tabNames('Season sections')).deep.equals([
+      'Schedule',
+      'Teams',
+      'Chats'
+    ])
     expect(text()).not.includes(battingFixture.shortName ?? 'Unknown')
     expect(text()).not.includes('BATTING')
   })
@@ -1184,7 +1201,8 @@ describe('the season screen', function () {
       'Schedule',
       'Stats',
       'Videos',
-      'Teams'
+      'Teams',
+      'Chats'
     ])
     expect(tabNames('Which games')).deep.equals(['Past', 'Upcoming', 'All'])
     // Nothing to correct: no tab was asked for.
