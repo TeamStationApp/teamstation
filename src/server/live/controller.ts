@@ -45,6 +45,7 @@ import {
   type LiveEvent,
   type LiveSpec,
   type LiveStatus,
+  outputsSettled,
   setLive,
   startIngest,
   statusFor,
@@ -138,6 +139,8 @@ export interface LiveControllerOptions {
 interface Tracked {
   key: string
   videoId: string | null
+  /** When a publisher's lookup added it, which a running tick cannot know of. */
+  lookedUpAt?: number
 }
 
 let timer: NodeJS.Timeout | undefined
@@ -452,7 +455,7 @@ export async function sweepLocalCopies(
     .select(['id'])
     .where('storage', '=', 'spaces')
     .where('spaces_verified_at', 'is not', null)
-    .where('local_delete_after', '<', now)
+    .where('local_delete_after', '<=', now)
     .limit(20)
     .execute()
 
@@ -648,6 +651,12 @@ async function handle(
     await placeByFrameWall(db, event.liveStreamId, event.startedAt)
     return
   }
+  if (
+    event.refusedSince != null &&
+    (await forgetRefusedPublish(current, event, event.refusedSince))
+  ) {
+    return
+  }
   await stoppedPublishing(current, event.liveStreamId, event.reason)
 }
 
@@ -797,10 +806,10 @@ async function stoppedPublishing(
     if (stopped.numUpdatedRows > 0n)
       noteScopeChange(trx, { gameId: row.gameId })
 
-    // A publish that was turned away — the wrong codec, usually — leaves a
-    // video row that was made visible the moment it connected and holds no
-    // video at all. It goes back to being a placeholder, rather than sitting
-    // on the home screen as a live game nobody can watch.
+    // A publish that dropped before anything was written leaves a video row
+    // that was made visible the moment it connected and holds no video at
+    // all. It goes back to being a placeholder, rather than sitting on the
+    // home screen as a live game nobody can watch.
     if (row.videoId == null || !empty) return
     const hidden = await trx
       .updateTable('videos')
@@ -809,6 +818,99 @@ async function stoppedPublishing(
       .where('status', '=', 'live')
       .executeTakeFirst()
     if (hidden.numUpdatedRows > 0n) await noteGameFigures(trx, row.gameId)
+  })
+}
+
+/**
+ * The ingest refused a stream's codec, a moment after it had connected and
+ * been taken for the camera's first publish.
+ *
+ * No picture ever came of that, so the camera goes back to what it was: no
+ * published stamp, a hidden placeholder with no start, and none of the
+ * segments the writer got down before the refusal. Those are in a codec the
+ * recording cannot hold, and the next publish would continue them. A camera
+ * stamped before `refusedSince` has real video behind it and keeps all of
+ * this. Answers whether the publish was the camera's first.
+ */
+async function forgetRefusedPublish(
+  current: LiveControllerOptions,
+  event: { key: string; liveStreamId: string; reason: string },
+  refusedSince: Date
+): Promise<boolean> {
+  const { db } = current
+  const { key, liveStreamId, reason } = event
+  const row = await db
+    .selectFrom('live_streams')
+    .select(['video_id as videoId', 'game_id as gameId'])
+    .where('id', '=', liveStreamId)
+    .where('first_published_at', '>=', refusedSince)
+    .executeTakeFirst()
+  if (row == null) return false
+
+  const now = new Date()
+  publisherActivity.set(liveStreamId, now)
+  // A writer told to stop still writes its playlist on the way out. And an
+  // encoder that has already come back has a writer in this directory again.
+  await outputsSettled(key)
+  const { videoId, gameId } = row
+  if (videoId != null && statusFor(key)?.ingress.publishing !== true) {
+    await removeRefusedMedia(current, videoId)
+  }
+
+  await atomic(db, async trx => {
+    await trx
+      .updateTable('live_streams')
+      .set({
+        state: sql`case when state = 'publishing' then 'idle' else state end`,
+        first_published_at: null,
+        last_published_at: null,
+        last_error: reason,
+        updated_at: now
+      })
+      .where('id', '=', liveStreamId)
+      .execute()
+    noteScopeChange(trx, { gameId })
+    if (videoId == null) return
+    await trx
+      .deleteFrom('video_wall_anchors')
+      .where('video_id', '=', videoId)
+      .execute()
+    await trx
+      .updateTable('videos')
+      .set({
+        status: 'processing',
+        hidden: true,
+        start_at: null,
+        start_at_source: null,
+        storage: 'local',
+        width: null,
+        height: null,
+        codecs: null,
+        updated_at: now
+      })
+      .where('id', '=', videoId)
+      .where('status', '=', 'live')
+      .execute()
+    await noteGameFigures(trx, gameId)
+  })
+  return true
+}
+
+/** Takes what a refused publish wrote back off the disk and the Space. */
+async function removeRefusedMedia(
+  current: LiveControllerOptions,
+  videoId: string
+): Promise<void> {
+  await new Promise<void>(resolve => {
+    queue(`publish:${videoId}`, async () => {
+      try {
+        await removeDeletedOrigin(current, videoId)
+      } finally {
+        // The row stays, so no later tick would retire this origin.
+        stopOrigin(videoId)
+        resolve()
+      }
+    })
   })
 }
 
@@ -910,7 +1012,7 @@ export async function resolveKey(
   const known = tracked.get(row.id)
   if (known != null && known.key !== key)
     clearLive(known.key, 'the key was replaced')
-  tracked.set(row.id, { key, videoId: row.videoId })
+  tracked.set(row.id, { key, videoId: row.videoId, lookedUpAt: Date.now() })
   return {
     liveStreamId: row.id,
     hlsDir,
@@ -962,8 +1064,10 @@ export async function sync(
     .where(eb =>
       eb.or([
         eb('live_streams.state', 'in', ['idle', 'publishing']),
+        // Stopped without being finished: a key taken away, or a stream its
+        // upload replaced. The playlist still has to be closed.
         eb.and([
-          eb('live_streams.state', '=', 'revoked'),
+          eb('live_streams.state', 'in', ['revoked', 'ended']),
           eb('live_streams.ended_at', 'is', null)
         ])
       ])
@@ -1004,7 +1108,7 @@ export async function sync(
   let failure: { error: unknown } | undefined
   try {
     for (const row of rows) {
-      if (row.state === 'revoked') {
+      if (row.state === 'revoked' || row.state === 'ended') {
         finish(
           row.id,
           row.localRecording === 'uploaded'
@@ -1103,9 +1207,12 @@ export async function sync(
     }
 
     // Anything the ingest still holds that this pass did not ask for: a revoked
-    // key, a rotated one, a window that closed.
+    // key, a rotated one, a window that closed. A key looked up since this
+    // pass read the rows is a camera too new for it to have seen, publishing
+    // the moment it was made, and the next pass will know of it.
     for (const [liveStreamId, entry] of tracked) {
       if (wanted.has(entry.key)) continue
+      if ((entry.lookedUpAt ?? 0) >= now.getTime()) continue
       clearLive(entry.key, 'no longer open')
       tracked.delete(liveStreamId)
     }
@@ -1322,7 +1429,8 @@ async function finishStreamRecording(
 
   const now = new Date()
   // Claim finalization once. A revoked key remains revoked while its recording
-  // follows the same retained-media lifecycle as an ordinarily ended stream.
+  // follows the same retained-media lifecycle as an ordinarily ended stream,
+  // and a stream its upload ended is finished here like any other.
   const row = await atomic(db, async trx => {
     const claimed = await trx
       .updateTable('live_streams')
@@ -1333,7 +1441,7 @@ async function finishStreamRecording(
         updated_at: now
       })
       .where('id', '=', liveStreamId)
-      .where('state', 'in', ['idle', 'publishing', 'revoked'])
+      .where('state', 'in', ['idle', 'publishing', 'revoked', 'ended'])
       .where('ended_at', 'is', null)
       .returning([
         'video_id as videoId',
@@ -1359,11 +1467,10 @@ async function finishStreamRecording(
     })
   }
 
-  // A key nobody ever used, or used only by something that was turned away —
-  // an encoder in the wrong codec connects and is refused, which does count as
-  // having published — leaves nothing behind. Deleting the placeholder is what
-  // keeps "we gave this game a stream URL once" from showing up in the game's
-  // videos for ever as a recording that does not exist.
+  // A key nobody ever used, or used only by something that was turned away,
+  // leaves nothing behind. Deleting the placeholder is what keeps "we gave
+  // this game a stream URL once" from showing up in the game's videos for ever
+  // as a recording that does not exist.
   if (
     row.firstPublishedAt == null ||
     !(await hasMedia(mediaRoot, row.videoId))

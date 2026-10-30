@@ -9,10 +9,9 @@ import type { Database } from '../db/database'
 import { cleanBody } from '../jsonBody'
 import {
   cameraLabelOf,
+  checkCameraLimits,
   createLiveStream,
-  freeSlot,
   type LiveStreamRow,
-  MAX_CAMERAS,
   myLiveStreams,
   revealKey,
   setCameraName,
@@ -165,12 +164,7 @@ export function directorRoutes(
             key: readKey(options.sessionSecret, existing)
           }
         }
-        const slot = freeSlot(mine)
-        if (slot == null) {
-          throw badRequest(
-            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-          )
-        }
+        const slot = await checkCameraLimits(trx, game.id, actor.userId)
         const created = await createLiveStream(trx, {
           gameId: game.id,
           teamId,
