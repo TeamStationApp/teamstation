@@ -5,10 +5,15 @@ import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
+  CHAT_DEVICE_APPROVAL,
   isSchedulingNews,
   type Notification,
   RECORDING_UPLOAD
 } from '../../common/notifications'
+import {
+  DeviceApprovalActions,
+  useDeviceApprovals
+} from '../chat/DeviceApprovalPrompt'
 import { Button, Card, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -61,6 +66,7 @@ export function NotificationsScreen({
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
+  const { state: approvals } = useDeviceApprovals()
   const [mode, setMode] = useState<'pending' | 'sent' | 'history'>('pending')
   const [items, setItems] = useState<Notification[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
@@ -119,6 +125,9 @@ export function NotificationsScreen({
     }
   }, [client, mode, begin])
   useForegroundRefresh(load)
+  useEffect(() => {
+    if (approvals.revision > 0) load().catch(() => undefined)
+  }, [load, approvals.revision])
   const more = async (): Promise<void> => {
     if (cursor == null) return
     const current = begin()
@@ -276,7 +285,31 @@ export function NotificationsScreen({
           </Text>
         )}
         {shown.map(item =>
-          mode === 'pending' && isReminder(item) ? (
+          item.type === CHAT_DEVICE_APPROVAL ? (
+            <Card key={item.id} style={styles.card}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={item.title}
+                onPress={() => {
+                  onOpen(item.id)
+                }}
+              >
+                <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+                <Text style={styles.name}>{item.title}</Text>
+                <Text style={styles.hint}>{item.description}</Text>
+              </Pressable>
+              <Text style={styles.status}>{statusLine(item, mode)}</Text>
+              {item.canAct && (
+                <DeviceApprovalActions
+                  id={item.requestId}
+                  onDecided={() => {
+                    load().catch(() => undefined)
+                    onDecided?.()
+                  }}
+                />
+              )}
+            </Card>
+          ) : mode === 'pending' && isReminder(item) ? (
             <Card key={item.requestId} style={styles.card}>
               <Pressable
                 accessibilityRole="button"
@@ -398,6 +431,8 @@ function statusLine(
   item: Notification,
   mode: 'pending' | 'sent' | 'history'
 ): string {
+  if (item.type === CHAT_DEVICE_APPROVAL && item.status === 'accepted')
+    return 'Approved'
   if (item.type === 'grant') return item.viewed ? 'Added' : 'New'
   if (isReminder(item)) return 'Reminder'
   if (item.status === 'pending')
@@ -430,6 +465,7 @@ function NotificationDetail({
   onUpload
 }: DetailProps): React.ReactElement {
   const styles = getStyles(useTheme())
+  const { state: approvals } = useDeviceApprovals()
   const [item, setItem] = useState<Notification | undefined>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -465,6 +501,9 @@ function NotificationDetail({
     }
   }, [client, id, begin])
   useForegroundRefresh(load)
+  useEffect(() => {
+    if (approvals.revision > 0) load().catch(() => undefined)
+  }, [load, approvals.revision])
   useEffect(() => {
     client.viewNotification(id).catch(() => undefined)
   }, [client, id])
@@ -543,6 +582,22 @@ function NotificationDetail({
       <Card style={styles.card}>
         {item == null ? (
           <Text style={styles.hint}>Loading invitation…</Text>
+        ) : item.type === CHAT_DEVICE_APPROVAL ? (
+          <>
+            <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+            <Text style={styles.title}>{item.title}</Text>
+            <Text style={styles.hint}>{item.description}</Text>
+            <Text style={styles.status}>{statusLine(item, 'pending')}</Text>
+            {item.canAct && !readUnavailable && (
+              <DeviceApprovalActions
+                id={item.requestId}
+                onDecided={() => {
+                  load().catch(() => undefined)
+                  onChanged()
+                }}
+              />
+            )}
+          </>
         ) : isReminder(item) ? (
           <>
             <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
