@@ -491,6 +491,27 @@ describe('adding a player who already exists', function () {
       'plays for the other team in a game against Ridgeview Falcons'
     )
     expect(await membership('Freddie Freeman', TEAM.falcons)).equals(undefined)
+    // Nor from the other team's roster: a scoring read of that game would throw.
+    const opposing = await roster({ userId: ids['Ryan Helsley'] })
+    expect(opposing.status).equals(409)
+    expect(JSON.stringify(opposing.body)).includes(
+      'plays for the other team in a game against Ridgeview Falcons'
+    )
+    expect(await membership('Ryan Helsley', TEAM.falcons)).equals(undefined)
+    // Unless that game left them out of it.
+    await db!
+      .updateTable('games')
+      .set({
+        unrostered: JSON.stringify({ [TEAM.herons]: [gumbo['Ryan Helsley']] })
+      })
+      .where('id', '=', GAME)
+      .execute()
+    expect((await roster({ userId: ids['Ryan Helsley'] })).status).equals(201)
+    await db!
+      .updateTable('games')
+      .set({ unrostered: JSON.stringify({}) })
+      .where('id', '=', GAME)
+      .execute()
     for (const name of ['Ryan Helsley', 'Mookie Betts']) {
       const rostered = await guest({ side: 'away', userId: ids[name] })
       expect(rostered.status, name).equals(409)

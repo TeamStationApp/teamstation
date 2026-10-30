@@ -9,6 +9,7 @@ import {
   placeholderTeamName
 } from '../../common/placeholderNames'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
+import { storedUnrostered } from '../../common/unroster'
 import { guardiansWhoCanAct } from '../access'
 import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
@@ -227,24 +228,20 @@ export async function applyPlayerAdd(
 }
 
 /**
- * A player who plays for the other side, as a pool player, in a game of
- * this team not yet over cannot join this team's roster: one person is never
- * on both sides of a game.
+ * A player who plays for the other side, on its roster or as a pool player,
+ * in a game of this team not yet over cannot join this team's roster: one
+ * person is never on both sides of a game, and a scoring read of such a game
+ * throws. Somebody the other side left out of that game does not count, as
+ * they do not for a merge (`assertMergeAvailabilitySafe`).
  */
 export async function refuseOtherSide(
   trx: Db,
   userIds: string[],
   terms: PlayerAddTerms
 ): Promise<void> {
-  const gumbos = await trx
-    .selectFrom('gumbo_ids')
-    .select('gumbo_id')
-    .where('user_id', 'in', userIds)
-    .execute()
-  if (gumbos.length === 0) return
   const games = await trx
     .selectFrom('games')
-    .select(['id', 'home_team_id', 'away_team_id', 'guests'])
+    .select(['id', 'home_team_id', 'away_team_id', 'guests', 'unrostered'])
     .where(eb =>
       eb.or([
         eb('home_team_id', '=', terms.teamId),
@@ -253,13 +250,42 @@ export async function refuseOtherSide(
     )
     .where('status', 'not in', ['final', 'cancelled'])
     .execute()
+  if (games.length === 0) return
+  const gumbos = (
+    await trx
+      .selectFrom('gumbo_ids')
+      .select('gumbo_id')
+      .where('user_id', 'in', userIds)
+      .execute()
+  ).map(row => row.gumbo_id)
+  const rosters = await trx
+    .selectFrom('memberships')
+    .select('team_id')
+    .where('user_id', 'in', userIds)
+    .where('is_player', '=', true)
+    .where(
+      'team_id',
+      'in',
+      games.map(game =>
+        game.home_team_id === terms.teamId
+          ? game.away_team_id
+          : game.home_team_id
+      )
+    )
+    .execute()
+  const onRoster = new Set(rosters.map(row => row.team_id))
   for (const game of games) {
-    const guests = storedGuests(game.guests, teamsOfRow(game))
-    const other = game.home_team_id === terms.teamId ? guests.away : guests.home
-    if (gumbos.some(row => other.includes(row.gumbo_id))) {
+    const teams = teamsOfRow(game)
+    const other = game.home_team_id === terms.teamId ? 'away' : 'home'
+    const guest = storedGuests(game.guests, teams)[other]
+    const left = storedUnrostered(game.unrostered, teams)[other]
+    const member =
+      onRoster.has(teams[other].id) && !gumbos.some(id => left.includes(id))
+    if (member || gumbos.some(id => guest.includes(id))) {
       const name = (await shortNamesOf(trx, [terms.userId])).get(terms.userId)
       throw conflict(
-        `${name} plays for the other team in a game against ${terms.teamName}`
+        `${name} plays for the other team in a game against ${terms.teamName}`,
+        { gameId: game.id }
       )
     }
   }
