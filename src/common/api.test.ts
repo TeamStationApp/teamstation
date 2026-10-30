@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { asString } from 'cleaners'
 import { describe, it } from 'mocha'
 
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
@@ -6,6 +7,7 @@ import { testPasswordParameters } from '../test/passwordFixtures'
 import {
   asHighlight,
   asManagePage,
+  asPage,
   asPlayerHighlight,
   asPlayerStats,
   asSaveLineupsBody,
@@ -2073,6 +2075,70 @@ describe('api client', function () {
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.teamGames('a/b?c')
     expect(calls[0].url).equals('http://x/api/v1/teams/a%2Fb%3Fc/games')
+  })
+
+  it('reads schedule pages with what they asked for, escaped', async function () {
+    const page = {
+      items: [],
+      nextCursor: 'after',
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    }
+    const { fetch, calls } = stubFetch(200, page)
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect(await client.gamesPage()).deep.equals(page)
+    await client.gamesPage({
+      when: 'past',
+      order: 'desc',
+      hasVideo: true,
+      limit: 25,
+      cursor: 'a+b'
+    })
+    await client.gamesPage({ when: 'all' })
+    await client.seasonGamesPage('s/1', { when: 'upcoming' })
+    await client.seasonGamesPage('s/1')
+    await client.teamGamesPage('t/1', { around: 'next', order: 'asc' })
+    await client.teamGamesPage('t/1')
+    expect(
+      calls.map(call => call.url.replace('http://x/api/v1', ''))
+    ).deep.equals([
+      '/events?paged=1',
+      '/events?paged=1&when=past&order=desc&hasVideo=1&cursor=a%2Bb&limit=25',
+      '/events?paged=1',
+      '/events?season=s%2F1&paged=1&when=upcoming',
+      '/events?season=s%2F1&paged=1',
+      '/teams/t%2F1/games?paged=1&order=asc&around=next',
+      '/teams/t%2F1/games?paged=1'
+    ])
+  })
+
+  it('cleans a page and refuses a bare array as one', function () {
+    const counts = {
+      total: 3,
+      upcoming: 1,
+      withVideo: 2,
+      videos: 4,
+      newestSeasonId: null
+    }
+    const clean = asPage(asString)
+    expect(
+      clean({
+        items: ['a'],
+        nextCursor: null,
+        prevCursor: 'before',
+        anchorId: 'a',
+        counts
+      })
+    ).deep.equals({
+      items: ['a'],
+      nextCursor: null,
+      prevCursor: 'before',
+      anchorId: 'a',
+      counts
+    })
+    expect(() => clean(['a'])).throws()
+    expect(() => clean({ items: [1] })).throws()
   })
 
   it('asks for people by each external id, escaped', async function () {

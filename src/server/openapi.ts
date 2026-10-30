@@ -662,6 +662,37 @@ const teamIdParam = {
   schema: { type: 'string' }
 }
 
+/** What a schedule list takes to answer a page at a time. */
+const schedulePageParams = [
+  {
+    name: 'paged',
+    in: 'query',
+    description:
+      'Answer `{items, nextCursor, prevCursor, anchorId, counts}`. Without it the list is the bare array.',
+    schema: { type: 'string', enum: ['1', 'true'] }
+  },
+  {
+    name: 'cursor',
+    in: 'query',
+    description:
+      "A `nextCursor` or `prevCursor`, with the filters of the query that gave it. It carries its list's order, so `order` may be left out, and an `order` that disagrees is a 400. Needs `paged`. A malformed one is a 400.",
+    schema: { type: 'string' }
+  },
+  {
+    name: 'around',
+    in: 'query',
+    description:
+      "`next` opens a first page on the list's next game, in `asc` order, with rows before it. Needs `paged`, and does not take `cursor` or `order=desc`.",
+    schema: { type: 'string', enum: ['next'] }
+  },
+  {
+    name: 'hasVideo',
+    in: 'query',
+    description: 'Keep only games with a video that is not hidden.',
+    schema: { type: 'string', enum: ['1', 'true'] }
+  }
+]
+
 const gameIdParam = {
   name: 'gameId',
   in: 'path',
@@ -3495,11 +3526,50 @@ export function openApiDocument(version: string): OpenApiDocument {
             'in who is not a member of the team (the non-member view) reads ' +
             'its games too, with their video counts, posters and logos.',
           security: [{ bearer: [] }],
-          parameters: [teamIdParam],
+          parameters: [
+            teamIdParam,
+            {
+              name: 'when',
+              in: 'query',
+              description:
+                'Which of the games, as on `GET /events`. Defaults to `all`.',
+              schema: {
+                type: 'string',
+                enum: [
+                  'all',
+                  'upcoming',
+                  'past',
+                  'future',
+                  'finished',
+                  'recent'
+                ],
+                default: 'all'
+              }
+            },
+            {
+              name: 'order',
+              in: 'query',
+              description:
+                'Defaults to newest first, and to soonest first for `when=upcoming` or `when=future`.',
+              schema: { type: 'string', enum: ['asc', 'desc'] }
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Page size. Only with `paged`.',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 50
+              }
+            },
+            ...schedulePageParams
+          ],
           responses: {
             200: {
               description:
-                'Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
+                '`Page` of the same rows with `paged`. Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
             },
             404: errorResponse
           }
@@ -8922,7 +8992,20 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`limit` is a whole number of at least 1; omit it for no cap. ' +
             '`externalId` may be repeated. `played=1` keeps games that have ' +
             'a score. `scoreboard=open` keeps games whose scoreboard is ' +
-            'still open, and answers 503 while that store is away.\n\n' +
+            'still open, and answers 503 while that store is away. ' +
+            '`hasVideo=1` keeps games with a video that is not hidden.\n\n' +
+            '`paged=1` answers `{items, nextCursor, prevCursor, anchorId, ' +
+            'counts}` rather than the bare array, `limit` rows at a time ' +
+            '(50 by default, 100 at most), and does not take ' +
+            '`scoreboard=open`. `nextCursor` is null at the end, and ' +
+            '`prevCursor` is set on any page with rows before it; send either ' +
+            'back as `cursor` with the same query to read on. A first page ' +
+            'has `counts`: `total`, `upcoming`, `withVideo`, `videos` and ' +
+            '`newestSeasonId`, for the whole list leaving out `when` and ' +
+            '`hasVideo`. `around=next` opens a first page on the row the app ' +
+            'opens a schedule on, named by `anchorId`, with `limit / 2` rows ' +
+            'before it and `limit` from it, in `asc` order, and its cursors ' +
+            'read on with `order=asc`.\n\n' +
             'Pending schedules carry exhibition/timezone and pendingApproval, with pendingRequestId only for an actor authorized to read the request. Existing revisions retain approved fields, canceled originals remain canceled, and new proposals have a reserved event ID with no scoring access. Scope run/film and scoreboard=open omit unpublished proposals. No private request terms are returned. ' +
             'Each row is a schedule game plus `gameId`, both teams\u2019 logo ' +
             'URLs, `liveState`, and `opponentFixed`: true when a schedule ' +
@@ -8982,6 +9065,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
+              description:
+                'No cap by default. With `paged`, 50 by default and 100 at most.',
               schema: { type: 'integer', minimum: 1 }
             },
             {
@@ -9000,7 +9085,8 @@ export function openApiDocument(version: string): OpenApiDocument {
               name: 'scoreboard',
               in: 'query',
               schema: { type: 'string', enum: ['open'] }
-            }
+            },
+            ...schedulePageParams
           ],
           responses: {
             200: { description: 'The games that match' },

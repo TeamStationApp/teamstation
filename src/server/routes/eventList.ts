@@ -5,13 +5,22 @@ import type { SeasonGame } from '../../common/api'
 import { notFound, unauthorized, unavailable } from '../../common/errors'
 import { adminScopes, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
-import { eventWindow, parseEventListQuery } from '../events/eventListQuery'
+import {
+  eventWindow,
+  parseEventListQuery,
+  schedulePageAsk
+} from '../events/eventListQuery'
 import { opponentFixed, scoredInTeamStation } from '../games/opponentFixed'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withRevision } from '../socket/syncRevision'
-import { scheduleOf, type ScheduleRow } from './seasons'
+import {
+  type ScheduleFilter,
+  scheduleOf,
+  schedulePage,
+  type ScheduleRow
+} from './seasons'
 
 /**
  * Every game list is this one route.
@@ -124,38 +133,18 @@ export function eventListRoutes(
       const now = new Date()
       const window = eventWindow(parsed, now)
 
-      const rows = await (async (): Promise<ScheduleRow[]> => {
-        const shared = {
-          actor,
-          publishedOnly: parsed.scoreboardOpen,
-          seasonIds: parsed.seasonIds,
-          externalIds: parsed.externalIds,
-          played: window.played,
-          since: window.since,
-          until: window.until,
-          untilInclusive: window.untilInclusive,
-          upcoming: window.upcoming,
-          past: window.past,
-          future: window.future,
-          now,
-          order: window.order,
-          omitCancelled: window.omitCancelled,
-          // A closed board must not consume a slot, so the limit waits.
-          limit: parsed.scoreboardOpen ? undefined : parsed.limit
-        }
+      const scoped = await (async (): Promise<ScheduleFilter> => {
         if (parsed.scope === 'run') {
-          const scopes = await adminScopes(db, actor.userId, actor.isAdmin)
-          return await scheduleOf(db, media, { ...shared, run: scopes })
+          return { run: await adminScopes(db, actor.userId, actor.isAdmin) }
         }
         if (parsed.scope === 'film') {
           const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-          return await scheduleOf(db, media, {
-            ...shared,
+          return {
             film: {
               teamIds: scopes.videographer.teamIds,
               isAdmin: scopes.isAdmin
             }
-          })
+          }
         }
         const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
         if (parsed.seasonIds != null && !scopes.isAdmin) {
@@ -163,9 +152,44 @@ export function eventListRoutes(
             if (!scopes.seasonIds.has(seasonId)) throw notFound()
           }
         }
-        return await scheduleOf(db, media, { ...shared, visible: scopes })
+        return { visible: scopes }
       })()
+      const filter: ScheduleFilter = {
+        ...scoped,
+        actor,
+        publishedOnly: parsed.scoreboardOpen,
+        seasonIds: parsed.seasonIds,
+        externalIds: parsed.externalIds,
+        played: window.played,
+        since: window.since,
+        until: window.until,
+        untilInclusive: window.untilInclusive,
+        upcoming: window.upcoming,
+        past: window.past,
+        future: window.future,
+        now,
+        order: window.order,
+        omitCancelled: window.omitCancelled,
+        hasVideo: parsed.hasVideo,
+        // A closed board must not consume a slot, so the limit waits.
+        limit: parsed.scoreboardOpen ? undefined : parsed.limit
+      }
 
+      if (parsed.paged) {
+        const page = await schedulePage(
+          db,
+          media,
+          filter,
+          schedulePageAsk(parsed, now)
+        )
+        res.json({
+          ...page,
+          items: await withDirectorFields(db, media, page.items)
+        })
+        return
+      }
+
+      const rows = await scheduleOf(db, media, filter)
       let listed = rows
       if (parsed.scoreboardOpen) {
         const store = options.store

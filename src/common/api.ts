@@ -1645,6 +1645,74 @@ export const asSeasonGame = withEventMetadata(
 )
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
+/**
+ * What a paged list's hero and notes read, counted over the list's whole
+ * filter leaving out `when` and `hasVideo`, so they hold with one page loaded
+ * and across a screen's pills.
+ */
+export const asListCounts = asObject({
+  total: asNumber,
+  upcoming: asNumber,
+  /** Rows with a video, and the videos they hold between them. */
+  withVideo: asNumber,
+  videos: asNumber,
+  /** The first `seasonId` of the list, newest first. */
+  newestSeasonId: asNullable(asString)
+})
+export type ListCounts = ReturnType<typeof asListCounts>
+
+/** One page of a list, as every `paged=1` read answers. */
+export interface Page<T> {
+  items: T[]
+  /** Null at the end. */
+  nextCursor: string | null
+  /** On any page with rows before it, and null otherwise. */
+  prevCursor: string | null
+  /** The row `around` opened on. */
+  anchorId: string | null
+  /** On a first page only. */
+  counts: ListCounts | null
+}
+
+export function asPage<T>(asItem: Cleaner<T>): Cleaner<Page<T>> {
+  return asObject({
+    items: asArray(asItem),
+    nextCursor: asNullable(asString),
+    prevCursor: asNullable(asString),
+    anchorId: asNullable(asString),
+    counts: asNullable(asListCounts)
+  })
+}
+
+/** What `paged=1` reads of a schedule take. */
+export interface GamesPageQuery {
+  when?: 'past' | 'upcoming' | 'all'
+  order?: 'asc' | 'desc'
+  /** Only games with a video. */
+  hasVideo?: boolean
+  /** Open on the list's next game, in `asc` order. Not with `cursor`. */
+  around?: 'next'
+  /**
+   * From the `nextCursor` or `prevCursor` of the same list. It carries the
+   * list's order, so `order` may be left out, and one that disagrees is a 400.
+   */
+  cursor?: string
+  limit?: number
+}
+
+function gamesPageParams(query: GamesPageQuery): string {
+  const params = ['paged=1']
+  if (query.when != null && query.when !== 'all')
+    params.push(`when=${query.when}`)
+  if (query.order != null) params.push(`order=${query.order}`)
+  if (query.hasVideo === true) params.push('hasVideo=1')
+  if (query.around != null) params.push(`around=${query.around}`)
+  if (query.cursor != null)
+    params.push(`cursor=${encodeURIComponent(query.cursor)}`)
+  if (query.limit != null) params.push(`limit=${query.limit}`)
+  return params.join('&')
+}
+
 /** A player a roster manager may add, as the search card draws them. */
 export interface RosterCandidate {
   userId: string
@@ -4455,6 +4523,15 @@ export class TeamStationClient {
     return await this.request('GET', `/events${query}`, asArray(asSeasonGame))
   }
 
+  /** `games`, a page at a time. */
+  async gamesPage(query: GamesPageQuery = {}): Promise<Page<SeasonGame>> {
+    return await this.request(
+      'GET',
+      `/events?${gamesPageParams(query)}`,
+      asPage(asSeasonGame)
+    )
+  }
+
   /**
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
@@ -4486,6 +4563,18 @@ export class TeamStationClient {
       'GET',
       `/events?season=${encodeURIComponent(seasonId)}`,
       asArray(asSeasonGame)
+    )
+  }
+
+  /** `seasonGames`, a page at a time. */
+  async seasonGamesPage(
+    seasonId: string,
+    query: GamesPageQuery = {}
+  ): Promise<Page<SeasonGame>> {
+    return await this.request(
+      'GET',
+      `/events?season=${encodeURIComponent(seasonId)}&${gamesPageParams(query)}`,
+      asPage(asSeasonGame)
     )
   }
 
@@ -4534,6 +4623,18 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/games`,
       asArray(asGameSummary)
+    )
+  }
+
+  /** `teamGames`, a page at a time. */
+  async teamGamesPage(
+    teamId: string,
+    query: GamesPageQuery = {}
+  ): Promise<Page<GameSummary>> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/games?${gamesPageParams(query)}`,
+      asPage(asGameSummary)
     )
   }
 
