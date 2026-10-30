@@ -6,6 +6,9 @@ import { AccessibilityInfo } from 'react-native'
 
 import {
   asSeasonGame,
+  type GamesPageQuery,
+  type ListCounts,
+  type Page,
   type SeasonGame,
   type TeamStationClient
 } from '../../common/api'
@@ -16,12 +19,14 @@ import {
   revisionStamps
 } from '../../test/fakeScreenScope'
 import { type FrameClock, installFrameClock } from '../../test/frameClock'
+import { listProps, reachEnd } from '../../test/PagedListStandIn'
+import { pageOf } from '../../test/pageOf'
 import { PAGE_MS } from '../components/TabPages'
 import { ScreenScopeProvider } from '../hooks/useScreenScope'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { shortDate, shortDateNoWeekday } from './format'
 import { GamesFeedScreen } from './GamesFeedScreen'
-import type { When } from './whenFilter'
+import { gamesFor, type When } from './whenFilter'
 
 let root: Root | undefined
 let host: HTMLElement | undefined
@@ -66,17 +71,36 @@ interface Opened {
   options?: { autoPlay?: boolean }
 }
 
+/** What a read answers, before the server cuts it into pages. */
+type GamesRead = (query: GamesPageQuery) => Promise<SeasonGame[]>
+
+/** As the server reads a list: its filter applied, in its pill's order. */
+function served(games: SeasonGame[], query: GamesPageQuery): SeasonGame[] {
+  return query.hasVideo === true
+    ? gamesFor(
+        games.filter(item => item.videoCount > 0),
+        'all'
+      )
+    : gamesFor(games, query.when ?? 'all')
+}
+
 async function mount(
   mode: 'videos' | 'schedule',
   games: SeasonGame[],
   initialWhen?: When,
   onWhen?: (when: When) => void,
-  load?: TeamStationClient['games'],
+  load?: GamesRead,
+  counts?: ListCounts,
   more: Record<string, unknown> = {}
 ): Promise<Opened[]> {
   const opened: Opened[] = []
   const client = {
-    games: load ?? (async () => games),
+    gamesPage: async (query: GamesPageQuery): Promise<Page<SeasonGame>> =>
+      pageOf(
+        load == null ? served(games, query) : await load(query),
+        query,
+        counts == null ? {} : { counts }
+      ),
     ...more
   } as unknown as TeamStationClient
   host = document.createElement('div')
@@ -384,8 +408,8 @@ describe('the games feed', function () {
       const past = game('gam_past', { venue: 'Past field' })
       const later = game('gam_later', { venue: 'All field' })
       await mount('schedule', [], 'past', undefined, async options => {
-        asked.push(options?.when)
-        if (options?.when === 'past') return [past]
+        asked.push(options.when)
+        if (options.when === 'past') return [past]
         return await new Promise(resolve => {
           answer = resolve
         })
@@ -445,12 +469,89 @@ describe('the games feed', function () {
     }
   })
 
+  it('draws each pill’s own pages as its end comes into view', async function () {
+    const past = Array.from({ length: 120 }, (_, index) =>
+      game(`gam_past${index}`, {
+        venue: `Past ${index}`,
+        startAt: new Date(Date.parse(START) - index * 3600_000).toISOString()
+      })
+    )
+    const asked: GamesPageQuery[] = []
+    await mount('schedule', past, 'past', undefined, async query => {
+      asked.push(query)
+      return served(past, query)
+    })
+    expect(asked).deep.equals([{ when: 'past' }])
+    expect(listProps().data).has.lengthOf(50)
+    await act(async () => {
+      reachEnd()
+      await delay(20)
+    })
+    expect(asked).has.lengthOf(2)
+    expect(asked[1].when).equals('past')
+    expect(asked[1].cursor).a('string')
+    expect(listProps().data).has.lengthOf(100)
+    expect(text()).includes('Past 99').and.not.includes('Past 100')
+    await act(async () => {
+      reachEnd()
+      await delay(20)
+    })
+    expect(listProps().data).has.lengthOf(120)
+    // The end has been reached: nothing is left to ask for.
+    await act(async () => {
+      reachEnd()
+      await delay(20)
+    })
+    expect(asked).has.lengthOf(3)
+  })
+
+  it('keeps the rows and offers Retry when a page cannot be read', async function () {
+    const past = Array.from({ length: 60 }, (_, index) =>
+      game(`gam_past${index}`, { venue: `Past ${index}` })
+    )
+    let refuse = false
+    await mount('schedule', past, 'past', undefined, async query => {
+      if (refuse && query.cursor != null) throw new Error('Offline')
+      return past
+    })
+    refuse = true
+    await act(async () => {
+      reachEnd()
+      await delay(20)
+    })
+    expect(text()).includes('Past 49').and.includes('Could not load more')
+    refuse = false
+    await press(
+      [...host!.querySelectorAll<HTMLElement>('button, [role="button"]')].find(
+        node => node.textContent === 'Retry'
+      )!
+    )
+    expect(text()).includes('Past 59').and.not.includes('Could not load more')
+  })
+
+  it('keeps a read’s failure on its own pill', async function () {
+    await mount('schedule', [], 'upcoming', undefined, async options => {
+      if (options.when === 'past') throw new Error('Past failed')
+      return [game('gam_any', { venue: 'Any field' })]
+    })
+    const pill = (label: string): HTMLElement =>
+      host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
+    await press(pill('Past'))
+    expect(text()).includes('Past failed')
+    await press(pill('All'))
+    expect(text()).not.includes('Past failed')
+    expect(text()).includes('Any field')
+    await press(pill('Past'))
+    expect(text()).includes('Past failed')
+    expect(text()).not.includes('Any field')
+  })
+
   it('reads a pill whose read failed again when it is chosen again', async function () {
     const asked: Array<string | undefined> = []
     let fail = true
     await mount('schedule', [], 'upcoming', undefined, async options => {
-      asked.push(options?.when)
-      if (options?.when === 'upcoming' && fail) throw new Error('Offline')
+      asked.push(options.when)
+      if (options.when === 'upcoming' && fail) throw new Error('Offline')
       return [
         game('gam_next', {
           venue: 'Next field',
@@ -475,16 +576,17 @@ describe('the games feed', function () {
 
   it('slides in a new pill’s stored games while its read is on its way', async function () {
     const held: Array<() => void> = []
-    const load: TeamStationClient['games'] = async options => {
-      if (options?.when === 'past')
+    const load: GamesRead = async query => {
+      if (query.when === 'past')
         await new Promise<void>(resolve => {
           held.push(resolve)
         })
       return []
     }
     const store = game('gam_stored', { venue: 'Stored field' })
-    await mount('schedule', [], 'upcoming', undefined, load, {
-      cached: async (key: string) => (key.includes('past') ? [store] : null)
+    await mount('schedule', [], 'upcoming', undefined, load, undefined, {
+      cached: async (key: string) =>
+        key.includes('past') ? pageOf([store], {}) : null
     })
     const pill = (label: string): HTMLElement =>
       host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
@@ -499,7 +601,7 @@ describe('the games feed', function () {
   it('leaves the last pill’s failure behind when the address changes the pill', async function () {
     let failing = false
     await mount('schedule', [], 'upcoming', undefined, async options => {
-      if (options?.when === 'past' && failing) throw new Error('Past failed')
+      if (options.when === 'past' && failing) throw new Error('Past failed')
       return [
         game('gam_next', {
           venue: 'Next field',
@@ -523,7 +625,7 @@ describe('the games feed', function () {
   it('lands no failure from the last pill’s read on a pill chosen again within the half minute', async function () {
     const held: Array<() => void> = []
     await mount('schedule', [], 'upcoming', undefined, async options => {
-      if (options?.when === 'past') {
+      if (options.when === 'past') {
         // Past's read is slow, and fails.
         await new Promise<void>(resolve => {
           held.push(resolve)
@@ -559,8 +661,8 @@ describe('the games feed', function () {
     const asked: Array<string | undefined> = []
     const held: Array<() => void> = []
     await mount('schedule', [], 'upcoming', undefined, async options => {
-      asked.push(options?.when)
-      if (options?.when === 'past' && held.length === 0)
+      asked.push(options.when)
+      if (options.when === 'past' && held.length === 0)
         // Past's first read is slow.
         await new Promise<void>(resolve => {
           held.push(resolve)
@@ -621,6 +723,53 @@ describe('the games feed', function () {
     expect(host?.querySelector('[aria-label="Upcoming"]')).equals(null)
     expect(text()).includes('GAME VIDEOS')
   })
+
+  it('asks the server for the games with a video, and does not filter them', async function () {
+    const asked: GamesPageQuery[] = []
+    await mount('videos', [], undefined, undefined, async query => {
+      asked.push(query)
+      // Whatever the server answers is what is drawn.
+      return [game('gam_none', { videoCount: 0, venue: 'Bare field' })]
+    })
+    expect(asked).deep.equals([{ hasVideo: true }])
+    expect(text()).includes('Bare field')
+  })
+
+  it('lays the videos out in the columns the width allows', async function () {
+    await mount('videos', [game('gam_final')])
+    expect(listProps().numColumns).equals(1)
+    await setWidth(1800)
+    expect(listProps().numColumns).greaterThan(1)
+  })
+
+  it('says how many games a list holds in all, from the counts', async function () {
+    const counts: ListCounts = {
+      total: 200,
+      upcoming: 30,
+      withVideo: 12,
+      videos: 40,
+      newestSeasonId: 'sea_spring'
+    }
+    const one = [game('gam_final')]
+    await mount('schedule', one, 'past', undefined, undefined, counts)
+    expect(text()).includes('170 games')
+    await applyWhen!('upcoming')
+    expect(text()).includes('30 games')
+    await applyWhen!('all')
+    await land()
+    expect(text()).includes('200 games')
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+    await mount('videos', one, undefined, undefined, undefined, counts)
+    expect(text()).includes('12 games')
+  })
+
+  it('says nothing of the count until it is known', async function () {
+    await mount('videos', [game('gam_final')])
+    expect(text()).not.includes('1 game')
+  })
 })
 
 describe('the games feed’s screen scope', function () {
@@ -646,10 +795,10 @@ describe('the games feed’s screen scope', function () {
     const stamps = revisionStamps()
     stamps.offline = offline
     const client = Object.assign(stamps, {
-      games: async (query: { when?: string }) => {
+      gamesPage: async (query: { when?: string }) => {
         asked.push(query)
-        socket.log.push('client.games')
-        return [game('gam_final', { startAt: START })]
+        socket.log.push('client.gamesPage')
+        return pageOf([game('gam_final', { startAt: START })])
       }
     }) as unknown as TeamStationClient
     host = document.createElement('div')
@@ -681,13 +830,13 @@ describe('the games feed’s screen scope', function () {
     const keys: string[] = []
     const stamps = revisionStamps()
     const client = Object.assign(stamps, {
-      games: async (query: { when?: string }) => {
+      gamesPage: async (query: { when?: string }) => {
         asked.push(query)
-        return [game('gam_final', { startAt: START })]
+        return pageOf([game('gam_final', { startAt: START })])
       },
       cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
         keys.push(key)
-        return cleaner([game('gam_stored', { startAt: START })])
+        return cleaner(pageOf([game('gam_stored', { startAt: START })]))
       }
     }) as unknown as TeamStationClient
     host = document.createElement('div')
@@ -708,8 +857,78 @@ describe('the games feed’s screen scope', function () {
       await delay(20)
     })
     expect(asked).deep.equals([])
-    expect(keys).deep.equals(['games.upcoming'])
+    expect(keys).deep.equals(['games.upcoming.page'])
     expect(spinning()).equals(false)
+    expect(text()).includes('Badgers')
+    await act(async () => {
+      socket.ack('2')
+      await delay(20)
+    })
+    expect(asked).deep.equals([{ when: 'upcoming' }])
+    expect(spinning()).equals(false)
+  })
+
+  it('paints the stored videos under their own key', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const keys: string[] = []
+    const client = Object.assign(revisionStamps(), {
+      gamesPage: async () => pageOf([game('gam_final')]),
+      cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
+        keys.push(key)
+        return cleaner(pageOf([]))
+      }
+    }) as unknown as TeamStationClient
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <GamesFeedScreen
+            client={client}
+            mode="videos"
+            onOpenGame={() => undefined}
+          />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    expect(keys).deep.equals(['games.videos.page'])
+  })
+
+  it('leaves what the server answered under a slower stored copy', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    let stored!: (raw: unknown) => void
+    const client = Object.assign(revisionStamps(), {
+      gamesPage: async () => pageOf([game('gam_new', { venue: 'New field' })]),
+      cached: async (_key: string, cleaner: (raw: unknown) => unknown) =>
+        cleaner(
+          await new Promise(resolve => {
+            stored = resolve
+          })
+        )
+    }) as unknown as TeamStationClient
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <GamesFeedScreen
+            client={client}
+            mode="videos"
+            onOpenGame={() => undefined}
+          />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    expect(text()).includes('New field')
+    await act(async () => {
+      stored(pageOf([game('gam_old', { venue: 'Old field' })]))
+      await delay(20)
+    })
+    expect(text()).includes('New field').and.not.includes('Old field')
   })
 
   it('does not let the foreground refresh’s first call read the schedule before subscribed', async function () {
@@ -717,7 +936,7 @@ describe('the games feed’s screen scope', function () {
     const socket = new FakeScopeSocket()
     const asked: Array<{ when?: string }> = []
     await mountScoped('schedule', socket, asked)
-    expect(asked, 'client.games before subscribed').deep.equals([])
+    expect(asked, 'client.gamesPage before subscribed').deep.equals([])
     expect(spinning()).equals(true)
     await act(async () => {
       socket.ack('2')
@@ -726,7 +945,7 @@ describe('the games feed’s screen scope', function () {
     expect(socket.log).deep.equals([
       'subscribe schedule',
       'subscribed 2',
-      'client.games'
+      'client.gamesPage'
     ])
     expect(asked).deep.equals([{ when: 'upcoming' }])
     expect(spinning()).equals(false)
@@ -746,7 +965,9 @@ describe('the games feed’s screen scope', function () {
     const socket = new FakeScopeSocket()
     const asked: Array<{ when?: string }> = []
     await mountScoped('videos', socket, asked)
-    expect(asked, 'client.games with no ack').deep.equals([{}])
+    expect(asked, 'client.gamesPage with no ack').deep.equals([
+      { hasVideo: true }
+    ])
     expect(socket.asked()).deep.equals([])
     expect(timers.pending()).equals(0)
     expect(text()).includes('GAME VIDEOS')

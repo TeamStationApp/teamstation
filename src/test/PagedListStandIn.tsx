@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { memo, useEffect, useRef } from 'react'
 import { View } from 'react-native'
 
 import type { PagedListProps } from '../app/components/pagedListProps'
@@ -36,10 +36,36 @@ export function reportAnchor(y: number): void {
   onShow().props.onAnchorPosition?.(y)
 }
 
+/** What a list on show was given, for a suite to check. */
+export function listProps(): PagedListProps<never> {
+  return onShow().props
+}
+
 function part(content: PagedListProps<never>['header']): React.ReactNode {
   if (content == null || React.isValidElement(content)) return content
   return React.createElement(content)
 }
+
+interface RowProps<T> {
+  item: T
+  index: number
+  extraData: unknown
+  render: (item: T, index: number) => React.ReactElement | null
+}
+
+/** As in Legend List, a mounted row is drawn again only for these. */
+function sameRow(a: RowProps<never>, b: RowProps<never>): boolean {
+  return a.item === b.item && a.index === b.index && a.extraData === b.extraData
+}
+
+function DrawnRow(props: RowProps<never>): React.ReactElement | null {
+  const { item, index, render } = props
+  return render(item, index)
+}
+
+const Row = memo(DrawnRow, sameRow) as unknown as <T>(
+  props: RowProps<T>
+) => React.ReactElement | null
 
 /**
  * The bundled tests' `PagedList`, which `scripts/pagedListStandInPlugin.mjs`
@@ -49,7 +75,7 @@ function part(content: PagedListProps<never>['header']): React.ReactNode {
  * `reportAnchor`.
  */
 export function PagedList<T>(props: PagedListProps<T>): React.ReactElement {
-  const { data, keyOf, renderItem, header, footer, empty } = props
+  const { data, keyOf, renderItem, extraData, header, footer, empty } = props
   usePageScroll()
   const active = usePageActive()
   const entry = useRef<StandingList>({
@@ -71,9 +97,13 @@ export function PagedList<T>(props: PagedListProps<T>): React.ReactElement {
       {data.length === 0
         ? part(empty)
         : data.map((item, index) => (
-            <React.Fragment key={keyOf(item)}>
-              {renderItem(item, index)}
-            </React.Fragment>
+            <Row
+              key={keyOf(item)}
+              item={item}
+              index={index}
+              extraData={extraData}
+              render={renderItem}
+            />
           ))}
       {part(footer)}
     </View>

@@ -14,6 +14,7 @@ import {
 } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { pageOf } from '../test/pageOf'
 import { App } from './App'
 
 const playerId = userIdOfGumbo(201)
@@ -100,7 +101,7 @@ describe('a navbar press clears that tab', () => {
     proto.follows = async () => []
     proto.recentGame = async () => null
     proto.liveNow = async () => []
-    proto.games = async () => [game]
+    proto.gamesPage = async () => pageOf([game])
     proto.teamGames = async () => [game]
     proto.game = async () => detail
     proto.roster = async () => [

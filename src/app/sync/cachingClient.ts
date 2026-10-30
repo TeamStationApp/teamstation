@@ -2,6 +2,7 @@ import { asArray, type Cleaner } from 'cleaners'
 
 import {
   asMyRoles,
+  asPage,
   asSeasonGame,
   asTeamSummary,
   type ClientOptions,
@@ -312,7 +313,8 @@ export class CachingClient extends TeamStationClient {
    * with no signal, beside what Home stored: the person's roles, every
    * team's roster (whole names only where they manage it), and for each
    * upcoming game both sides' rosters, the game, its lineups, its plays and
-   * each side's default lineup. Four at a time, without collecting
+   * each side's default lineup, and the first page Schedule opens on, so that
+   * it paints without having been opened. Four at a time, without collecting
    * revisions into a screen's load; a read that fails is left for the next
    * time. One prefetch runs at a time, and none while offline.
    */
@@ -415,7 +417,9 @@ export class CachingClient extends TeamStationClient {
     const [roles, teams, fetched] = await Promise.all([
       read<MyRoles>('/me/roles', asMyRoles),
       this.cached<TeamSummary[]>(HOME_TEAMS, asArray(asTeamSummary)),
-      read<SeasonGame[]>('/events?when=upcoming', asArray(asSeasonGame))
+      // Every upcoming game: these choose what is stored for scoring.
+      read<SeasonGame[]>('/events?when=upcoming', asArray(asSeasonGame)),
+      read('/events?paged=1&when=upcoming', asPage(asSeasonGame))
     ])
     // The games last stored stand in for a list that would not load.
     const upcoming =

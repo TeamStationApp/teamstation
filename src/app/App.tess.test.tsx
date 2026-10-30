@@ -15,6 +15,7 @@ import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
+import { pageOf } from '../test/pageOf'
 import { manualClock, windowSize } from '../test/tessTestKit'
 import { App, screenTitle } from './App'
 import { ChatListNavigationCapture } from './chat/chatWorkspaceModel'
@@ -127,7 +128,7 @@ describe("Tess in the app's shell", () => {
     api.guardedPlayers = async () => []
     api.recentGame = async () => null
     api.liveNow = async () => []
-    api.games = async () => []
+    api.gamesPage = async () => pageOf([])
     api.roster = async () => []
     api.defaultLineup = async () => ({
       lineup: null,

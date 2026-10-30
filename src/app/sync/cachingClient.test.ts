@@ -4,9 +4,15 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import { type RevisionRead, TeamStationClient } from '../../common/api'
+import {
+  asPage,
+  asSeasonGame,
+  type RevisionRead,
+  TeamStationClient
+} from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { pageOf } from '../../test/pageOf'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
 import { CachingClient, PREFETCH_CONCURRENCY } from './cachingClient'
 import {
@@ -401,6 +407,7 @@ describe('CachingClient', function () {
     expect(stored).not.includes(fullRosterKey('tem_owls'))
     expect(stored, 'a failed read is skipped').not.includes('game.g1')
     expect(stored).includes('me.roles').and.includes('games.upcoming')
+    expect(fetched, 'the scoring read stays').includes('/events?when=upcoming')
 
     net.offline = true
     expect(await client.myRoles()).deep.include({ teams: roles.teams })
@@ -413,6 +420,87 @@ describe('CachingClient', function () {
     const before = net.calls.length
     await client.prefetch()
     expect(net.calls.length).equals(before)
+  })
+
+  it('paints Schedule from a first page only the prefetch stored (Paged prefetch)', async function () {
+    const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
+    const net = server({
+      '/events?when=upcoming': { body: games, revision: '1' },
+      '/events?paged=1&when=upcoming': {
+        body: pageOf(games, {}, { counts: null }),
+        revision: '1'
+      }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.prefetch()
+    expect(net.calls).includes('/events?paged=1&when=upcoming')
+    const stored = await client.cached(
+      gamesKey('upcoming'),
+      asPage(asSeasonGame)
+    )
+    expect(stored?.items.map(game => game.id)).deep.equals(['g1'])
+    net.offline = true
+    const page = await client.gamesPage({ when: 'upcoming' })
+    expect(page.items.map(game => game.id)).deep.equals(['g1'])
+  })
+
+  it('stores a list’s first page, and no page after it (First page)', async function () {
+    const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
+    const lists: Array<[string, Parameters<CachingClient['gamesPage']>[0]]> = [
+      ['/events?paged=1&when=upcoming', { when: 'upcoming' }],
+      ['/events?paged=1&when=past', { when: 'past' }],
+      ['/events?paged=1', {}],
+      ['/events?paged=1&hasVideo=1', { hasVideo: true }]
+    ]
+    const net = server(
+      Object.fromEntries(
+        lists.map(([path]) => [path, { body: pageOf(games), revision: '1' }])
+      )
+    )
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    for (const [, query] of lists) await client.gamesPage(query)
+    net.offline = true
+    for (const [, query] of lists)
+      expect((await client.gamesPage(query)).items).length(1)
+    let failure: unknown
+    try {
+      await client.gamesPage({ when: 'past', cursor: 'next:50' })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'offline')
+  })
+
+  it('reads an array an older build stored as a miss (Stored array)', async function () {
+    const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
+    const net = server({
+      '/events?when=upcoming': { body: games, revision: '1' }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.games({ when: 'upcoming' })
+    expect(await client.cached('games.upcoming', asPage(asSeasonGame))).equals(
+      undefined
+    )
+    const store = await openCacheStore(stores.get('usr_1')!)
+    await store.store(gamesKey('upcoming'), {
+      body: JSON.stringify(games),
+      revision: '1',
+      serverDigest: null
+    })
+    expect(
+      await client.cached(gamesKey('upcoming'), asPage(asSeasonGame))
+    ).equals(undefined)
+    net.offline = true
+    let failure: unknown
+    try {
+      await client.gamesPage({ when: 'upcoming' })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'offline')
   })
 
   it('reads ahead from the stored upcoming list when it will not load', async function () {
@@ -590,9 +678,21 @@ describe('document keys', function () {
     expect(documentKeyOf('/games/g/events')).equals('events.g')
     expect(documentKeyOf('/games/%E0%A4%A/lineups')).equals(undefined)
     expect(documentKeyOf('/games/g/dj')).equals(undefined)
-    expect(gamesKey('upcoming')).equals('games.upcoming')
-    expect(gamesKey('past')).equals('games.past')
-    expect(gamesKey('all')).equals('games.all')
+    expect(documentKeyOf('/events?paged=1&when=upcoming')).equals(
+      'games.upcoming.page'
+    )
+    expect(documentKeyOf('/events?paged=1&when=past')).equals('games.past.page')
+    expect(documentKeyOf('/events?paged=1')).equals('games.all.page')
+    expect(documentKeyOf('/events?paged=1&hasVideo=1')).equals(
+      'games.videos.page'
+    )
+    expect(documentKeyOf('/events?paged=1&when=past&cursor=c')).equals(
+      undefined
+    )
+    expect(gamesKey('upcoming')).equals('games.upcoming.page')
+    expect(gamesKey('past')).equals('games.past.page')
+    expect(gamesKey('all')).equals('games.all.page')
+    expect(gamesKey('videos')).equals('games.videos.page')
     expect(fallbackKeyOf('roster.full.t')).equals('roster.t')
     expect(fallbackKeyOf('roster.t')).equals(undefined)
   })

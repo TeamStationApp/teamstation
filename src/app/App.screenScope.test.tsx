@@ -6,6 +6,7 @@ import { asSessionUser, TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
 import { type FakeSocket, fakeSockets } from '../test/fakeScoreboardSocket'
 import { mount, settle, unmount } from '../test/gameFormDom'
+import { pageOf } from '../test/pageOf'
 import { App, screenScopeOf } from './App'
 import { showRoute } from './navigation/useAddressBar'
 import { gameFixture } from './scoring/isUnscoredGame.test'
@@ -80,9 +81,9 @@ describe('the scope the visible route holds', () => {
     api.guardedPlayers = async () => []
     api.recentGame = async () => null
     api.liveNow = async () => []
-    api.games = async () => {
+    api.gamesPage = async () => {
       reads.push('games')
-      return []
+      return pageOf([])
     }
     api.game = async () => {
       reads.push('game')

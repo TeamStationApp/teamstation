@@ -1,4 +1,3 @@
-import { asArray } from 'cleaners'
 import React, {
   memo,
   useCallback,
@@ -10,7 +9,9 @@ import React, {
 import { ActivityIndicator, Text, View } from 'react-native'
 
 import {
+  asPage,
   asSeasonGame,
+  type ListCounts,
   type SeasonGame,
   type TeamStationClient
 } from '../../common/api'
@@ -28,6 +29,8 @@ import {
   useHeaderSlot,
   usePaneWidth
 } from '../components'
+import { PagedList } from '../components/PagedList'
+import { PagedListEnd } from '../components/PagedListEnd'
 import {
   PillBand,
   PinnedContent,
@@ -36,7 +39,7 @@ import {
 import { ActiveView, TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
-import { useLatestRequest } from '../hooks/useLatestRequest'
+import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { columnsForWidth } from '../layout/grid'
@@ -52,7 +55,7 @@ import {
   shortTime
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
-import { gamesFor, type When } from './whenFilter'
+import type { When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
   client: TeamStationClient
@@ -78,23 +81,49 @@ const WHEN_TABS = [
   { id: 'all' as const, label: 'All' }
 ]
 
-/**
- * Whether two reads of a list hold the same games, as drawn: game by game,
- * stopping at the first that differs, rather than writing out both lists
- * whole on every read.
- */
-function sameGames(
-  a: readonly SeasonGame[],
-  b: readonly SeasonGame[]
-): boolean {
-  if (a.length !== b.length) return false
-  for (let index = 0; index < a.length; index++)
-    if (
-      a[index] !== b[index] &&
-      JSON.stringify(a[index]) !== JSON.stringify(b[index])
-    )
-      return false
-  return true
+/** A row's height before it has been measured, as each list draws them. */
+const ROW_HEIGHT = { schedule: 140, videos: 130 }
+
+const gameId = (game: SeasonGame): string => game.id
+
+/** When each list last had its first page from the server. */
+type AnsweredAt = Partial<Record<When, number>>
+
+/** One list of the feed, read when the screen says so. */
+function useGamesList(
+  client: TeamStationClient,
+  mode: GamesFeedScreenProps['mode'],
+  when: When,
+  answered: React.RefObject<AnsweredAt>
+): PagedRows<SeasonGame> {
+  return usePagedList<SeasonGame>({
+    listKey: `${mode}-${when}`,
+    auto: false,
+    keyOf: gameId,
+    read: async cursor => {
+      const page = await client.gamesPage({
+        ...(mode === 'videos'
+          ? { hasVideo: true }
+          : when === 'all'
+            ? {}
+            : { when }),
+        ...(cursor == null ? {} : { cursor })
+      })
+      if (cursor == null) answered.current[when] = Date.now()
+      return page
+    }
+  })
+}
+
+/** How many games a list holds in all, whichever of them are loaded. */
+function countOf(
+  counts: ListCounts,
+  mode: GamesFeedScreenProps['mode'],
+  when: When
+): number {
+  if (mode === 'videos') return counts.withVideo
+  if (when === 'upcoming') return counts.upcoming
+  return when === 'past' ? counts.total - counts.upcoming : counts.total
 }
 
 /**
@@ -128,10 +157,7 @@ export function GamesFeedScreen(
   // The shell can change the address — Back, or a sign-in next link — while
   // this screen stays mounted. The pills and the list follow that address.
   useEffect(() => {
-    if (initialWhen == null) return
-    setWhen(initialWhen)
-    // The last pill's failure is not this one's, as when a pill is chosen.
-    setError(undefined)
+    if (initialWhen != null) setWhen(initialWhen)
   }, [initialWhen])
   // Navigation stays below the header; its title hands up as the page scrolls.
   const { headerHeight } = useHeaderSlot()
@@ -156,34 +182,26 @@ export function GamesFeedScreen(
   // drawn from its own games, never filtered out of another pill's, so a
   // change of pill slides in what that pill shows at once (the phone's stored
   // copy, then the server's) rather than the last pill's games, replaced
-  // under the slide when the read for the new one returns.
+  // under the slide when the read for the new one returns. A failed read
+  // stays on its own pill for the same reason.
+  const answered = useRef<AnsweredAt>({})
+  const lists: Record<When, PagedRows<SeasonGame>> = {
+    upcoming: useGamesList(client, mode, 'upcoming', answered),
+    past: useGamesList(client, mode, 'past', answered),
+    all: useGamesList(client, mode, 'all', answered)
+  }
   const list: When = mode === 'schedule' ? when : 'all'
-  const [lists, setLists] = useState<Partial<Record<When, SeasonGame[]>>>({})
-  const [error, setError] = useState<string | undefined>(undefined)
   const games = lists[list]
-  const loading = games == null && error == null
-  /** A list kept, unless it holds what is already there: no redraw then. */
-  const keep = useCallback(
-    (key: When, next: SeasonGame[], over: boolean): void => {
-      setLists(held => {
-        const kept = held[key]
-        if (kept != null && (!over || sameGames(kept, next))) return held
-        return { ...held, [key]: next }
-      })
-    },
-    []
-  )
+  const { refresh: readGames, paint } = games
   const { pinned, selectTab } = usePinnedTabs({
     head: { headerHeight, handoff },
-    ready: mode === 'schedule' && !loading,
+    ready: mode === 'schedule' && !games.loading,
     tab: when,
     anchorOnRow: false
   })
   const choose = useCallback(
     (next: When): void => {
       selectTab(next)
-      // The last pill's failure is not this one's: it loads afresh.
-      setError(undefined)
       setWhen(next)
       onWhenChange?.(next)
     },
@@ -193,93 +211,41 @@ export function GamesFeedScreen(
   // A pill chosen again shows the list it kept, and reads it again only when
   // the server last answered for it over half a minute ago: a long list
   // read, checked and stored on every change of pill would hold the next tap
-  // up. A read that failed, or was dropped for a later one, answered nothing,
-  // so the pill reads at once. The half-minute refresh and a return to the
-  // app still read it. A scope notice reads only the pill on show, so one
-  // that came while this pill was hidden reaches it within the half minute.
-  const read = useRef<{ list?: When; at: Partial<Record<When, number>> }>({
-    at: {}
-  })
-  const beginGames = useLatestRequest()
+  // up. A read that failed answered nothing, so the pill reads at once. The
+  // half-minute refresh and a return to the app still read it. A scope notice
+  // reads only the pill on show, so one that came while this pill was hidden
+  // reaches it within the half minute.
+  const shownList = useRef<When | undefined>(undefined)
   const loadGames = useCallback(async (): Promise<void> => {
-    const current = beginGames()
-    try {
-      const all = await client.games(list === 'all' ? {} : { when: list })
-      if (current()) {
-        keep(list, all, true)
-        setError(undefined)
-        read.current.at[list] = Date.now()
-      }
-    } catch (caught) {
-      if (current())
-        setError(caught instanceof Error ? caught.message : 'Cannot load')
-    }
-  }, [client, list, beginGames, keep])
+    await readGames()
+  }, [readGames])
   /** The list as the phone last stored it, until the read returns. */
   const paintGames = useCallback(async (): Promise<void> => {
-    const current = beginGames()
-    const stored = await client.cached(gamesKey(list), asArray(asSeasonGame))
-    // Under what the server already gave, never over it.
-    if (current() && stored != null) keep(list, stored, false)
-  }, [client, list, beginGames, keep])
+    const stored = await client.cached(
+      gamesKey(mode === 'videos' ? 'videos' : list),
+      asPage(asSeasonGame)
+    )
+    if (stored != null) paint(stored)
+  }, [client, list, mode, paint])
   // Schedule waits for its scope's acknowledgement before it reads. Videos
   // takes no scope, so it reads at once.
   const scoped = useScreenScope(loadGames, client, paintGames)
-  /** As `paintGames`, for a read already on its way: it holds no request. */
-  const paintChosen = useCallback(async (): Promise<void> => {
-    const stored = await client.cached(gamesKey(list), asArray(asSeasonGame))
-    if (stored != null) keep(list, stored, false)
-  }, [client, list, keep])
   const listsNow = useRef(lists)
   listsNow.current = lists
   const refresh = useCallback(async (): Promise<void> => {
-    const held = read.current
-    const chosen = held.list !== list
-    const entering = held.list == null
-    held.list = list
+    const shown = shownList.current
+    const chosen = shown !== list
+    shownList.current = list
     // A pill new to this screen slides in what the phone has stored, until
     // the read returns: the screen's scope paints only as it enters.
-    if (chosen && !entering && listsNow.current[list] == null)
-      paintChosen().catch(() => undefined)
-    const last = held.at[list]
-    if (chosen && last != null && Date.now() - last < REREAD_MS) {
-      // Not read again, but the last pill's read is not this pill's: one
-      // still on its way must not land its failure, or its list, here.
-      beginGames()
-      return
-    }
+    if (chosen && shown != null && listsNow.current[list].loading)
+      paintGames().catch(() => undefined)
+    const last = answered.current[list]
+    if (chosen && last != null && Date.now() - last < REREAD_MS) return
     await scoped()
-  }, [list, paintChosen, scoped, beginGames])
+  }, [list, paintGames, scoped])
   useForegroundRefresh(refresh)
 
-  // Videos offers no filter. Nothing that has not been played can have a
-  // recording, so `Upcoming` was always empty and `Past` was always the whole
-  // list — three pills to choose between one answer and two empty ones.
-  // Arranged once per pill and list, so a pill chosen again hands its cards
-  // the same games, and they are not drawn again.
-  const arranged = useMemo(
-    () => new Map<When, { games: SeasonGame[]; sorted: SeasonGame[] }>(),
-    // A new mode arranges the same lists another way.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode]
-  )
-  let sorted: SeasonGame[] | undefined
-  if (games != null) {
-    const held = arranged.get(when)
-    if (held?.games === games) sorted = held.sorted
-    else {
-      sorted =
-        mode === 'videos'
-          ? games
-              .filter(game => game.videoCount > 0)
-              .sort(
-                (a, b) =>
-                  Date.parse(b.startAt ?? '') - Date.parse(a.startAt ?? '')
-              )
-          : gamesFor(games, when)
-      arranged.set(when, { games, sorted })
-    }
-  }
   // The latest handler, under one identity, which leaves the cards as drawn.
   const open = useStableCallback(onOpenGame)
 
@@ -288,6 +254,7 @@ export function GamesFeedScreen(
       {...(mode === 'schedule'
         ? pinned.screen
         : { onScroll: handoff.handleScroll })}
+      pagedList
       // Videos lays its cards out in up to four columns, so it keeps the
       // margins and loses the reading-width cap: a cap made for a line of text
       // would hold a grid of pictures to two columns on any monitor.
@@ -314,14 +281,23 @@ export function GamesFeedScreen(
           <ActiveView ref={handoff.ref}>
             <SectionHeader
               title={mode === 'videos' ? 'Game videos' : 'Schedule'}
-              note={sorted == null ? undefined : gameCountLabel(sorted.length)}
+              note={
+                games.counts == null
+                  ? undefined
+                  : gameCountLabel(countOf(games.counts, mode, list))
+              }
             />
           </ActiveView>
 
-          {error != null && <Text style={styles.error}>{error}</Text>}
+          {games.error != null && (
+            <Text style={styles.error}>
+              {games.error instanceof Error
+                ? games.error.message
+                : 'Cannot load'}
+            </Text>
+          )}
           <GameCards
-            games={sorted}
-            failed={error != null}
+            list={games}
             mode={mode}
             columns={columns}
             narrow={narrow}
@@ -343,165 +319,170 @@ export function GamesFeedScreen(
  * A spinner until the games are in.
  */
 function GameCards(props: {
-  games: SeasonGame[] | undefined
-  failed: boolean
-  mode: GamesFeedScreenProps['mode']
-  columns: number
-  narrow: boolean
-  offline: boolean
-  onOpenGame: GamesFeedScreenProps['onOpenGame']
-}): React.ReactElement | null {
-  const { games, failed, mode, columns, narrow, offline, onOpenGame } = props
-  const styles = getStyles(useTheme())
-  if (games == null) {
-    // A list that could not be read says so above, and does not spin.
-    if (failed) return null
-    return (
-      <ActivityIndicator
-        accessibilityLabel="Loading games"
-        style={styles.loading}
-      />
-    )
-  }
-  if (games.length === 0)
-    return (
-      <Card>
-        <Text style={styles.muted}>
-          {mode === 'videos'
-            ? 'No recorded games here yet.'
-            : 'No games here yet.'}
-        </Text>
-      </Card>
-    )
-  return (
-    <CardGrid
-      games={games}
-      mode={mode}
-      columns={columns}
-      narrow={narrow}
-      offline={offline}
-      onOpenGame={onOpenGame}
-    />
-  )
-}
-
-/**
- * The cards themselves, drawn again only when what they show changes: a
- * pill's page drawn again as it comes back leaves them as they are.
- */
-const CardGrid = memo(function CardGrid(props: {
-  games: SeasonGame[]
+  list: PagedRows<SeasonGame>
   mode: GamesFeedScreenProps['mode']
   columns: number
   narrow: boolean
   offline: boolean
   onOpenGame: GamesFeedScreenProps['onOpenGame']
 }): React.ReactElement {
-  const { games, mode, columns, narrow, offline, onOpenGame } = props
+  const { list, mode, columns, narrow, offline, onOpenGame } = props
+  const { rows, loading, empty, loadMore } = list
   const styles = getStyles(useTheme())
+  const renderRow = useCallback(
+    (game: SeasonGame) => (
+      <GameCardRow
+        game={game}
+        mode={mode}
+        narrow={narrow}
+        offline={offline}
+        onOpenGame={onOpenGame}
+      />
+    ),
+    [mode, narrow, offline, onOpenGame]
+  )
+  const extraData = useMemo(() => ({ narrow, offline }), [narrow, offline])
+  const readOn = useCallback(() => {
+    loadMore().catch(() => undefined)
+  }, [loadMore])
   return (
     <View style={styles.grid}>
-      {games.map(game => {
-        const lines = matchupLines(game)
-        const unplayable = offline && game.isLive
-        const listed = gameListOptions(game, mode)
-        const options =
-          listed == null || !unplayable
-            ? listed
-            : { ...listed, autoPlay: false }
-        return (
-          <View
-            key={game.id}
-            style={[styles.cell, { width: `${100 / columns}%` }]}
-          >
-            <Card>
-              {mode === 'schedule' ? (
-                <ScheduleRow
-                  first={lines.first}
-                  second={lines.second}
-                  startAt={game.startAt}
-                  isGameLive={game.isGameLive}
-                  isUmpire={game.isUmpire}
-                  venue={game.venue}
-                  status={game.status}
-                  awayScore={game.awayScore}
-                  homeScore={game.homeScore}
-                  isLive={game.isLive}
-                  videoCount={game.videoCount}
-                  pendingApproval={game.pendingApproval}
-                  cancellationReason={game.cancellationReason}
-                  withdrawnByTeamName={game.withdrawnByTeamName}
-                  onPress={
-                    options == null
-                      ? undefined
-                      : () => {
-                          onOpenGame(
-                            game.id,
-                            [lines.first, lines.second]
-                              .filter(line => line !== '')
-                              .join(' '),
-                            options
-                          )
-                        }
+      <PagedList
+        data={rows}
+        keyOf={gameId}
+        renderItem={renderRow}
+        extraData={extraData}
+        numColumns={columns}
+        estimatedItemSize={ROW_HEIGHT[mode]}
+        // A list that could not be read says so above, and does not spin.
+        empty={
+          loading ? (
+            <ActivityIndicator
+              accessibilityLabel="Loading games"
+              style={styles.loading}
+            />
+          ) : empty ? (
+            <View style={styles.cell}>
+              <Card>
+                <Text style={styles.muted}>
+                  {mode === 'videos'
+                    ? 'No recorded games here yet.'
+                    : 'No games here yet.'}
+                </Text>
+              </Card>
+            </View>
+          ) : null
+        }
+        footer={<PagedListEnd list={list} />}
+        onEndReached={readOn}
+      />
+    </View>
+  )
+}
+
+/**
+ * One card, drawn again only when what it shows changes: a page of rows
+ * arriving, or a row's refresh, leaves the others as they are.
+ */
+const GameCardRow = memo(function GameCardRow(props: {
+  game: SeasonGame
+  mode: GamesFeedScreenProps['mode']
+  narrow: boolean
+  offline: boolean
+  onOpenGame: GamesFeedScreenProps['onOpenGame']
+}): React.ReactElement {
+  const { game, mode, narrow, offline, onOpenGame } = props
+  const styles = getStyles(useTheme())
+  const lines = matchupLines(game)
+  const unplayable = offline && game.isLive
+  const listed = gameListOptions(game, mode)
+  const options =
+    listed == null || !unplayable ? listed : { ...listed, autoPlay: false }
+  return (
+    <View style={styles.cell}>
+      <Card>
+        {mode === 'schedule' ? (
+          <ScheduleRow
+            first={lines.first}
+            second={lines.second}
+            startAt={game.startAt}
+            isGameLive={game.isGameLive}
+            isUmpire={game.isUmpire}
+            venue={game.venue}
+            status={game.status}
+            awayScore={game.awayScore}
+            homeScore={game.homeScore}
+            isLive={game.isLive}
+            videoCount={game.videoCount}
+            pendingApproval={game.pendingApproval}
+            cancellationReason={game.cancellationReason}
+            withdrawnByTeamName={game.withdrawnByTeamName}
+            onPress={
+              options == null
+                ? undefined
+                : () => {
+                    onOpenGame(
+                      game.id,
+                      [lines.first, lines.second]
+                        .filter(line => line !== '')
+                        .join(' '),
+                      options
+                    )
                   }
-                />
-              ) : (
-                <GameRow
-                  first={lines.first}
-                  second={lines.second}
-                  detail={[
-                    narrow
-                      ? shortDateNoWeekday(game.startAt)
-                      : shortDate(game.startAt),
-                    shortTime(game.startAt),
-                    videoCountLabel(game.videoCount)
-                  ]
-                    .filter(part => part !== '')
-                    .join(' · ')}
-                  venue={game.venue}
-                  posterUrl={game.posterUrl}
-                  length={
-                    game.durationSec == null
-                      ? undefined
-                      : clock(game.durationSec)
-                  }
-                  badgeLabel={
-                    game.pendingApproval
-                      ? 'Pending approval'
-                      : game.status === 'cancelled'
-                        ? 'Canceled'
-                        : unplayable
-                          ? OFFLINE_UNPLAYABLE
-                          : game.isLive
-                            ? 'live'
-                            : game.awayScore == null
-                              ? undefined
-                              : `${game.awayScore}–${game.homeScore}`
-                  }
-                  badgeTone={
-                    game.isLive && !game.pendingApproval && !unplayable
+            }
+          />
+        ) : (
+          <GameRow
+            first={lines.first}
+            second={lines.second}
+            detail={[
+              narrow
+                ? shortDateNoWeekday(game.startAt)
+                : shortDate(game.startAt),
+              shortTime(game.startAt),
+              videoCountLabel(game.videoCount)
+            ]
+              .filter(part => part !== '')
+              .join(' · ')}
+            venue={game.venue}
+            posterUrl={game.posterUrl}
+            length={
+              game.durationSec == null ? undefined : clock(game.durationSec)
+            }
+            badgeLabel={
+              game.pendingApproval
+                ? 'Pending approval'
+                : game.status === 'cancelled'
+                  ? 'Canceled'
+                  : unplayable
+                    ? OFFLINE_UNPLAYABLE
+                    : game.isLive
                       ? 'live'
-                      : 'neutral'
+                      : game.awayScore == null
+                        ? undefined
+                        : `${game.awayScore}–${game.homeScore}`
+            }
+            badgeTone={
+              game.isLive && !game.pendingApproval && !unplayable
+                ? 'live'
+                : 'neutral'
+            }
+            onPress={
+              options == null
+                ? undefined
+                : () => {
+                    onOpenGame(
+                      game.id,
+                      [lines.first, lines.second]
+                        .filter(line => line !== '')
+                        .join(' '),
+                      options
+                    )
                   }
-                  onPress={
-                    options == null
-                      ? undefined
-                      : () => {
-                          onOpenGame(
-                            game.id,
-                            [lines.first, lines.second]
-                              .filter(line => line !== '')
-                              .join(' '),
-                            options
-                          )
-                        }
-                  }
-                />
-              )}
-            </Card>
-          </View>
-        )
-      })}
+            }
+          />
+        )}
+      </Card>
     </View>
   )
 })
@@ -510,8 +491,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // Left, not centred: the pills are what you reach for from up there, and a
   // row of three centred under a back chevron reads as a title.
   grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     // The gap is on the cells, so a row of one and a row of four have the same
     // margins as everything else on the screen.
     marginHorizontal: theme.rem(-theme.spaceXsRem)

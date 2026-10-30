@@ -19,6 +19,17 @@ import {
 
 /** Answers the last sign-in code and link mailed to `?email=`. */
 export const SIGN_IN_LINK_ROUTE = '/__longLists/code'
+/**
+ * On the fixture's own origin, which the phone never sees: `?offline=1` or `0`
+ * cuts the phone off or lets it back, and it answers the paths it has seen.
+ */
+export const PHONE_NETWORK_ROUTE = '/__longLists/phone'
+
+/** The way to the fixture from a phone, which a simulator cannot turn off. */
+interface PhoneNetwork {
+  offline: boolean
+  seen: string[]
+}
 
 export interface LongListsServer {
   f: GroupFixture
@@ -30,7 +41,8 @@ export interface LongListsServer {
  * read beyond the harness: stills, umpires and chat.
  */
 export async function startLongLists(
-  bindHost = '127.0.0.1'
+  bindHost = '127.0.0.1',
+  phone: PhoneNetwork = { offline: false, seen: [] }
 ): Promise<LongListsServer> {
   // Filled once the fixture exists; the route only runs after that.
   const mailbox: { mail?: Map<string, string>; links?: Map<string, string> } =
@@ -45,6 +57,10 @@ export async function startLongLists(
       app.use('/api/v1', chatKeyRoutes(db))
       app.use('/api/v1', chatEpochRoutes(db))
       app.use('/api/v1', chatMessageRoutes(db, media))
+      app.get(PHONE_NETWORK_ROUTE, (req, res) => {
+        if (req.query.offline != null) phone.offline = req.query.offline === '1'
+        res.json(phone)
+      })
       app.get(SIGN_IN_LINK_ROUTE, (req, res) => {
         const email = typeof req.query.email === 'string' ? req.query.email : ''
         const code = mailbox.mail?.get(email)
@@ -78,13 +94,20 @@ async function main(): Promise<void> {
     .flat()
     .find(entry => entry?.family === 'IPv4' && !entry.internal)?.address
   if (lan == null) throw new Error('No LAN address')
-  const { f, seeded } = await startLongLists()
+  const phone: PhoneNetwork = { offline: false, seen: [] }
+  const { f, seeded } = await startLongLists('127.0.0.1', phone)
   // The team, season and league chats the server's reconciler would make.
   setInterval(() => {
     drainDirty(f.h.db, new Date()).catch(() => undefined)
   }, 2000)
   const target = new URL(f.h.origin)
   const proxy = createServer((incoming, outgoing) => {
+    if (phone.offline) {
+      // A request that never got out: to the app, no signal.
+      incoming.socket.destroy()
+      return
+    }
+    phone.seen.push(incoming.url ?? '')
     const forward = request(
       {
         host: target.hostname,
@@ -115,8 +138,10 @@ async function main(): Promise<void> {
       {
         origin,
         apiBaseUrl: `${origin}/api/v1`,
+        controlOrigin: f.h.origin,
         email: 'alex@example.com',
         signInLinkRoute: SIGN_IN_LINK_ROUTE,
+        phoneNetworkRoute: PHONE_NETWORK_ROUTE,
         ...seeded
       },
       null,
