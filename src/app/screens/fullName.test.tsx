@@ -14,6 +14,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { reachEnd } from '../../test/PagedListStandIn'
 import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
@@ -195,7 +196,9 @@ describe('a player’s whole name is never shown', function () {
     )
     expect(text()).includes('Jordan P')
     expect(text()).not.includes('Pacheco')
-    await press('Show more')
+    await act(async () => {
+      reachEnd()
+    })
     expect(text()).includes('Double')
     await press('Hawks')
     expect(moments.length).equals(1)
