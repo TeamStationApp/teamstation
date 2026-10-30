@@ -29,6 +29,16 @@ So the teams a season holds are `GET /teams?season=…`, not
 `/seasons/:seasonId/opponents`, and a search is `GET /teams?…`, not
 `/teams/search`.
 
+The same holds for people: the players a roster manager may add to a team are
+`GET /users?forTeam=…` (with `forGame`, `q`, `limit` and `after`), not
+`/teams/:teamId/candidates`. They are every live player, and every full
+account (switched on, with an email) though it plays for no team. That search
+reaches people the asker has no tie to, so it answers only what the result
+card draws (a short name, a picture,
+hands and the teams they play for this season), lists strangers only once
+three letters of a name are typed, and pages with an opaque cursor that holds
+no name.
+
 - **Repeat a parameter for several values:** `?season=a&season=b`.
 - **Leaving a parameter out keeps the collection's existing answer.** Adding
   a parameter never changes what a caller that does not send it gets. A new

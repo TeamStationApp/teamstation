@@ -934,8 +934,9 @@ describe('a player’s Settings tab', function () {
     await press('Player settings')
     expect(tabs).deep.equals(['settings'])
     expect(selectedTab()).equals('Settings')
-    expect(document.querySelector('[aria-label="Bats Right"]')).equals(null)
-    await press('SS')
+    // The hands show beside the team's jersey and positions.
+    expect(document.querySelector('[aria-label="Bats Right"]')).not.equals(null)
+    await press('Player position SS')
     await press('Save')
     expect(saves).deep.equals([
       { teamId: 't1', settings: { positions: ['SS', 'CF'] } }

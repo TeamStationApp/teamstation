@@ -4,6 +4,7 @@ import { asStatExtras } from '../../common/statExtras'
 import { visibleGamesWhere, type VisibleScopes } from '../access'
 import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { withdrawnKey, withdrawnPlayers } from '../games/withdrawn'
 import { DEFAULT_ERA_INNINGS, type StatRow } from '../stats'
 
 /**
@@ -66,6 +67,8 @@ export interface StatRowWithGame extends StatRow {
   firstName: string | null
   lastName: string | null
   displayName: string
+  /** The game's id for the person whose line it is. */
+  gumboId: number
 }
 
 export async function statRows(
@@ -83,6 +86,7 @@ export async function statRows(
     .select([
       'game_player_stats.extra as extra',
       'game_player_stats.game_id as gameId',
+      'game_player_stats.gumbo_id as gumboId',
       'gumbo_ids.user_id as userId',
       'game_player_stats.team_id as teamId',
       'game_player_stats.pa as pa',
@@ -200,20 +204,53 @@ export async function statRows(
             .execute()
         ).map(user => [user.id, user])
   )
-  return rows.map(row => {
+  // A person whose part in a game was withdrawn: the game keeps the line,
+  // under the placeholder name and a key of its own, and their own record
+  // (asked by `userId` or `userIds`) leaves it out.
+  const withdrawn = new Map(
+    (
+      await withdrawnPlayers(
+        db,
+        rows.map(row => row.gameId)
+      )
+    ).map(row => [`${row.gameId} ${row.userId}`, row])
+  )
+  const own = filter.userId != null || filter.userIds != null
+  return rows.flatMap(row => {
     const userId = survivors.get(row.userId) ?? row.userId
-    const name = names.get(userId)
-    return {
-      ...row,
-      ...(name == null
-        ? {}
-        : {
-            firstName: name.firstName,
-            lastName: name.lastName,
-            displayName: name.displayName
-          }),
-      extra: row.extra == null ? null : asStatExtras(row.extra),
-      userId
+    const held =
+      withdrawn.get(`${row.gameId} ${userId}`) ??
+      withdrawn.get(`${row.gameId} ${row.userId}`)
+    // Only the line for the team the add was to: a part they played for the
+    // other team in the same game stays theirs.
+    const gone = held?.teamId === row.teamId ? held : undefined
+    if (gone != null) {
+      if (own) return []
+      return [
+        {
+          ...row,
+          extra: row.extra == null ? null : asStatExtras(row.extra),
+          userId: withdrawnKey(gone.requestId, row.gameId),
+          firstName: gone.label,
+          lastName: '',
+          displayName: gone.label
+        }
+      ]
     }
+    const name = names.get(userId)
+    return [
+      {
+        ...row,
+        ...(name == null
+          ? {}
+          : {
+              firstName: name.firstName,
+              lastName: name.lastName,
+              displayName: name.displayName
+            }),
+        extra: row.extra == null ? null : asStatExtras(row.extra),
+        userId
+      }
+    ]
   })
 }

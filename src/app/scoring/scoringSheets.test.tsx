@@ -7,6 +7,8 @@ import { Text } from 'react-native'
 import { TeamStationClient } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
+import { candidate } from '../../test/fakeCandidateClient'
+import { measureBoxes } from '../../test/measureBoxes'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -22,6 +24,9 @@ import { playerRef } from './scoringSelectors'
 import { memoryStore, type ScoringSource } from './scoringSource'
 import type { ScoringSessionState } from './scoringTypes'
 let root: Root | undefined
+/** What Add to Roster and Add as Pool Player sent, in order. */
+const existingSent: unknown[] = []
+let mountedClient: TeamStationClient | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 async function click(label: string): Promise<void> {
@@ -109,6 +114,7 @@ async function mount(
 ): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  mountedClient = client
   client.game = async () => gameFixture
   client.roster = async () => []
   // These player-entry tests act as the roster manager of both teams.
@@ -121,6 +127,26 @@ async function mount(
     mintedRosterEntry(player)
   client.createRosterPlayer = async (_teamId, player) =>
     mintedRosterEntry(player)
+  client.rosterCandidates = async () => [
+    candidate('Mookie Betts', { userId: 'usr_betts' })
+  ]
+  const betts = (): ReturnType<typeof mintedRosterEntry> =>
+    mintedRosterEntry({
+      firstName: 'Mookie',
+      lastName: 'Betts',
+      jersey: null,
+      bats: 'right',
+      throws: 'right',
+      positions: []
+    })
+  client.addExistingRosterPlayer = async (teamId, body) => {
+    existingSent.push({ roster: teamId, body })
+    return { entry: betts(), noticeId: null }
+  }
+  client.addExistingGuest = async (gameId, side, body, teamId) => {
+    existingSent.push({ guest: { gameId, side, teamId }, body })
+    return { entry: betts(), noticeId: null }
+  }
   const source: ScoringSource = {
     open: async () => {
       const session = scoringSession(gameFixture)
@@ -389,6 +415,39 @@ describe('scoring slide-up sheets', function () {
     }
   })
 
+  it('adds an existing player to the roster and as a pool player through the client', async function () {
+    this.timeout(10000)
+    existingSent.length = 0
+    const restore = measureBoxes()
+    try {
+      await mount()
+      await menu('Set Team Rosters')
+      for (const action of ['Add to Roster', 'Add as Pool Player']) {
+        // Nothing answers the screen's own requests here, which leaves the
+        // client offline; the search is answered.
+        await act(async () => {
+          mountedClient!.offline = false
+        })
+        await click('Add Existing Player')
+        await click('Choose Mookie B')
+        await click(action)
+      }
+      expect(existingSent).deep.equals([
+        {
+          roster: 'away',
+          body: { userId: 'usr_betts', jersey: null, positions: [] }
+        },
+        {
+          guest: { gameId: 'g1', side: 'away', teamId: 'away' },
+          body: { userId: 'usr_betts', jersey: null, positions: [] }
+        }
+      ])
+      await click('Cancel')
+    } finally {
+      restore()
+    }
+  })
+
   it('names the teams inside the Away/Home pill and nowhere else', async function () {
     await mount()
     // The scoreboard behind the sheet names the teams too; the sheet adds each
@@ -465,7 +524,7 @@ describe('scoring slide-up sheets', function () {
       document.querySelector('[aria-label="Create Placeholder Player"]')
     ).equals(null)
     const footer = document.querySelector('[data-testid="Roster footer"]')!
-    expect(footer.textContent).includes('Create PlayerSave RostersCancel')
+    expect(footer.textContent).includes('Save RostersCancel')
     await click('Defense')
     expect(document.body.textContent).includes(
       'Drag player into position. On touch, hold briefly first.'

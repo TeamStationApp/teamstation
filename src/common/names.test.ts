@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { DELETED_NAME, fullName, shortName, shortNames } from './names'
+import {
+  DELETED_NAME,
+  fullName,
+  shortName,
+  shortNames,
+  shortParts
+} from './names'
 
 const person = (
   id: string,
@@ -120,5 +126,22 @@ describe('the same person listed twice', function () {
     const names = shortNames([twice, twice, person('2', 'Casey', 'Mize')])
     expect(names.get('1')).equals('Henry H')
     expect(names.get('2')).equals('Casey M')
+  })
+})
+
+describe('a short name in two halves', function () {
+  it('splits where the short name was built, and keeps a name with no first half whole', function () {
+    const jordan = person('a', 'Jordan', 'Palmeiro')
+    expect(shortParts(jordan, 'Jordan Pa')).deep.equals({
+      first: 'Jordan',
+      last: 'Pa'
+    })
+    expect(
+      shortParts({ id: 'b', displayName: 'Ichiro' }, 'Ichiro')
+    ).deep.equals({ first: 'Ichiro', last: '' })
+    expect(shortParts(person('c', '', 'Suzuki'), 'Suzuki')).deep.equals({
+      first: '',
+      last: 'Suzuki'
+    })
   })
 })

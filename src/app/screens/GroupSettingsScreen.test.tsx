@@ -20,11 +20,21 @@ import { InvitationsWaiting } from './InvitationsWaiting'
 function fixture(kind: GroupRef['kind'] = 'team'): {
   client: TeamStationClient
   calls: unknown[]
-  controls: { fail: boolean; allowed: boolean }
+  controls: {
+    fail: boolean
+    allowed: boolean
+    roster: boolean
+    external: boolean
+  }
 } {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   const calls: unknown[] = []
-  const controls = { fail: false, allowed: true }
+  const controls = {
+    fail: false,
+    allowed: true,
+    roster: false,
+    external: false
+  }
   let group = asGroupDetail({
     group: {
       kind,
@@ -56,7 +66,12 @@ function fixture(kind: GroupRef['kind'] = 'team'): {
   })
   client.group = async () => {
     if (controls.fail) throw new Error('Settings unavailable')
-    return { ...group, canManage: controls.allowed }
+    return {
+      ...group,
+      group: { ...group.group, external: controls.external },
+      canManage: controls.allowed,
+      canManageRoster: controls.roster
+    }
   }
   client.managePage = async (asked, id) =>
     asManagePage({
@@ -86,6 +101,105 @@ function fixture(kind: GroupRef['kind'] = 'team'): {
   }
   return { client, calls, controls }
 }
+
+describe("team management's player rows", () => {
+  afterEach(unmount)
+  /** Where each row's title first shows in the page, in order. */
+  const order = (titles: string[]): number[] =>
+    titles.map(title => text().indexOf(title))
+
+  it('lists Add Player and Create Player after the administrator rows, and opens each for the team', async () => {
+    const f = fixture()
+    f.controls.roster = true
+    const opened: string[] = []
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'team', id: 'canonical' }}
+        onAddPeople={() => undefined}
+        onInvites={() => undefined}
+        onAddPlayer={id => opened.push(`add ${id}`)}
+        onCreatePlayer={id => opened.push(`create ${id}`)}
+      />
+    )
+    await settle()
+    const at = order([
+      'Add Person to Team',
+      'Create Invite Link',
+      'Add Player',
+      'Create Player'
+    ])
+    expect(at.every(index => index >= 0)).equals(true)
+    expect([...at].sort((a, b) => a - b)).deep.equals(at)
+    await press('Add Player')
+    await press('Create Player')
+    expect(opened).deep.equals(['add canonical', 'create canonical'])
+  })
+
+  it('shows a roster manager who is not an administrator only the two player rows', async () => {
+    const f = fixture()
+    f.controls.allowed = false
+    f.controls.roster = true
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'team', id: 'canonical' }}
+        onAddPlayer={() => undefined}
+        onCreatePlayer={() => undefined}
+      />
+    )
+    await settle()
+    expect(text()).includes('TEAM MANAGEMENT')
+    expect(find('Add Player')).not.equals(undefined)
+    expect(find('Create Player')).not.equals(undefined)
+    expect(text()).not.includes('Add Person to Team')
+    expect(text()).not.includes('Create Invite Link')
+    expect(text()).includes('Only a current administrator')
+    expect(find('Save name')).equals(undefined)
+  })
+
+  it('offers no player rows on a season, on an external team, or to a viewer', async () => {
+    const season = fixture('season')
+    season.controls.roster = true
+    await mount(
+      <GroupSettingsScreen
+        client={season.client}
+        groupRef={{ kind: 'season', id: 'canonical' }}
+        onAddPlayer={() => undefined}
+        onCreatePlayer={() => undefined}
+      />
+    )
+    await settle()
+    expect(find('Add Player')).equals(undefined)
+    await unmount()
+    const external = fixture()
+    external.controls.roster = true
+    external.controls.external = true
+    await mount(
+      <GroupSettingsScreen
+        client={external.client}
+        groupRef={{ kind: 'team', id: 'canonical' }}
+        onAddPlayer={() => undefined}
+        onCreatePlayer={() => undefined}
+      />
+    )
+    await settle()
+    expect(find('Create Player')).equals(undefined)
+    await unmount()
+    const viewer = fixture()
+    viewer.controls.allowed = false
+    await mount(
+      <GroupSettingsScreen
+        client={viewer.client}
+        groupRef={{ kind: 'team', id: 'canonical' }}
+        onAddPlayer={() => undefined}
+        onCreatePlayer={() => undefined}
+      />
+    )
+    await settle()
+    expect(text()).not.includes('TEAM MANAGEMENT')
+  })
+})
 
 describe('group settings identity and individual saves', () => {
   afterEach(unmount)

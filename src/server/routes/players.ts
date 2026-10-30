@@ -6,9 +6,9 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import {
-  asNewRosterPlayer,
   asPersonSettings,
-  asPlayerSettings
+  asPlayerSettings,
+  asRosterPlayerBody
 } from '../../common/playerSettings'
 import { asUserId } from '../../common/userId'
 import {
@@ -32,6 +32,7 @@ import {
 } from '../db/syncIdempotency'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
+import { withdrawnGames } from '../games/withdrawn'
 import { guardianInviteAs } from '../groups/requests'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
@@ -50,6 +51,10 @@ import { mayKeepBirthMonth } from '../people/guardians'
 import { gumboIdsOfUsers } from '../scoring/gumboIds'
 import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
+import {
+  addExistingRosterPlayer,
+  type ExistingAdd
+} from '../teams/addExistingPlayer'
 import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
 import { refuseDeleted } from '../users/deleted'
@@ -286,6 +291,8 @@ export function playerRoutes(
       // done something worth watching.
       const creditsByEvent = await creditsForPlayer(db, person.userId)
       const creditedIds = await gumboIdsOfUsers(db, person.userIds)
+      // Games their part in was withdrawn from are not on their record.
+      const withdrawn = await withdrawnGames(db, person.userIds)
       // A team filter is the team they played for, as on their stats: a play
       // whose credit names another team of theirs is that team's, even in a
       // game against this one. A credit with no team leaves it to the game.
@@ -324,6 +331,9 @@ export function playerRoutes(
         .where('events.id', 'in', eventIds)
         .where('events.hidden', '=', false)
         .where('events.startTime', 'is not', null)
+        .$if(withdrawn.length > 0, query =>
+          query.where('events.gameId', 'not in', withdrawn)
+        )
       if (before != null) {
         query = query.where('events.startTime', '<', before)
       }
@@ -549,8 +559,61 @@ export function playerRoutes(
         .executeTakeFirst()
       if (team == null) throw notFound()
 
-      const player = cleanBody(asNewRosterPlayer, req.body)
+      const asked = cleanBody(asRosterPlayerBody, req.body)
       const call = idempotentCallOf(req, actor.userId)
+      if ('existing' in asked) {
+        // An existing player, by their user id. The entry carries only the
+        // short name: a roster manager who added them reads more on the
+        // roster, as for any player of theirs.
+        const existingEntry = async (result: ExistingAdd): Promise<Answer> => {
+          if (result.kind === 'pending')
+            return {
+              status: 202,
+              body: { pending: { requestId: result.requestId } }
+            }
+          const roster = await teamRoster(db, media.space, teamId)
+          const entry = roster.find(row => row.userId === result.userId)
+          if (entry == null) throw notFound()
+          return result.kind === 'unchanged'
+            ? { status: 200, body: entry }
+            : {
+                status: 201,
+                body: {
+                  ...entry,
+                  ...(result.requestId == null
+                    ? {}
+                    : { notice: { requestId: result.requestId } })
+                }
+              }
+        }
+        const answer = await answerOnce(db, call, {
+          write: async claim => {
+            const result = await addExistingRosterPlayer(
+              db,
+              actor,
+              teamId,
+              asked.existing,
+              claim == null
+                ? undefined
+                : async (trx, made) => {
+                    await claim(trx, { resultId: existingResultId(made) })
+                  }
+            )
+            if (result.kind !== 'unchanged')
+              setAudit(res.locals, {
+                entityType: 'rosterPlayer',
+                entityId: result.userId,
+                after: { teamId, ...asked.existing, kind: result.kind }
+              })
+            return await existingEntry(result)
+          },
+          rebuild: async held =>
+            await existingEntry(existingResultOf(held.resultId!))
+        })
+        res.status(answer.status).json(answer.body)
+        return
+      }
+      const player = asked.player
       // The entry as a roster manager reads it, after the player committed.
       const entryOf = async (userId: string): Promise<Answer> => {
         const roster = await teamRoster(db, media.space, teamId, true)
@@ -822,6 +885,13 @@ export interface PlayerTeam {
    * of a team.
    */
   current: boolean
+  /**
+   * True when every stat line that makes this a team of theirs is from a game
+   * they played as a pool player, an existing player added for that game
+   * only: such a team counts for their stats, and gives nobody their page.
+   * Absent otherwise.
+   */
+  viaPool?: true
 }
 
 /**
@@ -888,11 +958,42 @@ export async function teamsOf(
       'teams.logo_path as logoPath',
       'seasons.id as seasonId',
       'seasons.name as seasonName',
-      'seasons.year as seasonYear'
+      'seasons.year as seasonYear',
+      eb =>
+        eb
+          .exists(
+            eb
+              .selectFrom('game_guest_details')
+              .select('game_guest_details.game_id')
+              .whereRef(
+                'game_guest_details.game_id',
+                '=',
+                'game_player_stats.game_id'
+              )
+              .where('game_guest_details.user_id', 'in', userIds)
+              .where('game_guest_details.pool', '=', true)
+          )
+          .as('pool')
     ])
     .distinct()
     .where('gumbo_ids.user_id', 'in', userIds)
     .where('teams.merged_into', 'is', null)
+    // A game their part in was withdrawn from makes nobody's team theirs.
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('game_withdrawn_players')
+            .select('game_withdrawn_players.game_id')
+            .whereRef(
+              'game_withdrawn_players.game_id',
+              '=',
+              'game_player_stats.game_id'
+            )
+            .where('game_withdrawn_players.user_id', 'in', userIds)
+        )
+      )
+    )
     .execute()
 
   // Their place on each team. One person can be on a team under two rows
@@ -915,9 +1016,20 @@ export async function teamsOf(
 
   const playing = new Set(await teamsPlayedOnNow(db, userIds))
   const byKey = new Map<string, PlayerTeam>()
+  // A team is theirs through a pool game alone only while every line for it
+  // is one, and no membership makes it theirs.
+  const poolOnly = new Map<string, boolean>()
+  for (const row of fromPlays) {
+    const key = `${row.teamId} ${row.seasonId ?? ''}`
+    poolOnly.set(key, (poolOnly.get(key) ?? true) && row.pool === true)
+  }
+  const poolTeam = (teamId: string, key: string): boolean =>
+    !fromMemberships.some(row => row.teamId === teamId) &&
+    poolOnly.get(key) === true
   for (const row of [...fromPlays, ...fromMemberships]) {
     const place = places.get(row.teamId)
-    byKey.set(`${row.teamId} ${row.seasonId ?? ''}`, {
+    const key = `${row.teamId} ${row.seasonId ?? ''}`
+    byKey.set(key, {
       teamId: row.teamId,
       teamName: row.teamName,
       logoPath: row.logoPath,
@@ -926,7 +1038,8 @@ export async function teamsOf(
       seasonYear: row.seasonYear,
       jersey: place?.jersey ?? null,
       positions: place?.positions ?? [],
-      current: playing.has(row.teamId)
+      current: playing.has(row.teamId),
+      ...(poolTeam(row.teamId, key) ? { viaPool: true as const } : {})
     })
   }
 
@@ -958,5 +1071,23 @@ function userIdParam(value: string | string[] | undefined): string {
     return asUserId(pathParam(value))
   } catch {
     throw badRequest('Expected a canonical user id')
+  }
+}
+
+/** An existing-player add as an idempotency claim keeps it. */
+function existingResultId(result: ExistingAdd): string {
+  return result.kind === 'pending'
+    ? `pending ${result.userId} ${result.requestId}`
+    : `${result.kind} ${result.userId} ${result.kind === 'added' ? (result.requestId ?? '') : ''}`
+}
+
+function existingResultOf(held: string): ExistingAdd {
+  const [kind, userId, requestId] = held.split(' ')
+  if (kind === 'pending') return { kind, userId, requestId }
+  if (kind === 'unchanged') return { kind, userId }
+  return {
+    kind: 'added',
+    userId,
+    requestId: requestId === '' ? null : requestId
   }
 }

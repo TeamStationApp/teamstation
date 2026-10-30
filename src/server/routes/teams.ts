@@ -23,6 +23,7 @@ import {
   givenRolesOnTeams,
   isHeadCoach,
   nonMemberTeam,
+  openablePeople,
   roleScopes,
   type VisibleScopes,
   visibleScopes
@@ -38,6 +39,7 @@ import { resolvedFenceDistance } from '../games/fenceDistance'
 import { gameIsLive } from '../games/gameLive'
 import { gameAvailability } from '../games/rosterAvailability'
 import { hasScoringEventsSql } from '../games/scoringActivity'
+import { isWithdrawnKey, publicUserId } from '../games/withdrawn'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -892,6 +894,7 @@ export function teamRoutes(
         res.json(
           pitchingLines(rows).map(line => ({
             ...line,
+            userId: publicUserId(line.userId),
             shortName: names.get(line.userId) ?? 'Unknown',
             ip: inningsPitched(line.outs),
             rates: pitchingRates(line)
@@ -902,6 +905,7 @@ export function teamRoutes(
       res.json(
         battingLines(rows).map(line => ({
           ...line,
+          userId: publicUserId(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         }))
@@ -948,23 +952,44 @@ export function teamRoutes(
       // at-bats say nothing, and a box score has always printed the running
       // figure.
       const seasonAvg = await averagesToDate(db, gameId, game.season_id, scopes)
+      // Whose page a line may open: nobody's for a withdrawn line or a pool
+      // player the viewer could not already see.
+      const opens = await openablePeople(
+        db,
+        scopes,
+        actor.userId,
+        rows.map(row => row.userId).filter(id => !isWithdrawnKey(id))
+      )
 
       const pitching = (
         await pitchingOrder(db, gameId, pitchingLines(rows))
       ).map(line => ({
         ...line,
+        userId: publicUserId(line.userId),
+        openable: opens.has(line.userId),
         shortName: names.get(line.userId) ?? 'Unknown',
         ip: inningsPitched(line.outs),
         rates: pitchingRates(line)
       }))
       const lines = await boxScoreOrder(db, gameId, battingLines(rows))
+      // The batter a withdrawn line stands in for in this game, so an order
+      // that still names him shows the line, not his name beside it. The
+      // game's plays name him already.
+      const standsFor = new Map(
+        rows.flatMap(row =>
+          isWithdrawnKey(row.userId) ? [[row.userId, row.gumboId] as const] : []
+        )
+      )
 
       res.json({
         batting: lines.map(line => ({
           ...line,
+          userId: publicUserId(line.userId),
+          openable: opens.has(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line),
-          seasonAvg: seasonAvg.get(line.userId) ?? null
+          seasonAvg: seasonAvg.get(line.userId) ?? null,
+          standsFor: standsFor.get(line.userId) ?? null
         })),
         pitching,
         stats: await gameStatsStatus(db, gameId)

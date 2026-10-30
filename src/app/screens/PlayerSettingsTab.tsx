@@ -4,13 +4,15 @@ import { Pressable, Text, View } from 'react-native'
 import { ageOn, type BirthMonth, parseBirthMonth } from '../../common/age'
 import type { Guardian, RosterEntry, TeamStationClient } from '../../common/api'
 import { rosterFullName } from '../../common/names'
+import { playerFormError, type PlayerFormValue } from '../../common/playerForm'
 import {
   PLAYER_POSITIONS,
   type PlayerPosition,
   type PlayerSettings
 } from '../../common/playerSettings'
-import { Button, Card, SectionHeader, TextField } from '../components'
+import { Button, Card, SectionHeader } from '../components'
 import { GuardiansModal, kindLabel } from '../components/GuardiansModal'
+import { PlayerForm, type PlayerFormFields } from '../components/PlayerForm'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -44,9 +46,6 @@ type Saved = Pick<
   'jersey' | 'positions' | 'bats' | 'throws' | 'nameDetails' | 'shortName'
 >
 
-type Bats = NonNullable<RosterEntry['bats']>
-type Throws = NonNullable<RosterEntry['throws']>
-
 interface Draft {
   name?: PlayerSettings['name']
   jersey: string
@@ -54,16 +53,6 @@ interface Draft {
   bats: RosterEntry['bats']
   throws: RosterEntry['throws']
 }
-
-const BATS: Array<{ id: Bats; label: string }> = [
-  { id: 'right', label: lstrings.player_settings_right },
-  { id: 'left', label: lstrings.player_settings_left },
-  { id: 'switch', label: lstrings.player_settings_switch }
-]
-const THROWS: Array<{ id: Throws; label: string }> = [
-  { id: 'right', label: lstrings.player_settings_right },
-  { id: 'left', label: lstrings.player_settings_left }
-]
 
 /**
  * What a roster manager or a guardian sets for one player. Opened from a
@@ -183,123 +172,58 @@ export function PlayerSettingsTab(
       })
   }
 
+  const fields: PlayerFormFields =
+    teamId == null
+      ? { name: 'hidden', hands: 'edit', jersey: false, positions: false }
+      : {
+          name: draft.name == null ? 'hidden' : 'edit',
+          hands: 'edit',
+          jersey: true,
+          positions: true
+        }
+  const value: PlayerFormValue = {
+    firstName: draft.name?.firstName ?? '',
+    lastName: draft.name?.lastName ?? '',
+    jersey: draft.jersey,
+    throws: draft.throws,
+    bats: draft.bats,
+    positions: draft.positions
+  }
+  // A jersey stored before the form checked jerseys is the player's until
+  // somebody changes it: only an edited one is held to the digits rule.
+  const problem = playerFormError(
+    { ...value, jersey: 'jersey' in changes ? value.jersey : '' },
+    { nameRequired: draft.name != null }
+  )
+
   return (
     <View style={styles.sections}>
       <Card style={styles.form}>
-        {teamId != null && (
-          <>
-            {draft.name != null && (
-              <View pointerEvents={busy ? 'none' : 'auto'} style={{ gap: 16 }}>
-                <TextField
-                  label={lstrings.player_settings_first_name}
-                  value={draft.name.firstName}
-                  onChangeText={firstName => {
-                    edit({ name: { ...draft.name!, firstName } })
-                  }}
-                />
-                <TextField
-                  label={lstrings.player_settings_last_name}
-                  value={draft.name.lastName}
-                  onChangeText={lastName => {
-                    edit({ name: { ...draft.name!, lastName } })
-                  }}
-                />
-              </View>
-            )}
-            <TextField
-              label={lstrings.player_settings_jersey}
-              value={draft.jersey}
-              keyboardType="number-pad"
-              onChangeText={jersey => {
-                edit({ jersey })
-              }}
-            />
+        <PlayerForm
+          value={value}
+          fields={fields}
+          disabled={busy}
+          onChange={next => {
+            edit({
+              ...(draft.name == null
+                ? {}
+                : {
+                    name: { firstName: next.firstName, lastName: next.lastName }
+                  }),
+              jersey: next.jersey,
+              // In the roster's own order, so positions compare as a set.
+              positions: PLAYER_POSITIONS.filter(position =>
+                next.positions.includes(position)
+              ),
+              bats: next.bats,
+              throws: next.throws
+            })
+          }}
+        />
 
-            <Text style={styles.label}>
-              {lstrings.player_settings_positions.toUpperCase()}
-            </Text>
-            <View
-              style={styles.chips}
-              accessibilityLabel={lstrings.player_settings_positions}
-            >
-              {PLAYER_POSITIONS.map(position => {
-                const on = draft.positions.includes(position)
-                return (
-                  <Chip
-                    key={position}
-                    label={position}
-                    role="button"
-                    on={on}
-                    disabled={busy}
-                    onPress={() => {
-                      edit({
-                        positions: on
-                          ? draft.positions.filter(held => held !== position)
-                          : PLAYER_POSITIONS.filter(
-                              item =>
-                                item === position ||
-                                draft.positions.includes(item)
-                            )
-                      })
-                    }}
-                  />
-                )
-              })}
-            </View>
-          </>
+        {(error ?? (changed ? problem : undefined)) != null && (
+          <Text style={styles.error}>{error ?? problem}</Text>
         )}
-
-        {teamId == null && (
-          <>
-            <Text style={styles.label}>
-              {lstrings.player_settings_bats.toUpperCase()}
-            </Text>
-            <View
-              style={styles.chips}
-              accessibilityRole="radiogroup"
-              accessibilityLabel={lstrings.player_settings_bats}
-            >
-              {BATS.map(choice => (
-                <Chip
-                  key={choice.id}
-                  label={choice.label}
-                  accessibilityLabel={`${lstrings.player_settings_bats} ${choice.label}`}
-                  role="radio"
-                  on={draft.bats === choice.id}
-                  disabled={busy}
-                  onPress={() => {
-                    edit({ bats: choice.id })
-                  }}
-                />
-              ))}
-            </View>
-
-            <Text style={styles.label}>
-              {lstrings.player_settings_throws.toUpperCase()}
-            </Text>
-            <View
-              style={styles.chips}
-              accessibilityRole="radiogroup"
-              accessibilityLabel={lstrings.player_settings_throws}
-            >
-              {THROWS.map(choice => (
-                <Chip
-                  key={choice.id}
-                  label={choice.label}
-                  accessibilityLabel={`${lstrings.player_settings_throws} ${choice.label}`}
-                  role="radio"
-                  on={draft.throws === choice.id}
-                  disabled={busy}
-                  onPress={() => {
-                    edit({ throws: choice.id })
-                  }}
-                />
-              ))}
-            </View>
-          </>
-        )}
-
-        {error != null && <Text style={styles.error}>{error}</Text>}
         {done && !changed && (
           <Text style={styles.muted}>{lstrings.player_settings_saved}</Text>
         )}
@@ -308,7 +232,7 @@ export function PlayerSettingsTab(
           label={lstrings.player_settings_save}
           accessibilityLabel={lstrings.player_settings_save}
           busy={busy}
-          disabled={!changed}
+          disabled={!changed || problem != null}
           onPress={save}
         />
       </Card>

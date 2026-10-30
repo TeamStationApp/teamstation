@@ -273,7 +273,9 @@ describe('a roster screen following the lineups', function () {
     await changes.lineups('d2')
     expect(banner()).equals(BANNER)
     // Back to the lineup it was opened with: the batter added at the end.
-    const add = host.querySelector<HTMLElement>('[aria-label^="Add "]')
+    const add = host.querySelector<HTMLElement>(
+      '[aria-label^="Add "][aria-label$=" to Lineup"]'
+    )
     await act(async () => {
       add!.click()
     })

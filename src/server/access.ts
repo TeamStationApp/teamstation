@@ -1112,6 +1112,90 @@ export async function nonMemberTeam(
 export interface PlayedFor {
   teamId: string
   seasonId: string | null
+  /** A team they played for only as a pool player: it opens nobody's page. */
+  viaPool?: boolean
+}
+
+/**
+ * Which of these people this viewer could open the page of, as `GET
+ * /players/:id` answers it, for a whole box score or season table at once:
+ * themselves, anybody they guard, and anybody on a team they can see, by
+ * membership or by a stat line that is neither a pool game's nor a
+ * withdrawn game's.
+ */
+export async function openablePeople(
+  db: Kysely<Database>,
+  scopes: VisibleScopes,
+  viewerUserId: string,
+  userIds: readonly string[]
+): Promise<Set<string>> {
+  const ids = [...new Set(userIds)]
+  if (scopes.isAdmin) return new Set(ids)
+  // Themselves, and anybody they guard: their page is theirs to open
+  // wherever the line is from.
+  const guarded =
+    scopes.guardedIds ?? new Set(await guardedPlayers(db, viewerUserId))
+  const open = new Set(ids.filter(id => id === viewerUserId || guarded.has(id)))
+  const teams = [...scopes.teamIds]
+  if (teams.length === 0 || ids.length === 0) return open
+  // As `teamsOf` counts the teams a person played for: a player's
+  // membership, on a team not merged away.
+  const members = await db
+    .selectFrom('memberships')
+    .innerJoin('teams', 'teams.id', 'memberships.team_id')
+    .select('memberships.user_id')
+    .distinct()
+    .where('memberships.user_id', 'in', ids)
+    .where('memberships.team_id', 'in', teams)
+    .where('memberships.is_player', '=', true)
+    .where('teams.merged_into', 'is', null)
+    .execute()
+  for (const row of members) open.add(row.user_id)
+  const played = await db
+    .selectFrom('game_player_stats')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
+    .select('gumbo_ids.user_id')
+    .distinct()
+    .where('gumbo_ids.user_id', 'in', ids)
+    .where('game_player_stats.team_id', 'in', teams)
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('game_guest_details')
+            .select('game_guest_details.game_id')
+            .whereRef(
+              'game_guest_details.game_id',
+              '=',
+              'game_player_stats.game_id'
+            )
+            .whereRef('game_guest_details.user_id', '=', 'gumbo_ids.user_id')
+            .where('game_guest_details.pool', '=', true)
+        )
+      )
+    )
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('game_withdrawn_players')
+            .select('game_withdrawn_players.game_id')
+            .whereRef(
+              'game_withdrawn_players.game_id',
+              '=',
+              'game_player_stats.game_id'
+            )
+            .whereRef(
+              'game_withdrawn_players.user_id',
+              '=',
+              'gumbo_ids.user_id'
+            )
+        )
+      )
+    )
+    .execute()
+  for (const row of played) open.add(row.user_id)
+  return open
 }
 
 /** Whether a team a person played for is one this viewer can see. */
@@ -1119,7 +1203,9 @@ export function canSeePlayedFor(
   scopes: VisibleScopes,
   team: PlayedFor
 ): boolean {
-  return scopes.isAdmin || scopes.teamIds.has(team.teamId)
+  return (
+    scopes.isAdmin || (team.viaPool !== true && scopes.teamIds.has(team.teamId))
+  )
 }
 
 /**

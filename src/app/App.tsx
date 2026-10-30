@@ -125,10 +125,12 @@ import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { AddPlayerScene } from './screens/AddPlayerScene'
 import { AutoSchedulerScreen } from './screens/AutoSchedulerScreen'
 import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
+import { CreatePlayerScreen } from './screens/CreatePlayerScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
 import { EventSettingsScreen } from './screens/EventSettingsScreen'
 import { FieldManagerScreen } from './screens/FieldManagerScreen'
@@ -2328,6 +2330,27 @@ function Shell(props: AppProps): React.ReactElement {
           pop()
         }}
       />
+    ) : top.name === 'teamCreatePlayer' ? (
+      <CreatePlayerScreen
+        key={`teamCreatePlayer:${top.id}`}
+        client={client}
+        teamId={top.id}
+        onCreated={(name, another) => {
+          setSuccessNotice({ id: Date.now(), message: `Created ${name}` })
+          if (!another) pop()
+        }}
+      />
+    ) : top.name === 'teamAddPlayer' ? (
+      <AddPlayerScene
+        key={`teamAddPlayer:${top.id}`}
+        client={client}
+        teamId={top.id}
+        onAdded={message => {
+          setSuccessNotice({ id: Date.now(), message })
+          pop()
+        }}
+        onCancel={pop}
+      />
     ) : top.name === 'autoScheduler' ? (
       <AutoSchedulerScreen
         key={top.leagueId}
@@ -2583,6 +2606,22 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onInvites={group => {
           push({ name: 'groupInvites', ...group, teamReturn: top.teamReturn })
+        }}
+        onAddPlayer={teamId => {
+          push({
+            name: 'teamAddPlayer',
+            kind: 'team',
+            id: teamId,
+            teamReturn: top.teamReturn
+          })
+        }}
+        onCreatePlayer={teamId => {
+          push({
+            name: 'teamCreatePlayer',
+            kind: 'team',
+            id: teamId,
+            teamReturn: top.teamReturn
+          })
         }}
         onOpenTimeFrame={group => {
           push({ name: 'seasonTimeFrame', kind: 'season', id: group.id })
@@ -3686,7 +3725,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   if (
     route.name === 'groupLocation' ||
     route.name === 'groupAddPeople' ||
-    route.name === 'groupInvites'
+    route.name === 'groupInvites' ||
+    route.name === 'teamCreatePlayer' ||
+    route.name === 'teamAddPlayer'
   ) {
     const settings = {
       name: 'groupSettings' as const,

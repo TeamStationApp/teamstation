@@ -26,13 +26,14 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { after as score, game as fixture } from '../../test/scoringGames'
 import { closeInto } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { atomic } from '../db/atomic'
 import { type Database, makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { createGuestPlayer } from './guestPlayers'
 import { gameAvailability } from './rosterAvailability'
-import { setRostered } from './unroster'
+import { reconcileUnbegunLineup, setRostered } from './unroster'
 
 describe('atomic game availability', function () {
   this.timeout(60000)
@@ -531,5 +532,58 @@ describe('atomic game availability', function () {
     ).equals(3129)
     expect((await toggle(id, 129, true)).away).deep.equals([])
     await rejected(async () => await toggle(id, 3129, false), 'badRequest')
+  })
+  it('drops a player who left the team from a game not begun, and leaves a begun one', async () => {
+    const id = 'gam_leaver'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const initial = fixture()
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: currentDocumentOf(
+          initial,
+          initial.liveData.plays.currentPlay,
+          { setupBefore: setupOf(initial), actions: [] }
+        )
+      })
+      .where('id', '=', id)
+      .execute()
+    expect(
+      (await open(id)).state.liveData.boxscore.teams.away.players
+    ).includes(2)
+    // He leaves the team: the lineup of the game not begun follows.
+    await db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', userIdOfGumbo(2))
+      .where('team_id', '=', 'team-away')
+      .execute()
+    try {
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, id)
+      })
+      const away = (await open(id)).state.liveData.boxscore.teams.away
+      expect(away.players).not.includes(2)
+      expect(away.battingOrder).not.includes(2)
+      // A game that is not there, or over, changes nothing.
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, 'gam_nobody')
+      })
+    } finally {
+      await db
+        .updateTable('memberships')
+        .set({ is_player: true })
+        .where('user_id', '=', userIdOfGumbo(2))
+        .where('team_id', '=', 'team-away')
+        .execute()
+    }
   })
 })

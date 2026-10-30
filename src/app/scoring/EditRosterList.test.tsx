@@ -242,6 +242,90 @@ describe('Roster tab cards and selector', function () {
       host.remove()
     }
   })
+  it('ends with the add rows when it can add, after the players and the empty line, and holds them while busy', async function () {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const pressed: string[] = []
+    const draw = async (
+      props: Partial<React.ComponentProps<typeof EditRosterList>>
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <EditRosterList rows={[row(1, '1')]} {...props} />
+          </ThemeProvider>
+        )
+      })
+    }
+    const labels = (): string[] =>
+      [...host.querySelectorAll('[role="button"]')].map(
+        node => node.getAttribute('aria-label') ?? ''
+      )
+    const press = async (label: string): Promise<void> => {
+      await act(async () => {
+        host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+      })
+    }
+    try {
+      // Without a way to create, no rows.
+      await draw({})
+      expect(labels()).not.includes('Create Player')
+      await draw({
+        onCreatePlayer: () => pressed.push('create'),
+        onAddExisting: () => pressed.push('existing')
+      })
+      expect(labels().slice(-2)).deep.equals([
+        'Create Player',
+        'Add Existing Player'
+      ])
+      // Create Player wears the head and shoulders with a plus; Add Existing
+      // Player the magnifying glass, with only the chevron after its title.
+      const createBadge = host.querySelector(
+        '[data-testid="Create Player badge"]'
+      )!
+      expect(
+        createBadge.querySelector('[data-testid="addPersonGlyph"]')
+      ).not.equals(null)
+      expect(createBadge.textContent).equals('')
+      const existingBadge = host.querySelector(
+        '[data-testid="Add Existing Player badge"]'
+      )!
+      expect(existingBadge.textContent).equals('search')
+      expect(
+        existingBadge.querySelector('[data-testid="addPersonGlyph"]')
+      ).equals(null)
+      expect(
+        host.querySelector('[aria-label="Add Existing Player"]')!.textContent
+      ).equals('searchAdd Existing Player›')
+      await press('Create Player')
+      await press('Add Existing Player')
+      expect(pressed).deep.equals(['create', 'existing'])
+      // After the empty line too.
+      await draw({ rows: [], onCreatePlayer: () => pressed.push('create') })
+      expect(host.textContent).includes('No players on this team.')
+      expect(labels().slice(-2)).deep.equals([
+        'Create Player',
+        'Add Existing Player'
+      ])
+      await draw({
+        adding: 'disabled',
+        onCreatePlayer: () => pressed.push('create'),
+        onAddExisting: () => pressed.push('existing')
+      })
+      for (const label of ['Create Player', 'Add Existing Player'])
+        expect(
+          host
+            .querySelector(`[aria-label="${label}"]`)!
+            .getAttribute('aria-disabled')
+        ).equals('true')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
   it('edits a game-only roster card and cancels without changing its retained draft', async function () {
     const host = document.createElement('div')
     document.body.append(host)
@@ -371,7 +455,7 @@ describe('Roster tab cards and selector', function () {
       host.remove()
     }
   })
-  it('starts in lineup and retains the draft across all three modes and teams', async function () {
+  it('starts on the roster and retains the draft across all three modes and teams', async function () {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
@@ -397,10 +481,10 @@ describe('Roster tab cards and selector', function () {
       }
       expect(
         host
-          .querySelector('[aria-label="Lineup"]')
+          .querySelector('[aria-label="Roster"]')
           ?.getAttribute('aria-selected')
       ).equals('true')
-      for (const mode of ['Roster', 'Defense', 'Lineup']) await click(mode)
+      for (const mode of ['Lineup', 'Defense', 'Roster']) await click(mode)
       await click('Home Team')
       await click('Roster')
       expect(host.textContent).includes('Tap player to edit.')

@@ -4883,7 +4883,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             'game team creates a guest with no ' +
             'login, email or team membership. The returned identity is appended ' +
             'to that side of GameDetail.guests before the client adds the player ' +
-            'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation.',
+            'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation. ' +
+            'With `{ side, userId, jersey?, positions?, teamId? }` instead, an existing player ' +
+            '(one `GET /users?forTeam=` lists) joins this side for this game only, as a pool ' +
+            'player: 201 with their entry and `notice.requestId` when their side was told, or ' +
+            '202 `{ pending: { requestId } }` when their side must accept first. Any other key ' +
+            'beside `userId` is 400; a player already on either team or a guest of either side is 409.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -5573,7 +5578,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`built` when the lines match the plays, `incomplete` when a ' +
             'required Gumbo field is missing (with `detail` naming the play ' +
             'and field), or `failed` after a build threw. A game with no ' +
-            'lines yet has empty `batting` and `pitching`. Anybody signed in ' +
+            'lines yet has empty `batting` and `pitching`. A withdrawn ' +
+            "batting line (a rejected add's part in the game, `userId` null " +
+            'under a placeholder name) has `standsFor`, the gumbo id of the ' +
+            'batter it stands in for in this game, so a batting order that ' +
+            'still names him shows the line instead; every other line has ' +
+            '`standsFor` null. Anybody signed in ' +
             'who is a member of neither team is answered 403 `membersOnly`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
@@ -6056,7 +6066,23 @@ export function openApiDocument(version: string): OpenApiDocument {
             'administrator instead receives account identity and node/suspension ' +
             'state, filtered by query (name or verified email, at most 120 ' +
             'characters). This view requires no externalId and does not alter ' +
-            'the default identity-lookup response.',
+            'the default identity-lookup response. ' +
+            'With `forTeam` instead, the answer is the players a roster ' +
+            'manager of that team (or, with `forGame`, a scorekeeper of either ' +
+            'team in that game) may add to it: every live player, and every ' +
+            'full account (switched on, with an email) though it plays for ' +
+            'no team, nearest first by `tier` (`mine`: a team you are on or ' +
+            "hold a role on, or a person you guard; `season`: a team in the game's " +
+            "season, or any season the team is in; `league`: a team in the team's " +
+            'league; `other`: everyone else, a full account that plays for no ' +
+            'team among them, listed only once `q` holds three characters). ' +
+            'Players already on the team, and with `forGame` ' +
+            'anybody already in that game, are left out. Each row adds ' +
+            '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
+            'in a season ending today or later), `tier` and `cursor`, and ' +
+            'nothing else about the person. `forTeam` beside `externalId` or ' +
+            '`guardedBy` is 400. A team or game you cannot see is 404; one you ' +
+            'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -6093,6 +6119,40 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', minLength: 1 },
               description: 'Restrict external IDs to this source system'
+            },
+            {
+              name: 'forTeam',
+              in: 'query',
+              schema: { type: 'string', minLength: 1 },
+              description:
+                'Players who may be added to this team. Omitted: the other ways of asking.'
+            },
+            {
+              name: 'forGame',
+              in: 'query',
+              schema: { type: 'string', minLength: 1 },
+              description:
+                'With forTeam: a game the team plays in. Its season ranks players, and anybody already in it is left out.'
+            },
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', maxLength: 100, default: '' },
+              description:
+                'With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
+              description: 'With forTeam: rows per page.'
+            },
+            {
+              name: 'after',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'With forTeam: the cursor of the last row of the previous page.'
             },
             {
               name: 'guardedBy',
@@ -6278,6 +6338,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'and `throws` are the player\u2019s own and are marked set by ' +
             'hand, so a roster import does not overwrite them. The person ' +
             'can be merged later because they are a real user. Audited. ' +
+            'With `{ userId, jersey?, positions? }` instead, an existing player joins the ' +
+            'team: 201 with their entry (short name only) and `notice.requestId` when their ' +
+            'side was told, 200 when they already play for it, or 202 `{ pending: { requestId } }` ' +
+            'when their side must accept first. Any other key beside `userId` is 400. ' +
             "Answers with the player's authorized roster entry, including " +
             'the whole name, as GET /teams/{teamId}/roster lists it for a ' +
             'roster manager.',

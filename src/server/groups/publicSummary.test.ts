@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 
@@ -283,6 +284,56 @@ describe('limited public organization profiles', function () {
         .deleteFrom('follows')
         .where('user_id', 'in', [userIdOfGumbo(101), userIdOfGumbo(103)])
         .execute()
+    }
+  })
+  it("says who manages a team's roster: its administrators, coaches, assistants and scorekeepers", async () => {
+    const rights = async (
+      path: string,
+      userId: number | null
+    ): Promise<{ canManage: boolean; canManageRoster: boolean }> =>
+      (await (await f.h.request('GET', path, undefined, userId)).json()) as {
+        canManage: boolean
+        canManageRoster: boolean
+      }
+    // The team's creator administers it.
+    expect(await rights(`/teams/${f.teamA}`, 101)).to.include({
+      canManage: true,
+      canManageRoster: true
+    })
+    // Nobody signed in, and somebody with no role, manage nothing.
+    expect((await rights(`/teams/${f.teamA}`, null)).canManageRoster).equals(
+      false
+    )
+    expect((await rights(`/teams/${f.teamA}`, 104)).canManageRoster).equals(
+      false
+    )
+    // Never on a season or a league, even for whoever administers it.
+    expect((await rights(`/seasons/${f.seasonA}`, 101)).canManageRoster).equals(
+      false
+    )
+    expect((await rights(`/leagues/${f.leagueA}`, 101)).canManageRoster).equals(
+      false
+    )
+    for (const role of ['scorekeeper', 'assistant', 'coach'] as const) {
+      const id = makeId('scopeRole')
+      await f.h.db
+        .insertInto('scope_roles')
+        .values({
+          id,
+          user_id: userIdOfGumbo(104),
+          scope_type: 'team',
+          scope_id: f.teamA,
+          role
+        })
+        .execute()
+      try {
+        expect(await rights(`/teams/${f.teamA}`, 104), role).to.include({
+          canManage: false,
+          canManageRoster: true
+        })
+      } finally {
+        await f.h.db.deleteFrom('scope_roles').where('id', '=', id).execute()
+      }
     }
   })
   it('includes aggregate results and parent context without private play events or stats', async () => {

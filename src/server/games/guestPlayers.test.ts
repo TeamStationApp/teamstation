@@ -569,6 +569,33 @@ describe("correcting a game-only player's name", function () {
     })
   })
 
+  it('refuses a pool player, an existing player added for this game only', async function () {
+    const before = await nameOf(homeGuest)
+    const pool = async (value: boolean): Promise<void> => {
+      await db
+        .updateTable('game_guest_details')
+        .set({ pool: value })
+        .where('game_id', '=', 'gam_rename')
+        .where('user_id', '=', homeGuest)
+        .executeTakeFirstOrThrow()
+    }
+    await pool(true)
+    try {
+      expect(
+        await refusal(
+          async () =>
+            await renameGuestPlayer(db, as(SCORER), 'gam_rename', homeGuest, {
+              firstName: 'Ty',
+              lastName: 'Cobb'
+            })
+        )
+      ).equals('forbidden')
+    } finally {
+      await pool(false)
+    }
+    expect(await nameOf(homeGuest)).deep.equals(before)
+  })
+
   it('refuses a guest who signs in, and one whose account was deleted', async function () {
     await db
       .updateTable('users')

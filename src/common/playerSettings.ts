@@ -159,6 +159,60 @@ export interface NewRosterPlayer {
   throws: 'left' | 'right' | null
 }
 
+/**
+ * A player who already exists, added by their user id: only what belongs to
+ * this team or this game, a jersey and positions. Their name and how they
+ * bat and throw are theirs, set when they were created, so a body that
+ * sends them is refused.
+ */
+export interface ExistingRosterPlayer {
+  userId: string
+  jersey: string | null
+  positions: PlayerPosition[]
+}
+
+/** The keys an existing-player body may hold beside these. */
+const EXISTING_KEYS = ['userId', 'jersey', 'positions']
+
+export function asExistingRosterPlayer(
+  raw: unknown,
+  /** Keys the route itself reads, such as a guest's `side` and `teamId`. */
+  routeKeys: readonly string[] = []
+): ExistingRosterPlayer {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new TypeError('Expected an object')
+  }
+  const body = raw as Record<string, unknown>
+  for (const key of Object.keys(body))
+    if (!EXISTING_KEYS.includes(key) && !routeKeys.includes(key))
+      throw new TypeError(`${key} is not allowed with userId`)
+  if (typeof body.userId !== 'string' || body.userId === '')
+    throw new TypeError('userId must be a user id')
+  return {
+    userId: body.userId,
+    jersey: body.jersey === undefined ? null : field('jersey', asJersey, body),
+    positions:
+      body.positions === undefined
+        ? []
+        : field('positions', asPlayerPositions, body)
+  }
+}
+
+/** A roster or guest body: an existing player by `userId`, or a new one. */
+export function asRosterPlayerBody(
+  raw: unknown,
+  routeKeys: readonly string[] = []
+): { existing: ExistingRosterPlayer } | { player: NewRosterPlayer } {
+  if (
+    raw != null &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    'userId' in raw
+  )
+    return { existing: asExistingRosterPlayer(raw, routeKeys) }
+  return { player: asNewRosterPlayer(raw) }
+}
+
 export function asNewRosterPlayer(raw: unknown): NewRosterPlayer {
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new TypeError('Expected an object')

@@ -912,6 +912,7 @@ export interface GroupRequestsTable {
     | 'guardian'
     | 'game'
     | 'gameChange'
+    | 'playerAdd'
   sender_id: string
   /** Null for a guardian or membership request sent on one’s own behalf. */
   sender_scope_type: 'league' | 'season' | 'team' | null
@@ -919,7 +920,13 @@ export interface GroupRequestsTable {
   terms: Json
   revision: Generated<number>
   status: Generated<
-    'pending' | 'accepted' | 'declined' | 'expired' | 'cancelled' | 'superseded'
+    | 'pending'
+    | 'accepted'
+    | 'declined'
+    | 'expired'
+    | 'cancelled'
+    | 'superseded'
+    | 'applied'
   >
   sent_at: Timestamp
   expires_at: Timestamp
@@ -929,6 +936,20 @@ export interface GroupRequestsTable {
   initiating_team_id: string | null
   sender_hidden: Generated<boolean>
   supersedes_id: string | null
+}
+
+/**
+ * A person whose part in a played game was withdrawn by rejecting the add
+ * that put them there: the game reads `label` in their place, and their own
+ * record leaves the game out (097noticeRequests).
+ */
+export interface GameWithdrawnPlayersTable {
+  game_id: string
+  user_id: string
+  side: 'away' | 'home'
+  request_id: string
+  label: string
+  withdrawn_at: Generated<Timestamp>
 }
 
 export interface GroupRequestSidesTable {
@@ -1505,7 +1526,10 @@ export interface Database {
     user_id: string
     jersey: string | null
     positions: string[]
+    /** An existing person added for this game only (097noticeRequests). */
+    pool: Generated<boolean>
   }
+  game_withdrawn_players: GameWithdrawnPlayersTable
   team_events: TeamEventsTable
   game_rsvps: EventRsvpsTable
   team_event_rsvps: EventRsvpsTable

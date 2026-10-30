@@ -112,6 +112,25 @@ describe('expanded statistics screens', function () {
     expect(text()).includes('BATTING').and.includes('PITCHING')
     expect(text()).not.includes('Host standings unavailable')
   })
+  it('lists a withdrawn line on the team’s tables under its placeholder name', async function () {
+    await render(
+      <TeamScreen
+        client={client({
+          teamStats: async () => [
+            battingFixture,
+            { ...battingFixture, userId: null, shortName: 'RFlcns A' }
+          ],
+          teamPitchingStats: async () => [
+            { ...pitchingFixture, userId: null, shortName: 'RFlcns B' }
+          ]
+        })}
+        team={team}
+        initialTab="stats"
+        onOpenGame={() => {}}
+      />
+    )
+    expect(text()).includes('RFlcns A').and.includes('RFlcns B')
+  })
   it('shares compact header and row widths with no leading statistics gutter', async function () {
     await render(
       <TeamScreen

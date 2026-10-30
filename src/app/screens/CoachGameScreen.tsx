@@ -166,7 +166,8 @@ export function battingOrders(
               {
                 userId:
                   accounts.find(row => row.gumboId === id)?.userId ?? null,
-                shortName: player.fullName
+                shortName: player.fullName,
+                gumboId: id
               }
             ]
       })
@@ -637,6 +638,26 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       })
   }
 
+  /** A player just put on team `id`'s roster joins the rosters this game holds. */
+  const holdRosterEntry = (id: string, entry: RosterEntry): void => {
+    setOpened(current =>
+      current?.game.id !== gameId
+        ? current
+        : {
+            ...current,
+            rosters: {
+              ...current.rosters,
+              [id]: [
+                ...(current.rosters[id] ?? []).filter(
+                  person => person.userId !== entry.userId
+                ),
+                entry
+              ]
+            }
+          }
+    )
+  }
+
   const team =
     side == null || opened == null
       ? ''
@@ -788,24 +809,18 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                   id,
                   rosterPlayerBody(player)
                 )
-                setOpened(current =>
-                  current?.game.id !== gameId
-                    ? current
-                    : {
-                        ...current,
-                        rosters: {
-                          ...current.rosters,
-                          [id]: [
-                            ...(current.rosters[id] ?? []).filter(
-                              person => person.userId !== entry.userId
-                            ),
-                            entry
-                          ]
-                        }
-                      }
-                )
+                holdRosterEntry(id, entry)
                 return entry
               }}
+              client={client}
+              onAddExistingRosterPlayer={async (id, body) => {
+                const answer = await client.addExistingRosterPlayer(id, body)
+                if ('entry' in answer) holdRosterEntry(id, answer.entry)
+                return answer
+              }}
+              onAddExistingGuest={async (side, body) =>
+                await client.addExistingGuest(gameId, side, body, teamId)
+              }
               onCreateGuest={async (side, player) => {
                 const entry = await client.createGuestPlayer(
                   gameId,

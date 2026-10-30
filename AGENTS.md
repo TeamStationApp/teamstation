@@ -41,16 +41,16 @@ reviewed it for what follows and fixed what you found.
 
 ### What to use instead
 
-| Instead of | Use |
-| --- | --- |
-| A person's name | A real MLB player's name. A team named for its coach takes an MLB player's surname. |
-| A real team, league, club, field or place | A neutral invented one. |
-| A real network address | `192.168.x.x` where the code needs a private address, otherwise a documentation range (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`). Never an address from a real network. |
-| A hostname | `*.example.test` (or `example.com`). |
-| A server or home path | `/var/app/...`, `/Users/dev/...`. |
-| A device identifier | A zero-filled value of the same format (`00000000-0000-4000-8000-000000000001`, `02:00:00:00:00:01`), keeping any prefix the code requires. |
-| A secret, code or key | A placeholder of the same shape. |
-| Prose about the infrastructure | The engineering reason without the layout: "behind the reverse proxy, the client address comes from X-Forwarded-For", not where the proxy runs or what it forwards to. |
+| Instead of                                | Use                                                                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A person's name                           | A real MLB player's name. A team named for its coach takes an MLB player's surname.                                                                                       |
+| A real team, league, club, field or place | A neutral invented one.                                                                                                                                                   |
+| A real network address                    | `192.168.x.x` where the code needs a private address, otherwise a documentation range (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`). Never an address from a real network. |
+| A hostname                                | `*.example.test` (or `example.com`).                                                                                                                                      |
+| A server or home path                     | `/var/app/...`, `/Users/dev/...`.                                                                                                                                         |
+| A device identifier                       | A zero-filled value of the same format (`00000000-0000-4000-8000-000000000001`, `02:00:00:00:00:01`), keeping any prefix the code requires.                               |
+| A secret, code or key                     | A placeholder of the same shape.                                                                                                                                          |
+| Prose about the infrastructure            | The engineering reason without the layout: "behind the reverse proxy, the client address comes from X-Forwarded-For", not where the proxy runs or what it forwards to.    |
 
 ### Before every PR or merge
 
@@ -101,6 +101,8 @@ Before adding or changing a screen, read [docs/ui-rules.md](docs/ui-rules.md). A
 choices than fit on one line is a list of rows, never pills, and stacked Cancel actions are centered, using blue beneath a red destructive primary and red otherwise.
 Pill labels stay on their straight run, with horizontal padding of at least half
 the explicit shell height; see the pill rule in that document.
+A search field floats at the bottom of its screen and rises above the keyboard when
+focused; see "A search field floats at the bottom" in that document.
 
 ## API design
 

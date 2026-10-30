@@ -107,6 +107,7 @@
     "coverage.creation": "node scripts/creation-coverage.mjs",
     "coverage.refinements": "node scripts/refinements-coverage.mjs",
     "coverage.guardian": "node scripts/guardian-coverage.mjs",
+    "coverage.existingPlayer": "node scripts/existing-player-coverage.mjs",
     "coverage.eventInfo": "node scripts/event-info-coverage.mjs",
     "coverage.gameForm": "node scripts/game-form-coverage.mjs",
     "coverage.scoreboardEventLog": "node scripts/scoreboard-coverage.mjs",

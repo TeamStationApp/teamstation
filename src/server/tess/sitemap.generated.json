@@ -741,19 +741,10 @@
         }
       ],
       "settings": [
-        "Right",
-        "Left",
-        "Switch",
         "This player is not on this team’s roster.",
         "Cannot load this player’s settings.",
         "Loading…",
         "Cannot save these settings.",
-        "First name",
-        "Last name",
-        "Jersey number",
-        "Positions",
-        "Bats",
-        "Throws",
         "Saved.",
         "Save",
         "Birth month cleared.",
@@ -800,7 +791,16 @@
         "Add %s",
         "Add by e-mail",
         "Family",
-        "That person has no way to sign in. Add them by e-mail address instead."
+        "That person has no way to sign in. Add them by e-mail address instead.",
+        "Left",
+        "Right",
+        "Switch",
+        "First name",
+        "Last name",
+        "Jersey number",
+        "Throws",
+        "Bats",
+        "Select player positions"
       ]
     },
     {
@@ -1013,6 +1013,46 @@
         }
       ],
       "settings": []
+    },
+    {
+      "name": "teamAddPlayer",
+      "path": "/groups/team/:id/settings/add-player",
+      "title": "Team add player",
+      "tabs": [],
+      "settings": [
+        "Retry",
+        "Cancel",
+        "This needs a guardian's approval first. We sent the request.",
+        "Add to Roster",
+        "Left",
+        "Right",
+        "Switch",
+        "First name",
+        "Last name",
+        "Jersey number",
+        "Throws",
+        "Bats",
+        "Select player positions"
+      ]
+    },
+    {
+      "name": "teamCreatePlayer",
+      "path": "/groups/team/:id/settings/create-player",
+      "title": "Team create player",
+      "tabs": [],
+      "settings": [
+        "Create Player",
+        "Create Player and Add Another",
+        "Left",
+        "Right",
+        "Switch",
+        "First name",
+        "Last name",
+        "Jersey number",
+        "Throws",
+        "Bats",
+        "Select player positions"
+      ]
     },
     {
       "name": "umpireLevels",

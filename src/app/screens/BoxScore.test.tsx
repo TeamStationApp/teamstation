@@ -280,6 +280,20 @@ describe('the box score', function () {
     expect(text).not.includes('Batting — Hawks')
     expect(text).not.includes('No individual lines')
   })
+  it('shows a withdrawn line under its placeholder name, with nobody behind it', async function () {
+    this.timeout(10000)
+    const withdrawn = asPitchingRow({
+      ...BLAIR,
+      userId: null,
+      gumboId: null,
+      shortName: 'RFlcns A'
+    })
+    expect(withdrawn.userId).equals(null)
+    const container = await boxScore([BLAIR, withdrawn])
+    const text = container.textContent ?? ''
+    expect(text).includes('RFlcns A')
+    expect(text).includes('Blair')
+  })
   it('preserves batting appearance order for both sides and player links', async function () {
     this.timeout(10000)
     const rows = ['away', 'home'].flatMap((teamId, side) =>
@@ -462,8 +476,137 @@ describe('the box score module (U24)', function () {
       h: 0,
       seasonAvg: null
     })
-    expect(ordered[3].userId).equals(null)
+    expect(ordered[3]).deep.include({ userId: null, openable: false })
+    expect(ordered[2].openable).equals(true)
     expect(ordered[4]).equals(runner)
+    // A withdrawn line names the batter it stands in for, who has no account
+    // any more: his name does not come back beside the placeholder.
+    const placeholder = {
+      ...batter(16, 'RFlcns A', 'away', 2),
+      userId: null,
+      openable: false,
+      standsFor: 21
+    }
+    const withGone = [
+      ...order.slice(0, 2),
+      { userId: null, gumboId: 21, shortName: 'Mookie Betts' },
+      ...order.slice(2)
+    ]
+    expect(
+      battingOrder([...lines, placeholder], withGone, 'away').map(
+        line => line.shortName
+      )
+    ).deep.equals([
+      'First',
+      'Second',
+      'RFlcns A',
+      'Early',
+      'Made Up',
+      'Runner',
+      'Late',
+      'Gone'
+    ])
+    // Another batter with no account ahead of him in the order, one taken off
+    // the roster after batting or made up for the game, keeps his place: the
+    // line is the withdrawn batter's, not the first such batter's.
+    const offFirst = [
+      order[1],
+      { userId: null, gumboId: 30, shortName: 'Off Roster' },
+      { userId: null, gumboId: 21, shortName: 'Mookie Betts' },
+      { userId: null, gumboId: null, shortName: 'Made Up' }
+    ]
+    expect(
+      battingOrder([...lines, placeholder], offFirst, 'away').map(
+        line => line.shortName
+      )
+    ).deep.equals([
+      'First',
+      'Second',
+      'RFlcns A',
+      'Off Roster',
+      'Made Up',
+      'Late',
+      'Gone',
+      'Runner'
+    ])
+    // Two withdrawn lines stand in for their own two batters.
+    const second = {
+      ...placeholder,
+      shortName: 'RFlcns B',
+      pa: 1,
+      standsFor: 22
+    }
+    expect(
+      battingOrder(
+        [...lines, placeholder, second],
+        [
+          ...offFirst,
+          { userId: null, gumboId: 22, shortName: 'Shohei Ohtani' }
+        ],
+        'away'
+      ).map(line => line.shortName)
+    ).deep.equals([
+      'First',
+      'Second',
+      'RFlcns A',
+      'RFlcns B',
+      'Off Roster',
+      'Made Up',
+      'Late',
+      'Gone',
+      'Runner'
+    ])
+    // A pool player whose add was rejected while the game was under way is
+    // still in it, with his account: the line takes his place all the same.
+    const pooled = [
+      order[1],
+      { userId: userIdOfGumbo(21), gumboId: 21, shortName: 'Mookie Betts' },
+      order[4]
+    ]
+    const pooledOrder = battingOrder([...lines, placeholder], pooled, 'away')
+    expect(pooledOrder.map(line => line.shortName)).deep.equals([
+      'First',
+      'Second',
+      'RFlcns A',
+      'Late',
+      'Gone',
+      'Runner'
+    ])
+    expect(pooledOrder.some(line => line.userId === userIdOfGumbo(21))).equals(
+      false
+    )
+    // One yet to come up, a pitcher batting ninth, waits in his own slot
+    // under the placeholder, not at the bottom.
+    const ninth = {
+      ...batter(18, 'RFlcns C', 'away', 0),
+      userId: null,
+      openable: false,
+      standsFor: 23
+    }
+    expect(
+      battingOrder(
+        [...lines, ninth],
+        [
+          order[1],
+          { userId: null, gumboId: 23, shortName: 'Clayton Kershaw' },
+          order[4]
+        ],
+        'away'
+      ).map(line => line.shortName)
+    ).deep.equals(['First', 'Second', 'RFlcns C', 'Late', 'Gone', 'Runner'])
+    // A withdrawn pinch runner who scored and never batted keeps his line.
+    const runnerGone = {
+      ...batter(17, 'RFlcns B', 'away', 0),
+      r: 1,
+      userId: null,
+      openable: false,
+      standsFor: null
+    }
+    expect(
+      battingOrder([...lines, runnerGone], order, 'away').map(
+        line => line.shortName
+      )
+    ).includes('RFlcns B')
     // Without an order, the server's.
     expect(battingOrder(lines).map(line => line.shortName)).deep.equals([
       'Late',
@@ -517,6 +660,39 @@ describe('the box score module (U24)', function () {
       host!.querySelector<HTMLElement>('[aria-label="Dana E"]')!.click()
     })
     expect(opened).deep.equals([userIdOfGumbo(5)])
+  })
+
+  it('opens a pitcher from their line, and a withdrawn or unopenable pitcher from none', async function () {
+    const opened: string[] = []
+    await moduleBoxScore({
+      game: gameFixture,
+      box: {
+        batting: [],
+        pitching: [
+          BLAIR,
+          asPitchingRow({ ...BLAIR, userId: null, shortName: 'RFlcns A' }),
+          // A pool player the viewer could not already see.
+          asPitchingRow({
+            ...BLAIR,
+            userId: userIdOfGumbo(9),
+            shortName: 'Freddie F',
+            openable: false
+          })
+        ],
+        stats: undefined
+      },
+      first: 'away',
+      onOpenPlayer: userId => {
+        opened.push(userId)
+      }
+    })
+    expect(host!.querySelector('[aria-label="RFlcns A"]')).equals(null)
+    expect(host!.querySelector('[aria-label="Freddie F"]')).equals(null)
+    expect(host!.textContent).includes('Freddie F')
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[aria-label="Blair"]')!.click()
+    })
+    expect(opened).deep.equals([BLAIR.userId])
   })
 
   it('draws a coach an empty line score before the game, over a word that it has not started', async function () {

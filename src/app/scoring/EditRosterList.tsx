@@ -8,6 +8,8 @@ import {
   View
 } from 'react-native'
 
+import { AddPersonGlyph } from '../components/AddPersonGlyph'
+import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { LineupQrGlyph } from './LineupQrGlyph'
 import { ScoringPlayerCard } from './ScoringPlayerCard'
@@ -35,7 +37,10 @@ export function EditRosterList({
   initialScrollOffset,
   onScrollOffset,
   lineupOffer = 'both',
-  onShareLineup
+  onShareLineup,
+  adding = 'enabled',
+  onCreatePlayer,
+  onAddExisting
 }: {
   rows: readonly EditRosterRow[]
   loading?: boolean
@@ -57,6 +62,14 @@ export function EditRosterList({
   lineupOffer?: LineupQrOffer
   /** Opens the lineup QR for this side. */
   onShareLineup?: () => void
+  /** Whether the add rows may be pressed: not while the roster is busy. */
+  adding?: 'enabled' | 'disabled'
+  /**
+   * Opens Create Player. With it, the list ends with Create Player and Add
+   * Existing Player, which `onAddExisting` opens.
+   */
+  onCreatePlayer?: () => void
+  onAddExisting?: () => void
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
   const text = {
@@ -84,6 +97,18 @@ export function EditRosterList({
         ? lstrings.lineupQr_scanOpponent
         : lstrings.lineupQr_shareRow
   const lineupGlyph = lineupOffer === 'scan' ? 'scan' : 'qr'
+  const chevron = (
+    <Text
+      style={{
+        ...text,
+        fontSize: 22,
+        paddingRight: 4,
+        color: theme.scoringSurface.chevronActive
+      }}
+    >
+      ›
+    </Text>
+  )
   const initialOffset = useRef({ x: 0, y: initialScrollOffset ?? 0 })
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const restorePending = useRef(true)
@@ -231,6 +256,44 @@ export function EditRosterList({
             </View>
           </ScoringPlayerCard>
         ))}
+        {onCreatePlayer != null && (
+          <>
+            <ScoringPlayerCard
+              label="Create Player"
+              disabled={adding === 'disabled'}
+              onPress={onCreatePlayer}
+            >
+              <View testID="Create Player badge" style={badgeStyle}>
+                {/* The badge is translucent; the ring and plus take the
+                    card's own colour so they read against the head. */}
+                <AddPersonGlyph
+                  color={badge.text}
+                  background={theme.scoringSurface.idle}
+                  size={JERSEY_BADGE_SIZE - 14}
+                />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={title}>Create Player</Text>
+              </View>
+              {chevron}
+            </ScoringPlayerCard>
+            <ScoringPlayerCard
+              label="Add Existing Player"
+              disabled={adding === 'disabled' || onAddExisting == null}
+              onPress={() => {
+                onAddExisting?.()
+              }}
+            >
+              <View testID="Add Existing Player badge" style={badgeStyle}>
+                <Icon name="search" size={1.75} color={badge.text} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={title}>Add Existing Player</Text>
+              </View>
+              {chevron}
+            </ScoringPlayerCard>
+          </>
+        )}
       </ScrollView>
     </View>
   )

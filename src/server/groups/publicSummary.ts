@@ -14,8 +14,10 @@ import type {
 } from '../../common/publicGroups'
 import { publicStaffName } from '../../common/publicStaffName'
 import {
+  canManageRoster,
   givenRoleLevelsOnTeam,
   nonMemberTeam,
+  roleScopes,
   seesPeopleOf,
   visibleScopes
 } from '../access'
@@ -567,6 +569,11 @@ export async function groupDetail(
       actor == null || actor.apiTokenId != null
         ? false
         : await canManagePeople(db, actor, ref),
-    canSeePeople: actor == null ? false : await seesPeopleOf(db, actor, ref)
+    canSeePeople: actor == null ? false : await seesPeopleOf(db, actor, ref),
+    canManageRoster:
+      ref.kind === 'team' &&
+      actor != null &&
+      actor.apiTokenId == null &&
+      canManageRoster(await roleScopes(db, actor.userId, actor.isAdmin), ref.id)
   }
 }

@@ -90,6 +90,7 @@ import {
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
 import type {
+  ExistingRosterPlayer,
   NewRosterPlayer,
   PersonSettings,
   PlayerSettings
@@ -1067,7 +1068,14 @@ const asPitchingRates = asObject({
 })
 
 export const asBattingRow = asObject({
-  userId: asUserId,
+  /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
+  userId: asNullable(asUserId),
+  /**
+   * Whether the line opens its player's page for this viewer: false for a
+   * withdrawn line, and for a pool player the viewer could not already see.
+   * Absent from older servers and from team tables, which is true.
+   */
+  openable: asOptional(asBoolean, true),
   /** First name, last initial. Never the whole name. */
   shortName: asOptional(asString),
   teamId: asNullable(asString),
@@ -1099,7 +1107,9 @@ export const asBattingRow = asObject({
    * This player's average for the season so far, up to and including this
    * game — not the afternoon's. Null where they have no at-bats to average.
    */
-  seasonAvg: asOptional(asNullable(asNumber), null)
+  seasonAvg: asOptional(asNullable(asNumber), null),
+  /** A withdrawn line's: the gumbo id of the batter it stands in for. */
+  standsFor: asOptional(asNullable(asNumber), null)
 })
 export type BattingRow = ReturnType<typeof asBattingRow>
 
@@ -1113,7 +1123,14 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  * neither sets one.
  */
 export const asPitchingRow = asObject({
-  userId: asUserId,
+  /** Null on a withdrawn line: a placeholder in the game, nobody to open. */
+  userId: asNullable(asUserId),
+  /**
+   * Whether the line opens its player's page for this viewer: false for a
+   * withdrawn line, and for a pool player the viewer could not already see.
+   * Absent from older servers and from team tables, which is true.
+   */
+  openable: asOptional(asBoolean, true),
   shortName: asOptional(asString),
   teamId: asNullable(asString),
   /** `5.2`, the way it is always written. */
@@ -1596,6 +1613,59 @@ export const asSeasonGame = withEventMetadata(
   })
 )
 export type SeasonGame = ReturnType<typeof asSeasonGame>
+
+/** A player a roster manager may add, as the search card draws them. */
+export interface RosterCandidate {
+  userId: string
+  gumboId: number | null
+  externalIds: string[]
+  shortName: string
+  shortParts: { first: string; last: string }
+  avatarUrl: string | null
+  bats: 'left' | 'right' | 'switch' | null
+  throws: 'left' | 'right' | null
+  teams: Array<{ teamId: string; name: string }>
+  tier: 'mine' | 'season' | 'league' | 'other'
+  cursor: string
+}
+export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
+  userId: asString,
+  gumboId: asNullable(asNumber),
+  externalIds: asArray(asString),
+  shortName: asString,
+  shortParts: asObject({ first: asString, last: asString }),
+  avatarUrl: asNullable(asString),
+  bats: asBats,
+  throws: asThrows,
+  teams: asArray(asObject({ teamId: asString, name: asString })),
+  tier: asEither(
+    asLiteral('mine'),
+    asLiteral('season'),
+    asLiteral('league'),
+    asLiteral('other')
+  ),
+  cursor: asString
+})
+
+/**
+ * An existing player's add: their entry, with the notice their side was sent
+ * when there was one, or the request their side must accept first.
+ */
+export type ExistingPlayerAnswer =
+  { entry: RosterEntry; noticeId: string | null } | { pendingRequestId: string }
+export function asExistingPlayerAnswer(raw: unknown): ExistingPlayerAnswer {
+  const held = raw as {
+    pending?: { requestId?: unknown }
+    notice?: { requestId?: unknown }
+  }
+  if (held?.pending != null)
+    return { pendingRequestId: asString(held.pending.requestId) }
+  return {
+    entry: asRosterEntry(raw),
+    noticeId:
+      held?.notice?.requestId == null ? null : asString(held.notice.requestId)
+  }
+}
 
 /** A person another service knows, and which of the asked ids are theirs. */
 export const asUserMatch = asObject({
@@ -2543,6 +2613,8 @@ export interface RequestOptions {
    * of the game reads named before the server answers.
    */
   deviceNames?: Record<string, string>
+  /** Cancels the call; a cancelled call is not the network going away. */
+  signal?: AbortSignal
 }
 
 /**
@@ -5014,6 +5086,64 @@ export class TeamStationClient {
   }
 
   /**
+   * Puts a player who already exists on the team's roster, by user id, with
+   * only a jersey and positions of the team's own. The entry, with the notice
+   * their side was sent, or the request waiting for their side's approval.
+   */
+  async addExistingRosterPlayer(
+    teamId: string,
+    body: ExistingRosterPlayer
+  ): Promise<ExistingPlayerAnswer> {
+    return await this.request(
+      'POST',
+      `/teams/${encodeURIComponent(teamId)}/roster-players`,
+      asExistingPlayerAnswer,
+      body
+    )
+  }
+
+  /** Adds a player who already exists to one side of one game only. */
+  async addExistingGuest(
+    gameId: string,
+    side: 'away' | 'home',
+    body: ExistingRosterPlayer,
+    teamId?: string
+  ): Promise<ExistingPlayerAnswer> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/guest-players`,
+      asExistingPlayerAnswer,
+      { side, ...(teamId == null ? {} : { teamId }), ...body }
+    )
+  }
+
+  /**
+   * The players a roster manager may add to a team, or to its side of a
+   * game, nearest first, a page at a time (`GET /users?forTeam=`).
+   */
+  async rosterCandidates(ask: {
+    teamId: string
+    gameId?: string
+    q?: string
+    after?: string
+    limit?: number
+    signal?: AbortSignal
+  }): Promise<RosterCandidate[]> {
+    const params = new URLSearchParams({ forTeam: ask.teamId })
+    if (ask.gameId != null) params.set('forGame', ask.gameId)
+    if (ask.q != null && ask.q !== '') params.set('q', ask.q)
+    if (ask.after != null) params.set('after', ask.after)
+    if (ask.limit != null) params.set('limit', String(ask.limit))
+    return await this.request(
+      'GET',
+      `/users?${params.toString()}`,
+      asArray(asRosterCandidate),
+      undefined,
+      ask.signal == null ? {} : { signal: ask.signal }
+    )
+  }
+
+  /**
    * A guest on one side of the game. `teamId` is the team the caller means:
    * when home and away were swapped since it read the game, the server
    * refuses rather than add the guest to the other team.
@@ -6226,9 +6356,11 @@ export class TeamStationClient {
             ? new Uint8Array(bytes)
             : body === undefined
               ? undefined
-              : JSON.stringify(body)
+              : JSON.stringify(body),
+        ...(options.signal == null ? {} : { signal: options.signal })
       })
     } catch (caught: unknown) {
+      if (options.signal?.aborted === true) throw caught
       this.offline = true
       throw new HttpError(
         'offline',

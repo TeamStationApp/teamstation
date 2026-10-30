@@ -102,6 +102,8 @@ describe('the roster screen for a coach', function () {
     })
     const last = name(home.battingOrder.at(-1)!)
     expect(saveDisabled()).equals('true')
+    // The sheet opens on the roster; the lineup is a tab away.
+    await click('Lineup')
     await click(`Remove ${last}`)
     expect(node(`Remove ${last}`)).equals(null)
     expect(saveDisabled()).equals(null)

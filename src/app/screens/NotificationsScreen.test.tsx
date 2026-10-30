@@ -682,3 +682,118 @@ describe('a reminder to upload a recording', function () {
     expect(dot()).equals(false)
   })
 })
+
+describe('a player added with a notice', function () {
+  const notice: Notification = {
+    ...invitation,
+    id: 'event_player_add',
+    requestId: 'request_player_add',
+    type: 'playerAdd',
+    title: 'Dave Roberts added Mookie B to Ridgeview Falcons',
+    description: 'Mookie B was added to the roster of Ridgeview Falcons.',
+    status: 'applied',
+    canAct: false,
+    canReject: true,
+    rejectUntil: '2027-01-26T12:00:00Z'
+  }
+
+  it('offers Reject without Accept, and Dismiss only while it is pending', async function () {
+    const decided: string[] = []
+    const dismissed: string[] = []
+    const client = {
+      notifications: async (options: { history?: boolean }) => ({
+        items: [notice],
+        hasPending: options.history !== true,
+        nextCursor: null
+      }),
+      decideRelationship: async (id: string, action: string) => {
+        decided.push(`${id} ${action}`)
+        return { id, status: 'declined' }
+      },
+      dismissNotification: async (id: string) => {
+        dismissed.push(id)
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    expect(text()).includes(notice.title)
+    expect(text()).includes('You can reject this until')
+    expect(
+      document.querySelectorAll('[data-testid="notification-accept"]')
+    ).length(0)
+    byLabel(`Dismiss ${notice.title}`)
+    await press(`Dismiss ${notice.title}`)
+    expect(dismissed).deep.equals([notice.requestId])
+    expect(text()).not.includes(notice.title)
+
+    await press('History')
+    expect(text()).includes(notice.title)
+    expect(
+      [...document.querySelectorAll('[aria-label]')].some(
+        node => node.getAttribute('aria-label') === `Dismiss ${notice.title}`
+      )
+    ).equals(false)
+    await press(`Reject ${notice.title}`)
+    expect(decided).deep.equals([`${notice.requestId} decline`])
+  })
+
+  it('says when it was added once it can no longer be rejected', async function () {
+    const settled: Notification = { ...notice, canReject: false }
+    const client = {
+      notifications: async () => ({
+        items: [settled],
+        hasPending: false,
+        nextCursor: null
+      })
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    await press('History')
+    expect(text()).includes('Added on')
+    expect(
+      [...document.querySelectorAll('[aria-label]')].some(
+        node => node.getAttribute('aria-label') === `Reject ${notice.title}`
+      )
+    ).equals(false)
+  })
+})
+
+describe("a player's side removing them", function () {
+  const removal: Notification = {
+    ...invitation,
+    id: 'evt_removed',
+    requestId: 'evt_removed',
+    type: 'playerAddRejected',
+    title: 'A guardian removed Mookie B from Ridgeview Falcons',
+    description: 'Mookie B is no longer on it.',
+    status: 'accepted',
+    canAct: false,
+    canReject: false,
+    rejectUntil: null
+  }
+
+  it('waits in Pending with nothing to accept, and leaves on Dismiss', async function () {
+    const dismissed: string[] = []
+    const client = {
+      notifications: async () => ({
+        items: [removal],
+        hasPending: true,
+        nextCursor: null
+      }),
+      dismissNotification: async (id: string) => {
+        dismissed.push(id)
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    expect(text()).includes(removal.title)
+    expect(text()).includes(removal.description)
+    expect(text()).not.includes('Accept')
+    await press(`Dismiss ${removal.title}`)
+    expect(dismissed).deep.equals(['evt_removed'])
+    expect(text()).not.includes(removal.title)
+  })
+})

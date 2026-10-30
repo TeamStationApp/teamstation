@@ -800,10 +800,9 @@ function ScheduleCard(props: {
 }
 
 /** Header and body share compact widths, including any unusually large value. */
-function StatsTable<T extends { userId: string; shortName?: string }>(props: {
-  rows: T[]
-  columns: Array<StatColumn<T>>
-}): React.ReactElement {
+function StatsTable<
+  T extends { userId: string | null; shortName?: string }
+>(props: { rows: T[]; columns: Array<StatColumn<T>> }): React.ReactElement {
   const { rows, columns } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -833,8 +832,11 @@ function StatsTable<T extends { userId: string; shortName?: string }>(props: {
             </Text>
           ))}
         </View>
-        {rows.map(row => (
-          <View key={row.userId} style={styles.tableRow}>
+        {rows.map((row, index) => (
+          <View
+            key={row.userId ?? `withdrawn-${index}`}
+            style={styles.tableRow}
+          >
             <Text style={styles.cellName} numberOfLines={1}>
               {row.shortName ?? 'Unknown'}
             </Text>
