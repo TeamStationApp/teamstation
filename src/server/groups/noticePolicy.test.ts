@@ -899,6 +899,16 @@ describe('adds made with a notice', function () {
     // which outlives it.
     expect(card.description).not.includes('until')
     expect(card.description).not.includes('removes')
+    // The game's sides swap before its first pitch: the Herons, who took him
+    // on the away side, are at home now, and the reject still finds him.
+    await db!
+      .updateTable('games')
+      .set(eb => ({
+        home_team_id: eb.ref('away_team_id'),
+        away_team_id: eb.ref('home_team_id')
+      }))
+      .where('id', '=', fresh)
+      .execute()
     expect(card.rejectUntil).to.be.a('string')
     await call(
       TOKENS.bearsCoach,

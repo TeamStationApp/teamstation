@@ -377,6 +377,17 @@ async function gameStarted(
  * not one they played as a pool guest, which a pool add of its own covers;
  * for a pool add, that game once it has begun.
  */
+/**
+ * The side a team is on in a game now. The add's `side` is the one it joined,
+ * and a game's sides can swap before its first pitch.
+ */
+function sideOf(
+  game: { home_team_id: string },
+  teamId: string
+): 'away' | 'home' {
+  return game.home_team_id === teamId ? 'home' : 'away'
+}
+
 async function playedGames(
   trx: Db,
   request: StoredRequest,
@@ -398,7 +409,7 @@ async function playedGames(
       .where('id', '=', terms.gameId!)
       .executeTakeFirst()
     if (game == null || !(await gameStarted(trx, game))) return []
-    return [{ ...game, side: terms.side! }]
+    return [{ ...game, side: sideOf(game, terms.teamId) }]
   }
   const gumbos = await trx
     .selectFrom('gumbo_ids')
@@ -466,7 +477,7 @@ async function playedGames(
     .execute()
   return games.map(game => ({
     ...game,
-    side: game.home_team_id === terms.teamId ? 'home' : 'away'
+    side: sideOf(game, terms.teamId)
   }))
 }
 
@@ -648,7 +659,7 @@ export async function undoPlayerAdd(
     if (game != null) {
       const teams = teamsOfRow(game)
       const guests = storedGuests(game.guests, teams)
-      const side = terms.side!
+      const side = sideOf(game, terms.teamId)
       guests[side] = guests[side].filter(id => !gumboIds.has(id))
       await trx
         .updateTable('games')
