@@ -97,7 +97,7 @@ export function eventInfoPaths(
           ...responses,
           200: {
             description:
-              '{ latitude, longitude, tileUrl, googleMapsApiKey? }. The optional key is the browser-restricted Google Maps display key, never a server or Android credential.'
+              '{ latitude, longitude, tileUrl, googleMapsApiKey? }. The optional key is the Google Maps display key for browsers, never a server or Android credential. The web map loads from an opaque origin with no Referer, so it cannot carry an HTTP-referrer restriction.'
           },
           503: errorResponse
         }

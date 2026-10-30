@@ -29,7 +29,8 @@ interface StubMarker {
  */
 function load(
   given: PinMapSettings,
-  timeoutMs?: number
+  timeoutMs?: number,
+  beforeParse?: (window: Window & Record<string, any>) => void
 ): {
   dom: JSDOM
   window: Window & Record<string, any>
@@ -48,6 +49,9 @@ function load(
   })
   const dom = new JSDOM(pinMapDocument(given, { timeoutMs }), {
     runScripts: 'dangerously',
+    beforeParse: window => {
+      beforeParse?.(window as unknown as Window & Record<string, any>)
+    },
     virtualConsole
   })
   const window = dom.window as unknown as Window & Record<string, any>
@@ -230,11 +234,135 @@ describe('the pin map document', () => {
     late.window.close()
   })
 
-  it('reloads on Retry', () => {
+  it('starts its timer only once the map is on screen', async () => {
+    const observers: Array<(entries: unknown[]) => void> = []
+    const page = load(settings, 20, window => {
+      Object.defineProperty(window, 'parent', { value: {} })
+      window.IntersectionObserver = class {
+        constructor(callback: (entries: unknown[]) => void) {
+          observers.push(callback)
+        }
+
+        observe(): void {}
+        disconnect(): void {}
+      }
+    })
+    await wait(60)
+    expect(page.failed()).equals(false)
+    observers[0]([{ isIntersecting: false }])
+    await wait(60)
+    expect(page.failed()).equals(false)
+    // Left again before the timer ends, it does not count.
+    observers[0]([{ isIntersecting: true }])
+    observers[0]([{ isIntersecting: false }])
+    await wait(60)
+    expect(page.failed()).equals(false)
+    observers[0]([{ isIntersecting: true }])
+    await wait(60)
+    expect(page.failed()).equals(true)
+    page.window.close()
+  })
+
+  it('stops its timer while the tab is hidden, and goes on when it returns', async () => {
+    const observers: Array<(entries: unknown[]) => void> = []
+    const page = load(settings, 20, window => {
+      Object.defineProperty(window, 'parent', { value: {} })
+      window.IntersectionObserver = class {
+        constructor(callback: (entries: unknown[]) => void) {
+          observers.push(callback)
+        }
+
+        observe(): void {}
+      }
+    })
+    let hidden = false
+    Object.defineProperty(page.window.document, 'visibilityState', {
+      get: () => (hidden ? 'hidden' : 'visible')
+    })
+    const switched = (to: boolean): void => {
+      hidden = to
+      page.window.document.dispatchEvent(
+        new page.window.Event('visibilitychange')
+      )
+    }
+    observers[0]([{ isIntersecting: true }])
+    switched(true)
+    await wait(60)
+    expect(page.failed()).equals(false)
+    switched(false)
+    await wait(60)
+    expect(page.failed()).equals(true)
+    page.window.close()
+  })
+
+  it('keeps one timer through a batch that leaves and returns', async () => {
+    const observers: Array<(entries: unknown[]) => void> = []
+    const page = load(settings, 40, window => {
+      Object.defineProperty(window, 'parent', { value: {} })
+      window.IntersectionObserver = class {
+        constructor(callback: (entries: unknown[]) => void) {
+          observers.push(callback)
+        }
+
+        observe(): void {}
+      }
+    })
+    observers[0]([{ isIntersecting: true }])
+    observers[0]([{ isIntersecting: false }, { isIntersecting: true }])
+    page.google()
+    await page.window.initPinMap()
+    page.maps[0].tilesloaded!()
+    await wait(80)
+    expect(page.failed()).equals(false)
+    page.window.close()
+  })
+
+  it('starts its timer at once with no frame around it, as in a WebView', async () => {
+    const page = load(settings, 20, window => {
+      window.IntersectionObserver = class {
+        observe(): void {}
+      }
+    })
+    await wait(60)
+    expect(page.failed()).equals(true)
+    page.window.close()
+  })
+
+  it('never starts its timer for a map that drew before it came on screen', async () => {
+    const observers: Array<(entries: unknown[]) => void> = []
+    const page = load(settings, 20, window => {
+      Object.defineProperty(window, 'parent', { value: {} })
+      window.IntersectionObserver = class {
+        constructor(callback: (entries: unknown[]) => void) {
+          observers.push(callback)
+        }
+
+        observe(): void {}
+        disconnect(): void {}
+      }
+    })
+    page.google()
+    await page.window.initPinMap()
+    page.maps[0].tilesloaded!()
+    observers[0]([{ isIntersecting: true }])
+    await wait(60)
+    expect(page.failed()).equals(false)
+    page.window.close()
+  })
+
+  it('asks the page around it for a new frame on Retry', () => {
     const page = load({ ...settings, googleMapsApiKey: undefined })
+    const asked: unknown[] = []
+    Object.defineProperty(page.window, 'parent', {
+      value: {
+        postMessage: (data: unknown, target: string) => {
+          asked.push([data, target])
+        }
+      }
+    })
     page.window.document.getElementById('retry')!.click()
-    // The test page cannot navigate; it reports the reload it was asked for.
-    expect(page.errors.join(' ')).matches(/navigation|reload/i)
+    expect(asked).deep.equals([[{ type: 'teamstation:mapRetry' }, '*']])
+    expect(page.errors).deep.equals([])
     page.window.close()
   })
 

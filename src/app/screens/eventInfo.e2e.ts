@@ -6,12 +6,18 @@ import { createRequire } from 'node:module'
 import { basename, join, resolve } from 'node:path'
 
 import { sql } from 'kysely'
-import puppeteer, { type Browser as CoverageBrowser } from 'puppeteer'
+import type { Browser as CoverageBrowser } from 'puppeteer'
 
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { groupFixture } from '../../test/groupFixtures'
+import {
+  connectToProfile,
+  inMapFrame,
+  pointInMapFrame,
+  waitInMapFrame
+} from '../../test/mapFrameProbe'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -177,17 +183,9 @@ async function main(): Promise<void> {
       }
     })
     await m.openBrowser({ url: f.h.origin })
-    const [debugPort, socketPath] = readFileSync(
-      join(profile, 'DevToolsActivePort'),
-      'utf8'
-    )
-      .trim()
-      .split('\n')
-    // This connection collects coverage only; every UI action uses Maestro D.
-    coverageBrowser = await puppeteer.connect({
-      defaultViewport: null,
-      browserWSEndpoint: `ws://127.0.0.1:${debugPort}${socketPath}`
-    })
+    // This connection collects coverage and reads the map frame; every UI
+    // action uses Maestro D.
+    coverageBrowser = await connectToProfile(profile)
     const coveragePage = (await coverageBrowser.pages()).find(page =>
       page.url().startsWith(f.h.origin)
     )!
@@ -240,11 +238,10 @@ async function main(): Promise<void> {
     )
     console.log('Upcoming default is Info')
     await m.assertVisible({ id: 'event-location-map', timeout: 10000 })
-    await m.evalBrowserScript({
-      script: `for(let i=0;i<100;i++){if(document.querySelector('iframe')?.contentWindow?.eventMap)break;await new Promise(r=>setTimeout(r,20))}`
-    })
-    const mapBefore = await evaluate<{ lat: number; lng: number }>(
-      `document.querySelector('iframe').contentWindow.eventMap.getCenter()`
+    await waitInMapFrame(coveragePage, 'window.eventMap!=null')
+    const mapBefore = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      'window.eventMap.getCenter()'
     )
     const mapRect = await evaluate<{
       x: number
@@ -264,8 +261,9 @@ async function main(): Promise<void> {
       holdDuration: 100,
       duration: 500
     })
-    const mapAfter = await evaluate<{ lat: number; lng: number }>(
-      `document.querySelector('iframe').contentWindow.eventMap.getCenter()`
+    const mapAfter = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      'window.eventMap.getCenter()'
     )
     assert.notEqual(
       mapAfter.lng,
@@ -285,32 +283,20 @@ async function main(): Promise<void> {
       holdDuration: 100,
       duration: 500
     })
-    await m.evalBrowserScript({
-      script: `for(let i=0;i<100;i++){if(document.querySelector('iframe').contentDocument.querySelector('#error').style.display==='block')break;await new Promise(r=>setTimeout(r,20))}`
-    })
-    assert.equal(
-      await evaluate(
-        `document.querySelector('iframe').contentDocument.querySelector('#error').style.display`
-      ),
-      'block'
+    await waitInMapFrame(
+      coveragePage,
+      `document.querySelector('#error').style.display==='block'`
     )
     await shot('map-tiles-retry.png')
     failTiles = false
-    const retryPoint = await evaluate<{ x: number; y: number }>(
-      `(()=>{const f=document.querySelector('iframe');const a=f.getBoundingClientRect();const b=f.contentDocument.querySelector('#retry-map-tiles').getBoundingClientRect();return{x:a.x+b.x+b.width/2,y:a.y+b.y+b.height/2}})()`
-    )
+    const retryPoint = await pointInMapFrame(coveragePage, '#retry-map-tiles')
     await m.tapOnPoint({
       x: Math.round(retryPoint.x),
       y: Math.round(retryPoint.y)
     })
-    await m.evalBrowserScript({
-      script: `for(let i=0;i<100;i++){if(document.querySelector('iframe').contentDocument.querySelector('#error').style.display==='none')break;await new Promise(r=>setTimeout(r,20))}`
-    })
-    assert.equal(
-      await evaluate(
-        `document.querySelector('iframe').contentDocument.querySelector('#error').style.display`
-      ),
-      'none'
+    await waitInMapFrame(
+      coveragePage,
+      `document.querySelector('#error').style.display==='none'`
     )
     console.log('Failed map tiles recover through the visible retry button')
     await m.scrollUntilVisible({
