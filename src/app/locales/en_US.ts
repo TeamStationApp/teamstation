@@ -712,6 +712,7 @@ export const enUs = {
   chat_new_title: 'New message',
   chat_new_search: 'Name',
   chat_new_none: 'Nobody matches.',
+  chat_new_search_failed: 'People could not be loaded.',
   chat_new_pick: 'Pick %s',
   chat_new_unpick: 'Remove %s',
   chat_new_start: 'Start conversation',

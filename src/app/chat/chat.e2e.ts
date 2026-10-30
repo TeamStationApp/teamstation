@@ -1376,9 +1376,19 @@ describe('chat scenarios in the browser', function () {
    * has no Announcements at all.
    */
   it('E13: Announcements, written by season staff', async function () {
-    const announcements = 'QPLL Spring 2027 Announcements'
     const admin = await signedIn('S')
     await signIn(admin, seed, 'S')
+    const chats = (await apiGet(admin, '/chat/conversations')).body as Array<{
+      kind: string
+      title: string
+      scope?: { id: string }
+    }>
+    const announcements = chats.find(
+      chat =>
+        chat.kind === 'seasonAnnouncements' &&
+        chat.scope?.id === seed.ids['Spring 2027']
+    )!.title
+    expect(announcements).matches(/^Spring 2027 - .+ Announcements$/)
     await openChat(admin, announcements)
     await send(admin, 'Opening day is Saturday')
 

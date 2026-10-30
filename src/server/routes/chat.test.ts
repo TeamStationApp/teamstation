@@ -23,13 +23,13 @@ import { linkGuardian, unlinkGuardian } from '../people/guardians'
  * rule, the MAAPP rule under `safesport_lao`, sizes, one-to-one reuse, adds,
  * leaves, the re-checks that close a DM, and the chat half of a merge.
  *
- * Today is 10 April 2027: P is 15, E 16, R and T 12. QPLL starts with
+ * Today is 10 April 2027: P is 15, E 16, R and T 12. Harbor League starts with
  * `safesport_lao` off.
  */
 
-const ALL_STAFF = 'QPLL Spring 2027 All Staff'
-const ANNOUNCEMENTS = 'QPLL Spring 2027 Announcements'
-const SEASON_STAFF = 'QPLL Spring 2027 Staff'
+const ALL_STAFF = 'Spring 2027 - Harbor League All Staff'
+const ANNOUNCEMENTS = 'Spring 2027 - Harbor League Announcements'
+const SEASON_STAFF = 'Spring 2027 - Harbor League Staff'
 
 describe('chat routes and the DM rules (U5)', function () {
   this.timeout(120000)
@@ -37,7 +37,9 @@ describe('chat routes and the DM rules (U5)', function () {
   let db: Kysely<Database>
 
   before(async function () {
-    const opened = await openChatFixture('routes')
+    const opened = await openChatFixture('routes', {
+      leagueName: 'Harbor League'
+    })
     if (opened == null) {
       this.skip()
       return
@@ -149,7 +151,7 @@ describe('chat routes and the DM rules (U5)', function () {
       `${team} Members`
     ]
     const expected: Record<string, string[]> = {
-      L: [ALL_STAFF, ANNOUNCEMENTS, 'QPLL Org', SEASON_STAFF],
+      L: [ALL_STAFF, ANNOUNCEMENTS, 'Harbor League Org', SEASON_STAFF],
       S: [ALL_STAFF, ANNOUNCEMENTS, SEASON_STAFF],
       K: [ALL_STAFF, ANNOUNCEMENTS, SEASON_STAFF],
       Z: [],
@@ -204,7 +206,7 @@ describe('chat routes and the DM rules (U5)', function () {
         closed: false,
         lastSeq: 0,
         lastMessageAt: null,
-        scopeName: 'QPLL Spring 2027',
+        scopeName: 'Spring 2027 - Harbor League',
         unread: 0
       })
       expect(a['Hawks Members']).to.include({
@@ -220,12 +222,12 @@ describe('chat routes and the DM rules (U5)', function () {
       const hk = await list('Hk')
       expect(hk['Hawks Staff']).to.include({ canModerate: false })
       const l = await list('L')
-      expect(l['QPLL Org']).to.include({ canModerate: true })
-      expect(l['QPLL Org'].scope).deep.equals({
+      expect(l['Harbor League Org']).to.include({ canModerate: true })
+      expect(l['Harbor League Org'].scope).deep.equals({
         type: 'league',
         id: fixture.seed.leagueId
       })
-      expect(l['QPLL Org'].scopeName).equals('QPLL')
+      expect(l['Harbor League Org'].scopeName).equals('Harbor League')
     })
 
     it('lists members with labels, never the player without an account', async function () {
@@ -290,7 +292,7 @@ describe('chat routes and the DM rules (U5)', function () {
         Ha: 'Admin · Hawks'
       })
 
-      const org = await chatId('L', 'QPLL Org')
+      const org = await chatId('L', 'Harbor League Org')
       const orgMembers = await call(
         'L',
         'GET',
