@@ -113,6 +113,7 @@
     "coverage.scoreboardEventLog": "node scripts/scoreboard-coverage.mjs",
     "coverage.userIds": "node scripts/user-id-coverage.mjs",
     "coverage.playerLayouts": "node scripts/player-layouts-coverage.mjs",
+    "coverage.statsTables": "node scripts/stats-tables-coverage.mjs",
     "coverage.tess": "node scripts/tess-coverage.mjs",
     "test.playerNative": "node scripts/build-player-native-tests.mjs",
     "coverage.umpires": "node scripts/umpire-coverage.mjs",

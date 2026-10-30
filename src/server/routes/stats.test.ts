@@ -13,6 +13,12 @@ import { asUserId, mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
+import {
+  battingLines,
+  battingRates,
+  pitchingLines,
+  pitchingRates
+} from '../stats'
 import { statRows } from '../stats/rows'
 import { statsRoutes } from './stats'
 
@@ -49,6 +55,7 @@ const jordanClosed = mintUser()
 const stranger = mintUser()
 const teammate = mintUser()
 const seasonFan = mintUser()
+const hawksFan = mintUser()
 
 describe('one player’s figures', function () {
   this.timeout(60000)
@@ -574,6 +581,200 @@ describe('one player’s figures', function () {
     it('answers 400 for a malformed user id', async function () {
       if (db == null) return this.skip()
       expect((await ask('/players/usr_notanumber/plays')).status).equals(400)
+    })
+  })
+
+  describe('a player’s stats split into rows', function () {
+    // A third game, for the Hawks at the Ravens, in which he only pitched:
+    // the Hawks have a pitching row from both their games and a batting row
+    // from one, and their latest game is this one.
+    const relief = makeId('game')
+
+    before(async function () {
+      if (db == null) return this.skip()
+      await db
+        .insertInto('games')
+        .values({
+          id: relief,
+          home_team_id: ravens,
+          away_team_id: hawks,
+          season_id: spring,
+          start_at: new Date('2026-05-30T18:00:00Z'),
+          status: 'final'
+        })
+        .execute()
+      await db
+        .insertInto('game_player_stats')
+        .values({
+          id: makeId('gamePlayerStats'),
+          game_id: relief,
+          gumbo_id: jordan,
+          team_id: hawks,
+          pitch_bf: 4,
+          pitch_outs: 4,
+          pitch_h: 1,
+          pitch_er: 0
+        })
+        .execute()
+      await insertFixtureUsers(db, [
+        {
+          id: userIdOfGumbo(hawksFan),
+          legacyId: legacyId(hawksFan),
+          display_name: 'Hawks Fan'
+        }
+      ])
+      await db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: userIdOfGumbo(hawksFan),
+          team_id: hawks,
+          role: 'member'
+        })
+        .execute()
+    })
+
+    /** The sum of the rows' counting stats, and of the totals'. */
+    const sums = (
+      rows: Array<{ line: Record<string, unknown> }>,
+      fields: string[]
+    ): Record<string, number> =>
+      Object.fromEntries(
+        fields.map(field => [
+          field,
+          rows.reduce((sum, row) => sum + Number(row.line[field]), 0)
+        ])
+      )
+    const battingCounts = ['pa', 'ab', 'h', 'singles', 'r', 'rbi', 'bb']
+    const pitchingCounts = ['outs', 'bf', 'h', 'er', 'g']
+
+    it('splits a career into a row per team, latest game first, the rows adding up to the totals', async function () {
+      if (db == null) return this.skip()
+      const { body } = await ask(`/players/${userIdOfGumbo(jordan)}/stats`)
+      expect(body.splits.by).equals('team')
+      expect(
+        body.splits.batting.map((row: any) => row.split.teamName)
+      ).deep.equals(['Alta Hawks', 'Ravens'])
+      expect(
+        body.splits.pitching.map((row: any) => row.split.teamName)
+      ).deep.equals(['Alta Hawks', 'Ravens'])
+      const [hawksRow] = body.splits.pitching
+      expect(hawksRow.split).deep.include({
+        teamId: hawks,
+        seasonName: 'Spring 2026',
+        gameId: null,
+        startAt: '2026-05-30T18:00:00.000Z',
+        opponentName: null,
+        home: null
+      })
+      expect(hawksRow.line).deep.include({ outs: 10, g: 2, ip: '3.1' })
+      expect(sums(body.splits.batting, battingCounts)).deep.equals(
+        Object.fromEntries(battingCounts.map(f => [f, body.batting[f]]))
+      )
+      expect(sums(body.splits.pitching, pitchingCounts)).deep.equals(
+        Object.fromEntries(pitchingCounts.map(f => [f, body.pitching[f]]))
+      )
+    })
+
+    it('works each row’s rates and the total’s out of the combined lines', async function () {
+      if (db == null) return this.skip()
+      const { body } = await ask(`/players/${userIdOfGumbo(jordan)}/stats`)
+      const rows = await statRows(db, {
+        userIds: [userIdOfGumbo(jordan), userIdOfGumbo(jordanClosed)]
+      })
+      const mine = rows.map(row => ({ ...row, userId: 'one' }))
+      const hawksRows = mine.filter(row => row.teamId === hawks)
+      expect(body.splits.batting[0].line.rates).deep.equals(
+        battingRates(battingLines(hawksRows)[0])
+      )
+      expect(body.splits.pitching[0].line.rates).deep.equals(
+        pitchingRates(pitchingLines(hawksRows)[0])
+      )
+      expect(body.batting.rates).deep.equals(
+        battingRates(battingLines(mine)[0])
+      )
+      expect(body.pitching.rates).deep.equals(
+        pitchingRates(pitchingLines(mine)[0])
+      )
+    })
+
+    it('splits a season, a team and a year into a row per game, newest first, with the opponent and side', async function () {
+      if (db == null) return this.skip()
+      const player = userIdOfGumbo(jordan)
+      for (const filter of [
+        `seasonId=${spring}`,
+        `teamId=${hawks}`,
+        'year=2026'
+      ]) {
+        const { body } = await ask(`/players/${player}/stats?${filter}`)
+        expect(body.splits.by, filter).equals('game')
+        expect(
+          body.splits.pitching.map((row: any) => row.split),
+          filter
+        ).deep.equals([
+          {
+            teamId: hawks,
+            teamName: 'Alta Hawks',
+            seasonName: 'Spring 2026',
+            gameId: relief,
+            startAt: '2026-05-30T18:00:00.000Z',
+            opponentName: 'Ravens',
+            home: false
+          },
+          {
+            teamId: hawks,
+            teamName: 'Alta Hawks',
+            seasonName: 'Spring 2026',
+            gameId: body.splits.batting[0].split.gameId,
+            startAt: '2026-05-16T18:00:00.000Z',
+            opponentName: 'Ravens',
+            home: true
+          }
+        ])
+        // He did not bat in the relief game, so it has no batting row.
+        expect(body.splits.batting.length, filter).equals(1)
+        expect(body.splits.batting[0].split.home, filter).equals(true)
+        expect(sums(body.splits.pitching, pitchingCounts), filter).deep.equals(
+          Object.fromEntries(pitchingCounts.map(f => [f, body.pitching[f]]))
+        )
+        expect(sums(body.splits.batting, battingCounts), filter).deep.equals(
+          Object.fromEntries(battingCounts.map(f => [f, body.batting[f]]))
+        )
+      }
+    })
+
+    it('keeps the split last, after the totals and the filter', async function () {
+      if (db == null) return this.skip()
+      const { body } = await ask(`/players/${userIdOfGumbo(jordan)}/stats`)
+      expect(Object.keys(body).at(-1)).equals('splits')
+    })
+
+    it('splits only the rows a reader may see, and none for a reader who sees none', async function () {
+      if (db == null) return this.skip()
+      const { body } = await ask(
+        `/players/${userIdOfGumbo(jordan)}/stats`,
+        hawksFan
+      )
+      expect(
+        body.splits.batting.map((row: any) => row.split.teamId)
+      ).deep.equals([hawks])
+      expect(
+        body.splits.pitching.map((row: any) => row.split.teamId)
+      ).deep.equals([hawks])
+      expect(body.batting.ab).equals(body.splits.batting[0].line.ab)
+      const { status } = await ask(
+        `/players/${userIdOfGumbo(jordan)}/stats`,
+        stranger
+      )
+      expect(status).equals(404)
+    })
+
+    it('splits nothing when the filter matches nothing', async function () {
+      if (db == null) return this.skip()
+      const { body } = await ask(
+        `/players/${userIdOfGumbo(jordan)}/stats?year=2019`
+      )
+      expect(body.splits).deep.equals({ by: 'game', batting: [], pitching: [] })
     })
   })
 })

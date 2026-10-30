@@ -226,6 +226,9 @@ describe('strict historical identity transformations', function () {
         batting: null,
         pitching: null
       })
+      expect(
+        (expected.api[`/players/${id}/stats`] as JsonObject).splits
+      ).deep.equals({ by: 'team', batting: [], pitching: [] })
     }
   })
 })

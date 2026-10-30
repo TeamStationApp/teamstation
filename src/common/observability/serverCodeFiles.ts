@@ -326,6 +326,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/stats/expandedStats.js',
   'server/stats/gumboStats.js',
   'server/stats/plateAppearances.js',
+  'server/stats/playerSplits.js',
   'server/stats/records.js',
   'server/stats/rows.js',
   'server/stats/seasonTeams.js',

@@ -531,6 +531,14 @@ describe('the API document', function () {
     )
   })
 
+  it("describes a player's stats split into rows, last in the answer", function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const description: string = paths['/players/{userId}/stats'].get.description
+    expect(description).includes('`splits`, last in the answer')
+    expect(description).includes('`by` `team` for a career')
+    expect(description).includes('`by` `game` under a season, team or year')
+  })
+
   it('describes the box-score stats field and the events play contract', function () {
     const paths = openApiDocument('0.0.0').paths as Record<
       string,

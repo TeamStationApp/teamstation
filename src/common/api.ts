@@ -99,6 +99,7 @@ import type {
   PersonSettings,
   PlayerSettings
 } from './playerSettings'
+import { asStatSplit, asStatSplitBy } from './playerStatSplits'
 import {
   asGroupDetail,
   asPublicGroup,
@@ -1191,9 +1192,22 @@ export const asPlayerStats = asObject({
     ),
     teams: asArray(asObject({ teamId: asString, name: asString })),
     years: asArray(asNumber)
-  })
+  }),
+  /**
+   * The rows the totals are the sum of, newest first: a team each for a
+   * career, a game each under a season, a team or a year. Absent from a
+   * server older than the page, which then shows the totals alone.
+   */
+  splits: asOptional(
+    asObject({
+      by: asStatSplitBy,
+      batting: asArray(asObject({ split: asStatSplit, line: asBattingRow })),
+      pitching: asArray(asObject({ split: asStatSplit, line: asPitchingRow }))
+    })
+  )
 })
-export type PlayerStats = ReturnType<typeof asPlayerStats>
+export type PlayerStats = Omit<ReturnType<typeof asPlayerStats>, 'splits'> &
+  Partial<Pick<ReturnType<typeof asPlayerStats>, 'splits'>>
 
 export const asSeasonStats = asObject({
   seasonId: asString,
