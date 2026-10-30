@@ -13,7 +13,8 @@ import {
   type NameBook,
   type NameHalves,
   nameHalves,
-  scopeOf
+  scopeOf,
+  withWithdrawn
 } from '../users/nameBook'
 import { survivorsOf } from '../users/survivors'
 import { resolveGumboIds } from './gumboIds'
@@ -210,11 +211,16 @@ export async function namedScoringGame<T extends StoredGame>(
   // General scoring reads also feed public scoreboards. Disambiguate against
   // everyone in the game without adding private name parts to the projection.
   // Ids as stored and their survivors' read as the same accounts.
-  const names = (
+  const book = (
     await booksOver(db, new Map([[0, scopeOf(projected, players)]]), {
       spoken: options.spoken
     })
   ).get(0)!
+  // A rejected add's plays stay; every surface reads them as the placeholder.
+  const names =
+    options.gameId == null
+      ? book
+      : await withWithdrawn(db, options.gameId, book)
   const teams = new Set(options.halves ?? [])
   const halves =
     teams.size === 0

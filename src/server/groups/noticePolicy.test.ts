@@ -19,6 +19,7 @@ import { hashToken } from '../auth/tokens'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { gameAvailability } from '../games/rosterAvailability'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
@@ -29,9 +30,11 @@ import { notificationRoutes } from '../routes/notifications'
 import { playerRoutes, teamsOf } from '../routes/players'
 import { statsRoutes } from '../routes/stats'
 import { teamRoutes } from '../routes/teams'
+import { resolveScoringGame } from '../scoring/openRow'
 import { battingLines } from '../stats'
 import { statRows } from '../stats/rows'
 import { ensureGumboId, insertUser } from '../users/insertUser'
+import { gameNames, gameNamesDigest } from '../users/nameBook'
 import {
   applyPlayerAdd,
   decidePlayerAdd,
@@ -978,6 +981,7 @@ describe('adds made with a notice', function () {
       })
       .where('id', '=', started)
       .execute()
+    const digestBefore = await gameNamesDigest(db!, started)
     await call(
       TOKENS.bearsCoach,
       'POST',
@@ -996,6 +1000,38 @@ describe('adds made with a notice', function () {
     expect(withdrawn.map(row => [row.side, row.label])).deep.equals([
       ['away', `${herons} B`]
     ])
+    // Every surface of that game reads him so: its guests, its names and the
+    // digest whatever caches them is keyed by.
+    const game_ = await db!
+      .selectFrom('games')
+      .selectAll()
+      .where('id', '=', started)
+      .executeTakeFirstOrThrow()
+    expect(
+      (await gameAvailability(db!, game_)).guestPlayers.away.map(
+        row => row.shortName
+      )
+    ).includes(`${herons} B`)
+    const book = (await gameNames(db!, [started])).get(started)!
+    expect(book.nameOf(gumbo['Tony Kemp'])).equals(`${herons} B`)
+    expect(await gameNamesDigest(db!, started)).not.equals(digestBefore)
+    const named = await resolveScoringGame(
+      db!,
+      {
+        plays: [],
+        currentPlay: {
+          teamStation: {
+            setupBefore: {
+              players: {
+                [gumbo['Tony Kemp']]: { id: gumbo['Tony Kemp'] }
+              }
+            }
+          }
+        } as any
+      },
+      { gameId: started }
+    )
+    expect(JSON.stringify(named)).includes(`${herons} B`)
   })
 
   it('lets a notice be rejected for 90 days, from the inbox or after dismissing it, and not after', async function () {

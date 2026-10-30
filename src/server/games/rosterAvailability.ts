@@ -12,6 +12,7 @@ import { readPlays } from '../events/postPlays'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { teamRoster } from '../teams/teamRoster'
+import { withdrawnLabels } from '../users/nameBook'
 
 export interface GameAvailability {
   guests: Guests
@@ -105,6 +106,10 @@ export async function gameAvailability(
   const names = formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
+  // A rejected pool player who played stays a guest, under the placeholder.
+  const withdrawn =
+    (await withdrawnLabels(db, [game.id])).get(game.id) ??
+    new Map<number, string>()
   for (const side of ['away', 'home'] as const) {
     for (const original of guests[side]) {
       const id = resolve(original)
@@ -120,8 +125,12 @@ export async function gameAvailability(
         asRosterEntry({
           userId: user.id,
           gumboId: id,
-          shortName: names.get(user.id)!,
+          shortName:
+            withdrawn.get(id) ?? withdrawn.get(original) ?? names.get(user.id)!,
+          // A placeholder is no name to format.
           nameFormat:
+            withdrawn.has(id) ||
+            withdrawn.has(original) ||
             formats.get(user.id) === DEFAULT_PLAYER_NAME_PRIVACY
               ? undefined
               : formats.get(user.id),

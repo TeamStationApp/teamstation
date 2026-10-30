@@ -296,6 +296,11 @@ describe('092 player names from users', function () {
     db = makeDatabase(url)
     await migrateUp(pool, before092)
     await addPlayerNamePrivacy(pool)
+    // This test reads the game as today's server does, which also asks who
+    // was withdrawn from it: a table of a later migration, empty here.
+    await pool.query(
+      'create table game_withdrawn_players (game_id text, user_id text, label text)'
+    )
     for (const person of PEOPLE) {
       const userId = userIdOfGumbo(person.gumboId)
       await pool.query(
