@@ -11,6 +11,7 @@ import type {
 import type { AttachmentRef } from '../../common/chatContent'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AttachmentView } from './AttachmentView'
 import { chatStartFailure } from './chatCoreLog'
@@ -418,15 +419,15 @@ const attachment = (over: Partial<AttachmentRef> = {}): AttachmentRef => ({
 })
 
 describe('the chat list', function () {
-  it('shows only the season name while retaining the audience label', async function () {
+  it('shows the season before its league while retaining the audience label', async function () {
     const engine = new FakeEngine()
     engine.list = [
       chat({
         id: 'season',
         kind: 'seasonStaff',
         scope: { type: 'season', id: 'sea_spring' },
-        title: 'Demo League Spring Staff',
-        scopeName: 'Demo League Spring',
+        title: 'Spring - Demo League Staff',
+        scopeName: 'Spring - Demo League',
         avatarName: 'Spring'
       })
     ]
@@ -438,11 +439,10 @@ describe('the chat list', function () {
         onNewMessage={() => {}}
       />
     )
-    await until('the season row', () => button('Spring') != null)
-    expect(text()).contains('Spring')
+    await until('the season row', () => button('Spring - Demo League') != null)
+    expect(text()).contains('Spring - Demo League')
     expect(text()).contains('Season Staff')
-    expect(text()).not.contains('Demo League')
-    await press('Spring')
+    await press('Spring - Demo League')
     expect(opened).deep.equals(['season'])
   })
 
@@ -1661,6 +1661,8 @@ describe('starting a direct message', function () {
     await typeInto('Name', 'Fra')
     await until('the search', () => !text().includes('Pat P'))
     await press('Pick Frankie F')
+    expect((labelled('Name') as HTMLInputElement).value).equals('')
+    expect(document.activeElement).equals(labelled('Name'))
     await press('Remove Frankie F')
     await press('Pick Frankie F')
     await press('Start conversation')
@@ -1669,6 +1671,62 @@ describe('starting a direct message', function () {
     expect(engine.calls).includes('refresh')
     await typeInto('Name', 'zzz')
     await until('nobody', () => text().includes('Nobody matches.'))
+  })
+
+  it('debounces searches and never publishes an older response or error', async function () {
+    const dms = new FakeDms()
+    dms.people = [{ ...dms.people[0], shortName: 'Lou Gehrig' }]
+    const waiting = new Map<
+      string,
+      {
+        resolve: (people: ChatPerson[]) => void
+        reject: (error: Error) => void
+      }
+    >()
+    dms.dmCandidates = async (query = '') => {
+      dms.calls.push(query)
+      if (query === '') return dms.people
+      return await new Promise((resolve, reject) =>
+        waiting.set(query, { resolve, reject })
+      )
+    }
+    await render(
+      <NewDmScreen
+        client={dms}
+        engine={new FakeEngine()}
+        onCreated={() => {}}
+      />
+    )
+    await until('initial people', () => text().includes('Lou Gehrig'))
+    await typeInto('Name', 'Lou')
+    expect(document.querySelector('[role="progressbar"]')).not.equals(null)
+    expect(text()).not.includes('Lou Gehrig')
+    await settle(300)
+    expect(dms.calls).deep.equals([''])
+    await typeInto('Name', 'Ted')
+    await settle(300)
+    expect(dms.calls).deep.equals([''])
+    await until('debounced request', () => waiting.has('Ted'))
+    expect(dms.calls).deep.equals(['', 'Ted'])
+    await typeInto('Name', 'Ted ')
+    await act(async () => {
+      waiting.get('Ted')!.resolve(dms.people)
+    })
+    expect(text()).not.includes('Lou Gehrig')
+    await until('new generation', () => dms.calls.length === 3)
+    await typeInto('Name', 'Hank')
+    await act(async () => {
+      waiting.get('Ted')!.reject(new Error('old request'))
+    })
+    expect(text()).not.includes(lstrings.chat_new_failed)
+    await until('latest request', () => waiting.has('Hank'))
+    await act(async () => {
+      waiting.get('Hank')!.reject(new Error('request failed'))
+    })
+    expect(text()).includes(lstrings.chat_new_failed)
+    expect(document.querySelector('[role="progressbar"]')).equals(null)
+    await typeInto('Name', '')
+    await until('recovered', () => text().includes('Lou Gehrig'))
   })
 
   it('opens Include another adult on adultRequired and starts again with them', async function () {

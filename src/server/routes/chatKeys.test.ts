@@ -75,7 +75,9 @@ describe('chat devices, identities and keys (U6)', function () {
   let sessionCount = 0
 
   before(async function () {
-    const opened = await openChatFixture('keys')
+    const opened = await openChatFixture('keys', {
+      leagueName: 'Harbor League'
+    })
     if (opened == null) {
       this.skip()
       return
@@ -579,7 +581,10 @@ describe('chat devices, identities and keys (U6)', function () {
       const ha = await enrolled('Ha')
       const staff = await chatId('Ha', 'Hawks Staff')
       const members = await chatId('Ha', 'Hawks Members')
-      const announcements = await chatId('Ha', 'QPLL Spring 2027 Announcements')
+      const announcements = await chatId(
+        'Ha',
+        'Spring 2027 - Harbor League Announcements'
+      )
       await epochOne(staff, ha.keys)
       await epochOne(announcements, ha.keys)
       // Hs is in all three; only the two with an epoch have anything to grant.
@@ -1147,7 +1152,7 @@ describe('chat devices, identities and keys (U6)', function () {
       const { device, keys } = await enrolled('L')
       const second = await linked('L', keys, device)
       const pending = await register(await session('L'))
-      const org = await chatId('L', 'QPLL Org')
+      const org = await chatId('L', 'Harbor League Org')
       await clearRotation()
 
       // A pending device may revoke only itself.

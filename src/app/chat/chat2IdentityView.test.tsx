@@ -198,7 +198,7 @@ describe('chat identity presentation', function () {
     expect(buttons.length).equals(list.length)
     for (const button of buttons) {
       expect(Number.parseFloat(getComputedStyle(button).minHeight)).at.least(44)
-      expect(Number.parseFloat(getComputedStyle(button).minWidth)).at.least(44)
+      expect(Number.parseFloat(getComputedStyle(button).width)).at.least(48)
       const dots = button.firstElementChild as HTMLElement
       expect(dots.children.length).equals(3)
       expect(getComputedStyle(dots).gap).not.equals('')

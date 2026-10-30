@@ -51,7 +51,9 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
   const held: Record<string, { device: TestDevice; keys: TestKeys }> = {}
 
   before(async function () {
-    const opened = await openChatFixture('messages')
+    const opened = await openChatFixture('messages', {
+      leagueName: 'Harbor League'
+    })
     if (opened == null) {
       this.skip()
       return
@@ -340,7 +342,10 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
       expect(ok(await post('A', members, now.body), 201).seq).equals(2)
 
       // A chat with no epoch yet.
-      const announcements = await chatId('B', 'QPLL Spring 2027 Announcements')
+      const announcements = await chatId(
+        'B',
+        'Spring 2027 - Harbor League Announcements'
+      )
       const early = seal('B', announcements, 1, newEpochKey(), 'reaction', {
         type: 'reaction',
         targetId: first.id,
@@ -401,7 +406,10 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
 
     it('lets only season staff post in Announcements, and anybody react', async function () {
       held.S = await devices.enrol('S')
-      const announcements = await chatId('S', 'QPLL Spring 2027 Announcements')
+      const announcements = await chatId(
+        'S',
+        'Spring 2027 - Harbor League Announcements'
+      )
       const key = await makeEpoch('S', announcements, 1, null)
       const news = seal('S', announcements, 1, key, 'post', text('Opening day'))
       ok(await post('S', announcements, news.body), 201)

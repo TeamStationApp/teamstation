@@ -84,7 +84,9 @@ describe('chat on the socket (U9)', function () {
   let epochKey: Uint8Array
 
   before(async function () {
-    const made = await openChatFixture('socket')
+    const made = await openChatFixture('socket', {
+      leagueName: 'Harbor League'
+    })
     if (made == null) {
       this.skip()
       return
@@ -145,8 +147,9 @@ describe('chat on the socket (U9)', function () {
       await fixture.call('A', 'GET', '/chat/conversations')
     ) as Array<{ id: string; title: string }>
     announcements =
-      parents.find(chat => chat.title === 'QPLL Spring 2027 Announcements')
-        ?.id ?? ''
+      parents.find(
+        chat => chat.title === 'Spring 2027 - Harbor League Announcements'
+      )?.id ?? ''
     expect(members).not.equals('')
     expect(fans).not.equals('')
     expect(announcements).not.equals('')

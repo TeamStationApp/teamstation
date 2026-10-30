@@ -95,6 +95,11 @@ describe('following a team (U1)', function () {
       password: 'pw',
       now: new Date('2027-04-10T12:00:00Z')
     })
+    await db
+      .updateTable('leagues')
+      .set({ name: 'Harbor League' })
+      .where('id', '=', seed.leagueId)
+      .execute()
 
     // Somebody tied to nothing, and a merged row that holds a coach role.
     stranger = mintUserId()
@@ -291,7 +296,9 @@ describe('following a team (U1)', function () {
           id: seed.teams.hawks,
           name: 'Hawks',
           logoUrl: null,
-          seasons: [{ id: seed.seasonId, title: 'QPLL Spring 2027' }],
+          seasons: [
+            { id: seed.seasonId, title: 'Spring 2027 - Harbor League' }
+          ],
           following: true
         }
       ])
@@ -648,7 +655,9 @@ describe('following a team (U1)', function () {
   })
 
   it('titles a season with its league when it has one', function () {
-    expect(seasonTitle('Spring 2027', 'QPLL')).equals('QPLL Spring 2027')
+    expect(seasonTitle('Spring 2027', 'Harbor League')).equals(
+      'Spring 2027 - Harbor League'
+    )
     expect(seasonTitle('Titan Force 2026', null)).equals('Titan Force 2026')
   })
 })
