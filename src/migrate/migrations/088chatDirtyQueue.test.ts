@@ -3,7 +3,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { migrateDown, migrateUp } from '../runner'
-import { testDatabaseUrl } from '../testDatabase'
+import { dropScratchDatabase, testDatabaseUrl } from '../testDatabase'
 import { migration088ChatDirtyQueue } from './088chatDirtyQueue'
 import { migrations } from './index'
 
@@ -38,7 +38,7 @@ describe('088 the chat dirty queue', function () {
   after(async function () {
     await pool?.end()
     if (admin != null) {
-      await admin.query(`drop database if exists ${name} with (force)`)
+      await dropScratchDatabase(admin, name)
       await admin.end()
     }
   })
