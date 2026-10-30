@@ -259,6 +259,32 @@ describe('merging two rows that are one team', function () {
 
   it('keeps the scored game and moves the video onto it', async function () {
     if (db == null) this.skip()
+    // A player add of the team that goes, for the game that goes with it.
+    const { id: sender } = await db
+      .selectFrom('users')
+      .select('id')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_add',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'pool',
+          teamId: houser,
+          gameId: filmedGame
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        game_id: filmedGame,
+        initiating_team_id: houser
+      })
+      .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
     const report = await mergeTeams(db, {
@@ -267,6 +293,17 @@ describe('merging two rows that are one team', function () {
       apply: true
     })
     expect(report.applied).equals(true)
+    const add = await db
+      .selectFrom('group_requests')
+      .select(['initiating_team_id', 'sender_scope_id', 'game_id', 'terms'])
+      .where('id', '=', 'grq_merge_add')
+      .executeTakeFirstOrThrow()
+    expect(add).to.deep.include({
+      initiating_team_id: hawks,
+      sender_scope_id: hawks,
+      game_id: scoredGame
+    })
+    expect(add.terms).to.include({ teamId: hawks, gameId: scoredGame })
     // Both teams' screens are told, and the game that moved.
     try {
       for (const ids of [

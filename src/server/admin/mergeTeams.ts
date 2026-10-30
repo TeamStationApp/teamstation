@@ -297,6 +297,15 @@ export async function mergeTeams(
     const stricter = await stricterOfTeams(trx, fromTeamId, intoTeamId)
     await mergeParents(trx, fromTeamId, intoTeamId, true)
     await keepPrivacy(trx, intoTeamId, stricter)
+    // A player add is the team's: its rejection undoes it there, and the
+    // team's next add reads what became of the last.
+    await sql`update group_requests set
+      initiating_team_id = ${intoTeamId},
+      sender_scope_id = ${intoTeamId},
+      terms = jsonb_set(terms, '{teamId}', to_jsonb(${intoTeamId}::text))
+      where kind = 'playerAdd' and initiating_team_id = ${fromTeamId}`.execute(
+      trx
+    )
     // Merge overlapping rows before repointing, so unique constraints remain valid.
     await sql`update memberships target set
       role = case when target.role = 'owner' or source.role = 'owner' then 'owner'
@@ -427,6 +436,11 @@ export async function mergeTeams(
         .set({ game_id: fixture.keptGameId })
         .where('game_id', '=', fixture.retiredGameId)
         .execute()
+      await sql`update group_requests set
+        terms = jsonb_set(terms, '{gameId}', to_jsonb(${fixture.keptGameId}::text))
+        where kind = 'playerAdd' and game_id = ${fixture.keptGameId}`.execute(
+        trx
+      )
       // The video is the whole point: it lives on the game that was never
       // scored, and the plays live on the one that was never filmed.
       await trx
