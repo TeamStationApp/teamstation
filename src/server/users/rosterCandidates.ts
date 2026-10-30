@@ -344,18 +344,18 @@ export async function rosterCandidates(
         where m.is_player
           and (m.team_id = ${target.teamId}
             ${inGame.length === 0 ? sql`` : sql`or m.team_id in (${sql.join(inGame)})`})
-      union
-      select u.merged_into from held h join users u on u.id = h.id
-        where u.merged_into is not null
-    ),
-    excluded as (
-      select id as user_id from held
       ${
         guestGumbos.length === 0
           ? sql``
           : sql`union select user_id from gumbo_ids
                   where gumbo_id in (${sql.join(guestGumbos)})`
       }
+      union
+      select u.merged_into from held h join users u on u.id = h.id
+        where u.merged_into is not null
+    ),
+    excluded as (
+      select id as user_id from held
     ),
     ranked as (
       select r.user_id, min(case
