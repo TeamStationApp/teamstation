@@ -208,10 +208,17 @@ export function NotificationsScreen({
         cache.current.pending = { ...pending, items: kept(pending.items) }
       delete cache.current.history
       onDecided?.()
-      // Accepted too late to happen: say so, or it reads as done.
-      if (action === 'accept' && answer.status === 'expired')
+      // Accepted too late to happen: say so, or it reads as done. A game
+      // request stays pending until the other side answers, so that is not
+      // among these.
+      if (
+        action === 'accept' &&
+        ['expired', 'superseded', 'cancelled'].includes(answer.status)
+      )
         setError(
-          'That could no longer be made: the game is over or has changed.'
+          item.type === 'playerAdd'
+            ? 'That add could no longer be made.'
+            : 'This request is no longer open.'
         )
     } catch (error) {
       setError(

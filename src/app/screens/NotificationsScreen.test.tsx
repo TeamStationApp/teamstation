@@ -711,13 +711,13 @@ describe('a player added with a notice', function () {
         hasPending: true,
         nextCursor: null
       }),
-      decideRelationship: async (id: string) => ({ id, status: 'expired' })
+      decideRelationship: async (id: string) => ({ id, status: 'superseded' })
     } as unknown as TeamStationClient
     await mount(
       <NotificationsScreen client={client} onOpen={() => undefined} />
     )
     await press(`Accept ${waiting.title}`)
-    expect(text()).includes('could no longer be made')
+    expect(text()).includes('That add could no longer be made.')
   })
 
   it('offers Reject without Accept, and Dismiss only while it is pending', async function () {
