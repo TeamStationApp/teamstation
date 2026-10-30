@@ -913,12 +913,16 @@ export interface GroupRequestsTable {
     | 'promotion'
     | 'person'
     | 'membership'
+    | 'videographer'
     | 'guardian'
     | 'game'
     | 'gameChange'
     | 'playerAdd'
   sender_id: string
-  /** Null for a guardian or membership request sent on one’s own behalf. */
+  /**
+   * Null for a guardian, membership or videographer request sent on one’s own
+   * behalf.
+   */
   sender_scope_type: 'league' | 'season' | 'team' | null
   sender_scope_id: string | null
   terms: Json

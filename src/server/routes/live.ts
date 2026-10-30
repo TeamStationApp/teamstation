@@ -11,13 +11,16 @@ import {
   asLiveNow,
   asLiveStatus,
   asLiveStream,
+  asStreamAccess,
   type LiveStatus,
   type LiveStream
 } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { gameCalendarDay } from '../../common/gameTime'
 import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { isFullTeam, waitingOwnRequest } from '../groups/requests'
 import {
   cameraLabelOf,
   checkCameraLimits,
@@ -112,6 +115,8 @@ interface GameRow {
   awayTeamId: string
   seasonId: string | null
   startAt: Date
+  /** Its own zone, in which it has a calendar day. */
+  timezone: string
   homeTeamName: string
   awayTeamName: string
 }
@@ -159,6 +164,54 @@ export function liveRoutes(
     }
     return row
   }
+
+  /**
+   * Whether this person films this game, and if not whether they can ask to.
+   *
+   * 404 for somebody who cannot see the game, as every read of a game is: a
+   * member of neither team keeps the members-only message.
+   */
+  router.get(
+    '/games/:gameId/stream-access',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const game = await loadGame(db, pathParam(req.params.gameId))
+      const visible = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (game == null || !canSeeGame(visible, game)) throw notFound()
+      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+      const films = [game.homeTeamId, game.awayTeamId].some(teamId =>
+        canFilm(scopes, teamId)
+      )
+      const teamId = visible.teamIds.has(game.homeTeamId)
+        ? game.homeTeamId
+        : game.awayTeamId
+      const now = new Date()
+      const upcoming =
+        gameCalendarDay(game.startAt.toISOString(), game.timezone) >=
+        gameCalendarDay(now.toISOString(), game.timezone)
+      res.json(
+        asStreamAccess({
+          canFilm: films,
+          canRequest:
+            !films &&
+            upcoming &&
+            visible.teamIds.has(teamId) &&
+            (await isFullTeam(db, teamId)),
+          requested:
+            (await waitingOwnRequest(
+              db,
+              'videographer',
+              actor.userId,
+              teamId,
+              now
+            )) != null,
+          teamId
+        })
+      )
+    })
+  )
 
   /**
    * Everything pointed at this game: mine whole, everybody else's named.
@@ -957,6 +1010,7 @@ async function loadGame(
       'games.away_team_id as awayTeamId',
       'games.season_id as seasonId',
       'games.start_at as startAt',
+      'games.timezone as timezone',
       'home.name as homeTeamName',
       'away.name as awayTeamName'
     ])

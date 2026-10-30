@@ -17,6 +17,8 @@ export async function completionNotice(
     return `${await groupName(db, { kind: 'team', id: terms.teamId })}: administrator added`
   if (terms.kind === 'membership')
     return `${await groupName(db, { kind: 'team', id: terms.teamId })}: membership approved`
+  if (terms.kind === 'videographer')
+    return `${await groupName(db, { kind: 'team', id: terms.teamId })}: videographer approved`
   if (terms.kind === 'person')
     return `${await groupName(db, terms.scope)}: access added for ${terms.recipientEmail}`
   const changes = await Promise.all(
