@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 /** Every native spec, in a stable order. */
@@ -38,6 +39,7 @@ export async function buildNativeSpecs(outDir) {
     const outfile = resolve(outDir, `${index}.cjs`)
     await build({
       ...webSettings,
+      plugins: [...webSettings.plugins, pagedListStandInPlugin()],
       alias: {
         ...webSettings.alias,
         'react-native-webview': './src/test/eventWebViewStub.tsx',

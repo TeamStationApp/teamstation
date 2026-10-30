@@ -1,7 +1,8 @@
-import React, { useCallback, useRef } from 'react'
+import React, { useCallback, useLayoutEffect, useRef } from 'react'
 import { View } from 'react-native'
-import Animated from 'react-native-reanimated'
 
+import { usePageScrollSource } from '../components/pageScroll'
+import { pageScroller, Published } from '../components/PageScrollView'
 import { PinnedSpacer } from '../components/PinnedBands'
 import { SlidingContent, useActiveRef } from '../components/TabPages'
 import { PHONE_MARGIN } from '../layout/watch'
@@ -30,7 +31,8 @@ export function GameWatchLayout(
     tabsHeight,
     height,
     style,
-    contentStyle
+    contentStyle,
+    pagedList
   } = props
   const theme = useTheme()
   // A pane sliding out lets go of the pinned head's scroller and its
@@ -44,8 +46,16 @@ export function GameWatchLayout(
     const room = window.innerHeight - node.getBoundingClientRect().top
     node.style.maxHeight = `${Math.max(120, Math.round(room))}px`
   }, [])
+  // Side by side the list pane scrolls by itself, and its list follows that.
+  const pane = usePageScrollSource()
+  const { attachElement } = pane
+  useLayoutEffect(() => {
+    if (pagedList === true && sideBySide && listRef.current != null)
+      attachElement(listRef.current)
+  }, [attachElement, pagedList, sideBySide])
+  const Scroller = pageScroller(pagedList)
   return (
-    <Animated.ScrollView
+    <Scroller
       ref={useActiveRef(pinned.screen.scrollRef)}
       onLayout={handleLayout}
       style={style}
@@ -115,7 +125,13 @@ export function GameWatchLayout(
             }}
           >
             {short ? description : null}
-            {highlightList}
+            {pagedList === true ? (
+              <Published source={pane} inert={!sideBySide}>
+                {highlightList}
+              </Published>
+            ) : (
+              highlightList
+            )}
             {footer}
           </div>
         </SlidingContent>
@@ -133,6 +149,6 @@ export function GameWatchLayout(
           }}
         />
       </View>
-    </Animated.ScrollView>
+    </Scroller>
   )
 }

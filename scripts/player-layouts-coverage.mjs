@@ -43,6 +43,7 @@ import {
   buildNativeSpecs,
   runNativeSpecs
 } from './build-player-native-tests.mjs'
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const unitOnly = process.argv.includes('--unit')
@@ -153,6 +154,7 @@ const paths = [...new Set([...changed, ...untracked])].filter(eligible).sort()
 for (const [index, suite] of appSuites.entries()) {
   await build({
     ...webSettings,
+    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
     alias: {
       ...webSettings.alias,
       'react-native-webview': './src/test/eventWebViewStub.tsx',

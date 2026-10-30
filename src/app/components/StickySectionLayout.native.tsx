@@ -14,6 +14,7 @@ import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
 import { ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
 import { navClearanceAboveInset } from './navClearance'
+import { pageScroller } from './PageScrollView'
 import type { StickySectionLayoutProps } from './stickySectionLayoutProps'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -25,7 +26,8 @@ export function StickySectionLayout({
   onScroll,
   wide,
   scrollRef,
-  contentStyle
+  contentStyle,
+  pagedList
 }: StickySectionLayoutProps): React.ReactElement {
   const theme = useTheme()
   const { headerHeight } = useHeaderSlot()
@@ -66,8 +68,9 @@ export function StickySectionLayout({
       }
     ]
   }))
+  const Scroller = pageScroller(pagedList)
   return (
-    <Animated.ScrollView
+    <Scroller
       ref={scrollRef}
       style={{ flex: 1, backgroundColor: theme.backgroundColor }}
       onScroll={handleScroll}
@@ -117,6 +120,6 @@ export function StickySectionLayout({
           {children}
         </ContentInsetContext.Provider>
       </View>
-    </Animated.ScrollView>
+    </Scroller>
   )
 }

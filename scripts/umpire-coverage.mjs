@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 const report = resolve('coverage/umpires')
 const temp = resolve(report, 'tmp')
@@ -29,6 +30,7 @@ function run(cmd, args, env = {}) {
 if (!reportOnly) {
   await build({
     ...webSettings,
+    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
     alias: {
       ...webSettings.alias,
       'react-native-svg': './src/test/umpireSvgStub.tsx'

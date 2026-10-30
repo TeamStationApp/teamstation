@@ -13,7 +13,8 @@ export function StickySectionLayout({
   onScroll,
   wide,
   scrollRef,
-  contentStyle
+  contentStyle,
+  pagedList
 }: StickySectionLayoutProps): React.ReactElement {
   const { headerHeight } = useHeaderSlot()
   const theme = useTheme()
@@ -23,6 +24,7 @@ export function StickySectionLayout({
       wide={wide}
       scrollRef={scrollRef}
       contentStyle={contentStyle}
+      pagedList={pagedList}
     >
       {hero}
       <div
