@@ -14,12 +14,6 @@ import { listenScreenScopes } from '../../test/screenScopeNotices'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
-import { mergeTeams } from './mergeTeams'
-
-const adminUrl = testDatabaseUrl
-const scratchName = `teamstation_mergeteams_${Date.now()}`
-const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-
 /**
  * The real shape of the problem, in miniature.
  *
@@ -29,6 +23,13 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
  * case — it is the QPLL playoffs, where every team entered its opponent by
  * hand as a new team.
  */
+import { insertUser } from '../users/insertUser'
+import { mergeTeams } from './mergeTeams'
+
+const adminUrl = testDatabaseUrl
+const scratchName = `teamstation_mergeteams_${Date.now()}`
+const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
 describe('merging two rows that are one team', function () {
   this.timeout(60000)
 
@@ -320,6 +321,57 @@ describe('merging two rows that are one team', function () {
         initiating_team_id: houser
       })
       .execute()
+    // One of somebody the team that stays has, on a row merged into theirs,
+    // as nothing but a coach.
+    const survivor = await insertUser(db, {
+      display_name: 'Coach Stays',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    const closed = await insertUser(db, {
+      display_name: 'Coach Closed',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .updateTable('users')
+      .set({ merged_into: survivor })
+      .where('id', '=', closed)
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: survivor,
+        team_id: hawks,
+        role: 'owner',
+        is_player: false,
+        jersey: '9'
+      })
+      .execute()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_coach',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: houser,
+          userId: closed,
+          createdMembership: true
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
     const report = await mergeTeams(db, {
@@ -328,6 +380,14 @@ describe('merging two rows that are one team', function () {
       apply: true
     })
     expect(report.applied).equals(true)
+    const coach = await db
+      .selectFrom('group_requests')
+      .select(['status', 'terms'])
+      .where('id', '=', 'grq_merge_coach')
+      .executeTakeFirstOrThrow()
+    expect(coach.status).equals('applied')
+    expect(coach.terms).not.has.property('createdMembership')
+    expect(coach.terms).has.property('previous').that.includes({ jersey: '9' })
     const add = await db
       .selectFrom('group_requests')
       .select(['initiating_team_id', 'sender_scope_id', 'game_id', 'terms'])

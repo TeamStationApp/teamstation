@@ -299,17 +299,36 @@ export async function mergeTeams(
     await keepPrivacy(trx, intoTeamId, stricter)
     // A player add is the team's: its rejection undoes it there, and the
     // team's next add reads what became of the last.
-    // Unless the team that stays had the player anyway: the add made nothing
-    // there, and rejecting it must not take them off their own team.
-    await sql`update group_requests set status = 'superseded', resolved_at = now()
-      where kind = 'playerAdd' and status = 'applied'
-        and initiating_team_id = ${fromTeamId} and terms->>'mode' = 'roster'
-        and exists (
-          select 1 from memberships
-          where memberships.team_id = ${intoTeamId} and memberships.is_player
-            and memberships.user_id = group_requests.terms->>'userId')`.execute(
-      trx
-    )
+    // Unless the team that stays had the person anyway, on any row of theirs:
+    // the add made nothing there, and rejecting it must not take them off
+    // their own team. As a player, it has nothing left to undo; as anything
+    // else, it undoes the playing and leaves the row as it was.
+    await sql`with recursive family(request_id, id) as (
+        select id, terms->>'userId' from group_requests
+          where kind = 'playerAdd' and status = 'applied'
+            and initiating_team_id = ${fromTeamId} and terms->>'mode' = 'roster'
+        union
+        select f.request_id, related.id from family f
+          join users u on u.id = f.id
+          join users related
+            on related.id = u.merged_into or related.merged_into = u.id
+      ),
+      held as (
+        select distinct on (f.request_id) f.request_id,
+            m.is_player, m.jersey, m.positions
+          from family f
+          join memberships m on m.user_id = f.id and m.team_id = ${intoTeamId}
+          order by f.request_id, m.is_player desc
+      )
+      update group_requests r set
+        status = case when held.is_player then 'superseded' else r.status end,
+        resolved_at = case when held.is_player then now() else r.resolved_at end,
+        terms = case when held.is_player then r.terms
+          else (r.terms - 'createdMembership') || jsonb_build_object(
+            'previous', jsonb_build_object(
+              'jersey', held.jersey, 'positions', to_jsonb(held.positions)))
+          end
+      from held where held.request_id = r.id`.execute(trx)
     await sql`update group_requests set
       initiating_team_id = ${intoTeamId},
       sender_scope_id = ${intoTeamId},
