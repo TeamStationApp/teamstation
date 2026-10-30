@@ -319,9 +319,11 @@ export async function rosterCandidates(
           ),
           sql` and `
         )
-  // Strangers are listed only once three letters or digits are typed.
-  const strangers =
-    words.join('').replace(/[^\p{L}\p{N}]/gu, '').length >= OTHER_TIER_QUERY
+  // Strangers are listed only once three letters or digits of one word are
+  // typed: each word matches alone, so `j j j` is one letter, not three.
+  const strangers = words.some(
+    word => word.replace(/[^\p{L}\p{N}]/gu, '').length >= OTHER_TIER_QUERY
+  )
   const rows = await sql<CandidateRow>`
     with recursive
     team_seasons as (

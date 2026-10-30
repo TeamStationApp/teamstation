@@ -594,6 +594,16 @@ describe('roster candidates', function () {
     ).deep.equals([])
   })
 
+  it('counts the letters of one word toward a stranger, not of all of them', async function () {
+    for (const q of ['j j j', 'a a a', 'ra mo si'])
+      expect(
+        names((await ask(COACH, { forTeam: team.falcons, q })).body).filter(
+          name => name.startsWith('Jos')
+        ),
+        q
+      ).deep.equals([])
+  })
+
   it('matches the start of every word typed', async function () {
     const bet = await ask(COACH, { forTeam: team.falcons, q: 'bet' })
     expect(names(bet.body)).deep.equals(['Mookie B'])
