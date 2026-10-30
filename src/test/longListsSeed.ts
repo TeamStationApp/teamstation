@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { RECORDING_UPLOAD } from '../common/notifications'
 import { userIdOfGumbo } from '../common/userId'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
@@ -62,6 +63,7 @@ export const LONG_LISTS_SHAPE = {
   pendingNotices: 30,
   sentNotices: 25,
   historyNotices: 25,
+  reminders: 2,
   privateEventTitle: 'Private team practice'
 }
 
@@ -503,6 +505,27 @@ export async function seedLongLists(f: GroupFixture): Promise<LongListsSeed> {
         metadata: {
           title: `Schedule published, week ${index + 1}`,
           description: 'The league published its next games.'
+        },
+        recorded_recipients: [userIdOfGumbo(101)],
+        created_at: on(-index - 1)
+      }))
+    )
+    .execute()
+  // What Pending can dismiss, which comes before everything else there.
+  await db
+    .insertInto('notification_events')
+    .values(
+      Array.from({ length: LONG_LISTS_SHAPE.reminders }, (_, index) => ({
+        id: `nev_long_reminder_${index}`,
+        source_type: RECORDING_UPLOAD,
+        source_id: `long-lists-reminder-${index}`,
+        revision: 1,
+        actor_id: userIdOfGumbo(101),
+        metadata: {
+          title: `Upload your recording, angle ${index + 1}`,
+          description: 'Provide a higher-quality copy for future viewing.',
+          gameId: highlightsGameId,
+          liveStreamId: `lvs_long_${index}`
         },
         recorded_recipients: [userIdOfGumbo(101)],
         created_at: on(-index - 1)

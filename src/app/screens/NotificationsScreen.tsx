@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import type { TeamStationClient } from '../../common/api'
+import type { Page, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
@@ -10,8 +10,12 @@ import {
   RECORDING_UPLOAD
 } from '../../common/notifications'
 import { Button, Card, Screen } from '../components'
+import { PagedList } from '../components/PagedList'
+import { PagedListEnd } from '../components/PagedListEnd'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { type PagedRows, usePagedList } from '../hooks/usePagedList'
+import { useStableCallback } from '../hooks/useStableCallback'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 function accessRefused(error: unknown): boolean {
@@ -33,6 +37,31 @@ const inviteDate = (time: string): string =>
 /** A reminder to upload a phone's recording of one camera angle. */
 const isReminder = (item: Notification): boolean =>
   item.type === RECORDING_UPLOAD
+
+type Mode = 'pending' | 'sent' | 'history'
+
+/** A row's height before it has been measured. */
+const ROW_HEIGHT = 340
+
+/** An inbox page has only a next cursor, and nothing else a list's has. */
+const NOTHING: Page<Notification> = {
+  items: [],
+  nextCursor: null,
+  prevCursor: null,
+  anchorId: null,
+  counts: null
+}
+
+const requestIdOf = (item: Notification): string => item.requestId
+
+const failureOf = (error: unknown, otherwise: string): string =>
+  error instanceof Error ? error.message : otherwise
+
+/** The approval being decided on its card, and how. */
+interface Deciding {
+  id: string
+  action: 'accept' | 'decline'
+}
 
 export function NotificationsScreen({
   client,
@@ -61,175 +90,134 @@ export function NotificationsScreen({
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
-  const [mode, setMode] = useState<'pending' | 'sent' | 'history'>('pending')
-  const [items, setItems] = useState<Notification[]>([])
-  const [cursor, setCursor] = useState<string | null>(null)
+  const [mode, setMode] = useState<Mode>('pending')
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
   const [dismissing, setDismissing] = useState<string | undefined>()
-  /** The approval being decided on its card, and how. */
-  const [deciding, setDeciding] = useState<
-    { id: string; action: 'accept' | 'decline' } | undefined
-  >()
-  const begin = useLatestRequest()
-  const cache = useRef<
-    Partial<
-      Record<
-        typeof mode,
-        { items: Notification[]; cursor: string | null; pages: number }
-      >
-    >
-  >({})
-  const load = useCallback(async (): Promise<void> => {
-    const current = begin()
-    try {
-      const wantedPages = cache.current[mode]?.pages ?? 1
-      const found = new Map<string, Notification>()
-      let next: string | null = null
-      let pages = 0
-      do {
-        const page = await client.notifications({
-          history: mode === 'history',
-          sent: mode === 'sent',
-          ...(next == null ? {} : { cursor: next })
-        })
-        if (!current()) return
-        for (const item of page.items) found.set(item.requestId, item)
-        next = page.nextCursor
-        pages++
-      } while (pages < wantedPages && next != null)
-      if (!current()) return
-      const refreshed = [...found.values()]
-      setItems(refreshed)
-      setCursor(next)
-      cache.current[mode] = { items: refreshed, cursor: next, pages }
-      setError('')
-    } catch (error) {
-      if (!current()) return
-      if (accessRefused(error)) cache.current = {}
-      setItems(cache.current[mode]?.items ?? [])
-      setCursor(cache.current[mode]?.cursor ?? null)
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Notifications could not load. Retry.'
-      )
-    } finally {
-      if (current()) setLoading(false)
-    }
-  }, [client, mode, begin])
-  useForegroundRefresh(load)
-  const more = async (): Promise<void> => {
-    if (cursor == null) return
-    const current = begin()
+  const [deciding, setDeciding] = useState<Deciding | undefined>()
+  const read = async (
+    which: Mode,
+    cursor: string | null
+  ): Promise<Page<Notification>> => {
     try {
       const page = await client.notifications({
-        history: mode === 'history',
-        sent: mode === 'sent',
-        cursor
+        history: which === 'history',
+        sent: which === 'sent',
+        ...(cursor == null ? {} : { cursor })
       })
-      if (!current()) return
-      setItems(previous => {
-        const merged = [
-          ...new Map(
-            [...previous, ...page.items].map(item => [item.requestId, item])
-          ).values()
-        ]
-        cache.current[mode] = {
-          items: merged,
-          cursor: page.nextCursor,
-          pages: (cache.current[mode]?.pages ?? 1) + 1
-        }
-        return merged
-      })
-      setCursor(page.nextCursor)
       setError('')
-    } catch (error) {
-      if (!current()) return
-      if (accessRefused(error)) {
-        cache.current = {}
-        setItems([])
-        setCursor(null)
+      return { ...NOTHING, items: page.items, nextCursor: page.nextCursor }
+    } catch (caught) {
+      // Whatever each list held is no longer theirs to see.
+      if (accessRefused(caught)) {
+        setError(failureOf(caught, 'Notifications could not load. Retry.'))
+        for (const list of Object.values(lists))
+          list.apply(NOTHING).catch(() => undefined)
       }
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'More notifications could not load. Retry.'
-      )
+      throw caught
     }
+  }
+  // Each holds its own pages, for coming back to as they were.
+  const lists: Record<Mode, PagedRows<Notification>> = {
+    pending: useInbox('pending', read),
+    sent: useInbox('sent', read),
+    history: useInbox('history', read)
+  }
+  const list = lists[mode]
+  const { rows, refreshHeld: load, loadMore } = list
+  useForegroundRefresh(load)
+  /** Gone from every list. History reads it again from the server. */
+  const settled = (item: Notification): void => {
+    for (const held of Object.values(lists)) held.remove(item.requestId)
   }
   /** Settles a reminder for good: it leaves Pending and moves to History. */
-  const dismiss = async (item: Notification): Promise<void> => {
-    if (dismissing != null) return
-    setDismissing(item.requestId)
-    setError('')
-    try {
-      await client.dismissNotification(item.requestId)
-      const kept = (list: Notification[]): Notification[] =>
-        list.filter(other => other.requestId !== item.requestId)
-      setItems(kept)
-      const pending = cache.current.pending
-      if (pending != null)
-        cache.current.pending = { ...pending, items: kept(pending.items) }
-      delete cache.current.history
-      onDismissed?.()
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'The reminder could not be dismissed. Retry.'
-      )
-    } finally {
-      setDismissing(undefined)
+  const dismiss = useStableCallback(
+    async (item: Notification): Promise<void> => {
+      if (dismissing != null) return
+      setDismissing(item.requestId)
+      setError('')
+      try {
+        await client.dismissNotification(item.requestId)
+        settled(item)
+        onDismissed?.()
+      } catch (error) {
+        setError(
+          failureOf(error, 'The reminder could not be dismissed. Retry.')
+        )
+      } finally {
+        setDismissing(undefined)
+      }
     }
-  }
+  )
   /**
    * Accepts or rejects an approval on its card. Decided, it leaves Pending,
    * and History reads it again from the server; refused, the card stays with
    * the reason, to be pressed again.
    */
-  const decide = async (
-    item: Notification,
-    action: 'accept' | 'decline'
-  ): Promise<void> => {
-    if (deciding != null) return
-    setDeciding({ id: item.requestId, action })
-    setError('')
-    try {
-      if (item.type === 'game')
-        await client.decideGameRequest(item.requestId, action)
-      else await client.decideRelationship(item.requestId, action)
-      const kept = (list: Notification[]): Notification[] =>
-        list.filter(other => other.requestId !== item.requestId)
-      setItems(kept)
-      const pending = cache.current.pending
-      if (pending != null)
-        cache.current.pending = { ...pending, items: kept(pending.items) }
-      delete cache.current.history
-      onDecided?.()
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'The request could not be decided. Retry.'
-      )
-    } finally {
-      setDeciding(undefined)
+  const decide = useStableCallback(
+    async (item: Notification, action: Deciding['action']): Promise<void> => {
+      if (deciding != null) return
+      setDeciding({ id: item.requestId, action })
+      setError('')
+      try {
+        if (item.type === 'game')
+          await client.decideGameRequest(item.requestId, action)
+        else await client.decideRelationship(item.requestId, action)
+        settled(item)
+        onDecided?.()
+      } catch (error) {
+        setError(failureOf(error, 'The request could not be decided. Retry.'))
+      } finally {
+        setDeciding(undefined)
+      }
     }
-  }
-  const upload = (item: Notification): void => {
+  )
+  const upload = useStableCallback((item: Notification): void => {
     if (item.gameId != null) onUpload?.(item.gameId)
-  }
+  })
+  const open = useStableCallback((item: Notification): void => {
+    if (onOpenTarget != null && isSchedulingNews(item.type)) {
+      client.viewNotification(item.id).catch(() => undefined)
+      onOpenTarget(item)
+    } else onOpen(item.requestId)
+  })
   // Pending reminders come before anything waiting on an approval.
-  const shown =
-    mode === 'pending'
-      ? [
-          ...items.filter(isReminder),
-          ...items.filter(item => !isReminder(item))
-        ]
-      : items
+  const shown = useMemo(
+    () =>
+      mode === 'pending'
+        ? [
+            ...rows.filter(isReminder),
+            ...rows.filter(item => !isReminder(item))
+          ]
+        : rows,
+    [mode, rows]
+  )
+  const renderRow = useCallback(
+    (item: Notification) => (
+      <View style={styles.row} testID={`notification-row-${item.requestId}`}>
+        <NotificationRow
+          item={item}
+          mode={mode}
+          dismissing={dismissing}
+          deciding={deciding}
+          onUpload={upload}
+          onDismiss={dismiss}
+          onDecide={decide}
+          onOpen={open}
+        />
+      </View>
+    ),
+    [decide, deciding, dismiss, dismissing, mode, open, styles.row, upload]
+  )
+  const extraData = useMemo(
+    () => ({ mode, dismissing, deciding }),
+    [deciding, dismissing, mode]
+  )
+  const shownError =
+    error !== '' || list.error == null
+      ? error
+      : failureOf(list.error, 'Notifications could not load. Retry.')
   return (
-    <Screen>
+    <Screen pagedList>
       <View style={styles.page}>
         <Text style={styles.title}>Notifications</Text>
         <View style={styles.tabs}>
@@ -241,8 +229,6 @@ export function NotificationsScreen({
               label={value[0].toUpperCase() + value.slice(1)}
               onPress={() => {
                 setMode(value)
-                setItems(cache.current[value]?.items ?? [])
-                setCursor(cache.current[value]?.cursor ?? null)
               }}
             />
           ))}
@@ -251,11 +237,11 @@ export function NotificationsScreen({
           Oldest first. Any eligible administrator can answer on behalf of their
           team, season or league.
         </Text>
-        {loading && <Text style={styles.hint}>Loading…</Text>}
-        {error !== '' && (
+        {list.loading && <Text style={styles.hint}>Loading…</Text>}
+        {shownError !== '' && (
           <>
             <Text accessibilityRole="alert" style={styles.error}>
-              {error}
+              {shownError}
             </Text>
             <Button
               label="Retry notifications"
@@ -266,187 +252,221 @@ export function NotificationsScreen({
             />
           </>
         )}
-        {!loading && error === '' && items.length === 0 && (
-          <Text style={styles.hint}>
-            {mode === 'pending'
-              ? 'No approvals are waiting for you.'
-              : mode === 'sent'
-                ? 'No sent invitations are waiting for approval.'
-                : 'No resolved notifications yet.'}
-          </Text>
-        )}
-        {shown.map(item =>
-          mode === 'pending' && isReminder(item) ? (
-            <Card key={item.requestId} style={styles.card}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${item.title}. ${item.description}`}
-                style={styles.cardBody}
-                onPress={() => {
-                  upload(item)
-                }}
-              >
-                <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
-                <Text style={styles.name}>{item.title}</Text>
-                <Text style={styles.hint}>{item.description}</Text>
-              </Pressable>
-              <Text style={styles.status}>{statusLine(item, mode)}</Text>
-              <View style={styles.tabs}>
-                {item.gameId != null && (
-                  <Button
-                    compact
-                    label="Upload"
-                    onPress={() => {
-                      upload(item)
-                    }}
-                  />
-                )}
-                <Button
-                  compact
-                  kind="secondary"
-                  label="Dismiss"
-                  busy={dismissing === item.requestId}
-                  disabled={dismissing != null}
-                  onPress={() => {
-                    dismiss(item).catch(() => undefined)
-                  }}
-                />
-              </View>
-            </Card>
-          ) : mode === 'pending' && item.type === 'playerAddRejected' ? (
-            // A player taken off the team by their side: read, and dismissed.
-            <Card key={item.requestId} style={styles.card}>
-              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
-              <Text style={styles.name}>{item.title}</Text>
-              <Text style={styles.hint}>{item.description}</Text>
-              <View style={styles.tabs}>
-                <Button
-                  compact
-                  kind="secondary"
-                  label="Dismiss"
-                  accessibilityLabel={`Dismiss ${item.title}`}
-                  busy={dismissing === item.requestId}
-                  disabled={dismissing != null}
-                  onPress={() => {
-                    dismiss(item).catch(() => undefined)
-                  }}
-                />
-              </View>
-            </Card>
-          ) : mode !== 'sent' && item.canReject === true ? (
-            // A change already made, which may be rejected for its 90 days:
-            // Reject undoes it, Dismiss only moves it to History.
-            <Card key={item.requestId} style={styles.card}>
-              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
-              <Text style={styles.name}>{item.title}</Text>
-              <Text style={styles.hint}>{item.description}</Text>
-              <Text style={styles.status}>{statusLine(item, mode)}</Text>
-              <View style={styles.tabs}>
-                <Button
-                  compact
-                  label="Reject"
-                  accessibilityLabel={`Reject ${item.title}`}
-                  testID="notification-reject"
-                  color={theme.dangerColor}
-                  textColor={theme.buttonTextColor}
-                  busy={
-                    deciding?.id === item.requestId &&
-                    deciding.action === 'decline'
-                  }
-                  disabled={deciding != null}
-                  onPress={() => {
-                    decide(item, 'decline').catch(() => undefined)
-                  }}
-                />
-                {mode === 'pending' && (
-                  <Button
-                    compact
-                    kind="secondary"
-                    label="Dismiss"
-                    accessibilityLabel={`Dismiss ${item.title}`}
-                    busy={dismissing === item.requestId}
-                    disabled={dismissing != null}
-                    onPress={() => {
-                      dismiss(item).catch(() => undefined)
-                    }}
-                  />
-                )}
-              </View>
-            </Card>
-          ) : mode === 'pending' && item.canAct ? (
-            // Decided here, on the card: the list stays on Notifications.
-            <Card key={item.requestId} style={styles.card}>
-              <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
-              <Text style={styles.name}>{item.title}</Text>
-              <Text style={styles.hint}>{item.description}</Text>
-              <Text style={styles.status}>{statusLine(item, mode)}</Text>
-              <View style={styles.tabs}>
-                <Button
-                  compact
-                  label="Accept"
-                  accessibilityLabel={`Accept ${item.title}`}
-                  testID="notification-accept"
-                  color={theme.successColor}
-                  textColor={theme.buttonTextColor}
-                  busy={
-                    deciding?.id === item.requestId &&
-                    deciding.action === 'accept'
-                  }
-                  disabled={deciding != null}
-                  onPress={() => {
-                    decide(item, 'accept').catch(() => undefined)
-                  }}
-                />
-                <Button
-                  compact
-                  label="Reject"
-                  accessibilityLabel={`Reject ${item.title}`}
-                  testID="notification-reject"
-                  color={theme.dangerColor}
-                  textColor={theme.buttonTextColor}
-                  busy={
-                    deciding?.id === item.requestId &&
-                    deciding.action === 'decline'
-                  }
-                  disabled={deciding != null}
-                  onPress={() => {
-                    decide(item, 'decline').catch(() => undefined)
-                  }}
-                />
-              </View>
-            </Card>
-          ) : (
-            <Pressable
-              key={item.requestId}
-              accessibilityRole="button"
-              accessibilityLabel={item.title}
-              onPress={() => {
-                if (onOpenTarget != null && isSchedulingNews(item.type)) {
-                  client.viewNotification(item.id).catch(() => undefined)
-                  onOpenTarget(item)
-                } else onOpen(item.requestId)
-              }}
-            >
-              <Card style={styles.card}>
-                <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
-                <Text style={styles.name}>{item.title}</Text>
-                <Text style={styles.hint}>{item.description}</Text>
-                <Text style={styles.status}>{statusLine(item, mode)}</Text>
-              </Card>
-            </Pressable>
-          )
-        )}
-        {cursor != null && (
-          <Button
-            label="Load more"
-            kind="secondary"
-            onPress={() => {
-              more().catch(() => undefined)
-            }}
-          />
-        )}
+        <PagedList
+          key={mode}
+          data={shown}
+          keyOf={requestIdOf}
+          renderItem={renderRow}
+          extraData={extraData}
+          estimatedItemSize={ROW_HEIGHT}
+          empty={
+            list.empty && shownError === '' ? (
+              <Text style={styles.hint}>
+                {mode === 'pending'
+                  ? 'No approvals are waiting for you.'
+                  : mode === 'sent'
+                    ? 'No sent invitations are waiting for approval.'
+                    : 'No resolved notifications yet.'}
+              </Text>
+            ) : null
+          }
+          footer={<PagedListEnd list={list} />}
+          onEndReached={() => {
+            loadMore().catch(() => undefined)
+          }}
+        />
       </View>
     </Screen>
+  )
+}
+
+/** One mode's list, read when the screen asks. */
+function useInbox(
+  mode: Mode,
+  read: (mode: Mode, cursor: string | null) => Promise<Page<Notification>>
+): PagedRows<Notification> {
+  return usePagedList<Notification>({
+    listKey: mode,
+    auto: false,
+    keyOf: requestIdOf,
+    read: async cursor => await read(mode, cursor)
+  })
+}
+
+/** A notification as its mode shows it, and what can be done with it there. */
+function NotificationRow(props: {
+  item: Notification
+  mode: Mode
+  dismissing: string | undefined
+  deciding: Deciding | undefined
+  onUpload: (item: Notification) => void
+  onDismiss: (item: Notification) => Promise<void>
+  onDecide: (item: Notification, action: Deciding['action']) => Promise<void>
+  onOpen: (item: Notification) => void
+}): React.ReactElement {
+  const { item, mode, dismissing, deciding } = props
+  const { onUpload: upload, onDismiss: dismiss, onDecide: decide } = props
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  if (mode === 'pending' && isReminder(item))
+    return (
+      <Card style={styles.card}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${item.title}. ${item.description}`}
+          style={styles.cardBody}
+          onPress={() => {
+            upload(item)
+          }}
+        >
+          <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+          <Text style={styles.name}>{item.title}</Text>
+          <Text style={styles.hint}>{item.description}</Text>
+        </Pressable>
+        <Text style={styles.status}>{statusLine(item, mode)}</Text>
+        <View style={styles.tabs}>
+          {item.gameId != null && (
+            <Button
+              compact
+              label="Upload"
+              onPress={() => {
+                upload(item)
+              }}
+            />
+          )}
+          <Button
+            compact
+            kind="secondary"
+            label="Dismiss"
+            busy={dismissing === item.requestId}
+            disabled={dismissing != null}
+            onPress={() => {
+              dismiss(item).catch(() => undefined)
+            }}
+          />
+        </View>
+      </Card>
+    )
+  // A player taken off the team by their side: read, and dismissed.
+  if (mode === 'pending' && item.type === 'playerAddRejected')
+    return (
+      <Card style={styles.card}>
+        <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+        <Text style={styles.name}>{item.title}</Text>
+        <Text style={styles.hint}>{item.description}</Text>
+        <View style={styles.tabs}>
+          <Button
+            compact
+            kind="secondary"
+            label="Dismiss"
+            accessibilityLabel={`Dismiss ${item.title}`}
+            busy={dismissing === item.requestId}
+            disabled={dismissing != null}
+            onPress={() => {
+              dismiss(item).catch(() => undefined)
+            }}
+          />
+        </View>
+      </Card>
+    )
+  // A change already made, which may be rejected for its 90 days: Reject
+  // undoes it, Dismiss only moves it to History.
+  if (mode !== 'sent' && item.canReject === true)
+    return (
+      <Card style={styles.card}>
+        <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+        <Text style={styles.name}>{item.title}</Text>
+        <Text style={styles.hint}>{item.description}</Text>
+        <Text style={styles.status}>{statusLine(item, mode)}</Text>
+        <View style={styles.tabs}>
+          <Button
+            compact
+            label="Reject"
+            accessibilityLabel={`Reject ${item.title}`}
+            testID="notification-reject"
+            color={theme.dangerColor}
+            textColor={theme.buttonTextColor}
+            busy={
+              deciding?.id === item.requestId && deciding.action === 'decline'
+            }
+            disabled={deciding != null}
+            onPress={() => {
+              decide(item, 'decline').catch(() => undefined)
+            }}
+          />
+          {mode === 'pending' && (
+            <Button
+              compact
+              kind="secondary"
+              label="Dismiss"
+              accessibilityLabel={`Dismiss ${item.title}`}
+              busy={dismissing === item.requestId}
+              disabled={dismissing != null}
+              onPress={() => {
+                dismiss(item).catch(() => undefined)
+              }}
+            />
+          )}
+        </View>
+      </Card>
+    )
+  // Decided here, on the card: the list stays on Notifications.
+  if (mode === 'pending' && item.canAct)
+    return (
+      <Card style={styles.card}>
+        <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+        <Text style={styles.name}>{item.title}</Text>
+        <Text style={styles.hint}>{item.description}</Text>
+        <Text style={styles.status}>{statusLine(item, mode)}</Text>
+        <View style={styles.tabs}>
+          <Button
+            compact
+            label="Accept"
+            accessibilityLabel={`Accept ${item.title}`}
+            testID="notification-accept"
+            color={theme.successColor}
+            textColor={theme.buttonTextColor}
+            busy={
+              deciding?.id === item.requestId && deciding.action === 'accept'
+            }
+            disabled={deciding != null}
+            onPress={() => {
+              decide(item, 'accept').catch(() => undefined)
+            }}
+          />
+          <Button
+            compact
+            label="Reject"
+            accessibilityLabel={`Reject ${item.title}`}
+            testID="notification-reject"
+            color={theme.dangerColor}
+            textColor={theme.buttonTextColor}
+            busy={
+              deciding?.id === item.requestId && deciding.action === 'decline'
+            }
+            disabled={deciding != null}
+            onPress={() => {
+              decide(item, 'decline').catch(() => undefined)
+            }}
+          />
+        </View>
+      </Card>
+    )
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={item.title}
+      onPress={() => {
+        props.onOpen(item)
+      }}
+    >
+      <Card style={styles.card}>
+        <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+        <Text style={styles.name}>{item.title}</Text>
+        <Text style={styles.hint}>{item.description}</Text>
+        <Text style={styles.status}>{statusLine(item, mode)}</Text>
+      </Card>
+    </Pressable>
   )
 }
 
@@ -454,10 +474,7 @@ export function NotificationsScreen({
  * What a notification's state is, in a word or two. Somebody being added to
  * a group needed nobody's approval: it is new until opened, then added.
  */
-function statusLine(
-  item: Notification,
-  mode: 'pending' | 'sent' | 'history'
-): string {
+function statusLine(item: Notification, mode: Mode): string {
   if (item.type === 'grant') return item.viewed ? 'Added' : 'New'
   if (isReminder(item)) return 'Reminder'
   if (item.status === 'applied')
@@ -744,5 +761,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(0.5)
   },
   card: { gap: theme.rem(0.75) },
-  cardBody: { gap: theme.rem(0.75) }
+  cardBody: { gap: theme.rem(0.75) },
+  // A list's rows are placed one by one, so its gap is on each of them.
+  row: { paddingBottom: theme.rem(1) }
 }))

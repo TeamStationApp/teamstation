@@ -5,7 +5,9 @@ import { join, resolve } from 'node:path'
 
 import type { HTTPRequest } from 'puppeteer'
 
+import { gameCountLabel } from '../app/locales/strings'
 import { scheduleDate, shortDate } from '../app/screens/format'
+import { countFor, type When } from '../app/screens/whenFilter'
 import type {
   GameSummary,
   ListCounts,
@@ -79,6 +81,8 @@ const TWO_COLUMNS = { width: 900, height: 1000 }
 const DEPTH = 6000
 /** The rows of a page the server answers. */
 const PAGE_ROWS = 50
+/** The rows of a page of notifications. */
+const INBOX_ROWS = 25
 /** A row on the phone's screen, with what a list keeps drawn around it. */
 const MOST_ROWS_AT_ONCE = 60
 /** Past what is kept drawn after a team's next game. */
@@ -212,8 +216,12 @@ async function main(): Promise<void> {
   /** The reads of a paged list since the last look. */
   const reads: URL[] = []
   const teamReads: URL[] = []
+  const publicReads: URL[] = []
+  const inboxReads: URL[] = []
   page.on('request', request => {
     const url = new URL(request.url())
+    if (url.searchParams.get('public') === '1') publicReads.push(url)
+    if (url.pathname.endsWith('/me/notifications')) inboxReads.push(url)
     if (url.pathname.endsWith('/events') && url.searchParams.has('paged'))
       reads.push(url)
     if (
@@ -402,6 +410,110 @@ async function main(): Promise<void> {
   const guestSeesNoPrivateEvent = async (): Promise<void> => {
     const text = await page.evaluate(() => document.body.textContent!)
     assert.ok(!text.includes(seeded.privateEventTitle), 'E8: a private event')
+  }
+  /** The rows on show whose test id starts `prefix`, without it. */
+  const rowsNamed = async (prefix: string): Promise<string[]> =>
+    await page.$$eval(
+      `[data-scene-role="top"] [data-testid^="${prefix}"]`,
+      (nodes, cut) =>
+        nodes
+          .filter(
+            node =>
+              node.closest('[data-page-role]:not([data-page-role="top"])') ===
+              null
+          )
+          .map(node => node.getAttribute('data-testid')!.slice(cut)),
+      prefix.length
+    )
+  /**
+   * Down a list a screen at a time to its end, as somebody reading it does:
+   * every row it holds that was on the page, and the most on it at once.
+   */
+  const readDown = async (
+    prefix: string,
+    onStep?: () => Promise<void>
+  ): Promise<{ seen: Set<string>; most: number }> => {
+    const seen = new Set<string>()
+    let most = 0
+    const look = async (): Promise<void> => {
+      const rows = await rowsNamed(prefix)
+      most = Math.max(most, rows.length)
+      for (const row of rows) seen.add(row)
+      await onStep?.()
+    }
+    await scroll(0)
+    await pause(300)
+    let at = 0
+    for (let still = 0; still < 3;) {
+      await look()
+      at += PHONE.height * 0.7
+      const height = await scroll(at)
+      await page
+        .waitForNetworkIdle({ idleTime: 150, timeout: 5000 })
+        .catch(() => undefined)
+      const end = await page.evaluate(() => {
+        const scene = document.querySelector('[data-scene-role="top"]')!
+        const tallest = [...scene.querySelectorAll<HTMLElement>('*')]
+          .filter(node => node.scrollHeight > node.clientHeight + 40)
+          .filter(node =>
+            ['auto', 'scroll'].includes(getComputedStyle(node).overflowY)
+          )
+          .sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
+        return tallest.scrollHeight - tallest.clientHeight - tallest.scrollTop
+      })
+      still = end < 2 && height > 0 ? still + 1 : 0
+    }
+    await look()
+    return { seen, most }
+  }
+  /** What a guest's read of a group's public games walks to, in order. */
+  const publicGames = async (
+    groups: string,
+    id: string,
+    query: string
+  ): Promise<{ ids: string[]; counts: ListCounts }> => {
+    const ids: string[] = []
+    let counts: ListCounts | null = null
+    let cursor: string | null = null
+    do {
+      const after: string =
+        cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`
+      const answer = await f.h.request(
+        'GET',
+        `/${groups}/${id}/games?public=1&paged=1&${query}${after}`
+      )
+      assert.equal(answer.status, 200, 'E8: a guest may read public games')
+      const found = (await answer.json()) as ListPage<{ id: string }>
+      ids.push(...found.items.map(row => row.id))
+      counts ??= found.counts
+      cursor = found.nextCursor
+    } while (cursor !== null)
+    return { ids, counts: counts! }
+  }
+  /** A mode's rows, as the server walks them for 101. */
+  const inbox = async (query: string): Promise<string[]> => {
+    const ids: string[] = []
+    let cursor: string | null = null
+    do {
+      const after: string =
+        cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`
+      const answer = await f.h.request(
+        'GET',
+        `/me/notifications?${query}${after}`,
+        undefined,
+        101
+      )
+      const found = (await answer.json()) as {
+        items: Array<{ requestId: string }>
+        nextCursor: string | null
+      }
+      ids.push(...found.items.map(row => row.requestId))
+      cursor = found.nextCursor
+    } while (cursor !== null)
+    return ids
+  }
+  const sameRows = (seen: Set<string>, ids: string[], what: string): void => {
+    assert.deepEqual([...seen].sort(), [...ids].sort(), what)
   }
 
   const cases: Record<string, () => Promise<void>> = {
@@ -732,23 +844,218 @@ async function main(): Promise<void> {
         await pause(600)
         await shot('public-team')
         await guestSeesNoPrivateEvent()
-        await open(`/groups/season/${seeded.publicSeasonId}`, 'Demo Standalone')
+        if (before) {
+          await open(
+            `/groups/season/${seeded.publicSeasonId}`,
+            'Demo Standalone'
+          )
+          await settle('Demo Gulls')
+          await pause(600)
+          await shot('public-season')
+          await guestSeesNoPrivateEvent()
+          return
+        }
+        const pillsAt = await teamPillsBottom()
+        const teamId = seeded.publicTeamId
+        const teamVideos = await publicGames(
+          'teams',
+          teamId,
+          'order=asc&hasVideo=1'
+        )
+        await contains(page, `${teamVideos.counts.withVideo} with video`)
+        const videos = await readDown('public-game-', guestSeesNoPrivateEvent)
+        sameRows(videos.seen, teamVideos.ids, 'E8: the team Videos rows')
+        assert.ok(
+          publicReads.some(url => url.searchParams.get('hasVideo') === '1'),
+          'E8: Videos asks hasVideo=1'
+        )
+
+        await tapCss('[aria-label="Team sections"] [aria-label="Schedule"]')
+        await settle('Demo Gulls')
+        await pause(600)
+        publicReads.length = 0
+        const teamGames = await publicGames('teams', teamId, 'order=asc')
+        assert.ok(teamGames.ids.length > PAGE_ROWS * 2, 'E8: three pages')
+        const games = await readDown('public-game-', guestSeesNoPrivateEvent)
+        sameRows(games.seen, teamGames.ids, 'E8: the team Schedule rows')
+        const cursors = publicReads
+          .map(url => url.searchParams.get('cursor'))
+          .filter(cursor => cursor !== null)
+        assert.equal(
+          cursors.length,
+          Math.ceil(teamGames.ids.length / PAGE_ROWS) - 1,
+          'E8: each page of the team Schedule, read once'
+        )
+        assert.equal(new Set(cursors).size, cursors.length, 'E8: no page twice')
+        assert.ok(
+          publicReads.every(url => url.searchParams.get('order') === 'asc'),
+          'E8: the team reads in the order games are played'
+        )
+        assert.ok(games.most < MOST_ROWS_AT_ONCE, `E8: ${games.most} rows`)
+        // The pills pin under the header at depth, and hold across tabs.
+        const pinnedAt = await teamPillsBottom()
+        assert.ok(pinnedAt < pillsAt - 40, 'E8: the pills go up with the card')
+        await tapCss('[aria-label="Team sections"] [aria-label="Team"]')
+        await settle('TEAM INFORMATION')
+        await pause(600)
+        const held = await teamPillsBottom()
+        await tapCss('[aria-label="Team sections"] [aria-label="Schedule"]')
+        await pause(600)
+        assert.ok(
+          (await rowsNamed('public-game-')).length > 0,
+          'E8: a kept Schedule comes back with rows'
+        )
+        assert.ok(
+          Math.abs((await teamPillsBottom()) - held) < 1 &&
+            Math.abs(held - pinnedAt) < 1,
+          'E8: the pills hold through a tab'
+        )
+        console.log(
+          `  public team: ${teamGames.ids.length} games, ${videos.seen.size} with video, ${cursors.length + 1} pages, most rows at once ${games.most}, pills ${pillsAt} to ${pinnedAt}`
+        )
+        await log(
+          support,
+          'longLists-web.log',
+          `E8: public team read ${games.seen.size} games by page`
+        )
+
+        publicReads.length = 0
+        const seasonId = seeded.publicSeasonId
+        await open(`/groups/season/${seasonId}`, 'Demo Standalone')
         await settle('Demo Gulls')
         await pause(600)
         await shot('public-season')
-        later('M7: pages load; counts are right; pills switch')
         await guestSeesNoPrivateEvent()
+        const orders: Record<When, string> = {
+          past: 'when=past&order=desc',
+          upcoming: 'when=upcoming&order=asc',
+          all: 'order=desc'
+        }
+        const walked = new Set<string>()
+        for (const [label, when] of [
+          ['Past', 'past'],
+          ['Upcoming', 'upcoming'],
+          ['All', 'all']
+        ] as const) {
+          if (when !== 'past') {
+            await tapCss(`[role="tablist"] [role="tab"][aria-label="${label}"]`)
+            await settle('Demo Gulls')
+            await pause(600)
+          }
+          const listed = await publicGames('seasons', seasonId, orders[when])
+          await contains(page, gameCountLabel(countFor(listed.counts, when)))
+          const read = await readDown('public-game-', guestSeesNoPrivateEvent)
+          sameRows(read.seen, listed.ids, `E8: the season's ${label} rows`)
+          assert.ok(read.most < MOST_ROWS_AT_ONCE, `E8: ${read.most} rows`)
+          for (const id of read.seen) walked.add(id)
+          console.log(`  public season ${label}: ${read.seen.size} games`)
+        }
+        assert.ok(
+          publicReads.every(url =>
+            url.pathname.includes(`/seasons/${seasonId}`)
+          ),
+          'E8: only the public season read'
+        )
+        await log(
+          support,
+          'longLists-web.log',
+          `E8: public season read ${walked.size} games by page in each pill`
+        )
       } finally {
         await signedIn()
       }
     },
     E9: async () => {
+      inboxReads.length = 0
       await open('/notifications', 'Pending')
       await settle('Demo')
-      await scrollToEnd()
-      if (before) await contains(page, 'Load more')
+      if (before) {
+        await scrollToEnd()
+        await contains(page, 'Load more')
+        await shot('notifications')
+        return
+      }
+      const PREFIX = 'notification-row-'
+      const pages = (rows: number): number => Math.ceil(rows / INBOX_ROWS)
+      const cursors = (mode: string | null): Array<string | null> =>
+        inboxReads
+          .filter(
+            url =>
+              (url.searchParams.get('history') === '1'
+                ? 'history'
+                : url.searchParams.get('sent') === '1'
+                  ? 'sent'
+                  : null) === mode
+          )
+          .map(url => url.searchParams.get('cursor'))
+          .filter(cursor => cursor !== null)
+      const pending = await inbox('')
+      const read = await readDown(PREFIX)
+      sameRows(read.seen, pending, 'E9: every row of Pending')
+      assert.equal(
+        new Set(cursors(null)).size,
+        pages(pending.length) - 1,
+        'E9: Pending reads each page'
+      )
+      assert.ok(read.most < MOST_ROWS_AT_ONCE, `E9: ${read.most} rows at once`)
+      await absent(page, 'Load more')
       await shot('notifications')
-      later('M7: pages in each mode; a dismissed row leaves; no Load more')
+
+      await scroll(0)
+      await pause(400)
+      const reminder = (await rowsNamed(PREFIX))[0]
+      const row = `[data-testid="${PREFIX}${reminder}"]`
+      assert.match(reminder, /^nev_long_reminder_/, 'E9: reminders come first')
+      await page.$$eval(`${row} [role="button"]`, nodes => {
+        const dismiss = nodes.find(node => node.textContent === 'Dismiss')
+        ;(dismiss as HTMLElement).click()
+      })
+      await page.waitForFunction(
+        (css: string) => document.querySelector(css) === null,
+        { timeout: 10000 },
+        row
+      )
+      const left = await inbox('')
+      assert.ok(!left.includes(reminder), 'E9: the server dismissed it')
+      assert.equal(left.length, pending.length - 1, 'E9: one row left')
+      await pause(300)
+
+      for (const [label, query, mode] of [
+        ['Sent', 'sent=1', 'sent'],
+        ['History', 'history=1', 'history']
+      ] as const) {
+        await m.tapOn({ text: label, timeout: 15000 })
+        await page
+          .waitForNetworkIdle({ idleTime: 250, timeout: 10000 })
+          .catch(() => undefined)
+        const rows = await inbox(query)
+        assert.ok(rows.length > 0, `E9: ${label} holds rows`)
+        const walked = await readDown(PREFIX)
+        sameRows(walked.seen, rows, `E9: every row of ${label}`)
+        assert.equal(
+          new Set(cursors(mode)).size,
+          pages(rows.length) - 1,
+          `E9: ${label} reads each page`
+        )
+        await absent(page, 'Load more')
+        if (mode === 'history')
+          assert.ok(walked.seen.has(reminder), 'E9: dismissed, in History')
+        console.log(`  ${label}: ${rows.length} rows, ${walked.most} at once`)
+      }
+      await m.tapOn({ text: 'Pending', timeout: 15000 })
+      await page
+        .waitForNetworkIdle({ idleTime: 250, timeout: 10000 })
+        .catch(() => undefined)
+      await pause(300)
+      assert.ok(
+        (await rowsNamed(PREFIX)).every(id => id !== reminder),
+        'E9: the dismissed row stays gone'
+      )
+      await log(
+        support,
+        'longLists-web.log',
+        `E9: Pending ${pending.length} rows, ${read.most} at once; a reminder left`
+      )
     },
     E10: async () => {
       await open(`/players/${seeded.playerId}`, 'Mookie')

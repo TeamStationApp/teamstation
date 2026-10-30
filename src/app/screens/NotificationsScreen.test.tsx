@@ -4,8 +4,10 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { TeamStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
+import { listProps, reachEnd } from '../../test/PagedListStandIn'
 import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
@@ -795,5 +797,322 @@ describe("a player's side removing them", function () {
     await press(`Dismiss ${removal.title}`)
     expect(dismissed).deep.equals(['evt_removed'])
     expect(text()).not.includes(removal.title)
+  })
+})
+
+describe('notifications a page at a time', function () {
+  type Mode = 'pending' | 'sent' | 'history'
+  interface Query {
+    history?: boolean
+    sent?: boolean
+    cursor?: string
+  }
+  const PAGE = 25
+  const modeOf = ({ history, sent }: Query): Mode =>
+    history === true ? 'history' : sent === true ? 'sent' : 'pending'
+  const inbox = (mode: Mode, count: number): Notification[] =>
+    Array.from({ length: count }, (_row, index) => ({
+      ...invitation,
+      id: `${mode}_event_${index}`,
+      requestId: `${mode}_${index}`,
+      title: `${mode} row ${index}.`,
+      canAct: mode === 'pending',
+      status: mode === 'history' ? ('accepted' as const) : invitation.status
+    }))
+
+  /** Each mode's rows, cut as the server cuts them. */
+  function server(rows: Record<Mode, Notification[]>): {
+    client: TeamStationClient
+    reads: Query[]
+  } {
+    const reads: Query[] = []
+    const client = {
+      notifications: async (query: Query) => {
+        reads.push(query)
+        const start = query.cursor == null ? 0 : Number(query.cursor)
+        const list = rows[modeOf(query)]
+        const end = start + PAGE
+        return {
+          items: list.slice(start, end),
+          hasPending: rows.pending.length > 0,
+          nextCursor: end < list.length ? String(end) : null
+        }
+      },
+      dismissNotification: async () => undefined,
+      decideRelationship: async (id: string) => ({ id, status: 'accepted' })
+    } as unknown as TeamStationClient
+    return { client, reads }
+  }
+
+  const reached = async (): Promise<void> => {
+    await act(async () => {
+      reachEnd()
+      await delay(20)
+    })
+  }
+
+  for (const mode of ['pending', 'sent', 'history'] as const)
+    it(`reads ${mode} by page, with no button, and comes back to what it held`, async function () {
+      const rows = {
+        pending: inbox('pending', 60),
+        sent: inbox('sent', 60),
+        history: inbox('history', 60)
+      }
+      const { client, reads } = server(rows)
+      await mount(
+        <NotificationsScreen client={client} onOpen={() => undefined} />
+      )
+      if (mode !== 'pending') await press(mode[0].toUpperCase() + mode.slice(1))
+      expect(text()).includes(`${mode} row 24.`)
+      expect(text()).not.includes(`${mode} row 25.`)
+      expect(text()).not.includes('Load more')
+      await reached()
+      expect(text()).includes(`${mode} row 49.`)
+      await reached()
+      expect(text()).includes(`${mode} row 59.`)
+      expect(
+        reads.filter(query => modeOf(query) === mode).map(read => read.cursor)
+      ).deep.equals([undefined, '25', '50'])
+      // The other way and back: its pages are held, and all read again.
+      await press(mode === 'sent' ? 'History' : 'Sent')
+      reads.length = 0
+      await press(mode[0].toUpperCase() + mode.slice(1))
+      expect(text()).includes(`${mode} row 59.`)
+      expect(reads.map(read => read.cursor)).deep.equals([
+        undefined,
+        '25',
+        '50'
+      ])
+    })
+
+  it('says so when a mode has nothing in it', async function () {
+    const { client } = server({ pending: [], sent: [], history: [] })
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    expect(text()).includes('No approvals are waiting for you.')
+    await press('Sent')
+    expect(text()).includes('No sent invitations are waiting for approval.')
+    await press('History')
+    expect(text()).includes('No resolved notifications yet.')
+  })
+
+  it('keeps one row for a request read on two pages, where it first came', async function () {
+    const rows = inbox('pending', 2)
+    let second = false
+    const client = {
+      notifications: async () => {
+        if (second)
+          return {
+            items: [
+              { ...rows[0], title: 'Read again.' },
+              { ...rows[1], requestId: 'after', title: 'After.' }
+            ],
+            hasPending: true,
+            nextCursor: null
+          }
+        second = true
+        return { items: rows, hasPending: true, nextCursor: 'more' }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    await reached()
+    const page = text()
+    expect(page).not.includes('pending row 0.')
+    expect(page.indexOf('Read again.')).lessThan(page.indexOf('pending row 1.'))
+    expect(page.indexOf('pending row 1.')).lessThan(page.indexOf('After.'))
+  })
+
+  it('leaves a row taken by a page that has more behind it, and reads on', async function () {
+    const rows = {
+      pending: inbox('pending', 40),
+      sent: [],
+      history: inbox('history', 1)
+    }
+    const { client, reads } = server(rows)
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    let decided = 0
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <NotificationsScreen
+            client={client}
+            onOpen={() => undefined}
+            onDecided={() => {
+              decided++
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    reads.length = 0
+    for (let index = 0; index < 16; index++) {
+      const { title } = rows.pending[index]
+      await press(`Accept ${title}`)
+      expect(text()).not.includes(title)
+    }
+    expect(decided).equals(16)
+    // Nine left of 25: fewer than fill a screen, so the next page came.
+    expect(reads.map(read => read.cursor)).deep.equals(['25'])
+    expect(text()).includes('pending row 39.')
+  })
+
+  it('tells a mounted row what is being dismissed and decided', async function () {
+    const rows = inbox('pending', 3)
+    const reminders = rows.map(row => ({
+      ...row,
+      type: 'recordingUpload',
+      gameId: null
+    }))
+    const hold: { release?: () => void } = {}
+    const client = {
+      notifications: async () => ({
+        items: [...reminders.slice(0, 2), rows[2]],
+        hasPending: true,
+        nextCursor: null
+      }),
+      dismissNotification: async () => {
+        await new Promise<void>(resolve => {
+          hold.release = resolve
+        })
+      },
+      decideRelationship: async (id: string) => {
+        await new Promise<void>(resolve => {
+          hold.release = resolve
+        })
+        return { id, status: 'accepted' }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    const before = listProps().extraData
+    const busyRows = (): number =>
+      document.querySelectorAll('[aria-busy="true"]').length
+    const dismissButtons = (): HTMLElement[] =>
+      [...document.querySelectorAll<HTMLElement>('[role="button"]')].filter(
+        node => node.textContent === 'Dismiss'
+      )
+    await act(async () => {
+      dismissButtons()[0].click()
+      await delay(20)
+    })
+    expect(listProps().extraData).not.equals(before)
+    // Its own row shows the spinner; the other waits for it.
+    expect(busyRows()).equals(1)
+    expect(dismissButtons()).has.length(1)
+    expect(dismissButtons()[0].getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      hold.release?.()
+      await delay(20)
+    })
+    expect(busyRows()).equals(0)
+    expect(dismissButtons()).has.length(1)
+    expect(dismissButtons()[0].getAttribute('aria-disabled')).not.equals('true')
+    await press(`Accept ${rows[2].title}`)
+    expect(
+      byLabel(`Reject ${rows[2].title}`).getAttribute('aria-disabled')
+    ).equals('true')
+    await act(async () => {
+      hold.release?.()
+      await delay(20)
+    })
+    expect(text()).not.includes(rows[2].title)
+  })
+
+  it('keeps the rows and shows Retry at the end when a later page fails', async function () {
+    const rows = inbox('pending', 30)
+    let fail = true
+    const client = {
+      notifications: async ({ cursor }: Query) => {
+        if (cursor == null)
+          return {
+            items: rows.slice(0, 25),
+            hasPending: true,
+            nextCursor: '25'
+          }
+        if (fail) throw new Error('The inbox went away')
+        return {
+          items: rows.slice(25),
+          hasPending: true,
+          nextCursor: null
+        }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    await reached()
+    expect(text()).includes('Could not load more')
+    expect(text()).includes('pending row 24.')
+    expect(text()).not.includes('The inbox went away')
+    fail = false
+    await press('Retry')
+    expect(text()).includes('pending row 29.')
+    expect(text()).not.includes('Could not load more')
+  })
+
+  it('keeps the rows and says why when reading them again fails', async function () {
+    const rows = inbox('pending', 2)
+    let fail = false
+    const client = {
+      notifications: async () => {
+        if (fail) throw new Error('The inbox went away')
+        return { items: rows, hasPending: true, nextCursor: null }
+      }
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    fail = true
+    await act(async () => {
+      window.dispatchEvent(new window.Event('focus'))
+      await delay(20)
+    })
+    expect(text()).includes('The inbox went away')
+    expect(text()).includes('pending row 1.')
+    fail = false
+    await press('Retry notifications')
+    expect(text()).not.includes('The inbox went away')
+    expect(text()).includes('pending row 1.')
+  })
+
+  it('forgets every mode once the server refuses a page', async function () {
+    const rows = {
+      pending: inbox('pending', 30),
+      sent: inbox('sent', 2),
+      history: []
+    }
+    const { client } = server(rows)
+    const read = client.notifications.bind(client)
+    let refuse = false
+    client.notifications = async query => {
+      if (refuse) throw new HttpError('forbidden', 'You were signed out')
+      return await read(query)
+    }
+    await mount(
+      <NotificationsScreen client={client} onOpen={() => undefined} />
+    )
+    await press('Sent')
+    expect(text()).includes('sent row 1.')
+    await press('Pending')
+    refuse = true
+    await reached()
+    expect(text()).includes('You were signed out')
+    expect(text()).not.includes('pending row')
+    expect(text()).not.includes('No approvals are waiting')
+    await press('Sent')
+    await act(async () => {
+      await delay(20)
+    })
+    expect(text()).not.includes('sent row')
+    refuse = false
+    await press('Retry notifications')
+    expect(text()).includes('sent row 1.')
+    expect(text()).not.includes('You were signed out')
   })
 })
