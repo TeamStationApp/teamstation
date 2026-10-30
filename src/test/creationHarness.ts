@@ -133,7 +133,16 @@ export async function creationHarness(
             freeDiskFloorGb: 1
           },
           sessionSecret: makeToken(),
-          host: 'localhost'
+          host: 'localhost',
+          space: {
+            endpoint: '',
+            region: '',
+            bucket: '',
+            accessKeyId: '',
+            secretAccessKey: '',
+            pathStyle: false
+          },
+          mediaRoot: '/tmp'
         })
       )
     },

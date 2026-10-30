@@ -3,6 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import {
+  asCameraSource,
   asGameLiveStreams,
   asLiveNow,
   asLiveStatus,
@@ -16,18 +17,19 @@ import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import {
   cameraLabelOf,
+  checkCameraLimits,
   createLiveStream,
   deviceIdOf,
   deviceLabelTaken,
   deviceModelOf,
-  freeSlot,
+  isActiveStream,
   labelFor,
   labelTaken,
   liveStreamById,
   type LiveStreamRow,
   liveStreamsFor,
   MAX_CAMERAS,
-  myLiveStreams,
+  MAX_GAME_CAMERAS,
   placeByPublisher,
   requestDeviceStream,
   revealKey,
@@ -35,10 +37,16 @@ import {
   setCameraName,
   streamUrlFor
 } from '../live/streamKeys'
+import { deleteVideo } from '../media/deleteVideo'
+import { imageUrl } from '../media/imageUrls'
+import type { SpaceSettings } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { recordRecordingReminder } from '../notifications/recordingReminders'
+import {
+  recordRecordingReminder,
+  settleRecordingReminder
+} from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
 import { withRevision } from '../socket/syncRevision'
 
@@ -54,8 +62,10 @@ import { withRevision } from '../socket/syncRevision'
  * what it is doing, and how to stop it. That is the difference between knowing
  * who is streaming and being able to stream as them.
  *
- * One person may point up to four cameras at one game, which is four videos,
- * which is what the watch screen already calls angles.
+ * One person may have up to four cameras active on one game, which is four
+ * videos, which is what the watch screen already calls angles, and a game may
+ * have six. An ended camera stays on the list with its video and counts against
+ * neither limit.
  *
  * Nothing here talks to the ingest. These endpoints write rows; the ingest
  * reads them within the second and acts. See `server/live/controller.ts`.
@@ -67,6 +77,9 @@ export interface LiveRouteOptions {
   /** The host to print in a stream URL when none is configured. */
   /** What this deployment is called: the host a stream URL names. */
   host: string
+  /** Where a discarded camera's video is deleted from. */
+  space: SpaceSettings
+  mediaRoot: string
 }
 
 const asStreamChange = asObject({
@@ -85,7 +98,9 @@ const asNewStream = asObject({
   deviceId: asOptional(asString),
   deviceModel: asOptional(asString),
   recordsLocally: asOptional(asBoolean),
-  heldStreamId: asOptional(asString)
+  heldStreamId: asOptional(asString),
+  /** An external camera. It is tied to the account, so no device applies. */
+  source: asOptional(asCameraSource)
 })
 
 interface GameRow {
@@ -103,7 +118,7 @@ export function liveRoutes(
   options: LiveRouteOptions
 ): Router {
   const router = Router()
-  const { live, sessionSecret, host } = options
+  const { live, sessionSecret, host, space, mediaRoot } = options
 
   /**
    * The game, and the team of it this person films — a videographer of it,
@@ -160,12 +175,13 @@ export function liveRoutes(
         actor.isAdmin,
         pathParam(req.params.gameId)
       )
-      res.json(await listFor(db, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId))
     })
   )
 
   /**
-   * Another camera of this person's own, up to the fourth.
+   * Another camera of this person's own, up to the fourth, while the game has
+   * fewer than six.
    *
    * With a `deviceId`, it is the stream that device holds under that camera
    * name: the same one again (200), one an installed Director claimed under
@@ -204,7 +220,7 @@ export function liveRoutes(
       const body = cleanBody(asNewStream, req.body)
       // Blank is the same as omitted: the slot's own name, not an empty one.
       const named = cameraLabelOf(body.label)
-      if (body.deviceId != null) {
+      if (body.deviceId != null && body.source == null) {
         const answer = await requestDeviceStream(db, {
           gameId: game.id,
           teamId,
@@ -224,7 +240,7 @@ export function liveRoutes(
           entityId: answer.row.id
         })
         res.status(answer.created ? 201 : 200).json({
-          ...(await summaryOf(db, answer.row, actor.userId)),
+          ...(await summaryOf(db, space, answer.row, actor.userId)),
           url: streamUrlFor(live, host, answer.key)
         })
         return
@@ -234,12 +250,7 @@ export function liveRoutes(
       // each, and neither is handed the other's key.
       const created = await db.transaction().execute(async trx => {
         await lockKeys(trx, [`liveStreams:${game.id}`])
-        const slot = freeSlot(await myLiveStreams(trx, game.id, actor.userId))
-        if (slot == null) {
-          throw badRequest(
-            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-          )
-        }
+        const slot = await checkCameraLimits(trx, game.id, actor.userId)
         return await createLiveStream(trx, {
           gameId: game.id,
           teamId,
@@ -249,13 +260,14 @@ export function liveRoutes(
           label: named ?? undefined,
           live,
           sessionSecret,
-          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
+          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`,
+          source: body.source
         })
       })
 
       setAudit(res.locals, { entityType: 'liveStream', entityId: created.id })
       res.status(201).json({
-        ...(await summaryOf(db, created, actor.userId)),
+        ...(await summaryOf(db, space, created, actor.userId)),
         url: streamUrlFor(live, host, created.key)
       })
     })
@@ -291,7 +303,7 @@ export function liveRoutes(
         )
       }
       res.json({
-        ...(await summaryOf(db, row, actor.userId)),
+        ...(await summaryOf(db, space, row, actor.userId)),
         url: streamUrlFor(live, host, key)
       })
     })
@@ -318,7 +330,7 @@ export function liveRoutes(
       setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       const fresh = (await liveStreamById(db, row.id)) ?? row
       res.json({
-        ...(await summaryOf(db, fresh, actor.userId)),
+        ...(await summaryOf(db, space, fresh, actor.userId)),
         url: streamUrlFor(live, host, key)
       })
     })
@@ -418,7 +430,7 @@ export function liveRoutes(
         }
       })
       const fresh = (await liveStreamById(db, row.id)) ?? row
-      res.json(await summaryOf(db, fresh, actor.userId))
+      res.json(await summaryOf(db, space, fresh, actor.userId))
     })
   )
 
@@ -456,7 +468,7 @@ export function liveRoutes(
         .execute()
       setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       const fresh = (await liveStreamById(db, row.id)) ?? row
-      res.json(await summaryOf(db, fresh, actor.userId))
+      res.json(await summaryOf(db, space, fresh, actor.userId))
     })
   )
 
@@ -539,7 +551,67 @@ export function liveRoutes(
         before: { state: row.state, slot: row.slot },
         after: { state: 'revoked', removedVideo }
       })
-      res.json(await listFor(db, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId))
+    })
+  )
+
+  /**
+   * Deletes one of this person's own ended cameras, and everything it made.
+   *
+   * Removing a camera leaves its recording; this is the delete that takes the
+   * recording too: its live video and every upload of it, which is what lets
+   * a phone drop its own copy. Only once it has stopped. A camera still active
+   * has End, and one still `publishing` after End is one whose playlist the
+   * ingest has not closed yet.
+   */
+  router.post(
+    '/games/:gameId/live-streams/:streamId/discard',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const { game } = await gameToManage(
+        actor.userId,
+        actor.isAdmin,
+        pathParam(req.params.gameId)
+      )
+      const row = await myStream(
+        actor.userId,
+        game.id,
+        pathParam(req.params.streamId)
+      )
+      if (isActiveStream(row) || row.state === 'publishing') {
+        throw badRequest('That camera is still running. End it first.')
+      }
+
+      const uploads = await db
+        .selectFrom('director_uploads')
+        .select('video_id as videoId')
+        .where('live_stream_id', '=', row.id)
+        .where('video_id', 'is not', null)
+        .execute()
+      const videoIds = [
+        ...new Set([row.videoId, ...uploads.map(one => one.videoId)])
+      ].filter(id => id != null)
+      for (const videoId of videoIds) {
+        await deleteVideo({ db, space, mediaRoot }, videoId)
+      }
+
+      const now = new Date()
+      await db
+        .updateTable('live_streams')
+        .set({ discarded_at: now, updated_at: now })
+        .where('id', '=', row.id)
+        .execute()
+      await settleRecordingReminder(db, row.id, now)
+
+      setAudit(res.locals, {
+        entityType: 'liveStream',
+        entityId: row.id,
+        before: { state: row.state, slot: row.slot },
+        after: { discarded: true, deletedVideos: videoIds }
+      })
+      res.json(await listFor(db, space, game.id, actor.userId))
     })
   )
 
@@ -633,14 +705,21 @@ export function liveRoutes(
  */
 async function summaryOf(
   db: Kysely<Database>,
+  space: SpaceSettings,
   row: LiveStreamRow,
   askedBy: string
 ): Promise<LiveStream> {
-  const [status, names] = await Promise.all([
+  const [status, owners] = await Promise.all([
     statusOf(db, row.id),
-    namesFor(db, [row.userId])
+    ownersOf(db, space, [row.userId])
   ])
-  return oneStream(row, status, names.get(row.userId) ?? '', askedBy)
+  return oneStream(row, status, owners.get(row.userId)?.name ?? '', askedBy)
+}
+
+/** What a game's list says of a camera beyond what a single answer does. */
+interface ListedStream {
+  ownerPicture: string | null
+  video: PlayableVideo | undefined
 }
 
 /**
@@ -649,16 +728,17 @@ async function summaryOf(
  * Every item of a game's list says what device holds it and how far its
  * recording has got, and the owner's own items say which install. A single
  * camera says so too when a device holds it; one made for a browser or
- * streaming software answers exactly as it always has.
+ * streaming software answers exactly as it always has. Only a list says when
+ * the camera ran and what to play.
  */
 function oneStream(
   row: LiveStreamRow,
   status: LiveStatus | null,
   ownerName: string,
   askedBy: string,
-  inList = false
+  listed?: ListedStream
 ): LiveStream {
-  const device = inList || row.deviceId != null
+  const device = listed != null || row.deviceId != null
   return asLiveStream({
     id: row.id,
     gameId: row.gameId,
@@ -682,21 +762,45 @@ function oneStream(
           localRecording: row.localRecording,
           ...(row.userId === askedBy ? { deviceId: row.deviceId } : {})
         }
-      : {})
+      : {}),
+    ...(listed == null
+      ? {}
+      : {
+          createdAt: row.createdAt.toISOString(),
+          source: row.source,
+          publishedAt: row.publishedAt?.toISOString() ?? null,
+          endedAt: row.endedAt?.toISOString() ?? null,
+          durationSec: listed.video?.durationSec ?? null,
+          playableVideoId: listed.video?.id ?? null,
+          ownerPicture: listed.ownerPicture
+        })
   })
 }
 
 /** Everything on one game, split by whose it is. */
 async function listFor(
   db: Kysely<Database>,
+  space: SpaceSettings,
   gameId: string,
   askedBy: string
 ): Promise<unknown> {
   const rows = await liveStreamsFor(db, gameId)
-  const names = await namesFor(
-    db,
-    rows.map(row => row.userId)
-  )
+  const [owners, videos, discarded] = await Promise.all([
+    ownersOf(
+      db,
+      space,
+      rows.map(row => row.userId)
+    ),
+    playableVideos(db, rows),
+    db
+      .selectFrom('live_streams')
+      .select('id')
+      .where('game_id', '=', gameId)
+      .where('user_id', '=', askedBy)
+      .where('discarded_at', 'is not', null)
+      .orderBy('id')
+      .execute()
+  ])
   const statuses = new Map<string, LiveStatus | null>()
   for (const row of rows) {
     statuses.set(
@@ -708,34 +812,104 @@ async function listFor(
     oneStream(
       row,
       statuses.get(row.id) ?? null,
-      names.get(row.userId) ?? '',
+      owners.get(row.userId)?.name ?? '',
       askedBy,
-      true
+      {
+        ownerPicture: owners.get(row.userId)?.picture ?? null,
+        video: videos.get(row.id)
+      }
     )
   )
-  const mine = drawn.filter(row => row.userId === askedBy)
+  const active = rows.filter(row => isActiveStream(row))
+  const activeMine = active.filter(row => row.userId === askedBy)
+  const gameCanAdd = Math.max(0, MAX_GAME_CAMERAS - active.length)
   return asGameLiveStreams({
     gameId,
-    mine,
+    mine: drawn.filter(row => row.userId === askedBy),
     others: drawn.filter(row => row.userId !== askedBy),
-    canAdd: Math.max(0, MAX_CAMERAS - mine.length),
-    maxCameras: MAX_CAMERAS
+    canAdd: Math.min(MAX_CAMERAS - activeMine.length, gameCanAdd),
+    maxCameras: MAX_CAMERAS,
+    gameCanAdd,
+    discarded: discarded.map(row => row.id)
   })
 }
 
-/** Who these people are, in the words a screen would use. */
-async function namesFor(
+interface Owner {
+  name: string
+  picture: string | null
+}
+
+/** Who these people are, in the words a screen would use, and their picture. */
+async function ownersOf(
   db: Kysely<Database>,
+  space: SpaceSettings,
   userIds: string[]
-): Promise<Map<string, string>> {
+): Promise<Map<string, Owner>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
   const rows = await db
     .selectFrom('users')
-    .select(['id', 'display_name as displayName'])
+    .select(['id', 'display_name as displayName', 'avatar_path as avatarPath'])
     .where('id', 'in', wanted)
     .execute()
-  return new Map(rows.map(row => [row.id, row.displayName]))
+  return new Map(
+    rows.map(row => [
+      row.id,
+      { name: row.displayName, picture: imageUrl(space, row.avatarPath) }
+    ])
+  )
+}
+
+interface PlayableVideo {
+  id: string
+  durationSec: number | null
+}
+
+/**
+ * The video each camera plays: its newest finished upload when that is
+ * visible, otherwise its live video when that is. By upload rather than by
+ * `replaced_by`, because an upload that stands alone replaced nothing.
+ */
+async function playableVideos(
+  db: Kysely<Database>,
+  rows: LiveStreamRow[]
+): Promise<Map<string, PlayableVideo>> {
+  const ids = rows.map(row => row.id)
+  if (ids.length === 0) return new Map()
+  const uploads = await db
+    .selectFrom('director_uploads')
+    .select(['live_stream_id as streamId', 'video_id as videoId'])
+    .where('live_stream_id', 'in', ids)
+    .where('state', '=', 'ready')
+    .where('video_id', 'is not', null)
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .execute()
+  const live = rows.flatMap(row => (row.videoId == null ? [] : [row.videoId]))
+  const wanted = [...live, ...uploads.flatMap(one => one.videoId ?? [])]
+  const visible =
+    wanted.length === 0
+      ? []
+      : await db
+          .selectFrom('videos')
+          .select(['id', 'duration_sec as durationSec'])
+          .where('id', 'in', wanted)
+          .where('hidden', '=', false)
+          .where('status', 'in', ['live', 'ready'])
+          .execute()
+  const byId = new Map(visible.map(one => [one.id, one]))
+  const answer = new Map<string, PlayableVideo>()
+  for (const row of rows) {
+    const candidates = [
+      ...uploads.filter(one => one.streamId === row.id).map(one => one.videoId),
+      row.videoId
+    ]
+    const found = candidates
+      .map(id => (id == null ? undefined : byId.get(id)))
+      .find(one => one != null)
+    if (found != null) answer.set(row.id, found)
+  }
+  return answer
 }
 
 /**

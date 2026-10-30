@@ -34,7 +34,9 @@ import {
   configureIngest,
   forcePublishForTest,
   liveKeys,
-  resetForTest
+  type LiveSpec,
+  resetForTest,
+  setLive
 } from './splitter'
 
 /**
@@ -245,6 +247,68 @@ describe('what the ingest is told', function () {
     const answer = await resolveKey(SECOND_KEY, tight)
     expect(typeof answer, 'a sentence, not a stream').equals('string')
     expect(typeof answer === 'string' ? answer : '').contains('not enough room')
+  })
+
+  it('leaves alone a key looked up after a running tick read the rows', async function () {
+    if (options == null || db == null) this.skip()
+    const lateKey = 'ts_latekeylatekeylatekeyl'
+    const now = new Date()
+    const first = await db
+      .selectFrom('live_streams')
+      .select('user_id')
+      .where('id', '=', 'liv_1')
+      .executeTakeFirstOrThrow()
+    let reading = (): void => undefined
+    const read = new Promise<void>(resolve => {
+      reading = resolve
+    })
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const tick = sync({
+      ...options,
+      freeBytes: async () => {
+        reading()
+        await held
+        return 1_000_000_000_000
+      }
+    })
+    await read
+    await db
+      .insertInto('live_streams')
+      .values({
+        id: 'liv_late',
+        game_id: 'gam_1',
+        team_id: 'tem_home',
+        user_id: first.user_id,
+        slot: 2,
+        key_hash: hashToken(lateKey),
+        key_prefix: lateKey.slice(0, 8),
+        key_cipher: sealSecret(SECRET, lateKey),
+        state: 'idle',
+        opens_at: now,
+        video_id: 'vid_1',
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    const spec = await resolveKey(lateKey, options)
+    expect(typeof spec).equals('object')
+    setLive(lateKey, spec as LiveSpec)
+    release()
+    await tick
+    expect(liveKeys(), 'the tick that could not see it').includes(lateKey)
+    await sync(options)
+    expect(liveKeys(), 'the tick that can').includes(lateKey)
+
+    await db
+      .updateTable('live_streams')
+      .set({ state: 'revoked', closes_at: now, ended_at: now })
+      .where('id', '=', 'liv_late')
+      .execute()
+    await sync(options)
+    expect(liveKeys(), 'gone with the stream').not.includes(lateKey)
   })
 
   it('lets a key through days before the game, so it can be tried', async function () {

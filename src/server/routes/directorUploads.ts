@@ -9,6 +9,7 @@ import {
   badRequest,
   conflict,
   forbidden,
+  gone,
   notFound,
   unauthorized
 } from '../../common/errors'
@@ -35,6 +36,7 @@ import {
   startOf,
   uploadDir
 } from '../director/uploads'
+import { deleteVideo, type DeleteVideoContext } from '../media/deleteVideo'
 import { ingestVideoFile } from '../media/ingestFile'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
@@ -70,9 +72,14 @@ import { noteGameFigures } from '../socket/syncRevision'
 export interface DirectorUploadRouteOptions {
   /** Where the parts wait. Scratch, not media: see `serverConfig`. */
   uploadsDir: string
+  /** Where a video's files are, to delete one whose camera was deleted. */
+  mediaRoot: string
   ffmpegPath: string
   space?: SpaceSettings
 }
+
+/** What a phone still holding a deleted camera's upload is told. */
+const CAMERA_DELETED = 'This camera was deleted, and its video with it.'
 
 const asNewUpload = asObject({
   gameId: asString,
@@ -265,6 +272,7 @@ export function directorUploadRoutes(
       const serverClockOffsetMs = clockOffsetOf(body.serverClockOffsetMs)
       theSpace()
       const game = await gameIRun(body.gameId, actor.userId, actor.isAdmin)
+      await refuseDiscarded(db, body.liveStreamId)
 
       // Ended and revoked streams still count: a recording made before an
       // End can still replace its own angle's live copy.
@@ -443,6 +451,7 @@ export function directorUploadRoutes(
         throw badRequest(`This upload is ${row.state}.`)
       }
       if (row.game_id == null) throw badRequest('This upload names no game.')
+      await refuseDiscarded(db, row.live_stream_id)
 
       const dir = uploadDir(options.uploadsDir, row.id)
       const total = partCount(Number(row.size_bytes), row.part_size)
@@ -554,7 +563,10 @@ export function directorUploadRoutes(
         }
       })
 
-      await replaceLiveRecording(db, game.id, ingested.videoId, namedBy(row))
+      await replaceLiveRecording(db, game.id, ingested.videoId, namedBy(row), {
+        space,
+        mediaRoot: options.mediaRoot
+      })
 
       await db
         .updateTable('director_uploads')
@@ -628,6 +640,21 @@ export function directorUploadRoutes(
   return router
 }
 
+/** An upload may not open or finish against a camera its owner deleted. */
+async function refuseDiscarded(
+  db: Kysely<Database>,
+  liveStreamId: string | null | undefined
+): Promise<void> {
+  if (liveStreamId == null) return
+  const discarded = await db
+    .selectFrom('live_streams')
+    .select('id')
+    .where('id', '=', liveStreamId)
+    .where('discarded_at', 'is not', null)
+    .executeTakeFirst()
+  if (discarded != null) throw gone(CAMERA_DELETED)
+}
+
 /**
  * The stream an upload names, for `replaceLiveRecording`: none for an upload
  * from TS Director or the Distributor, which go by the coverage rule.
@@ -657,23 +684,25 @@ export function namedBy(row: {
  * **Named**, from the phone that recorded the angle: only that stream's live
  * copy, and only while it is not publishing. With `wholeStream` it is hidden
  * whatever the coverage test says; without, only if the test passes. When it
- * is hidden, the upload takes its title, the stream is revoked and marked
+ * is hidden, the upload takes its title, the stream is ended and marked
  * `uploaded`, and its reminder is settled. When it is not, the upload stands
  * as a video of its own and the reminder stays. A stream with no live copy at
  * all — its phone never reached the server, so the placeholder went when it
  * ended — has nothing to hide: the upload is the angle's only copy, and the
- * stream is revoked, marked `uploaded` and its reminder settled all the same.
+ * stream is ended, marked `uploaded` and its reminder settled all the same.
  * A named stream that is another game's, keeps no recording, or was replaced
- * already replaces nothing.
+ * already replaces nothing. One its owner deleted drops the upload, so an
+ * upload already under way cannot bring a deleted video back.
  */
 export async function replaceLiveRecording(
   db: Kysely<Database>,
   gameId: string,
   uploadedId: string,
-  named?: { liveStreamId: string; wholeStream: boolean }
+  named?: { liveStreamId: string; wholeStream: boolean },
+  files?: Omit<DeleteVideoContext, 'db'>
 ): Promise<string[]> {
   if (named != null) {
-    return await replaceNamedStream(db, gameId, uploadedId, named)
+    return await replaceNamedStream(db, gameId, uploadedId, named, files)
   }
   // Read and hidden in one transaction, which tells the game's event last.
   return await atomic(
@@ -737,8 +766,19 @@ async function replaceNamedStream(
   db: Kysely<Database>,
   gameId: string,
   uploadedId: string,
-  named: { liveStreamId: string; wholeStream: boolean }
+  named: { liveStreamId: string; wholeStream: boolean },
+  files?: Omit<DeleteVideoContext, 'db'>
 ): Promise<string[]> {
+  const discarded = await db
+    .selectFrom('live_streams')
+    .select('id')
+    .where('id', '=', named.liveStreamId)
+    .where('discarded_at', 'is not', null)
+    .executeTakeFirst()
+  if (discarded != null) {
+    if (files != null) await deleteVideo({ db, ...files }, uploadedId)
+    return []
+  }
   const stream = await db
     .selectFrom('live_streams')
     .select(['id', 'state', 'video_id as videoId', 'local_recording'])
@@ -787,7 +827,7 @@ async function replaceNamedStream(
 
   const now = new Date()
   const replaced = await atomic(db, async trx => {
-    // Revoked, so the next take on this angle asks for a fresh stream and
+    // Ended, so the next take on this angle asks for a fresh stream and
     // video rather than this one, whose copy is now the upload. First, and
     // only while it is still neither publishing nor replaced: the phone may
     // have dialled it again since it was read above, and a stream that is on
@@ -818,10 +858,11 @@ async function replaceNamedStream(
 }
 
 /**
- * Marks a stream `uploaded` and revokes it, so the next take on its angle asks
- * for a fresh stream and video, and says whether it did: only while it is
- * neither publishing nor replaced already, since the phone may have dialled it
- * again since it was read.
+ * Marks a stream `uploaded` and ends it, so the next take on its angle asks
+ * for a fresh stream and video while this one stays listed, and says whether
+ * it did: only while it is neither publishing nor replaced already, since the
+ * phone may have dialled it again since it was read. Its key stops here, and
+ * the ingest closes its playlist if it was never finished.
  */
 async function claimAsUploaded(
   trx: Transaction<Database>,
@@ -830,7 +871,12 @@ async function claimAsUploaded(
 ): Promise<boolean> {
   const claimed = await trx
     .updateTable('live_streams')
-    .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
+    .set({
+      local_recording: 'uploaded',
+      state: 'ended',
+      closes_at: now,
+      updated_at: now
+    })
     .where('id', '=', streamId)
     .where('state', '<>', 'publishing')
     .where('local_recording', '<>', 'uploaded')

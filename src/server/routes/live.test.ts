@@ -63,6 +63,16 @@ const parentId = mintUser()
 const filmerId = mintUser()
 const scorerId = mintUser()
 
+const MEDIA_ROOT = '/tmp/tsLiveRoutesMedia'
+const NO_SPACE = {
+  endpoint: '',
+  region: '',
+  bucket: '',
+  accessKeyId: '',
+  secretAccessKey: '',
+  pathStyle: false
+}
+
 describe('a game’s stream key over the API', function () {
   this.timeout(60000)
 
@@ -104,7 +114,9 @@ describe('a game’s stream key over the API', function () {
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
-        host: 'live.example'
+        host: 'live.example',
+        space: NO_SPACE,
+        mediaRoot: MEDIA_ROOT
       })
     )
     // Mounted alongside, because deleting a recording is the other half of
@@ -114,17 +126,10 @@ describe('a game’s stream key over the API', function () {
       '/api/v1',
       mediaRoutes(db, {
         ffmpegPath: '/usr/bin/ffmpeg',
-        mediaRoot: '/tmp/tsLiveRoutesMedia',
+        mediaRoot: MEDIA_ROOT,
         mediaSecret: 'm'.repeat(32),
         publicUrl: 'http://127.0.0.1',
-        space: {
-          endpoint: '',
-          region: '',
-          bucket: '',
-          accessKeyId: '',
-          secretAccessKey: '',
-          pathStyle: false
-        }
+        space: NO_SPACE
       })
     )
     app.use(errorHandler)
@@ -770,7 +775,9 @@ describe('a game’s stream key over the API', function () {
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
-        host: 'live.example'
+        host: 'live.example',
+        space: NO_SPACE,
+        mediaRoot: MEDIA_ROOT
       })
     )
     off.use(errorHandler)

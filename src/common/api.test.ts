@@ -851,6 +851,50 @@ describe('api client', function () {
     }).updateLiveStream('gam 1', 'liv_1', { localRecording: 'recorded' })
     expect(marked.localRecording).equals('recorded')
 
+    const external = stubFetch(201, device)
+    await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: external.fetch
+    }).addLiveStream('gam 1', 'Backstop', { source: 'gopro' })
+    expect(JSON.parse(external.calls[0].body ?? '')).deep.equals({
+      label: 'Backstop',
+      source: 'gopro'
+    })
+
+    const discarded = stubFetch(200, {
+      gameId: 'gam 1',
+      mine: [],
+      others: [],
+      canAdd: 4,
+      maxCameras: 4,
+      gameCanAdd: 6,
+      discarded: ['liv_1']
+    })
+    const left = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: discarded.fetch
+    }).discardLiveStream('gam 1', 'liv_1')
+    expect(discarded.calls[0].method).equals('POST')
+    expect(discarded.calls[0].url).equals(
+      'http://x/api/v1/games/gam%201/live-streams/liv_1/discard'
+    )
+    expect(left.discarded).deep.equals(['liv_1'])
+
+    // An older server says neither: room for the game, nothing discarded.
+    const older = stubFetch(200, {
+      gameId: 'gam 1',
+      mine: [],
+      others: [],
+      canAdd: 4,
+      maxCameras: 4
+    })
+    const listed = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: older.fetch
+    }).liveStreams('gam 1')
+    expect(listed.gameCanAdd).equals(6)
+    expect(listed.discarded).deep.equals([])
+
     // 204 in production; a stub Response cannot carry a body with it.
     const dismissed = stubFetch(200, '')
     await new TeamStationClient({

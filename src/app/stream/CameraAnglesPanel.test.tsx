@@ -106,7 +106,9 @@ function fakeClient(): FakeClient {
         mine: fake.mine,
         others: fake.others,
         canAdd: 4,
-        maxCameras: 4
+        maxCameras: 4,
+        gameCanAdd: 6,
+        discarded: []
       }
     },
     rotateLiveStream: acting('rotate'),
