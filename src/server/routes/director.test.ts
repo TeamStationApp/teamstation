@@ -422,6 +422,51 @@ describe('what TS Director is offered', function () {
     expect(answer.body).deep.equals([])
   })
 
+  it('answers none for a game whose every camera was deleted', async function () {
+    if (db == null) this.skip()
+    const now = new Date()
+    const camera = {
+      game_id: 'gam_sixth',
+      team_id: 'tem_ours',
+      user_id: userIdOfGumbo(coachId),
+      slot: 1,
+      key_prefix: 'ts_cam',
+      key_cipher: 'v1.a.b.c',
+      state: 'ended' as const,
+      opens_at: now,
+      closes_at: now,
+      created_at: now,
+      updated_at: now
+    }
+    await db
+      .insertInto('live_streams')
+      .values([
+        {
+          ...camera,
+          id: 'liv_gone',
+          key_hash: 'hash_gone',
+          discarded_at: now
+        },
+        { ...camera, id: 'liv_kept', key_hash: 'hash_kept' }
+      ])
+      .execute()
+    const liveState = async (): Promise<string | undefined> =>
+      (
+        (await ask(NEXT_TEN, COACH)).body as Array<{
+          gameId: string
+          liveState: string
+        }>
+      ).find(event => event.gameId === 'gam_sixth')?.liveState
+
+    expect(await liveState()).equals('ended')
+    await db
+      .updateTable('live_streams')
+      .set({ discarded_at: now })
+      .where('id', '=', 'liv_kept')
+      .execute()
+    expect(await liveState()).equals('none')
+  })
+
   it('names both sides, and carries no relay fields', async function () {
     if (db == null) this.skip()
     const answer = await ask(NEXT_TEN, COACH)

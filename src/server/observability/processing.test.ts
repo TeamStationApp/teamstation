@@ -22,6 +22,7 @@ describe('Server-confirmed video analytics', function () {
         '/api/v1',
         directorUploadRoutes(db, {
           uploadsDir: directory,
+          mediaRoot: media.mediaRoot,
           ffmpegPath: media.ffmpegPath,
           space
         })

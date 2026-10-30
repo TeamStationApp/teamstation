@@ -1710,6 +1710,10 @@ export const asLiveStatus = asObject({
 })
 export type LiveStatus = ReturnType<typeof asLiveStatus>
 
+/** What an external camera says it is. */
+export const asCameraSource = asLiteral('rtmp', 'gopro', 'mevo', 'mevoStudio')
+export type CameraSource = ReturnType<typeof asCameraSource>
+
 /**
  * A game's live stream.
  *
@@ -1747,6 +1751,23 @@ const cleanLiveStream = asObject({
   deviceId: asAbsentOr(asNullable(asString)),
   /** How far the phone's own recording has got. */
   localRecording: asOptional(asLiteral('none', 'recorded', 'uploaded')),
+  /** When it was made. On every item of a game's list, as what follows is. */
+  createdAt: asAbsentOr(asString),
+  /** What an external camera is. Null for a phone, Director or the website. */
+  source: asAbsentOr(asNullable(asCameraSource)),
+  /** When video first reached it. Null until then. */
+  publishedAt: asAbsentOr(asNullable(asString)),
+  /** When the ingest finished it. */
+  endedAt: asAbsentOr(asNullable(asString)),
+  /** How long `playableVideoId` runs, in seconds. */
+  durationSec: asAbsentOr(asNullable(asNumber)),
+  /**
+   * The video to play for this camera: the newest finished upload when it is
+   * visible, otherwise its live video when that is. Null when neither is.
+   */
+  playableVideoId: asAbsentOr(asNullable(asString)),
+  /** The owner's picture. */
+  ownerPicture: asAbsentOr(asNullable(asString)),
   /**
    * Only ever in the reply to a request that asked for it by name, and only
    * ever to the person the key belongs to.
@@ -1754,15 +1775,23 @@ const cleanLiveStream = asObject({
   url: asOptional(asString)
 })
 type CleanedLiveStream = ReturnType<typeof cleanLiveStream>
-/** The device fields are absent from a browser stream's own answers. */
-export type LiveStream = Omit<
-  CleanedLiveStream,
-  'deviceModel' | 'deviceId' | 'localRecording'
-> & {
-  deviceModel?: CleanedLiveStream['deviceModel']
-  deviceId?: CleanedLiveStream['deviceId']
-  localRecording?: CleanedLiveStream['localRecording']
-}
+/**
+ * The device fields are absent from a browser stream's own answers, and the
+ * list's own fields from every answer that is not a list.
+ */
+type AbsentLiveStreamField =
+  | 'deviceModel'
+  | 'deviceId'
+  | 'localRecording'
+  | 'createdAt'
+  | 'source'
+  | 'publishedAt'
+  | 'endedAt'
+  | 'durationSec'
+  | 'playableVideoId'
+  | 'ownerPicture'
+export type LiveStream = Omit<CleanedLiveStream, AbsentLiveStreamField> &
+  Partial<Pick<CleanedLiveStream, AbsentLiveStreamField>>
 export const asLiveStream: (raw: unknown) => LiveStream = cleanLiveStream
 
 /** What a device sends with a camera name to get its own stream. */
@@ -1774,6 +1803,11 @@ export interface DeviceStreamOptions {
   recordsLocally?: boolean
   /** The stream a redial already holds: 410 if somebody ended it. */
   heldStreamId?: string
+}
+
+/** What an external camera says it is. Such a stream is tied to the account. */
+export interface CameraSourceOptions {
+  source: CameraSource
 }
 
 /**
@@ -1788,9 +1822,16 @@ export const asGameLiveStreams = asObject({
   gameId: asString,
   mine: asArray(asLiveStream),
   others: asArray(asLiveStream),
-  /** How many more cameras this person may add to this game. */
+  /**
+   * How many more cameras this person may add to this game: the smaller of the
+   * room left under their own limit and the game's, counting active cameras.
+   */
   canAdd: asNumber,
-  maxCameras: asNumber
+  maxCameras: asNumber,
+  /** How many more cameras the game has room for, whoever adds them. */
+  gameCanAdd: asOptional(asNumber, 6),
+  /** The stream ids this person deleted, so a phone can drop their copies. */
+  discarded: asOptional(asArray(asString), [])
 })
 export type GameLiveStreams = ReturnType<typeof asGameLiveStreams>
 
@@ -4670,7 +4711,7 @@ export class TeamStationClient {
   async addLiveStream(
     gameId: string,
     label?: string,
-    device?: DeviceStreamOptions
+    device?: DeviceStreamOptions | CameraSourceOptions
   ): Promise<LiveStream> {
     return await this.request(
       'POST',
@@ -4753,6 +4794,21 @@ export class TeamStationClient {
       'DELETE',
       `/videos/${encodeURIComponent(videoId)}`,
       asDeletedVideo
+    )
+  }
+
+  /**
+   * Deletes one of my ended cameras: its row leaves the list, and its video
+   * and every upload of it go too.
+   */
+  async discardLiveStream(
+    gameId: string,
+    streamId: string
+  ): Promise<GameLiveStreams> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/discard`,
+      asGameLiveStreams
     )
   }
 

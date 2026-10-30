@@ -1,6 +1,3 @@
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
-
 import { type Response, Router } from 'express'
 import type { Kysely } from 'kysely'
 
@@ -11,8 +8,8 @@ import {
   unauthorized
 } from '../../common/errors'
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
-import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { deleteVideo } from '../media/deleteVideo'
 import { locateVideo, videoFrameSource } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import {
@@ -28,7 +25,6 @@ import {
   spaceConfigured,
   SpacePlayback
 } from '../media/spacesHls'
-import { deleteVideoFromSpace } from '../media/spacesVideo'
 import {
   ensureStill,
   stillInSpace,
@@ -39,7 +35,6 @@ import { readWallTimeline } from '../media/wallTimeline'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { noteGameFigures } from '../socket/syncRevision'
 
 /**
  * Playback URLs, and the check behind them.
@@ -416,7 +411,7 @@ export function mediaRoutes(
       // delete it and so a running one can stop this before it starts.
       const cameras = await db
         .selectFrom('live_streams')
-        .select(['id', 'user_id', 'state'])
+        .select(['user_id'])
         .where('video_id', '=', videoId)
         .execute()
 
@@ -430,60 +425,10 @@ export function mediaRoutes(
       // confirm to somebody who may not touch it.
       if (!runsTheGame && !isMine) throw notFound()
 
-      if (video.storage === 'peertube') {
-        throw badRequest(
-          'That recording came from the old server, which this one only reads. It cannot be deleted here.'
-        )
-      }
-      if (cameras.some(row => row.state === 'publishing')) {
-        throw badRequest(
-          'Something is still streaming into that recording. End the camera first.'
-        )
-      }
-
-      // The Space first. If it fails the row stays, and the delete can be
-      // tried again; doing it the other way round loses the only record of
-      // which objects were the video's, and they are then paid for for ever.
-      let removedFromSpace = 0
-      if (spaceConfigured(space)) {
-        const { deleted } = await deleteVideoFromSpace({ space, videoId })
-        removedFromSpace = deleted
-      }
-
-      const local = join(mediaRoot, 'work', 'videos', videoId)
-      await rm(local, { recursive: true, force: true })
-
-      // The rows change together, and the game's event hears of it from the
-      // transaction's last statements.
-      const restored = await atomic(db, async trx => {
-        // The cameras keep their rows — they are the record that a key
-        // existed — and simply stop pointing at a video that is gone.
-        if (cameras.length > 0) {
-          await trx
-            .updateTable('live_streams')
-            .set({ video_id: null, updated_at: new Date() })
-            .where('video_id', '=', videoId)
-            .execute()
-        }
-        // Anything this video displaced comes back. A recording is hidden
-        // and dated for deletion only because something better took its
-        // place, so deleting that something takes the reason away with it —
-        // and without this, undoing a bad upload quietly destroys the
-        // recording the upload pushed aside, which is the opposite of what
-        // deleting it was for. The foreign key clears the pointer; the
-        // hiding and the purge date are ours to undo.
-        const back = await trx
-          .updateTable('videos')
-          .set({ hidden: false, purge_after: null, updated_at: new Date() })
-          .where('replaced_by', '=', videoId)
-          .returning('id')
-          .execute()
-
-        await trx.deleteFrom('videos').where('id', '=', videoId).execute()
-        // One video fewer on its season's row: Home's lists are told.
-        if (video.gameId != null) await noteGameFigures(trx, video.gameId)
-        return back
-      })
+      const { removedFromSpace, restored } = await deleteVideo(
+        { db, space, mediaRoot },
+        videoId
+      )
 
       setAudit(res.locals, {
         entityType: 'video',
@@ -494,13 +439,13 @@ export function mediaRoutes(
           storage: video.storage,
           gameId: video.gameId
         },
-        after: { removedFromSpace, restored: restored.map(one => one.id) }
+        after: { removedFromSpace, restored }
       })
       res.json({
         id: videoId,
         removedFromSpace,
         // What came back out of hiding because this went.
-        restored: restored.map(one => one.id)
+        restored
       })
     })
   )

@@ -184,6 +184,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/location/places.js',
   'server/media/cameras.js',
   'server/media/codecString.js',
+  'server/media/deleteVideo.js',
   'server/media/diskSpace.js',
   'server/media/ffmpeg.js',
   'server/media/imageUrls.js',

@@ -242,7 +242,9 @@ function liveRouteOptions(): LiveRouteOptions {
     // The name this deployment goes by, which is the name an encoder has to
     // publish to. There is nothing to fall back to and nothing to get wrong:
     // it is the same fact the playback URLs are built from.
-    host: primaryHost
+    host: primaryHost,
+    space: serverConfig.space,
+    mediaRoot: serverConfig.mediaDir
   }
 }
 
@@ -700,6 +702,7 @@ function runWorker(): void {
     '/api/v1',
     directorUploadRoutes(db, {
       uploadsDir: uploadsDir(),
+      mediaRoot: serverConfig.mediaDir,
       ffmpegPath: serverConfig.ffmpegPath,
       space: serverConfig.space
     })

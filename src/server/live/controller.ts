@@ -962,8 +962,10 @@ export async function sync(
     .where(eb =>
       eb.or([
         eb('live_streams.state', 'in', ['idle', 'publishing']),
+        // Stopped without being finished: a key taken away, or a stream its
+        // upload replaced. The playlist still has to be closed.
         eb.and([
-          eb('live_streams.state', '=', 'revoked'),
+          eb('live_streams.state', 'in', ['revoked', 'ended']),
           eb('live_streams.ended_at', 'is', null)
         ])
       ])
@@ -1004,7 +1006,7 @@ export async function sync(
   let failure: { error: unknown } | undefined
   try {
     for (const row of rows) {
-      if (row.state === 'revoked') {
+      if (row.state === 'revoked' || row.state === 'ended') {
         finish(
           row.id,
           row.localRecording === 'uploaded'
@@ -1322,7 +1324,8 @@ async function finishStreamRecording(
 
   const now = new Date()
   // Claim finalization once. A revoked key remains revoked while its recording
-  // follows the same retained-media lifecycle as an ordinarily ended stream.
+  // follows the same retained-media lifecycle as an ordinarily ended stream,
+  // and a stream its upload ended is finished here like any other.
   const row = await atomic(db, async trx => {
     const claimed = await trx
       .updateTable('live_streams')
@@ -1333,7 +1336,7 @@ async function finishStreamRecording(
         updated_at: now
       })
       .where('id', '=', liveStreamId)
-      .where('state', 'in', ['idle', 'publishing', 'revoked'])
+      .where('state', 'in', ['idle', 'publishing', 'revoked', 'ended'])
       .where('ended_at', 'is', null)
       .returning([
         'video_id as videoId',

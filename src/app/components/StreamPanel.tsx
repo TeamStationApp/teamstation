@@ -55,8 +55,9 @@ export interface StreamPanelProps {
  * person it was issued to, so it is theirs and not the team's; knowing who is
  * streaming is a different thing from being able to stream as them.
  *
- * A person may point up to four cameras at one game, which is four angles a
- * viewer can switch between while it is being played.
+ * A person may have up to four cameras active on one game, which is four
+ * angles a viewer can switch between while it is being played, and a game may
+ * have six.
  */
 export function StreamPanel(
   props: StreamPanelProps
@@ -491,12 +492,20 @@ export function StreamPanel(
         </>
       )}
 
-      {streams != null && streams.mine.length > 0 && streams.canAdd === 0 && (
+      {streams?.gameCanAdd === 0 && (
         <Text style={styles.muted}>
-          That is all {streams.maxCameras} of your cameras on this game. End one
-          to add another.
+          This game already has 6 cameras. End one to add another.
         </Text>
       )}
+      {streams != null &&
+        streams.gameCanAdd > 0 &&
+        streams.mine.length > 0 &&
+        streams.canAdd === 0 && (
+          <Text style={styles.muted}>
+            That is all {streams.maxCameras} of your cameras on this game. End
+            one to add another.
+          </Text>
+        )}
 
       {/*
         Who else is streaming this game. Named, never revealed: what they are
