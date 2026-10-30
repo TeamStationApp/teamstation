@@ -78,9 +78,13 @@ export async function teamRoster(
   )
   for (const [userId, level] of await membersOfLevels(db, levels))
     memberLevels.set(userId, level)
+  // Not the guardians of somebody held only by an add they may yet reject.
+  const open = await openAdds(db, teamId)
   const family = await guardiansOfEach(
     db,
-    members.filter(row => row.isPlayer).map(row => row.userId)
+    members
+      .filter(row => row.isPlayer && !open.has(row.userId))
+      .map(row => row.userId)
   )
   const followers = await followersOf(db, teamId)
 
@@ -101,7 +105,7 @@ export async function teamRoster(
       ))
     ],
     {
-      openAdds: await openAdds(db, teamId),
+      openAdds: open,
       ownLevel: 'team',
       given,
       memberLevels,

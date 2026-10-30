@@ -19,6 +19,7 @@ import {
   canSeeTeam,
   guardiansWhoCanAct,
   guardsPlayer,
+  openAddTeams,
   roleScopes,
   teamsPlayedOnNow,
   visibleScopes
@@ -304,7 +305,12 @@ async function coachesPlayer(
   actor: Actor,
   player: OnePerson
 ): Promise<boolean> {
-  const plays = await teamsPlayedOnNow(db, player.userIds)
+  // Not a team holding them only by an open add: their guardian is the side
+  // that add answers to.
+  const held = new Set(await openAddTeams(db, player.userIds))
+  const plays = (await teamsPlayedOnNow(db, player.userIds)).filter(
+    teamId => !held.has(teamId)
+  )
   if (plays.length === 0) return false
   const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
   if (plays.some(teamId => canCoach(scopes, teamId))) return true
@@ -500,6 +506,11 @@ async function authorizeGuardian(
         'Only an administrator, coach or assistant of the team can invite a guardian'
       )
     if (!plays.includes(sender.id)) throw notFound()
+    if (
+      !actor.isAdmin &&
+      (await openAddTeams(db, player.userIds)).includes(sender.id)
+    )
+      throw notFound()
     if (!actor.isAdmin && (await hasGuardian(db, player.userId)))
       throw forbidden(await hasGuardianAlready(db, player.userId))
   } else if (

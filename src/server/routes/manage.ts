@@ -132,7 +132,7 @@ export function manageRoutes(
       const tree = await managementPeopleTree(db, scopeType, scopeId)
       if (tree == null) throw notFound()
       const [people, pending, invites] = await Promise.all([
-        peopleInScope(db, tree),
+        peopleInScope(db, tree, actor),
         pendingInvitations(db, scopeType, scopeId, options.clock?.now()),
         listInvites(db, scopeType, scopeId)
       ])

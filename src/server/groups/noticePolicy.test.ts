@@ -24,6 +24,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { gameAvailability } from '../games/rosterAvailability'
+import { peopleInScope } from '../invites/people'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
@@ -34,6 +35,7 @@ import {
 } from '../notifications/requestInformation'
 import { mayKeepBirthMonth } from '../people/guardians'
 import { groupRoutes } from '../routes/groups'
+import { guardianRoutes } from '../routes/guardians'
 import { notificationRoutes } from '../routes/notifications'
 import { playerRoutes, teamsOf } from '../routes/players'
 import { statsRoutes } from '../routes/stats'
@@ -56,6 +58,7 @@ import {
   recordPlayerAdd,
   supersededPlayerAdd
 } from './noticePolicy'
+import { guardianInviteAs } from './requests'
 
 /**
  * Adds made with a notice, through the real routers.
@@ -468,6 +471,10 @@ describe('adds made with a notice', function () {
     app.use('/api/v1', statsRoutes(db, media))
     app.use('/api/v1', playerRoutes(db, media))
     app.use('/api/v1', teamRoutes(db, media))
+    app.use(
+      '/api/v1',
+      guardianRoutes(db, { sendInvite: async () => undefined })
+    )
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -1773,5 +1780,50 @@ describe('adds made with a notice', function () {
     expect(await mayManagePlayer(db!, coach, ids['Open Add'], null)).equals(
       true
     )
+  })
+
+  it('keeps the player’s side from a team holding them only by an open add', async function () {
+    await person('Held Child')
+    await person('Held Parent', { login: true })
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Held Parent'],
+        related_user_id: ids['Held Child'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    const added = await add('roster', 'Held Child')
+    const path = `/teams/${TEAM.falcons}/players/${ids['Held Child']}/guardians`
+    expect((await call(TOKENS.coach, 'GET', path)).status).equals(404)
+    expect((await call(TOKENS.coach, 'POST', path)).status).equals(404)
+    expect(
+      (await call(TOKENS.coach, 'DELETE', `${path}/${ids['Held Parent']}`))
+        .status
+    ).equals(404)
+    // The parent is still theirs to answer it.
+    expect(
+      await mayAnswerPlayerAdd(
+        db!,
+        { userId: ids['Held Parent'], isAdmin: false, scopes: [] },
+        await request(added.requestId!)
+      )
+    ).equals(true)
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    expect(await guardianInviteAs(db!, coach, ids['Held Child'])).equals(null)
+    // Their family is not listed to the team, and Manage shows a short name.
+    const roster = await teamRoster(db!, undefined, TEAM.falcons)
+    expect(roster.map(row => row.userId)).not.includes(ids['Held Parent'])
+    const people = await peopleInScope(db!, {
+      teams: [{ id: TEAM.falcons, name: 'Ridgeview Falcons' }],
+      seasons: [],
+      leagues: []
+    })
+    expect(people.find(each => each.userId === ids['Held Child'])).to.include({
+      displayName: 'Held C',
+      lastSignInAt: null
+    })
   })
 })

@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import { conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
+import { openAdds } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -12,6 +13,7 @@ import {
   requireDirectAdmin
 } from '../groups/adminGuard'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
+import { shortNamesOf } from '../users/nameBook'
 import type { InviteScopeType } from './invites'
 
 /**
@@ -253,7 +255,8 @@ async function teamsOfSeasons(
 /** Everybody holding any grant anywhere in this tree, and which grants. */
 export async function peopleInScope(
   db: Kysely<Database>,
-  tree: ScopeTree
+  tree: ScopeTree,
+  viewer: { isAdmin: boolean } = { isAdmin: false }
 ): Promise<ScopePerson[]> {
   const teamIds = tree.teams.map(team => team.id)
   const seasonIds = tree.seasons.map(season => season.id)
@@ -440,6 +443,34 @@ export async function peopleInScope(
       held.lastSeenAt =
         row.lastSeenAt == null ? null : new Date(row.lastSeenAt).toISOString()
     }
+  }
+
+  // Somebody here only through open adds shows as the add gave them: a short
+  // name, and no addresses, until their side can no longer reject it.
+  if (!viewer.isAdmin) {
+    const open = new Map(
+      await Promise.all(
+        teamIds.map(async id => [id, await openAdds(db, id)] as const)
+      )
+    )
+    const held = [...people.values()].filter(
+      each =>
+        each.teams.length > 0 &&
+        each.seasons.length === 0 &&
+        each.leagues.length === 0 &&
+        each.teams.every(team => open.get(team.id)?.has(each.userId) === true)
+    )
+    const names = await shortNamesOf(
+      db,
+      held.map(each => each.userId)
+    )
+    for (const each of held)
+      Object.assign(each, {
+        displayName: names.get(each.userId),
+        emails: [],
+        lastSignInAt: null,
+        lastSeenAt: null
+      })
   }
 
   return [...people.values()].sort((a, b) =>
