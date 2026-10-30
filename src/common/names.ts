@@ -1,6 +1,9 @@
+import { mostRestrictive, type PlayerNamePrivacy } from './playerNamePrivacy'
+
 /**
  * How a person's name is written anywhere in the app: first name, last
- * initial. `Jordan P`.
+ * initial, `Jordan P`, unless the player's league, season or team has chosen
+ * another public format (`playerNamePrivacy.ts`), which only the server picks.
  *
  * The full name is stored — it is what the import sent, what a parent would
  * search for, and what an admin needs to tell two children apart — but it is
@@ -49,6 +52,11 @@ export function shortParts(
   const { first } = halves(person)
   if (first !== '' && short.startsWith(first))
     return { first, last: short.slice(first.length).trim() }
+  // A format that abbreviated the first name: `A L`.
+  if (first !== '' && short.includes(' ')) {
+    const [given = '', ...rest] = short.split(' ')
+    return { first: given, last: rest.join(' ') }
+  }
   return { first: '', last: short }
 }
 
@@ -114,6 +122,140 @@ export function shortNames(
     }
   }
   return result
+}
+
+/** A person's name with this many letters of each abbreviated part. */
+function written(
+  person: NamedPerson,
+  format: PlayerNamePrivacy,
+  given: number,
+  surname: number
+): string {
+  if (format === 'full') return fullName(person)
+  if (fullName(person) === DELETED_NAME) return DELETED_NAME
+  const { first, last } = halves(person)
+  if (format === 'firstLastInitial') {
+    if (surname === 1) return shortName(person)
+    return `${first} ${last.slice(0, surname)}`.trim()
+  }
+  const shownLast = format === 'initialLast' ? last : last.slice(0, surname)
+  return `${first.slice(0, given)} ${shownLast}`.trim()
+}
+
+/**
+ * `Alex Lee` as the public format writes it: `Alex L`, `A Lee`, `A L` or
+ * `Alex Lee`. No period after an initial, and a missing half is left out.
+ */
+export function formatName(
+  person: NamedPerson,
+  format: PlayerNamePrivacy
+): string {
+  return written(person, format, 1, 1)
+}
+
+/**
+ * A name as a model is given it: its format's, and with no first name to go
+ * by, the surname's initial alone, never the surname.
+ */
+export function modelLabel(
+  person: NamedPerson,
+  format: PlayerNamePrivacy
+): string {
+  const { first, last } = halves(person)
+  return first === '' ? last.slice(0, 1) : formatName(person, format)
+}
+
+/** One person of a list, and the public format that applies to them. */
+export interface FormattedPerson {
+  person: NamedPerson
+  format: PlayerNamePrivacy
+}
+
+/** The letters of each part a format can lengthen, in the order it does. */
+function lengthenings(entry: FormattedPerson): Array<[number, number]> {
+  const { first, last } = halves(entry.person)
+  const given = first.length
+  const surname = last.length
+  const steps: Array<[number, number]> = []
+  if (entry.format === 'firstLastInitial')
+    for (let take = 2; take <= surname; take++) steps.push([1, take])
+  if (entry.format === 'initialLast')
+    for (let take = 2; take <= given; take++) steps.push([take, 1])
+  if (entry.format === 'initials') {
+    for (let take = 2; take <= given; take++) steps.push([take, 1])
+    for (let take = 2; take <= surname; take++) steps.push([given, take])
+  }
+  return steps
+}
+
+/**
+ * Public names for a list, each person in their own format, with collisions
+ * broken across the whole list: anything still identical takes another letter
+ * of the part its format abbreviates until it differs. A full name abbreviates
+ * nothing, so two identical full names stay identical. Somebody who appears
+ * twice in two formats is written in the more restrictive. Over a list wholly
+ * in the built-in format this answers exactly what `shortNames` does. A list
+ * going to a model is not lengthened: another letter of a surname, or of a
+ * first name the public format withholds, is what it must never be told.
+ */
+export function formatNames(
+  entries: readonly FormattedPerson[],
+  options: { lengthen?: boolean } = {}
+): Map<string | number, string> {
+  const unique = new Map<string | number, FormattedPerson>()
+  for (const entry of entries) {
+    const held = unique.get(entry.person.id)
+    unique.set(
+      entry.person.id,
+      held == null
+        ? entry
+        : {
+            person: held.person,
+            format: mostRestrictive([held.format, entry.format])
+          }
+    )
+  }
+  const people = [...unique.values()]
+  if (options.lengthen === false)
+    return new Map(
+      people.map(entry => [
+        entry.person.id,
+        modelLabel(entry.person, entry.format)
+      ])
+    )
+  if (people.every(entry => entry.format === 'firstLastInitial'))
+    return shortNames(people.map(entry => entry.person))
+  // Everybody still identical takes one more letter, all together, so a step
+  // only ever goes up and the loop ends with the last letter anybody has.
+  const steps = new Map(people.map(entry => [entry, 0]))
+  const nameOf = (entry: FormattedPerson): string => {
+    const step = steps.get(entry)!
+    if (step === 0) return formatName(entry.person, entry.format)
+    const [given, surname] = lengthenings(entry)[step - 1]
+    return written(entry.person, entry.format, given, surname)
+  }
+  const duplicates = (): FormattedPerson[][] => {
+    const groups = new Map<string, FormattedPerson[]>()
+    for (const entry of people) {
+      const name = nameOf(entry)
+      groups.set(name, [...(groups.get(name) ?? []), entry])
+    }
+    return [...groups.values()].filter(group => group.length > 1)
+  }
+  let moved = true
+  while (moved) {
+    moved = false
+    for (const group of duplicates())
+      for (const entry of group) {
+        if (steps.get(entry)! >= lengthenings(entry).length) continue
+        steps.set(entry, steps.get(entry)! + 1)
+        moved = true
+      }
+  }
+  // Nothing here can tell these apart, as `lengthenUntilDistinct` says.
+  for (const group of duplicates())
+    for (const entry of group) steps.set(entry, 0)
+  return new Map(people.map(entry => [entry.person.id, nameOf(entry)]))
 }
 
 function lengthenUntilDistinct(
