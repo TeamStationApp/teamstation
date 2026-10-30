@@ -14,6 +14,30 @@ import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
+/**
+ * What to say when a decision did not do what was asked, because somebody
+ * else got there first or it had lapsed: an answer that is not the one asked
+ * for would otherwise read as done. A request can stay pending after an
+ * accept, until the other side answers.
+ */
+function staleAnswer(
+  item: Notification,
+  action: 'accept' | 'decline',
+  status: string
+): string | undefined {
+  if (
+    action === 'accept'
+      ? status === 'accepted' || status === 'pending'
+      : status === 'declined'
+  )
+    return undefined
+  if (status === 'accepted') return 'Somebody else already accepted this.'
+  if (status === 'declined') return 'Somebody else already declined this.'
+  return item.type === 'playerAdd'
+    ? 'That add could no longer be changed.'
+    : 'This request is no longer open.'
+}
+
 function accessRefused(error: unknown): boolean {
   return (
     error instanceof HttpError &&
@@ -208,18 +232,8 @@ export function NotificationsScreen({
         cache.current.pending = { ...pending, items: kept(pending.items) }
       delete cache.current.history
       onDecided?.()
-      // Accepted too late to happen: say so, or it reads as done. A game
-      // request stays pending until the other side answers, so that is not
-      // among these.
-      if (
-        action === 'accept' &&
-        ['expired', 'superseded', 'cancelled'].includes(answer.status)
-      )
-        setError(
-          item.type === 'playerAdd'
-            ? 'That add could no longer be made.'
-            : 'This request is no longer open.'
-        )
+      const stale = staleAnswer(item, action, answer.status)
+      if (stale != null) setError(stale)
     } catch (error) {
       setError(
         error instanceof Error
