@@ -50,6 +50,8 @@ const paths = [
     !/^src\/.+\.tsx?$/.test(path) ||
     /\.(test|e2e|integration|smoke)\./.test(path) ||
     path.startsWith('src/test/') ||
+    // Vendored comparison vocabulary is static data, not executable logic.
+    path === 'src/common/chatCrypto/safetyWordList.ts' ||
     path === 'src/server/chat/chatTestFixture.ts' ||
     path === 'src/server/dev/chatSeed.ts' ||
     /\.d\.ts$/.test(path)

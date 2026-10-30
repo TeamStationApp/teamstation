@@ -8,7 +8,7 @@ import { useBreakpoint } from '../components/useBreakpoint'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { chatLayout, keyboardOverlap } from './chatLayoutModel'
-import { watchVisualViewport } from './chatWebInteractions'
+import { useChatVisualViewport } from './useChatVisualViewport'
 
 export type ChatViewportState = ReturnType<typeof chatLayout> & {
   frame: React.RefObject<React.ComponentRef<typeof View> | null>
@@ -33,10 +33,7 @@ export function useChatViewport(
   const measurement = useRef(0)
   const [frameBottom, setFrameBottom] = useState(window.height)
   const [nativeKeyboardTop, setNativeKeyboardTop] = useState<number>()
-  const [visual, setVisual] = useState<{
-    bottom: number
-    keyboardOpen: boolean
-  }>()
+  const visual = useChatVisualViewport(Platform.OS === 'web')
   const measure = useCallback(() => {
     const version = ++measurement.current
     frame.current?.measureInWindow((_x, y, width, height) => {
@@ -56,8 +53,7 @@ export function useChatViewport(
       measurement.current += 1
     }
   }, [])
-  useEffect(measure, [measure, window.height, window.width])
-  useEffect(() => watchVisualViewport(setVisual), [])
+  useEffect(measure, [measure, window.height, window.width, visual])
   useEffect(() => {
     const shown = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
