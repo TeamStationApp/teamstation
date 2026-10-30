@@ -1,8 +1,9 @@
 import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
-import type { SeasonGame } from '../../common/api'
+import type { ListCounts, Page, SeasonGame } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { nextGameIndex } from '../../common/nextGame'
 import {
   type AdminScopes,
   canSeeTeam,
@@ -14,6 +15,7 @@ import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamEventSchedule } from '../events/eventInfo'
+import type { SchedulePageAsk } from '../events/eventListQuery'
 import { gameIsLive } from '../games/gameLive'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import { imageUrl } from '../media/imageUrls'
@@ -27,6 +29,14 @@ import {
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
+import {
+  firstPage,
+  pageAround,
+  pageFromCursor,
+  pastCursor,
+  readingOrder,
+  type ScheduleCursor
+} from '../schedule/scheduleCursor'
 import { scheduleRights } from '../schedule/scheduleGames'
 import { withRevision } from '../socket/syncRevision'
 import { teamRecords } from '../stats/records'
@@ -286,6 +296,50 @@ export interface ScheduleFilter {
   future?: boolean
   now?: Date
   order?: 'asc' | 'desc'
+  /** Only games with a video that is real and not hidden. */
+  hasVideo?: boolean
+  /** Rows past this place in `order`. `limit` then counts from it. */
+  page?: { cursor?: ScheduleCursor }
+}
+
+/**
+ * Whether a row belongs to the list. The games query asks the same in SQL;
+ * this is what proposals and team events answer to.
+ */
+function inSchedule(
+  row: ScheduleRow,
+  filter: ScheduleFilter,
+  nowMs: number
+): boolean {
+  const when = row.startAt == null ? null : Date.parse(row.startAt)
+  if (filter.played === true && row.homeScore == null) return false
+  if (filter.omitCancelled === true && row.status === 'cancelled') return false
+  if (filter.since != null && (when == null || when < filter.since.getTime()))
+    return false
+  if (
+    filter.until != null &&
+    (when == null ||
+      (filter.untilInclusive === true
+        ? when > filter.until.getTime()
+        : when >= filter.until.getTime()))
+  )
+    return false
+  if (
+    (filter.future === true || filter.upcoming === true) &&
+    (when == null || when <= nowMs)
+  )
+    return false
+  if (filter.upcoming === true && row.awayScore != null) return false
+  if (
+    filter.past === true &&
+    when != null &&
+    when > nowMs &&
+    row.awayScore == null
+  )
+    return false
+  if (filter.hasVideo === true && row.videoCount === 0) return false
+  const cursor = filter.page?.cursor
+  return cursor == null || pastCursor(row, cursor)
 }
 
 /**
@@ -438,9 +492,25 @@ export async function scheduleOf(
       ])
     )
   }
+  if (filter.hasVideo === true) {
+    query = query.having(eb => eb.fn.count('videos.id'), '>', 0)
+  }
+  // JavaScript sees a start to the millisecond, and a cursor holds what it
+  // sees, so a page reads starts the same way.
+  const start =
+    filter.page?.cursor == null
+      ? sql<Date>`games.start_at`
+      : sql<Date>`date_trunc('milliseconds', games.start_at)`
+  if (filter.page?.cursor != null) {
+    const { startAt, id } = filter.page.cursor
+    const past = sql.raw(filter.order === 'asc' ? '>' : '<')
+    query = query.where(
+      sql<boolean>`(${start}, games.id collate "C") ${past} (${new Date(startAt)}::timestamptz, ${id}::text collate "C")`
+    )
+  }
   // Newest first, unless the caller is looking forward.
   query = query
-    .orderBy('games.start_at', filter.order ?? 'desc')
+    .orderBy(start, filter.order ?? 'desc')
     // Match JavaScript's ID byte ordering regardless of the database locale.
     .orderBy(sql<string>`games.id collate "C"`, filter.order ?? 'desc')
   if (filter.externalIds != null) {
@@ -648,36 +718,7 @@ export async function scheduleOf(
     ...annotatePending(answer, pending),
     ...projected,
     ...nonGames
-  ].filter(row => {
-    const when = row.startAt == null ? null : Date.parse(row.startAt)
-    if (filter.played === true && row.homeScore == null) return false
-    if (filter.omitCancelled === true && row.status === 'cancelled')
-      return false
-    if (filter.since != null && (when == null || when < filter.since.getTime()))
-      return false
-    if (
-      filter.until != null &&
-      (when == null ||
-        (filter.untilInclusive === true
-          ? when > filter.until.getTime()
-          : when >= filter.until.getTime()))
-    )
-      return false
-    if (
-      (filter.future === true || filter.upcoming === true) &&
-      (when == null || when <= nowMs)
-    )
-      return false
-    if (filter.upcoming === true && row.awayScore != null) return false
-    if (
-      filter.past === true &&
-      when != null &&
-      when > nowMs &&
-      row.awayScore == null
-    )
-      return false
-    return true
-  })
+  ].filter(row => inSchedule(row, filter, nowMs))
   combined.sort((a, b) => {
     const order = filter.order === 'asc' ? 1 : -1
     if (a.startAt == null || b.startAt == null) {
@@ -692,6 +733,75 @@ export async function scheduleOf(
   })
   if (filter.limit != null) combined = combined.slice(0, filter.limit)
   return combined
+}
+
+/** What a paged list's first page says of the whole list, read in `order`. */
+function listCounts(
+  rows: ScheduleRow[],
+  order: 'asc' | 'desc',
+  nowMs: number
+): ListCounts {
+  const hasSeason = (row: ScheduleRow): boolean => row.seasonId != null
+  const newest =
+    order === 'desc' ? rows.find(hasSeason) : rows.findLast(hasSeason)
+  return {
+    total: rows.length,
+    upcoming: rows.filter(row => inSchedule(row, { upcoming: true }, nowMs))
+      .length,
+    withVideo: rows.filter(row => row.videoCount > 0).length,
+    videos: rows.reduce((total, row) => total + row.videoCount, 0),
+    newestSeasonId: newest?.seasonId ?? null
+  }
+}
+
+/**
+ * One page of `scheduleOf`.
+ *
+ * A cursor's page costs only its own rows. A first page holds `counts`, and
+ * `around` a rule that can land on a practice, so it reads the merged list of
+ * the whole filter, leaving out `when` and `hasVideo`, as an unpaged read
+ * does, and cuts the page from that.
+ */
+export async function schedulePage(
+  db: Kysely<Database>,
+  media: MediaContext,
+  filter: ScheduleFilter,
+  ask: SchedulePageAsk
+): Promise<Page<ScheduleRow>> {
+  const { cursor, limit } = ask
+  const order = filter.order ?? 'desc'
+  if (cursor != null) {
+    const rows = await scheduleOf(db, media, {
+      ...filter,
+      order: readingOrder(cursor),
+      limit: limit + 1,
+      page: { cursor }
+    })
+    return {
+      ...pageFromCursor(rows, limit, cursor),
+      anchorId: null,
+      counts: null
+    }
+  }
+  const nowMs = (filter.now ?? new Date()).getTime()
+  const whole = await scheduleOf(db, media, {
+    ...filter,
+    ...ask.whole,
+    order,
+    hasVideo: false,
+    limit: undefined
+  })
+  const listed = whole.filter(row => inSchedule(row, filter, nowMs))
+  const counts = listCounts(whole, order, nowMs)
+  if (!ask.around) {
+    return { ...firstPage(listed, limit, order), anchorId: null, counts }
+  }
+  const index = nextGameIndex(listed, nowMs)
+  return {
+    ...pageAround(listed, Math.max(index, 0), limit),
+    anchorId: listed[index]?.id ?? null,
+    counts
+  }
 }
 
 /**
