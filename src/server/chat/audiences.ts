@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { ageOn } from '../../common/age'
+import { openAdds } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
@@ -254,12 +255,22 @@ export async function teamGuardianRows(
   teamIds: string[]
 ): Promise<string[]> {
   if (teamIds.length === 0) return []
-  const players = await db
+  const rows = await db
     .selectFrom('memberships')
-    .select(['user_id'])
+    .select(['user_id', 'team_id'])
     .where('team_id', 'in', teamIds)
     .where('is_player', '=', true)
     .execute()
+  // Not the guardians of somebody a team holds only by an open add: who they
+  // are is not that team's to read until the add can no longer be rejected.
+  const open = new Map(
+    await Promise.all(
+      teamIds.map(async id => [id, await openAdds(db, id)] as const)
+    )
+  )
+  const players = rows.filter(
+    row => open.get(row.team_id)?.has(row.user_id) !== true
+  )
   if (players.length === 0) return []
   const links = await db
     .selectFrom('user_links')

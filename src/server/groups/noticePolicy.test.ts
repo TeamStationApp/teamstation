@@ -19,6 +19,8 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mayEditName, mayManagePlayer } from '../access'
 import { MERGE_LOCK } from '../admin/people'
 import { hashToken } from '../auth/tokens'
+import { teamGuardianRows } from '../chat/audiences'
+import { DmFacts } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -1813,6 +1815,21 @@ describe('adds made with a notice', function () {
     ).equals(true)
     const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
     expect(await guardianInviteAs(db!, coach, ids['Held Child'])).equals(null)
+    // The team is not their staff in chat: no private line to somebody's
+    // child, and their parents join none of its chats.
+    const facts = new DmFacts(db!, new Date())
+    expect([...(await facts.staffOf(ids['Held Child']))]).not.includes(
+      ids.coach
+    )
+    expect([...(await facts.coachesOf(ids['Held Child']))]).not.includes(
+      ids.coach
+    )
+    expect(await facts.mayNamePlayer(ids.coach, ids['Held Child'])).equals(
+      false
+    )
+    expect(await teamGuardianRows(db!, [TEAM.falcons])).not.includes(
+      ids['Held Parent']
+    )
     // Their family is not listed to the team, and Manage shows a short name.
     const roster = await teamRoster(db!, undefined, TEAM.falcons)
     expect(roster.map(row => row.userId)).not.includes(ids['Held Parent'])

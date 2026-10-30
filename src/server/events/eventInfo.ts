@@ -22,7 +22,7 @@ import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import { type Role, ROLES } from '../../common/roles'
 import { asFieldSize } from '../../common/venues'
-import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
+import { canSeeGame, canSeeTeam, openAdds, visibleScopes } from '../access'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -268,10 +268,17 @@ async function eventPeople(
           .where('disabled_at', 'is', null)
           .where('merged_into', 'is', null)
           .execute()
+  // Not the guardians of somebody a team holds only by an open add.
+  const openAdded = new Set(
+    (
+      await Promise.all(event.teamIds.map(async id => await openAdds(db, id)))
+    ).flatMap(open => [...open])
+  )
   const playerAliases = new Set<string>()
   for (const player of activePlayers)
-    for (const alias of (await identity(player.id)).userIds)
-      playerAliases.add(alias)
+    if (!openAdded.has(player.id))
+      for (const alias of (await identity(player.id)).userIds)
+        playerAliases.add(alias)
   const guardianLinks =
     playerAliases.size === 0
       ? []
