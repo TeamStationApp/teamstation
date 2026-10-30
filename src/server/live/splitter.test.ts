@@ -16,6 +16,7 @@ import { createServer, type Server, Socket } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
+import { CODEC_REFUSAL } from '../../common/api'
 import { remuxToHls, remuxToHlsArgs, VIDEO_FILE } from '../media/ffmpeg'
 import { fileForRemux, timelineHole } from './finishVideo'
 import {
@@ -470,6 +471,7 @@ describe('a publisher replaced by its own reconnect', function () {
       streamName: KEY,
       streamPath: `/live/${KEY}`,
       inBytes: 0,
+      videoCodec: 12,
       closed: 0,
       destroyed: 0,
       broadcast,
@@ -669,6 +671,32 @@ describe('a publisher replaced by its own reconnect', function () {
     expect(ended?.type === 'publishEnded' ? ended.reason : '').equals(
       'The stream ended'
     )
+  })
+
+  it('looks at the codec of every publish on a key, not only its first', function () {
+    const withCodec = (id: string, videoCodec: number): TestSession =>
+      Object.assign(publisher(id), { videoCodec })
+    const refusals = (): LiveEvent[] =>
+      events.filter(
+        event =>
+          event.type === 'publishEnded' &&
+          event.reason.startsWith(CODEC_REFUSAL)
+      )
+
+    const hevc = withCodec('hevc', 12)
+    push(hevc)
+    tickSamplerForTest()
+    expect(refusals(), 'HEVC goes through').deep.equals([])
+    broadcast.donePublish(hevc)
+
+    push(withCodec('first refused', 7))
+    tickSamplerForTest()
+    expect(refusals().length, 'H.264 after HEVC').equals(1)
+    expect(statusFor(KEY)?.ingress.publishing).equals(false)
+
+    push(withCodec('second refused', 7))
+    tickSamplerForTest()
+    expect(refusals().length, 'H.264 after H.264').equals(2)
   })
 
   it('answers each lookup the way the controller answered it', async function () {
@@ -2348,6 +2376,7 @@ describe('a live publish that jumps (U19)', function () {
       streamApp: 'live',
       streamName: KEY,
       streamPath: `/live/${KEY}`,
+      videoCodec: 12,
       close: () => undefined,
       socket: { destroy: () => undefined },
       broadcast: made

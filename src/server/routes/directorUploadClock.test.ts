@@ -145,6 +145,7 @@ describe('an upload that measured the server clock', function () {
       '/api/v1',
       directorUploadRoutes(db, {
         uploadsDir: join(dir, 'uploads'),
+        mediaRoot: join(dir, 'media'),
         ffmpegPath: FFMPEG,
         space: {
           endpoint: `http://127.0.0.1:${spacePort}`,

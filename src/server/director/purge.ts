@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely'
 
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { letCamerasGo } from '../media/deleteVideo'
 import type { SpaceSettings } from '../media/spacesHls'
 import { deleteVideoFromSpace } from '../media/spacesVideo'
 import { noteGameFigures } from '../socket/syncRevision'
@@ -122,11 +123,7 @@ export async function purgeReplacedRecordings(options: {
       })
       // The row goes in one transaction that tells the game's event last.
       await atomic(db, async trx => {
-        await trx
-          .updateTable('live_streams')
-          .set({ video_id: null, updated_at: now })
-          .where('video_id', '=', videoId)
-          .execute()
+        await letCamerasGo(trx, videoId, now)
         const deleted = await trx
           .deleteFrom('videos')
           .where('id', '=', videoId)

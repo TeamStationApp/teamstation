@@ -16,6 +16,7 @@ import { makeId } from '../../common/ids'
 import { canFilm, roleScopes } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database, DirectorUploadsTable } from '../db/database'
+import { deleteVideoIfThere } from '../director/discard'
 import {
   assembleParts,
   covers,
@@ -35,6 +36,7 @@ import {
   startOf,
   uploadDir
 } from '../director/uploads'
+import { isDiscarded, refuseDiscarded } from '../live/streamKeys'
 import { ingestVideoFile } from '../media/ingestFile'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
@@ -70,8 +72,12 @@ import { noteGameFigures } from '../socket/syncRevision'
 export interface DirectorUploadRouteOptions {
   /** Where the parts wait. Scratch, not media: see `serverConfig`. */
   uploadsDir: string
+  /** Where a video's files are, to delete one whose camera was deleted. */
+  mediaRoot: string
   ffmpegPath: string
   space?: SpaceSettings
+  /** What makes a video of the assembled file. */
+  ingest?: typeof ingestVideoFile
 }
 
 const asNewUpload = asObject({
@@ -265,6 +271,7 @@ export function directorUploadRoutes(
       const serverClockOffsetMs = clockOffsetOf(body.serverClockOffsetMs)
       theSpace()
       const game = await gameIRun(body.gameId, actor.userId, actor.isAdmin)
+      await refuseDiscarded(db, body.liveStreamId)
 
       // Ended and revoked streams still count: a recording made before an
       // End can still replace its own angle's live copy.
@@ -396,14 +403,20 @@ export function directorUploadRoutes(
       await writeFile(join(dir, partName(index)), body)
 
       const received = await receivedParts(dir)
-      await db
+      const noted = await db
         .updateTable('director_uploads')
         .set({
           received_bytes: String(await receivedBytes(dir)),
           updated_at: new Date()
         })
         .where('id', '=', row.id)
-        .execute()
+        .where('state', '<>', 'abandoned')
+        .executeTakeFirst()
+      // Abandoned while this part was on its way: it made the folder again.
+      if (Number(noted.numUpdatedRows) === 0) {
+        await rm(dir, { recursive: true, force: true })
+        throw badRequest('This upload is abandoned, and takes no more parts.')
+      }
 
       res.json({
         received: received.length,
@@ -433,6 +446,7 @@ export function directorUploadRoutes(
         res.json({ videoId: row.video_id, state: row.state })
         return
       }
+      await refuseDiscarded(db, row.live_stream_id)
       // A failed upload can be asked again. Its parts are still on disk —
       // that is the whole reason they are kept — so what a retry costs is the
       // conversion and not the upload. Before this, `failed` was a dead end:
@@ -509,6 +523,26 @@ export function directorUploadRoutes(
   }): Promise<void> {
     const { row, game, space, dir, total } = work
     const whole = join(dir, 'whole')
+    const ingest = options.ingest ?? ingestVideoFile
+    let videoId: string | undefined
+    /**
+     * The camera was deleted, or the upload given up on, while this ran. That
+     * is no failure and no success: nothing of it stays and nobody is told.
+     */
+    const drop = async (): Promise<void> => {
+      if (videoId != null) {
+        await deleteVideoIfThere(
+          { db, space, mediaRoot: options.mediaRoot },
+          videoId
+        )
+      }
+      await db
+        .updateTable('director_uploads')
+        .set({ state: 'abandoned', step: null, updated_at: new Date() })
+        .where('id', '=', row.id)
+        .execute()
+      await rm(dir, { recursive: true, force: true })
+    }
     const notes = async (step: string): Promise<void> => {
       await db
         .updateTable('director_uploads')
@@ -524,7 +558,7 @@ export function directorUploadRoutes(
     const recorded = startOf(row.started_at, game.startAt)
     try {
       await assembleParts({ dir, total, into: whole })
-      const ingested = await ingestVideoFile({
+      const ingested = await ingest({
         db,
         space,
         ffmpegPath: options.ffmpegPath,
@@ -554,18 +588,34 @@ export function directorUploadRoutes(
         }
       })
 
-      await replaceLiveRecording(db, game.id, ingested.videoId, namedBy(row))
+      videoId = ingested.videoId
 
+      // On the row before the camera is looked at, because a discard writes
+      // `discarded_at` before it reads these rows. However the two fall, one
+      // of them sees the other and this video goes.
       await db
         .updateTable('director_uploads')
-        .set({
-          state: 'ready',
-          step: null,
-          video_id: ingested.videoId,
-          updated_at: new Date()
-        })
+        .set({ video_id: videoId, updated_at: new Date() })
         .where('id', '=', row.id)
         .execute()
+      if (await isDiscarded(db, row.live_stream_id)) {
+        await drop()
+        return
+      }
+
+      await replaceLiveRecording(db, game.id, videoId, namedBy(row))
+
+      const finished = await db
+        .updateTable('director_uploads')
+        .set({ state: 'ready', step: null, updated_at: new Date() })
+        .where('id', '=', row.id)
+        .where('state', '=', 'assembling')
+        .where('video_id', 'is not', null)
+        .executeTakeFirst()
+      if (Number(finished.numUpdatedRows) === 0) {
+        await drop()
+        return
+      }
 
       // The parts have done their job and are several gigabytes.
       await recordOutcome(
@@ -580,6 +630,11 @@ export function directorUploadRoutes(
       // The whole of it goes to the log; what the operator is shown is the
       // sentence without the server's paths in it.
       console.error(`taking in ${row.id}: ${String(error)}`)
+      // Its parts can go from under it, and then this is what that looks like.
+      if (await isDiscarded(db, row.live_stream_id)) {
+        await drop()
+        return
+      }
       const message = failureToShow(error)
       await db
         .updateTable('director_uploads')
@@ -657,14 +712,15 @@ export function namedBy(row: {
  * **Named**, from the phone that recorded the angle: only that stream's live
  * copy, and only while it is not publishing. With `wholeStream` it is hidden
  * whatever the coverage test says; without, only if the test passes. When it
- * is hidden, the upload takes its title, the stream is revoked and marked
+ * is hidden, the upload takes its title, the stream is ended and marked
  * `uploaded`, and its reminder is settled. When it is not, the upload stands
  * as a video of its own and the reminder stays. A stream with no live copy at
  * all — its phone never reached the server, so the placeholder went when it
  * ended — has nothing to hide: the upload is the angle's only copy, and the
- * stream is revoked, marked `uploaded` and its reminder settled all the same.
+ * stream is ended, marked `uploaded` and its reminder settled all the same.
  * A named stream that is another game's, keeps no recording, or was replaced
- * already replaces nothing.
+ * already replaces nothing. Nor does one its owner deleted: `takeItIn` deletes
+ * the upload, so one already under way cannot bring a deleted video back.
  */
 export async function replaceLiveRecording(
   db: Kysely<Database>,
@@ -739,6 +795,7 @@ async function replaceNamedStream(
   uploadedId: string,
   named: { liveStreamId: string; wholeStream: boolean }
 ): Promise<string[]> {
+  if (await isDiscarded(db, named.liveStreamId)) return []
   const stream = await db
     .selectFrom('live_streams')
     .select(['id', 'state', 'video_id as videoId', 'local_recording'])
@@ -787,7 +844,7 @@ async function replaceNamedStream(
 
   const now = new Date()
   const replaced = await atomic(db, async trx => {
-    // Revoked, so the next take on this angle asks for a fresh stream and
+    // Ended, so the next take on this angle asks for a fresh stream and
     // video rather than this one, whose copy is now the upload. First, and
     // only while it is still neither publishing nor replaced: the phone may
     // have dialled it again since it was read above, and a stream that is on
@@ -818,10 +875,11 @@ async function replaceNamedStream(
 }
 
 /**
- * Marks a stream `uploaded` and revokes it, so the next take on its angle asks
- * for a fresh stream and video, and says whether it did: only while it is
- * neither publishing nor replaced already, since the phone may have dialled it
- * again since it was read.
+ * Marks a stream `uploaded` and ends it, so the next take on its angle asks
+ * for a fresh stream and video while this one stays listed, and says whether
+ * it did: only while it is neither publishing nor replaced already, since the
+ * phone may have dialled it again since it was read. Its key stops here, and
+ * the ingest closes its playlist if it was never finished.
  */
 async function claimAsUploaded(
   trx: Transaction<Database>,
@@ -830,10 +888,16 @@ async function claimAsUploaded(
 ): Promise<boolean> {
   const claimed = await trx
     .updateTable('live_streams')
-    .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
+    .set({
+      local_recording: 'uploaded',
+      state: 'ended',
+      closes_at: now,
+      updated_at: now
+    })
     .where('id', '=', streamId)
     .where('state', '<>', 'publishing')
     .where('local_recording', '<>', 'uploaded')
+    .where('discarded_at', 'is', null)
     .executeTakeFirst()
   return Number(claimed.numUpdatedRows) > 0
 }

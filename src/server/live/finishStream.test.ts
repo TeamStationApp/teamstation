@@ -459,7 +459,7 @@ describe('the end of a live stream', function () {
       .execute()
     await db
       .updateTable('live_streams')
-      .set({ state: 'revoked', local_recording: 'uploaded' })
+      .set({ state: 'ended', closes_at: now, local_recording: 'uploaded' })
       .where('id', '=', 'liv_replaced')
       .execute()
     const uploadsBefore = held.size
@@ -472,7 +472,7 @@ describe('the end of a live stream', function () {
       .select(['state', 'ended_at as endedAt', 'last_error as lastError'])
       .where('id', '=', 'liv_replaced')
       .executeTakeFirstOrThrow()
-    expect(stream.state).equals('revoked')
+    expect(stream.state).equals('ended')
     expect(stream.endedAt).not.equals(null)
     expect(stream.lastError, 'nobody took its permission away').equals(
       REPLACED_BY_UPLOAD

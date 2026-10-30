@@ -138,6 +138,8 @@ export interface LiveControllerOptions {
 interface Tracked {
   key: string
   videoId: string | null
+  /** When a publisher's lookup added it, which a running tick cannot know of. */
+  lookedUpAt?: number
 }
 
 let timer: NodeJS.Timeout | undefined
@@ -452,7 +454,7 @@ export async function sweepLocalCopies(
     .select(['id'])
     .where('storage', '=', 'spaces')
     .where('spaces_verified_at', 'is not', null)
-    .where('local_delete_after', '<', now)
+    .where('local_delete_after', '<=', now)
     .limit(20)
     .execute()
 
@@ -797,10 +799,10 @@ async function stoppedPublishing(
     if (stopped.numUpdatedRows > 0n)
       noteScopeChange(trx, { gameId: row.gameId })
 
-    // A publish that was turned away — the wrong codec, usually — leaves a
-    // video row that was made visible the moment it connected and holds no
-    // video at all. It goes back to being a placeholder, rather than sitting
-    // on the home screen as a live game nobody can watch.
+    // A publish that dropped before anything was written leaves a video row
+    // that was made visible the moment it connected and holds no video at
+    // all. It goes back to being a placeholder, rather than sitting on the
+    // home screen as a live game nobody can watch.
     if (row.videoId == null || !empty) return
     const hidden = await trx
       .updateTable('videos')
@@ -910,7 +912,7 @@ export async function resolveKey(
   const known = tracked.get(row.id)
   if (known != null && known.key !== key)
     clearLive(known.key, 'the key was replaced')
-  tracked.set(row.id, { key, videoId: row.videoId })
+  tracked.set(row.id, { key, videoId: row.videoId, lookedUpAt: Date.now() })
   return {
     liveStreamId: row.id,
     hlsDir,
@@ -962,8 +964,10 @@ export async function sync(
     .where(eb =>
       eb.or([
         eb('live_streams.state', 'in', ['idle', 'publishing']),
+        // Stopped without being finished: a key taken away, or a stream its
+        // upload replaced. The playlist still has to be closed.
         eb.and([
-          eb('live_streams.state', '=', 'revoked'),
+          eb('live_streams.state', 'in', ['revoked', 'ended']),
           eb('live_streams.ended_at', 'is', null)
         ])
       ])
@@ -1004,7 +1008,7 @@ export async function sync(
   let failure: { error: unknown } | undefined
   try {
     for (const row of rows) {
-      if (row.state === 'revoked') {
+      if (row.state === 'revoked' || row.state === 'ended') {
         finish(
           row.id,
           row.localRecording === 'uploaded'
@@ -1103,9 +1107,12 @@ export async function sync(
     }
 
     // Anything the ingest still holds that this pass did not ask for: a revoked
-    // key, a rotated one, a window that closed.
+    // key, a rotated one, a window that closed. A key looked up since this
+    // pass read the rows is a camera too new for it to have seen, publishing
+    // the moment it was made, and the next pass will know of it.
     for (const [liveStreamId, entry] of tracked) {
       if (wanted.has(entry.key)) continue
+      if ((entry.lookedUpAt ?? 0) >= now.getTime()) continue
       clearLive(entry.key, 'no longer open')
       tracked.delete(liveStreamId)
     }
@@ -1322,7 +1329,8 @@ async function finishStreamRecording(
 
   const now = new Date()
   // Claim finalization once. A revoked key remains revoked while its recording
-  // follows the same retained-media lifecycle as an ordinarily ended stream.
+  // follows the same retained-media lifecycle as an ordinarily ended stream,
+  // and a stream its upload ended is finished here like any other.
   const row = await atomic(db, async trx => {
     const claimed = await trx
       .updateTable('live_streams')
@@ -1333,7 +1341,7 @@ async function finishStreamRecording(
         updated_at: now
       })
       .where('id', '=', liveStreamId)
-      .where('state', 'in', ['idle', 'publishing', 'revoked'])
+      .where('state', 'in', ['idle', 'publishing', 'revoked', 'ended'])
       .where('ended_at', 'is', null)
       .returning([
         'video_id as videoId',
@@ -1345,7 +1353,15 @@ async function finishStreamRecording(
     return claimed
   })
 
-  if (row?.videoId == null) return
+  if (row?.videoId == null) {
+    // The camera's video went while the ingest still held its key: a lookup
+    // can have made the folder again behind it, and this is the last anybody
+    // will hear of that folder.
+    if (row != null && entry?.videoId != null) {
+      await forgetRemovedVideo(current, entry.videoId)
+    }
+    return
+  }
   const { gameId } = row
   // Each way the video ends is one write and the clock, in one transaction.
   // The disk is read between them, outside any.
@@ -1359,11 +1375,10 @@ async function finishStreamRecording(
     })
   }
 
-  // A key nobody ever used, or used only by something that was turned away —
-  // an encoder in the wrong codec connects and is refused, which does count as
-  // having published — leaves nothing behind. Deleting the placeholder is what
-  // keeps "we gave this game a stream URL once" from showing up in the game's
-  // videos for ever as a recording that does not exist.
+  // A key nobody ever used, or used only by something that was turned away,
+  // leaves nothing behind. Deleting the placeholder is what keeps "we gave
+  // this game a stream URL once" from showing up in the game's videos for ever
+  // as a recording that does not exist.
   if (
     row.firstPublishedAt == null ||
     !(await hasMedia(mediaRoot, row.videoId))
@@ -1487,6 +1502,22 @@ async function removeDeletedOrigin(
     await deleteVideoFromSpace({ space: current.space, videoId })
   stopOrigin(videoId)
   anchorCursors.delete(videoId)
+}
+
+/** Clears up behind a video whose row has gone, if it has. */
+async function forgetRemovedVideo(
+  current: LiveControllerOptions,
+  videoId: string
+): Promise<void> {
+  const held = await current.db
+    .selectFrom('videos')
+    .select('id')
+    .where('id', '=', videoId)
+    .executeTakeFirst()
+  if (held != null) return
+  queue(`publish:${videoId}`, async () => {
+    await removeDeletedOrigin(current, videoId)
+  })
 }
 
 async function closeOrigin(

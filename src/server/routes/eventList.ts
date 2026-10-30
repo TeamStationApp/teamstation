@@ -87,6 +87,7 @@ async function withDirectorFields(
             rows.map(row => row.id)
           )
           .where('state', '<>', 'revoked')
+          .where('discarded_at', 'is', null)
           .execute()
   const scored = await scoredInTeamStation(
     db,

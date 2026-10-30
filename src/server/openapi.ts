@@ -1801,6 +1801,25 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'has no clock at either end, so it can be tried before the ' +
                 'game and after it.'
             },
+            createdAt: { type: 'string', format: 'date-time' },
+            source: {
+              type: ['string', 'null'],
+              enum: ['rtmp', 'gopro', 'mevo', 'mevoStudio', null],
+              description: 'What an external camera is'
+            },
+            publishedAt: { type: ['string', 'null'], format: 'date-time' },
+            endedAt: { type: ['string', 'null'], format: 'date-time' },
+            durationSec: {
+              type: ['number', 'null'],
+              description: 'How long `playableVideoId` runs'
+            },
+            playableVideoId: {
+              type: ['string', 'null'],
+              description:
+                'Its newest finished upload when visible, otherwise its ' +
+                'live video when visible'
+            },
+            ownerPicture: { type: ['string', 'null'] },
             videoId: { type: ['string', 'null'] },
             lastError: { type: ['string', 'null'] },
             status: {
@@ -8736,7 +8755,15 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Split into `mine` and `others`. A key is a person\u2019s: their own ' +
             'cameras come back whole enough to act on, and everybody ' +
             'else\u2019s are named — whose, what it is called, what it is doing ' +
-            '— and never carry a key.',
+            '— and never carry a key. Active cameras come first, then ended ' +
+            'ones, each oldest first. An item also says `createdAt`, `source`, ' +
+            '`publishedAt`, `endedAt`, `ownerPicture`, `playableVideoId` (its ' +
+            'newest finished upload when visible, otherwise its live video ' +
+            'when visible, otherwise the upload that replaced it) and that ' +
+            'video\u2019s `durationSec`. `canAdd` is the ' +
+            'smaller of the room left under my limit and the game\u2019s, ' +
+            'counting active cameras; `gameCanAdd` is the game\u2019s alone; ' +
+            '`discarded` lists the ids of cameras I deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -8754,17 +8781,21 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'Another camera of my own on this game',
           description:
-            'Up to four per person per game. The slot is the lowest I do not ' +
-            'already hold, so ending one and asking again gives that number ' +
-            'back rather than counting upwards.\n\n' +
+            'Up to four active per person and six active per game; an ended ' +
+            'camera counts against neither, and a Director\u2019s counts. The ' +
+            'slot is the lowest I do not already hold, so ending one and ' +
+            'asking again gives that number back rather than counting ' +
+            'upwards.\n\n' +
             'With `deviceId`, the stream that device holds under that camera ' +
             'name: the same one again, in any case (200); else one an ' +
             'installed TS Director claimed under that name, which the device ' +
-            'adopts with its key and video (200); else a new one (201), after ' +
-            'revoking an ended stream of that device and name. A camera name ' +
-            'is unique among my active device streams on the game (409). A ' +
-            'redial sends `heldStreamId`; if that stream was ended or ' +
-            'revoked the answer is 410 and nothing is created.',
+            'adopts with its key and video (200); else a new one (201), ' +
+            'leaving an ended stream of that device and name beside it. A ' +
+            'camera name is unique among my active device streams on the game ' +
+            '(409). A redial sends `heldStreamId`; if that stream was ended ' +
+            'or revoked the answer is 410 and nothing is created.\n\n' +
+            'With `source`, an external camera tied to my account: `deviceId` ' +
+            'does not apply.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -8791,6 +8822,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                       description:
                         'The stream a redial already holds. Only an explicit ' +
                         'start leaves it out'
+                    },
+                    source: {
+                      type: 'string',
+                      enum: ['rtmp', 'gopro', 'mevo', 'mevoStudio'],
+                      description: 'What an external camera is'
                     }
                   }
                 }
@@ -8900,7 +8936,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Not the same as ending it. Ending stops a camera; this removes ' +
             'it and gives its number back. Mine only, and refused while it ' +
             'is streaming. An empty recording goes with it; one that holds ' +
-            'video stays, and is deleted on its own.',
+            'video stays, and is deleted on its own. Its upload reminder is ' +
+            'settled. 410 for a camera I deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           responses: {
@@ -8914,7 +8951,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             400: errorResponse,
             401: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            410: errorResponse
           }
         },
         patch: {
@@ -8928,7 +8966,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'for me. `liveStartedAt` says when the stream\u2019s first picture ' +
             'was captured, on the server\u2019s clock (`GET /time`): the live ' +
             'video is placed there unless a publisher already placed it, or ' +
-            'the instant is too far from when the publish arrived to be of it.',
+            'the instant is too far from when the publish arrived to be of it. ' +
+            '410 for a camera I deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           requestBody: {
@@ -8950,7 +8989,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: { description: 'The camera as it now stands' },
             400: errorResponse,
             404: errorResponse,
-            409: errorResponse
+            409: errorResponse,
+            410: errorResponse
           }
         }
       },
@@ -8959,23 +8999,91 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Show one of my URLs again, key and all',
           description:
             'Mine only — somebody else\u2019s key is answered 404, because it ' +
-            'publishes video as them. Written to the audit log every time.',
+            'publishes video as them. Written to the audit log every time. ' +
+            '410 for a camera I deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           responses: {
             200: { description: 'The camera, with its URL' },
             400: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            410: errorResponse
           }
         }
       },
       '/games/{gameId}/live-streams/{streamId}/rotate': {
         post: {
           summary: 'Replace one of my keys. The old one stops at once',
+          description: '410 for a camera I deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           responses: {
             200: { description: 'The camera, with its new URL' },
+            404: errorResponse,
+            410: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams/{streamId}/revoke': {
+        post: {
+          summary:
+            'Stop one of my cameras, and remove it if it never published',
+          description:
+            'Mine only, under the game\u2019s lock. A camera no accepted ' +
+            'publish ever reached is ended and removed, with its empty ' +
+            'recording; any other is only ended, and keeps what it recorded. ' +
+            'An encoder still being refused does not hold this up, and its ' +
+            'next try finds the key gone. `removed` says which it was; a ' +
+            'camera removed has its upload reminder settled. 410 for a ' +
+            'camera I deleted.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          responses: {
+            200: {
+              description: 'Which it was, and what is left on this game',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['removed', 'streams'],
+                    properties: {
+                      removed: { type: 'boolean' },
+                      streams: { $ref: '#/components/schemas/LiveStream' }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse,
+            410: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams/{streamId}/discard': {
+        post: {
+          summary: 'Delete one of my ended cameras and everything it made',
+          description:
+            'Mine only. Refused for an active camera, and for one still ' +
+            '`publishing` after End. Deletes its live video and every upload ' +
+            'of it, settles its upload reminder, and takes it off the list; ' +
+            'its id then appears in `discarded`. An upload opened or finished ' +
+            'for it afterwards is refused with 410, as is every other route ' +
+            'of the camera but this one, which can be asked again until it ' +
+            'has finished.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          responses: {
+            200: {
+              description: 'What is left pointed at this game',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/LiveStream' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         }
@@ -8987,12 +9095,14 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Mine, or anybody\u2019s if I run the team: a stream on their game ' +
             'that should not be there is theirs to stop. Closes the window ' +
             'rather than the playlist — only the ingest may touch a file its ' +
-            'own ffmpeg is writing, and it notices within the second.',
+            'own ffmpeg is writing, and it notices within the second. 410 ' +
+            'for a camera its owner deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           responses: {
             200: { description: 'The camera, ending' },
-            404: errorResponse
+            404: errorResponse,
+            410: errorResponse
           }
         }
       },
@@ -9216,9 +9326,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'For a videographer of either team, which every admin of it ' +
             'is. Anybody else gets 404. Kept for the TS Director builds ' +
-            'already installed: it returns my lowest-numbered stream that no ' +
-            'device holds, renamed to `cameraName`, or makes one in my lowest ' +
-            'free slot, and never returns or renames a device\u2019s stream. ' +
+            'already installed: it returns the stream it returned before, ' +
+            'even once ended, or else my oldest active one that no device ' +
+            'holds and nobody has published on, renamed to `cameraName`, or ' +
+            'makes one in my lowest free slot, and never returns or renames ' +
+            'a device\u2019s stream. 410 once the stream it returned was ' +
+            'deleted, so a redial puts no camera back on the air. ' +
             'Newer builds ask `POST /games/{gameId}/live-streams` with their ' +
             'install id.',
           security: [{ bearer: [] }],
@@ -9229,7 +9342,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'The URL with its key, which the operator never sees or types'
             },
             400: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            410: errorResponse
           }
         }
       },
@@ -9317,7 +9431,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             400: errorResponse,
             401: errorResponse,
             404: errorResponse,
-            409: errorResponse
+            409: errorResponse,
+            410: errorResponse
           }
         }
       },
@@ -9394,7 +9509,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`serverClockOffsetMs`, less any pre-roll the file holds. The ' +
             'live recording of the game it replaces is hidden. Asked again ' +
             'once ready, the same `videoId`; a failed upload can be asked ' +
-            'again. 400 while parts are missing.',
+            'again. 400 while parts are missing. 410 when its camera was ' +
+            'deleted.',
           security: [{ bearer: [] }],
           parameters: [uploadIdParam],
           responses: {
@@ -9402,7 +9518,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             202: { description: '`{ state: "assembling", step }`' },
             400: errorResponse,
             401: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            410: errorResponse
           }
         }
       },

@@ -18,6 +18,7 @@ import { purgeExpiredKeys } from './db/syncIdempotency'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { dictationScopes } from './dictation/scopes'
+import { finishDiscards } from './director/discard'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
 import { deliverAccountMail } from './email/accountMail'
@@ -242,7 +243,10 @@ function liveRouteOptions(): LiveRouteOptions {
     // The name this deployment goes by, which is the name an encoder has to
     // publish to. There is nothing to fall back to and nothing to get wrong:
     // it is the same fact the playback URLs are built from.
-    host: primaryHost
+    host: primaryHost,
+    space: serverConfig.space,
+    mediaRoot: serverConfig.mediaDir,
+    uploadsDir: uploadsDir()
   }
 }
 
@@ -312,6 +316,33 @@ function startPurge(db: ReturnType<typeof makeDatabase>): void {
   timer.unref?.()
 }
 
+/** How often a camera's delete that stopped partway is carried on. */
+const DISCARD_SWEEP_INTERVAL_MS = 60 * 60 * 1000
+
+/**
+ * Finishes the deletes of cameras that left the list with something still to
+ * delete, on the way up and then every hour.
+ */
+function startDiscardSweep(db: ReturnType<typeof makeDatabase>): void {
+  const sweep = (): void => {
+    finishDiscards({
+      db,
+      space: serverConfig.space,
+      mediaRoot: serverConfig.mediaDir,
+      uploadsDir: uploadsDir()
+    })
+      .then(finished => {
+        if (finished > 0) console.log(`finished ${finished} camera delete(s)`)
+      })
+      .catch((error: unknown) => {
+        console.error(`finishing camera deletes: ${String(error)}`)
+      })
+  }
+  sweep()
+  const timer = setInterval(sweep, DISCARD_SWEEP_INTERVAL_MS)
+  timer.unref?.()
+}
+
 /** How often expired `Idempotency-Key`s are swept. */
 const KEY_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
 
@@ -358,6 +389,7 @@ function runPrimary(workerCount: number): void {
   const primaryDb = makeDatabase(serverConfig.databaseUrl)
   reopenInterrupted(primaryDb)
   startPurge(primaryDb)
+  startDiscardSweep(primaryDb)
   startKeySweep(primaryDb)
   startChatAttachmentPurge(primaryDb)
   startChatReconciler(primaryDb, serverConfig.databaseUrl)
@@ -708,6 +740,7 @@ function runWorker(): void {
     '/api/v1',
     directorUploadRoutes(db, {
       uploadsDir: uploadsDir(),
+      mediaRoot: serverConfig.mediaDir,
       ffmpegPath: serverConfig.ffmpegPath,
       space: serverConfig.space
     })
@@ -778,6 +811,7 @@ function runWorker(): void {
   if (cluster.isPrimary) {
     reopenInterrupted(db)
     startPurge(db)
+    startDiscardSweep(db)
     startChatAttachmentPurge(db)
     startChatReconciler(db, serverConfig.databaseUrl)
     builder = startStatsBuilder({

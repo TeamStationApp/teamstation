@@ -2,17 +2,17 @@ import { asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { badRequest, gone, notFound, unauthorized } from '../../common/errors'
 import { canFilm, roleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { cleanBody } from '../jsonBody'
 import {
   cameraLabelOf,
+  checkCameraLimits,
   createLiveStream,
-  freeSlot,
+  isActiveStream,
   type LiveStreamRow,
-  MAX_CAMERAS,
   myLiveStreams,
   revealKey,
   setCameraName,
@@ -62,26 +62,60 @@ function readKey(sessionSecret: string, row: LiveStreamRow): string {
 
 const asClaim = asObject({ cameraName: asOptional(asString) })
 
+/** What an installed Director whose camera was deleted is told, with `410`. */
+export const DELETED_DIRECTOR_CAMERA =
+  'This camera was ended and deleted on TeamStation, so it stays off the air.'
+
 /**
  * The stream the legacy claim route resolves among this account's streams on
- * a game, lowest slot first: one it has returned before (`director_claimed`)
- * or, failing that, a device-less one nobody has published on yet.
+ * a game, oldest active first, as `liveStreamsFor` lists them: one it has
+ * returned before (`director_claimed`) or, failing that, an active
+ * device-less one nobody has published on yet.
  *
  * Never a device-less stream somebody has published on that this route did
  * not return: that is a stream made on the website for streaming software, and
  * its key is the coach's encoder's. Handed to an installed Director it put two
  * encoders on one key, and the claimed flag then let a phone adopt it. A
  * stream nobody has published on has no encoder to collide with, and once it
- * is returned it is the Director's.
+ * is returned it is the Director's. One that has ended can publish nothing,
+ * and no Director holds it, so it is passed over.
+ *
+ * A stream this route has returned is its own even once ended. An installed
+ * build claims on every redial, and this route cannot tell that from a start:
+ * answering with the ended key is what keeps an ended camera off the air.
+ * Builds that ask by device say which they mean (`requestDeviceStream`).
+ *
+ * The same holds once its owner has deleted it, which takes it out of `mine`:
+ * `deleted` then, ahead of the fallback, and the claim answers `410` rather
+ * than making a camera the next redial would put on the air. Installed builds
+ * keep the address they hold when a claim fails on a redial, which is the
+ * deleted camera's own dead key, and show the sentence when somebody picks
+ * the game.
  */
 async function directorsStream(
   db: Kysely<Database>,
+  gameId: string,
+  userId: string,
   mine: LiveStreamRow[]
-): Promise<LiveStreamRow | undefined> {
+): Promise<LiveStreamRow | 'deleted' | undefined> {
   const deviceLess = mine.filter(row => row.deviceId == null)
   const claimed = deviceLess.find(row => row.directorClaimed)
-  if (claimed != null || deviceLess.length === 0) return claimed
-  const candidates = deviceLess.map(row => row.id)
+  if (claimed != null) return claimed
+  const deleted = await db
+    .selectFrom('live_streams')
+    .select('id')
+    .where('game_id', '=', gameId)
+    .where('user_id', '=', userId)
+    .where('device_id', 'is', null)
+    .where('director_claimed', '=', true)
+    .where('discarded_at', 'is not', null)
+    .executeTakeFirst()
+  if (deleted != null) return 'deleted'
+  if (deviceLess.length === 0) return undefined
+  const candidates = deviceLess
+    .filter(row => isActiveStream(row))
+    .map(row => row.id)
+  if (candidates.length === 0) return undefined
   const unused = await db
     .selectFrom('live_streams')
     .select('id')
@@ -146,7 +180,7 @@ export function directorRoutes(
 
       // Taking a game twice is the ordinary case, not the exception: the same
       // Director claims it again on every redial. It gets **its own account's**
-      // camera — its lowest-numbered one that no device holds, and that
+      // camera — its oldest active one that no device holds, and that
       // streaming software is not using (`directorsStream`) — so a second
       // Director signed in as somebody else is a second camera on the game
       // rather than a second publisher turned away from the same key. A
@@ -158,19 +192,15 @@ export function directorRoutes(
       const claimed = await db.transaction().execute(async trx => {
         await lockKeys(trx, [`liveStreams:${game.id}`])
         const mine = await myLiveStreams(trx, game.id, actor.userId)
-        const existing = await directorsStream(trx, mine)
+        const existing = await directorsStream(trx, game.id, actor.userId, mine)
+        if (existing === 'deleted') throw gone(DELETED_DIRECTOR_CAMERA)
         if (existing != null) {
           return {
             row: existing,
             key: readKey(options.sessionSecret, existing)
           }
         }
-        const slot = freeSlot(mine)
-        if (slot == null) {
-          throw badRequest(
-            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-          )
-        }
+        const slot = await checkCameraLimits(trx, game.id, actor.userId)
         const created = await createLiveStream(trx, {
           gameId: game.id,
           teamId,
@@ -233,9 +263,11 @@ export function directorRoutes(
       const gameId = pathParam(req.params.gameId)
       const mine = await directorsStream(
         db,
+        gameId,
+        actor.userId,
         await myLiveStreams(db, gameId, actor.userId)
       )
-      if (mine == null) throw notFound()
+      if (mine == null || mine === 'deleted') throw notFound()
       res.json({
         gameId,
         state: mine.state,
