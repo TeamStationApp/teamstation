@@ -11,9 +11,10 @@ import { createHash } from 'node:crypto'
  * Fonts, pictures and video from itself, `blob:` and `data:` URLs and the media origins the deployment names, and talk to
  * itself, its API, the API's socket and those media origins. Workers come
  * from itself or `blob:` (hls.js builds its transmuxer from a Blob). No
- * plugins and no `<base>`. Framing is refused by the reverse proxy's
- * response headers, because browsers ignore `frame-ancestors` in a
- * `<meta>` policy and log an error for it on every page.
+ * plugins and no `<base>`. Framing is the reverse proxy's to refuse, by its
+ * response headers, because browsers ignore `frame-ancestors` in a `<meta>`
+ * policy and log an error for it on every page. Those headers must leave the
+ * app's own origin able to frame `/mapFrame.html`, where the maps draw.
  *
  * - `<api>` is the origin of the build's `TS_API_BASE_URL` when it is
  *   absolute (a relative one is the page's own origin, `'self'`).
