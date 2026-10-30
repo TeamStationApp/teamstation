@@ -320,6 +320,32 @@ describe('a pool player and who may open their page', function () {
     expect([...(await openablePeople(db!, scopes, heron, [kept]))]).deep.equals(
       [kept]
     )
+    // A pool line under a closed row, with the details on the row it joined.
+    const old_ = ids['Freddie Freeman']
+    const survivor = await person('Freddie Kept', true)
+    await db!
+      .updateTable('users')
+      .set({ merged_into: survivor })
+      .where('id', '=', old_)
+      .execute()
+    await db!
+      .updateTable('game_guest_details')
+      .set({ user_id: survivor })
+      .where('user_id', '=', old_)
+      .execute()
+    expect([
+      ...(await openablePeople(db!, scopes, heron, [survivor]))
+    ]).deep.equals([])
+    await db!
+      .updateTable('game_guest_details')
+      .set({ user_id: old_ })
+      .where('user_id', '=', survivor)
+      .execute()
+    await db!
+      .updateTable('users')
+      .set({ merged_into: null })
+      .where('id', '=', old_)
+      .execute()
     const outsider = await person('Out Sider', true)
     expect([
       ...(await openablePeople(

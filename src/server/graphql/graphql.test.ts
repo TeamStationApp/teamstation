@@ -4,11 +4,9 @@ import { after, before, describe, it } from 'mocha'
 import { asApiKey } from '../../common/apiKeys'
 import { userIdOfGumbo } from '../../common/userId'
 import { type ApiFixture, apiFixture } from '../../test/apiFixture'
-import { withdrawnKey } from '../games/withdrawn'
 import { apiKeyRoutes } from '../routes/apiKeys'
 import { graphqlRoutes, MAX_QUERY_LENGTH } from '../routes/graphql'
-import type { BattingLine, PitchingLine } from '../stats'
-import { boxScoreOrder, pitchingOrder } from '../stats/boxScoreOrder'
+import { insertUser } from '../users/insertUser'
 import { MAX_READS } from './restReader'
 import { MAX_DEPTH } from './schema'
 
@@ -384,6 +382,34 @@ describe('the GraphQL API', function () {
         const own = `{ stats(perspective: PITCHING, filter: { playerId: "${userIdOfGumbo(202)}" }) { pa k } }`
         const figures = (await ask(104, own)).body.data.stats
         expect(figures.map((row: { k: number }) => row.k)).not.includes(7)
+        // By player too, with the withdrawal held on the row they merged into.
+        const kept = await insertUser(db, {
+          display_name: 'Kept Row',
+          password_hash: null,
+          login_enabled: false,
+          is_admin: false
+        })
+        await db
+          .updateTable('game_withdrawn_players')
+          .set({ user_id: kept })
+          .where('game_id', '=', game)
+          .execute()
+        await db
+          .updateTable('users')
+          .set({ merged_into: kept })
+          .where('id', '=', userIdOfGumbo(202))
+          .execute()
+        try {
+          const grouped = `{ stats(perspective: PITCHING, groupBy: [PLAYER]) { k } }`
+          const rows = (await ask(105, grouped)).body.data.stats
+          expect(rows.map((row: { k: number }) => row.k)).not.includes(7)
+        } finally {
+          await db
+            .updateTable('users')
+            .set({ merged_into: null })
+            .where('id', '=', userIdOfGumbo(202))
+            .execute()
+        }
       } finally {
         await db
           .deleteFrom('group_requests')

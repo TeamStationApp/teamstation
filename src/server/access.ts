@@ -1171,47 +1171,29 @@ export async function openablePeople(
   const played = await db
     .selectFrom('game_player_stats')
     .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
-    .select('gumbo_ids.user_id')
+    .select(['gumbo_ids.user_id', 'game_player_stats.game_id'])
     .distinct()
     .where('gumbo_ids.user_id', 'in', ids)
     .where('game_player_stats.team_id', 'in', teams)
-    .where(eb =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('game_guest_details')
-            .select('game_guest_details.game_id')
-            .whereRef(
-              'game_guest_details.game_id',
-              '=',
-              'game_player_stats.game_id'
-            )
-            .whereRef('game_guest_details.user_id', '=', 'gumbo_ids.user_id')
-            .where('game_guest_details.pool', '=', true)
-        )
-      )
-    )
-    .where(eb =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('game_withdrawn_players')
-            .select('game_withdrawn_players.game_id')
-            .whereRef(
-              'game_withdrawn_players.game_id',
-              '=',
-              'game_player_stats.game_id'
-            )
-            .whereRef(
-              'game_withdrawn_players.user_id',
-              '=',
-              'gumbo_ids.user_id'
-            )
-        )
-      )
-    )
     .execute()
-  for (const row of played) open.add(personOf.get(row.user_id)!)
+  // A game they played as a pool player, or were withdrawn from, opens
+  // nothing, on whichever of their rows it is held.
+  const pool = await db
+    .selectFrom('game_guest_details')
+    .select(['user_id', 'game_id'])
+    .where('user_id', 'in', ids)
+    .where('pool', '=', true)
+    .execute()
+  const withdrawn = await db
+    .selectFrom('game_withdrawn_players')
+    .select(['user_id', 'game_id'])
+    .where('user_id', 'in', ids)
+    .execute()
+  const key = (row: { user_id: string; game_id: string }): string =>
+    `${row.game_id} ${personOf.get(row.user_id)}`
+  const closed = new Set([...pool, ...withdrawn].map(key))
+  for (const row of played)
+    if (!closed.has(key(row))) open.add(personOf.get(row.user_id)!)
   return open
 }
 
