@@ -157,15 +157,16 @@ describe('the lineups a game starts from (U4b)', function () {
       { away: [], home: [] }
     )
     expect(empty.sides.away.battingIndex).equals(0)
-    expect(() =>
-      reconcileRoster(
-        held,
-        teamsOf(game),
-        { away, home },
-        { away: [], home: roster([101]) },
-        { away: [], home: [] }
-      )
-    ).throws('both teams')
+    // Fielded by both sides, a player already in the game stays on their team.
+    const both = reconcileRoster(
+      held,
+      teamsOf(game),
+      { away, home },
+      { away: [], home: roster([101]) },
+      { away: [], home: [] }
+    )
+    expect(both.sides.away.players).includes(101)
+    expect(both.sides.home.players).not.includes(101)
   })
 
   it('retains merged historical turns and fielding assignments until that player is unavailable', () => {
@@ -395,5 +396,57 @@ describe('a reader who can see a side left unseen', function () {
     )
     expect(shown).equals(next)
     expect(arranged(setupOf(shown), 'away').order[0]).equals(102)
+  })
+  it('leaves somebody on both rosters off both, until a coach leaves them out of one', function () {
+    const roster = (id: number, name: string): RosterEntry =>
+      asRosterEntry({
+        userId: userIdOfGumbo(id),
+        gumboId: id,
+        shortName: name,
+        jersey: null,
+        positions: [],
+        bats: 'right',
+        throws: 'right',
+        isPlayer: true,
+        role: 'player',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null
+      })
+    const both = roster(70, 'Both Sides')
+    const game = {
+      awayTeamId: 'tem_a',
+      awayTeamName: 'Falcons',
+      awayLogoUrl: null,
+      homeTeamId: 'tem_h',
+      homeTeamName: 'Owls',
+      homeLogoUrl: null
+    }
+    const away = [both, roster(71, 'Only Away')]
+    const home = [both, roster(72, 'Only Home')]
+    const setup = startingSetup(game, away, home, {}, false)
+    expect(setup.players[70]).equals(undefined)
+    expect(setup.sides.away.players).deep.equals([71])
+    expect(setup.sides.home.players).deep.equals([72])
+    // Left out of one side, they play for the other.
+    const chosen = startingSetup(
+      { ...game, unrostered: { away: [70], home: [] } },
+      away,
+      home,
+      {},
+      false
+    )
+    expect(chosen.sides.away.players).deep.equals([71])
+    expect(chosen.sides.home.players).has.members([70, 72])
+    // Somebody who has played stays with the team they played for.
+    const held = reconcileRoster(
+      chosen,
+      teamsOf(game),
+      { away, home },
+      { away: [], home: [] },
+      { away: [], home: [] }
+    )
+    expect(held.sides.home.players).includes(70)
+    expect(held.sides.away.players).not.includes(70)
   })
 })

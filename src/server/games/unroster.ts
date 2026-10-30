@@ -14,8 +14,10 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { storedRecordOf } from '../../common/scoring/gumbo'
-import { newSetup } from '../../common/scoring/lineup'
-import { reconcileRoster } from '../../common/scoring/rosterAvailability'
+import {
+  onBothSides,
+  reconcileRoster
+} from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
@@ -82,24 +84,17 @@ export async function setRostered(
     unrostered[body.side] = body.rostered
       ? unrostered[body.side].filter(id => id !== gumboId)
       : [...unrostered[body.side], gumboId]
-    // A merge can leave one person on both team rosters with one side
-    // excluded. Re-enabling that side must not make the next setup unreadable.
-    const teams = {
-      away: { id: game.away_team_id, name: '' },
-      home: { id: game.home_team_id, name: '' }
-    }
-    try {
-      reconcileRoster(
-        newSetup(teams, { away: [], home: [] }),
-        teams,
+    // Somebody on both rosters plays for one side once the other leaves them
+    // out: putting them back is refused, or they would play for neither.
+    if (
+      body.rostered &&
+      onBothSides(
         availability.roster,
         availability.guestPlayers,
         unrostered
-      )
-    } catch (error) {
-      if (!(error instanceof Error)) throw error
-      throw conflict(error.message)
-    }
+      ).has(gumboId)
+    )
+      throw conflict('A player cannot be available for both teams')
     const rows = await readPlays(trx, gameId)
     const stored = await resolveScoringGame(
       trx,
