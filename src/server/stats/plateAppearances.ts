@@ -1,3 +1,4 @@
+import { CALL_OF_PITCH_CODE } from '../../common/gumbo/reference'
 import type { GumboPlay } from '../../common/gumboPlay'
 import type { GameTeams } from '../events/eventWrite'
 import {
@@ -81,14 +82,21 @@ function pitchesOf(
   return events.flatMap((event: unknown, at: number) => {
     if (!isRecord(event) || event.isPitch !== true) return []
     const details = isRecord(event.details) ? event.details : {}
+    // The call's code says what the pitch was; games stored before the
+    // engine wrote `isBall` and `isStrike` have the code alone.
+    const code = [
+      isRecord(details.call) ? details.call.code : undefined,
+      details.code
+    ].find(each => typeof each === 'string')
     const call: FirstPitch =
-      details.isInPlay === true
+      (typeof code === 'string' ? CALL_OF_PITCH_CODE.get(code) : undefined) ??
+      (details.isInPlay === true
         ? 'inPlay'
         : details.isStrike === true
           ? 'strike'
           : details.isBall === true
             ? 'ball'
-            : 'other'
+            : 'other')
     return [
       {
         index: typeof event.index === 'number' ? event.index : at,

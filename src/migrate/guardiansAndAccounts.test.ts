@@ -5,7 +5,7 @@ import { Pool } from 'pg'
 import { migrations } from './migrations'
 import { migration051GuardiansAndAccounts } from './migrations/051guardiansAndAccounts'
 import { migrateDown, migrateUp } from './runner'
-import { testDatabaseUrl } from './testDatabase'
+import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
 /**
  * U2: 051 over a database with users in every state, then its triggers.
@@ -95,7 +95,7 @@ describe('051: accounts are users with a way to sign in', function () {
   after(async function () {
     if (pool != null) await pool.end()
     if (admin != null) {
-      await admin.query(`drop database if exists ${name} with (force)`)
+      await dropScratchDatabase(admin, name)
       await admin.end()
     }
   })

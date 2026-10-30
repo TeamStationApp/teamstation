@@ -4,7 +4,7 @@ import { Pool } from 'pg'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { migrateDown, migrateUp } from '../runner'
-import { testDatabaseUrl } from '../testDatabase'
+import { dropScratchDatabase, testDatabaseUrl } from '../testDatabase'
 import { migration087LoginOffOnly } from './087loginOffOnly'
 import { migrations } from './index'
 
@@ -60,7 +60,7 @@ describe('087 login switched off only with the last way in', function () {
   after(async function () {
     await pool?.end()
     if (admin != null) {
-      await admin.query(`drop database if exists ${name} with (force)`)
+      await dropScratchDatabase(admin, name)
       await admin.end()
     }
   })

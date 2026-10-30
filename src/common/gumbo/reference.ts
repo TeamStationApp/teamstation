@@ -80,6 +80,26 @@ export const PITCH_CODES: ReadonlySet<string> = new Set(
   pitchCodes.map(entry => entry.code)
 )
 
+/**
+ * What each pitch code is to the count: a ball, a strike, or a ball put in
+ * play (contact on a swing, which MLB also marks a strike). Codes that are
+ * no pitch (a pickoff throw, a step-off) are absent.
+ */
+export const CALL_OF_PITCH_CODE: ReadonlyMap<
+  string,
+  'ball' | 'strike' | 'inPlay'
+> = new Map(
+  pitchCodes.flatMap((entry): Array<[string, 'ball' | 'strike' | 'inPlay']> =>
+    entry.swingContactStatus
+      ? [[entry.code, 'inPlay']]
+      : entry.ballStatus
+        ? [[entry.code, 'ball']]
+        : entry.strikeStatus
+          ? [[entry.code, 'strike']]
+          : []
+  )
+)
+
 /** Batted-ball trajectories: `ground_ball`, `bunt_popup`, … */
 export const HIT_TRAJECTORIES: ReadonlySet<string> = new Set(
   hitTrajectories.map(entry => entry.code)
