@@ -1,5 +1,5 @@
 import { LegendList } from '@legendapp/list/react-native'
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -74,6 +74,14 @@ export function AddPlayerScene({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [pending, setPending] = useState(false)
+  const saving = useRef(false)
+  const mounted = useRef(true)
+  useEffect(
+    () => () => {
+      mounted.current = false
+    },
+    []
+  )
   const list = useRosterCandidates({ client, teamId, query })
   const contentWidth = theme.rem(theme.maxContentWidthRem)
   const wide = window.width > contentWidth
@@ -92,7 +100,8 @@ export function AddPlayerScene({
   }
   const problem = playerFormError(value, { nameRequired: false })
   const add = async (candidate: RosterCandidate): Promise<void> => {
-    if (busy || problem != null) return
+    if (saving.current || problem != null) return
+    saving.current = true
     setBusy(true)
     setError(undefined)
     try {
@@ -104,6 +113,7 @@ export function AddPlayerScene({
           value.positions.includes(position)
         )
       })
+      if (!mounted.current) return
       if ('pendingRequestId' in answer) setPending(true)
       else
         onAdded(
@@ -118,8 +128,15 @@ export function AddPlayerScene({
           : 'Unable to add the player. Please try again.'
       )
     } finally {
+      saving.current = false
       setBusy(false)
     }
+  }
+  // Back or Esc does what Cancel does, and waits for an add as Cancel does.
+  const back = (): void => {
+    if (busy) return
+    if (chosen == null) onCancel()
+    else setChosen(undefined)
   }
 
   const line = (message: string): React.ReactElement => (
@@ -182,7 +199,7 @@ export function AddPlayerScene({
       visible
       transparent={wide}
       animationType="slide"
-      onRequestClose={onCancel}
+      onRequestClose={back}
     >
       <SafeAreaProvider
         initialMetrics={
@@ -235,8 +252,7 @@ export function AddPlayerScene({
                   accessibilityLabel="Cancel"
                   disabled={busy}
                   onPress={() => {
-                    if (chosen == null) onCancel()
-                    else setChosen(undefined)
+                    back()
                   }}
                   style={styles.cancel}
                 >

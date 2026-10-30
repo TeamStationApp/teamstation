@@ -198,6 +198,33 @@ describe('team settings Add Player', function () {
     ])
   })
 
+  it('sends one add however it is pressed, and says nothing once it is gone', async () => {
+    let finish: (answer: ExistingPlayerAnswer) => void = () => undefined
+    const { fake, sent, added } = await open({
+      answer: async () =>
+        await new Promise(resolve => {
+          finish = resolve
+        })
+    })
+    await act(async () => {
+      fake.last().resolve([burnes])
+    })
+    await click('Choose Corbin B')
+    await act(async () => {
+      node('Add to Roster')!.click()
+      node('Add to Roster')!.click()
+    })
+    expect(sent).has.length(1)
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    await act(async () => {
+      finish({ entry, noticeId: null })
+    })
+    expect(added).deep.equals([])
+  })
+
   it('says nothing of a notice nobody was sent, and Cancel on Add to Roster goes back to the list', async () => {
     const { fake, added } = await open({
       answer: async () => ({ entry, noticeId: null })
