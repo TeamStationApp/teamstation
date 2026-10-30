@@ -1500,6 +1500,7 @@ describe('api client', function () {
       createdAt: 'now',
       expiresAt: 'soon',
       approved: false,
+      declined: undefined,
       expired: false,
       approvedByDeviceId: null,
       box: null
@@ -1542,6 +1543,15 @@ describe('api client', function () {
       url: 'http://x/api/v1/chat/links/clk_1/approve'
     })
     expect(JSON.parse(approved.calls[0].body ?? '')).deep.equals(approval)
+    const declined = client({ ...link, declined: true })
+    expect(await declined.client.declineChatLink('clk_1')).deep.equals({
+      ...link,
+      declined: true
+    })
+    expect(declined.calls[0]).deep.include({
+      method: 'POST',
+      url: 'http://x/api/v1/chat/links/clk_1/decline'
+    })
   })
 
   it('reads epochs, makes one, and lists and fills grant requests', async function () {
