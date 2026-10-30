@@ -24,6 +24,9 @@ export interface PinMoved {
   longitude: number
 }
 
+/** How long a web map's frame has to start before the panel replaces it. */
+export const MAP_FRAME_READY_MS = 10000
+
 /** What the map shows when it cannot load. */
 export const PIN_MAP_FAILED = 'The map couldn’t load'
 

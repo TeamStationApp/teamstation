@@ -1,0 +1,61 @@
+<!doctype html>
+<!--
+  The page every web map draws in. Loaded from its own URL, it takes no
+  policy from the app's page, whose `script-src 'self'` would refuse a map's
+  inline script. `MapFrame` frames it with a sandbox that leaves it an opaque
+  origin, and only there does it take a document: opened any other way it runs
+  in the app's origin, and does nothing.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Map</title>
+  </head>
+  <body>
+    <script>
+      if (self.origin === 'null') {
+        // Google's map watches its size through a child frame of its own, which
+        // this sandbox makes cross-origin, so it would never hear of a resize
+        // and keep drawing at its first size. Asked for the window of a child
+        // with no address of its own, which it may not touch, it gets this one,
+        // which sees the same resizes.
+        const contentWindow = Object.getOwnPropertyDescriptor(
+          HTMLIFrameElement.prototype,
+          'contentWindow'
+        )
+        Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+          ...contentWindow,
+          get() {
+            const inner = contentWindow.get.call(this)
+            try {
+              return inner == null ||
+                this.src !== '' ||
+                inner.addEventListener != null
+                ? inner
+                : window
+            } catch {
+              return window
+            }
+          }
+        })
+        addEventListener('message', event => {
+          const data = event.data
+          // `location.origin` is this page's address, which the sandbox leaves
+          // alone: only the app that serves this page can send it a document.
+          if (
+            event.source !== parent ||
+            event.origin !== location.origin ||
+            data == null ||
+            data.type !== 'teamstation:mapDocument' ||
+            typeof data.html !== 'string'
+          )
+            return
+          document.open()
+          document.write(data.html)
+          document.close()
+        })
+        parent.postMessage({ type: 'teamstation:mapFrameReady' }, '*')
+      }
+    </script>
+  </body>
+</html>
