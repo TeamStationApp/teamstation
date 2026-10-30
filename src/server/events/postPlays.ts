@@ -17,6 +17,7 @@ import {
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
 import { pregameRecord } from '../../common/scoring/sideSwap'
+import { withoutNames } from '../../common/scoring/storedNames'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
@@ -90,6 +91,13 @@ export interface PostOptions {
    * passes it; the server's own writes pass none and are not checked.
    */
   expectedGeneration?: number
+  /**
+   * The teams whose players' first and last names the answer
+   * carries (`ScoringReadOptions.halves`), asked of the locked game: the
+   * route answers its sender the teams whose lineups he may save. None when
+   * absent.
+   */
+  halves?: (trx: Trx, game: PostedGame) => Promise<readonly string[]>
 }
 
 /** The refusal of a post made against the game before its last reset. */
@@ -213,11 +221,21 @@ export async function postGamePlays(
     const prior = live
       ? playsDigest(priorRows, atBatOf(game, priorRows.length > 0))
       : null
+    // The lineups digest the game answers before this post: the one it
+    // keeps, or for a game that keeps none, its stored form's; none when
+    // that stored form does not read, so the post tells a lineups change
+    // and a post built on a base is refused as the read is.
+    const lineupsBefore = live
+      ? await storedLineupsDigest(trx, { id: gameId, ...game }).catch(
+          () => null
+        )
+      : null
     if (
       live &&
       body.lineupsBase !== undefined &&
       body.lineupsBase !==
-        (await storedLineupsDigest(trx, { id: gameId, ...game }))
+        (lineupsBefore ??
+          (await storedLineupsDigest(trx, { id: gameId, ...game })))
     )
       throw conflict(
         'Somebody else changed the lineups since this game was read',
@@ -247,7 +265,7 @@ export async function postGamePlays(
         play => storedRecordOf(play) != null
       )
     ) {
-      const projected = await resolveScoringGame(trx, next)
+      const projected = await resolveScoringGame(trx, next, { gameId })
       await assertStoredScoringRoles(
         trx,
         { id: gameId, ...game },
@@ -256,7 +274,7 @@ export async function postGamePlays(
       )
       const context = (await contextOf(trx, gameId, game, projected))!
       assertAuthoredRosters(
-        await resolveScoringGame(trx, previous),
+        await resolveScoringGame(trx, previous, { gameId }),
         projected,
         context
       )
@@ -358,6 +376,9 @@ export async function postGamePlays(
         .where('id', '=', gameId)
         .execute()
     }
+    // The at-bat in progress is stored as every play is, naming nobody.
+    if (currentPlay != null && typeof currentPlay === 'object')
+      currentPlay = withoutNames(currentPlay, { source: system })
     const write = {
       gameId,
       homeTeamId: game.home_team_id,
@@ -455,15 +476,13 @@ export async function postGamePlays(
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
     const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
-    // Told to the game socket when this commits. The lineups only when a
-    // reader of them would see something new: the digest is of what they
-    // show, so a pitch leaves it alone and an undone change moves it.
+    // Told to the game socket when this commits. The lineups only when their
+    // digest moves from the one the game answered before: the digest is of
+    // their stored form, so a pitch leaves it alone and an undone change
+    // moves it.
     await notifyGameChange(trx, { game: gameId, kind: 'plays' })
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
-    if (
-      'lineups_digest' in lineups &&
-      lineups.lineups_digest !== game.lineups_digest
-    )
+    if ('lineups_digest' in lineups && lineups.lineups_digest !== lineupsBefore)
       await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
     // And to the screens of that game: its event, and home and schedule,
     // from the clock this transaction bumps last. A post that makes the
@@ -480,10 +499,14 @@ export async function postGamePlays(
     )
       await noteGameFigures(trx, gameId)
     else noteScopeChange(trx, { gameId })
-    const resolved = await resolveScoringGame(trx, {
-      plays: taggedStored.map(row => row.gumbo as GumboPlay),
-      currentPlay: taggedCurrent as CurrentPlay | null
-    })
+    const resolved = await resolveScoringGame(
+      trx,
+      {
+        plays: taggedStored.map(row => row.gumbo as GumboPlay),
+        currentPlay: taggedCurrent as CurrentPlay | null
+      },
+      { halves: (await options.halves?.(trx, game)) ?? [], gameId }
+    )
     const sides = teamsOfRow(game)
     const answer: PostedPlays = {
       plays: taggedStored.map((row, index) => ({
@@ -634,7 +657,8 @@ export async function readPlays(
 }
 
 /**
- * What a live post that sends the at-bat in progress stores of it. Before
+ * What a live post that sends the at-bat in progress stores of it, in its
+ * stored form, as the pregame is (`withoutNames`). Before
  * the first pitch no Gumbo is: a post that leaves no stored play, and whose
  * at-bat holds lineup changes only, keeps its record as the game's pregame
  * lineups, as does the post that takes the first pitch back. The first post
@@ -660,7 +684,9 @@ function atBatWrite(
   )
     return {
       currentPlay: null,
-      pregame: (currentPlay as { teamStation: unknown }).teamStation
+      pregame: withoutNames(
+        (currentPlay as { teamStation: unknown }).teamStation
+      )
     }
   const began =
     pregame == null || begins
@@ -672,7 +698,7 @@ function atBatWrite(
       : null
   return {
     currentPlay,
-    ...(began == null ? {} : { pregame: began })
+    ...(began == null ? {} : { pregame: withoutNames(began) })
   }
 }
 

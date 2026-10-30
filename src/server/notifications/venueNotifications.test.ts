@@ -145,6 +145,54 @@ describe('venue notifications in the inbox', function () {
     )!
     expect(declined.title).equals('Example Park: request declined')
     expect(declined.description).includes("decided Demo League B's request")
+    // A person's decision stores who decided and what, never their name,
+    // which is read as it is now; the seven days' is stored in words.
+    const stored = await f.h.db
+      .selectFrom('notification_events')
+      .select(['id', 'actor_id', 'metadata'])
+      .where('source_type', '=', 'venueClaimDecided')
+      .orderBy('created_at')
+      .execute()
+    expect(stored.map(row => row.metadata)).deep.equals([
+      {
+        title: 'Example Park: claim approved',
+        description: "Demo League A's claim was approved after 7 days.",
+        venueId: venue.id,
+        claimId: (stored[0].metadata as { claimId: string }).claimId
+      },
+      {
+        title: 'Example Park: request declined',
+        venueId: venue.id,
+        claimId,
+        claimKind: 'request',
+        leagueName: 'Demo League B'
+      }
+    ])
+    const decider = stored[1].actor_id!
+    const { display_name: name } = await f.h.db
+      .selectFrom('users')
+      .select('display_name')
+      .where('id', '=', decider)
+      .executeTakeFirstOrThrow()
+    expect(declined.description).equals(
+      `${name} decided Demo League B's request.`
+    )
+    await f.h.db
+      .updateTable('users')
+      .set({ display_name: 'Ken Griffey' })
+      .where('id', '=', decider)
+      .execute()
+    const renamed = (await inbox(102, true)).items.find(
+      item => item.type === 'venueClaimDecided'
+    )!
+    expect(renamed.description).equals(
+      "Ken Griffey decided Demo League B's request."
+    )
+    expect(
+      (await inbox(101, true)).items.find(
+        item => item.type === 'venueClaimDecided'
+      )!.description
+    ).equals(decided.description)
   })
 
   it('records nothing for nobody, and never collides two notices about one thing', async () => {

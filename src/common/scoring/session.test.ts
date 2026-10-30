@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
+import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
 import { HttpError } from '../errors'
 import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
@@ -18,9 +19,26 @@ import {
   type SaveChange,
   ScoringSession,
   type SessionContext,
+  storedChange,
   type StoredGame
 } from './session'
 import { asGameState, type GameState, setupOf, type Side } from './state'
+import { namesIn, withNames, withoutNames } from './storedNames'
+
+/**
+ * A document as a session sends it: in its stored form, holding none of the
+ * names the session sent beside it.
+ */
+function expectStoredForm(
+  document: unknown,
+  names: Record<string, string>,
+  what: string
+): void {
+  expect(withoutNames(document), `${what} is sent stored`).deep.equals(document)
+  const text = JSON.stringify(document)
+  for (const name of Object.values(names))
+    if (name !== '') expect(text, `${what} sends ${name}`).not.include(name)
+}
 
 /** A server in memory that records every post and can be made to fail. */
 class FakeStore implements EventStore {
@@ -38,17 +56,37 @@ class FakeStore implements EventStore {
     }
   }
 
+  /** The names the server reads from the players' accounts. */
+  names = new Map<number, string>()
+
   async save(_gameId: string, change: SaveChange): Promise<StoredGame> {
     this.posts.push(JSON.parse(JSON.stringify(change)) as SaveChange)
+    // A session posts its documents in their stored form, with the names
+    // they carried beside them: the server keeps none, and reads them back
+    // from the accounts, as these are named back.
+    for (const [id, name] of Object.entries(change.names ?? {}))
+      this.names.set(Number(id), name)
+    const named = <T extends GumboPlay | CurrentPlay | null | undefined>(
+      document: T,
+      what: string
+    ): T => {
+      if (document == null) return document
+      expectStoredForm(document, change.names ?? {}, what)
+      const back = withNames(document, this.names)
+      expectNamesRoundTrip(back, what)
+      return back
+    }
+    const plays = change.plays.map(play => named(play, 'play'))
+    const current = named(change.currentPlay, 'current play')
     if (this.gate != null) await this.gate
     if (this.fail != null) throw this.fail
     for (const index of change.remove) this.plays.delete(index)
-    for (const play of change.plays) {
+    for (const play of plays) {
       const index = play.about.atBatIndex
       const id = this.plays.get(index)?.id ?? `evt_${this.next++}`
       this.plays.set(index, { id, play })
     }
-    if (change.currentPlay !== undefined) this.current = change.currentPlay
+    if (current !== undefined) this.current = current
     return await this.load()
   }
 
@@ -217,6 +255,62 @@ describe('a scoring session', function () {
     expect(baseIds(again.session.state)).deep.equals([null, null, null])
     await again.session.flush()
     expect((await open(store)).session.state.liveData.linescore.outs).equals(0)
+  })
+
+  it('saves its plays with no names in them, and their names beside them', async () => {
+    const { session, store } = await open()
+    for (const action of [strike, strike, strike])
+      expect(session.apply(action).problems).deep.equals([])
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await session.flush()
+    const post = store.posts.find(change => change.plays.length > 0)!
+    const batter = session.state.liveData.plays.allPlays[0].matchup.batter
+    expect(post.names?.[String(batter.id)]).equals(batter.fullName)
+    expect(batter.fullName).not.equals('')
+    expect(JSON.stringify(post.plays)).not.include(batter.fullName)
+    expect(post.plays[0].matchup?.batter).deep.equals({ id: batter.id })
+  })
+
+  it('sends the stored form of a play it decided changed, worked out once', async () => {
+    const { session } = await open()
+    for (const action of [strike, strike, strike])
+      expect(session.apply(action).problems).deep.equals([])
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    const play = session.picture().plays.get(0)!
+    const change = { plays: [play], remove: [] }
+    const sent = storedChange(change).plays[0]
+    expect(sent).deep.equals(withoutNames(play))
+    // The same play sends the very stored form its save was decided on.
+    expect(storedChange(change).plays[0]).equals(sent)
+  })
+
+  it('posts nothing when a player is renamed between its load and its save', async () => {
+    const { session, store } = await open()
+    for (const action of [strike, strike, strike])
+      expect(session.apply(action).problems).deep.equals([])
+    session.apply({ type: 'gameFlow', kind: 'closePlay' })
+    session.apply(ball)
+    await session.flush()
+    const posts = store.posts.length
+    const batter = store.plays.get(0)!.play.matchup!.batter!.id!
+    // Every read names the batter anew, as the server does after a rename.
+    const renamed = <T>(document: T): T => {
+      const names = namesIn(document)
+      return withNames(document, id =>
+        id === batter ? 'Ichiro S' : names.get(id)
+      )
+    }
+    for (const row of store.plays.values()) row.play = renamed(row.play)
+    store.current = renamed(store.current)
+    expect(await session.reload()).equals(true)
+    expect(session.state.gameData.players[batter].fullName).equals('Ichiro S')
+    await session.flush()
+    expect(store.posts).has.length(posts)
+    // The next pitch posts the at-bat it changes, and no play renamed.
+    session.apply(ball)
+    await session.flush()
+    expect(store.posts).has.length(posts + 1)
+    expect(store.posts.at(-1)!.plays).deep.equals([])
   })
 
   it('coalesces the real hit-by-pitch event and retains its tag on completion', async () => {

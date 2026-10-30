@@ -349,6 +349,42 @@ describe('replay narration audio', function () {
       ).equals(400)
   }
 
+  it('speaks a renamed player anew, under a new key', async function () {
+    forgetNarrations()
+    const said = (narrations: Map<string, { text: string }>): string =>
+      [...narrations.values()].map(narration => narration.text).join('\n')
+    const before = await narrationsFor(db!, REPLAY_SEED.games.final)
+    expect(said(before)).includes('Juan')
+    const person = await db!
+      .selectFrom('users')
+      .select(['id', 'display_name', 'first_name', 'last_name'])
+      .where('display_name', '=', 'Juan Soto')
+      .executeTakeFirstOrThrow()
+    const rename = async (
+      display: string,
+      first: string | null,
+      last: string | null
+    ): Promise<void> => {
+      await db!
+        .updateTable('users')
+        .set({ display_name: display, first_name: first, last_name: last })
+        .where('id', '=', person.id)
+        .execute()
+    }
+    await rename('Vladimir Guerrero', 'Vladimir', 'Guerrero')
+    try {
+      const after = await narrationsFor(db!, REPLAY_SEED.games.final)
+      expect(after).not.equals(before)
+      expect(said(after)).includes('Vladimir')
+      expect(said(after)).not.includes('Juan')
+    } finally {
+      await rename(person.display_name, person.first_name, person.last_name)
+    }
+    expect(said(await narrationsFor(db!, REPLAY_SEED.games.final))).equals(
+      said(before)
+    )
+  })
+
   it('names a renamed team anew', async function () {
     const end = async (): Promise<string> =>
       (await narrationsFor(db!, REPLAY_SEED.games.final)).get('9999-1')!.text

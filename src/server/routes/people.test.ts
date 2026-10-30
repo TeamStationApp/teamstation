@@ -11,6 +11,7 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { canKeepSongs, roleScopes } from '../access'
 import { createSession } from '../auth/sessions'
 import { rolesAt } from '../invites/people'
+import { notificationDetail } from '../notifications/inbox'
 
 /**
  * People at a team, a season and a league, through the real routes: who may
@@ -247,7 +248,7 @@ describe('people at a team, a season and a league', function () {
     it('tells somebody each role they are given, and mails them only when they join the level', async () => {
       const notices = await f.h.db
         .selectFrom('notification_events')
-        .select(['metadata', 'recorded_recipients'])
+        .select(['id', 'metadata', 'recorded_recipients'])
         .where('source_type', '=', 'grant')
         .where(eb =>
           eb(
@@ -258,8 +259,23 @@ describe('people at a team, a season and a league', function () {
         )
         .orderBy('created_at')
         .execute()
+      // Each stores what was given and reads with who gave it.
+      expect(notices.map(row => row.metadata)).deep.equals([
+        { scope: { kind: 'team', id: f.teamA }, roles: ['videographer'] },
+        { scope: { kind: 'team', id: f.teamA }, roles: ['songkeeper'] }
+      ])
+      const reader = {
+        userId: userIdOfGumbo(MEMBER),
+        isAdmin: false,
+        scopes: []
+      }
       expect(
-        notices.map(row => (row.metadata as { title: string }).title)
+        await Promise.all(
+          notices.map(
+            async row =>
+              (await notificationDetail(f.h.db, reader, row.id)).title
+          )
+        )
       ).deep.equals([
         'Ichiro added you as Videographer of Demo Hawks',
         'Tim Raines added you as Songkeeper of Demo Hawks'

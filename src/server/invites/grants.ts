@@ -8,7 +8,7 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import type { AddedNotice } from '../email/sendMail'
-import { grantInformation, roleList } from '../notifications/requestInformation'
+import { roleList } from '../notifications/requestInformation'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { addToScope, rolesAt } from './people'
 
@@ -164,14 +164,6 @@ export async function notifyGrant(
   if (added.length === 0) return undefined
   const actor = await onePerson(db, actorId)
   if (actor.userIds.includes(userId)) return undefined
-  const [who, group] = await Promise.all([
-    db
-      .selectFrom('users')
-      .select('display_name')
-      .where('id', '=', actorId)
-      .executeTakeFirstOrThrow(),
-    groupName(db, ref)
-  ])
   const roles = ROLES.filter(role => added.includes(role))
   const id = makeId('audit')
   await db
@@ -183,7 +175,6 @@ export async function notifyGrant(
       revision: 1,
       actor_id: actorId,
       metadata: {
-        ...grantInformation(who.display_name, group, roles),
         scope: { kind: ref.kind, id: ref.id },
         roles
       },

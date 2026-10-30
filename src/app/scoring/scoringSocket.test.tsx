@@ -14,6 +14,11 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import {
+  namesIn,
+  withNames,
+  withoutNames
+} from '../../common/scoring/storedNames'
 import { scoringRoster } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
 import { CachingClient } from '../sync/cachingClient'
@@ -408,9 +413,13 @@ describe('the scoring screen on the game socket', function () {
     await click('Called Strike')
     await settle()
     expect(session().saving).equals(true)
+    // As the store will answer the at-bat: kept unnamed, read back named.
+    const current = session().picture().current
     const late = JSON.stringify([
       (await store.load('g1')).plays,
-      session().picture().current
+      current == null
+        ? current
+        : withNames(withoutNames(current), namesIn(current))
     ])
     await changes.plays(late)
     release()

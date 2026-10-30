@@ -75,6 +75,7 @@ import { createTeam } from '../teams/createTeam'
 import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
 import { gameUmpires } from '../umpires/assignments'
+import { gameNames } from '../users/nameBook'
 import {
   externalIdsAsked,
   schedulableSeasonIds,
@@ -757,13 +758,17 @@ export function teamRoutes(
         db,
         events.map(row => row.id)
       )
+      // Each credit names its people by id, read from the game's book.
+      const gameId = video.gameId ?? ''
+      const book = (await gameNames(db, [gameId])).get(gameId)
+      const nameOf = book?.nameOf ?? ((): undefined => undefined)
       const teams = await teamStandings(db)
 
       const settings = await highlightSettings(db)
       const computed = withDropped(
         // `undefined` keeps a play nobody has looked at; `[]` drops one that
         // was looked at and credited to nobody.
-        events.map(row => highlightEvent(row, credits.get(row.id))),
+        events.map(row => highlightEvent(row, credits.get(row.id), nameOf)),
         {
           startAt: video.startAt == null ? null : new Date(video.startAt),
           syncOffsetSec: video.syncOffsetSec,

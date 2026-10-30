@@ -3,12 +3,13 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { asDefaultLineup } from '../../common/scoring/lineupHistory'
+import { asStoredDefaultLineup } from '../../common/scoring/lineupHistory'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { resolvedDefaultOf } from '../events/teamLineups'
 import {
   LINEUP_NAMES,
   type LineupFixture,
@@ -216,18 +217,29 @@ describe('development game fixtures', function () {
           .select('default_lineup')
           .where('id', '=', fixture.teams[side])
           .executeTakeFirstOrThrow()
-        const value = asDefaultLineup(team.default_lineup)
-        const nine = fixture.players[side]
-          .slice(0, 9)
-          .map(({ userId: _, ...person }) => person)
-        expect(value.fromGameId).to.equal(null)
-        expect(value.lineup?.batters).to.deep.equal(nine)
-        expect(value.lineup?.defense.P).to.deep.equal(nine[0])
-        expect(value.lineup?.defense.RF).to.deep.equal(nine[8])
-        // Freeman starts on the bench.
-        expect(value.lineup?.batters.map(batter => batter.name)).not.to.include(
-          'Freeman'
+        // Stored with ids and jerseys and no names, as a live post keeps it.
+        const stored = asStoredDefaultLineup(team.default_lineup)
+        const nine = fixture.players[side].slice(0, 9)
+        const kept = nine.map(({ gumboId, jersey }) => ({ gumboId, jersey }))
+        expect(stored.fromGameId).to.equal(null)
+        expect(
+          JSON.parse(JSON.stringify(stored.lineup?.batters))
+        ).to.deep.equal(kept)
+        expect(JSON.stringify(team.default_lineup)).not.to.include('"name"')
+        // Read, each is named from his account.
+        const value = await resolvedDefaultOf(
+          db!,
+          fixture.teams[side],
+          team.default_lineup
         )
+        const named = nine.map(({ userId: _, ...person }) => person)
+        expect(value?.lineup?.batters).to.deep.equal(named)
+        expect(value?.lineup?.defense.P).to.deep.equal(named[0])
+        expect(value?.lineup?.defense.RF).to.deep.equal(named[8])
+        // Freeman starts on the bench.
+        expect(
+          value?.lineup?.batters.map(batter => batter.name)
+        ).not.to.include('Freeman')
       }
     })
 

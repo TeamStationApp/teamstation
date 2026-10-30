@@ -460,6 +460,107 @@ describe('Coach Game (U25)', function () {
     ])
   })
 
+  it("renames a corrected game-only player's account once, before the lineup is saved", async () => {
+    const guest = asRosterEntry({
+      ...roster('home')[0],
+      userId: userIdOfGumbo(901),
+      gumboId: 901,
+      shortName: 'Babe Ruth',
+      nameDetails: {
+        firstName: 'Babe',
+        lastName: 'Ruth',
+        displayName: 'Babe Ruth'
+      },
+      jersey: '99'
+    })
+    const held = server({
+      guests: { away: [], home: [901] },
+      guestPlayers: { away: [], home: [guest] }
+    })
+    const calls: string[] = []
+    const renames: unknown[] = []
+    held.client.renameGuestPlayer = async (gameId, userId, name, gumboId) => {
+      calls.push('rename')
+      renames.push({ gameId, userId, name, gumboId })
+      return { ...guest, shortName: `${name.firstName} ${name.lastName}` }
+    }
+    const answer = held.answer
+    held.answer = async body => {
+      calls.push('lineups')
+      return await answer(body)
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label*="game-only player"]')!
+        .click()
+    })
+    await settle()
+    const input = document.querySelector<HTMLInputElement>(
+      '[aria-label="First Name"]'
+    )!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, 'George')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await click('Save Player')
+    await click('Save Rosters')
+    await settle()
+    expect(renames).deep.equals([
+      {
+        gameId: 'g1',
+        userId: userIdOfGumbo(901),
+        name: { firstName: 'George', lastName: 'Ruth' },
+        gumboId: 901
+      }
+    ])
+    expect(calls.slice(0, 2)).deep.equals(['rename', 'lineups'])
+  })
+
+  it('saves no lineup when the rename is refused, and says why', async () => {
+    const guest = asRosterEntry({
+      ...roster('home')[0],
+      userId: userIdOfGumbo(901),
+      gumboId: 901,
+      shortName: 'Babe Ruth',
+      jersey: '99'
+    })
+    const held = server({
+      guests: { away: [], home: [901] },
+      guestPlayers: { away: [], home: [guest] }
+    })
+    held.client.renameGuestPlayer = async () => {
+      throw new HttpError('forbidden', 'This player can sign in')
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label*="game-only player"]')!
+        .click()
+    })
+    await settle()
+    const input = document.querySelector<HTMLInputElement>(
+      '[aria-label="First Name"]'
+    )!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, 'George')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await click('Save Player')
+    await click('Save Rosters')
+    await settle()
+    expect(held.saved).deep.equals([])
+    expect(document.body.textContent).includes('This player can sign in')
+  })
+
   this.timeout(20000)
 
   it('draws its own chevron and his team’s name on the right, over Box Score, Roster, Lineup and Defense', async function () {

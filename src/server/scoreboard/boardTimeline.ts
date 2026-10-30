@@ -3,7 +3,6 @@ import { isDeepStrictEqual } from 'node:util'
 import { type Kysely, sql } from 'kysely'
 
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
-import { shortNames } from '../../common/names'
 import {
   composeScoreboard,
   type DashboardOverrides,
@@ -17,10 +16,18 @@ import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { GamePlay } from '../../common/scoring/state'
+import type { NameOf } from '../../common/scoring/storedNames'
 import type { Database } from '../db/database'
-import { atBatInProgress } from '../events/atBatInProgress'
-import { resolveScoringGame } from '../scoring/openRow'
+import { atBatOf } from '../events/atBatInProgress'
+import { namedScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
+import {
+  keepScope,
+  keptScope,
+  scopeDigest,
+  scopeStampOf,
+  scopeUnder
+} from '../users/nameBook'
 
 /**
  * A game's board at every moment, rebuilt from what Postgres keeps: the
@@ -49,9 +56,9 @@ export interface BoardStep {
 
 export interface BoardTimeline {
   /**
-   * `"<game update>:<newest log>:<team names>:<account merges>"`,
-   * the last a hash of the two teams' names: what changes whenever anything
-   * the timeline reads does.
+   * `"<game update>:<newest log>:<team names>:<account merges>:<names>"`,
+   * the third a hash of the two teams' names and the last of the game's
+   * players' names: what changes whenever anything the timeline reads does.
    */
   version: string
   steps: BoardStep[]
@@ -69,8 +76,8 @@ export async function computeBoardTimeline(
     .transaction()
     .setIsolationLevel('repeatable read')
     .execute(async trx => {
-      const version = await timelineVersion(trx, gameId)
-      if (version == null) return undefined
+      const parts = await versionParts(trx, gameId)
+      if (parts == null) return undefined
       const game = await trx
         .selectFrom('games')
         .innerJoin('teams as home', 'home.id', 'games.home_team_id')
@@ -79,7 +86,8 @@ export async function computeBoardTimeline(
           'games.home_team_id',
           'games.away_team_id',
           'games.start_at',
-          atBatInProgress('games').as('currentPlay'),
+          'games.currentPlay',
+          'games.pregame',
           'home.name as homeTeam',
           'away.name as awayTeam'
         ])
@@ -99,10 +107,25 @@ export async function computeBoardTimeline(
         .where('gameId', '=', gameId)
         .orderBy('atBatIndex')
         .execute()
-      const stored = await resolveScoringGame(trx, {
-        plays: plays.map(row => row.gumbo as GumboPlay),
-        currentPlay: game.currentPlay as CurrentPlay | null
-      })
+      const {
+        game: stored,
+        names: book,
+        scope
+      } = await namedScoringGame(
+        trx,
+        {
+          plays: plays.map(row => row.gumbo as GumboPlay),
+          // Before the first pitch, the pregame lineups, as `gameScopes`
+          // reads them: the scope kept under the stamp is the one every
+          // other reader of the game keeps.
+          currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
+        },
+        { gameId }
+      )
+      // The board's version holds the names it is named with, and the scope
+      // is kept under its stamp: the next check reads no play.
+      keepScope(gameId, parts.stamp, scope)
+      const version = versionOf(parts.base, book.digest)
       const context =
         stored.plays.length === 0 && stored.currentPlay == null
           ? null
@@ -118,47 +141,6 @@ export async function computeBoardTimeline(
         )
         .orderBy('version')
         .execute()
-      // Everyone an imported board can name: each play's batter and pitcher,
-      // and whoever each of its pitches and pitching changes names.
-      const named = [
-        ...new Set(
-          stored.plays
-            .flatMap(play => [
-              refId(play.matchup?.batter),
-              refId(play.matchup?.pitcher),
-              ...eventsOf(play).map(event => refId(event.player))
-            ])
-            .filter((id): id is number => id != null)
-        )
-      ]
-      const people =
-        named.length === 0
-          ? []
-          : await trx
-              .selectFrom('gumbo_ids')
-              .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
-              .select([
-                'gumbo_id as id',
-                'display_name',
-                'first_name',
-                'last_name'
-              ])
-              .where('gumbo_id', 'in', named)
-              .execute()
-      // Short names with collisions broken over the game's people, as a box
-      // score has them. A rename moves no timeline version, so a board built
-      // before it keeps the old name until the game's plays or log next move.
-      const short = shortNames(
-        people.map(person => ({
-          id: Number(person.id),
-          displayName: person.display_name,
-          firstName: person.first_name,
-          lastName: person.last_name
-        }))
-      )
-      const names = new Map(
-        [...short].map(([id, name]) => [Number(id), name] as const)
-      )
       return {
         version,
         game,
@@ -169,7 +151,7 @@ export async function computeBoardTimeline(
         stored,
         context,
         rows,
-        names
+        names: book.nameOf
       }
     })
   if (read == null) return undefined
@@ -291,29 +273,82 @@ export async function computeBoardTimeline(
 }
 
 /**
- * The version a game's timeline is cached under, read in one query: the
- * game's `updated_at`, which every play post moves (and which the game
+ * What the database works out of a game's timeline version in one query:
+ * the game's `updated_at`, which every play post moves (and which the game
  * source writes as its `sourceVersion`), the newest log row's version, and
- * the two teams' names, which every step shows and which a rename or a merge
- * changes without touching the game. The merge graph also invalidates cached
- * player identities even when no new play follows a merge. Undefined for no game.
+ * the two teams' names, which every step shows and which a rename or a
+ * merge changes without touching the game, and the merge graph, which
+ * invalidates cached player identities even when no new play follows a
+ * merge; and, beside them, the stamp the game's scope is kept under
+ * (`scopeStampOf`). Undefined for no game.
+ */
+async function versionParts(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<{ base: string; stamp: string } | undefined> {
+  return await db
+    .selectFrom('games')
+    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .select([
+      sql<string>`(extract(epoch from games.updated_at) * 1000000)::bigint::text || ':' || coalesce((select max(version) from scoreboard_log where game_id = games.id), 0)::text || ':' || left(md5(home.name || chr(10) || away.name), 16) || ':' || (select md5(coalesce(string_agg(id::text || ':' || merged_into::text, ',' order by id), '')) from users where merged_into is not null)`.as(
+        'base'
+      ),
+      scopeStampOf('games').as('stamp')
+    ])
+    .where('games.id', '=', gameId)
+    .executeTakeFirst()
+}
+
+/** A version from its parts and the digest of the game's names. */
+function versionOf(base: string, digest: string): string {
+  return `${base}:${digest.slice(0, 16)}`
+}
+
+/**
+ * The version, when the game's scope is kept under its stamp: the parts
+ * and the names of the kept scope, two queries and no play. Otherwise only
+ * the parts: something the board shows was written since it was built, and
+ * the build reads it.
+ */
+async function checkedVersion(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<
+  { base: string; stamp: string; version: string | undefined } | undefined
+> {
+  const parts = await versionParts(db, gameId)
+  if (parts == null) return undefined
+  const scope = keptScope(gameId, parts.stamp)
+  return {
+    ...parts,
+    version:
+      scope == null
+        ? undefined
+        : versionOf(parts.base, await scopeDigest(db, scope))
+  }
+}
+
+/**
+ * The version a game's timeline is cached under: `versionParts`, and the
+ * digest of the game's names (`gameNames`), which moves with a rename or a
+ * deletion of anyone the board can name, a batter before his first stored
+ * play and a substitute who has not batted among them. Undefined for no
+ * game.
  */
 export async function timelineVersion(
   db: Kysely<Database>,
   gameId: string
 ): Promise<string | undefined> {
-  const row = await db
-    .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-    .select(
-      sql<string>`(extract(epoch from games.updated_at) * 1000000)::bigint::text || ':' || coalesce((select max(version) from scoreboard_log where game_id = games.id), 0)::text || ':' || left(md5(home.name || chr(10) || away.name), 16) || ':' || (select md5(coalesce(string_agg(id::text || ':' || merged_into::text, ',' order by id), '')) from users where merged_into is not null)`.as(
-        'version'
-      )
+  const checked = await checkedVersion(db, gameId)
+  if (checked == null) return undefined
+  return (
+    checked.version ??
+    versionOf(
+      checked.base,
+      await scopeDigest(db, await scopeUnder(db, gameId, checked.stamp))
     )
-    .where('games.id', '=', gameId)
-    .executeTakeFirst()
-  return row?.version
+  )
 }
 
 /**
@@ -344,14 +379,17 @@ export function makeBoardTimelineCache(
   const building = new Map<string, Promise<BoardTimeline | undefined>>()
   return {
     get: async (db, gameId, log) => {
-      const version = await timelineVersion(db, gameId)
-      if (version == null) {
+      // A viewer's ask on a cached board reads the version and the names:
+      // a game written since reads its plays once, in the build.
+      const checked = await checkedVersion(db, gameId)
+      if (checked == null) {
         held.delete(gameId)
         return undefined
       }
+      const { version } = checked
       let timeline = held.get(gameId)
-      if (timeline?.version !== version) {
-        const key = `${gameId} ${version}`
+      if (version == null || timeline?.version !== version) {
+        const key = `${gameId} ${version ?? `${checked.base} ${checked.stamp}`}`
         let build = building.get(key)
         if (build == null) {
           build = compute(db, gameId, log).finally(() => {
@@ -492,7 +530,7 @@ export function importedBoards(
     startTime: unknown
     endTime: unknown
   }>,
-  names: Map<number, string>,
+  names: NameOf | ReadonlyMap<number, string>,
   reopened: number | undefined
 ): Array<{ at: number | undefined; state: GameScoreboard }> {
   const boards: Array<{ at: number | undefined; state: GameScoreboard }> = []
@@ -513,7 +551,9 @@ export function importedBoards(
   /** The pitcher each side last had on the mound. */
   const mounds = new Map<'top' | 'bottom', number | null>()
   const name = (id: number | null): string =>
-    id == null ? '' : (names.get(id) ?? '')
+    id == null
+      ? ''
+      : ((typeof names === 'function' ? names(id) : names.get(id)) ?? '')
   let away = 0
   let home = 0
   let outs = 0

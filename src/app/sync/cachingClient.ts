@@ -106,8 +106,8 @@ export class CachingClient extends TeamStationClient {
       // Checked again just before each send: a sign-in that set another
       // person's token while the queue read its file sends nothing of it.
       owns: () => this.owned != null,
-      send: async (path, body, key) =>
-        await super.request('POST', path, asRaw, body, {
+      send: async (method, path, body, key) =>
+        await super.request(method, path, asRaw, body, {
           collect: false,
           ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } })
         }),
@@ -332,8 +332,12 @@ export class CachingClient extends TeamStationClient {
     options?: RequestOptions
   ): Promise<T> {
     const opened = this.owned
-    // A roster player, a lineup and a live play go through the queue.
-    const queued = opened == null ? undefined : queuedCallOf(method, path, body)
+    // A roster player, a lineup, a live play and a game-only player's
+    // rename go through the queue, with the names kept beside a play.
+    const queued =
+      opened == null
+        ? undefined
+        : queuedCallOf(method, path, body, options?.deviceNames)
     if (queued != null) return cleaner(await this.outbox.submit(queued))
     const key = method === 'GET' ? documentKeyOf(path) : undefined
     if (key == null || opened == null) {

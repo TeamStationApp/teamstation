@@ -457,6 +457,32 @@ describe('guardian invitations and requests', function () {
           "Approving lets them see Cody D's teams and manage Cody D's details.",
         canAct: true
       })
+      // The sender and the player are named as they are now: nothing stored
+      // holds either name.
+      const stored = await f.h.db
+        .selectFrom('notification_events')
+        .select('metadata')
+        .where('source_type', '=', 'groupRequest')
+        .where('source_id', '=', sent.body.id)
+        .executeTakeFirstOrThrow()
+      expect(JSON.stringify(stored.metadata)).not.match(/Punto|Cody|Decker/)
+      await f.h.db
+        .updateTable('users')
+        .set({ display_name: 'Joe Mauer' })
+        .where('id', '=', userIdOfGumbo(f.people.scorekeeper))
+        .execute()
+      await f.h.db
+        .updateTable('users')
+        .set({ first_name: 'Carlos', last_name: 'Delgado' })
+        .where('id', '=', userIdOfGumbo(203))
+        .execute()
+      expect(
+        (await inbox(203)).items.find(item => item.requestId === sent.body.id)
+      ).deep.include({
+        title: "Joe Mauer asks to be Carlos D's guardian",
+        description:
+          "Approving lets them see Carlos D's teams and manage Carlos D's details."
+      })
       const own = (await inbox(f.people.scorekeeper, '?sent=1')).items
       expect(own.map(item => [item.requestId, item.canResend])).deep.equals([
         [sent.body.id, false]

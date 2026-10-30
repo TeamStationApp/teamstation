@@ -602,7 +602,9 @@ const asSide = asObject({
 const playerShape = {
   id: asSessionId,
   teamId: asString,
-  fullName: asString,
+  // A stored setup names nobody: its players are named from their accounts
+  // when the game is read, and read as '' before then.
+  fullName: asOptional(asString, ''),
   firstName: asOptional(asString),
   lastName: asOptional(asString),
   jersey: asString,

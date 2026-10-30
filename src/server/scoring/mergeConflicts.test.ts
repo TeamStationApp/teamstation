@@ -12,6 +12,7 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
 import { asLegacyGameSetup } from '../../common/scoring/state'
+import { withoutNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
@@ -24,6 +25,15 @@ import { createGuestPlayer } from '../games/guestPlayers'
 import { setRostered } from '../games/unroster'
 import { startingContext } from '../routes/lineups'
 import { resolveScoringGame, scoringIdsIn } from './openRow'
+
+/** A game without its names: what a read changes besides them. */
+function unnamed(game: StoredGame): StoredGame {
+  return {
+    ...game,
+    plays: game.plays.map(play => withoutNames(play)),
+    currentPlay: withoutNames(game.currentPlay)
+  }
+}
 
 describe('account merges preserve distinct physical scoring roles', function () {
   this.timeout(30000)
@@ -572,7 +582,8 @@ describe('account merges preserve distinct physical scoring roles', function () 
         }>
       )[0].offense
       offense[base].id = 201
-      expect(projected).deep.equals(expected)
+      expect(unnamed(projected)).deep.equals(unnamed(expected))
+      expect(projected.plays[0].matchup?.batter?.fullName).equals('Babe R')
       await refusal(
         importHistory(
           imported([
@@ -767,7 +778,9 @@ describe('account merges preserve distinct physical scoring roles', function () 
     expect(error.details).deep.includes({ gameId: context.gamePk })
     expect(await accountState()).deep.equals(accounts)
     expect(await raw()).deep.equals(before)
-    expect(await resolveScoringGame(fixture.db, before)).deep.equals(before)
+    expect(unnamed(await resolveScoringGame(fixture.db, before))).deep.equals(
+      unnamed(before)
+    )
   })
 
   it('refuses an imported stale save after a merge while retaining valid single-identity imports', async () => {

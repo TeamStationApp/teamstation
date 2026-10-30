@@ -10,7 +10,7 @@ import type { ClaimRow } from './ownership'
  * Records one scheduling notice for the people it names. Every notice has an
  * id of its own as its source, so two notices about one thing never collide
  * on `notification_events`' unique source; what it concerns is in its
- * metadata, beside its title and description.
+ * metadata, beside its title and (unless it names a person) its description.
  */
 export async function recordNotice(
   db: Kysely<Database>,
@@ -19,7 +19,8 @@ export async function recordNotice(
     actorId: string | null
     recipients: string[]
     title: string
-    description: string
+    /** None when the inbox renders it as it is read. */
+    description?: string
     metadata: Record<string, string>
   }
 ): Promise<void> {
@@ -36,7 +37,9 @@ export async function recordNotice(
       actor_id: notice.actorId,
       metadata: {
         title: notice.title,
-        description: notice.description,
+        ...(notice.description == null
+          ? {}
+          : { description: notice.description }),
         ...notice.metadata
       },
       recorded_recipients: recipients,
@@ -117,12 +120,14 @@ export async function noticeClaimFiled(
 
 /**
  * A claim decided, by a person or by the seven days passing: the claiming
- * league's admins are told.
+ * league's admins are told. A person's decision stores who decided (the
+ * notice's actor), the claim's kind and the league's name, and the inbox
+ * names the decider as they are now; the seven days' says so in words.
  */
 export async function noticeClaimDecided(
   db: Kysely<Database>,
   claim: ClaimRow,
-  deciderName: string | null
+  byPerson: boolean
 ): Promise<void> {
   const names = await namesOf(db, claim)
   const outcome =
@@ -131,6 +136,7 @@ export async function noticeClaimDecided(
       : claim.kind === 'claim'
         ? 'claim rejected'
         : 'request declined'
+  const claimKind = claim.kind === 'claim' ? 'claim' : 'request'
   await recordNotice(db, {
     type: 'venueClaimDecided',
     actorId: claim.decided_by,
@@ -138,10 +144,13 @@ export async function noticeClaimDecided(
       { kind: 'league', id: claim.league_id }
     ]),
     title: `${names.venue}: ${outcome}`,
-    description:
-      deciderName == null
-        ? `${names.league}'s ${claim.kind === 'claim' ? 'claim' : 'request'} was approved after 7 days.`
-        : `${deciderName} decided ${names.league}'s ${claim.kind === 'claim' ? 'claim' : 'request'}.`,
-    metadata: { venueId: claim.venue_id, claimId: claim.id }
+    description: byPerson
+      ? undefined
+      : `${names.league}'s ${claimKind} was approved after 7 days.`,
+    metadata: {
+      venueId: claim.venue_id,
+      claimId: claim.id,
+      ...(byPerson ? { claimKind, leagueName: names.league } : {})
+    }
   })
 }

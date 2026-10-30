@@ -29,7 +29,10 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { shortNames } from '../../common/names'
-import { asNewRosterPlayer } from '../../common/playerSettings'
+import {
+  asNewRosterPlayer,
+  asPlayerSettingsName
+} from '../../common/playerSettings'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
 import { addPlayer } from '../../common/scoring/lineup'
 import {
@@ -53,13 +56,12 @@ import {
   setupOf,
   type Side
 } from '../../common/scoring/state'
-import { asGumboId } from '../../common/userId'
+import { asGumboId, asUserId } from '../../common/userId'
 import {
   canKeepSongs,
-  canScore,
   canSeeGame,
   canSeeTeam,
-  isHeadCoach,
+  lineupTeams,
   roleScopes,
   visibleScopes
 } from '../access'
@@ -81,10 +83,11 @@ import {
   type TeamSideLineups
 } from '../events/teamLineups'
 import { fenceDistanceFor, gameHasPlays } from '../games/fenceDistance'
-import { createGuestPlayer } from '../games/guestPlayers'
+import { createGuestPlayer, renameGuestPlayer } from '../games/guestPlayers'
 import { gameAvailability } from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
 import { cleanBody } from '../jsonBody'
+import { setAudit, skipAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
@@ -120,6 +123,11 @@ const SAVE_ATTEMPTS = 3
 
 /**
  * Lineups, read back out of what TeamStation stores.
+ *
+ * `PUT /games/:gameId/guest-players/:userId` corrects a game-only player's
+ * name, `{ firstName, lastName }`, on his account (`renameGuestPlayer`), for
+ * a caller who may save the lineup of the guest's side. A lineup save never
+ * renames a guest: his name is his account's.
  *
  * `GET /teams/:teamId/default-lineup` is the team's default lineup: the
  * starting lineup of the last game scored here that began with a different
@@ -197,6 +205,37 @@ export function lineupRoutes(
     })
   )
 
+  router.put(
+    '/games/:gameId/guest-players/:userId',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const userId = userIdParam(req.params.userId)
+      const name = cleanBody(asPlayerSettingsName, req.body)
+      const renamed = await renameGuestPlayer(db, actor, gameId, userId, name)
+      // A name the account already has changed nothing to audit or tell.
+      if (!renamed.changed) {
+        skipAudit(res.locals)
+        res.json(renamed.entry)
+        return
+      }
+      setAudit(res.locals, {
+        entityType: 'user',
+        entityId: userId,
+        before: renamed.before,
+        after: {
+          firstName: name.firstName,
+          lastName: name.lastName,
+          displayName: renamed.entry.shortName
+        }
+      })
+      res.json(renamed.entry)
+      tellGameWritten(options.onGameWritten, gameId)
+    })
+  )
+
   router.get(
     '/teams/:teamId/default-lineup',
     requireActor,
@@ -213,7 +252,8 @@ export function lineupRoutes(
         .executeTakeFirst()
       if (team == null) throw notFound()
       res.json(
-        (await resolvedDefaultOf(db, team.default_lineup)) ?? NO_DEFAULT_LINEUP
+        (await resolvedDefaultOf(db, teamId, team.default_lineup)) ??
+          NO_DEFAULT_LINEUP
       )
     })
   )
@@ -273,11 +313,7 @@ export function lineupRoutes(
         const roles = await roleScopes(reader, actor.userId, actor.isAdmin)
         const teamId =
           body.side === 'home' ? game.home_team_id : game.away_team_id
-        if (
-          !isHeadCoach(roles, teamId) &&
-          !canScore(roles, game.home_team_id) &&
-          !canScore(roles, game.away_team_id)
-        )
+        if (!lineupTeams(roles, game).includes(teamId))
           throw forbidden(
             "Only the team's head coach or a scorekeeper may save its lineup"
           )
@@ -505,10 +541,14 @@ async function saveSide(
         .executeTakeFirst()
       if (game == null) throw notFound()
       const rows = await readPlays(trx, gameId)
-      const stored: StoredGame = await resolveScoringGame(trx, {
-        plays: rows.map(row => row.gumbo as GumboPlay),
-        currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
-      })
+      const stored: StoredGame = await resolveScoringGame(
+        trx,
+        {
+          plays: rows.map(row => row.gumbo as GumboPlay),
+          currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
+        },
+        { gameId }
+      )
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
@@ -685,6 +725,7 @@ export async function startingContext(
           ? (
               await resolvedDefaultOf(
                 db,
+                game.away_team_id,
                 row(game.away_team_id)?.default_lineup
               )
             )?.lineup
@@ -693,6 +734,7 @@ export async function startingContext(
           ? (
               await resolvedDefaultOf(
                 db,
+                game.home_team_id,
                 row(game.home_team_id)?.default_lineup
               )
             )?.lineup
@@ -783,17 +825,11 @@ function sideActions(
         player.fullName,
         player.jersey
       )
-    if (known != null && guests.includes(known)) {
-      const guest = setup.players[known]
-      if (guest.fullName !== player.fullName) {
-        // This API carries the combined name. Let the editor derive fresh parts
-        // instead of reopening with parts from an earlier game-local name.
-        delete guest.firstName
-        delete guest.lastName
-      }
-      guest.fullName = player.fullName
-      guest.jersey = player.jersey
-    }
+    // A guest's name is his account's: a save never renames him, so a stale
+    // copy held by an open session or an older build cannot undo a
+    // correction (`PUT /games/:gameId/guest-players/:userId` makes one).
+    if (known != null && guests.includes(known))
+      setup.players[known].jersey = player.jersey
     if (known == null) {
       const entry = roster.find(person => person.gumboId === player.gumboId)
       if (entry == null)
@@ -900,7 +936,7 @@ async function djBatters(
     .select('default_lineup')
     .where('id', '=', read.teamId)
     .executeTakeFirst()
-  const kept = await resolvedDefaultOf(db, team?.default_lineup)
+  const kept = await resolvedDefaultOf(db, read.teamId, team?.default_lineup)
   if (kept?.lineup != null) {
     return { source: 'default', batters: await withSongs(kept.lineup) }
   }
@@ -950,4 +986,12 @@ function jerseyNumber(jersey: string | null): number {
 function pathParam(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || value === '') throw notFound()
   return value
+}
+
+function userIdParam(value: string | string[] | undefined): string {
+  try {
+    return asUserId(pathParam(value))
+  } catch {
+    throw badRequest('Expected a canonical user id')
+  }
 }

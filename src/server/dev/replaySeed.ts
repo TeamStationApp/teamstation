@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely'
 import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { StoredGame } from '../../common/scoring/session'
+import { withoutNames } from '../../common/scoring/storedNames'
 import type { UserId } from '../../common/userId'
 import {
   asImported,
@@ -198,12 +199,20 @@ async function post(
   currentPlay: StoredGame['currentPlay'],
   system: 'teamstation' | 'importer'
 ): Promise<void> {
+  // Posted as the app posts them, naming nobody: ids and structured credits
+  // only, every name read from the accounts.
   await postGamePlays(
     db,
     gameId,
     asPostEventsBody({
-      plays,
-      ...(system === 'teamstation' ? { currentPlay, mode: 'live' } : {}),
+      plays: plays.map(play => withoutNames(play)),
+      ...(system === 'teamstation'
+        ? {
+            currentPlay:
+              currentPlay == null ? currentPlay : withoutNames(currentPlay),
+            mode: 'live'
+          }
+        : {}),
       source: { system }
     })
   )

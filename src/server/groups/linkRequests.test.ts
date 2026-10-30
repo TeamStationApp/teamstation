@@ -46,6 +46,31 @@ describe('two-sided relationship invitations and shared inbox', function () {
     expect(body.hasPending).equals(true)
     expect(body.items[0].requestId).equals(id)
     expect(body.items[0].title).includes('Demo Hawks')
+    // The sender is named as they are now, the groups as they were sent.
+    const read = async (): Promise<{ title: string; description: string }> =>
+      (await (
+        await f.h.request('GET', `/me/notifications/${id}`, undefined, 101)
+      ).json()) as { title: string; description: string }
+    const shown = await read()
+    expect(shown.description).includes('Lou Gehrig from Demo Tournament')
+    const renameBoth = async (person: string, team: string): Promise<void> => {
+      await f.h.db
+        .updateTable('users')
+        .set({ display_name: person })
+        .where('id', '=', userIdOfGumbo(102))
+        .execute()
+      await f.h.db
+        .updateTable('teams')
+        .set({ name: team })
+        .where('id', '=', f.teamA)
+        .execute()
+    }
+    await renameBoth('Ken Griffey', 'Demo Renamed Hawks')
+    expect(await read()).deep.include({
+      title: shown.title,
+      description: shown.description.replace('Lou Gehrig', 'Ken Griffey')
+    })
+    await renameBoth('Lou Gehrig', 'Demo Hawks')
     expect(
       (await f.h.request('GET', '/me/notifications', undefined, 106)).status
     ).equals(200)

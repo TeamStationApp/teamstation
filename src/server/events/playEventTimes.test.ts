@@ -394,8 +394,11 @@ describe('adding events to stored plays', function () {
         {
           atBatIndex: 0,
           playEvents: [
-            { ...pitch(1), player: { id: scorer.gumboId } },
-            { ...pitch(2), pitcher: { id: null } },
+            {
+              ...pitch(1),
+              player: { id: scorer.gumboId, fullName: 'Mike Trout' }
+            },
+            { ...pitch(2), pitcher: { id: null, fullName: 'Babe Ruth' } },
             // An umpire is nobody the game's statistics name.
             { ...pitch(3), umpire: { id: 515151 } }
           ]
@@ -403,6 +406,16 @@ describe('adding events to stored plays', function () {
       ]
     })
     expect(named.status).equals(200)
+    // Stored as every play is: a person with an id by his id alone, one with
+    // none by the name typed for him.
+    const events = (
+      (await stored(gameId)) as {
+        plays: Array<{ gumbo: { playEvents: Array<Record<string, unknown>> } }>
+      }
+    ).plays[0].gumbo.playEvents
+    expect(events[0].player).deep.equals({ id: scorer.gumboId })
+    expect(events[1].pitcher).deep.equals({ id: null, fullName: 'Babe Ruth' })
+    expect(JSON.stringify(events)).not.include('Mike Trout')
   })
 
   it('asks for no statistics rebuild; the next one counts the events', async function () {

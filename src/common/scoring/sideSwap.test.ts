@@ -18,6 +18,7 @@ import {
 } from './session'
 import { pregameRecord } from './sideSwap'
 import { type GameSetup, setupOf } from './state'
+import { withoutNames } from './storedNames'
 import { recordByTeam, retargetRecord, setupByTeam } from './teamRecord'
 
 /** A server in memory, holding only what the session saves. */
@@ -229,9 +230,13 @@ describe('swapping home and away', function () {
     it('writes back to what it read from', async function () {
       const current = await scored(threeSaves)
       const stored = (current as { teamStation?: unknown }).teamStation
+      // A stored record names nobody; read, it names its players '', and
+      // written again in its stored form it is the record it was.
       expect(
         JSON.parse(
-          JSON.stringify(recordByTeam(recordOf(current, TEAMS)!, TEAMS))
+          JSON.stringify(
+            withoutNames(recordByTeam(recordOf(current, TEAMS)!, TEAMS))
+          )
         )
       ).deep.equals(JSON.parse(JSON.stringify(stored)))
     })

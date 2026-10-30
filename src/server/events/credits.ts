@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { onePerson } from '../admin/people'
-import type { Database } from '../db/database'
+import type { CreditAssistRow, Database } from '../db/database'
 import type { CreditedOutcome } from '../highlights'
 import { gumboIdsOfUsers } from '../scoring/gumboIds'
 
@@ -9,39 +9,74 @@ import { gumboIdsOfUsers } from '../scoring/gumboIds'
 const CREDIT_COLUMNS = [
   'eventId',
   'eventType',
-  'label',
+  'head',
+  'suffix',
+  'assists',
+  'assistWord',
   'teamId',
   'creditGumboId as creditUserId',
-  'name',
+  'typedName',
   'role',
-  'position'
+  'position',
+  'positionShown'
 ] as const
 
+/** A play's credit, structured. */
 function asCredit(row: {
   eventType: string
-  label: string
+  head: string
+  suffix: string | null
+  assists: CreditAssistRow[]
+  assistWord: 'from' | 'to' | null
   teamId: string | null
   creditUserId: number | null
-  name: string
+  typedName: string | null
   role: string | null
   position: string | null
+  positionShown: boolean
 }): CreditedOutcome {
   return {
     eventType: row.eventType,
-    label: row.label,
+    head: row.head,
+    suffix: row.suffix,
+    assists: row.assists.map(assist => ({
+      creditUserId: assist.gumboId,
+      position: assist.position,
+      ...(assist.gumboId == null && assist.name != null
+        ? { name: assist.name }
+        : {})
+    })),
+    assistWord: row.assistWord,
+    positionShown: row.positionShown,
     teamId: row.teamId,
     creditUserId: row.creditUserId,
     credit: {
-      name: row.name,
+      // Only a person with no id is named here: an id's name is read from
+      // users when the credit is shown.
+      ...(row.creditUserId == null ? { name: row.typedName ?? '' } : {}),
       role: row.role ?? '',
       position: row.position
     }
   }
 }
 
+/** Every credit of these plays, structured. */
+async function creditsOf(
+  db: Kysely<Database>,
+  eventIds: string[]
+): Promise<Array<{ eventId: string; credit: CreditedOutcome }>> {
+  const rows = await db
+    .selectFrom('eventCredits')
+    .select(CREDIT_COLUMNS)
+    .where('eventId', 'in', eventIds)
+    .execute()
+  return rows.map(row => ({ eventId: row.eventId, credit: asCredit(row) }))
+}
+
 /**
  * Every credit on each play that credits this person, keyed by play. The
- * player page passes the array to `withDropped`.
+ * player page names them from one book for the games of its page
+ * (`gameNames`).
  *
  * A credit names its person by `creditUserId` alone. A merge closes a row
  * without moving the credits written under it, so every row that is this
@@ -63,15 +98,10 @@ export async function creditsForPlayer(
   const eventIds = [...new Set(matched.map(row => row.eventId))]
   if (eventIds.length === 0) return out
 
-  const rows = await db
-    .selectFrom('eventCredits')
-    .select(CREDIT_COLUMNS)
-    .where('eventId', 'in', eventIds)
-    .execute()
-  for (const row of rows) {
-    const list = out.get(row.eventId) ?? []
-    list.push(asCredit(row))
-    out.set(row.eventId, list)
+  for (const { eventId, credit } of await creditsOf(db, eventIds)) {
+    const list = out.get(eventId) ?? []
+    list.push(credit)
+    out.set(eventId, list)
   }
   return out
 }
@@ -81,7 +111,7 @@ export async function creditsForPlayer(
  * `credits` key for, or a row from before 031 (`creditsLookedAt` false), is
  * `undefined`, and kept. A re-post without the key keeps the list already
  * stored (`withKeptCredits`). A play whose stored list is empty is `[]`, and
- * omitted. Otherwise its `eventCredits` rows are the array.
+ * omitted. Otherwise its `eventCredits` rows are the array, structured.
  */
 export async function creditsForHighlight(
   db: Kysely<Database>,
@@ -99,15 +129,10 @@ export async function creditsForHighlight(
     out.set(row.id, row.creditsLookedAt ? [] : undefined)
   }
 
-  const rows = await db
-    .selectFrom('eventCredits')
-    .select(CREDIT_COLUMNS)
-    .where('eventId', 'in', eventIds)
-    .execute()
-  for (const row of rows) {
-    const credits = out.get(row.eventId) ?? []
-    credits.push(asCredit(row))
-    out.set(row.eventId, credits)
+  for (const { eventId, credit } of await creditsOf(db, eventIds)) {
+    const credits = out.get(eventId) ?? []
+    credits.push(credit)
+    out.set(eventId, credits)
   }
   return out
 }

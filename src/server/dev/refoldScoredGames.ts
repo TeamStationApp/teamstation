@@ -17,6 +17,7 @@ import {
 import { type Database, makeDatabase } from '../db/database'
 import { postGamePlays } from '../events/postPlays'
 import { readPlays } from '../routes/events'
+import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { serverConfig } from '../serverConfig'
 
@@ -208,10 +209,16 @@ export async function refoldGame(
     .executeTakeFirst()
   if (game == null) return { kind: 'missing' }
   const rows = await readPlays(db, gameId)
-  const stored: StoredGame = {
-    plays: rows.map(row => row.gumbo as GumboPlay),
-    currentPlay: game.currentPlay as CurrentPlay | null
-  }
+  // Refolded and compared named, as a scorer reads the game: a name alone
+  // is never a change.
+  const stored: StoredGame = await resolveScoringGame(
+    db,
+    {
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    },
+    { gameId }
+  )
   const context = await contextOf(db, gameId, game, stored)
   if (context == null) return { kind: 'unchanged' }
   const problems = replayPlays(stored, context).problems

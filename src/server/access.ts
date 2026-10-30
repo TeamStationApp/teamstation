@@ -662,6 +662,22 @@ export function isHeadCoach(scopes: RoleScopes, teamId: string): boolean {
   return hasRole(scopes, 'coach', teamId)
 }
 
+/**
+ * The teams of a game whose lineups these scopes may save: both, for a
+ * scorekeeper of either team; otherwise each team they are head coach of.
+ * Whoever may save a side's lineup is answered its players' first and last
+ * names: he may correct a game-only player's, and his tools export the
+ * lineup and match spoken names by them.
+ */
+export function lineupTeams(
+  scopes: RoleScopes,
+  game: { home_team_id: string; away_team_id: string }
+): string[] {
+  const teams = [game.away_team_id, game.home_team_id]
+  if (teams.some(teamId => canScore(scopes, teamId))) return teams
+  return teams.filter(teamId => isHeadCoach(scopes, teamId))
+}
+
 /** Scorekeepers can edit player settings and view full names because they
  * may be the only person responsible for maintaining the team roster.
  * This intentional roster-management exception must survive broader

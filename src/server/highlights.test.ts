@@ -6,6 +6,8 @@ import { measureOffset } from '../common/serverClock'
 import { game } from '../test/scoringGames'
 import {
   computeHighlights,
+  type CreditedOutcome,
+  type Highlight,
   type HighlightEvent,
   highlightEvent,
   type HighlightVideo,
@@ -106,7 +108,9 @@ describe('highlights', function () {
         }
       }
     }
-    expect(highlightEvent(row, undefined).tag).equals('great catch')
+    expect(highlightEvent(row, undefined, () => undefined).tag).equals(
+      'great catch'
+    )
     expect(
       highlightEvent(
         {
@@ -116,7 +120,8 @@ describe('highlights', function () {
             tagTargets: { version: 1, events: row.gumbo.tagTargets.events }
           }
         },
-        undefined
+        undefined,
+        () => undefined
       ).tag
     ).equals(null)
   })
@@ -519,5 +524,177 @@ describe('what a highlight is called, and whether it is shown at all', function 
     )
     expect(found).to.have.length(1)
     expect(found[0]?.title).equals('Single')
+  })
+})
+
+describe('a highlight named from its structured credits', function () {
+  const VLAD = 7101
+  const JORDAN = 7102
+  const JORDAN_TOO = 7103
+  const row = {
+    id: 'evt_named',
+    atBatIndex: 4,
+    startTime: new Date(videoStart.getTime() + 600_000),
+    endTime: null,
+    eventType: 'single',
+    inning: 1,
+    halfInning: 'top',
+    awayScore: 1,
+    homeScore: 0,
+    titleOverride: null,
+    timeNudgeSec: 0,
+    hidden: false,
+    isScoringPlay: false
+  }
+  const outcome = (
+    eventType: string,
+    head: string,
+    creditUserId: number | null,
+    more: Partial<CreditedOutcome> & { typed?: string } = {}
+  ): CreditedOutcome => {
+    const { typed, ...rest } = more
+    return {
+      eventType,
+      head,
+      suffix: null,
+      assists: [],
+      assistWord: null,
+      positionShown: true,
+      teamId: null,
+      creditUserId,
+      credit: {
+        ...(typed == null ? {} : { name: typed }),
+        role: eventType === 'run' ? 'runner' : 'batter',
+        position: null
+      },
+      ...rest
+    }
+  }
+  const book =
+    (names: Record<number, string>) =>
+    (id: number): string | undefined =>
+      names[id]
+  const shown = (
+    credits: CreditedOutcome[],
+    names: Record<number, string>
+  ): { highlights: Highlight[]; dropped: number } =>
+    withDropped([highlightEvent(row, credits, book(names))], video, settings)
+
+  it('words each label from the book, an id by its name and a typed name as typed', function () {
+    const credits = [
+      outcome('single', 'Single', VLAD),
+      outcome('run', 'Run', null, { typed: 'Kyle Tucker' })
+    ]
+    const [first] = shown(credits, { [VLAD]: 'Juan S' }).highlights
+    expect(first.title).equals('Single: Juan S · Run: Kyle Tucker')
+    expect(first.description).equals(
+      'Top 1st: Juan S singles. Kyle Tucker scores. 1–0'
+    )
+    // A rename is read on the next read.
+    const [renamed] = shown(credits, { [VLAD]: 'Vladimir G' }).highlights
+    expect(renamed.title).equals('Single: Vladimir G · Run: Kyle Tucker')
+    expect(renamed.description).equals(
+      'Top 1st: Vladimir G singles. Kyle Tucker scores. 1–0'
+    )
+  })
+
+  it("words an outside scorer's suffix and fielders' chain", function () {
+    const [play] = shown(
+      [
+        outcome('strikeout', 'Strikeout', VLAD, {
+          suffix: ' pitching',
+          credit: { role: 'pitcher', position: null }
+        }),
+        outcome('field_out', 'Ground out', JORDAN, {
+          credit: { role: 'fielder', position: 'SS' },
+          assists: [
+            { creditUserId: JORDAN_TOO, position: '2B' },
+            { creditUserId: null, position: '1B', name: 'Kyle Tucker' }
+          ],
+          assistWord: 'to'
+        })
+      ],
+      { [VLAD]: 'Vladimir G', [JORDAN]: 'Jordan Pu', [JORDAN_TOO]: 'Jordan Pe' }
+    ).highlights
+    expect(play.title).equals(
+      'Strikeout: Vladimir G pitching · Ground out: Jordan Pu (SS) to Jordan Pe (2B) to Kyle Tucker (1B)'
+    )
+    expect(play.description).equals(
+      'Top 1st: Vladimir G strikes out the batter. Ground out, Jordan Pu (SS) to Jordan Pe (2B) to Kyle Tucker (1B). 1–0'
+    )
+  })
+
+  it('words a pitcher at P with no position where his label showed none', function () {
+    const [play] = shown(
+      [
+        outcome('strikeout', 'Strikeout', VLAD, {
+          suffix: ' pitching',
+          credit: { role: 'pitcher', position: 'P' },
+          positionShown: false
+        })
+      ],
+      { [VLAD]: 'Vladimir G' }
+    ).highlights
+    expect(play.title).equals('Strikeout: Vladimir G pitching')
+  })
+
+  it('names a person once by his id or typed name, and two people who read alike twice', function () {
+    const title = (credits: CreditedOutcome[]): string =>
+      shown(credits, { [JORDAN]: 'Jordan P', [JORDAN_TOO]: 'Jordan P' })
+        .highlights[0].title
+    expect(
+      title([
+        outcome('home_run', 'Home run', JORDAN),
+        outcome('run', 'Run', JORDAN)
+      ])
+    ).equals('Home run: Jordan P')
+    expect(
+      title([
+        outcome('home_run', 'Home run', JORDAN),
+        outcome('run', 'Run', JORDAN_TOO)
+      ])
+    ).equals('Home run: Jordan P · Run: Jordan P')
+    expect(
+      title([
+        outcome('home_run', 'Home run', null, { typed: 'Kyle Tucker' }),
+        outcome('run', 'Run', null, { typed: 'Kyle Tucker' })
+      ])
+    ).equals('Home run: Kyle Tucker')
+    // A typed name is nobody's id.
+    expect(
+      title([
+        outcome('home_run', 'Home run', null, { typed: 'Jordan P' }),
+        outcome('run', 'Run', JORDAN)
+      ])
+    ).equals('Home run: Jordan P · Run: Jordan P')
+  })
+
+  it('shows a credit that names an id or a typed name, and drops one naming nobody', function () {
+    // An id the book does not name is still somebody.
+    expect(
+      shown([outcome('single', 'Single', VLAD)], {}).highlights.map(
+        highlight => highlight.title
+      )
+    ).deep.equals(['Single: '])
+    const nobody = shown(
+      [
+        outcome('single', 'Single', null),
+        outcome('run', 'Run', null, { typed: '' })
+      ],
+      {}
+    )
+    expect(nobody).deep.equals({ highlights: [], dropped: 1 })
+    // A credit with no person at all is kept out the same way.
+    expect(
+      shown([outcome('single', 'Single', null, { credit: null })], {})
+    ).deep.equals({ highlights: [], dropped: 1 })
+  })
+
+  it('leaves a play nobody has looked at to its type', function () {
+    const event = highlightEvent(row, undefined, book({}))
+    expect(event.credits).equals(undefined)
+    expect(withDropped([event], video, settings).highlights[0].title).equals(
+      'Single'
+    )
   })
 })

@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
 import type { GameChange } from '../../common/gameSocket'
+import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
@@ -14,7 +15,7 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
 import { type Database, makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
-import { playsDigest } from '../events/postPlays'
+import { playsDigest, postGamePlays, readPlays } from '../events/postPlays'
 import { readWalkUpSong } from '../routes/walkUpSongs'
 import { GameFanout } from './fanout'
 import { GAME_CHANGES_CHANNEL } from './gameChanges'
@@ -257,6 +258,69 @@ describe('the game socket fan-out (U15)', function () {
     await notify({ game: today, kind: 'plays' })
     await until(() => heard.sent.length === 2, 'the second plays')
     await one.close()
+  })
+
+  it('sends the plays named from the accounts, with the digest of the stored rows', async function () {
+    const named = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id: named,
+        home_team_id: team,
+        away_team_id: rival,
+        start_at: new Date()
+      })
+      .execute()
+    for (const [user, given, family] of [
+      [first, 'Babe', 'Ruth'],
+      [second, 'Cy', 'Young']
+    ] as const)
+      await db!
+        .updateTable('users')
+        .set({
+          display_name: `${given} ${family}`,
+          first_name: given,
+          last_name: family
+        })
+        .where('id', '=', userIdOfGumbo(user.userId))
+        .execute()
+    await postGamePlays(
+      db!,
+      named,
+      asPostEventsBody({
+        source: { system: 'manual' },
+        plays: [
+          {
+            about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+            result: { eventType: 'single', awayScore: 0, homeScore: 0 },
+            matchup: {
+              batter: { id: first.userId, fullName: 'Stale Batter' },
+              pitcher: { id: second.userId, fullName: 'Stale Pitcher' }
+            }
+          }
+        ]
+      })
+    )
+    const one = fanout()
+    try {
+      const heard = subscriber()
+      one.watch(named, scopeOf(team, rival), heard)
+      await one.deliver(JSON.stringify({ game: named, kind: 'plays' }))
+      const data = heard.sent[0].data as {
+        plays: Array<{ gumbo: GumboPlay }>
+        digest: string
+      }
+      expect(data.plays[0].gumbo.matchup).deep.include({
+        batter: { id: first.userId, fullName: 'Babe R' },
+        pitcher: { id: second.userId, fullName: 'Cy Y' }
+      })
+      const rows = await readPlays(db!, named)
+      // The stored row names nobody: the name it was posted with is gone.
+      expect(JSON.stringify(rows[0].gumbo)).not.includes('Stale Batter')
+      expect(data.digest).equals(playsDigest(rows, null))
+    } finally {
+      await one.close()
+    }
   })
 
   it('sends a game before its first pitch with its pregame lineups as the at-bat', async function () {

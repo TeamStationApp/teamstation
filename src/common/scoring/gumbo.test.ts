@@ -202,7 +202,10 @@ describe('folding a play for the server', function () {
         label: 'Single: Away 1',
         teamId: 'away',
         creditUserId: 1,
-        credit: { name: 'Away 1', role: 'batter', position: null }
+        credit: { name: 'Away 1', role: 'batter', position: null },
+        head: 'Single',
+        assists: [],
+        assistWord: 'from'
       }
     ])
     const runner = (

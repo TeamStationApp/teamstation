@@ -6,6 +6,8 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
+import { makeId } from '../../common/ids'
+import { shortNames } from '../../common/names'
 import { cleanAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { recordOf } from '../../common/scoring/gumbo'
@@ -15,10 +17,19 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { namesIn } from '../../common/scoring/storedNames'
 import { ownTeams } from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import {
+  AWAY_PLAYERS,
+  HOME_PLAYERS,
+  inProgressGame,
+  type Player,
+  REPLAY_TEAMS,
+  replaySetup
+} from '../../test/replayGameFixture'
 import { statsDatabase } from '../../test/statsDatabase'
 import { closeInto, survivorsOf } from '../admin/people'
 import { postGamePlays, readPlays } from '../events/postPlays'
@@ -28,7 +39,8 @@ import {
   timelineVersion
 } from '../scoreboard/boardTimeline'
 import { scoreboardFromGame } from '../scoreboard/gameSource'
-import { resolveScoringGame } from './openRow'
+import { gameNames, gameNamesDigest } from '../users/nameBook'
+import { namedScoringGame, resolveScoringGame, scoringIdsIn } from './openRow'
 
 // Full persisted rosters, including a guest whose account later closes into another.
 describe('opening scoring through account merges', function () {
@@ -184,12 +196,19 @@ describe('opening scoring through account merges', function () {
       survivor
     )
     expect(projected.plays[0].matchup?.batter?.id).equals(survivor)
+    // Credited by the survivor's id, and named from his account.
     expect(projected.plays[0].credits).deep.equals(
-      before.plays[0].credits?.map(credit => ({
-        ...credit,
-        creditUserId:
+      before.plays[0].credits?.map(credit => {
+        const id =
           credit.creditUserId === original ? survivor : credit.creditUserId
-      }))
+        const name = id === survivor ? 'Miguel C' : 'Mike T'
+        return {
+          ...credit,
+          creditUserId: id,
+          credit: { ...(credit.credit as object), name },
+          label: `${(credit as { head?: string }).head}: ${name}`
+        }
+      })
     )
     expect(opened.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
     await opened.flush()
@@ -334,12 +353,17 @@ describe('opening scoring through account merges', function () {
       recordOf(projected.plays[0], ownTeams(projected.plays[0].teamStation))!
         .detail
     ).deep.equals({
-      fieldingRoute: [{ player: { id: survivor }, location: { x: 1, z: 2 } }],
+      fieldingRoute: [
+        {
+          player: { id: survivor, fullName: 'Miguel C' },
+          location: { x: 1, z: 2 }
+        }
+      ],
       runnerActions: [
         {
-          runner: { id: survivor },
+          runner: { id: survivor, fullName: 'Miguel C' },
           origin: 1,
-          credits: [{ player: { id: survivor } }]
+          credits: [{ player: { id: survivor, fullName: 'Miguel C' } }]
         }
       ]
     })
@@ -426,5 +450,431 @@ describe('opening scoring through account merges', function () {
       .set({ merged_into: null })
       .where('id', '=', userIdOfGumbo(survivor))
       .execute()
+  })
+})
+
+// A whole game named from the accounts, as every read names it.
+describe('naming a scoring game from the accounts', function () {
+  this.timeout(60000)
+  const fixture = statsDatabase('namedread')
+  const everyone = [...AWAY_PLAYERS, ...HOME_PLAYERS]
+  const taken = new Set<number>()
+  const minted = new Map(
+    everyone.map(player => {
+      const one = mintUserId(id => taken.has(id))
+      taken.add(one.userId)
+      return [player, one] as const
+    })
+  )
+  const mint = (): { userId: number; legacyId: string } => {
+    const one = mintUserId(id => taken.has(id))
+    taken.add(one.userId)
+    return one
+  }
+  const guests = { away: mint(), home: mint() }
+  const idOf = (player: Player): number => minted.get(player)!.userId
+  const setup = replaySetup(idOf)
+  // A game-only player on each side, his setup holding the whole name he
+  // was typed with.
+  for (const [side, guest, jersey] of [
+    ['away', guests.away, '51'],
+    ['home', guests.home, '55']
+  ] as const) {
+    setup.players[guest.userId] = {
+      id: guest.userId,
+      teamId: REPLAY_TEAMS[side].id,
+      fullName: 'Typed Whole Name',
+      firstName: 'Typed',
+      lastName: 'Whole Name',
+      jersey,
+      bats: 'left',
+      throws: 'right',
+      positions: [],
+      local: true
+    }
+    setup.sides[side].players.push(guest.userId)
+    setup.tagOrder.push(guest.userId)
+  }
+  const accounts = [
+    ...everyone.map(player => ({
+      ...minted.get(player)!,
+      first: player.first,
+      last: player.last
+    })),
+    { ...guests.away, first: 'Ichiro', last: 'Suzuki' },
+    { ...guests.home, first: 'Hideki', last: 'Matsui' }
+  ]
+  const shown = shortNames(
+    accounts.map(person => ({
+      id: person.userId,
+      displayName: `${person.first} ${person.last}`,
+      firstName: person.first,
+      lastName: person.last
+    }))
+  )
+  let stored: StoredGame
+  before(async () => {
+    await insertFixtureUsers(
+      fixture.db,
+      accounts.map(person => ({
+        id: person.userId,
+        legacyId: person.legacyId,
+        display_name: `${person.first} ${person.last}`,
+        first_name: person.first,
+        last_name: person.last,
+        login_enabled: false
+      }))
+    )
+    stored = await inProgressGame(setup)
+  })
+
+  it('names every reference, setup player, credit and sentence by short names over the game', async () => {
+    const before = JSON.stringify(stored)
+    const named = await resolveScoringGame(fixture.db, stored)
+    expect(JSON.stringify(stored)).equals(before)
+    const documents = [...named.plays, named.currentPlay]
+    let checked = 0
+    for (const document of documents)
+      for (const [id, name] of namesIn(document)) {
+        expect(name, String(id)).equals(shown.get(id))
+        checked++
+      }
+    expect(checked).greaterThan(100)
+    const text = JSON.stringify(named)
+    for (const player of everyone)
+      expect(text).not.includes(`${player.first} ${player.last}`)
+    expect(text).not.includes('Typed Whole Name')
+    // Sentences read the game's short names: the pitching change, the pinch
+    // hitter and the wild pitch among them.
+    const sentences = documents.flatMap(document =>
+      (
+        (document?.playEvents ?? []) as Array<{
+          details?: { eventType?: string; description?: string }
+        }>
+      ).flatMap(event =>
+        event.details?.description == null ? [] : [event.details]
+      )
+    )
+    for (const type of [
+      'pitching_substitution',
+      'offensive_substitution',
+      'wild_pitch'
+    ])
+      expect(
+        sentences.find(details => details.eventType === type)?.description,
+        type
+      ).matches(/[A-Z][a-z]+ [A-Z]\b/)
+    const labels = named.plays.flatMap(play =>
+      (play.credits ?? []).map(credit => credit.label)
+    )
+    expect(labels).includes('Walk: Juan S')
+    // Nobody's halves on a general read: the scoreboards read it too.
+    const record = recordOf(named.currentPlay, REPLAY_TEAMS)!
+    for (const player of Object.values(record.setupBefore.players)) {
+      expect(player.firstName, String(player.id)).equals(undefined)
+      expect(player.lastName, String(player.id)).equals(undefined)
+    }
+    expect(record.setupBefore.players[guests.away.userId].fullName).equals(
+      'Ichiro S'
+    )
+  })
+
+  it("gives every player's halves, rostered and game-only, only on the teams asked for", async () => {
+    const halvesOf = async (
+      halves: string[]
+    ): Promise<Record<string, unknown>> => {
+      const named = await resolveScoringGame(fixture.db, stored, { halves })
+      const players = recordOf(named.currentPlay, REPLAY_TEAMS)!.setupBefore
+        .players
+      const parts = (id: number): unknown =>
+        players[id].firstName == null && players[id].lastName == null
+          ? null
+          : `${players[id].firstName} ${players[id].lastName}`
+      return {
+        awayGuest: parts(guests.away.userId),
+        homeGuest: parts(guests.home.userId),
+        away: parts(idOf(AWAY_PLAYERS[0])),
+        home: parts(idOf(HOME_PLAYERS[0]))
+      }
+    }
+    const { away, home } = REPLAY_TEAMS
+    expect(await halvesOf([away.id, home.id])).deep.equals({
+      awayGuest: 'Ichiro Suzuki',
+      homeGuest: 'Hideki Matsui',
+      away: 'Juan Soto',
+      home: 'Mookie Betts'
+    })
+    expect(await halvesOf([home.id])).deep.equals({
+      awayGuest: null,
+      homeGuest: 'Hideki Matsui',
+      away: null,
+      home: 'Mookie Betts'
+    })
+    expect(await halvesOf([])).deep.equals({
+      awayGuest: null,
+      homeGuest: null,
+      away: null,
+      home: null
+    })
+  })
+
+  it('stores no name from a build that sends named sentences and no said, and reads its sentences back the same', async () => {
+    const teams = Object.values(REPLAY_TEAMS)
+    await fixture.db
+      .insertInto('teams')
+      .values(teams.map(team => ({ id: team.id, name: team.name })))
+      .onConflict(conflict => conflict.doNothing())
+      .execute()
+    await fixture.db
+      .insertInto('games')
+      .values({
+        id: 'gam_oldbuild',
+        start_at: new Date('2026-01-01T00:00:00Z'),
+        home_team_id: REPLAY_TEAMS.home.id,
+        away_team_id: REPLAY_TEAMS.away.id
+      })
+      .execute()
+    // What a build from before sentences carried their `said` posts.
+    const unsaid = <T>(document: T): T =>
+      JSON.parse(
+        JSON.stringify(document, (key, value: unknown) =>
+          key === 'said' ? undefined : value
+        )
+      ) as T
+    await postGamePlays(
+      fixture.db,
+      'gam_oldbuild',
+      asPostEventsBody({
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: stored.plays.map(unsaid),
+        currentPlay: unsaid(stored.currentPlay)
+      })
+    )
+    const rows = await readPlays(fixture.db, 'gam_oldbuild')
+    const game = await fixture.db
+      .selectFrom('games')
+      .select(['currentPlay', 'pregame'])
+      .where('id', '=', 'gam_oldbuild')
+      .executeTakeFirstOrThrow()
+    const text = JSON.stringify([
+      rows.map(row => row.gumbo),
+      game.currentPlay,
+      game.pregame
+    ])
+    for (const person of accounts) {
+      expect(text).not.includes(`${person.first} ${person.last}`)
+      expect(text).not.includes(shown.get(person.userId)!)
+    }
+    expect(text).not.includes('Typed Whole Name')
+    // Every sentence was read back to what it is worded from.
+    const described = rows.flatMap(row =>
+      (((row.gumbo as GumboPlay).playEvents ?? []) as unknown[]).filter(
+        event =>
+          (event as { said?: unknown }).said != null ||
+          (event as { details?: { description?: unknown } }).details
+            ?.description != null
+      )
+    )
+    expect(described.length).greaterThan(5)
+    const sentences = (game: StoredGame): unknown =>
+      [...game.plays, game.currentPlay].map(document =>
+        ((document?.playEvents ?? []) as unknown[]).map(
+          event =>
+            (event as { details?: { description?: unknown } }).details
+              ?.description
+        )
+      )
+    const named = await resolveScoringGame(fixture.db, {
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    })
+    expect(sentences(named)).deep.equals(
+      sentences(await resolveScoringGame(fixture.db, stored))
+    )
+  })
+
+  it('names a merged player by his survivor, in every sentence that names him', async () => {
+    const replaced = idOf(AWAY_PLAYERS[8])
+    const survivor = mint()
+    await insertFixtureUsers(fixture.db, {
+      id: survivor.userId,
+      legacyId: survivor.legacyId,
+      display_name: 'Hank Aaron',
+      first_name: 'Hank',
+      last_name: 'Aaron',
+      login_enabled: false
+    })
+    await closeInto(
+      fixture.db,
+      userIdOfGumbo(replaced),
+      userIdOfGumbo(survivor.userId)
+    )
+    const named = await resolveScoringGame(fixture.db, stored)
+    // Annotation signatures are opaque, and stay as they were tagged.
+    const text = JSON.stringify(named, (key, value: unknown) =>
+      key === 'tagTargets' ? undefined : value
+    )
+    expect(text).not.includes(String(replaced))
+    for (const document of [...named.plays, named.currentPlay])
+      expect(namesIn(document).get(survivor.userId) ?? 'Hank A').equals(
+        'Hank A'
+      )
+    expect(
+      [...named.plays, named.currentPlay].some(
+        document => namesIn(document).get(survivor.userId) === 'Hank A'
+      )
+    ).equals(true)
+  })
+})
+
+describe('the scoring ids a game names', function () {
+  it("reads each sentence's players, and leaves typed names and odd shapes alone", () => {
+    const stored = {
+      plays: [
+        {
+          about: { atBatIndex: 0 },
+          playEvents: [
+            {
+              said: {
+                kind: 'order',
+                moved: [
+                  { player: 11, bats: 1 },
+                  { player: { name: 'Typed Name' }, bats: 2 }
+                ]
+              }
+            },
+            {
+              said: {
+                kind: 'action',
+                eventType: 'wild_pitch',
+                lead: { player: 12, role: 'pitcher' }
+              }
+            },
+            {
+              said: { kind: 'pinch', player: 13, replaced: 14, running: false }
+            },
+            { said: { kind: 'action', eventType: 'balk', lead: null } },
+            { said: 'odd' },
+            { catcher: { id: 15 } }
+          ]
+        }
+      ],
+      currentPlay: null
+    } as unknown as StoredGame
+    expect(scoringIdsIn(stored)).members([11, 12, 13, 14, 15])
+  })
+})
+
+describe('naming a game whose record does not read', function () {
+  this.timeout(60000)
+  const fixture = statsDatabase('oddrecord')
+  it("keeps what it cannot name, and names nobody's halves", async () => {
+    const stored = {
+      plays: [
+        {
+          about: { atBatIndex: 0 },
+          teamStation: {
+            version: 2,
+            setupBefore: { players: { 1: 'odd', 2: { id: 2, local: true } } },
+            actions: [
+              { type: 'pitch' },
+              'odd',
+              { type: 'lineup', setup: 'odd' }
+            ]
+          }
+        }
+      ],
+      currentPlay: { about: { atBatIndex: 1 }, teamStation: 'odd' }
+    } as unknown as StoredGame
+    const named = await resolveScoringGame(fixture.db, stored, {
+      halves: ['tem_home']
+    })
+    expect(named.plays[0].teamStation).deep.equals({
+      version: 2,
+      setupBefore: {
+        players: { 1: 'odd', 2: { id: 2, local: true, fullName: '' } }
+      },
+      actions: [{ type: 'pitch' }, 'odd', { type: 'lineup', setup: 'odd' }]
+    })
+    expect(named.currentPlay).deep.equals(stored.currentPlay)
+  })
+})
+
+describe('one scope for every surface of a game', function () {
+  this.timeout(60000)
+  const fixture = statsDatabase('onescope')
+  const smith = mintUserId(() => false)
+  const stange = mintUserId(id => id === smith.userId)
+  const gameId = makeId('game')
+  const play = {
+    about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+    result: { eventType: 'single' },
+    matchup: { batter: { id: smith.userId } }
+  } as unknown as GumboPlay
+  before(async () => {
+    for (const [who, first, last] of [
+      [smith, 'Lee', 'Smith'],
+      [stange, 'Lee', 'Stange']
+    ] as const)
+      await insertFixtureUsers(fixture.db, {
+        id: who.userId,
+        legacyId: who.legacyId,
+        display_name: `${first} ${last}`,
+        first_name: first,
+        last_name: last,
+        login_enabled: false
+      })
+    await fixture.db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        start_at: new Date('2026-01-01T00:00:00Z'),
+        home_team_id: 'tem_home',
+        away_team_id: 'tem_away',
+        season_id: 'sea_demo'
+      })
+      .execute()
+    const event = makeId('event')
+    await fixture.db
+      .insertInto('events')
+      .values({ id: event, gameId, gumbo: JSON.stringify(play) })
+      .execute()
+    // A fielder kept on the play's tags whom no stored document names.
+    await fixture.db
+      .insertInto('event_players')
+      .values({
+        id: makeId('eventPlayer'),
+        event_id: event,
+        gumbo_id: stange.userId,
+        team_id: null,
+        role: 'fielder',
+        position: null
+      })
+      .execute()
+  })
+
+  it("breaks a short-name tie with a tagged player the documents do not name the same in the plays and the highlights, under the board's digest", async () => {
+    const stored: StoredGame = { plays: [play], currentPlay: null }
+    const named = await namedScoringGame(fixture.db, stored, { gameId })
+    expect(named.game.plays[0].matchup?.batter).deep.equals({
+      id: smith.userId,
+      fullName: 'Lee Sm'
+    })
+    expect(
+      (await resolveScoringGame(fixture.db, stored, { gameId })).plays[0]
+        .matchup?.batter?.fullName
+    ).equals('Lee Sm')
+    // The highlights' book, read for the game alone.
+    const book = (await gameNames(fixture.db, [gameId])).get(gameId)!
+    expect(book.nameOf(smith.userId)).equals('Lee Sm')
+    expect(book.nameOf(stange.userId)).equals('Lee St')
+    expect(named.names.digest).equals(book.digest)
+    expect(await gameNamesDigest(fixture.db, gameId)).equals(book.digest)
+    // Without the game, only its documents: the tie is not seen.
+    expect(
+      (await resolveScoringGame(fixture.db, stored)).plays[0].matchup?.batter
+        ?.fullName
+    ).equals('Lee S')
   })
 })

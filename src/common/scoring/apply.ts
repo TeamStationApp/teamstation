@@ -45,6 +45,7 @@ import {
   lineupChanges,
   ordinal,
   playerRef,
+  saidNames,
   startAppearance
 } from './lineup'
 import { homeRunKind, isFair } from './park'
@@ -1968,7 +1969,11 @@ function courtesyRunner(ctx: Ctx, action: LineupAction): void {
     isPitch: false,
     type: 'action',
     details: {
-      description: courtesyRunnerSaid(player.fullName, replaced.fullName),
+      description: courtesyRunnerSaid(
+        saidNames(id => state.gameData.players[id]?.fullName),
+        incoming,
+        runner
+      ),
       code: 'ts_courtesy_runner'
     },
     isSubstitution: false,

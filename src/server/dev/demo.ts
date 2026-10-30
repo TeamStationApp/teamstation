@@ -24,6 +24,12 @@ import { sampleBatter } from './demoStats'
 /** The home team's players, so the roster and box score have names. */
 const ROSTER = ['Robin Hale', 'Ash Berger', 'Sam Ortiz']
 
+/** The first words of each demo play's credit label. */
+const HEADS: Partial<Record<GumboEventType, string>> = {
+  home_run: 'Home run',
+  single: 'Single'
+}
+
 /** A strikeout in the top of the first, then a home run and a single. */
 function demoPlays(homeTeamId: string, batters: number[]): PlayWrite[] {
   const [first, second] = batters
@@ -45,8 +51,20 @@ function demoPlays(homeTeamId: string, batters: number[]): PlayWrite[] {
       result: { eventType, awayScore: 0, homeScore, description },
       count: { outs: halfInning === 'top' ? 1 : 0 },
       matchup: { batter: { id: batter } },
+      // A credit names its batter by id alone: his name is read from his
+      // account whenever the play is shown.
       credits:
-        batter == null ? [] : [{ teamId: homeTeamId, creditUserId: batter }]
+        batter == null
+          ? []
+          : [
+              {
+                eventType,
+                head: HEADS[eventType] ?? eventType,
+                teamId: homeTeamId,
+                creditUserId: batter,
+                credit: { role: 'batter', position: null }
+              }
+            ]
     }),
     source: 'teamstation'
   })

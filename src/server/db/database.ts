@@ -310,9 +310,7 @@ export interface GamesTable {
   status: Generated<'scheduled' | 'inProgress' | 'final' | 'cancelled'>
   home_score: number | null
   away_score: number | null
-  gumbo_game_data: Json | null
   linescore: Json | null
-  boxscore: Json | null
   /** `teamstation` when a post from that system owns the plays. */
   scoringOwner: ColumnType<
     string | null,
@@ -487,12 +485,32 @@ export interface EventCreditsTable {
   id: string
   eventId: string
   eventType: string
-  label: string
   teamId: string | null
   creditGumboId: number | null
-  name: string
   role: string | null
   position: string | null
+  /** The label's first words, `Ground out`. */
+  head: string
+  /** Words after the person and position, ` pitching`. */
+  suffix: string | null
+  /** The fielders who assisted: `{ gumboId, position, name? }` each. */
+  assists: ColumnType<CreditAssistRow[], CreditAssistRow[] | undefined, never>
+  /** How the assists are joined: `from A, B` or `to A to B`. */
+  assistWord: 'from' | 'to' | null
+  /** The typed name of a credited person with no id. */
+  typedName: string | null
+  /**
+   * False for a label that words its person with no position though the
+   * credit has one: `Strikeout: X pitching` for a pitcher at P.
+   */
+  positionShown: Generated<boolean>
+}
+
+/** A fielder who assisted on a credit, as `"eventCredits".assists` holds him. */
+export interface CreditAssistRow {
+  gumboId: number | null
+  position: string | null
+  name?: string
 }
 
 export interface GumboIdsTable {
@@ -662,7 +680,10 @@ export interface EmailCodesTable {
   approved_at: Timestamp | null
   /** The invite this sign-in carries, so finishing it also lets them in. */
   invite_id: string | null
-  /** What an account made by that invite will be called. */
+  /**
+   * What an account made by that invite will be called. Held only while the
+   * code is pending: settling the account, spending or expiry forgets it.
+   */
   display_name: string | null
 }
 

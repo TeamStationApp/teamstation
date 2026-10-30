@@ -51,8 +51,10 @@ import { atBatInProgress } from '../events/atBatInProgress'
 import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
+import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { resolveScoringGame } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
 import { lineupRoutes, startingContext } from './lineups'
 
@@ -74,6 +76,7 @@ describe('the lineup routes (U11)', function () {
   let db: Kysely<Database> | undefined
   let server: ReturnType<express.Express['listen']> | undefined
   let base = ''
+  const written: string[] = []
   const taken = new Set<number>()
   const mint = (): { userId: number; legacyId: string } => {
     const minted = mintUserId(id => taken.has(id))
@@ -104,6 +107,12 @@ describe('the lineup routes (U11)', function () {
     home: { id: home, name: 'Hosts' }
   }
 
+  const displayOf = (user: { userId: number }): string => {
+    const at = players.indexOf(user as (typeof players)[number])
+    if (at < 0) return `User ${user.userId}`
+    return at < 9 ? `A${at + 1}` : `H${at - 8}`
+  }
+
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
     try {
@@ -126,7 +135,9 @@ describe('the lineup routes (U11)', function () {
         user => ({
           id: user.userId,
           legacyId: user.legacyId,
-          display_name: `User ${user.userId}`,
+          // A player under the name the game's setup gives him, as reads
+          // name him from his account.
+          display_name: displayOf(user),
           is_admin: user === admin,
           created_at: now,
           updated_at: now
@@ -375,7 +386,15 @@ describe('the lineup routes (U11)', function () {
     const app = express()
     app.use(jsonBody)
     app.use(withActor(db))
-    app.use('/api/v1', lineupRoutes(db))
+    app.use(withAudit(db))
+    app.use(
+      '/api/v1',
+      lineupRoutes(db, {
+        onGameWritten: gameId => {
+          written.push(gameId)
+        }
+      })
+    )
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -437,6 +456,95 @@ describe('the lineup routes (U11)', function () {
       away: [body.gumboId],
       home: []
     })
+
+    // The guest's name is corrected on his account, through its own route.
+    const put = async (
+      token: string | null,
+      userId: string,
+      name: unknown
+    ): Promise<Response> =>
+      await fetch(`${base}/games/${fresh}/guest-players/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          ...(token == null ? {} : { authorization: `Bearer ${token}` })
+        },
+        body: JSON.stringify(name)
+      })
+    const corrected = { firstName: 'George', lastName: 'Ruth' }
+    expect((await put(null, body.userId, corrected)).status).equals(401)
+    expect((await put(STRANGER, body.userId, corrected)).status).equals(403)
+    expect((await put(ADMIN, 'nobody', corrected)).status).equals(400)
+    expect(
+      (await put(ADMIN, body.userId, { firstName: '', lastName: '' })).status
+    ).equals(400)
+    expect(
+      (await put(ADMIN, userIdOfGumbo(987654321), corrected)).status
+    ).equals(404)
+    const renamed = await put(ADMIN, body.userId, corrected)
+    expect(renamed.status).equals(200)
+    expect(await renamed.json()).deep.include({
+      userId: body.userId,
+      gumboId: body.gumboId,
+      shortName: 'George Ruth',
+      nameDetails: {
+        firstName: 'George',
+        lastName: 'Ruth',
+        displayName: 'George Ruth'
+      },
+      jersey: '00'
+    })
+    expect(
+      await db!
+        .selectFrom('users')
+        .select(['first_name', 'last_name', 'display_name'])
+        .where('id', '=', body.userId)
+        .executeTakeFirstOrThrow()
+    ).deep.equals({
+      first_name: 'George',
+      last_name: 'Ruth',
+      display_name: 'George Ruth'
+    })
+    // The same name again writes nothing: no account, audit row or notice.
+    const audits = async (): Promise<number> =>
+      (
+        await db!
+          .selectFrom('audit_log')
+          .select('id')
+          .where(
+            'path',
+            '=',
+            `/api/v1/games/${fresh}/guest-players/${body.userId}`
+          )
+          .where('method', '=', 'PUT')
+          .execute()
+      ).length
+    const settled = async (count: number): Promise<void> => {
+      for (let tries = 0; tries < 50 && (await audits()) < count; tries++)
+        await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    await settled(1)
+    expect(await audits()).equals(1)
+    expect(written.filter(id => id === fresh)).has.length(1)
+    const stamp = async (): Promise<unknown> =>
+      (
+        await db!
+          .selectFrom('users')
+          .select('updated_at')
+          .where('id', '=', body.userId)
+          .executeTakeFirstOrThrow()
+      ).updated_at
+    const was = await stamp()
+    const again = await put(ADMIN, body.userId, {
+      firstName: ' George ',
+      lastName: 'Ruth'
+    })
+    expect(again.status).equals(200)
+    expect(await again.json()).deep.include({ shortName: 'George Ruth' })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(await audits()).equals(1)
+    expect(written.filter(id => id === fresh)).has.length(1)
+    expect(await stamp()).deep.equals(was)
   })
 
   it("reads a team's default lineup, or nulls for none", async function () {
@@ -479,6 +587,90 @@ describe('the lineup routes (U11)', function () {
     expect((await get(`/teams/${home}/default-lineup`, null)).status).equals(
       401
     )
+  })
+
+  it('keeps the default it took by ids alone, and answers it named', async function () {
+    // The first pitch of the scored game gave the hosts this default.
+    const row = await db!
+      .selectFrom('teams')
+      .select('default_lineup')
+      .where('id', '=', home)
+      .executeTakeFirstOrThrow()
+    const stored = row.default_lineup as {
+      lineup: {
+        batters: Array<Record<string, unknown>>
+        defense: Record<string, Record<string, unknown> | null>
+      }
+    }
+    expect(
+      stored.lineup.batters.map(person => Object.keys(person).sort())
+    ).deep.equals(Array(9).fill(['gumboId', 'jersey']))
+    expect(JSON.stringify(stored)).not.includes('"name"')
+    const answered = asDefaultLineup(
+      (await get(`/teams/${home}/default-lineup`, MEMBER)).body
+    )
+    expect(answered.lineup?.batters[0]).deep.equals({
+      gumboId: players[9].userId,
+      name: 'H1',
+      jersey: '1'
+    })
+    expect(
+      Object.values(answered.lineup?.defense ?? {}).every(
+        person => person?.name !== ''
+      )
+    ).equals(true)
+  })
+
+  it('answers a placeholder in a default by the name typed for him', async function () {
+    const was = await db!
+      .selectFrom('teams')
+      .select('default_lineup')
+      .where('id', '=', other)
+      .executeTakeFirstOrThrow()
+    const typed = { gumboId: null, name: 'Typed Fielder', jersey: '8' }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: {
+            batters: [typed, { gumboId: players[0].userId, jersey: '1' }],
+            defense: Object.fromEntries(
+              POSITIONS.map(position => [
+                position,
+                position === 'C' ? typed : null
+              ])
+            )
+          },
+          fromGameId: null,
+          setAt: '2026-04-01T18:00:00.000Z'
+        }
+      })
+      .where('id', '=', other)
+      .execute()
+    try {
+      const answered = asDefaultLineup(
+        (await get(`/teams/${other}/default-lineup`, ADMIN)).body
+      )
+      expect(answered.lineup?.batters).deep.equals([
+        typed,
+        { gumboId: players[0].userId, name: 'A1', jersey: '1' }
+      ])
+      expect(answered.lineup?.defense.C).deep.equals(typed)
+      const dj = asDjGame((await get(`/games/${hidden}/dj`, ADMIN)).body)
+      expect(dj.home.source).equals('default')
+      expect(
+        dj.home.batters.map(({ userId, name }) => ({ userId, name }))
+      ).deep.equals([
+        { userId: null, name: 'Typed Fielder' },
+        { userId: userIdOfGumbo(players[0].userId), name: 'A1' }
+      ])
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: was.default_lineup as never })
+        .where('id', '=', other)
+        .execute()
+    }
   })
 
   it("reads both sides' start, changes and current lineup of a game", async function () {
@@ -636,6 +828,52 @@ describe('the lineup routes (U11)', function () {
       // The default is the lineup the visitors began with, before the Guest.
       expect(dj.away.batters[1].name).equals('A2')
       expect(dj.away.batters[0].walkUpSong?.title).equals('Away Song')
+    })
+
+    it('names the default from the accounts, so a rename changes the default and its DJ rows', async function () {
+      const storedOf = async (): Promise<unknown> =>
+        (
+          await db!
+            .selectFrom('teams')
+            .select('default_lineup')
+            .where('id', '=', home)
+            .executeTakeFirstOrThrow()
+        ).default_lineup
+      const stored = await storedOf()
+      const renamed = userIdOfGumbo(players[9].userId)
+      await db!
+        .updateTable('users')
+        .set({
+          first_name: 'Shohei',
+          last_name: 'Ohtani',
+          display_name: 'Shohei Ohtani'
+        })
+        .where('id', '=', renamed)
+        .execute()
+      try {
+        const answered = asDefaultLineup(
+          (await get(`/teams/${home}/default-lineup`, MEMBER)).body
+        )
+        expect(answered.lineup?.batters.map(person => person.name)).deep.equals(
+          ['Shohei O', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8', 'H9']
+        )
+        const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
+        expect(dj.home.source).equals('default')
+        expect(dj.home.batters[0]).deep.include({
+          userId: renamed,
+          name: 'Shohei O'
+        })
+        // Nothing stored changed.
+        expect(await storedOf()).deep.equals(stored)
+      } finally {
+        await db!
+          .updateTable('users')
+          .set({ first_name: null, last_name: null, display_name: 'H1' })
+          .where('id', '=', renamed)
+          .execute()
+      }
+      const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
+      expect(dj.home.batters[0].name).equals('H1')
     })
 
     it('lists the players by jersey, then name, with no default either', async function () {
@@ -998,18 +1236,20 @@ describe("saving a side's lineup (U8)", function () {
     const database = db!
     return await ScoringSession.open(
       {
-        load: async () => ({
-          plays: (await readPlays(database, gameId)).map(
-            row => row.gumbo as GumboPlay
-          ),
-          currentPlay: (
-            await database
-              .selectFrom('games')
-              .select(atBatInProgress().as('currentPlay'))
-              .where('id', '=', gameId)
-              .executeTakeFirstOrThrow()
-          ).currentPlay as CurrentPlay | null
-        }),
+        // Read as `GET /events` reads it: named from the accounts.
+        load: async () =>
+          await resolveScoringGame(database, {
+            plays: (await readPlays(database, gameId)).map(
+              row => row.gumbo as GumboPlay
+            ),
+            currentPlay: (
+              await database
+                .selectFrom('games')
+                .select(atBatInProgress().as('currentPlay'))
+                .where('id', '=', gameId)
+                .executeTakeFirstOrThrow()
+            ).currentPlay as CurrentPlay | null
+          }),
         save: async (id, change) => {
           const posted = await postGamePlays(
             database,
@@ -2049,7 +2289,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(named('Newcomer')).equals(1)
   })
 
-  it('saves and reloads guest name and jersey edits without changing identity or roster profiles', async function () {
+  it("saves and reloads a guest's jersey edit, never the name it posts, without changing identity or roster profiles", async function () {
     const initial = await scoring(games.locals)
     const guest = Object.values(initial.state.gameData.players).find(
       player => player.local && player.fullName === 'Guest'
@@ -2089,12 +2329,18 @@ describe("saving a side's lineup (U8)", function () {
     const answer = await save(games.locals, COACH, body)
     expect(answer.status, JSON.stringify(answer.body)).equals(200)
     const reopened = await scoring(games.locals)
+    // A guest's name is his account's: the save renamed nobody.
     expect(reopened.state.gameData.players[guest.id]).includes({
       id: guest.id,
-      fullName: 'Babe Ruth',
+      fullName: 'Guest',
       jersey: '03',
       local: true
     })
+    const stored = JSON.stringify(
+      (await readPlays(db!, games.locals)).map(row => row.gumbo)
+    )
+    expect(stored).not.include('Babe Ruth')
+    expect(stored).not.include('Willie Mays')
     expect(reopened.state.gameData.players[guest.id].firstName).equals(
       undefined
     )

@@ -502,6 +502,8 @@ describe('swapping a game’s home and away teams', function () {
     await swap('gam_side_pregame')
     const game = await row('gam_side_pregame')
     expect(game.pregame).deep.include({ version: 3 })
+    // Written through the cleaners, and stored naming nobody.
+    expect(JSON.stringify(game.pregame)).not.include('"fullName"')
     const now = await lineupsAnswer(db, game)
     expect(now.home.teamId).equals(was.away.teamId)
     expect(now.home.current).deep.equals(was.away.current)

@@ -121,7 +121,7 @@ async function settle(
   clock: Clock
 ): Promise<void> {
   for (const claim of await settleClaims(db, venueId, clock))
-    await noticeClaimDecided(db, claim, null)
+    await noticeClaimDecided(db, claim, false)
 }
 
 async function venueRow(
@@ -514,12 +514,7 @@ export async function decideVenueClaim(
       decision,
       clock
     )
-    const decider = await trx
-      .selectFrom('users')
-      .select('display_name')
-      .where('id', '=', claim.decided_by!)
-      .executeTakeFirst()
-    await noticeClaimDecided(trx, claim, decider?.display_name ?? 'An admin')
+    await noticeClaimDecided(trx, claim, true)
   })
   return await venueDetail(db, actor, venueId, services)
 }

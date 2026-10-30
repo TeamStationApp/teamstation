@@ -5,11 +5,12 @@ import type { Kysely } from 'kysely'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { recordOf } from '../../common/scoring/gumbo'
 import {
-  asDefaultLineup,
+  asStoredDefaultLineup,
   type CourtesyRunner,
   type DefaultLineup,
   type DueBatter,
   type GameLineups,
+  type Lineup,
   type LineupContext,
   lineupHistory,
   type LineupPerson,
@@ -17,15 +18,19 @@ import {
   readLineups,
   sameArrangement,
   type SideLineups,
-  type StoredLineupGame
+  type StoredDefaultLineup,
+  type StoredLineup,
+  type StoredLineupGame,
+  type StoredLineupPerson
 } from '../../common/scoring/lineupHistory'
-import type { Side } from '../../common/scoring/state'
+import type { Position, Side } from '../../common/scoring/state'
 import type { SideTeams } from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
+import { teamNames } from '../users/nameBook'
 import { atBatOf } from './atBatInProgress'
 import { readPlays } from './postPlays'
 
@@ -72,7 +77,9 @@ export async function gameLineups(
 ): Promise<Record<Side, TeamSideLineups>> {
   const context = await lineupContext(db, game)
   const sides = lineupHistory(
-    await resolveScoringGame(db, await storedOrPregame(db, game)),
+    await resolveScoringGame(db, await storedOrPregame(db, game), {
+      gameId: game.id
+    }),
     context
   )
   return {
@@ -94,7 +101,8 @@ export async function gameLineups(
  * keeps of them (`lineups_digest`): what `GET /games/:gameId/lineups`
  * answers and the game socket sends. A screen keeps the digest it last read
  * or saved, to tell its own save from somebody else's. A game no live post
- * has written yet keeps none, and its digest is worked out as a post would.
+ * has written yet keeps none, and its digest is worked out from its stored
+ * form (`storedFormDigest`), so a rename leaves it as it was.
  */
 export async function lineupsAnswer(
   db: Trx,
@@ -111,8 +119,9 @@ export async function lineupsAnswer(
   Record<Side, TeamSideLineups> & { digest: string; generation: number }
 > {
   const context = await lineupContext(db, game)
+  const stored = await storedOrPregame(db, game)
   const read = readLineups(
-    await resolveScoringGame(db, await storedOrPregame(db, game)),
+    await resolveScoringGame(db, stored, { gameId: game.id }),
     context
   )
   const sides = {
@@ -129,16 +138,15 @@ export async function lineupsAnswer(
   }
   return {
     ...sides,
-    digest:
-      game.lineups_digest ??
-      lineupsDigest(read.sides, read.bench, read.courtesy, read.due),
+    digest: game.lineups_digest ?? digestOf(readLineups(stored, context)),
     generation: game.play_generation
   }
 }
 
 /**
  * The digest a game keeps of its lineups, as `lineupsAnswer` gives it, without
- * the lineups themselves: worked out only for a game no live post has written.
+ * the lineups themselves: worked out only for a game no live post has written
+ * (`storedFormDigest`).
  */
 export async function storedLineupsDigest(
   db: Trx,
@@ -152,10 +160,32 @@ export async function storedLineupsDigest(
   }
 ): Promise<string> {
   if (game.lineups_digest != null) return game.lineups_digest
-  const read = readLineups(
-    await resolveScoringGame(db, await storedOrPregame(db, game)),
-    await lineupContext(db, game)
+  return await storedFormDigest(db, game)
+}
+
+/**
+ * The digest of a game's lineups read from their stored form, not named
+ * from `users`: each person by id, jersey and position, and by name only
+ * one with no id (a placeholder the team named at the field). The one form
+ * of a game's lineups digest: what a game that keeps no `lineups_digest`
+ * answers and what every live post keeps (`keepLineups`), so a rename or a
+ * guest's correction leaves it alone, and a post built on it is not
+ * refused as stale.
+ */
+export async function storedFormDigest(
+  db: Trx,
+  game: Parameters<typeof lineupContext>[1] & {
+    currentPlay: unknown
+    pregame?: unknown
+  }
+): Promise<string> {
+  return digestOf(
+    readLineups(await storedOrPregame(db, game), await lineupContext(db, game))
   )
+}
+
+/** `lineupsDigest` of everything a read of the lineups counts. */
+function digestOf(read: GameLineups): string {
   return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
 }
 
@@ -244,53 +274,88 @@ export function lineupsDigest(
   return createHash('sha256').update(JSON.stringify(body)).digest('hex')
 }
 
-/** A team's stored default, or none when it has none or it no longer reads. */
-export function defaultOf(raw: unknown): DefaultLineup | null {
+/**
+ * A team's stored default, or none when it has none or it no longer reads.
+ * Its people are as stored: a player with an id may have no name.
+ */
+export function defaultOf(raw: unknown): StoredDefaultLineup | null {
   if (raw == null) return null
   try {
-    const cleaned = asDefaultLineup(raw)
+    const cleaned = asStoredDefaultLineup(raw)
     return cleaned.lineup == null ? null : cleaned
   } catch {
     return null
   }
 }
 
-/** Resolve stored default identities without modifying the historical lineup. */
+/** Each person of a stored lineup, through `turn`. */
+function mapLineup<From, To>(
+  lineup: {
+    batters: From[]
+    defense: Record<Position, From | null>
+  },
+  turn: (person: From) => To
+): { batters: To[]; defense: Record<Position, To | null> } {
+  return {
+    batters: lineup.batters.map(turn),
+    defense: Object.fromEntries(
+      Object.entries(lineup.defense).map(([position, person]) => [
+        position,
+        person == null ? null : turn(person)
+      ])
+    ) as Record<Position, To | null>
+  }
+}
+
+/**
+ * A team's stored default, read: merged ids resolved to their survivors
+ * (the stored row is left as it is), and each player with an id named from
+ * `users`, by the short names of the team's roster (`teamNames`). A
+ * placeholder keeps the name the team typed.
+ */
 export async function resolvedDefaultOf(
   db: Trx,
+  teamId: string,
   raw: unknown
 ): Promise<DefaultLineup | null> {
   const kept = defaultOf(raw)
-  if (kept?.lineup == null) return kept
+  if (kept?.lineup == null) return null
   const people = [...kept.lineup.batters, ...Object.values(kept.lineup.defense)]
   const mapping = await resolveGumboIds(
     db,
     people.flatMap(person => (person?.gumboId == null ? [] : [person.gumboId]))
   )
-  const resolve = (person: LineupPerson): LineupPerson => ({
-    ...person,
-    gumboId: person.gumboId == null ? null : mapping.get(person.gumboId)!
-  })
-  return {
-    ...kept,
-    lineup: {
-      batters: kept.lineup.batters.map(resolve),
-      defense: Object.fromEntries(
-        Object.entries(kept.lineup.defense).map(([position, person]) => [
-          position,
-          person == null ? null : resolve(person)
-        ])
-      ) as typeof kept.lineup.defense
-    }
+  const nameOf = await teamNames(db, teamId, mapping.values())
+  const resolve = (person: StoredLineupPerson): LineupPerson => {
+    if (person.gumboId == null)
+      return { gumboId: null, name: person.name ?? '', jersey: person.jersey }
+    const gumboId = mapping.get(person.gumboId)!
+    return { gumboId, name: nameOf(gumboId) ?? '', jersey: person.jersey }
   }
+  return { ...kept, lineup: mapLineup(kept.lineup, resolve) }
+}
+
+/**
+ * A lineup as a team's default stores it: each player with an id by his id
+ * and jersey, a placeholder with the name the team typed.
+ */
+export function storedLineupOf(lineup: Lineup): StoredLineup {
+  return mapLineup(lineup, (person): StoredLineupPerson =>
+    person.gumboId == null
+      ? { gumboId: null, name: person.name, jersey: person.jersey }
+      : { gumboId: person.gumboId, jersey: person.jersey }
+  )
 }
 
 /**
  * What a live post leaves of the game's lineups, inside its transaction and
- * after its writes: the digest, and for a post from TeamStation the teams'
- * defaults. The first post after which the game has begun takes each side's
+ * after its writes: the digest, of their stored form as `storedFormDigest`
+ * works it out (so a rename or a guest's correction never moves it), and
+ * for a post from TeamStation the teams' defaults. The first post after which the game has begun takes each side's
  * starting lineup as its team's default, unless the team's default is the
- * same arrangement already, and marks the game `lineup_started_at`. A side
+ * same arrangement already, and marks the game `lineup_started_at`. The
+ * default keeps each player's id and jersey and no name (`storedLineupOf`).
+ * A side
  * whose starting lineup is still the roster order a save left because the
  * saver could not see that team keeps the default it already has. A later
  * roster save takes that side only when it confirms the side and the
@@ -312,11 +377,12 @@ export async function keepLineups(
   fromTeamStation: boolean,
   now: Date
 ): Promise<{ lineups_digest: string; lineup_started_at?: Date | null }> {
+  const context = await lineupContext(trx, game)
   const read: GameLineups = readLineups(
-    await resolveScoringGame(trx, stored),
-    await lineupContext(trx, game)
+    await resolveScoringGame(trx, stored, { gameId: game.id }),
+    context
   )
-  const digest = lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+  const digest = digestOf(readLineups(stored, context))
   if (read.problem != null) {
     console.warn(
       `game ${game.id}: its lineups could not be read, so its teams' default lineups are left as they are: ${read.problem}`
@@ -342,10 +408,10 @@ export async function keepLineups(
       .where('id', '=', teamId)
       .forUpdate()
       .executeTakeFirst()
-    const kept = await resolvedDefaultOf(trx, row?.default_lineup)
+    const kept = await resolvedDefaultOf(trx, teamId, row?.default_lineup)
     if (kept?.lineup != null && sameArrangement(kept.lineup, lineup)) continue
-    const value: DefaultLineup = {
-      lineup,
+    const value: StoredDefaultLineup = {
+      lineup: storedLineupOf(lineup),
       fromGameId: game.id,
       setAt: now.toISOString()
     }

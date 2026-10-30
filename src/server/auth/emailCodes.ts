@@ -13,6 +13,10 @@ export type CodePurpose = 'login' | 'verify' | 'reset'
  * Issues a code and returns it to the caller to deliver. Any earlier unused
  * code for the same address and purpose is consumed first, so only the newest
  * one works and a stream of requests cannot widen the guessing window.
+ *
+ * A name typed at sign-up stays on a code only while it is pending: the same
+ * update forgets it on the codes it spends, and on every expired code that
+ * still holds one, whoever asked for it.
  */
 export interface SignInRequest {
   /** Names the row, and is what the client that asked waits on. */
@@ -57,12 +61,25 @@ export async function createEmailCode(
   const normalised = email.trim().toLowerCase()
   const now = new Date()
 
+  // One update: this address's pending codes (by `email_codes_email`) are
+  // spent, and expired ones still holding a name (by
+  // `email_codes_named_expiry`) only forget it.
+  const thisAddress = sql<boolean>`lower(email) = ${normalised} and purpose = ${purpose}`
   await db
     .updateTable('email_codes')
-    .set({ consumed_at: now })
-    .where('email', '=', normalised)
-    .where('purpose', '=', purpose)
-    .where('consumed_at', 'is', null)
+    .set({
+      consumed_at: sql<Date | null>`case when ${thisAddress} then coalesce(consumed_at, ${now}::timestamptz) else consumed_at end`,
+      display_name: null
+    })
+    .where(eb =>
+      eb.or([
+        eb.and([thisAddress, eb('consumed_at', 'is', null)]),
+        eb.and([
+          eb('expires_at', '<=', now),
+          eb('display_name', 'is not', null)
+        ])
+      ])
+    )
     .execute()
 
   const id = makeId('emailCode')
@@ -118,6 +135,8 @@ export function signInLink(
 }
 
 export interface LinkClaim {
+  /** The code's row, whose typed name the sign-in forgets once settled. */
+  codeId: string
   email: string
   next: string | null
   origin: SignInOrigin
@@ -157,11 +176,19 @@ export async function claimSignInLink(
     .where('purpose', '=', 'login')
     .where('consumed_at', 'is', null)
     .where('expires_at', '>', now)
-    .returning(['email', 'next_path', 'origin', 'invite_id', 'display_name'])
+    .returning([
+      'id',
+      'email',
+      'next_path',
+      'origin',
+      'invite_id',
+      'display_name'
+    ])
     .executeTakeFirst()
   if (row == null) return null
 
   return {
+    codeId: row.id,
     email: row.email,
     next: row.next_path,
     origin: row.origin,
@@ -182,6 +209,7 @@ export async function claimApprovedRequest(
   id: string,
   clientSecret: string
 ): Promise<{
+  codeId: string
   email: string
   next: string | null
   inviteId: string | null
@@ -207,6 +235,7 @@ export async function claimApprovedRequest(
     return null
   }
   return {
+    codeId: row.id,
     email: row.email,
     next: row.next_path,
     inviteId: row.invite_id,
@@ -216,6 +245,8 @@ export async function claimApprovedRequest(
 
 /** What a spent code carried, beyond the fact that it was right. */
 export interface CodeClaim {
+  /** The code's row, whose typed name the sign-in forgets once settled. */
+  codeId: string
   inviteId: string | null
   displayName: string | null
 }
@@ -274,5 +305,25 @@ export async function verifyEmailCode(
     .where('consumed_at', 'is', null)
     .executeTakeFirst()
   if (spent.numUpdatedRows === BigInt(0)) return null
-  return { inviteId: row.invite_id, displayName: row.display_name }
+  return {
+    codeId: row.id,
+    inviteId: row.invite_id,
+    displayName: row.display_name
+  }
+}
+
+/**
+ * Forget the name typed at sign-up once the account it names is settled: it
+ * lives on `users` from then on, and a spent code keeps nothing of it.
+ */
+export async function forgetTypedName(
+  db: Kysely<Database>,
+  codeId: string
+): Promise<void> {
+  await db
+    .updateTable('email_codes')
+    .set({ display_name: null })
+    .where('id', '=', codeId)
+    .where('display_name', 'is not', null)
+    .execute()
 }

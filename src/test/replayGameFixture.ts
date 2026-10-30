@@ -15,6 +15,7 @@ import type {
   Position,
   Side
 } from '../common/scoring/state'
+import { withNames } from '../common/scoring/storedNames'
 
 /**
  * A three-inning game scored in TeamStation, for the replay's tests and its
@@ -109,23 +110,44 @@ export function replaySetup(
   return setup
 }
 
-/** A server in memory, keeping what each save sends as the server would. */
+/**
+ * A server in memory, keeping what each save sends as the server would: the
+ * stored forms, which name nobody. It answers them named, as the server
+ * names them from the players' accounts, here from the names each save
+ * carried beside its documents.
+ */
 export class MemoryStore implements EventStore {
   plays = new Map<number, GumboPlay>()
   current: CurrentPlay | null = null
+  names = new Map<number, string>()
 
   async load(): Promise<StoredGame> {
     return this.stored()
   }
 
   async save(_gameId: string, change: SaveChange): Promise<StoredGame> {
+    for (const [id, name] of Object.entries(change.names ?? {}))
+      this.names.set(Number(id), name)
     for (const index of change.remove) this.plays.delete(index)
     for (const play of change.plays) this.plays.set(play.about.atBatIndex, play)
     if (change.currentPlay !== undefined) this.current = change.currentPlay
     return this.stored()
   }
 
+  /** The game as the server answers it: named. */
   stored(): StoredGame {
+    const game = this.storedForms()
+    return {
+      plays: game.plays.map(play => withNames(play, this.names)),
+      currentPlay:
+        game.currentPlay == null
+          ? null
+          : withNames(game.currentPlay, this.names)
+    }
+  }
+
+  /** The game as the server keeps it: the stored forms, as sent. */
+  storedForms(): StoredGame {
     return JSON.parse(
       JSON.stringify({
         plays: [...this.plays.values()].sort(

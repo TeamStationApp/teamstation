@@ -5,6 +5,7 @@ import { Pool } from 'pg'
 
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -219,6 +220,16 @@ describe('scoring events', function () {
       .where('id', '=', replaced[0].id)
       .executeTakeFirstOrThrow()
     expect(document.gumbo).to.not.have.property('source')
+    // The credit is stored with its structure, and no name its id gives.
+    expect((document.gumbo as { credits: unknown[] }).credits).deep.equals([
+      {
+        eventType: 'single',
+        teamId: home,
+        creditUserId: player.userId,
+        credit: { role: 'batter', position: null },
+        head: 'Single'
+      }
+    ])
     const roles = await db
       .selectFrom('event_players')
       .select(['role', 'gumbo_id'])
@@ -227,15 +238,193 @@ describe('scoring events', function () {
     expect(roles.map(row => row.role)).deep.equals(['fielder'])
 
     const byPlayer = await creditsForPlayer(db, userIdOfGumbo(player.userId))
-    expect(byPlayer.get(replaced[0].id)?.[0].credit?.name).equals('Adam Dunn')
-    expect(byPlayer.get(replaced[0].id)?.[0].creditUserId).equals(player.userId)
-    expect(byPlayer.get(replaced[0].id)?.[0].label).equals('Single: Adam Dunn')
+    // Read back structured, naming its person by id alone.
+    expect(byPlayer.get(replaced[0].id)).deep.equals([
+      {
+        eventType: 'single',
+        head: 'Single',
+        suffix: null,
+        assists: [],
+        assistWord: null,
+        positionShown: true,
+        teamId: home,
+        creditUserId: player.userId,
+        credit: { role: 'batter', position: null }
+      }
+    ])
     expect(
       await creditsForPlayer(db, userIdOfGumbo(9_007_199_254_740_000))
     ).deep.equals(new Map())
 
     const highlights = await creditsForHighlight(db, [replaced[0].id])
     expect(highlights.get(replaced[0].id)?.[0].eventType).equals('single')
+  })
+
+  it("stores an outside scorer's credits with their structure, naming only a person with no id, and copies it into eventCredits", async function () {
+    const fielder = mintUserId(id => id === player.userId)
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(fielder.userId),
+      legacyId: fielder.legacyId,
+      display_name: 'Alex Bregman'
+    })
+    const outsideGame = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: outsideGame,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const sent = [
+      {
+        eventType: 'single',
+        label: 'Single: Kyle Tucker',
+        teamId: 'away',
+        creditUserId: null,
+        credit: { name: 'Kyle Tucker', role: 'batter', position: null }
+      },
+      {
+        eventType: 'strikeout',
+        label: 'Strikeout: Adam Dunn pitching',
+        teamId: 'home',
+        creditUserId: player.userId,
+        // As GameChanger sends it: at P, though the label shows no position.
+        credit: { name: 'Adam Dunn', role: 'pitcher', position: 'P' }
+      },
+      {
+        eventType: 'double_play',
+        label:
+          'Double play: Adam Dunn (SS) to Alex Bregman (2B) to Jose Altuve (1B)',
+        teamId: 'home',
+        creditUserId: player.userId,
+        credit: { name: 'Adam Dunn', role: 'fielder', position: 'SS' },
+        assists: [
+          {
+            name: 'Alex Bregman',
+            position: '2B',
+            creditUserId: fielder.userId
+          }
+        ]
+      }
+    ]
+    await postGamePlays(
+      db,
+      outsideGame,
+      asPostEventsBody({
+        mode: 'replace',
+        source: { system: 'acme' },
+        plays: [
+          {
+            about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+            result: { eventType: 'single', awayScore: 0, homeScore: 0 },
+            matchup: {
+              batter: { fullName: 'Kyle Tucker' },
+              pitcher: { id: player.userId, fullName: 'Adam Dunn' }
+            },
+            credits: sent
+          }
+        ]
+      })
+    )
+    const stored = await db
+      .selectFrom('events')
+      .select(['id', 'gumbo'])
+      .where('gameId', '=', outsideGame)
+      .executeTakeFirstOrThrow()
+    const credits = (
+      stored.gumbo as { credits: Array<Record<string, unknown>> }
+    ).credits
+    expect(credits.map(credit => credit.label)).deep.equals([
+      undefined,
+      undefined,
+      undefined
+    ])
+    expect(credits.map(credit => credit.credit)).deep.equals([
+      { name: 'Kyle Tucker', role: 'batter', position: null },
+      { role: 'pitcher', position: 'P' },
+      { role: 'fielder', position: 'SS' }
+    ])
+    // Named from the accounts, each label reads as it was sent.
+    const named = withNames(
+      stored.gumbo,
+      new Map([
+        [player.userId, 'Adam Dunn'],
+        [fielder.userId, 'Alex Bregman']
+      ])
+    ) as { credits: Array<{ label: string }> }
+    expect(named.credits.map(credit => credit.label)).deep.equals(
+      sent.map(credit => credit.label)
+    )
+    expect(JSON.stringify(stored.gumbo)).not.include('Adam Dunn')
+    expect(JSON.stringify(stored.gumbo)).not.include('Alex Bregman')
+    expect(credits[1]).include({
+      head: 'Strikeout',
+      suffix: ' pitching',
+      positionShown: false
+    })
+    expect(credits[2]).deep.include({
+      head: 'Double play',
+      assists: [
+        { creditUserId: fielder.userId, position: '2B' },
+        { creditUserId: null, position: '1B', name: 'Jose Altuve' }
+      ],
+      assistWord: 'to'
+    })
+
+    const rows = await db
+      .selectFrom('eventCredits')
+      .select([
+        'head',
+        'suffix',
+        'assists',
+        'assistWord',
+        'typedName',
+        'positionShown'
+      ])
+      .where('eventId', '=', stored.id)
+      .orderBy('head')
+      .execute()
+    expect(rows).deep.equals([
+      {
+        head: 'Double play',
+        suffix: null,
+        assists: [
+          { gumboId: fielder.userId, position: '2B' },
+          { gumboId: null, position: '1B', name: 'Jose Altuve' }
+        ],
+        assistWord: 'to',
+        typedName: null,
+        positionShown: true
+      },
+      {
+        head: 'Single',
+        suffix: null,
+        assists: [],
+        assistWord: null,
+        typedName: 'Kyle Tucker',
+        positionShown: true
+      },
+      {
+        head: 'Strikeout',
+        suffix: ' pitching',
+        assists: [],
+        assistWord: null,
+        typedName: null,
+        positionShown: false
+      }
+    ])
+    const read = await creditsForHighlight(db, [stored.id])
+    expect(read.get(stored.id)?.map(credit => credit.credit)).deep.equals([
+      { name: 'Kyle Tucker', role: 'batter', position: null },
+      { role: 'pitcher', position: 'P' },
+      { role: 'fielder', position: 'SS' }
+    ])
+    expect(read.get(stored.id)?.[2].assists).deep.equals([
+      { creditUserId: fielder.userId, position: '2B' },
+      { creditUserId: null, position: '1B', name: 'Jose Altuve' }
+    ])
   })
 
   it('keeps stored credits a post leaves off, and records an empty list', async function () {
@@ -275,7 +464,10 @@ describe('scoring events', function () {
     const empty = indexes.find(row => row.atBatIndex === 9999)
     expect(looked.get(empty?.id ?? '')).deep.equals([])
     const single = indexes.find(row => row.atBatIndex === 0)
-    expect(looked.get(single?.id ?? '')?.[0].label).equals('Single: Adam Dunn')
+    expect(looked.get(single?.id ?? '')?.[0]).include({
+      head: 'Single',
+      creditUserId: player.userId
+    })
 
     await db
       .insertInto('games')

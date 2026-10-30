@@ -41,7 +41,7 @@ describe('the pinch runner who keeps the batting order (U4c)', function () {
     expect(
       outcomeName({
         eventType: 'ts_courtesy_runner',
-        label: 'Runner: Freeman',
+        head: 'Runner',
         credit: { role: 'runner' }
       })
     ).equals('Pinch runner')

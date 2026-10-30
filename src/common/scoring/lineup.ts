@@ -531,24 +531,52 @@ const POSITION_WORDS: Record<Position, { place: string; fielder: string }> = {
   RF: { place: 'right field', fielder: 'right fielder' }
 }
 
+/**
+ * Whom a sentence names: a player by his gumbo id, or, for one with no id,
+ * by the name typed for him. A sentence is worded from these with a name
+ * lookup (`SaidName`), so the same function words it in the engine, with the
+ * game's names, and on a read, with the names of the accounts.
+ */
+export type SaidPlayer = number | { name: string }
+/** The name a sentence gives each player it names. */
+export type SaidName = (player: SaidPlayer) => string
+
+/** A `SaidName` reading ids through `lookup`, and a typed name as it is. */
+export function saidNames(
+  lookup: (id: number) => string | undefined
+): SaidName {
+  return player =>
+    typeof player === 'number' ? (lookup(player) ?? '') : player.name
+}
+
 /** A pinch hitter's or runner's announcement, as the feed words it. */
 export function pinchSaid(
+  name: SaidName,
   running: boolean,
-  name: string,
-  replaced: string | undefined
+  player: SaidPlayer,
+  replaced: SaidPlayer | undefined
 ): string {
   const role = running ? 'Pinch-runner' : 'Pinch-hitter'
   return replaced == null
-    ? `Offensive Substitution: ${role} ${name} comes in.`
-    : `Offensive Substitution: ${role} ${name} replaces ${replaced}.`
+    ? `Offensive Substitution: ${role} ${name(player)} comes in.`
+    : `Offensive Substitution: ${role} ${name(player)} replaces ${name(replaced)}.`
 }
 
 /**
  * A pinch runner who leaves the batting order as it is, which the feed has no
  * words for.
  */
-export function courtesyRunnerSaid(name: string, replaced: string): string {
-  return `Pinch-runner ${name} runs for ${replaced}; the batting order is unchanged`
+export function courtesyRunnerSaid(
+  name: SaidName,
+  player: SaidPlayer,
+  replaced: SaidPlayer
+): string {
+  return `Pinch-runner ${name(player)} runs for ${name(replaced)}; the batting order is unchanged`
+}
+
+/** Where a position is in a sentence, or the code itself for one unknown. */
+function placeOf(position: string): string {
+  return POSITION_WORDS[position as Position]?.place ?? position
 }
 
 /**
@@ -556,26 +584,107 @@ export function courtesyRunnerSaid(name: string, replaced: string): string {
  * X" when the man leaving came in to hit or run and never fielded.
  */
 export function defensiveSubstitutionSaid(
-  name: string,
-  replaced: string | undefined,
+  name: SaidName,
+  player: SaidPlayer,
+  replaced: SaidPlayer | undefined,
   position: Position,
   pinch?: 'PH' | 'PR'
 ): string {
-  const where = POSITION_WORDS[position].place
+  const where = placeOf(position)
   const role =
     pinch == null ? '' : pinch === 'PH' ? 'pinch-hitter ' : 'pinch-runner '
   return replaced == null
-    ? `Defensive Substitution: ${name} comes in, playing ${where}.`
-    : `Defensive Substitution: ${name} replaces ${role}${replaced}, playing ${where}.`
+    ? `Defensive Substitution: ${name(player)} comes in, playing ${where}.`
+    : `Defensive Substitution: ${name(player)} replaces ${role}${name(replaced)}, playing ${where}.`
+}
+
+/** A pitching change: the man coming in, and the one he replaces. */
+export function pitchingSaid(
+  name: SaidName,
+  player: SaidPlayer,
+  replaced: SaidPlayer | undefined
+): string {
+  return replaced == null
+    ? `Pitching Change: ${name(player)} comes in to pitch.`
+    : `Pitching Change: ${name(player)} replaces ${name(replaced)}.`
+}
+
+/**
+ * A player already in the game moving to another position, or staying in at
+ * one when where he played before is not known.
+ */
+export function switchSaid(
+  name: SaidName,
+  player: SaidPlayer,
+  position: Position,
+  fromPosition: Position | undefined
+): string {
+  return fromPosition == null
+    ? `${name(player)} remains in the game as the ${POSITION_WORDS[position]?.fielder ?? position}.`
+    : `Defensive switch from ${placeOf(fromPosition)} to ${placeOf(position)} for ${name(player)}.`
 }
 
 /** A change of batting order: each man it moves and where he now bats. */
 export function battingOrderSaid(
-  moved: ReadonlyArray<{ name: string; bats: number }>
+  name: SaidName,
+  moved: ReadonlyArray<{ player: SaidPlayer; bats: number }>
 ): string {
   return `Batting order change: ${moved
-    .map(({ name, bats }) => `${name} bats ${ordinal(bats)}`)
+    .map(({ player, bats }) => `${name(player)} bats ${ordinal(bats)}`)
     .join(', ')}.`
+}
+
+/**
+ * What a lineup change's sentence is made from: the players it names, by id,
+ * and the positions and places it names. A stored play keeps it beside the
+ * sentence (`said`), so the sentence can be worded again with other names.
+ */
+export type LineupSaid =
+  | { kind: 'pitching'; player: SaidPlayer; replaced?: SaidPlayer }
+  | {
+      kind: 'defensive'
+      player: SaidPlayer
+      replaced?: SaidPlayer
+      position: Position
+      pinch?: 'PH' | 'PR'
+    }
+  | {
+      kind: 'pinch'
+      player: SaidPlayer
+      replaced?: SaidPlayer
+      running: boolean
+    }
+  | {
+      kind: 'switch'
+      player: SaidPlayer
+      position: Position
+      fromPosition?: Position
+    }
+  | { kind: 'order'; moved: Array<{ player: SaidPlayer; bats: number }> }
+  | { kind: 'courtesy'; player: SaidPlayer; replaced: SaidPlayer }
+
+/** A lineup change's sentence, worded from what it is made of. */
+export function lineupSaid(said: LineupSaid, name: SaidName): string {
+  switch (said.kind) {
+    case 'pitching':
+      return pitchingSaid(name, said.player, said.replaced)
+    case 'defensive':
+      return defensiveSubstitutionSaid(
+        name,
+        said.player,
+        said.replaced,
+        said.position,
+        said.pinch
+      )
+    case 'pinch':
+      return pinchSaid(name, said.running, said.player, said.replaced)
+    case 'switch':
+      return switchSaid(name, said.player, said.position, said.fromPosition)
+    case 'order':
+      return battingOrderSaid(name, said.moved)
+    case 'courtesy':
+      return courtesyRunnerSaid(name, said.player, said.replaced)
+  }
 }
 
 export type LineupEventType =
@@ -598,6 +707,11 @@ export interface LineupChange {
   replacedPlayer?: PlayerRef
   /** A change of batting order: each man it moves and where he now bats. */
   moved?: Array<{ player: PlayerRef; bats: number }>
+  /**
+   * A defensive substitution at the break replacing a man who came in to hit
+   * or run and never fielded: which of the two he did.
+   */
+  pinch?: 'PH' | 'PR'
   /** The announcement, as the live feed words it. */
   description: string
 }
@@ -723,8 +837,7 @@ function sideChanges(
     team.battingOrder.includes(id) || positionOf(team, id) != null
   const ref = (id: number | null | undefined): PlayerRef | undefined =>
     id == null ? undefined : playerRef(after, id)
-  const name = (id: number | null | undefined): string =>
-    ref(id)?.fullName ?? ''
+  const said = saidNames(id => ref(id)?.fullName)
   // The player whose place in the order this one took.
   const orderReplaced = (id: number): number | undefined =>
     [...takers].find(([, taker]) => taker === id)?.[0]
@@ -767,10 +880,7 @@ function sideChanges(
       fromPosition,
       battingOrder,
       replacedPlayer: ref(replaced),
-      description:
-        replaced == null
-          ? `Pitching Change: ${name(id)} comes in to pitch.`
-          : `Pitching Change: ${name(id)} replaces ${name(replaced)}.`
+      description: pitchingSaid(said, id, replaced)
     })
   }
 
@@ -799,8 +909,9 @@ function sideChanges(
             battingOrder,
             replacedPlayer: ref(holder),
             description: defensiveSubstitutionSaid(
-              name(id),
-              holder == null ? undefined : name(holder),
+              said,
+              id,
+              holder ?? undefined,
               position
             )
           })
@@ -819,11 +930,7 @@ function sideChanges(
           position: running ? 'PR' : 'PH',
           battingOrder,
           replacedPlayer: ref(replaced),
-          description: pinchSaid(
-            running,
-            name(id),
-            replaced == null ? undefined : name(replaced)
-          )
+          description: pinchSaid(said, running, id, replaced)
         })
       )
       continue
@@ -838,7 +945,6 @@ function sideChanges(
     const holder = was.defense[position]
     const replaced =
       holder != null && holder !== id ? holder : vacated(position)
-    const words = POSITION_WORDS[position]
     changes.push(
       withoutUndefined({
         eventType: 'defensive_switch' as const,
@@ -847,10 +953,7 @@ function sideChanges(
         fromPosition,
         battingOrder: orderCode(id, false),
         replacedPlayer: ref(replaced),
-        description:
-          fromPosition == null
-            ? `${name(id)} remains in the game as the ${words.fielder}.`
-            : `Defensive switch from ${POSITION_WORDS[fromPosition].place} to ${words.place} for ${name(id)}.`
+        description: switchSaid(said, id, position, fromPosition)
       })
     )
   }
@@ -872,7 +975,8 @@ function sideChanges(
       player: bats[0].player,
       moved: bats,
       description: battingOrderSaid(
-        bats.map(({ player, bats }) => ({ name: player.fullName, bats }))
+        said,
+        bats.map(({ player, bats }) => ({ player: player.id, bats }))
       )
     })
   }
@@ -903,8 +1007,7 @@ export function fieldingChanges(
 ): LineupChange[] {
   const ref = (id: number | null | undefined): PlayerRef | undefined =>
     id == null ? undefined : playerRef(state, id)
-  const name = (id: number | null | undefined): string =>
-    ref(id)?.fullName ?? ''
+  const said = saidNames(id => ref(id)?.fullName)
   const orderCode = (id: number): string | undefined => {
     const slot = now.battingOrder.indexOf(id) + 1
     if (slot === 0) return undefined
@@ -919,7 +1022,6 @@ export function fieldingChanges(
     const holder = was.defense[position] ?? undefined
     if (id == null || id === holder) continue
     const from = POSITIONS.find(known => was.defense[known] === id)
-    const where = POSITION_WORDS[position]
     if (position === 'P') {
       changes.push(
         withoutUndefined({
@@ -929,10 +1031,7 @@ export function fieldingChanges(
           fromPosition: from,
           battingOrder: orderCode(id),
           replacedPlayer: ref(holder),
-          description:
-            holder == null
-              ? `Pitching Change: ${name(id)} comes in to pitch.`
-              : `Pitching Change: ${name(id)} replaces ${name(holder)}.`
+          description: pitchingSaid(said, id, holder)
         })
       )
       continue
@@ -946,9 +1045,11 @@ export function fieldingChanges(
           position,
           battingOrder: orderCode(id),
           replacedPlayer: ref(replaced),
+          pinch,
           description: defensiveSubstitutionSaid(
-            name(id),
-            replaced == null ? undefined : name(replaced),
+            said,
+            id,
+            replaced,
             position,
             pinch
           )
@@ -964,10 +1065,7 @@ export function fieldingChanges(
         fromPosition: from,
         battingOrder: orderCode(id),
         replacedPlayer: ref(holder ?? appeared.get(id)),
-        description:
-          from == null
-            ? `${name(id)} remains in the game as the ${where.fielder}.`
-            : `Defensive switch from ${POSITION_WORDS[from].place} to ${where.place} for ${name(id)}.`
+        description: switchSaid(said, id, position, from)
       })
     )
   }

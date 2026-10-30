@@ -345,7 +345,8 @@ describe('the board timeline', function () {
       made.map((one, i) => ({
         id: one.userId,
         legacyId: one.legacyId,
-        display_name: `Player ${i + 1}`,
+        // The names the setup gives them, as a read names them from here.
+        display_name: i < 9 ? `Away ${i + 1}` : `Home ${i - 8}`,
         created_at: created,
         updated_at: created
       }))
@@ -418,6 +419,88 @@ describe('the board timeline', function () {
       expect(timeline?.steps).deep.equals(expected)
       expect(expected.length).equals(actions.length - 1)
       expect(timeline?.version).equals(await timelineVersion(db, gameId))
+    })
+
+    it('builds a new board when anyone it can name is renamed, a bench player who has not batted too', async function () {
+      const gameId = await newGame()
+      const score = await scorer(gameId, direct)
+      for (const action of situationActions(setup).slice(0, 4)) {
+        clock += 1000
+        await score(action)
+      }
+      const batter = setup.sides.away.battingOrder[0]
+      const rename = async (id: number, name: string): Promise<void> => {
+        await db
+          .updateTable('users')
+          .set({ display_name: name })
+          .where('id', '=', userIdOfGumbo(id))
+          .execute()
+      }
+      const first = await timelineVersion(db, gameId)
+      const named = (await computeBoardTimeline(db, gameId))!.steps
+      expect(named.some(step => step.state.batterName === 'Away 1')).equals(
+        true
+      )
+      await rename(batter, 'Vladimir Guerrero')
+      const second = await timelineVersion(db, gameId)
+      expect(second).not.equals(first)
+      const rebuilt = await computeBoardTimeline(db, gameId)
+      expect(rebuilt!.version).equals(second)
+      expect(
+        rebuilt!.steps.some(step => step.state.batterName === 'Vladimir G')
+      ).equals(true)
+      expect(
+        rebuilt!.steps.some(step => step.state.batterName === 'Away 1')
+      ).equals(false)
+      // Somebody on the bench, in the setup alone.
+      await rename(bench, 'Evan Phillips')
+      expect(await timelineVersion(db, gameId)).not.equals(second)
+      await rename(bench, 'Home 10')
+      await rename(batter, 'Away 1')
+    })
+
+    it('moves the version of a game before its first pitch when a pregame batter is renamed, its board built first', async function () {
+      const gameId = await newGame()
+      const score = await scorer(gameId, direct)
+      clock += 1000
+      await score({
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'home',
+        player: bench,
+        replaces: secondBaseman
+      })
+      // Only the pregame lineups are stored: no play and no at-bat.
+      const row = await db
+        .selectFrom('games')
+        .select(['currentPlay', 'pregame'])
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      expect(row.currentPlay).equals(null)
+      expect(row.pregame).not.equals(null)
+      expect(await readPlays(db, gameId)).deep.equals([])
+      // The board is built first, and keeps the scope it was named over.
+      const built = (await computeBoardTimeline(db, gameId))!
+      expect(built.version).equals(await timelineVersion(db, gameId))
+      const batter = setup.sides.away.battingOrder[0]
+      try {
+        await db
+          .updateTable('users')
+          .set({ display_name: 'Vladimir Guerrero' })
+          .where('id', '=', userIdOfGumbo(batter))
+          .execute()
+        const renamed = await timelineVersion(db, gameId)
+        expect(renamed).not.equals(built.version)
+        expect((await computeBoardTimeline(db, gameId))!.version).equals(
+          renamed
+        )
+      } finally {
+        await db
+          .updateTable('users')
+          .set({ display_name: 'Away 1' })
+          .where('id', '=', userIdOfGumbo(batter))
+          .execute()
+      }
     })
 
     it("puts a play's actions at its end, and the at-bat in progress at its start, without action times", async function () {
@@ -1458,6 +1541,45 @@ describe('the board timeline', function () {
       )
       expect(second?.steps.at(-1)?.state).includes({ awayScore: 1 })
       expect(await cache.get(db, gameId)).equals(second)
+    })
+
+    it('checks a cached board by its version and its names alone, and reads the plays once after a post', async function () {
+      const cache = makeBoardTimelineCache(2)
+      const gameId = await newGame()
+      const score = await scorer(gameId, direct)
+      clock += 1000
+      await score({ type: 'pitch', call: 'B' })
+      // Every query a viewer's ask makes, as the tree Kysely builds of it.
+      let queries: string[] = []
+      const watched = db.withPlugin({
+        transformQuery: args => {
+          queries.push(JSON.stringify(args.node))
+          return args.node
+        },
+        transformResult: async args => await Promise.resolve(args.result)
+      })
+      const plays = (): number =>
+        queries.filter(query => query.includes('"name":"gumbo"')).length
+      const first = await cache.get(watched, gameId)
+      expect(plays()).equals(1)
+      // Asked again: the version query and one names query, no play.
+      queries = []
+      expect(await cache.get(watched, gameId)).equals(first)
+      expect(queries).has.length(2)
+      expect(plays()).equals(0)
+      // A post: the check reads no play, and the build reads them once,
+      // naming the board with the book its version holds.
+      clock += 1000
+      await score({ type: 'pitch', call: 'B' })
+      queries = []
+      const scored = await cache.get(watched, gameId)
+      expect(scored?.version).not.equals(first?.version)
+      expect(scored?.steps.at(-1)?.state).includes({ balls: 2 })
+      expect(plays()).equals(1)
+      expect(scored?.version).equals(await timelineVersion(db, gameId))
+      queries = []
+      expect(await cache.get(watched, gameId)).equals(scored)
+      expect(queries).has.length(2)
     })
 
     it('builds a new version once for every viewer asking at once, and again after a build that failed', async function () {

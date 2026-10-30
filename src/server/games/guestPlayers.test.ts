@@ -17,7 +17,7 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { after as score, game as fixture } from '../../test/scoringGames'
 import type { Actor } from '../auth/sessions'
 import { type Database, makeDatabase } from '../db/database'
-import { createGuestPlayer } from './guestPlayers'
+import { createGuestPlayer, renameGuestPlayer } from './guestPlayers'
 
 describe('persistent game guests', function () {
   this.timeout(60000)
@@ -341,5 +341,271 @@ describe('persistent game guests', function () {
         await createGuestPlayer(db, actor, 'gam_guests', 'away', player),
       'conflict'
     )
+  })
+})
+
+describe("correcting a game-only player's name", function () {
+  this.timeout(60000)
+  const name = `teamstation_guest_rename_${process.pid}_${Date.now()}`
+  let admin: Pool
+  let db: Kysely<Database>
+  const as = (gumboId: number): Actor => ({
+    userId: userIdOfGumbo(gumboId),
+    isAdmin: false,
+    scopes: []
+  })
+  const SCORER = 201
+  const HOME_COACH = 202
+  const AWAY_COACH = 203
+  const VIEWER = 204
+  const ROSTERED = 205
+  const babe = asNewRosterPlayer({
+    firstName: 'Babe',
+    lastName: 'Ruth',
+    jersey: '3',
+    bats: 'left',
+    throws: 'left',
+    positions: ['RF']
+  })
+  let homeGuest = ''
+  let awayGuest = ''
+  let otherGuest = ''
+
+  before(async function () {
+    admin = new Pool({ connectionString: testDatabaseUrl })
+    await admin.query(`create database ${name}`)
+    const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
+    const pool = new Pool({ connectionString: url })
+    await migrateUp(pool, migrations)
+    await pool.end()
+    db = makeDatabase(url)
+    await insertFixtureUsers(
+      db,
+      [
+        [SCORER, 'Yogi Berra'],
+        [HOME_COACH, 'Casey Stengel'],
+        [AWAY_COACH, 'Connie Mack'],
+        [VIEWER, 'Lou Gehrig'],
+        [ROSTERED, 'Mickey Mantle']
+      ].map(([id, display]) => ({
+        id: id as number,
+        legacyId: makeId('user'),
+        display_name: display as string
+      }))
+    )
+    await db
+      .insertInto('teams')
+      .values([
+        { id: 'team-r-away', name: 'Visitors' },
+        { id: 'team-r-home', name: 'Hosts' }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values([
+        {
+          id: 'gam_rename',
+          home_team_id: 'team-r-home',
+          away_team_id: 'team-r-away',
+          start_at: new Date()
+        },
+        {
+          id: 'gam_rename_other',
+          home_team_id: 'team-r-home',
+          away_team_id: 'team-r-away',
+          start_at: new Date()
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values(
+        [
+          [SCORER, 'team-r-away', 'scorekeeper'],
+          [HOME_COACH, 'team-r-home', 'coach'],
+          [AWAY_COACH, 'team-r-away', 'coach'],
+          [VIEWER, 'team-r-home', 'videographer']
+        ].map(([user, team, role]) => ({
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(user as number),
+          scope_type: 'team',
+          scope_id: team as string,
+          role: role as 'coach'
+        }))
+      )
+      .execute()
+    const make = async (
+      gameId: string,
+      side: 'away' | 'home'
+    ): Promise<string> =>
+      (await createGuestPlayer(db, as(SCORER), gameId, side, babe)).userId
+    homeGuest = await make('gam_rename', 'home')
+    awayGuest = await make('gam_rename', 'away')
+    otherGuest = await make('gam_rename_other', 'home')
+  })
+  after(async function () {
+    await db?.destroy()
+    await admin.query(`drop database if exists ${name}`)
+    await admin.end()
+  })
+
+  async function nameOf(userId: string): Promise<unknown> {
+    return await db
+      .selectFrom('users')
+      .select(['first_name', 'last_name', 'display_name'])
+      .where('id', '=', userId)
+      .executeTakeFirstOrThrow()
+  }
+
+  async function refusal(run: () => Promise<unknown>): Promise<unknown> {
+    try {
+      await run()
+    } catch (error) {
+      return (error as { code?: unknown }).code
+    }
+    return undefined
+  }
+
+  it("renames the guest's account for a scorekeeper and for his team's head coach", async function () {
+    const renamed = await renameGuestPlayer(
+      db,
+      as(SCORER),
+      'gam_rename',
+      homeGuest,
+      { firstName: 'George', lastName: 'Ruth' }
+    )
+    expect(renamed.before).deep.equals({
+      firstName: 'Babe',
+      lastName: 'Ruth',
+      displayName: 'Babe Ruth'
+    })
+    expect(renamed.entry).deep.include({
+      userId: homeGuest,
+      shortName: 'George Ruth',
+      jersey: '3',
+      positions: ['RF'],
+      bats: 'left'
+    })
+    expect(await nameOf(homeGuest)).deep.equals({
+      first_name: 'George',
+      last_name: 'Ruth',
+      display_name: 'George Ruth'
+    })
+    await renameGuestPlayer(db, as(HOME_COACH), 'gam_rename', homeGuest, {
+      firstName: '',
+      lastName: 'Ruth'
+    })
+    expect(await nameOf(homeGuest)).deep.equals({
+      first_name: null,
+      last_name: 'Ruth',
+      display_name: 'Ruth'
+    })
+    expect(renamed.changed).equals(true)
+  })
+
+  it('writes nothing for the name the account already has', async function () {
+    const stamp = async (): Promise<unknown> =>
+      (
+        await db
+          .selectFrom('users')
+          .select('updated_at')
+          .where('id', '=', otherGuest)
+          .executeTakeFirstOrThrow()
+      ).updated_at
+    const was = await stamp()
+    const kept = await renameGuestPlayer(
+      db,
+      as(SCORER),
+      'gam_rename_other',
+      otherGuest,
+      { firstName: 'Babe', lastName: 'Ruth' }
+    )
+    expect(kept.changed).equals(false)
+    expect(kept.entry).deep.include({
+      userId: otherGuest,
+      shortName: 'Babe Ruth'
+    })
+    expect(kept.before).deep.equals({
+      firstName: 'Babe',
+      lastName: 'Ruth',
+      displayName: 'Babe Ruth'
+    })
+    expect(await stamp()).deep.equals(was)
+    expect(await nameOf(otherGuest)).deep.equals({
+      first_name: 'Babe',
+      last_name: 'Ruth',
+      display_name: 'Babe Ruth'
+    })
+  })
+
+  it('refuses everybody else, and anybody who is not a guest of this game', async function () {
+    const before = await nameOf(homeGuest)
+    const rename = async (
+      actor: number,
+      userId: string,
+      gameId = 'gam_rename'
+    ): Promise<unknown> =>
+      await refusal(
+        async () =>
+          await renameGuestPlayer(db, as(actor), gameId, userId, {
+            firstName: 'Ty',
+            lastName: 'Cobb'
+          })
+      )
+    // Another team's coach, and somebody who only sees the game.
+    expect(await rename(AWAY_COACH, homeGuest)).equals('forbidden')
+    expect(await rename(VIEWER, homeGuest)).equals('forbidden')
+    // The away team's head coach may correct his own side's guest.
+    expect(await rename(HOME_COACH, awayGuest)).equals('forbidden')
+    // A rostered player, a guest of another game, a game that is not there.
+    expect(await rename(SCORER, userIdOfGumbo(ROSTERED))).equals('notFound')
+    expect(await rename(SCORER, otherGuest)).equals('notFound')
+    expect(await rename(SCORER, homeGuest, 'gam_missing')).equals('notFound')
+    expect(await nameOf(homeGuest)).deep.equals(before)
+    expect(await nameOf(otherGuest)).deep.equals({
+      first_name: 'Babe',
+      last_name: 'Ruth',
+      display_name: 'Babe Ruth'
+    })
+  })
+
+  it('refuses a guest who signs in, and one whose account was deleted', async function () {
+    await db
+      .updateTable('users')
+      .set({ login_enabled: true })
+      .where('id', '=', awayGuest)
+      .execute()
+    expect(
+      await refusal(
+        async () =>
+          await renameGuestPlayer(db, as(SCORER), 'gam_rename', awayGuest, {
+            firstName: 'Ty',
+            lastName: 'Cobb'
+          })
+      )
+    ).equals('forbidden')
+    await db
+      .updateTable('users')
+      .set({
+        login_enabled: false,
+        disabled_at: new Date(),
+        deleted_at: new Date()
+      })
+      .where('id', '=', awayGuest)
+      .execute()
+    expect(
+      await refusal(
+        async () =>
+          await renameGuestPlayer(db, as(SCORER), 'gam_rename', awayGuest, {
+            firstName: 'Ty',
+            lastName: 'Cobb'
+          })
+      )
+    ).equals('notFound')
+    expect(await nameOf(awayGuest)).deep.equals({
+      first_name: 'Babe',
+      last_name: 'Ruth',
+      display_name: 'Babe Ruth'
+    })
   })
 })

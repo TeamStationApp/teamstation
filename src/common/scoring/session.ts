@@ -34,6 +34,7 @@ import {
   setupOf,
   type Side
 } from './state'
+import { namesIn, withoutNames } from './storedNames'
 
 /**
  * A game being scored, and kept on the server as it is scored.
@@ -112,9 +113,22 @@ export interface StoredGame {
   context?: SessionContext
 }
 export interface SaveChange {
+  /**
+   * The plays that changed. A session saves them in their stored form
+   * (`withoutNames`): nobody's name travels with a play, and the server
+   * names it from the players' accounts when it is read.
+   */
   plays: GumboPlay[]
   remove: number[]
+  /** The at-bat in progress when it changed, in its stored form too. */
   currentPlay?: CurrentPlay | null
+  /**
+   * The session's name for each gumbo id the change's plays name
+   * (`namesIn` of the named documents): kept on the device beside the
+   * change, so a copy written on the phone reads named before the server
+   * has answered (`appliedEvents`, `memoryStore`). Never sent.
+   */
+  names?: Record<string, string>
   /**
    * The fence, in feet, the plays were sized by: the game's
    * `gameData.venue.fieldInfo.center`, or the default for a game saved
@@ -235,15 +249,55 @@ interface Displaced {
   consumed: number
 }
 
-/** A folded play as the server is sent it, written out once per play. */
-const writtenPlays = new WeakMap<GumboPlay, string>()
-function written(play: GumboPlay): string {
-  let text = writtenPlays.get(play)
-  if (text == null) {
-    text = JSON.stringify(play)
-    writtenPlays.set(play, text)
+/**
+ * A folded play as the server stores it (`withoutNames`), worked out once
+ * per play and kept with its text: what changed is decided by the text, so
+ * a play whose only change is a player's name is never written again, and a
+ * save sends the stored form it was decided on (`storedChange`).
+ */
+const writtenPlays = new WeakMap<
+  GumboPlay,
+  { stored: GumboPlay; text: string }
+>()
+function storedPlay(play: GumboPlay): { stored: GumboPlay; text: string } {
+  let form = writtenPlays.get(play)
+  if (form == null) {
+    const stored = withoutNames(play)
+    form = { stored, text: JSON.stringify(stored) }
+    writtenPlays.set(play, form)
   }
-  return text
+  return form
+}
+function written(play: GumboPlay): string {
+  return storedPlay(play).text
+}
+
+/** The at-bat in progress as the server stores it, written out. */
+function writtenCurrent(current: CurrentPlay | null | undefined): string {
+  return JSON.stringify(current == null ? current : withoutNames(current))
+}
+
+/**
+ * A change as a store is sent it: its plays and at-bat in their stored form,
+ * and beside them the names those documents carried.
+ */
+export function storedChange(change: SaveChange): SaveChange {
+  const names: Record<string, string> = { ...change.names }
+  for (const play of [...change.plays, change.currentPlay])
+    if (play != null)
+      for (const [id, name] of namesIn(play))
+        if (!(String(id) in names)) names[String(id)] = name
+  return {
+    ...change,
+    plays: change.plays.map(play => storedPlay(play).stored),
+    ...(change.currentPlay === undefined
+      ? {}
+      : {
+          currentPlay:
+            change.currentPlay == null ? null : withoutNames(change.currentPlay)
+        }),
+    names
+  }
 }
 
 export class ScoringSession {
@@ -379,7 +433,7 @@ export class ScoringSession {
     options: SessionOptions = {}
   ): ScoringSession {
     const session = new ScoringSession(store, gameId, game, options)
-    session.postedCurrent = JSON.stringify(session.picture().current)
+    session.postedCurrent = writtenCurrent(session.picture().current)
     return session
   }
 
@@ -446,9 +500,8 @@ export class ScoringSession {
         session.stored.add(play.about.atBatIndex)
     const picture = session.picture()
     for (const [index, play] of picture.plays)
-      if (session.stored.has(index))
-        session.posted.set(index, JSON.stringify(play))
-    session.postedCurrent = JSON.stringify(picture.current)
+      if (session.stored.has(index)) session.posted.set(index, written(play))
+    session.postedCurrent = writtenCurrent(picture.current)
     // A game read back only in part is shown and never written: saving it
     // would remove the plays that could not be read.
     if (replayed.problems.length > 0)
@@ -546,7 +599,7 @@ export class ScoringSession {
         .map(([index]) => index)
     )
     const currentAcknowledged =
-      this.postedCurrent === JSON.stringify(before.current)
+      this.postedCurrent === writtenCurrent(before.current)
     if (!this.tagIdentities.setTag(targetId, tag)) return false
     this.tagSnapshot++
     this.revision++
@@ -561,7 +614,7 @@ export class ScoringSession {
     for (const [index, play] of picture.plays)
       if (acknowledged.has(index)) this.posted.set(index, written(play))
     if (currentAcknowledged)
-      this.postedCurrent = JSON.stringify(picture.current)
+      this.postedCurrent = writtenCurrent(picture.current)
     this.notify()
     return true
   }
@@ -1549,7 +1602,7 @@ export class ScoringSession {
     const remove = [...this.stored]
       .filter(index => !picture.plays.has(index) && index !== reopened)
       .sort((a, b) => a - b)
-    const current = JSON.stringify(picture.current)
+    const current = writtenCurrent(picture.current)
     return {
       plays,
       remove,
@@ -1607,7 +1660,7 @@ export class ScoringSession {
       let answer: StoredGame | undefined
       try {
         answer = await this.store.save(this.gameId, {
-          ...change,
+          ...storedChange(change),
           ...(this.lineupsBase === undefined
             ? {}
             : { lineupsBase: this.lineupsBase }),
@@ -1659,7 +1712,7 @@ export class ScoringSession {
         this.stored.delete(index)
       }
       if (change.currentPlay !== undefined)
-        this.postedCurrent = JSON.stringify(change.currentPlay)
+        this.postedCurrent = writtenCurrent(change.currentPlay)
       this.savedLog = covering
       this.savedTimes = coveringTimes
       this.savedPlaybackTimes = coveringPlaybackTimes

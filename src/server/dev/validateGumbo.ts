@@ -4,12 +4,15 @@ import {
   type GumboViolation,
   gumboViolations
 } from '../../common/gumbo/validate'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { type Database, makeDatabase } from '../db/database'
+import { resolveScoringGame } from '../scoring/openRow'
 import { serverConfig } from '../serverConfig'
 
 /**
  * Checks every stored play, and every at-bat in progress, against MLB's code
- * lists and the live feed's shapes (`src/common/gumbo/validate.ts`).
+ * lists and the live feed's shapes (`src/common/gumbo/validate.ts`), as each
+ * game is read: named from its players' accounts (`resolveScoringGame`).
  *
  *   npm run validate-gumbo
  *
@@ -44,7 +47,7 @@ async function gamesWithPlays(db: Kysely<Database>): Promise<string[]> {
   return rows.rows.map(row => row.id)
 }
 
-/** Checks every stored play of every game; writes nothing. */
+/** Checks every stored play of every game, named; writes nothing. */
 export async function validateStoredPlays(
   db: Kysely<Database>
 ): Promise<ValidateReport> {
@@ -61,14 +64,25 @@ export async function validateStoredPlays(
       .select('currentPlay')
       .where('id', '=', gameId)
       .executeTakeFirst()
-    const documents = rows.map(row => ({
-      play: `play ${row.atBatIndex}`,
-      document: row.gumbo
-    }))
-    if (game?.currentPlay != null)
+    // Checked as they are read: named from the players' accounts. A game
+    // whose accounts cannot be resolved is checked as stored.
+    const stored = {
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: (game?.currentPlay ?? null) as CurrentPlay | null
+    }
+    const named = await resolveScoringGame(db, stored, { gameId }).catch(
+      () => stored
+    )
+    const documents: Array<{ play: string; document: unknown }> = rows.map(
+      (row, index) => ({
+        play: `play ${row.atBatIndex}`,
+        document: named.plays[index]
+      })
+    )
+    if (named.currentPlay != null)
       documents.push({
         play: 'the at-bat in progress',
-        document: game.currentPlay
+        document: named.currentPlay
       })
     const plays: PlayViolations[] = []
     for (const { play, document } of documents) {

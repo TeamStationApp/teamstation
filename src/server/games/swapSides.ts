@@ -4,6 +4,7 @@ import { conflict, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { recordOf } from '../../common/scoring/gumbo'
 import { pregameRecord } from '../../common/scoring/sideSwap'
+import { withoutNames } from '../../common/scoring/storedNames'
 import { recordByTeam } from '../../common/scoring/teamRecord'
 import { keyedBySide, listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
@@ -43,7 +44,7 @@ export async function maySwapSides(
  * exchanged; the lineups digest changes, so a device still holding the old
  * sides is refused as stale. Pregame lineups still stored by side, as an
  * older post or record left them, are first written by team, as the game
- * stood.
+ * stood. The pregame is written in its stored form (`withoutNames`).
  *
  * Runs in the caller's transaction, which took `lockPlayerEdits` before any
  * `games` row lock, as every roster writer does; it may hold this game's
@@ -98,7 +99,12 @@ export async function swapGameSides(
         : {}),
       ...(record == null
         ? {}
-        : { currentPlay: null, pregame: recordByTeam(record, before) }),
+        : {
+            currentPlay: null,
+            // Read back through the cleaners, its players named '': it is
+            // stored, as every record is, naming nobody.
+            pregame: withoutNames(recordByTeam(record, before))
+          }),
       lineups_digest: digest,
       updated_at: new Date()
     })

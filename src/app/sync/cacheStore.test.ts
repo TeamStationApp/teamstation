@@ -189,7 +189,8 @@ describe('the phone document cache', function () {
         ...row,
         id: 'r2',
         idempotencyKey: 'k2',
-        dependsOn: []
+        dependsOn: [],
+        names: '{"12":"Juan Soto"}'
       })
       return [first, second]
     })
@@ -199,8 +200,10 @@ describe('the phone document cache', function () {
       attempts: 0,
       leaseUntil: null,
       message: null,
+      names: null,
       dependsOn: ['player-5']
     })
+    expect(queued[1]).deep.include({ names: '{"12":"Juan Soto"}' })
     expect(await store.read('lineups.g1')).deep.include({ pending: true })
     await store.atomically(async tx => {
       await tx.update('r1', {})
@@ -233,7 +236,7 @@ describe('the phone document cache', function () {
     await store.close()
   })
 
-  it('adds the outbox message column to a file made before it, and reads a bad dependency list as none', async function () {
+  it('adds the outbox message and names columns to a file made before them, and reads a bad dependency list as none', async function () {
     const executor = nodeSqliteExecutor(join(dir, 'older.sqlite'))
     executor.db.exec(`CREATE TABLE outbox (
       id text PRIMARY KEY, idempotency_key text NOT NULL UNIQUE,
@@ -245,7 +248,12 @@ describe('the phone document cache', function () {
       'POST', '/teams/t1/roster-players', '{}', '{}', 'pending', 0, NULL, NULL)`)
     const store = await openCacheStore(executor)
     const [row] = await store.atomically(async tx => await tx.outbox())
-    expect(row).deep.include({ message: null, dependsOn: [], gameId: null })
+    expect(row).deep.include({
+      message: null,
+      names: null,
+      dependsOn: [],
+      gameId: null
+    })
     await store.close()
     // Opened again, the column is there already.
     const again = await openCacheStore(

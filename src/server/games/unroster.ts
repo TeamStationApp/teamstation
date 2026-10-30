@@ -95,10 +95,14 @@ export async function setRostered(
       throw conflict(error.message)
     }
     const rows = await readPlays(trx, gameId)
-    const stored = await resolveScoringGame(trx, {
-      plays: rows.map(row => row.gumbo as GumboPlay),
-      currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
-    })
+    const stored = await resolveScoringGame(
+      trx,
+      {
+        plays: rows.map(row => row.gumbo as GumboPlay),
+        currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
+      },
+      { gameId }
+    )
     if (
       [...stored.plays, stored.currentPlay].some(
         play => play?.teamStation != null && storedRecordOf(play) == null

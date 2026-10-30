@@ -408,9 +408,10 @@ describe('two-team scheduling and replacement history', function () {
       .selectAll()
       .where('id', '=', pending.id)
       .executeTakeFirstOrThrow()
+    // Stored with nothing frozen, it reads every group and zone live.
     await f.h.db
       .updateTable('notification_events')
-      .set({ metadata: sql`metadata - 'requestTitle' - 'requestDescription'` })
+      .set({ metadata: sql`metadata - 'frozen'` })
       .where('source_id', '=', pending.id)
       .execute()
     const legacyGame = { ...intent() }

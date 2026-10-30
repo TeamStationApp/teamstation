@@ -4,8 +4,9 @@ import { expect } from 'chai'
 import express from 'express'
 import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 
+import { lineupQrOf } from '../../app/scoring/lineupQrExport'
 import {
   type TagDocument,
   tagMetadata,
@@ -22,11 +23,18 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { recordOf } from '../../common/scoring/gumbo'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { newSetup } from '../../common/scoring/lineup'
+import { readLineups } from '../../common/scoring/lineupHistory'
 import {
   type EventStore,
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import {
+  type GameSetup,
+  POSITIONS,
+  type Side
+} from '../../common/scoring/state'
+import { withNames, withoutNames } from '../../common/scoring/storedNames'
 import { retargetRecord } from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
@@ -40,12 +48,19 @@ import { makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
-import { postGamePlays, RESET_SINCE_READ } from '../events/postPlays'
-import { storedLineupsDigest } from '../events/teamLineups'
+import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
+import {
+  lineupContext,
+  lineupsDigest,
+  storedLineupGame,
+  storedLineupsDigest
+} from '../events/teamLineups'
+import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
+import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
 import {
   eventRoutes,
   statusAfterLivePost,
@@ -606,6 +621,308 @@ describe('posting and reading plays', function () {
     // An administrator of the team, who holds every flag, still may: the
     // test above has the manager posting.
     expect(posted.status).equals(200)
+  })
+
+  it("answers plays named from the accounts, with the players' halves for whoever may save their lineup", async function () {
+    const named = makeId('game')
+    const now = new Date()
+    await db!
+      .insertInto('games')
+      .values({
+        id: named,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: now
+      })
+      .execute()
+    const taken = new Set(
+      [admin, stranger, member, manager, ...FLAGS.map(flagUser)].map(
+        user => user.userId
+      )
+    )
+    const NAMES: Record<Side, Array<[string, string]>> = {
+      away: [
+        ['Juan', 'Soto'],
+        ['Aaron', 'Judge'],
+        ['Anthony', 'Rizzo'],
+        ['Gleyber', 'Torres'],
+        ['Anthony', 'Volpe'],
+        ['Luis', 'Garcia'],
+        ['Jose', 'Trevino'],
+        ['Harrison', 'Bader'],
+        ['Gerrit', 'Cole']
+      ],
+      home: [
+        ['Tyler', 'Glasnow'],
+        ['Will', 'Smith'],
+        ['Freddie', 'Freeman'],
+        ['Gavin', 'Lux'],
+        ['Mookie', 'Betts'],
+        ['Max', 'Muncy'],
+        ['Shohei', 'Ohtani'],
+        ['James', 'Outman'],
+        ['Teoscar', 'Hernandez']
+      ]
+    }
+    const people = Object.fromEntries(
+      (['away', 'home'] as const).map(side => [
+        side,
+        NAMES[side].map(([first, last]) => {
+          const minted = mintUserId(id => taken.has(id))
+          taken.add(minted.userId)
+          return { ...minted, first, last }
+        })
+      ])
+    ) as Record<
+      Side,
+      Array<{ userId: number; legacyId: string; first: string; last: string }>
+    >
+    await insertFixtureUsers(
+      db!,
+      [...people.away, ...people.home].map(person => ({
+        id: person.userId,
+        legacyId: person.legacyId,
+        display_name: `${person.first} ${person.last}`,
+        first_name: person.first,
+        last_name: person.last,
+        created_at: now,
+        updated_at: now
+      }))
+    )
+    const actor = {
+      userId: userIdOfGumbo(admin.userId),
+      isAdmin: true,
+      scopes: []
+    }
+    const guest = async (
+      side: Side,
+      first: string,
+      last: string
+    ): Promise<{ gumboId?: number | null }> =>
+      await createGuestPlayer(db!, actor, named, side, {
+        firstName: first,
+        lastName: last,
+        jersey: side === 'away' ? '51' : '55',
+        positions: [],
+        bats: 'left',
+        throws: 'right'
+      })
+    const guests = {
+      away: (await guest('away', 'Ichiro', 'Suzuki')).gumboId!,
+      home: (await guest('home', 'Hideki', 'Matsui')).gumboId!
+    }
+    const teams = {
+      away: { id: away, name: 'Away' },
+      home: { id: home, name: 'Home' }
+    }
+    // Stored under other names than the accounts': a read names them anew.
+    const roster = (side: Side): Parameters<typeof newSetup>[1]['away'] =>
+      people[side].map((person, i) => ({
+        userId: userIdOfGumbo(person.userId),
+        gumboId: person.userId,
+        shortName: `Stale ${i}`,
+        jersey: String(i + 1),
+        positions: [POSITIONS[side === 'home' ? i : (i + 8) % 9]]
+      }))
+    const setup = newSetup(teams, {
+      away: roster('away'),
+      home: roster('home')
+    })
+    for (const side of ['away', 'home'] as const) {
+      setup.players[guests[side]] = {
+        id: guests[side],
+        teamId: teams[side].id,
+        fullName: 'Typed Whole Name',
+        firstName: 'Typed',
+        lastName: 'Whole Name',
+        jersey: '50',
+        bats: 'left',
+        throws: 'right',
+        positions: [],
+        local: true
+      }
+      setup.sides[side].players.push(guests[side])
+      setup.tagOrder.push(guests[side])
+    }
+    const store: EventStore = {
+      load: async () => ({ plays: [], currentPlay: null }),
+      save: async (_id, change) => {
+        const posted = await postGamePlays(
+          db!,
+          named,
+          asPostEventsBody({
+            ...change,
+            source: { system: 'teamstation' },
+            mode: 'live'
+          })
+        )
+        return {
+          plays: posted.plays.map(row => row.gumbo as GumboPlay),
+          currentPlay: posted.currentPlay as CurrentPlay | null
+        }
+      }
+    }
+    const session = await ScoringSession.open(
+      store,
+      named,
+      { gamePk: named, teams, setup },
+      { setTimer: () => null, clearTimer: () => undefined }
+    )
+    for (const action of [
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      { type: 'gameFlow', kind: 'closePlay' },
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: guests.away,
+        replaces: people.away[1].userId
+      }
+    ] as ScoringAction[])
+      expect(session.apply(action).problems).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+
+    interface Read {
+      plays: Array<{ gumbo: GumboPlay }>
+      currentPlay: CurrentPlay & {
+        teamStation: { setupBefore: { players: Record<string, unknown> } }
+      }
+    }
+    const read = async (token: string): Promise<Read> => {
+      const answer = await ask(
+        `/games/${named}/events`,
+        'GET',
+        undefined,
+        token
+      )
+      expect(answer.status).equals(200)
+      return answer.body as unknown as Read
+    }
+    const playerIn = (game: Read, id: number): Record<string, unknown> =>
+      game.currentPlay.teamStation.setupBefore.players[id] as Record<
+        string,
+        unknown
+      >
+    const scorer = await read(flagUser('scorekeeper').token)
+    const first = scorer.plays[0].gumbo
+    expect(first.matchup?.batter?.fullName).equals('Juan S')
+    expect(first.credits?.map(credit => credit.label)).deep.equals([
+      'Strikeout: Tyler G'
+    ])
+    expect(
+      (
+        scorer.currentPlay.playEvents as Array<{
+          details: { eventType?: string; description?: string }
+        }>
+      )
+        .map(event => event.details)
+        .find(details => details.eventType === 'offensive_substitution')
+        ?.description
+    ).equals('Offensive Substitution: Pinch-hitter Ichiro S replaces Aaron J.')
+    // A scorer may save either side's lineup: every player's halves on
+    // both sides, rostered and game-only alike, from the accounts.
+    const juan = people.away[0].userId
+    const tyler = people.home[0].userId
+    expect(playerIn(scorer, guests.away)).include({
+      fullName: 'Ichiro S',
+      firstName: 'Ichiro',
+      lastName: 'Suzuki'
+    })
+    expect(playerIn(scorer, guests.home)).include({
+      fullName: 'Hideki M',
+      firstName: 'Hideki',
+      lastName: 'Matsui'
+    })
+    expect(playerIn(scorer, juan)).include({
+      fullName: 'Juan S',
+      firstName: 'Juan',
+      lastName: 'Soto'
+    })
+    expect(playerIn(scorer, tyler)).include({
+      firstName: 'Tyler',
+      lastName: 'Glasnow'
+    })
+    // So his lineup QR code carries each batter's whole last name.
+    const setupRead = scorer.currentPlay.teamStation.setupBefore as unknown as {
+      players: GameSetup['players']
+      sides: GameSetup['sides']
+    }
+    const exported = lineupQrOf(
+      {
+        gamePk: named,
+        gameData: { teams, players: setupRead.players },
+        liveData: { boxscore: { teams: setupRead.sides } }
+      } as unknown as Parameters<typeof lineupQrOf>[0],
+      'away'
+    )
+    expect(exported.h[0]).include({ f: 'Juan', l: 'Soto' })
+    // The home team's head coach, who does not score: the home side's only.
+    const coach = await read(flagUser('coach').token)
+    expect(playerIn(coach, guests.home)).include({
+      firstName: 'Hideki',
+      lastName: 'Matsui'
+    })
+    expect(playerIn(coach, tyler)).include({
+      firstName: 'Tyler',
+      lastName: 'Glasnow'
+    })
+    for (const id of [guests.away, juan])
+      expect(playerIn(coach, id)).not.have.any.keys('firstName', 'lastName')
+    expect(playerIn(coach, guests.away).fullName).equals('Ichiro S')
+    // A member who saves no lineup: nobody's.
+    const viewer = await read(MEMBER)
+    for (const id of [guests.away, guests.home, juan, tyler])
+      expect(playerIn(viewer, id)).not.have.any.keys('firstName', 'lastName')
+
+    // A rename reads in the next answer; the stored play is as it was.
+    const storedFirst = async (): Promise<unknown> =>
+      (
+        await db!
+          .selectFrom('events')
+          .select('gumbo')
+          .where('gameId', '=', named)
+          .where('atBatIndex', '=', 0)
+          .executeTakeFirstOrThrow()
+      ).gumbo
+    const before = JSON.stringify(await storedFirst())
+    await db!
+      .updateTable('users')
+      .set({
+        display_name: 'Vladimir Guerrero',
+        first_name: 'Vladimir',
+        last_name: 'Guerrero'
+      })
+      .where('id', '=', userIdOfGumbo(people.away[0].userId))
+      .execute()
+    const renamed = await read(MEMBER)
+    expect(renamed.plays[0].gumbo.matchup?.batter?.fullName).equals(
+      'Vladimir G'
+    )
+    expect(playerIn(renamed, people.away[0].userId).fullName).equals(
+      'Vladimir G'
+    )
+    expect(JSON.stringify(await storedFirst())).equals(before)
+
+    // A post's answer is named the same way, halves and all.
+    const posted = await ask(
+      `/games/${named}/events`,
+      'POST',
+      {
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        currentPlay: scorer.currentPlay
+      },
+      flagUser('scorekeeper').token
+    )
+    expect(posted.status).equals(200)
+    const answer = posted.body as unknown as Read
+    expect(answer.plays[0].gumbo.matchup?.batter?.fullName).equals('Vladimir G')
+    expect(playerIn(answer, guests.away)).include({ firstName: 'Ichiro' })
+    expect(playerIn(answer, guests.home)).include({ firstName: 'Hideki' })
   })
 
   it('refuses a source system that is not spelled as one', async function () {
@@ -1586,7 +1903,8 @@ describe('posting and reading plays', function () {
     const { lineupsDigest, playsDigest, ...events } = read.body
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
-      currentPlay: current(0),
+      // Named from the batter's account.
+      currentPlay: withNames(current(0), new Map([[member.userId, 'Cam B']])),
       generation: 0,
       // An at-bat with no TeamStation record.
       swap: 'scoredElsewhere'
@@ -1594,13 +1912,14 @@ describe('posting and reading plays', function () {
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
     await live(liveAtBatId, { plays: [] })
+    // Stored naming nobody, as every play is.
     expect(
       withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
-    ).deep.equals(current(0))
+    ).deep.equals(withoutNames(current(0)))
     await live(liveAtBatId, { currentPlay: current(0, 2) })
     expect(
       withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
-    ).deep.equals(current(0, 2))
+    ).deep.equals(withoutNames(current(0, 2)))
     await live(liveAtBatId, { currentPlay: null })
     expect((await gameRow(liveAtBatId)).currentPlay).equals(null)
     // An at-bat in progress changes no stats, so none are asked for.
@@ -3449,7 +3768,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     home: rosterOf(homeIds)
   })
   setup.sides.away.battingOrder = setup.sides.away.battingOrder.slice(0, 9)
-  const games = Array.from({ length: 14 }, () => makeId('game'))
+  const games = Array.from({ length: 16 }, () => makeId('game'))
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -3469,10 +3788,11 @@ describe('the team default lineup a live post keeps (U10)', function () {
     const now = new Date()
     await insertFixtureUsers(
       db,
-      [{ ...owner, is_admin: true }, ...players].map(user => ({
+      [{ ...owner, is_admin: true }, ...players].map((user, i) => ({
         id: user.userId,
         legacyId: user.legacyId,
-        display_name: `User ${user.userId}`,
+        // Each player under the name the setup gives him, as reads name him.
+        display_name: i === 0 ? 'Owner' : i <= 10 ? `P${i}` : `P${i - 10}`,
         is_admin: 'is_admin' in user,
         created_at: now,
         updated_at: now
@@ -3613,6 +3933,41 @@ describe('the team default lineup a live post keeps (U10)', function () {
       .select(['lineup_started_at', 'lineups_digest'])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
+  }
+  /** The lineups digest a read of the game's plays answers. */
+  async function answeredDigest(gameId: string): Promise<string> {
+    const response = await fetch(`${base}/games/${gameId}/events`, {
+      headers: { authorization: `Bearer ${OWNER}` }
+    })
+    return ((await response.json()) as { lineupsDigest: string }).lineupsDigest
+  }
+  /** What `act` leaves, and the `lineups` changes told for the game meanwhile. */
+  async function hearing<T>(
+    gameId: string,
+    act: () => Promise<T>
+  ): Promise<{ result: T; lineupNotices: number }> {
+    const listener = new Client({ connectionString: url })
+    await listener.connect()
+    const heard: string[] = []
+    listener.on('notification', message => {
+      if (message.payload != null) heard.push(message.payload)
+    })
+    try {
+      await listener.query(`listen ${GAME_CHANGES_CHANNEL}`)
+      const result = await act()
+      // A round trip after the commits, so their notifies have arrived.
+      await listener.query('select 1')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      return {
+        result,
+        lineupNotices: heard.filter(
+          payload =>
+            payload === JSON.stringify({ game: gameId, kind: 'lineups' })
+        ).length
+      }
+    } finally {
+      await listener.end()
+    }
   }
   async function defaultOf(teamId: string): Promise<{
     lineup: { batters: Array<{ gumboId: number | null }> }
@@ -3805,7 +4160,8 @@ describe('the team default lineup a live post keeps (U10)', function () {
       .teamStation as { version: number; setupBefore: { sides: object } }
     expect(answered.version).equals(2)
     expect(answered.setupBefore.sides).have.keys('away', 'home')
-    expect(recordOf(read.currentPlay, TEAMS)).deep.equals(
+    // Answered named; stored naming nobody.
+    expect(recordOf(withoutNames(read.currentPlay), TEAMS)).deep.equals(
       recordOf(stored.currentPlay, TEAMS)
     )
 
@@ -3989,6 +4345,30 @@ describe('the team default lineup a live post keeps (U10)', function () {
     expect(((await fold()) as unknown as typeof current).matchup).deep.equals(
       current.matchup
     )
+    // The pregame is named from the accounts before it is folded: a rename
+    // reads in the leadoff the next read folds.
+    const leadoff = userIdOfGumbo(awayIds[1])
+    await db!
+      .updateTable('users')
+      .set({ display_name: 'Ichiro Suzuki' })
+      .where('id', '=', leadoff)
+      .execute()
+    try {
+      const renamed = (await store(gameId).load(gameId))
+        .currentPlay as unknown as typeof current & {
+        matchup: { batter: { fullName: string } }
+      }
+      expect(renamed.matchup.batter).deep.equals({
+        id: awayIds[1],
+        fullName: 'Ichiro S'
+      })
+    } finally {
+      await db!
+        .updateTable('users')
+        .set({ display_name: 'P2' })
+        .where('id', '=', leadoff)
+        .execute()
+    }
   })
 
   it('keeps the digest of the lineups a post leaves when it stores the first plays and sends no at-bat', async function () {
@@ -4027,11 +4407,119 @@ describe('the team default lineup a live post keeps (U10)', function () {
       ])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    // What a reader works out from the plays stored: the pregame lineups
-    // are no at-bat once a play is.
+    // The lineups in their stored form, read from the plays stored: the
+    // pregame lineups are no at-bat once a play is.
+    const plays = await readPlays(db!, gameId)
+    const read = readLineups(
+      storedLineupGame(plays, atBatOf(row, plays.length > 0)),
+      await lineupContext(db!, row)
+    )
+    expect(row.lineups_digest).equals(
+      lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+    )
     expect(row.lineups_digest).equals(
       await storedLineupsDigest(db!, { ...row, lineups_digest: null })
     )
+  })
+
+  it('keeps the digest a game that keeps none answered at its first post with no lineup change, and tells no lineups change', async function () {
+    const gameId = games[15]
+    await apply(await scoring(gameId), reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    await db!
+      .updateTable('games')
+      .set({ lineups_digest: null })
+      .where('id', '=', gameId)
+      .execute()
+    const held = await answeredDigest(gameId)
+    expect(held).match(/^[0-9a-f]{64}$/)
+    const { result: posted, lineupNotices } = await hearing(
+      gameId,
+      async () =>
+        await post(gameId, {
+          mode: 'live',
+          source: { system: 'teamstation' },
+          plays: [],
+          lineupsBase: held
+        })
+    )
+    expect(posted.status, JSON.stringify(posted.body)).equals(200)
+    expect(
+      (posted.body as unknown as { lineupsDigest: string }).lineupsDigest
+    ).equals(held)
+    expect((await gameRow(gameId)).lineups_digest).equals(held)
+    expect(lineupNotices).equals(0)
+    // A post that does change the lineups is still told.
+    const changed = await hearing(gameId, async () => {
+      await apply(await scoring(gameId), reorder([3, 1, 2, 4, 5, 6, 7, 8, 9]))
+    })
+    expect((await gameRow(gameId)).lineups_digest).not.equals(held)
+    expect(changed.lineupNotices).equals(1)
+  })
+
+  it('keeps the digest of a game that keeps none across a rename, and takes a post built on it', async function () {
+    const gameId = games[14]
+    await apply(await scoring(gameId), reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    expect((await atBatColumns(gameId)).pregame).not.equals(null)
+    // As a game no live post has kept a digest for.
+    await db!
+      .updateTable('games')
+      .set({ lineups_digest: null })
+      .where('id', '=', gameId)
+      .execute()
+    const digest = async (): Promise<string> => await answeredDigest(gameId)
+    const held = await digest()
+    expect(held).match(/^[0-9a-f]{64}$/)
+    const leadoff = userIdOfGumbo(awayIds[1])
+    await db!
+      .updateTable('users')
+      .set({ display_name: 'Ichiro Suzuki' })
+      .where('id', '=', leadoff)
+      .execute()
+    try {
+      // The pregame leadoff is renamed: the lineups read him by his new
+      // name, and the digest is the one the phone holds.
+      const read = await store(gameId).load(gameId)
+      expect(
+        (read.currentPlay as unknown as { matchup: { batter: unknown } })
+          .matchup.batter
+      ).deep.equals({ id: awayIds[1], fullName: 'Ichiro S' })
+      expect(await digest()).equals(held)
+      const { result: posted, lineupNotices } = await hearing(
+        gameId,
+        async () =>
+          await post(gameId, {
+            mode: 'live',
+            source: { system: 'teamstation' },
+            plays: [],
+            lineupsBase: held
+          })
+      )
+      expect(posted.status, JSON.stringify(posted.body)).equals(200)
+      // The post keeps the digest the game answered: the rename moves
+      // nothing, so no lineups change is told.
+      expect((await gameRow(gameId)).lineups_digest).equals(held)
+      expect(
+        (posted.body as unknown as { lineupsDigest: string }).lineupsDigest
+      ).equals(held)
+      expect(await digest()).equals(held)
+      expect(lineupNotices).equals(0)
+      // A second post still built on the base from before the rename, as a
+      // queued post from another device, is not refused as stale.
+      const second = await post(gameId, {
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        lineupsBase: held
+      })
+      expect(second.status, JSON.stringify(second.body)).equals(200)
+      expect((await gameRow(gameId)).lineups_digest).equals(held)
+    } finally {
+      await db!
+        .updateTable('users')
+        .set({ display_name: 'P2' })
+        .where('id', '=', leadoff)
+        .execute()
+    }
   })
 
   it('keeps a lineup change sent with the first pitch in the pregame lineups', async function () {

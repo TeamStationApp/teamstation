@@ -14,6 +14,12 @@
  * the team's roster managers. A songkeeper or videographer never reads it.
  */
 
+/**
+ * What a deleted account is called wherever it still appears, as one first
+ * name: its short name is the whole of it, never "Deleted u".
+ */
+export const DELETED_NAME = 'Deleted user'
+
 export interface NamedPerson {
   id: string | number
   firstName?: string | null
@@ -119,6 +125,10 @@ function halves(person: NamedPerson): { first: string; last: string } {
   const first = (person.firstName ?? '').trim()
   const last = (person.lastName ?? '').trim()
   if (first !== '' || last !== '') return { first, last }
+  // A deleted account read by its name alone (a game read with short names
+  // only) is still one first name.
+  if (person.displayName.trim() === DELETED_NAME)
+    return { first: DELETED_NAME, last: '' }
   // Imported with only a display name: split it the same way and carry on.
   const words = person.displayName
     .trim()

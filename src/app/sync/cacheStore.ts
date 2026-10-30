@@ -66,12 +66,18 @@ export interface OutboxRow {
   gameId: string | null
   /** The server's refusal of a dead or parked row, for its screen. */
   message: string | null
+  /**
+   * The names of the players the row's body names, by gumbo id, as JSON:
+   * kept on the phone beside the body and never sent, so the documents the
+   * row writes read named (`appliedEvents`). Null for a row with none.
+   */
+  names: string | null
 }
 
 export type NewOutboxRow = Omit<
   OutboxRow,
-  'seq' | 'state' | 'attempts' | 'leaseUntil' | 'message'
->
+  'seq' | 'state' | 'attempts' | 'leaseUntil' | 'message' | 'names'
+> & { names?: string | null }
 
 /** A player made on the phone with no signal, until the server has made him. */
 export interface LocalPlayer {
@@ -168,7 +174,8 @@ const SCHEMA = [
 
 /** Columns added after a file may already have been made without them. */
 const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
-  ['outbox', 'message', 'text']
+  ['outbox', 'message', 'text'],
+  ['outbox', 'names', 'text']
 ]
 
 function outboxRowOf(row: SqlRow): OutboxRow {
@@ -186,7 +193,8 @@ function outboxRowOf(row: SqlRow): OutboxRow {
     attempts: Number(row.attempts),
     leaseUntil: row.lease_until == null ? null : Number(row.lease_until),
     gameId: typeof row.game_id === 'string' ? row.game_id : null,
-    message: typeof row.message === 'string' ? row.message : null
+    message: typeof row.message === 'string' ? row.message : null,
+    names: typeof row.names === 'string' ? row.names : null
   }
 }
 
@@ -236,12 +244,14 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
         state: 'pending',
         attempts: 0,
         leaseUntil: null,
-        message: null
+        message: null,
+        names: row.names ?? null
       }
       await tx.execute(
         `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path,
-           body, depends_on, state, attempts, lease_until, game_id, message)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           body, depends_on, state, attempts, lease_until, game_id, message,
+           names)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           queued.id,
           queued.idempotencyKey,
@@ -255,7 +265,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
           queued.attempts,
           queued.leaseUntil,
           queued.gameId,
-          queued.message
+          queued.message,
+          queued.names
         ]
       )
       return queued

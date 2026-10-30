@@ -15,6 +15,7 @@ import {
   TEAMS,
   walk
 } from '../../test/scoringGames'
+import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
 import {
   HIT_TRAJECTORIES,
   mlbEventName,
@@ -88,15 +89,20 @@ interface StoredRunner {
 function runnersOf(play: GumboPlay): StoredRunner[] {
   return (play.runners ?? []) as unknown as StoredRunner[]
 }
-/** The play in progress, or the last one completed, as it is stored. */
+/**
+ * The play in progress, or the last one completed, as it is stored. Each is
+ * checked to name itself back from its stored form (`storedNames.ts`).
+ */
 function stored(state: GameState, completed = false): GumboPlay {
   const stamp = { setupBefore: setupOf(state), actions: [] }
-  if (completed)
-    return documentOf(state, state.liveData.plays.allPlays.at(-1)!, stamp)
   const play: GamePlay = state.liveData.plays.currentPlay!
-  return play.result.eventType === ''
-    ? (currentDocumentOf(state, play, stamp) as unknown as GumboPlay)
-    : documentOf(state, play, stamp)
+  const document = completed
+    ? documentOf(state, state.liveData.plays.allPlays.at(-1)!, stamp)
+    : play.result.eventType === ''
+      ? (currentDocumentOf(state, play, stamp) as unknown as GumboPlay)
+      : documentOf(state, play, stamp)
+  expectNamesRoundTrip(document)
+  return document
 }
 /** A made-up runner by his number, `Player 4` as 4, or `batter`. */
 function runnerName(runner: StoredRunner): string {
@@ -664,6 +670,7 @@ interface StoredEvent {
   details: Record<string, unknown>
   count: { balls: number; strikes: number; outs: number }
   player?: { id?: number; fullName: string }
+  said?: unknown
 }
 function eventsOf(play: GumboPlay): StoredEvent[] {
   return (play.playEvents ?? []) as unknown as StoredEvent[]
@@ -1301,7 +1308,17 @@ describe('action events (U12)', function () {
       actionPlayId?: string
     }
     expect(actionPlayId).a('string')
-    expect(Object.keys(got).sort()).deep.equals(Object.keys(feedEvent).sort())
+    // `said` is TeamStation's own: what the sentence is worded from.
+    expect(got.said).deep.equals({
+      kind: 'action',
+      eventType: 'wild_pitch',
+      lead: { player: 10, role: 'pitcher' }
+    })
+    expect(
+      Object.keys(got)
+        .filter(key => key !== 'said')
+        .sort()
+    ).deep.equals(Object.keys(feedEvent).sort())
     expect(Object.keys(got.details)).deep.equals(Object.keys(want.details))
     for (const key of Object.keys(want.details))
       expect(typeOf(got.details[key]), key).equals(typeOf(want.details[key]))
@@ -1873,9 +1890,14 @@ describe('substitutions (U19)', function () {
     ]) {
       const want = feedOf(eventType)
       const event = got.get(eventType)!
-      expect(Object.keys(event).sort(), eventType).deep.equals(
-        Object.keys(want).sort()
-      )
+      // `said` is TeamStation's own: what the sentence is worded from.
+      expect(event.said, eventType).an('object')
+      expect(
+        Object.keys(event)
+          .filter(key => key !== 'said')
+          .sort(),
+        eventType
+      ).deep.equals(Object.keys(want).sort())
       expect(Object.keys(event.details), eventType).deep.equals(
         Object.keys(want.details)
       )
@@ -1943,10 +1965,18 @@ describe('substitutions (U19)', function () {
         'isSubstitution',
         'player',
         'position',
+        'said',
         'startTime',
         'type'
       ].sort()
     )
+    // The man he replaces is named in `said` alone, as the feed writes none.
+    expect(event.said).deep.equals({
+      kind: 'defensive',
+      player: 20,
+      replaced: 16,
+      position: 'LF'
+    })
   })
 
   it('writes a shortstop moved to the mound as a pitching change and a switch, in one change or two', function () {

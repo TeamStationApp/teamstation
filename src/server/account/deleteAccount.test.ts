@@ -25,6 +25,8 @@ import {
   decideRelationshipRequest
 } from '../groups/requests'
 import { notifyGrant } from '../invites/grants'
+import { inbox } from '../notifications/inbox'
+import { titleAndDescription } from '../notifications/requestInformation'
 import { teamMemberRoutes } from '../routes/teamMembers'
 import { walkUpSongRoutes } from '../routes/walkUpSongs'
 import { addAdults, attachEmail } from '../teams/addAdults'
@@ -156,7 +158,14 @@ describe('deleting an account', function () {
       keptProof
     )
     // A sign-in asked for before the deletion must not finish after it.
-    const pending = await createEmailCode(h.db, 'JUNIOR@example.test', 'login')
+    const pending = await createEmailCode(
+      h.db,
+      'JUNIOR@example.test',
+      'login',
+      {
+        displayName: 'Ken Griffey'
+      }
+    )
 
     const deleted = await h.request('DELETE', ROOT, undefined, kept.session)
     expect(deleted.status).equals(204)
@@ -189,10 +198,11 @@ describe('deleting an account', function () {
     expect(addresses.map(row => row.user_id)).deep.equals([bystander.id])
     const code = await h.db
       .selectFrom('email_codes')
-      .select('consumed_at')
+      .select(['consumed_at', 'display_name'])
       .where('id', '=', pending.id)
       .executeTakeFirstOrThrow()
     expect(code.consumed_at).not.equals(null)
+    expect(code.display_name).equals(null)
 
     for (const who of [kept, closed, older]) {
       expect(await status(who.session)).equals(401)
@@ -728,12 +738,12 @@ describe('deleting an account', function () {
         source_id: 'req_deleted',
         revision: 1,
         actor_id: gone.id,
-        metadata: { senderName: 'Rod Carew', senderGroupName: 'Demo Hawks' },
+        metadata: { senderGroupName: 'Demo Hawks' },
         created_at: new Date()
       })
       .execute()
-    // Through the real paths: a guardian request they sent, which writes its
-    // title and description with their name, and a role they gave somebody.
+    // Through the real paths: a guardian request they sent, and a role they
+    // gave somebody. Neither stores their name; both are read with it.
     const asked = await createRelationshipRequest(
       h.db,
       { userId: gone.id, isAdmin: false, scopes: [] },
@@ -753,15 +763,34 @@ describe('deleting an account', function () {
       added: ['coach'],
       actorId: gone.id
     })
-    const mentions = async (): Promise<number> =>
+    const stored = async (): Promise<unknown[]> =>
+      await h.db
+        .selectFrom('notification_events')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+    const before = await stored()
+    expect(JSON.stringify(before)).not.includes('Rod Carew')
+    const childActor = { userId: child.id, isAdmin: false, scopes: [] }
+    const read = async (): Promise<string[]> => [
       (
-        await h.db
-          .selectFrom('notification_events')
-          .select('metadata')
-          .where('actor_id', '=', gone.id)
-          .execute()
-      ).filter(row => JSON.stringify(row.metadata).includes('Rod Carew')).length
-    expect(await mentions()).greaterThan(1)
+        await titleAndDescription(
+          h.db,
+          await h.db
+            .selectFrom('group_requests')
+            .selectAll()
+            .where('id', '=', asked.id)
+            .executeTakeFirstOrThrow()
+        )
+      ).title,
+      ...(await inbox(h.db, childActor, { history: true })).items
+        .filter(item => item.type === 'grant')
+        .map(item => item.title)
+    ]
+    expect(await read()).deep.equals([
+      "Rod Carew asks to be Tony O's guardian",
+      'Rod Carew added you as Coach of Demo Hawks'
+    ])
 
     expect(
       (await h.request('DELETE', ROOT, undefined, gone.session)).status
@@ -770,7 +799,13 @@ describe('deleting an account', function () {
     for (let tries = 0; tries < 50 && pictures().length > 0; tries++)
       await new Promise(resolve => setTimeout(resolve, 20))
     expect(pictures()).deep.equals([])
-    expect(await mentions()).equals(0)
+    // Nothing stored changes: every notification reads their name from
+    // `users`, which is "Deleted user" now.
+    expect(await stored()).deep.equals(before)
+    expect(await read()).deep.equals([
+      "Deleted user asks to be Tony O's guardian",
+      'Deleted user added you as Coach of Demo Hawks'
+    ])
     // The request they sent ended with their account, so accepting it later
     // makes no guardian.
     const request = await h.db
@@ -793,15 +828,6 @@ describe('deleting an account', function () {
         .where('related_user_id', '=', child.id)
         .execute()
     ).length(0)
-    const event = await h.db
-      .selectFrom('notification_events')
-      .select('metadata')
-      .where('id', '=', sent)
-      .executeTakeFirstOrThrow()
-    expect(event.metadata).deep.equals({
-      senderName: DELETED_NAME,
-      senderGroupName: 'Demo Hawks'
-    })
     expect(
       await h.db
         .selectFrom('follows')
@@ -970,7 +996,7 @@ describe('deleting an account', function () {
         table
       ).length(0)
   })
-  it('takes only whole names out of what other people read', async () => {
+  it('names them "Deleted user" wherever other people read them, with no stored text to change', async () => {
     const proof = 'd1'.repeat(32)
     const gone = await person('Ken Phelps', 'ken@example.test', proof)
     await h.db
@@ -979,19 +1005,12 @@ describe('deleting an account', function () {
       .where('id', '=', gone.id)
       .execute()
     const other = await person('Freddie Freeman', 'freddie@example.test', proof)
-    const sent = makeId('audit')
-    await h.db
-      .insertInto('notification_events')
-      .values({
-        id: sent,
-        source_type: 'grant',
-        source_id: 'grant_whole_names',
-        revision: 1,
-        actor_id: gone.id,
-        metadata: { title: 'Ken added you to the Kenzora Larks' },
-        created_at: new Date()
-      })
-      .execute()
+    await notifyGrant(h.db, {
+      ref: { kind: 'team', id: 'tem_account' },
+      userId: other.id,
+      added: ['member'],
+      actorId: gone.id
+    })
     // A request about them, as the player, written by somebody else.
     const asked = await createRelationshipRequest(
       h.db,
@@ -1005,31 +1024,41 @@ describe('deleting an account', function () {
         idempotencyKey: 'whole-names-guardian'
       }
     )
-    const about = async (): Promise<string> =>
-      JSON.stringify(
-        (
+    const stored = async (): Promise<unknown[]> =>
+      await h.db
+        .selectFrom('notification_events')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+    const before = await stored()
+    const otherActor = { userId: other.id, isAdmin: false, scopes: [] }
+    const read = async (): Promise<string[]> => [
+      (
+        await titleAndDescription(
+          h.db,
           await h.db
-            .selectFrom('notification_events')
-            .select('metadata')
-            .where('source_id', '=', asked.id)
-            .execute()
-        ).map(row => row.metadata)
-      )
-    expect(await about()).match(/\bKen\b/)
+            .selectFrom('group_requests')
+            .selectAll()
+            .where('id', '=', asked.id)
+            .executeTakeFirstOrThrow()
+        )
+      ).title,
+      ...(await inbox(h.db, otherActor, { history: true })).items
+        .filter(item => item.type === 'grant')
+        .map(item => item.title)
+    ]
+    expect(await read()).deep.equals([
+      "Freddie Freeman asks to be Ken's guardian",
+      'Ken added you to Demo Hawks'
+    ])
 
     expect(
       (await h.request('DELETE', ROOT, undefined, gone.session)).status
     ).equals(204)
-    const grant = await h.db
-      .selectFrom('notification_events')
-      .select('metadata')
-      .where('id', '=', sent)
-      .executeTakeFirstOrThrow()
-    expect(grant.metadata).deep.equals({
-      title: 'Deleted user added you to the Kenzora Larks'
-    })
-    const after = await about()
-    expect(after).not.match(/\bKen\b/)
-    expect(after).includes('Freddie')
+    expect(await stored()).deep.equals(before)
+    expect(await read()).deep.equals([
+      `Freddie Freeman asks to be ${DELETED_NAME}'s guardian`,
+      `${DELETED_NAME} added you to Demo Hawks`
+    ])
   })
 })

@@ -1,6 +1,7 @@
-import { shortName } from '../../common/names'
+import { shortName, shortNames } from '../../common/names'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { POSITIONS } from '../../common/scoring/state'
+import { namesIn, withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 
 /**
@@ -68,11 +69,117 @@ function indexOf(play: unknown): number | undefined {
   return typeof index === 'number' ? index : undefined
 }
 
+/** The names a cached `GET /games/:gameId/events` answer's documents carry. */
+function eventsNames(stored: Json): Map<number, string> {
+  const names = new Map<number, string>()
+  const add = (play: unknown): void => {
+    for (const [id, name] of namesIn(play))
+      if (!names.has(id)) names.set(id, name)
+  }
+  for (const row of arrayOf(stored.plays)) add(objectOf(row).gumbo)
+  add(stored.currentPlay)
+  return names
+}
+
+/** A player's first and last names, as a setup holds them. */
+interface Halves {
+  firstName: string
+  lastName: string
+}
+
+/** A record's setups: the one before its play, and each action's own. */
+function setupsOf(play: unknown): Json[] {
+  const record = objectOf(objectOf(play).teamStation)
+  return [
+    record.setupBefore,
+    ...arrayOf(record.actions).map(action => objectOf(action).setup)
+  ]
+    .map(objectOf)
+    .filter(setup => 'players' in setup)
+}
+
+/**
+ * The first and last names a cached `GET /games/:gameId/events` answer's
+ * setups hold, by gumbo id: the server answers them to whoever may correct
+ * a side's names, and a post, naming nobody, carries none.
+ */
+function eventsHalves(stored: Json): Map<number, Halves> {
+  const halves = new Map<number, Halves>()
+  const text = (value: unknown): string =>
+    typeof value === 'string' ? value : ''
+  for (const play of [
+    ...arrayOf(stored.plays).map(row => objectOf(row).gumbo),
+    stored.currentPlay
+  ])
+    for (const setup of setupsOf(play))
+      for (const raw of Object.values(objectOf(setup.players))) {
+        const player = objectOf(raw)
+        if (
+          typeof player.id === 'number' &&
+          !halves.has(player.id) &&
+          (typeof player.firstName === 'string' ||
+            typeof player.lastName === 'string')
+        )
+          halves.set(player.id, {
+            firstName: text(player.firstName),
+            lastName: text(player.lastName)
+          })
+      }
+  return halves
+}
+
+/** `play` with each setup player whose halves are known holding them. */
+function withHalves(
+  play: unknown,
+  halves: ReadonlyMap<number, Halves>
+): unknown {
+  const document = objectOf(play)
+  if (halves.size === 0 || !('teamStation' in document)) return play
+  const record = objectOf(document.teamStation)
+  const setup = (raw: unknown): unknown => {
+    const held = objectOf(raw)
+    if (!('players' in held)) return raw
+    const players: Json = {}
+    for (const [key, entry] of Object.entries(objectOf(held.players))) {
+      const player = objectOf(entry)
+      const parts =
+        typeof player.id === 'number' && !('firstName' in player)
+          ? halves.get(player.id)
+          : undefined
+      players[key] = parts == null ? entry : { ...player, ...parts }
+    }
+    return { ...held, players }
+  }
+  return {
+    ...document,
+    teamStation: {
+      ...record,
+      ...('setupBefore' in record
+        ? { setupBefore: setup(record.setupBefore) }
+        : {}),
+      ...(Array.isArray(record.actions)
+        ? {
+            actions: record.actions.map(action =>
+              'setup' in objectOf(action)
+                ? { ...objectOf(action), setup: setup(objectOf(action).setup) }
+                : action
+            )
+          }
+        : {})
+    }
+  }
+}
+
 /**
  * `GET /games/:gameId/events` once a live post is written: its plays in
  * place by `atBatIndex`, the indexes in `remove` gone, and the at-bat in
  * progress replaced when the post names one. `priorPlaysDigest` is the
- * document's before, as the server answers a post.
+ * document's before, as the server answers a post. A post's documents are
+ * in their stored form, naming nobody: each is named (`withNames`) from the
+ * names kept beside it on the phone (`game.names`), then from those the
+ * cached answer already shows, and each setup player keeps the first and
+ * last names the cached answer gave him, so a game reopened from it offline
+ * still offers them to correct (`draftOfLocalPlayer`).
  */
 export function appliedEvents(
   document: unknown,
@@ -82,10 +189,18 @@ export function appliedEvents(
     plays: string
     lineups: string | null
     newPlayId: () => string
+    names?: Readonly<Record<string, string>> | null
   }
 ): Json {
   const stored = objectOf(document)
   const body = objectOf(post)
+  const held = eventsNames(stored)
+  const halves = eventsHalves(stored)
+  const sent = game.names ?? {}
+  const nameOf = (id: number): string | undefined =>
+    Object.hasOwn(sent, String(id)) ? sent[String(id)] : held.get(id)
+  const named = (play: unknown): unknown =>
+    play == null ? play : withHalves(withNames(play, nameOf), halves)
   const rows = new Map<number, Json>()
   for (const raw of arrayOf(stored.plays)) {
     const row = objectOf(raw)
@@ -102,7 +217,7 @@ export function appliedEvents(
       ...held,
       id: held?.id ?? game.newPlayId(),
       gameId: held?.gameId ?? game.gameId,
-      gumbo: play
+      gumbo: named(play)
     })
   }
   return {
@@ -111,10 +226,133 @@ export function appliedEvents(
     currentPlay:
       body.currentPlay === undefined
         ? (stored.currentPlay ?? null)
-        : body.currentPlay,
+        : named(body.currentPlay),
     priorPlaysDigest: stored.playsDigest ?? null,
     playsDigest: game.plays,
     lineupsDigest: game.lineups
+  }
+}
+
+/**
+ * `value` with the player of `gumboId` called `name` wherever it names him
+ * by id: each reference and setup player, his first and last names where a
+ * setup holds them.
+ */
+function renamedIn(
+  value: unknown,
+  gumboId: number,
+  name: { fullName: string; firstName: string; lastName: string }
+): unknown {
+  if (Array.isArray(value))
+    return value.map(item => renamedIn(item, gumboId, name))
+  if (value == null || typeof value !== 'object') return value
+  const out: Json = {}
+  for (const [key, item] of Object.entries(value as Json))
+    out[key] = renamedIn(item, gumboId, name)
+  if (out.id === gumboId && typeof out.fullName === 'string') {
+    out.fullName = name.fullName
+    if ('firstName' in out || 'lastName' in out) {
+      out.firstName = name.firstName
+      out.lastName = name.lastName
+    }
+  }
+  return out
+}
+
+/**
+ * The game's short name for a guest called `name`, as the server will name
+ * him: short names over everyone the cached answer names, him by his new
+ * halves, the others by the halves its setups hold or else by the names it
+ * shows.
+ */
+function guestShortName(stored: Json, gumboId: number, name: Halves): string {
+  const halves = eventsHalves(stored)
+  const people = [...eventsNames(stored)]
+    .filter(([id]) => id !== gumboId)
+    .map(([id, shown]) => ({ id, displayName: shown, ...halves.get(id) }))
+  const whole = [name.firstName, name.lastName]
+    .filter(part => part !== '')
+    .join(' ')
+  return (
+    shortNames([...people, { id: gumboId, displayName: whole, ...name }]).get(
+      gumboId
+    ) ?? whole
+  )
+}
+
+/**
+ * `GET /games/:gameId/events` once a game-only player's name is corrected
+ * on the phone: every play and the at-bat in progress name him by the
+ * game's short name for him (`guestShortName`), their sentences and credits
+ * worded again with it, and his setup players hold his new halves.
+ */
+export function renamedEvents(
+  document: unknown,
+  gumboId: number,
+  name: { firstName: string; lastName: string }
+): Json {
+  const stored = objectOf(document)
+  const short = guestShortName(stored, gumboId, name)
+  const his = new Map([[gumboId, name]])
+  const renamed = (play: unknown): unknown => {
+    if (play == null) return play
+    const next = renamedIn(play, gumboId, { ...name, fullName: short })
+    const names = namesIn(next)
+    return withHalves(
+      withNames(next, id => (id === gumboId ? short : names.get(id))),
+      his
+    )
+  }
+  return {
+    ...stored,
+    ...(Array.isArray(stored.plays)
+      ? {
+          plays: stored.plays.map(raw => {
+            const row = objectOf(raw)
+            return { ...row, gumbo: renamed(row.gumbo) }
+          })
+        }
+      : {}),
+    ...('currentPlay' in stored
+      ? { currentPlay: renamed(stored.currentPlay) }
+      : {})
+  }
+}
+
+/**
+ * The roster entry of a guest whose name is corrected on the phone, as `PUT
+ * /games/:gameId/guest-players/:userId` answers it: his entry in the game's
+ * `guestPlayers` with the name he is given, or one made from that name alone.
+ */
+export function renamedGuestEntry(
+  game: unknown,
+  userId: string,
+  gumboId: number | null,
+  name: { firstName: string; lastName: string }
+): Json {
+  const displayName = [name.firstName, name.lastName]
+    .filter(part => part !== '')
+    .join(' ')
+  const listed = arrayOf(objectOf(game).guestPlayers)
+    .map(objectOf)
+    .find(entry => entry.userId === userId)
+  return {
+    jersey: null,
+    positions: [],
+    bats: null,
+    throws: null,
+    isPlayer: true,
+    role: 'player',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null,
+    avatarUrl: null,
+    walkUpSong: null,
+    ...listed,
+    userId,
+    gumboId: listed?.gumboId ?? gumboId,
+    shortName: displayName,
+    nameDetails: { ...name, displayName }
   }
 }
 

@@ -32,6 +32,22 @@ describe('invitation display snapshots', function () {
     }
     return { title, description }
   }
+  const storedMetadata = async (id: string): Promise<object> =>
+    (
+      await f.h.db
+        .selectFrom('notification_events')
+        .select('metadata')
+        .where('source_type', '=', 'groupRequest')
+        .where('source_id', '=', id)
+        .executeTakeFirstOrThrow()
+    ).metadata as object
+  const rename = async (user: number, name: string): Promise<void> => {
+    await f.h.db
+      .updateTable('users')
+      .set({ display_name: name })
+      .where('id', '=', userIdOfGumbo(user))
+      .execute()
+  }
   it('preserves game opponent/host names and display zone in pending and resolved history after renames', async () => {
     const sent = await f.h.request(
       'POST',
@@ -82,6 +98,28 @@ describe('invitation display snapshots', function () {
       ).json()
     ).property('status', 'accepted')
     expect(await information(id, 102)).deep.equals(before)
+    // The group names and zone it read are frozen; nobody's name is stored.
+    expect(await storedMetadata(id)).deep.equals({
+      senderGroupName: 'Demo Regular',
+      frozen: {
+        groups: {
+          [`team:${f.teamA}`]: 'Demo Hawks',
+          [`team:${f.teamB}`]: 'Demo Eagles',
+          [`season:${f.seasonA}`]: 'Demo Regular'
+        },
+        // The terms carry the zone, so no season's is read.
+        zones: {}
+      }
+    })
+    // The sender is named as they are now.
+    expect(before.description.startsWith('Babe Ruth from Demo Regular')).equals(
+      true
+    )
+    await rename(101, 'Ken Griffey')
+    expect(await information(id, 102)).deep.equals({
+      title: before.title,
+      description: before.description.replace('Babe Ruth', 'Ken Griffey')
+    })
   })
   it('freezes proposed and previous notes/arrival, including omitted fields and deliberate clears, before consent', async () => {
     const initial = await f.h.request(
@@ -160,30 +198,16 @@ describe('invitation display snapshots', function () {
       )
       expect(sent.status).equals(201)
       const { id } = await sent.json()
-      let shown = await information(id, 102)
+      const shown = await information(id, 102)
       expect(shown.description)
         .includes(`Proposed notes: ${note}.`)
         .and.includes('Previous notes: Field 1.')
         .and.includes(`Proposed arrival: ${arrival}.`)
         .and.includes('Previous arrival: 45 minutes before start.')
-      if (key === 'cleared') {
-        await f.h.db
-          .updateTable('notification_events')
-          .set({
-            metadata: sql`(metadata - 'gameEventDetailsIncluded') || jsonb_build_object('requestDescription', 'Frozen game names and details.')`
-          })
-          .where('source_id', '=', id)
-          .execute()
-        shown = await information(id, 102)
-        expect(
-          shown.description.startsWith('Frozen game names and details.')
-        ).equals(true)
-        expect(shown.description)
-          .includes('Proposed notes: Not set (cleared).')
-          .and.includes('Proposed arrival: Not set (cleared).')
-        expect(shown.description.match(/Proposed notes:/g)).length(1)
-        expect(await information(id, 102)).deep.equals(shown)
-      }
+      // Nothing rendered is stored: the details are read from the terms.
+      expect(await storedMetadata(id)).has.all.keys('senderGroupName', 'frozen')
+      expect(shown.description.match(/Proposed notes:/g)).length(1)
+      expect(shown.description.match(/Proposed arrival:/g)).length(1)
       await f.h.db
         .updateTable('teams')
         .set({ name: 'Demo Renamed Snapshot Team' })
@@ -279,7 +303,7 @@ describe('invitation display snapshots', function () {
       )
       expect(response.status).equals(201)
       const { id } = await response.json()
-      let shown = await information(id, 102)
+      const shown = await information(id, 102)
       expect(shown.description)
         .includes(`Proposed address: ${address}.`)
         .and.includes('Previous address: 1 Demo Way.')
@@ -287,21 +311,9 @@ describe('invitation display snapshots', function () {
         .and.includes(
           'Previous end: Apr 1, 2027, 3:00 PM (America/Los_Angeles).'
         )
-      if (key === 'cleared') {
-        await f.h.db
-          .updateTable('notification_events')
-          .set({
-            metadata: sql`(metadata - 'gameScheduleDetailsIncluded') || jsonb_build_object('requestDescription', 'Frozen names, notes and arrival.')`
-          })
-          .where('source_id', '=', id)
-          .execute()
-        shown = await information(id, 102)
-        expect(shown.description)
-          .includes('Frozen names, notes and arrival.')
-          .and.includes(`Proposed address: ${address}.`)
-          .and.includes(`Proposed end: ${end}.`)
-        expect(shown.description.match(/Proposed end:/g)).length(1)
-      }
+      expect(await storedMetadata(id)).has.all.keys('senderGroupName', 'frozen')
+      expect(shown.description.match(/Proposed address:/g)).length(1)
+      expect(shown.description.match(/Proposed end:/g)).length(1)
       await f.h.db
         .updateTable('teams')
         .set({ name: 'Demo Renamed Schedule Team' })
@@ -403,7 +415,7 @@ describe('invitation display snapshots', function () {
       expect(await information(proposal.id, 102)).deep.equals(shown)
     }
   })
-  it('adds legacy false classification to cached descriptions without replacing frozen names or duplicating it', async () => {
+  it('reads a request stored before classification and zones as no exhibition, with its frozen names', async () => {
     const sent = await f.h.request(
       'POST',
       '/game-requests',
@@ -454,16 +466,9 @@ describe('invitation display snapshots', function () {
       })
       .where('id', '=', id)
       .execute()
-    await f.h.db
-      .updateTable('notification_events')
-      .set({
-        metadata: sql`(metadata - 'gameClassificationIncluded') || jsonb_build_object('requestDescription', 'Frozen legacy names and game details.')`
-      })
-      .where('source_id', '=', id)
-      .execute()
     const shown = await information(id, 102)
     expect(shown.description).equals(
-      'Frozen legacy names and game details. Proposed Exhibition: Off. Previous Exhibition: Off.'
+      'Babe Ruth from Demo Hawks proposed Demo Eagles at Demo Hawks in Demo Regular, Apr 1, 2027, 7:00 PM (UTC) at Demo Legacy Revision Field, scheduled, Exhibition: Off. Previously Demo Eagles at Demo Hawks, in Demo Regular, Apr 1, 2027, 7:00 PM (UTC), scheduled, Exhibition: Off. This changes neither management parents nor season participation.'
     )
     await f.h.db
       .updateTable('teams')
@@ -560,6 +565,14 @@ describe('invitation display snapshots', function () {
         ).json()
       ).property('status', 'accepted')
       expect(await information(id, user)).deep.equals(before)
+      // A rename of the sender, unlike a group's, changes what it says.
+      const sender = kind === 'person' ? 'Babe Ruth' : 'Lou Gehrig'
+      expect(before.description).includes(`${sender} from `)
+      await rename(kind === 'person' ? 101 : 102, 'Ken Griffey')
+      expect(await information(id, user)).deep.equals({
+        title: before.title,
+        description: before.description.replace(sender, 'Ken Griffey')
+      })
     })
 })
 

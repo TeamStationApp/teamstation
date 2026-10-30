@@ -3,6 +3,7 @@ import type { Selectable } from 'kysely'
 import { describePlay } from '../common/describePlay'
 import { completedPlayTag, type TagDocument } from '../common/eventTags'
 import { eventTypeName } from '../common/gumboEventTypes'
+import { creditLabel, type NameOf } from '../common/scoring/storedNames'
 import type { EventsTable } from './db/database'
 import type { HighlightSettings } from './settings'
 
@@ -14,13 +15,33 @@ import type { HighlightSettings } from './settings'
  * A highlight is a **timestamp into the full video**, not a clip. The player
  * seeks there and keeps playing.
  */
-/** One thing somebody did well, as stored on the event by the ingest. */
+/**
+ * One thing somebody did well, as `"eventCredits"` holds it: the structure
+ * its label is worded from (`creditLabel`), and nobody's name but a typed
+ * one, for a person with no id.
+ */
 export interface CreditedOutcome {
   eventType: string
-  /** `Single: Jordan P`. */
-  label: string
+  /** The label's first words, `Ground out`. */
+  head: string
+  /** Words after the person and position, ` pitching`. */
+  suffix: string | null
+  /** The fielders who assisted, by id, or by typed name with none. */
+  assists: Array<{
+    creditUserId: number | null
+    position: string | null
+    name?: string
+  }>
+  /** `from A (SS), B (2B)`, or an outside scorer's `to A (1B) to B (2B)`. */
+  assistWord: 'from' | 'to' | null
+  /**
+   * False for a label that words its person with no position though the
+   * credit has one: `Strikeout: X pitching` for a pitcher at P.
+   */
+  positionShown: boolean
   credit: {
-    name: string
+    /** The typed name of a person with no id; an id's is read from users. */
+    name?: string
     role: string
     position: string | null
   } | null
@@ -28,6 +49,66 @@ export interface CreditedOutcome {
   teamId: string | null
   /** Who did it, when the sender knew them as one of our users. */
   creditUserId: number | null
+}
+
+/** A credited outcome as a highlight shows it: worded, with its names. */
+export interface NamedOutcome {
+  eventType: string
+  /** `Single: Jordan P`. */
+  label: string
+  credit: { name: string; role: string; position: string | null } | null
+  teamId: string | null
+  creditUserId: number | null
+}
+
+/**
+ * A credit named from a name book: its label worded from its structure, and
+ * its person's name, by id or as typed.
+ */
+export function namedOutcome(
+  outcome: CreditedOutcome,
+  nameOf: NameOf
+): NamedOutcome {
+  const typed = outcome.credit?.name
+  const name =
+    outcome.creditUserId == null
+      ? (typed ?? '')
+      : (nameOf(outcome.creditUserId) ?? '')
+  return {
+    eventType: outcome.eventType,
+    label: creditLabel(
+      {
+        creditUserId: outcome.creditUserId,
+        head: outcome.head,
+        ...(outcome.suffix == null ? {} : { suffix: outcome.suffix }),
+        credit:
+          outcome.credit == null
+            ? null
+            : {
+                position: outcome.credit.position,
+                ...(outcome.creditUserId == null && typed != null
+                  ? { name: typed }
+                  : {})
+              },
+        assists: outcome.assists,
+        ...(outcome.assistWord == null
+          ? {}
+          : { assistWord: outcome.assistWord }),
+        ...(outcome.positionShown ? {} : { positionShown: false })
+      },
+      nameOf
+    ),
+    credit:
+      outcome.credit == null
+        ? null
+        : {
+            name,
+            role: outcome.credit.role,
+            position: outcome.credit.position
+          },
+    teamId: outcome.teamId,
+    creditUserId: outcome.creditUserId
+  }
 }
 
 export interface HighlightEvent {
@@ -63,7 +144,7 @@ export interface HighlightEvent {
    * migration 031: those plays are shown by their type. A re-post without the
    * key keeps the list stored before it (`withKeptCredits`).
    */
-  credits?: CreditedOutcome[]
+  credits?: NamedOutcome[]
 }
 
 /** The `events` columns a highlight is worked out from. */
@@ -101,10 +182,14 @@ type HighlightEventRow = Pick<
   | 'isScoringPlay'
 > & { gumbo?: unknown }
 
-/** A row read with `HIGHLIGHT_EVENT_COLUMNS`, with its play's credits. */
+/**
+ * A row read with `HIGHLIGHT_EVENT_COLUMNS`, with its play's credits named
+ * from its game's name book (`gameNames`).
+ */
 export function highlightEvent(
   row: HighlightEventRow,
-  credits: CreditedOutcome[] | undefined
+  credits: CreditedOutcome[] | undefined,
+  nameOf: NameOf
 ): HighlightEvent {
   return {
     tag: row.gumbo == null ? null : completedPlayTag(row.gumbo as TagDocument),
@@ -121,7 +206,7 @@ export function highlightEvent(
     timeNudgeSec: row.timeNudgeSec,
     hidden: row.hidden,
     isScoringPlay: row.isScoringPlay === true,
-    credits
+    credits: credits?.map(outcome => namedOutcome(outcome, nameOf))
   }
 }
 
@@ -317,19 +402,19 @@ function toOffset(
 /**
  * Whether a credited outcome is worth putting in front of somebody.
  *
- * Two reasons not to. **Nobody to name**: if we cannot say who did it, a row
- * saying `Ground out` is a thumbnail with no reason to press it. And **an
+ * Two reasons not to. **Nobody to name**: if the credit names nobody, by id
+ * or by a typed name, a row saying `Ground out` is a thumbnail with no reason
+ * to press it. And **an
  * opponent nobody runs**: a team invented from a name typed into somebody
  * else's schedule, which nobody has claimed. Both of those at once — a real
  * team in the league is shown whether or not anybody has been recorded as
  * running it.
  */
 function worthShowing(
-  outcome: CreditedOutcome,
+  outcome: NamedOutcome,
   teams: Map<string, TeamStanding>
 ): boolean {
-  const name = outcome.credit?.name ?? ''
-  if (name === '') return false
+  if (personOf(outcome) == null) return false
   if (outcome.teamId == null) return true
   const standing = teams.get(outcome.teamId)
   if (standing == null) return true
@@ -340,19 +425,31 @@ function worthShowing(
 }
 
 /**
+ * Who a credit names: his id, or the name typed for somebody with none, or
+ * undefined for nobody.
+ */
+function personOf(outcome: NamedOutcome): string | undefined {
+  if (outcome.creditUserId != null) return `id:${outcome.creditUserId}`
+  const typed = outcome.credit?.name ?? ''
+  return typed === '' ? undefined : `typed:${typed}`
+}
+
+/**
  * The outcomes of one play, as one line.
  *
  * A player already named by an earlier part is not named again: a home run
  * puts the batter across the plate, so without this it reads
- * `Home run: Hunter P · Run: Hunter P`.
+ * `Home run: Hunter P · Run: Hunter P`. A player is the same person by his
+ * id, or, with none, by the name typed for him; two players whose names read
+ * alike are not.
  */
-function joinOutcomes(outcomes: CreditedOutcome[]): string {
-  const seen = new Set<string>()
+function joinOutcomes(outcomes: NamedOutcome[]): string {
+  const seen = new Set<string | undefined>()
   const parts: string[] = []
   for (const outcome of outcomes) {
-    const name = outcome.credit?.name ?? ''
-    if (outcome.eventType === 'run' && seen.has(name)) continue
-    seen.add(name)
+    const person = personOf(outcome)
+    if (outcome.eventType === 'run' && seen.has(person)) continue
+    seen.add(person)
     parts.push(outcome.label)
   }
   return parts.join(' · ')

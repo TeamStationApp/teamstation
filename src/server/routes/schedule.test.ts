@@ -1270,7 +1270,7 @@ describe('scheduling a team’s games over HTTP', function () {
       .select(['events.atBatIndex as atBatIndex', 'eventCredits.teamId'])
       .where('events.gameId', '=', gameId)
       .orderBy('events.atBatIndex')
-      .orderBy('eventCredits.label', 'desc')
+      .orderBy('eventCredits.head', 'desc')
       .execute()
     expect(credits.map(credit => credit.teamId)).deep.equals([
       copperheads.id,
