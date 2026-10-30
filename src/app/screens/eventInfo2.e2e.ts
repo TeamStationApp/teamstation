@@ -6,7 +6,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { sql } from 'kysely'
-import puppeteer, { type Browser as CoverageBrowser } from 'puppeteer'
+import type { Browser as CoverageBrowser } from 'puppeteer'
 
 import { asEventInfo } from '../../common/eventInfo'
 import { eventArrivalTime, eventHeroLines } from '../../common/eventTime'
@@ -18,6 +18,12 @@ import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { seedEventInfo2People } from '../../test/eventInfo2Fixture'
 import { groupFixture } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import {
+  connectToProfile,
+  inMapFrame,
+  pointInMapFrame,
+  waitInMapFrame
+} from '../../test/mapFrameProbe'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -228,17 +234,8 @@ async function main(): Promise<void> {
       }
     })
     await m.openBrowser({ url: f.h.origin })
-    const [debugPort, socketPath] = readFileSync(
-      join(profile, 'DevToolsActivePort'),
-      'utf8'
-    )
-      .trim()
-      .split('\n')
     // This connection collects coverage only; every UI action uses Maestro D.
-    coverageBrowser = await puppeteer.connect({
-      defaultViewport: null,
-      browserWSEndpoint: `ws://127.0.0.1:${debugPort}${socketPath}`
-    })
+    coverageBrowser = await connectToProfile(profile)
     const coveragePage = (await coverageBrowser.pages()).find(page =>
       page.url().startsWith(f.h.origin)
     )!
@@ -673,9 +670,7 @@ async function main(): Promise<void> {
       await shot(file)
     }
     await see({ id: 'event-location-map' }, 'UP')
-    await wait(
-      `document.querySelector('iframe')?.contentWindow?.eventMap != null`
-    )
+    await waitInMapFrame(coveragePage, 'window.eventMap!=null')
     await shot('location-after.png')
     const mapRect = await evaluate<{
       x: number
@@ -685,8 +680,9 @@ async function main(): Promise<void> {
     }>(
       `(()=>{const r=document.querySelector('iframe').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})()`
     )
-    const center = await evaluate<{ lat: number; lng: number }>(
-      `document.querySelector('iframe').contentWindow.eventMap.getCenter()`
+    const center = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      'window.eventMap.getCenter()'
     )
     await m.dragAndDrop({
       from: {
@@ -698,8 +694,9 @@ async function main(): Promise<void> {
       holdDuration: 100,
       duration: 500
     })
-    const changedCenter = await evaluate<{ lat: number; lng: number }>(
-      `document.querySelector('iframe').contentWindow.eventMap.getCenter()`
+    const changedCenter = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      'window.eventMap.getCenter()'
     )
     assert(
       Math.abs(center.lng - changedCenter.lng) > 0.001,
@@ -708,20 +705,20 @@ async function main(): Promise<void> {
     failTiles = true
     await open(`/games/${gameId}`)
     await see({ id: 'event-location-map' })
-    await wait(
-      `document.querySelector('iframe').contentDocument.querySelector('#error').style.display==='block'`
+    await waitInMapFrame(
+      coveragePage,
+      `document.querySelector('#error').style.display==='block'`
     )
     await shot('map-tiles-retry.png')
     failTiles = false
-    const retryPoint = await evaluate<{ x: number; y: number }>(
-      `(()=>{const f=document.querySelector('iframe'),a=f.getBoundingClientRect(),b=f.contentDocument.querySelector('#retry-map-tiles').getBoundingClientRect();return{x:a.x+b.x+b.width/2,y:a.y+b.y+b.height/2}})()`
-    )
+    const retryPoint = await pointInMapFrame(coveragePage, '#retry-map-tiles')
     await m.tapOnPoint({
       x: Math.round(retryPoint.x),
       y: Math.round(retryPoint.y)
     })
-    await wait(
-      `document.querySelector('iframe').contentDocument.querySelector('#error').style.display==='none'`
+    await waitInMapFrame(
+      coveragePage,
+      `document.querySelector('#error').style.display==='none'`
     )
     await see({ id: 'event-address' })
     // Clear of the floating tab bar, wherever the cards above leave it.
@@ -1182,9 +1179,10 @@ async function main(): Promise<void> {
     await open(`/games/${event.id}`)
     await see({ id: 'event-location-map' })
     await shot('legacy-location-after.png')
-    await wait(`document.querySelector('iframe').contentWindow.eventMap!=null`)
-    const venueCenter = await evaluate<{ lat: number; lng: number }>(
-      `document.querySelector('iframe').contentWindow.eventMap.getCenter()`
+    await waitInMapFrame(coveragePage, 'window.eventMap!=null')
+    const venueCenter = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      'window.eventMap.getCenter()'
     )
     await m.evalBrowserScript({
       script: `window.open=(url,target,features)=>{window.lastEventDirections=url;window.lastEventDirectionsFeatures=features;return null}`
