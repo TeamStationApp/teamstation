@@ -624,18 +624,30 @@ export function watchVisualViewport(
   const changed = (): void => {
     const bottom = viewport.offsetTop + viewport.height
     const visible = viewport.height * viewport.scale
-    if (window.innerWidth !== width) {
+    const editing =
+      document.activeElement instanceof HTMLElement &&
+      (document.activeElement.isContentEditable ||
+        document.activeElement.matches('input,textarea'))
+    if (!editing || window.innerWidth !== width) {
       width = window.innerWidth
-      closedHeight = window.innerHeight
+      closedHeight = Math.max(window.innerHeight, visible)
     } else closedHeight = Math.max(closedHeight, window.innerHeight, visible)
-    update({ bottom, keyboardOpen: visible < closedHeight - 80 })
+    update({ bottom, keyboardOpen: editing && visible < closedHeight - 80 })
   }
   viewport.addEventListener('resize', changed)
   viewport.addEventListener('scroll', changed)
+  window.addEventListener('resize', changed)
+  window.addEventListener('scroll', changed)
+  document.addEventListener('focusin', changed)
+  document.addEventListener('focusout', changed)
   changed()
   return () => {
     viewport.removeEventListener('resize', changed)
     viewport.removeEventListener('scroll', changed)
+    window.removeEventListener('resize', changed)
+    window.removeEventListener('scroll', changed)
+    document.removeEventListener('focusin', changed)
+    document.removeEventListener('focusout', changed)
   }
 }
 

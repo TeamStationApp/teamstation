@@ -44,6 +44,137 @@ async function render(element: React.ReactElement): Promise<HTMLElement> {
 }
 
 describe('chat measured chrome and explicit focus', function () {
+  it('shares visual keyboard clearance with navigation through scroll, zoom and rotation', async function () {
+    const saved = Object.getOwnPropertyDescriptor(window, 'visualViewport')
+    const width = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+    const height = Object.getOwnPropertyDescriptor(window, 'innerHeight')
+    const visual = Object.assign(new window.EventTarget(), {
+      height: 844,
+      width: 390,
+      scale: 1,
+      offsetTop: 0
+    })
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: visual
+    })
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 390
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 844
+    })
+    let measures = 0
+    function Probe(): React.ReactElement {
+      const viewport = useChatViewport({ composer: 52 })
+      const { frame, measure } = viewport
+      useEffect(() => {
+        Object.defineProperty(frame.current!, 'measureInWindow', {
+          configurable: true,
+          value: (
+            report: (
+              x: number,
+              y: number,
+              width: number,
+              height: number
+            ) => void
+          ) => {
+            measures++
+            report(0, 0, 390, 844)
+          }
+        })
+        measure()
+      }, [frame, measure])
+      return (
+        <>
+          <textarea data-testid="keyboard-input" />
+          <ChatViewport viewport={viewport}>
+            <span data-testid="visual-bottom">{viewport.composerBottom}</span>
+          </ChatViewport>
+          <AppNav selected="chat" mode="floating" onSelect={() => {}} />
+        </>
+      )
+    }
+    try {
+      const node = await render(<Probe />)
+      expect(node.querySelector('[role="tablist"]')).not.equals(null)
+      await act(async () => {
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          value: 700
+        })
+        visual.height = 700
+        window.dispatchEvent(new window.Event('resize'))
+      })
+      expect(node.querySelector('[role="tablist"]')).not.equals(null)
+      await act(async () => {
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          value: 844
+        })
+        visual.height = 844
+        window.dispatchEvent(new window.Event('resize'))
+        node.querySelector<HTMLTextAreaElement>('textarea')!.focus()
+      })
+      await act(async () => {
+        visual.height = 500
+        visual.dispatchEvent(new window.Event('resize'))
+      })
+      expect(
+        node.querySelector('[data-testid="visual-bottom"]')?.textContent
+      ).equals('352')
+      expect(node.querySelector('[role="tablist"]')).equals(null)
+      const beforeScroll = measures
+      await act(async () => {
+        visual.offsetTop = 100
+        visual.dispatchEvent(new window.Event('scroll'))
+      })
+      expect(measures).greaterThan(beforeScroll)
+      expect(
+        node.querySelector('[data-testid="visual-bottom"]')?.textContent
+      ).equals('252')
+      await act(async () => {
+        visual.offsetTop = 0
+        visual.height = 422
+        visual.scale = 2
+        visual.dispatchEvent(new window.Event('resize'))
+      })
+      expect(node.querySelector('[role="tablist"]')).not.equals(null)
+      await act(async () => {
+        Object.defineProperty(window, 'innerWidth', {
+          configurable: true,
+          value: 844
+        })
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          value: 390
+        })
+        visual.height = 390
+        visual.scale = 1
+        window.dispatchEvent(new window.Event('resize'))
+      })
+      expect(node.querySelector('[role="tablist"]')).not.equals(null)
+      await act(async () => {
+        root?.unmount()
+        root = undefined
+      })
+      const afterUnmount = measures
+      visual.dispatchEvent(new window.Event('resize'))
+      expect(measures).equals(afterUnmount)
+    } finally {
+      for (const [key, descriptor] of [
+        ['visualViewport', saved],
+        ['innerWidth', width],
+        ['innerHeight', height]
+      ] as const) {
+        if (descriptor == null) Reflect.deleteProperty(window, key)
+        else Object.defineProperty(window, key, descriptor)
+      }
+    }
+  })
+
   it('measures the complete phone tab-bar clearance inside the full list scroll frame', async function () {
     const item = chat()
     const node = await render(
