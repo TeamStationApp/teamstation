@@ -184,6 +184,7 @@ export async function deleteAccount(
       or terms->>'playerUserId' in (${ids})
       or terms->'guardian'->>'userId' in (${ids})
       or terms->>'recipientUserId' in (${ids})
+      or (kind = 'playerAdd' and terms->>'userId' in (${ids}))
     )`
     const cancelled = (
       await sql<{ id: string }>`update group_requests

@@ -757,6 +757,21 @@ describe('deleting an account', function () {
       }
     )
     expect(asked.status).equals('pending')
+    // A team's add of them, waiting on their side after a rejection.
+    await h.db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_deleted_add',
+        kind: 'playerAdd',
+        sender_id: child.id,
+        sender_scope_type: 'team',
+        sender_scope_id: 'tem_account',
+        terms: JSON.stringify({ kind: 'playerAdd', userId: gone.id }),
+        status: 'pending',
+        sent_at: new Date(0),
+        expires_at: new Date(Date.now() + 86_400_000)
+      })
+      .execute()
     await notifyGrant(h.db, {
       ref: { kind: 'team', id: 'tem_account' },
       userId: child.id,
@@ -814,6 +829,15 @@ describe('deleting an account', function () {
       .where('id', '=', asked.id)
       .executeTakeFirstOrThrow()
     expect(request.status).equals('cancelled')
+    expect(
+      (
+        await h.db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', 'grq_deleted_add')
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('cancelled')
     const decided = await decideRelationshipRequest(
       h.db,
       { userId: child.id, isAdmin: false, scopes: [] },

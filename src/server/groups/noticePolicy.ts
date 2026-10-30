@@ -22,6 +22,7 @@ import type {
   PlayerRemover
 } from '../notifications/requestInformation'
 import { noteScopeChange } from '../socket/syncRevision'
+import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId } from '../users/insertUser'
 import { shortNamesOf } from '../users/nameBook'
 import type { Clock, StoredRequest } from './requests'
@@ -869,6 +870,8 @@ async function decideOnce(
     // Between a pitch and its result: accept again once it is in.
     await guestGameOpen(trx, game)
   }
+  // Deleted since it was asked: a later add must not bring them back.
+  await refuseDeleted(trx, (await personOf(trx, terms.userId)).userId)
   const applied = await applyPlayerAdd(trx, terms)
   await trx
     .updateTable('group_requests')
