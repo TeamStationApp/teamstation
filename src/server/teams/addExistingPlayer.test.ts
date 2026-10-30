@@ -136,13 +136,19 @@ describe('adding a player who already exists', function () {
     db = makeDatabase(scratchUrl)
     const d = db
     await d
+      .insertInto('leagues')
+      .values({ id: 'lea_existingA', name: 'Valley League' })
+      .execute()
+    await db
       .insertInto('teams')
-      .values([
-        { id: TEAM.falcons, name: 'Ridgeview Falcons' },
-        { id: TEAM.herons, name: 'Lakeside Herons' },
-        { id: TEAM.owls, name: 'Ridgeview Owls' },
-        { id: TEAM.bears, name: 'Valley Bears' }
-      ])
+      .values(
+        [
+          { id: TEAM.falcons, name: 'Ridgeview Falcons' },
+          { id: TEAM.herons, name: 'Lakeside Herons' },
+          { id: TEAM.owls, name: 'Ridgeview Owls' },
+          { id: TEAM.bears, name: 'Valley Bears' }
+        ].map(team => ({ ...team, league_id: 'lea_existingA' }))
+      )
       .execute()
     const coach = await person('Dave Roberts', TEAM.falcons, false)
     await d
@@ -400,7 +406,7 @@ describe('adding a player who already exists', function () {
     expect(made.body.nameDetails.firstName).equals('Max')
   })
 
-  it('puts a full account that plays for no team on the roster, and refuses one switched off', async function () {
+  it('only asks for a full account that plays for no team, and refuses one switched off', async function () {
     const harper = await person('Bryce Harper')
     const off = await person('Rafael Furcal')
     await db!
@@ -424,20 +430,31 @@ describe('adding a player who already exists', function () {
       jersey: '3',
       positions: ['RF']
     })
-    expect(added.status).equals(201)
-    expect(added.body).to.include({
-      userId: harper,
-      shortName: 'Bryce H',
-      jersey: '3',
-      isPlayer: true
-    })
-    // He signs in himself, so he is the one told.
-    expect(added.body.notice.requestId).match(/^inv_/)
-    expect(await membership('Bryce Harper', TEAM.falcons)).to.include({
-      is_player: true,
-      jersey: '3'
-    })
+    // Nobody's player, so nobody this team has a reason to know: he is asked,
+    // and nothing about him reaches the team until he accepts.
+    expect(added.status).equals(202)
+    expect(added.body.pending.requestId).match(/^inv_/)
+    expect(await membership('Bryce Harper', TEAM.falcons)).equals(undefined)
     expect((await roster({ userId: off })).status).equals(404)
+  })
+
+  it('never adds a stranger on nobody’s say', async function () {
+    // On a team outside the league, with no guardian, no sign-in and no coach
+    // to stand in: nobody can answer for them.
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_existingAFar', name: 'Faraway Gulls' })
+      .execute()
+    await person('Faraway Child', 'tem_existingAFar')
+    await db!
+      .updateTable('users')
+      .set({ login_enabled: false })
+      .where('id', '=', ids['Faraway Child'])
+      .execute()
+    const asked = await roster({ userId: ids['Faraway Child'] })
+    expect(asked.status).equals(403)
+    expect(JSON.stringify(asked.body)).includes('Nobody can approve')
+    expect(await membership('Faraway Child', TEAM.falcons)).equals(undefined)
   })
 
   it('answers two adds of one person at once as one add', async function () {

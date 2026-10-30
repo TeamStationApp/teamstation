@@ -131,11 +131,13 @@ describe('a pool player and who may open their page', function () {
       .execute()
     await d
       .insertInto('teams')
-      .values([
-        { id: TEAM.falcons, name: 'Ridgeview Falcons' },
-        { id: TEAM.herons, name: 'Lakeside Herons' },
-        { id: TEAM.owls, name: 'Ridgeview Owls' }
-      ])
+      .values(
+        [
+          { id: TEAM.falcons, name: 'Ridgeview Falcons' },
+          { id: TEAM.herons, name: 'Lakeside Herons' },
+          { id: TEAM.owls, name: 'Ridgeview Owls' }
+        ].map(team => ({ ...team, league_id: 'lea_pool' }))
+      )
       .execute()
     await d
       .insertInto('season_teams')

@@ -1,6 +1,6 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
-import { notFound } from '../../common/errors'
+import { forbidden, notFound } from '../../common/errors'
 import type { PlayerAddTerms } from '../../common/notifications'
 import {
   DEFAULT_PLAYER_NAME_PRIVACY,
@@ -21,7 +21,7 @@ import {
 } from '../groups/noticePolicy'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { type Clock, realClock } from '../groups/requests'
-import { fullAccount } from '../users/rosterCandidates'
+import { fullAccount, hasTie } from '../users/rosterCandidates'
 
 type Trx = Transaction<Database>
 
@@ -129,7 +129,16 @@ export async function addByPolicy(
       (await personOf(trx, terms.userId)).userIds,
       terms
     )
-  const policy = await playerAddPolicy(trx, terms.userId, terms.teamId)
+  const known = await hasTie(
+    trx,
+    actor,
+    terms.teamId,
+    terms.gameId,
+    (await personOf(trx, terms.userId)).userIds
+  )
+  const policy = known
+    ? await playerAddPolicy(trx, terms.userId, terms.teamId)
+    : 'approval'
   if (policy === 'approval') {
     // Asked again while the first ask waits: the same request, not another.
     const waiting = await trx
@@ -155,6 +164,8 @@ export async function addByPolicy(
     const requestId = await recordPlayerAdd(trx, actor, terms, 'pending', clock)
     if (requestId != null)
       return { kind: 'pending', userId: terms.userId, requestId }
+    // A stranger is never added on nobody's say.
+    if (!known) throw forbidden('Nobody can approve adding this player')
   }
   const applied = await applyPlayerAdd(trx, terms, terms.mode === 'roster')
   const requestId = await recordPlayerAdd(trx, actor, applied, 'applied', clock)

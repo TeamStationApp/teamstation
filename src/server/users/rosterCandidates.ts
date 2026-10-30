@@ -223,6 +223,59 @@ interface CandidateRow {
  * left out. Pages are keyset pages over (tier, folded first, folded last, id),
  * so the list growing between pages repeats and skips nobody.
  */
+/**
+ * Whether a person is somebody this team has a reason to know, as the search's
+ * tiers read it: on a team of the caller's, in the team's season or league, or
+ * somebody the caller guards. Anybody else is a stranger, and an add of a
+ * stranger only asks: creating a team takes nothing but an account, and a
+ * team that holds a player reads their whole name, their guardians and their
+ * birth month.
+ */
+export async function hasTie(
+  db: Kysely<Database>,
+  actor: Actor,
+  teamId: string,
+  gameId: string | undefined,
+  userIds: readonly string[]
+): Promise<boolean> {
+  if (actor.isAdmin) return true
+  const target = await candidateTarget(db, actor, teamId, gameId)
+  const seasons =
+    target.gameSeasonId != null
+      ? sql`select ${target.gameSeasonId}::text as season_id`
+      : sql`select season_id from team_seasons where team_id = ${target.teamId}`
+  const ids = sql.join(userIds)
+  const { rows } = await sql`
+    with recursive
+    team_seasons as (
+      select season_id, team_id from season_teams where active
+      union
+      select season_id, team_id from season_team_parents
+    ),
+    target_seasons as (${seasons}),
+    caller_teams as (
+      select team_id from memberships where user_id = ${actor.userId}
+      union
+      select scope_id from scope_roles
+        where user_id = ${actor.userId} and scope_type = 'team'
+    )
+    select 1 from memberships m
+      join teams t on t.id = m.team_id and t.merged_into is null
+      where m.is_player and m.user_id in (${ids})
+        and (m.team_id in (select team_id from caller_teams)
+          or m.team_id in (
+            select team_id from team_seasons
+              where season_id in (select season_id from target_seasons)
+          )
+          or t.league_id = ${target.leagueId})
+    union all
+    select 1 from user_links
+      where user_id = ${actor.userId} and related_user_id in (${ids})
+        and kind in ('guardian', 'family')
+    limit 1`.execute(db)
+  return rows.length > 0
+}
+
 export async function rosterCandidates(
   db: Kysely<Database>,
   actor: Actor,
