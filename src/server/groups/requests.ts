@@ -1240,16 +1240,17 @@ export async function decideRelationshipRequest(
   clock: Clock = realClock
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
-    // A player add writes rosters, guests and lineups: like every roster
-    // writer it holds the player-edit lock before it reads who anybody is,
-    // and before the request's own locks. A request's kind never changes.
+    await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
+    // A player add writes rosters, guests and lineups, so it holds the
+    // player-edit lock before it reads who anybody is. After the locks above,
+    // as a merge and an account deletion take them: the other order
+    // deadlocks with them. A request's kind never changes.
     const kind = await trx
       .selectFrom('group_requests')
       .select('kind')
       .where('id', '=', id)
       .executeTakeFirst()
     if (kind?.kind === 'playerAdd') await lockPlayerEdits(trx)
-    await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
     const fresh = await currentActor(trx, actor)
     const request = await trx
       .selectFrom('group_requests')

@@ -8,6 +8,7 @@ import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
+import { recordOf } from '../../common/scoring/gumbo'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
 import { guardiansWhoCanAct } from '../access'
@@ -499,14 +500,67 @@ async function playedGames(
               'in',
               gumbos.map(row => String(row.gumbo_id))
             )
+        ),
+        // In a play in any other role: a pitcher, before any line is built.
+        eb.exists(
+          eb
+            .selectFrom('event_players')
+            .innerJoin('events', 'events.id', 'event_players.event_id')
+            .select('event_players.id')
+            .whereRef('events.gameId', '=', 'games.id')
+            .where(
+              'event_players.gumbo_id',
+              'in',
+              gumbos.map(row => row.gumbo_id)
+            )
+            .where(on =>
+              on.or([
+                on('event_players.team_id', '=', terms.teamId),
+                on('event_players.team_id', 'is', null)
+              ])
+            )
         )
       ])
     )
     .execute()
-  return games.map(game => ({
+  const covered = games.map(game => ({
     ...game,
     side: sideOf(game, terms, new Set())
   }))
+  // Under way, and in the order or the field without a play yet: their
+  // session would have them bat under their own name.
+  const underWay = await trx
+    .selectFrom('games')
+    .select(['id', 'guests', 'home_team_id', 'away_team_id', 'currentPlay'])
+    .where(eb =>
+      eb.or([
+        eb('home_team_id', '=', terms.teamId),
+        eb('away_team_id', '=', terms.teamId)
+      ])
+    )
+    .where('status', '=', 'inProgress')
+    .where('start_at', '>=', new Date(request.sent_at.getTime() - DAY))
+    .execute()
+  const pool = await trx
+    .selectFrom('game_guest_details')
+    .select('game_id')
+    .where('user_id', 'in', userIds)
+    .where('pool', '=', true)
+    .execute()
+  for (const game of underWay) {
+    if (covered.some(row => row.id === game.id)) continue
+    if (pool.some(row => row.game_id === game.id)) continue
+    const side = sideOf(game, terms, new Set())
+    const setup = recordOf(game.currentPlay, teamsOfRow(game))?.setupBefore
+      .sides[side]
+    const placed = [
+      ...(setup?.battingOrder ?? []),
+      ...Object.values(setup?.defense ?? {})
+    ]
+    if (placed.some(id => id != null && held.has(id)))
+      covered.push({ ...game, side })
+  }
+  return covered
 }
 
 /**
@@ -644,7 +698,23 @@ export async function undoPlayerAdd(
     noteScopeChange(trx, { gameId: game.id })
   }
   if (terms.mode === 'roster') {
-    if (terms.createdMembership === true)
+    // Whatever has come to rest on the row since the add stays: somebody
+    // given a role on the team is on it for that, not for the add.
+    const staff = await trx
+      .selectFrom('scope_roles')
+      .select('role')
+      .where('scope_type', '=', 'team')
+      .where('scope_id', '=', terms.teamId)
+      .where('user_id', 'in', person.userIds)
+      .executeTakeFirst()
+    const held = await trx
+      .selectFrom('memberships')
+      .select('role')
+      .where('team_id', '=', terms.teamId)
+      .where('user_id', 'in', person.userIds)
+      .where('role', '!=', 'member')
+      .executeTakeFirst()
+    if (terms.createdMembership === true && staff == null && held == null)
       await trx
         .deleteFrom('memberships')
         .where('team_id', '=', terms.teamId)

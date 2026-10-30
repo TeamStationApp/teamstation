@@ -5,17 +5,20 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
 import type { PlayerAddTerms } from '../../common/notifications'
 import { placeholderTeamName } from '../../common/placeholderNames'
+import { newSetup } from '../../common/scoring/lineup'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { MERGE_LOCK } from '../admin/people'
 import { hashToken } from '../auth/tokens'
+import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -33,6 +36,7 @@ import { teamRoutes } from '../routes/teams'
 import { resolveScoringGame } from '../scoring/openRow'
 import { battingLines } from '../stats'
 import { statRows } from '../stats/rows'
+import { addByPolicy } from '../teams/addExistingPlayer'
 import { ensureGumboId, insertUser } from '../users/insertUser'
 import { gameNames, gameNamesDigest } from '../users/nameBook'
 import {
@@ -1451,5 +1455,150 @@ describe('adds made with a notice', function () {
     // With the newer add undone, the older one is the latest again: its own
     // games are his to take off his record too.
     expect(await card(first.requestId!)).to.include({ canReject: true })
+  })
+
+  it('waits behind a merge holding the parent graph, rather than deadlock with it', async function () {
+    await person('Lock Holder', { login: true })
+    const added = await add('roster', 'Lock Holder')
+    let decided: Promise<string> | undefined
+    // As a merge and an account deletion do: the graph, then the merge lock.
+    await atomic(db!, async trx => {
+      await lockKeys(trx, ['creation:parent-graph'])
+      decided = decide('Lock Holder', added.requestId!, 'decline')
+      await new Promise(resolve => setTimeout(resolve, 300))
+      await sql`set local lock_timeout = '5s'`.execute(trx)
+      await sql`select pg_advisory_xact_lock(hashtextextended(${MERGE_LOCK}, 0))`.execute(
+        trx
+      )
+    })
+    expect(await decided).equals('declined')
+  })
+
+  it('withdraws a game under way that holds them with no line yet: pitching, or due up', async function () {
+    const under = async (): Promise<string> => {
+      const id = await game()
+      await db!
+        .updateTable('games')
+        .set({ status: 'inProgress' })
+        .where('id', '=', id)
+        .execute()
+      return id
+    }
+    await person('Only Pitching', { login: true })
+    const pitching = await add('roster', 'Only Pitching')
+    const mound = await under()
+    const event = makeId('event')
+    await db!
+      .insertInto('events')
+      .values({
+        id: event,
+        gameId: mound,
+        startTime: new Date(),
+        battingTeamId: TEAM.herons,
+        gumbo: JSON.stringify({ about: { atBatIndex: 0 } })
+      })
+      .execute()
+    await db!
+      .insertInto('event_players')
+      .values({
+        id: makeId('eventPlayer'),
+        event_id: event,
+        gumbo_id: gumbo['Only Pitching'],
+        team_id: TEAM.falcons,
+        role: 'pitcher',
+        position: null
+      })
+      .execute()
+    await decide('Only Pitching', pitching.requestId!, 'decline')
+
+    await person('Due Up', { login: true })
+    const waiting = await add('roster', 'Due Up')
+    const order = await under()
+    const teams = {
+      away: { id: TEAM.herons, name: 'Lakeside Herons' },
+      home: { id: TEAM.falcons, name: 'Ridgeview Falcons' }
+    }
+    const setup = newSetup(
+      teams,
+      {
+        away: [],
+        home: [
+          {
+            gumboId: gumbo['Due Up'],
+            shortName: 'Due U'
+          }
+        ]
+      },
+      false
+    )
+    setup.sides.home.battingOrder = [gumbo['Due Up']]
+    await db!
+      .updateTable('games')
+      .set({
+        currentPlay: JSON.stringify({
+          about: { atBatIndex: 0 },
+          teamStation: { version: 2, setupBefore: setup, actions: [] }
+        })
+      })
+      .where('id', '=', order)
+      .execute()
+    await decide('Due Up', waiting.requestId!, 'decline')
+
+    const rows = await db!
+      .selectFrom('game_withdrawn_players')
+      .select('game_id')
+      .where('game_id', 'in', [mound, order])
+      .orderBy('game_id')
+      .execute()
+    expect(rows.map(row => row.game_id).sort()).deep.equals(
+      [mound, order].sort()
+    )
+    await db!
+      .updateTable('games')
+      .set({ status: 'final' })
+      .where('id', 'in', [mound, order])
+      .execute()
+  })
+
+  it('leaves a role given since the add when it is rejected', async function () {
+    await person('Now Coaching', { login: true })
+    const added = await add('roster', 'Now Coaching')
+    await role(ids['Now Coaching'], TEAM.falcons, 'coach')
+    await decide('Now Coaching', added.requestId!, 'decline')
+    expect(await membership('Now Coaching', TEAM.falcons)).to.include({
+      is_player: false
+    })
+  })
+
+  it('finds the ask already waiting under an account merged since', async function () {
+    await person('Merged Asker', { login: true })
+    const first = await add('roster', 'Merged Asker')
+    await decide('Merged Asker', first.requestId!, 'decline')
+    const terms = (userId: string): PlayerAddTerms => ({
+      kind: 'playerAdd',
+      mode: 'roster',
+      userId,
+      teamId: TEAM.falcons,
+      jersey: null,
+      positions: [],
+      teamName: 'Ridgeview Falcons'
+    })
+    const actor = { userId: ids['Dave Roberts'], isAdmin: false, scopes: [] }
+    const ask = async (userId: string): Promise<unknown> =>
+      await atomic(
+        db!,
+        async trx => await addByPolicy(trx, actor, terms(userId), clock)
+      )
+    const asked = (await ask(ids['Merged Asker'])) as { requestId: string }
+    await person('Kept Asker', { login: true })
+    await db!
+      .updateTable('users')
+      .set({ merged_into: ids['Kept Asker'] })
+      .where('id', '=', ids['Merged Asker'])
+      .execute()
+    expect(await ask(ids['Kept Asker'])).to.include({
+      kind: 'pending',
+      requestId: asked.requestId
+    })
   })
 })

@@ -139,7 +139,11 @@ export async function addByPolicy(
       // Nothing marks an unanswered one expired: its date does.
       .where('expires_at', '>', clock.now())
       .where('initiating_team_id', '=', terms.teamId)
-      .where(sql<boolean>`terms->>'userId' = ${terms.userId}`)
+      .where(
+        sql<string>`terms->>'userId'`,
+        'in',
+        (await personOf(trx, terms.userId)).userIds
+      )
       .where(sql<boolean>`terms->>'mode' = ${terms.mode}`)
       .where(
         sql<boolean>`coalesce(terms->>'gameId', '') = ${terms.gameId ?? ''}`
