@@ -6,9 +6,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   asGameSummary,
   asTeamSummary,
+  type GamesPageQuery,
   type GameSummary,
   type TeamStationClient
 } from '../../common/api'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { TeamScreen } from './TeamScreen'
@@ -51,7 +53,8 @@ async function render(
 ): Promise<Array<{ id: string; options?: GameListOpenOptions }>> {
   const opened: Array<{ id: string; options?: GameListOpenOptions }> = []
   const client = {
-    teamGames: async () => [row],
+    teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+      pageOfGames([row], query),
     roster: async () => [],
     teamStats: async () => [],
     teamPitchingStats: async () => [],

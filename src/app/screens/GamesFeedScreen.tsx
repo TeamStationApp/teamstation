@@ -55,7 +55,7 @@ import {
   shortTime
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
-import type { When } from './whenFilter'
+import { countFor, type When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
   client: TeamStationClient
@@ -121,9 +121,7 @@ function countOf(
   mode: GamesFeedScreenProps['mode'],
   when: When
 ): number {
-  if (mode === 'videos') return counts.withVideo
-  if (when === 'upcoming') return counts.upcoming
-  return when === 'past' ? counts.total - counts.upcoming : counts.total
+  return mode === 'videos' ? counts.withVideo : countFor(counts, when)
 }
 
 /**

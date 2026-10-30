@@ -1,3 +1,5 @@
+import type { ListCounts } from '../../common/api'
+
 export { endsAt, LIVE_GRACE_MS, nextGameIndex } from '../../common/nextGame'
 
 /**
@@ -11,6 +13,12 @@ export { endsAt, LIVE_GRACE_MS, nextGameIndex } from '../../common/nextGame'
  * lived at the call site. It lives here now.
  */
 export type When = 'past' | 'upcoming' | 'all'
+
+/** How many games a filter holds, whichever of them are loaded. */
+export function countFor(counts: ListCounts, when: When): number {
+  if (when === 'upcoming') return counts.upcoming
+  return when === 'past' ? counts.total - counts.upcoming : counts.total
+}
 
 interface Datable {
   startAt: string | null

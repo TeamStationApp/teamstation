@@ -6,7 +6,12 @@ import { join, resolve } from 'node:path'
 import type { HTTPRequest } from 'puppeteer'
 
 import { scheduleDate, shortDate } from '../app/screens/format'
-import type { SeasonGame } from '../common/api'
+import type {
+  GameSummary,
+  ListCounts,
+  Page as ListPage,
+  SeasonGame
+} from '../common/api'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { startLongLists } from './longListsFixture.e2e'
 import { longListsSupport } from './longListsSeed'
@@ -17,6 +22,7 @@ import {
   log,
   maestro
 } from './refinementsMaestro.e2e'
+import { scrollToRow } from './scrollToRow'
 import { stackBrowserCoverage } from './stackBrowserCoverage'
 
 /**
@@ -75,6 +81,8 @@ const DEPTH = 6000
 const PAGE_ROWS = 50
 /** A row on the phone's screen, with what a list keeps drawn around it. */
 const MOST_ROWS_AT_ONCE = 60
+/** Past what is kept drawn after a team's next game. */
+const ROWS_PAST_THE_NEXT = 14
 /** The section title and its space, from the pills to a pill's first row. */
 const MOST_BELOW_PILLS = 110
 
@@ -141,7 +149,7 @@ async function main(): Promise<void> {
     )
   }
   /** The page's own scroller: the tallest one on the top scene. */
-  const scroll = async (to: number | 'end'): Promise<number> =>
+  const scroll = async (to: number | 'end' | 'here'): Promise<number> =>
     await page.evaluate(wanted => {
       const scene = document.querySelector('[data-scene-role="top"]')
       const nodes = [
@@ -158,6 +166,7 @@ async function main(): Promise<void> {
       nodes.sort((a, b) => b.scrollHeight - a.scrollHeight)
       const scroller = nodes[0]
       if (scroller === undefined) throw new Error('No scroller on this page')
+      if (wanted === 'here') return scroller.scrollTop
       scroller.scrollTop = wanted === 'end' ? scroller.scrollHeight : wanted
       return scroller.scrollHeight
     }, to)
@@ -202,15 +211,108 @@ async function main(): Promise<void> {
 
   /** The reads of a paged list since the last look. */
   const reads: URL[] = []
+  const teamReads: URL[] = []
   page.on('request', request => {
     const url = new URL(request.url())
     if (url.pathname.endsWith('/events') && url.searchParams.has('paged'))
       reads.push(url)
+    if (
+      url.pathname.endsWith(`/teams/${seeded.teamId}/games`) &&
+      url.searchParams.has('paged')
+    )
+      teamReads.push(url)
   })
   /** The whole list, as an unpaged read answers it. */
   const wholeList = async (query: string): Promise<SeasonGame[]> => {
     const answer = await f.h.request('GET', `/events${query}`, undefined, 101)
     return (await answer.json()) as SeasonGame[]
+  }
+  /** The game a team's schedule opens on, as the server says. */
+  const teamOpening = async (): Promise<ListPage<GameSummary>> => {
+    const answer = await f.h.request(
+      'GET',
+      `/teams/${seeded.teamId}/games?paged=1&around=next`,
+      undefined,
+      101
+    )
+    return (await answer.json()) as ListPage<GameSummary>
+  }
+  const nextGame = async (): Promise<GameSummary> => {
+    const { items, anchorId } = await teamOpening()
+    return items.find(game => game.id === anchorId)!
+  }
+  const laterGame = async (): Promise<GameSummary> => {
+    const { items, anchorId } = await teamOpening()
+    const at = items.findIndex(game => game.id === anchorId)
+    return items
+      .slice(at + ROWS_PAST_THE_NEXT)
+      .find(game => game.playerRsvps != null)!
+  }
+  /** The season's counts, as the server says. */
+  const seasonCounts = async (): Promise<ListCounts> => {
+    const answer = await f.h.request(
+      'GET',
+      `/events?season=${seeded.seasonId}&paged=1`,
+      undefined,
+      101
+    )
+    return ((await answer.json()) as ListPage<SeasonGame>).counts!
+  }
+  /** What the season's hero says. */
+  const heroCounts = async (): Promise<{ games: number; videos: number }> =>
+    await page.evaluate(() => {
+      const scene = document.querySelector('[data-scene-role="top"]')!
+      const said = (scene as HTMLElement).textContent!
+      const figure = (name: string): number => {
+        const found = new RegExp(`${name}(\\d+)`, 'i').exec(said)
+        return found === null ? -1 : Number(found[1])
+      }
+      return { games: figure('games'), videos: figure('videos') }
+    })
+  /** A team's schedule rows on the page, top first. */
+  const teamRows = async (): Promise<Array<{ text: string; top: number }>> =>
+    await page.evaluate(() =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-page-role="top"] [data-testid="scheduleGame"]'
+        )
+      ]
+        .map(node => ({
+          text: node.textContent!,
+          top: node.getBoundingClientRect().top
+        }))
+        .sort((a, b) => a.top - b.top)
+    )
+  const teamPillsBottom = async (): Promise<number> =>
+    await page.$eval(
+      '[aria-label="Team sections"]',
+      node => node.getBoundingClientRect().bottom
+    )
+  /** The first row at or below the pills. */
+  const readerRow = async (): Promise<{ text: string; top: number }> => {
+    const pills = await teamPillsBottom()
+    const row = (await teamRows()).find(({ top }) => top >= pills)
+    if (row == null) throw new Error('No row under the pills')
+    return row
+  }
+  const rowTop = async (text: string): Promise<number> => {
+    const row = (await teamRows()).find(row => row.text === text)
+    if (row == null) throw new Error(`No row ${text} on the page`)
+    return row.top
+  }
+  /** The next game's row starts right under the pills. */
+  const underPills = async (game: GameSummary, step: string): Promise<void> => {
+    const pills = await teamPillsBottom()
+    const top = await page.$eval(
+      `[data-testid="schedule-rsvps-${game.id}"]`,
+      node =>
+        node.closest('[data-testid="scheduleGame"]')!.getBoundingClientRect()
+          .top
+    )
+    assert.ok(
+      top >= pills && top - pills <= MOST_BELOW_PILLS,
+      `E6: ${step}: the row is ${top - pills} under the pills`
+    )
   }
   /** The pills, and where a pill's rows start beneath them. */
   const head = async (): Promise<{ pills: number; firstRow: number }> =>
@@ -475,17 +577,102 @@ async function main(): Promise<void> {
       later('M5: iOS only, in src/app/screens/longListsNative.e2e.ts')
     },
     E6: async () => {
+      teamReads.length = 0
       await open(`/teams/${seeded.teamId}?tab=schedule`, 'Demo Hawks')
       await settle('Demo Owls')
       await pause(900)
       await shot('team-schedule-next')
-      later('M6: opens under the pills at the next game')
+      if (before) {
+        await tapCss('[aria-label="Team sections"] [aria-label="Videos"]')
+        await settle('Demo Owls')
+        await pause(600)
+        await shot('team-videos')
+        return
+      }
+      const next = await nextGame()
+      await underPills(next, 'opens at the next game')
+      assert.ok(
+        (await teamRows()).length < MOST_ROWS_AT_ONCE,
+        'E6: rows mount near the screen'
+      )
+      assert.deepEqual(
+        teamReads.filter(url => url.searchParams.has('cursor')),
+        [],
+        'E6: nothing older is read before the reader moves'
+      )
+      await log(support, 'longLists-web.log', `E6: opens on ${next.id}`)
+
       await tapCss('[aria-label="Team sections"] [aria-label="Videos"]')
       await settle('Demo Owls')
       await pause(600)
       await shot('team-videos')
-      later('M6: back on Schedule, it anchors on the next game again')
-      later('M6: older rows arrive above; the reader stays; an RSVP stays')
+      await tapCss('[aria-label="Team sections"] [aria-label="Schedule"]')
+      await settle('Demo Owls')
+      await pause(900)
+      await underPills(next, 'anchors again from Videos')
+      await tapCss('[aria-label="Team sections"] [aria-label="Videos"]')
+      await settle('Demo Owls')
+      await pause(600)
+      await page.goBack()
+      await settle('Demo Owls')
+      await pause(900)
+      await underPills(next, 'anchors again on Back')
+      await log(support, 'longLists-web.log', 'E6: anchors again')
+
+      // A wheel at a time, in the middle of the page, up past the loaded rows.
+      await page.mouse.move(PHONE.width / 2, PHONE.height / 2)
+      const older = (): URL[] =>
+        teamReads.filter(url => url.searchParams.has('cursor'))
+      for (let wheel = 0; wheel < 80 && older().length === 0; wheel++) {
+        await page.mouse.wheel({ deltaY: -500 })
+        await pause(50)
+      }
+      assert.ok(older().length > 0, 'E6: older rows are read')
+      // Still in motion: the older page has not landed.
+      const reader = await readerRow()
+      const offset = await scroll('here')
+      await pause(1200)
+      const held = await rowTop(reader.text)
+      const landed = (await scroll('here')) - offset
+      assert.ok(landed > 1000, `E6: older rows landed above, ${landed} of them`)
+      assert.ok(
+        Math.abs(held - reader.top) <= 2,
+        `E6: the reader's row stood at ${reader.top}, and stands at ${held}`
+      )
+      await log(
+        support,
+        'longLists-web.log',
+        `E6: ${older().length} older reads; ${landed} of rows landed above; the reader's row ${reader.top} then ${held}`
+      )
+
+      // Past the rows kept drawn around the next game, so that it can leave.
+      const row = await laterGame()
+      const control = `[data-testid="schedule-rsvp-control-${row.id}"]`
+      await scrollToRow(page, control)
+      await pause(300)
+      await tapCss(control)
+      await page.waitForSelector('[data-testid="event-rsvp-modal"]')
+      await tapCss('[data-testid="event-rsvp-modal"] [aria-label^="Yes for"]')
+      await pause(400)
+      await m.tapOn({ text: 'Done', timeout: 15000 })
+      const answer = `[data-testid="schedule-rsvps-${row.id}"]`
+      await page.waitForSelector(
+        `${answer} [data-testid="schedule-rsvp-avatars"]`
+      )
+      const counted = await page.$eval(answer, node => node.textContent)
+      await scroll(0)
+      await pause(800)
+      assert.equal(await page.$(answer), null, 'E6: the row left the page')
+      await scrollToRow(page, answer)
+      await page.waitForSelector(
+        `${answer} [data-testid="schedule-rsvp-avatars"]`
+      )
+      assert.equal(
+        await page.$eval(answer, node => node.textContent),
+        counted,
+        'E6: the answer stays'
+      )
+      await log(support, 'longLists-web.log', 'E6: the RSVP answer stayed')
     },
     E7: async () => {
       await open(`/seasons/${seeded.seasonId}`, 'Demo Regular')
@@ -493,12 +680,63 @@ async function main(): Promise<void> {
       await settle('Demo Owls')
       await pause(600)
       await shot('season-games')
-      later('M6: pills slide; a kept page returns with rows')
+      if (before) {
+        await tapCss('[aria-label="Season sections"] [aria-label="Videos"]')
+        await settle('Demo Owls')
+        await pause(600)
+        await shot('season-videos')
+        return
+      }
+      const counts = await seasonCounts()
+      const hero = async (when: string): Promise<void> => {
+        assert.deepEqual(
+          await heroCounts(),
+          { games: counts.total, videos: counts.videos },
+          `E7: the hero's counts on ${when}`
+        )
+      }
+      await hero('opening')
+      await tapCss('[role="tablist"] [role="tab"][aria-label="Past"]')
+      await settle('Demo Owls')
+      await scrollDown(DEPTH)
+      await hero('Past at depth')
+      // A pill's first time in is a spinner. After that it is kept.
+      for (const [label, kept] of [
+        ['Upcoming', false],
+        ['Past', true],
+        ['All', false],
+        ['Past', true],
+        ['Upcoming', true]
+      ] as const) {
+        const slide = await fewestRowsSliding(label)
+        assert.ok(slide.frames > 0, `E7: ${label} slides`)
+        assert.ok(
+          !kept || slide.arriving > 0,
+          `E7: ${label} comes back with rows, at worst ${slide.arriving}`
+        )
+        await pause(300)
+        await hero(label)
+      }
       await tapCss('[aria-label="Season sections"] [aria-label="Videos"]')
       await settle('Demo Owls')
       await pause(600)
       await shot('season-videos')
-      later('M6: hero counts stay the same as rows load')
+      await hero('Videos')
+      await scrollToEnd()
+      await hero('Videos at its end')
+      await tapCss('[aria-label="Season sections"] [aria-label="Schedule"]')
+      await settle('Demo Owls')
+      await pause(400)
+      assert.ok(
+        (await page.$$('[data-page-role="top"] [data-testid="schedule-date"]'))
+          .length > 0,
+        'E7: Schedule comes back with rows'
+      )
+      await log(
+        support,
+        'longLists-web.log',
+        `E7: counts held at ${counts.total} games, ${counts.videos} videos`
+      )
     },
     E8: async () => {
       await signedOut()

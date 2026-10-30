@@ -14,6 +14,7 @@ import type { Notification } from '../../common/notifications'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { seasonTimeFrames } from '../../common/seasonTimeFrames'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOfGames } from '../../test/pageOf'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
@@ -180,7 +181,7 @@ describe('creation and organization interface behavior', () => {
       ...detail,
       group: { ...group, kind: 'season', id: 'sea_demo' }
     })
-    api.seasonGames = async () => []
+    api.seasonGamesPage = async (_id, query) => pageOfGames([], query)
     api.seasonTeams = async () => participants
     api.standings = async () =>
       participants.map(item => ({
@@ -314,25 +315,29 @@ describe('creation and organization interface behavior', () => {
         canViewPrivate: false,
         nonMemberView: true
       })
-    api.teamGames = async () => [
-      asGameSummary({
-        id: 'gam_reserved',
-        homeTeamId: group.id,
-        awayTeamId: 'tem_guest',
-        homeTeamName: group.name,
-        awayTeamName: 'Demo Guest',
-        seasonId: 'sea_host',
-        startAt: '2027-03-02T18:00:00Z',
-        venue: null,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        ingestStatus: 'pending',
-        videoCount: 0,
-        pendingApproval: true,
-        pendingRequestId: 'req_host'
-      })
-    ]
+    api.teamGamesPage = async (_id, query) =>
+      pageOfGames(
+        [
+          asGameSummary({
+            id: 'gam_reserved',
+            homeTeamId: group.id,
+            awayTeamId: 'tem_guest',
+            homeTeamName: group.name,
+            awayTeamName: 'Demo Guest',
+            seasonId: 'sea_host',
+            startAt: '2027-03-02T18:00:00Z',
+            venue: null,
+            status: 'scheduled',
+            homeScore: null,
+            awayScore: null,
+            ingestStatus: 'pending',
+            videoCount: 0,
+            pendingApproval: true,
+            pendingRequestId: 'req_host'
+          })
+        ],
+        query
+      )
     api.roster = async () => []
     api.standings = async () => []
     api.follows = async () => []
