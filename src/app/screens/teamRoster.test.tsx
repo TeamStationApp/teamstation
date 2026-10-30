@@ -5,10 +5,12 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   asRosterEntry,
+  type GamesPageQuery,
   type RosterEntry,
   type TeamStationClient
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { inheritedPill, TeamScreen } from './TeamScreen'
@@ -87,7 +89,8 @@ async function render(
 ): Promise<string[]> {
   const opened: string[] = []
   const client = {
-    teamGames: async () => [],
+    teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+      pageOfGames([], query),
     roster: async () => roster,
     teamStats: async () => [],
     teamPitchingStats: async () => [],

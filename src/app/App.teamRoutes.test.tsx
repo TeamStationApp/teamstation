@@ -15,6 +15,7 @@ import { userIdOfGumbo } from '../common/userId'
 import { candidate } from '../test/fakeCandidateClient'
 import { measureBoxes } from '../test/measureBoxes'
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
+import { pageOfGames } from '../test/pageOf'
 import { App, stackFor } from './App'
 
 describe('team route frames', () => {
@@ -577,7 +578,7 @@ describe('a person’s profile, through the app', () => {
     proto.hasNotifications = async () => false
     proto.group = async () => detail
     proto.gameProposals = async () => []
-    proto.teamGames = async () => []
+    proto.teamGamesPage = async (_id, query) => pageOfGames([], query)
     proto.teamStats = async () => []
     proto.teamPitchingStats = async () => []
     proto.roster = async () => [
@@ -806,7 +807,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
       asked.push(['update', ref.kind, ref.id, fields])
       return {}
     }) as unknown as typeof proto.updateGroup
-    proto.seasonGames = async () => []
+    proto.seasonGamesPage = async (_id, query) => pageOfGames([], query)
     proto.seasonTeams = async () => []
     proto.standings = async () => []
     proto.seasonStats = async seasonId => ({

@@ -13,6 +13,7 @@ import {
 import { userIdOfGumbo } from '../common/userId'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { mount, settle, unmount } from '../test/gameFormDom'
+import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { lstrings } from './locales/strings'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
@@ -51,7 +52,7 @@ describe('the full-screen player in the shell (U12)', () => {
     api.teams = async () => []
     api.follows = async () => []
     api.ownGroups = async () => []
-    api.teamGames = async () => []
+    api.teamGamesPage = async (_id, query) => pageOfGames([], query)
     api.roster = async () => []
     api.game = async () => ({
       ...gameFixture,

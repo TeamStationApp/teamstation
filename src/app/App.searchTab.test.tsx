@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { asRosterEntry, asSessionUser, TeamStationClient } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { pageOfGames } from '../test/pageOf'
 import { App, stackFor } from './App'
 
 describe('the Search tab', () => {
@@ -145,7 +146,7 @@ describe('the Search tab', () => {
         staff: [],
         canManage: false
       })
-    proto.teamGames = async () => []
+    proto.teamGamesPage = async (_id, query) => pageOfGames([], query)
     proto.roster = async () => [
       asRosterEntry({
         userId: userIdOfGumbo(201),

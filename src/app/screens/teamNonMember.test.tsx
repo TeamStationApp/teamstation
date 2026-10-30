@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
+import type { GamesPageQuery } from '../../common/api'
 import {
   asGameSummary,
   asHighlightsResponse,
@@ -12,6 +13,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOfGames } from '../../test/pageOf'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -173,7 +175,8 @@ function nonMemberClient(follows = true): {
     throw new Error(`${name} is kept for members`)
   }
   const client = {
-    teamGames: async () => [game],
+    teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+      pageOfGames([game], query),
     roster: async () => roster,
     teamStats: refused('teamStats'),
     teamPitchingStats: refused('teamPitchingStats'),

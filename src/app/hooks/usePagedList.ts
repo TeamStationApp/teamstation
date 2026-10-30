@@ -68,6 +68,8 @@ export interface PagedRows<T> {
   retry: () => Promise<void>
   /** Reads the first page and lays it over the rows it covers. */
   refresh: () => Promise<void>
+  /** `refresh`, for a first page the screen read for itself. */
+  apply: (page: Page<T>) => Promise<void>
   /** Reads every held page again, in place. */
   refreshHeld: () => Promise<void>
   /** A stored first page, under anything the server has given. */
@@ -126,6 +128,8 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
   const era = useRef<() => boolean>(() => false)
   /** The walk under way each way, one at a time, in the era it began. */
   const walks = useRef<Partial<Record<Way, () => boolean>>>({})
+  /** The latest refresh: an earlier one's answer is out of date. */
+  const refreshes = useRef(0)
   /** What an older page waits for before it lands above the reader. */
   const olderLands = useRef<() => Promise<void>>(async () => undefined)
 
@@ -252,8 +256,37 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
     [kept, unique]
   )
 
+  const apply = useCallback(
+    async (page: Page<T>): Promise<void> => {
+      const over = spliced(page)
+      if (over == null) {
+        replace(page)
+        const { screenRows = SCREEN_ROWS } = latest.current
+        if (held.current.rows.length < screenRows) await walk('next')
+        return
+      }
+      const now = held.current
+      const unchanged =
+        over.rows?.length === now.rows.length &&
+        over.rows.every((row, index) => row === now.rows[index]) &&
+        over.nextCursor === now.nextCursor &&
+        over.prevCursor === now.prevCursor &&
+        over.anchorId === now.anchorId &&
+        JSON.stringify(over.counts) === JSON.stringify(now.counts)
+      change({
+        ...(unchanged ? {} : over),
+        answered: true,
+        opening: false,
+        error: undefined
+      })
+    },
+    [change, replace, spliced, walk]
+  )
+
   const refresh = useCallback(async (): Promise<void> => {
-    const current = era.current
+    const turn = ++refreshes.current
+    const inEra = era.current
+    const current = (): boolean => turn === refreshes.current && inEra()
     let page: Page<T>
     try {
       page = await latest.current.read(null)
@@ -261,29 +294,8 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       if (current()) change({ error: caught, opening: false })
       return
     }
-    if (!current()) return
-    const over = spliced(page)
-    if (over == null) {
-      replace(page)
-      const { screenRows = SCREEN_ROWS } = latest.current
-      if (held.current.rows.length < screenRows) await walk('next')
-      return
-    }
-    const now = held.current
-    const unchanged =
-      over.rows?.length === now.rows.length &&
-      over.rows.every((row, index) => row === now.rows[index]) &&
-      over.nextCursor === now.nextCursor &&
-      over.prevCursor === now.prevCursor &&
-      over.anchorId === now.anchorId &&
-      JSON.stringify(over.counts) === JSON.stringify(now.counts)
-    change({
-      ...(unchanged ? {} : over),
-      answered: true,
-      opening: false,
-      error: undefined
-    })
-  }, [change, replace, spliced, walk])
+    if (current()) await apply(page)
+  }, [apply, change])
 
   const refreshHeld = useCallback(async (): Promise<void> => {
     const { keyOf } = latest.current
@@ -405,12 +417,14 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       loadOlder,
       retry,
       refresh,
+      apply,
       refreshHeld,
       paint,
       update,
       remove
     }
   }, [
+    apply,
     loadMore,
     loadOlder,
     paint,

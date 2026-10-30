@@ -15,7 +15,7 @@ import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
-import { pageOf } from '../test/pageOf'
+import { pageOf, pageOfGames } from '../test/pageOf'
 import { manualClock, windowSize } from '../test/tessTestKit'
 import { App, screenTitle } from './App'
 import { ChatListNavigationCapture } from './chat/chatWorkspaceModel'
@@ -568,7 +568,7 @@ describe("Tess in the app's shell", () => {
           canManage: false
         })
       api.gameProposals = async () => []
-      api.teamGames = async () => []
+      api.teamGamesPage = async (_id, query) => pageOfGames([], query)
       api.teamStats = async () => []
       api.teamPitchingStats = async () => []
       await open(1280, { name: 'team', teamId: 't1', tab: 'schedule' })

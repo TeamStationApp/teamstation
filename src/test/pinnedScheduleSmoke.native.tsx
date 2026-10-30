@@ -7,7 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { HeaderSlotProvider } from '../app/components/headerSlot'
 import { TeamScreen } from '../app/screens/TeamScreen'
 import { ThemeProvider } from '../app/theme/ThemeContext'
-import { asTeamSummary, TeamStationClient } from '../common/api'
+import { asTeamSummary, type Page, TeamStationClient } from '../common/api'
 import { TEAM_ID, teamScheduleAnswer } from './teamScheduleFixture'
 
 const now = Date.now()
@@ -24,13 +24,16 @@ const client = new TeamStationClient({
           ? input.href
           : input.url
     const answer = teamScheduleAnswer(init?.method ?? 'GET', url, now)
-    if (new URL(url).pathname === `/api/v1/teams/${TEAM_ID}/games`)
-      answer.body = (answer.body as Array<Record<string, unknown>>).map(
-        game => ({
+    if (new URL(url).pathname === `/api/v1/teams/${TEAM_ID}/games`) {
+      const page = answer.body as Page<Record<string, unknown>>
+      answer.body = {
+        ...page,
+        items: page.items.map(game => ({
           ...game,
           playerRsvps: { yes: 0, unknown: 13, no: 0 }
-        })
-      )
+        }))
+      }
+    }
     return new Response(JSON.stringify(answer.body), { status: answer.status })
   }
 })

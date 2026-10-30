@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -30,18 +30,29 @@ interface Device {
   assertVisible: (selector: unknown) => Promise<unknown>
   swipe: (options: unknown) => Promise<unknown>
   hierarchy: () => Promise<ViewNode>
+  tapOnPoint: (options: { point: string }) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
-  startRecording: (options: { path: string }) => Promise<unknown>
-  stopRecording: () => Promise<unknown>
   detach: () => Promise<unknown>
 }
 
 /** A node of `hierarchy()`. */
 interface ViewNode {
+  id?: string
   text?: string
   type?: string
   bounds?: { x: number; y: number; width: number; height: number }
   children?: ViewNode[]
+}
+
+/** A schedule row in a hierarchy. */
+interface ScreenRow {
+  y: number
+  /** The game's own, for a row with replies, as a date may be two games'. */
+  name: string | undefined
+  /** What its counts say, in words. */
+  replies: string
+  ids: string[]
+  words: string
 }
 
 interface Manifest extends LongListsSeed {
@@ -62,6 +73,17 @@ const ROW_TEXT = 'Demo Hawks'
 const PINNED_SLACK = 2
 /** Swipes that pass the end of a first page of 50 rows. */
 const SWIPES_PAST_A_PAGE = 24
+/** A drag that leaves no fling, and what a drag's start takes from it. */
+const DRAG_POINTS = 350
+const DRAG_SLACK = 24
+/** More than a row or two settling: a page of rows. */
+const ROWS_LANDED = 2000
+const FLING_POINTS = 420
+const FLING_MS = 90
+/** A fling over a read goes this share of a plain one, or to the list's top. */
+const MOMENTUM_KEPT = 0.7
+/** The section title and its space, from the pills to the first row. */
+const MOST_BELOW_PILLS = 110
 const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12'
 
 function required(name: string): string {
@@ -102,6 +124,18 @@ async function main(): Promise<void> {
   const note = async (line: string): Promise<void> => {
     await log(support, `longLists-${platform}.log`, line)
   }
+  /** A hierarchy's unit in points: an Android phone's is the pixel. */
+  const scale =
+    platform === 'android'
+      ? Number(
+          /(\d+)\s*$/.exec(
+            execFileSync('adb', ['-s', device, 'shell', 'wm', 'density'], {
+              encoding: 'utf8'
+            })
+          )?.[1]
+        ) / 160
+      : 1
+  const phone = platform === 'android'
   const visible = async (text: string, timeout = 15000): Promise<void> => {
     await m.assertVisible({ text, timeout })
   }
@@ -146,11 +180,29 @@ async function main(): Promise<void> {
       }
       return
     }
-    await m.startRecording({ path: join(artifacts, name) })
+    const shell = (...command: string[]): string[] => [
+      '-s',
+      device,
+      'shell',
+      ...command
+    ]
+    const onPhone = '/sdcard/longLists.mp4'
+    const video = spawn('adb', shell('screenrecord', onPhone))
+    await pause(1000)
     try {
       await run()
     } finally {
-      await m.stopRecording()
+      const stopped = new Promise(resolve => video.once('exit', resolve))
+      execFileSync('adb', shell('pkill', '-INT', 'screenrecord'))
+      await stopped
+      await pause(1000)
+      execFileSync('adb', [
+        '-s',
+        device,
+        'pull',
+        onPhone,
+        join(artifacts, name)
+      ])
     }
   }
   const shot = async (name: string): Promise<void> => {
@@ -196,6 +248,205 @@ async function main(): Promise<void> {
     const past = find(await m.hierarchy())
     assert.ok(past?.bounds != null, 'No Past pill on the screen')
     return past.bounds.y
+  }
+
+  const all = async (): Promise<ViewNode[]> => {
+    const flat: ViewNode[] = []
+    const walk = (node: ViewNode): void => {
+      flat.push(node)
+      for (const child of node.children ?? []) walk(child)
+    }
+    walk(await m.hierarchy())
+    return flat
+  }
+  /** Reads until two agree half a second apart: a fling has stopped. */
+  const settled = async (): Promise<ViewNode[]> => {
+    let last = JSON.stringify(await all())
+    for (let read = 0; read < 16; read++) {
+      await pause(500)
+      const now = await all()
+      if (JSON.stringify(now) === last) return now
+      last = JSON.stringify(now)
+    }
+    throw new Error('The screen never settled')
+  }
+  /** The team's or the season's section pills, by the strip's Stats pill. */
+  const statsPill = (nodes: ViewNode[]): ViewNode => {
+    const stats = nodes.find(
+      node => node.text === 'Stats' && node.type !== 'StaticText'
+    )
+    const found =
+      stats ?? nodes.find(node => node.text === 'Stats' && node.bounds != null)
+    assert.ok(found?.bounds != null, 'No section pills on the screen')
+    return found
+  }
+  const pillsBottom = (nodes: ViewNode[]): number => {
+    const { y, height } = statsPill(nodes).bounds!
+    return y + height
+  }
+  const tapPill = async (name: string): Promise<void> => {
+    const nodes = await all()
+    const strip = statsPill(nodes).bounds!
+    const pill = nodes
+      .filter(node => node.text === name && node.bounds != null)
+      .sort(
+        (a, b) =>
+          Math.abs(a.bounds!.y - strip.y) - Math.abs(b.bounds!.y - strip.y)
+      )[0]
+    assert.ok(pill?.bounds != null, `No ${name} pill`)
+    const { x, y, width, height } = pill.bounds
+    await m.tapOnPoint({
+      point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+    })
+    await pause(700)
+  }
+  /** Each schedule row drawn: its top, and what lies within it. */
+  const rowsOf = (nodes: ViewNode[]): ScreenRow[] =>
+    nodes
+      .filter(node => node.id === 'scheduleGame' && node.bounds != null)
+      .map(({ bounds }) => {
+        const { x, y, width, height } = bounds!
+        const inside = nodes.filter(({ bounds: at }) => {
+          return (
+            at != null &&
+            at.x >= x - 1 &&
+            at.y >= y - 1 &&
+            at.x + at.width <= x + width + 1 &&
+            at.y + at.height <= y + height + 1
+          )
+        })
+        return {
+          y,
+          name: inside.find(
+            node => node.id?.startsWith('schedule-rsvps-') === true
+          )?.id,
+          replies: inside
+            .filter(node => node.id?.startsWith('player-rsvp-count-') === true)
+            .map(node => node.text)
+            .join(', '),
+          ids: inside.flatMap(node => (node.id == null ? [] : [node.id])),
+          // In no order: the same row can be read in another.
+          words: [
+            ...new Set(
+              inside.flatMap(node =>
+                node.type === 'StaticText' && node.text != null
+                  ? [node.text]
+                  : []
+              )
+            )
+          ]
+            .sort()
+            .join(' ')
+        }
+      })
+      .sort((a, b) => a.y - b.y)
+  const contentOf = (nodes: ViewNode[]): ViewNode['bounds'] & object => {
+    const content = nodes.find(node => node.id === 'teamTabContent')
+    assert.ok(content?.bounds != null, 'No tab content')
+    return content.bounds
+  }
+  /**
+   * How far down the list the second reading stands from the first, in
+   * points. Measured at the list's foot, which rows landing above it leave
+  /** The first game drawn, by its place in the seed. */
+  const gameAt = (nodes: ViewNode[]): number => {
+    const places = rowsOf(nodes).map(({ name }) =>
+      Number(/gam_long_(\d+)/.exec(name ?? '')?.[1])
+    )
+    return places.find(place => !Number.isNaN(place)) ?? Number.NaN
+  }
+   * where the reader's rows are. An Android tree stops at the screen, so
+   * there it is in games passed.
+   */
+  const travel = (from: ViewNode[], to: ViewNode[]): number => {
+    const a = contentOf(from)
+    const b = contentOf(to)
+    return Math.abs(a.y + a.height - (b.y + b.height))
+    if (phone) return Math.abs(gameAt(from) - gameAt(to))
+  }
+  const olderReads = (seen: string[]): number =>
+    seen.filter(
+      path =>
+        path.startsWith(`/api/v1/teams/${manifest.teamId}/games?`) &&
+        path.includes('cursor=')
+    ).length
+  /**
+   * A finger on the page through this daemon's WebDriverAgent: `dy` points
+   * in `ms`, then held for `hold`. With no hold it flings, which maestro-d's
+   * `swipe` never does.
+   */
+  const gesture = async (
+    dy: number,
+    ms: number,
+    hold: number
+  ): Promise<void> => {
+    const x = 200
+    const from = dy > 0 ? 300 : 700
+    const move = (y: number, duration: number): unknown => ({
+      type: 'pointerMove',
+      duration,
+    if (platform === 'android') {
+      const place = (points: number): string =>
+        String(Math.round(points * scale))
+      execFileSync('adb', [
+        '-s',
+        device,
+        'shell',
+        'input',
+        'swipe',
+        place(x),
+        place(from),
+        place(x),
+        place(from + dy),
+        String(ms + hold)
+      ])
+      return
+    }
+      x,
+      y,
+      origin: 'viewport'
+    })
+    const { url, session } = await webDriver()
+    const body = JSON.stringify({
+      actions: [
+        {
+          type: 'pointer',
+          id: 'finger',
+          parameters: { pointerType: 'touch' },
+          actions: [
+            move(from, 0),
+            { type: 'pointerDown', button: 0 },
+            move(from + dy, ms),
+            ...(hold > 0 ? [{ type: 'pause', duration: hold }] : []),
+            { type: 'pointerUp', button: 0 }
+          ]
+        }
+      ]
+    })
+    const answer = await fetch(`${url}/session/${session}/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    })
+    assert.equal(answer.status, 200, await answer.text())
+  }
+  let driver: { url: string; session: string } | undefined
+  const webDriver = async (): Promise<{ url: string; session: string }> => {
+    if (driver != null) return driver
+    const { info } = daemon as unknown as { info: { runDir: string } }
+    const log = await readFile(join(info.runDir, 'daemon.log'), 'utf8')
+    const port = log
+      .split('\n')
+      .filter(line => line.includes(`Starting WDA on device ${device} (port:`))
+      .at(-1)
+      ?.match(/\(port: (\d+)\)/)?.[1]
+    assert.ok(port != null, 'This daemon started WebDriverAgent')
+    const url = `http://127.0.0.1:${port}`
+    const status = (await (await fetch(`${url}/status`)).json()) as {
+      sessionId: string
+    }
+    driver = { url, session: status.sessionId }
+    return driver
   }
 
   const webOnly = (name: string) => async () => {
@@ -280,22 +531,246 @@ async function main(): Promise<void> {
       )
     },
     E6: async () => {
+      const openTeam = async (): Promise<void> => {
+        await m.openLink({
+          link: `teamstation://teams/${manifest.teamId}?tab=schedule`
+        })
+        await visible('Stats')
+        await pause(2500)
+      }
+      const nextControl = `schedule-rsvp-control-${manifest.nextGameId}`
+      /**
+       * The next item's row starts right under the pills. That is the next
+       * game, or the week's practice when one falls just before it.
+       */
+      const onNextGame = async (step: string): Promise<void> => {
+        const nodes = await settled()
+        const rows = rowsOf(nodes)
+        const game = rows.findIndex(({ ids }) => ids.includes(nextControl))
+        assert.ok(game >= 0, `E6: ${step}: the next game's row is drawn`)
+        const row = rows[game - 1]?.ids.some(id =>
+          id.startsWith('schedule-rsvp-control-tev_long_')
+        )
+          ? rows[game - 1]
+          : rows[game]
+        const under = row.y - pillsBottom(nodes)
+        assert.ok(
+          under >= -PINNED_SLACK * scale && under <= MOST_BELOW_PILLS * scale,
+          `E6: ${step}: the row stands ${under} under the pills`
+        )
+        await note(`E6: ${step}: the row stands ${under} under the pills`)
+      }
+      await openTeam()
+      await onNextGame('opens at the next game')
+      await tapPill('Videos')
+      await pause(800)
+      await tapPill('Schedule')
+      await pause(800)
+      await onNextGame('anchors again from Videos')
+
       await recorded(`${platform}-team-older-rows.mp4`, async () => {
-        await m.openLink({ link: `teamstation://teams/${manifest.teamId}` })
-        await visible('Team sections')
-        later('M6: opens under the pills at the next game')
-        await tap('Videos')
-        await tap('Schedule')
-        later('M6: anchors again; older rows arrive above; the reader stays')
+        // Drags that leave no fling, so that where a row should be is known:
+        // up the page until older rows have landed above it.
+        let landed = 0
+        const readsAtFirst = olderReads(await phoneNetwork())
+        // An Android tree holds only what is on the screen, so that a row can
+        // be followed only over a shorter drag.
+        const dragPoints = phone ? DRAG_POINTS / 2 : DRAG_POINTS
+        for (let drag = 0; drag < 40 && landed === 0; drag++) {
+          const start = await settled()
+          const row = rowsOf(start).find(
+            ({ y, name }) => y >= pillsBottom(start) && name != null
+          )
+          assert.ok(row != null, 'E6: a row under the pills')
+          await gesture(dragPoints, 1200, 400)
+          const end = await settled()
+          const after = rowsOf(end).find(({ name }) => name === row.name)
+          assert.ok(after != null, `E6: ${row.name} is still drawn`)
+          const moved = after.y - row.y
+          assert.ok(
+            Math.abs(moved - dragPoints * scale) <= DRAG_SLACK * scale,
+            `E6: ${row.name} moved ${moved} on a drag of ${dragPoints * scale}`
+          )
+          if (phone) landed = olderReads(await phoneNetwork()) - readsAtFirst
+          else
+            landed =
+              contentOf(end).height - contentOf(start).height > ROWS_LANDED
+                ? contentOf(end).height - contentOf(start).height
+                : 0
+          await note(
+            `E6: drag ${drag}: the row moved ${moved}, ${landed} landed above`
+          )
+        }
+        assert.ok(landed > 0, 'E6: older rows arrived above the reader')
+
+        // A fling over rows already there, then one up through the place
+        // where the next older page is read.
+        const before = await settled()
+        await gesture(-FLING_POINTS, FLING_MS, 0)
+        const plain = travel(before, await settled())
+        await note(`E6: a plain fling went ${plain}`)
+        const reads = olderReads(await phoneNetwork())
+        for (let fling = 0; fling < 12; fling++) {
+          const from = await settled()
+          const room = phone ? Infinity : pillsBottom(from) - contentOf(from).y
+          const read = olderReads(await phoneNetwork())
+          await gesture(FLING_POINTS, FLING_MS, 0)
+          const to = await settled()
+          const went = travel(to, from)
+          const during = olderReads(await phoneNetwork()) - read
+          await note(
+            `E6: fling ${fling}: went ${went} of ${Math.round(room)} to the list's top, ${during} older reads`
+          )
+          if (during > 0) {
+            assert.ok(
+              went >= MOMENTUM_KEPT * Math.min(plain, room),
+              `E6: a fling kept its momentum over a read: ${went} of ${plain}`
+            )
+            break
+          }
+          assert.ok(fling < 11, 'E6: no read came during a fling')
+        }
+        assert.ok(olderReads(await phoneNetwork()) > reads)
       })
+
       await recorded(`${platform}-rsvp-row-state.mp4`, async () => {
-        later('M6: answer an RSVP, scroll away and back; the answer stays')
+        await m.stopApp({ appId: APP_ID })
+        await m.launchApp({ appId: APP_ID, stopApp: true })
+        await visible('Your Home', 30000)
+        await openTeam()
+        // Past the rows kept drawn around the next game, so that it can leave.
+        await gesture(-FLING_POINTS, FLING_MS, 0)
+        const nodes = await settled()
+        const control = nodes.find(
+          node =>
+            node.id?.startsWith('schedule-rsvp-control-') === true &&
+            node.bounds != null &&
+            node.bounds.y > pillsBottom(nodes) + 40 * scale &&
+            node.bounds.y < 600 * scale
+        )
+        assert.ok(control?.bounds != null, 'E6: an RSVP on the screen')
+        const { x, y, width, height } = control.bounds
+        await m.tapOnPoint({
+          point: `${x + Math.round(width / 2)},${y + Math.round(height / 2)}`
+        })
+        await pause(1200)
+        await m.tapOn({ text: 'Yes for .*', index: 0, timeout: 10000 })
+        await pause(800)
+        await m.tapOn({ text: 'Done', timeout: 10000 })
+        await pause(800)
+        const rowId = control.id!
+        const answer = rowsOf(await settled()).find(({ ids }) =>
+          ids.includes(rowId)
+        )
+        assert.ok(
+          answer?.ids.includes('schedule-rsvp-avatars') === true,
+          'E6: the answer shows on the row'
+        )
+        await note(`E6: answered: ${answer.replies}`)
+        await gesture(-FLING_POINTS, FLING_MS, 0)
+        await gesture(-FLING_POINTS, FLING_MS, 0)
+        assert.ok(
+          !(await settled()).some(node => node.id === rowId),
+          'E6: the answered row has left the list'
+        )
+        let back: ScreenRow | undefined
+        for (let fling = 0; fling < 10 && back == null; fling++) {
+          await gesture(FLING_POINTS / 2, FLING_MS, 0)
+          const shown = await settled()
+          back = rowsOf(shown).find(
+            ({ ids, y }) => ids.includes(rowId) && y > 0 && y < 700 * scale
+          )
+        }
+        assert.ok(back != null, 'E6: the answered row came back')
+        await pause(1500)
+        const again = rowsOf(await settled()).find(({ ids }) =>
+          ids.includes(rowId)
+        )
+        assert.ok(
+          again?.ids.includes('schedule-rsvp-avatars') === true,
+          'E6: the answer stays'
+        )
+        assert.equal(again.replies, answer.replies, 'E6: the counts stay')
+        await note(`E6: back again: ${again.replies}`)
       })
     },
     E7: async () => {
       await m.openLink({ link: `teamstation://seasons/${manifest.seasonId}` })
-      await visible('Season sections')
-      later('M6: Past at depth, Upcoming, Past, All, Videos; hero counts hold')
+      await visible('Stats')
+      await pause(1500)
+      /** What the hero says, whatever is on the screen. */
+      const hero = async (): Promise<string> => {
+        const nodes = await all()
+        const figure = (label: string): string | undefined => {
+          const name = nodes.find(
+            node => node.text?.toUpperCase() === label && node.bounds != null
+          )?.bounds
+          if (name == null) return undefined
+          // The figure stands under its name, in the same column.
+          return nodes.find(
+            ({ text, bounds }) =>
+              /^\d+$/.test(text ?? '') &&
+              bounds != null &&
+              bounds.y > name.y &&
+              bounds.y - name.y < 60 &&
+              Math.abs(bounds.x - name.x) < 60
+          )?.text
+        }
+        return `${figure('GAMES')} games, ${figure('VIDEOS')} videos`
+      }
+      const counts = await hero()
+      await note(`E7: the hero says ${counts}`)
+      await tapPill('Schedule')
+      await tap('Past')
+      await pause(1000)
+      for (let fling = 0; fling < 3; fling++)
+        await gesture(-FLING_POINTS, FLING_MS, 0)
+      await settled()
+      assert.equal(await hero(), counts, 'E7: at depth')
+      const rowsOnScreen = async (): Promise<number> =>
+        (await all()).filter(
+          node =>
+            node.id === 'schedule-date' &&
+            node.bounds != null &&
+            node.bounds.y > 0 &&
+            node.bounds.y < 800 &&
+            node.bounds.x >= 0 &&
+            node.bounds.x < 402
+        ).length
+      // The pills are in the page's flow, and scroll away with it.
+      const toPills = async (): Promise<void> => {
+        for (let fling = 0; fling < 12; fling++) {
+          const nodes = await settled()
+          const pill = nodes.find(node => node.text === 'Upcoming')?.bounds
+          if (pill != null && pill.y > 120 && pill.y < 700) return
+          await gesture(FLING_POINTS, FLING_MS, 0)
+        }
+        throw new Error('E7: the pills never came back')
+      }
+      await toPills()
+      for (const [pill, kept] of [
+        ['Upcoming', false],
+        ['Past', true],
+        ['All', false],
+        ['Past', true],
+        ['Upcoming', true]
+      ] as const) {
+        await toPills()
+        await tap(pill)
+        await pause(kept ? 100 : 1500)
+        const rows = await rowsOnScreen()
+        await note(`E7: ${pill}: ${rows} rows on the screen as it lands`)
+        if (kept) assert.ok(rows > 0, `E7: ${pill} comes back with rows`)
+        await settled()
+        assert.equal(await hero(), counts, `E7: on ${pill}`)
+      }
+      await tapPill('Videos')
+      await pause(1500)
+      assert.equal(await hero(), counts, 'E7: on Videos')
+      await tapPill('Schedule')
+      await pause(600)
+      assert.ok((await rowsOnScreen()) > 0, 'E7: Schedule comes back with rows')
+      await shot(`${platform}-season-kept.png`)
     },
     E8: webOnly('E8'),
     E9: async () => {
