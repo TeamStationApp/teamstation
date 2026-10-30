@@ -2,7 +2,12 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { birthMonthText } from '../../common/age'
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { outcomeName } from '../../common/outcomes'
 import {
   asPersonSettings,
@@ -15,6 +20,7 @@ import {
   canSeePerson,
   canSeePlayedFor,
   guardsPerson,
+  heldByOpenAdd,
   mayEditName,
   mayManagePlayer,
   roleScopes,
@@ -732,14 +738,27 @@ export function playerRoutes(
           body.throws !== undefined
         )
           await refuseDeleted(trx, userId)
-        if (
-          body.name !== undefined &&
-          !(await mayEditName(trx, actor.userId, userId, {
+        const person = body.name ?? body.bats ?? body.throws
+        const mayEdit =
+          person !== undefined &&
+          (await mayEditName(trx, actor.userId, userId, {
             isAdmin: actor.isAdmin
           }))
-        ) {
-          throw notFound()
-        }
+        if (body.name !== undefined && !mayEdit) throw notFound()
+        // Held only through an add that can still be rejected: a rejection
+        // could not undo a change to them.
+        if (
+          (body.bats !== undefined || body.throws !== undefined) &&
+          !mayEdit &&
+          (await heldByOpenAdd(
+            trx,
+            teamId,
+            (await onePerson(trx, userId)).userIds
+          ))
+        )
+          throw forbidden(
+            'How they bat and throw are their own while their side may reject this add'
+          )
 
         if (body.jersey !== undefined || body.positions !== undefined) {
           await trx

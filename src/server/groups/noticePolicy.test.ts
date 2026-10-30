@@ -40,6 +40,7 @@ import { resolveScoringGame } from '../scoring/openRow'
 import { battingLines } from '../stats'
 import { statRows } from '../stats/rows'
 import { addByPolicy } from '../teams/addExistingPlayer'
+import { teamRoster } from '../teams/teamRoster'
 import { ensureGumboId, insertUser } from '../users/insertUser'
 import { gameNames, gameNamesDigest } from '../users/nameBook'
 import {
@@ -1706,5 +1707,41 @@ describe('adds made with a notice', function () {
       .where('game_id', '=', fresh)
       .execute()
     expect(withdrawn).deep.equals([])
+  })
+
+  it('keeps the name and hands of somebody held by an open add from the team', async function () {
+    await person('Open Add', { login: true })
+    const added = await add('roster', 'Open Add')
+    const settings = async (body: object): Promise<number> =>
+      (
+        await fetch(
+          `${base}/teams/${TEAM.falcons}/players/${ids['Open Add']}/settings`,
+          {
+            method: 'PUT',
+            headers: {
+              authorization: `Bearer ${TOKENS.coach}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify(body)
+          }
+        )
+      ).status
+    expect(await settings({ throws: 'left' })).equals(403)
+    expect(
+      await settings({ name: { firstName: 'Changed', lastName: 'Name' } })
+    ).equals(404)
+    // The team's own fields stay the team's.
+    expect(await settings({ jersey: '7' })).equals(200)
+    const roster = await teamRoster(db!, undefined, TEAM.falcons, true)
+    const entry = roster.find(row => row.userId === ids['Open Add'])!
+    expect(entry.ownIdentity).equals(true)
+    expect(entry.nameDetails).equals(undefined)
+    // Past its window the add stands, and the team may maintain them.
+    await db!
+      .updateTable('group_requests')
+      .set({ sent_at: new Date(0), expires_at: new Date(1) })
+      .where('id', '=', added.requestId!)
+      .execute()
+    expect(await settings({ throws: 'left' })).equals(200)
   })
 })

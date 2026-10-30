@@ -43,7 +43,13 @@ export interface PlayerSettingsTabProps {
 /** What the form starts from: a roster entry, or the person away from one. */
 type Saved = Pick<
   RosterEntry,
-  'jersey' | 'positions' | 'bats' | 'throws' | 'nameDetails' | 'shortName'
+  | 'jersey'
+  | 'positions'
+  | 'bats'
+  | 'throws'
+  | 'nameDetails'
+  | 'shortName'
+  | 'ownIdentity'
 >
 
 interface Draft {
@@ -177,7 +183,7 @@ export function PlayerSettingsTab(
       ? { name: 'hidden', hands: 'edit', jersey: false, positions: false }
       : {
           name: draft.name == null ? 'hidden' : 'edit',
-          hands: 'edit',
+          hands: saved?.ownIdentity === true ? 'readOnly' : 'edit',
           jersey: true,
           positions: true
         }

@@ -9,6 +9,7 @@ import {
   guardiansOfEach,
   levelsAboveTeam,
   membersOfLevels,
+  openAdds,
   type RoleLevel,
   teamsUnder
 } from '../access'
@@ -100,6 +101,7 @@ export async function teamRoster(
       ))
     ],
     {
+      openAdds: await openAdds(db, teamId),
       ownLevel: 'team',
       given,
       memberLevels,
@@ -327,6 +329,8 @@ async function sectionPeople(
     memberLevels: Map<string, RoleLevel>
     /** Each guardian of a player on this list, and the players they guard. */
     family: Map<string, string[]>
+    /** Who the team holds only through an add that may yet be rejected. */
+    openAdds?: ReadonlySet<string>
     songs?: Map<string, WalkUpSong>
     /** The team these people are shown on: a roster's, not a level's list. */
     teamId?: string
@@ -423,6 +427,7 @@ async function sectionPeople(
     )
     return { guardianOf: children.filter(name => name !== '') }
   }
+  const open = facts.openAdds ?? new Set<string>()
   const order: Record<RosterSection, number> = {
     admin: 0,
     staff: 1,
@@ -438,8 +443,9 @@ async function sectionPeople(
       return {
         userId: row.userId,
         gumboId: gumboIds.get(row.userId) ?? null,
+        ...(open.has(row.userId) ? { ownIdentity: true } : {}),
         nameDetails:
-          includeFullNames === true && row.isPlayer
+          includeFullNames === true && row.isPlayer && !open.has(row.userId)
             ? {
                 firstName: row.firstName,
                 lastName: row.lastName,

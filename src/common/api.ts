@@ -1303,6 +1303,11 @@ const cleanRosterEntry = asObject({
    * hands are their own, and only their jersey and positions are the game's.
    */
   pool: asOptional(asBoolean),
+  /**
+   * Held only through an add their side may still reject: their name and
+   * hands are their own until it can no longer be.
+   */
+  ownIdentity: asOptional(asBoolean),
   role: asString,
   /** The section they are listed under: the first of these that fits. */
   section: asRosterSection,
@@ -1335,12 +1340,13 @@ const cleanRosterEntry = asObject({
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
-  'teamNames' | 'guardianOf' | 'nameFormat' | 'pool'
+  'teamNames' | 'guardianOf' | 'nameFormat' | 'pool' | 'ownIdentity'
 > & {
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
   pool?: boolean
+  ownIdentity?: boolean
 }
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 

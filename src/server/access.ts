@@ -1345,12 +1345,46 @@ export async function mayEditName(
   if (staffOf.size === 0) return false
   const plays = await db
     .selectFrom('memberships')
-    .select(['id'])
+    .select(['team_id'])
     .where('user_id', 'in', player.userIds)
     .where('is_player', '=', true)
     .where('team_id', 'in', [...staffOf])
-    .executeTakeFirst()
-  return plays != null
+    .execute()
+  for (const row of plays)
+    if (!(await heldByOpenAdd(db, row.team_id, player.userIds))) return true
+  return false
+}
+
+/**
+ * The people a team holds only through an add its player's side may still
+ * reject. Until then their name and hands are not the team's to read whole or
+ * to write: a rejection undoes the add, and could not undo that.
+ */
+export async function openAdds(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<Set<string>> {
+  const rows = await db
+    .selectFrom('group_requests')
+    .select(sql<string>`terms->>'userId'`.as('userId'))
+    .where('kind', '=', 'playerAdd')
+    .where('status', '=', 'applied')
+    .where('expires_at', '>', new Date())
+    .where('initiating_team_id', '=', teamId)
+    .where(sql<string>`terms->>'mode'`, '=', 'roster')
+    .where(sql<string>`terms->>'createdMembership'`, '=', 'true')
+    .execute()
+  return new Set(rows.map(row => row.userId))
+}
+
+/** Whether any of a person's rows is held only by an open add (`openAdds`). */
+export async function heldByOpenAdd(
+  db: Kysely<Database>,
+  teamId: string,
+  userIds: readonly string[]
+): Promise<boolean> {
+  const open = await openAdds(db, teamId)
+  return userIds.some(id => open.has(id))
 }
 
 /** Legacy team-follow listing, separate from private team visibility. */
