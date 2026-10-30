@@ -210,7 +210,7 @@ describe('the highlight routes', function () {
     )
     expect(first.status).equals(200)
     expect(eventIdsOf(first.body)).deep.equals(['evt_ada3', 'evt_ada2'])
-    expect(first.body.nextBefore).equals(minutesIn(30))
+    expect(first.body.nextBefore).equals(`${minutesIn(30)}|evt_ada2`)
     expect(first.body.withoutVideo).equals(0)
     expect(first.body.highlights[0].videoId).equals(creditedVideo)
     expect(first.body.highlights[0].outcome).is.a('string')
@@ -339,7 +339,9 @@ describe('the highlight routes', function () {
         `/players/${userIdOfGumbo(dee.userId)}/highlights?teamId=${away}&limit=1`
       )
       expect(eventIdsOf(first.body)).deep.equals(['evt_dee_season'])
-      expect(first.body.nextBefore).equals(minutesIn(10, DEE_SEASON))
+      expect(first.body.nextBefore).equals(
+        `${minutesIn(10, DEE_SEASON)}|evt_dee_season`
+      )
 
       const second = await get(
         `/players/${userIdOfGumbo(dee.userId)}/highlights?teamId=${away}&limit=1&before=${encodeURIComponent(

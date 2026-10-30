@@ -693,6 +693,46 @@ const schedulePageParams = [
   }
 ]
 
+/** What a schedule's rows take beside its page, on a team or a season. */
+const scheduleListParams = [
+  {
+    name: 'when',
+    in: 'query',
+    description: 'Which of the games, as on `GET /events`. Defaults to `all`.',
+    schema: {
+      type: 'string',
+      enum: ['all', 'upcoming', 'past', 'future', 'finished', 'recent'],
+      default: 'all'
+    }
+  },
+  {
+    name: 'order',
+    in: 'query',
+    description:
+      'Defaults to newest first, and to soonest first for `when=upcoming` or `when=future`.',
+    schema: { type: 'string', enum: ['asc', 'desc'] }
+  },
+  {
+    name: 'limit',
+    in: 'query',
+    description: 'Page size. Only with `paged`.',
+    schema: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 100,
+      default: 50
+    }
+  }
+]
+
+const publicGamesParam = {
+  name: 'public',
+  in: 'query',
+  description:
+    'Answer what the public page shows, `Page<PublicGame>`, to anybody, signed in or not. Needs `paged`, and does not take `around`.',
+  schema: { type: 'string', enum: ['1', 'true'] }
+}
+
 const gameIdParam = {
   name: 'gameId',
   in: 'path',
@@ -3524,53 +3564,23 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Answers 404 rather than 403 for a team the caller may not see, ' +
             'so that probing cannot reveal which teams exist. Anybody signed ' +
             'in who is not a member of the team (the non-member view) reads ' +
-            'its games too, with their video counts, posters and logos.',
-          security: [{ bearer: [] }],
+            'its games too, with their video counts, posters and logos. ' +
+            'Only `public` admits anybody who is not signed in, and it reads ' +
+            'the team as `GET /teams/{id}` does, so any team answers.',
+          security: [{}, { bearer: [] }],
           parameters: [
             teamIdParam,
-            {
-              name: 'when',
-              in: 'query',
-              description:
-                'Which of the games, as on `GET /events`. Defaults to `all`.',
-              schema: {
-                type: 'string',
-                enum: [
-                  'all',
-                  'upcoming',
-                  'past',
-                  'future',
-                  'finished',
-                  'recent'
-                ],
-                default: 'all'
-              }
-            },
-            {
-              name: 'order',
-              in: 'query',
-              description:
-                'Defaults to newest first, and to soonest first for `when=upcoming` or `when=future`.',
-              schema: { type: 'string', enum: ['asc', 'desc'] }
-            },
-            {
-              name: 'limit',
-              in: 'query',
-              description: 'Page size. Only with `paged`.',
-              schema: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 100,
-                default: 50
-              }
-            },
-            ...schedulePageParams
+            ...scheduleListParams,
+            ...schedulePageParams,
+            publicGamesParam
           ],
           responses: {
             200: {
               description:
                 '`Page` of the same rows with `paged`. Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
             },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         },
@@ -5828,9 +5838,11 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Every highlight a player is credited on, newest first',
           description:
-            'A page at a time: `nextBefore` is the play time to pass as ' +
-            '`before` for the next page, and `withoutVideo` counts plays on ' +
-            'the page no recording covers. `seasonId`, `teamId` and `year` ' +
+            'A page at a time: `nextBefore` is what to pass as `before` for ' +
+            'the next page, and `withoutVideo` counts plays read for the page ' +
+            'that no recording covers. A page is full unless the list ends ' +
+            'or 500 plays were read for it, so a short page can still have a ' +
+            '`nextBefore`, and only a null one ends the list. `seasonId`, `teamId` and `year` ' +
             'narrow the games the same way `/players/{userId}/stats` does, ' +
             'before the page is cut; `teamId` is the team the player played ' +
             'for. With none of them the answer is the career. Each highlight ' +
@@ -5841,8 +5853,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'before',
               in: 'query',
-              schema: { type: 'string', format: 'date-time' },
-              description: 'Only plays before this moment'
+              schema: { type: 'string' },
+              description:
+                'A `nextBefore`, `<iso>|<id>`: only the plays after it. A bare date-time still reads, as only plays before that moment. Anything else is a 400'
             },
             {
               name: 'limit',
@@ -5874,6 +5887,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'Highlights, newest first, with `nextBefore` and `withoutVideo`'
             },
+            400: errorResponse,
             404: errorResponse
           }
         }
@@ -5982,6 +5996,33 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'Season-owned child teams, active competition members and canonical committed game participants, including placeholders and canceled historical participants. TeamSummary adds seasonCategory inSeason/exhibition/unscheduled and canViewPrivate matching private team endpoint visibility; parent-only teams without games and canceled-only participants are unscheduled. Membership/management links are never created by this read.'
             },
+            404: errorResponse
+          }
+        }
+      },
+      '/seasons/{seasonId}/games': {
+        get: {
+          summary: "The games a season's public page shows",
+          description:
+            'To anybody, signed in or not, and only with `public` and ' +
+            '`paged`: a member reads a season through `GET /events?season=…`. ' +
+            '`counts` take in the whole public list. Without `public` the ' +
+            'path answers 404.',
+          security: [{}, { bearer: [] }],
+          parameters: [
+            {
+              name: 'seasonId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            },
+            ...scheduleListParams,
+            ...schedulePageParams.filter(param => param.name !== 'around'),
+            publicGamesParam
+          ],
+          responses: {
+            200: { description: '`Page<PublicGame>`' },
+            400: errorResponse,
             404: errorResponse
           }
         }

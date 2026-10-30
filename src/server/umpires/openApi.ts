@@ -307,6 +307,33 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
             'Legacy umpire involvement or administrator league view; schedule admits league admins and umpires and defaults to seasons whose end date has not passed in the season timezone'
         },
         {
+          name: 'paged',
+          in: 'query',
+          schema: { type: 'string', enum: ['1', 'true'] },
+          description:
+            'Answer the schedule with `{items, nextCursor, prevCursor, anchorId, counts, positions}` in place of `games`, soonest first. `counts` is null. Not with view=league'
+        },
+        {
+          name: 'cursor',
+          in: 'query',
+          schema: { type: 'string' },
+          description:
+            'A `nextCursor` or `prevCursor`, with the filters of the query that gave it. Needs `paged`. A malformed one is a 400'
+        },
+        {
+          name: 'around',
+          in: 'query',
+          schema: { type: 'string', enum: ['next'] },
+          description:
+            '`next` opens a first page on the game the table opens on, the first under way or still to start, with rows before it. Needs `paged`, and does not take `cursor`'
+        },
+        {
+          name: 'limit',
+          in: 'query',
+          schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+          description: 'Page size. Only with `paged`'
+        },
+        {
           name: 'priorSeasons',
           in: 'query',
           schema: { type: 'boolean', default: false },
@@ -340,7 +367,10 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       ],
       responses: {
         ...responses,
-        200: { description: 'Visible games, slot choices and credit teams' }
+        200: {
+          description:
+            'Visible games, slot choices and credit teams. With `paged`, one page of those games, and `positions`: the position columns of the whole filtered list, each with its `optionalHeader`, `Optional`, `Optional in some games` or null'
+        }
       }
     }
   }

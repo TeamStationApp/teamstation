@@ -6,7 +6,9 @@ import { encodeScheduleCursor } from '../schedule/scheduleCursor'
 import {
   eventWindow,
   parseEventListQuery,
+  parsePublicGamesQuery,
   parseTeamGamesQuery,
+  parseUmpirePageQuery,
   schedulePageAsk
 } from './eventListQuery'
 
@@ -226,6 +228,49 @@ describe('GET /events query', function () {
     })
     const looking = parseEventListQuery({ paged: '1', lookbackHours: '2' })
     expect(schedulePageAsk(looking, NOW).whole.since).equals(undefined)
+  })
+
+  it('reads a public list as a page, with no opening row', function () {
+    expect(
+      parsePublicGamesQuery({
+        public: '1',
+        paged: '1',
+        when: 'past',
+        hasVideo: '1',
+        limit: '7'
+      })
+    ).deep.include({ paged: true, when: 'past', hasVideo: true, limit: 7 })
+    const refuses = (query: Record<string, unknown>): string => {
+      try {
+        parsePublicGamesQuery(query)
+      } catch (error) {
+        if (error instanceof HttpError) return error.message
+        throw error
+      }
+      throw new Error('expected a 400')
+    }
+    expect(refuses({ public: '1' })).equals('public needs paged')
+    expect(refuses({ public: '0', paged: '1' })).equals(
+      'public must be 1 or true'
+    )
+    expect(refuses({ public: '1', paged: '1', around: 'next' })).equals(
+      'around does not apply with public'
+    )
+  })
+
+  it('takes only the page parameters on an umpire schedule', function () {
+    expect(parseUmpirePageQuery({ view: 'schedule' })).deep.include({
+      paged: false,
+      around: false,
+      limit: undefined,
+      cursor: undefined
+    })
+    // Sent today, and ignored today.
+    expect(parseUmpirePageQuery({ limit: 'many' }).limit).equals(undefined)
+    expect(
+      parseUmpirePageQuery({ paged: '1', around: 'next', limit: '9' })
+    ).deep.include({ paged: true, around: true, limit: 9 })
+    expect(parseUmpirePageQuery({ paged: '1' }).limit).equals(50)
   })
 
   it("takes only a team's own parameters on a team's games", function () {

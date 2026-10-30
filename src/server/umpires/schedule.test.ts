@@ -1,6 +1,14 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { TeamStationClient } from '../../common/api'
+import { initialUmpireGame } from '../../common/nextGame'
+import {
+  optionalPositionHeader,
+  type UmpireColumn,
+  umpireColumns,
+  type UmpireGameRow
+} from '../../common/umpireSchedule'
 import {
   hardUmpireConflict,
   softUmpireConflict,
@@ -17,7 +25,7 @@ import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { seedUmpireCounts } from '../../test/umpireTypes'
 import { now } from '../clock'
 import { umpireIdentity, umpireIsPlaying } from './context'
-import { parseUmpireFilters, schedule } from './schedule'
+import { parseUmpireFilters, schedule, umpireSchedulePage } from './schedule'
 
 describe('umpire time and conflict rules', () => {
   it('validates viewer zones and respects DST transitions', () => {
@@ -411,5 +419,377 @@ describe('umpire schedule author query bounds', function () {
       if (previous == null) delete process.env.TS_UMPIRE_NOW
       else process.env.TS_UMPIRE_NOW = previous
     }
+  })
+})
+
+describe('an umpire column', () => {
+  const positions = (slot: string, required: boolean): any => ({
+    positions: [
+      { slot, typeId: 'uty_field', typeName: 'Field', ordinal: 2, required }
+    ]
+  })
+  it('says how many of the games offering it leave it optional', () => {
+    const slot = 'uty_field:2'
+    expect(optionalPositionHeader([positions(slot, true)], slot)).equals(
+      undefined
+    )
+    expect(optionalPositionHeader([positions(slot, false)], slot)).equals(
+      'Optional'
+    )
+    expect(
+      optionalPositionHeader(
+        [positions(slot, true), positions(slot, false)],
+        slot
+      )
+    ).equals('Optional in some games')
+    expect(optionalPositionHeader([], slot)).equals(undefined)
+  })
+  it('runs by the type order given, then by ordinal, once a slot', () => {
+    const position = (typeId: string, ordinal: number): any => ({
+      slot: `${typeId}:${ordinal}`,
+      typeId,
+      typeName: typeId,
+      ordinal,
+      required: true
+    })
+    const games = [
+      { positions: [position('uty_field', 2), position('uty_plate', 1)] },
+      { positions: [position('uty_field', 1), position('uty_field', 2)] }
+    ]
+    expect(
+      umpireColumns([{ id: 'uty_plate' }, { id: 'uty_field' }], games).map(
+        column => column.slot
+      )
+    ).deep.equals(['uty_plate:1', 'uty_field:1', 'uty_field:2'])
+    expect(umpireColumns([{ id: 'uty_other' }], games)).deep.equals([])
+  })
+})
+
+interface UmpirePage {
+  items: UmpireGameRow[]
+  nextCursor: string | null
+  prevCursor: string | null
+  anchorId: string | null
+  counts: null
+  positions: UmpireColumn[]
+  games?: unknown
+}
+
+describe('umpire schedule pages (U9)', function () {
+  this.timeout(60000)
+  const DAY = 24 * 60 * 60 * 1000
+  const NOW = Date.parse(UMPIRE_TEST_NOW)
+  const mixed = 'sea_umpire_pages_mixed'
+  let f: GroupFixture
+  let old: string | undefined
+  let tied: string[]
+  const base = (): string =>
+    `/leagues/${f.leagueA}/umpire-schedule?view=schedule`
+  const read = async (query = '', status = 200): Promise<any> => {
+    const response = await f.h.request(
+      'GET',
+      `${base()}${query}`,
+      undefined,
+      101
+    )
+    expect(response.status, query).equals(status)
+    return await response.json()
+  }
+  const withCursor = (cursor: string): string =>
+    `&cursor=${encodeURIComponent(cursor)}`
+  const ids = (rows: Array<{ id: string }>): string[] => rows.map(row => row.id)
+  const inOrder = (rows: UmpireGameRow[]): UmpireGameRow[] =>
+    rows.toSorted((a, b) => {
+      const date = Date.parse(a.startAt) - Date.parse(b.startAt)
+      return date !== 0 ? date : a.id < b.id ? -1 : 1
+    })
+  const walk = async (query: string): Promise<UmpirePage[]> => {
+    const pages: UmpirePage[] = [await read(query)]
+    while (pages.at(-1)?.nextCursor != null) {
+      pages.push(await read(query + withCursor(pages.at(-1)?.nextCursor ?? '')))
+      expect(pages.length, 'a walk ends').lessThan(100)
+    }
+    return pages
+  }
+
+  before(async () => {
+    old = process.env.TS_UMPIRE_NOW
+    process.env.TS_UMPIRE_NOW = UMPIRE_TEST_NOW
+    f = await umpireFixture()
+    // A season where the second field position is required, and another
+    // where it is optional and only the third, which only this one has, is.
+    await f.h.db
+      .insertInto('seasons')
+      .values({
+        id: mixed,
+        league_id: f.leagueA,
+        name: 'Demo Mixed',
+        year: 2027,
+        starts_on: '2027-03-01',
+        ends_on: '2027-05-31',
+        timezone: 'UTC'
+      })
+      .execute()
+    for (const season of [mixed, f.playoffs])
+      await f.h.db
+        .insertInto('season_umpire_requirements')
+        .values({ season_id: season, level_id: 'ulv_majors' })
+        .execute()
+    await seedUmpireCounts(f.h.db, mixed, true, 2, 1)
+    await seedUmpireCounts(f.h.db, f.playoffs, true, 1, 1)
+    const game = (
+      offset: number,
+      fields: Record<string, unknown> = {}
+    ): any => ({
+      id: `gam_pages_${String(offset / DAY)
+        .replace('-', 'm')
+        .replace('.', '_')}`,
+      home_team_id: f.teamA,
+      away_team_id: f.teamB,
+      season_id: f.seasonA,
+      start_at: new Date(NOW + offset),
+      status: offset < 0 ? 'final' : 'scheduled',
+      ...fields
+    })
+    const rows = Array.from({ length: 12 }, (_, index) =>
+      game((index - 6) * DAY + DAY / 4)
+    )
+    const ties = ['A', 'b', 'C', 'd'].map(letter =>
+      game(-DAY, { id: `gam_pages_tied_${letter}`, status: 'final' })
+    )
+    tied = ties.map(row => row.id)
+    await f.h.db
+      .insertInto('games')
+      .values([
+        ...rows,
+        ...ties,
+        game(1.5 * DAY, { season_id: f.playoffs }),
+        // On a Saturday, as nothing else is.
+        game(16.25 * DAY, { id: 'gam_pages_mixed', season_id: mixed })
+      ])
+      .execute()
+  })
+  after(async () => {
+    if (old == null) delete process.env.TS_UMPIRE_NOW
+    else process.env.TS_UMPIRE_NOW = old
+    await f?.h.close()
+  })
+
+  it('walks to the rows of the unpaged schedule, with no others', async () => {
+    const whole: { games: UmpireGameRow[] } = await read()
+    expect(whole.games.length).greaterThan(15)
+    const pages = await walk('&paged=1&limit=4')
+    expect(pages.flatMap(page => ids(page.items))).deep.equals(
+      ids(inOrder(whole.games))
+    )
+    for (const page of pages) expect(page.items.length).most(4)
+    expect(pages[0].prevCursor).equals(null)
+    // A row of a page is the row the whole schedule has.
+    expect(pages[1].items[0]).deep.equals(
+      whole.games.find(row => row.id === pages[1].items[0].id)
+    )
+  })
+
+  it('holds rows of one instant across a page break', async () => {
+    const pages = await walk('&paged=1&limit=1')
+    expect(
+      pages.flatMap(page => ids(page.items)).filter(id => tied.includes(id))
+    ).deep.equals(tied.toSorted())
+  })
+
+  it('walks back to the same rows', async () => {
+    const first: UmpirePage = await read('&paged=1&limit=5')
+    const second: UmpirePage = await read(
+      `&paged=1&limit=5${withCursor(first.nextCursor ?? '')}`
+    )
+    const back: UmpirePage = await read(
+      `&paged=1&limit=5${withCursor(second.prevCursor ?? '')}`
+    )
+    expect(ids(back.items)).deep.equals(ids(first.items))
+    expect(back.prevCursor).equals(null)
+  })
+
+  it("gives every page the whole filtered list's columns", async () => {
+    const whole: { games: UmpireGameRow[]; types: Array<{ id: string }> } =
+      await read()
+    const want = umpireColumns(whole.types, whole.games)
+    expect(
+      want.map(column => [column.slot, column.optionalHeader])
+    ).deep.equals([
+      ['uty_plate:1', null],
+      ['uty_field:1', null],
+      ['uty_field:2', 'Optional in some games'],
+      ['uty_field:3', 'Optional']
+    ])
+    const pages = await walk('&paged=1&limit=3')
+    // The first page's rows offer two columns of the four.
+    expect(
+      new Set(pages[0].items.flatMap(row => row.positions.map(p => p.slot)))
+        .size
+    ).equals(2)
+    for (const page of pages) expect(page.positions).deep.equals(want)
+  })
+
+  it('narrows the columns with the filter', async () => {
+    // Monday is day 0, and 2027-04-17, the mixed game's date, is a Saturday.
+    const saturday: UmpirePage = await read('&paged=1&days=5')
+    expect(ids(saturday.items)).includes('gam_pages_mixed')
+    expect(saturday.positions.map(column => column.slot)).includes(
+      'uty_field:3'
+    )
+    const wednesday: UmpirePage = await read('&paged=1&days=2')
+    expect(
+      wednesday.positions.map(column => [column.slot, column.optionalHeader])
+    ).deep.equals(
+      umpireColumns(
+        [{ id: 'uty_plate' }, { id: 'uty_field' }],
+        (await read('&days=2')).games
+      ).map(column => [column.slot, column.optionalHeader])
+    )
+  })
+
+  it('opens on the rule, with rows before it, and meets every row', async () => {
+    const whole: { games: UmpireGameRow[] } = await read()
+    const list = inOrder(whole.games)
+    const rule = initialUmpireGame(list, NOW)
+    const page: UmpirePage = await read('&paged=1&limit=4&around=next')
+    expect(page.anchorId).equals(rule?.id)
+    const at = list.findIndex(row => row.id === rule?.id)
+    expect(at).greaterThan(2)
+    expect(ids(page.items)).deep.equals(ids(list.slice(at - 2, at + 4)))
+    const back: UmpirePage[] = []
+    let older = page
+    while (older.prevCursor != null) {
+      older = await read(`&paged=1&limit=4${withCursor(older.prevCursor)}`)
+      back.unshift(older)
+    }
+    const after: UmpirePage[] = []
+    let newer = page
+    while (newer.nextCursor != null) {
+      newer = await read(`&paged=1&limit=4${withCursor(newer.nextCursor)}`)
+      after.push(newer)
+    }
+    expect(
+      [...back, page, ...after].flatMap(one => ids(one.items))
+    ).deep.equals(ids(list))
+  })
+
+  it('opens a schedule past its last game on the last one', async () => {
+    const answer = await umpireSchedulePage(
+      f.h.db,
+      actor(101),
+      f.leagueA,
+      'schedule',
+      { days: [5] },
+      { around: true, limit: 2 }
+    )
+    expect(answer.anchorId).not.equals(null)
+    const held = process.env.TS_UMPIRE_NOW
+    process.env.TS_UMPIRE_NOW = '2027-05-20T12:00:00Z'
+    const late: UmpirePage = await read('&paged=1&limit=2&around=next')
+    process.env.TS_UMPIRE_NOW = held
+    expect(late.anchorId).equals('gam_pages_mixed')
+    expect(late.nextCursor).equals(null)
+  })
+
+  it('answers no rows with an empty page and no anchor', async () => {
+    const empty: UmpirePage = await read('&paged=1&around=next&levels=missing')
+    expect(empty).deep.include({
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null,
+      positions: []
+    })
+  })
+
+  it('leaves the unpaged answer as it was', async () => {
+    const whole = await read()
+    expect(Object.keys(whole).toSorted()).deep.equals(
+      [
+        'creditTeams',
+        'games',
+        'isAdmin',
+        'levels',
+        'noteTypes',
+        'settings',
+        'types',
+        'view',
+        'viewerId'
+      ].toSorted()
+    )
+    expect(
+      await schedule(f.h.db, actor(101), f.leagueA, 'schedule', {})
+    ).deep.equals(whole)
+    const page: UmpirePage = await read('&paged=1')
+    expect(page.games).equals(undefined)
+    expect(page).deep.include({
+      viewerId: whole.viewerId,
+      isAdmin: whole.isAdmin,
+      view: 'schedule'
+    })
+  })
+
+  it('leaves view=league unpaged, and reads the umpire view by page', async () => {
+    const path = `/leagues/${f.leagueA}/umpire-schedule`
+    const league = await f.h.request(
+      'GET',
+      `${path}?view=league&paged=1`,
+      undefined,
+      101
+    )
+    expect(league.status).equals(400)
+    expect(((await league.json()) as { message: string }).message).equals(
+      'paged does not apply with view=league'
+    )
+    const whole = await f.h.request(
+      'GET',
+      `${path}?view=league`,
+      undefined,
+      101
+    )
+    expect(((await whole.json()) as { games: unknown[] }).games.length).above(0)
+    const own = await f.h.request('GET', `${path}?paged=1`, undefined, 101)
+    expect(own.status).equals(200)
+    expect(((await own.json()) as { view: string }).view).equals('umpire')
+  })
+
+  it('refuses what a page cannot be, naming the parameter', async () => {
+    const says = async (query: string): Promise<string> =>
+      (await read(query, 400)).message
+    expect(await says('&cursor=abc')).equals('cursor needs paged')
+    expect(await says('&around=next')).equals('around needs paged')
+    expect(await says('&paged=2')).equals('paged must be 1 or true')
+    expect(await says('&paged=1&cursor=abc')).equals(
+      'cursor is not a cursor this list gave'
+    )
+    expect(await says('&paged=1&limit=101')).includes('limit')
+    expect(await says('&paged=1&around=soon')).equals('around must be next')
+    const first: UmpirePage = await read('&paged=1&limit=1')
+    expect(
+      await says(`&paged=1&around=next${withCursor(first.nextCursor ?? '')}`)
+    ).equals('around does not apply with cursor')
+  })
+
+  it('reads through the client, its filters as the whole list takes them', async () => {
+    const client = new TeamStationClient({
+      baseUrl: f.h.origin + '/api/v1',
+      token: f.h.tokens.get(101)!
+    })
+    const page = await client.umpireSchedulePage(
+      f.leagueA,
+      'view=schedule&days=0,5',
+      { around: 'next', limit: 3 }
+    )
+    expect(page.anchorId).not.equals(null)
+    expect(page.items.length).above(0)
+    expect(page.positions.length).above(1)
+    const on = await client.umpireSchedulePage(
+      f.leagueA,
+      'view=schedule&days=0,5',
+      { cursor: page.nextCursor ?? '' }
+    )
+    expect(on.prevCursor).not.equals(null)
   })
 })

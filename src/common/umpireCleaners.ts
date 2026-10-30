@@ -73,7 +73,8 @@ export const asUmpireLeagues = asObject({
     })
   )
 })
-export const asUmpireSchedule = asObject({
+/** What a schedule says beside its games, whole or a page at a time. */
+export const asUmpireScheduleHead = {
   settings: asUmpireSettings,
   levels: asArray(asUmpireLevel),
   types: asArray(asUmpireLevel),
@@ -85,69 +86,69 @@ export const asUmpireSchedule = asObject({
     asLiteral('league'),
     asLiteral('schedule')
   ),
-  creditTeams: asArray(asObject({ id: asString, name: asString })),
-  games: asArray(
+  creditTeams: asArray(asObject({ id: asString, name: asString }))
+}
+export const asUmpireGameRow = asObject({
+  id: asString,
+  seasonId: asString,
+  seasonName: asString,
+  levelId: asString,
+  levelName: asString,
+  startAt: asString,
+  endAt: asEither(asString, asLiteral(null)),
+  timezone: asString,
+  date: asString,
+  status: asEither(
+    asLiteral('scheduled'),
+    asLiteral('inProgress'),
+    asLiteral('final'),
+    asLiteral('cancelled')
+  ),
+  home: asString,
+  away: asString,
+  homeTeamId: asOptional(asString),
+  awayTeamId: asOptional(asString),
+  location: asOptional(asString),
+  venue: asString,
+  notes: asString,
+  umpireNotes: asMap(asString),
+  positions: asArray(asUmpirePosition),
+  assignments: asMap(
     asObject({
-      id: asString,
-      seasonId: asString,
-      seasonName: asString,
-      levelId: asString,
-      levelName: asString,
-      startAt: asString,
-      endAt: asEither(asString, asLiteral(null)),
-      timezone: asString,
-      date: asString,
-      status: asEither(
-        asLiteral('scheduled'),
-        asLiteral('inProgress'),
-        asLiteral('final'),
-        asLiteral('cancelled')
-      ),
-      home: asString,
-      away: asString,
-      homeTeamId: asOptional(asString),
-      awayTeamId: asOptional(asString),
-      location: asOptional(asString),
-      venue: asString,
-      notes: asString,
-      umpireNotes: asMap(asString),
-      positions: asArray(asUmpirePosition),
-      assignments: asMap(
-        asObject({
-          userId: asString,
-          name: asString,
-          assignedBy: asString,
-          canRemove: asBoolean,
-          teams: asOptional(
-            asArray(asObject({ id: asString, name: asString })),
-            []
-          )
-        })
-      ),
-      conflicts: asArray(
-        asObject({
-          userId: asString,
-          name: asString,
-          activity: asEither(
-            asLiteral('playing'),
-            asLiteral('already umpiring')
-          ),
-          gameId: asString,
-          time: asString,
-          closeness: asString
-        })
-      ),
-      choices: asMap(
-        asArray(
-          asObject({
-            userId: asString,
-            name: asString,
-            reason: asEither(asString, asLiteral(null))
-          })
-        )
-      )
+      userId: asString,
+      name: asString,
+      assignedBy: asString,
+      canRemove: asBoolean,
+      teams: asOptional(asArray(asObject({ id: asString, name: asString })), [])
     })
+  ),
+  conflicts: asArray(
+    asObject({
+      userId: asString,
+      name: asString,
+      activity: asEither(asLiteral('playing'), asLiteral('already umpiring')),
+      gameId: asString,
+      time: asString,
+      closeness: asString
+    })
+  ),
+  choices: asMap(
+    asArray(
+      asObject({
+        userId: asString,
+        name: asString,
+        reason: asEither(asString, asLiteral(null))
+      })
+    )
   )
+})
+export const asUmpireSchedule = asObject({
+  ...asUmpireScheduleHead,
+  games: asArray(asUmpireGameRow)
+})
+export const asUmpireColumn = asObject({
+  ...asUmpirePosition.shape,
+  optionalHeader: asEither(asString, asLiteral(null))
 })
 const asRank = asObject({
   userId: asString,

@@ -60,6 +60,44 @@ export interface UmpireSchedule {
   isAdmin: boolean
   view: 'umpire' | 'league' | 'schedule'
 }
+/** A column of the table, and the note under its heading. */
+export interface UmpireColumn extends UmpirePosition {
+  optionalHeader: string | null
+}
+
+/** What a column's heading says of the games that offer it. */
+export function optionalPositionHeader(
+  games: ReadonlyArray<Pick<UmpireGameRow, 'positions'>>,
+  slot: string
+): string | undefined {
+  const offering = games.filter(g => g.positions.some(p => p.slot === slot))
+  const optional = offering.filter(
+    g => !g.positions.find(p => p.slot === slot)!.required
+  ).length
+  return optional === 0
+    ? undefined
+    : optional === offering.length
+      ? 'Optional'
+      : 'Optional in some games'
+}
+
+/** The columns `games` fill, by type in the league's order, then ordinal. */
+export function umpireColumns(
+  types: ReadonlyArray<Pick<UmpireType, 'id'>>,
+  games: ReadonlyArray<Pick<UmpireGameRow, 'positions'>>
+): UmpireColumn[] {
+  return types.flatMap(type => {
+    const held = games
+      .flatMap(game => game.positions)
+      .filter(position => position.typeId === type.id)
+    return [...new Map(held.map(p => [p.slot, p])).values()]
+      .sort((a, b) => a.ordinal - b.ordinal)
+      .map(position => ({
+        ...position,
+        optionalHeader: optionalPositionHeader(games, position.slot) ?? null
+      }))
+  })
+}
 export interface UmpireLeague {
   id: string
   name: string

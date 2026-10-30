@@ -425,6 +425,36 @@ describe('the API document', function () {
       expect(game.description).includes(text)
   })
 
+  it('says who may read public games, and what a public list takes', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const names = (route: string): string[] =>
+      paths[route].get.parameters.map(
+        (parameter: { name: string }) => parameter.name
+      )
+    for (const route of [
+      '/teams/{teamId}/games',
+      '/seasons/{seasonId}/games'
+    ]) {
+      expect(paths[route].get.security).deep.equals([{}, { bearer: [] }])
+      expect(names(route)).includes.members([
+        'when',
+        'order',
+        'limit',
+        'paged',
+        'cursor',
+        'hasVideo',
+        'public'
+      ])
+    }
+    expect(names('/seasons/{seasonId}/games')).not.include('around')
+    expect(names('/leagues/{leagueId}/umpire-schedule')).includes.members([
+      'paged',
+      'cursor',
+      'around',
+      'limit'
+    ])
+  })
+
   it('lists every role flag, the assistant included, wherever roles are named', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })

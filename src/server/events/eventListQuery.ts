@@ -243,6 +243,37 @@ export function parseTeamGamesQuery(
   })
 }
 
+/**
+ * `?public=1&paged=1` on a team's or a season's games: the parameters of a
+ * team's list, with no account behind them. It always answers a `Page`, and
+ * has no next game to open on.
+ */
+export function parsePublicGamesQuery(
+  query: Record<string, unknown>
+): ParsedEventList {
+  flag(query.public, 'public')
+  if (query.paged == null) throw badRequest('public needs paged')
+  if (query.around != null)
+    throw badRequest('around does not apply with public')
+  return parseTeamGamesQuery(query)
+}
+
+/**
+ * `GET /leagues/:leagueId/umpire-schedule`: the page parameters of the list
+ * above. Like a team's, `limit` waits for `paged`.
+ */
+export function parseUmpirePageQuery(
+  query: Record<string, unknown>
+): ParsedEventList {
+  const { paged, cursor, around, limit } = query
+  return parseEventListQuery({
+    paged,
+    cursor,
+    around,
+    limit: paged == null ? undefined : limit
+  })
+}
+
 /** How a `paged` read cuts the list, for `schedulePage`. */
 export function schedulePageAsk(
   query: ParsedEventList,

@@ -83,6 +83,7 @@ import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
 import { gameUmpires } from '../umpires/assignments'
 import { gameNames } from '../users/nameBook'
+import { publicGamesRoute } from './publicGames'
 import {
   externalIdsAsked,
   schedulableSeasonIds,
@@ -427,6 +428,7 @@ export function teamRoutes(
 
   router.get(
     '/teams/:teamId/games',
+    publicGamesRoute(db, 'team'),
     requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
