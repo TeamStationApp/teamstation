@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { type Kysely, type RawBuilder, sql, type Transaction } from 'kysely'
 
+import type { CameraSource } from '../../common/api'
 import { badRequest, conflict, gone } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { rtmpOrigin } from '../../common/primaryUrl'
@@ -114,10 +115,33 @@ export interface LiveStreamRow {
   recordsLocally: boolean
   /** The legacy Director claim route has returned it. */
   directorClaimed: boolean
+  /** What an external camera is. */
+  source: CameraSource | null
+  createdAt: Date
+  /** When video first reached it. */
+  publishedAt: Date | null
+  /** When the ingest finished it. */
+  endedAt: Date | null
 }
 
-/** How many cameras one person may point at one game. */
+/** How many cameras one person may have active on one game at once. */
 export const MAX_CAMERAS = 4
+
+/** How many cameras one game may have active at once, whoever holds them. */
+export const MAX_GAME_CAMERAS = 6
+
+/**
+ * Whether a camera still holds its place: not ended, not revoked, and nobody
+ * has closed it. Everything else keeps its row and gives its slot, its name
+ * and its share of the limits back.
+ */
+export function isActiveStream(
+  row: Pick<LiveStreamRow, 'state' | 'closesAt'>
+): boolean {
+  return (
+    row.state !== 'ended' && row.state !== 'revoked' && row.closesAt == null
+  )
+}
 
 /** What a camera is called when nobody has said. */
 export function labelFor(row: { slot: number; label: string | null }): string {
@@ -180,25 +204,43 @@ const STREAM_FIELDS = [
   'device_model as deviceModel',
   'local_recording as localRecording',
   'records_locally as recordsLocally',
-  'director_claimed as directorClaimed'
+  'director_claimed as directorClaimed',
+  'source',
+  'created_at as createdAt',
+  'first_published_at as publishedAt',
+  'ended_at as endedAt'
 ] as const
+
+/** A timestamp as a date, whichever the driver handed over. */
+function dateOf(value: Date | string | null): Date | null {
+  return value == null ? null : new Date(value)
+}
 
 function asRow(row: {
   opensAt: Date | string
   closesAt: Date | string | null
+  createdAt: Date | string
+  publishedAt: Date | string | null
+  endedAt: Date | string | null
 }): LiveStreamRow {
   return {
     ...(row as unknown as LiveStreamRow),
     opensAt: new Date(row.opensAt),
-    closesAt: row.closesAt == null ? null : new Date(row.closesAt)
+    closesAt: dateOf(row.closesAt),
+    createdAt: new Date(row.createdAt),
+    publishedAt: dateOf(row.publishedAt),
+    endedAt: dateOf(row.endedAt)
   }
 }
 
 /**
- * Every key a game still has, whosever they are, oldest first.
+ * Every key a game still has, whosever they are: active cameras first, then
+ * ended ones, each oldest first.
  *
- * Ordered by person and then slot so a list reads as people with cameras
- * rather than as rows in whatever order the database felt like.
+ * Active first because readers take the first row that matches, installed TS
+ * Director builds among them, and they want the camera that can still publish
+ * rather than an ended one of the same name. A camera its owner deleted is
+ * left out.
  */
 export async function liveStreamsFor(
   db: Kysely<Database>,
@@ -209,10 +251,15 @@ export async function liveStreamsFor(
     .select(STREAM_FIELDS)
     .where('game_id', '=', gameId)
     .where('state', '<>', 'revoked')
-    .orderBy('user_id', 'asc')
+    .where('discarded_at', 'is', null)
+    .orderBy('created_at', 'asc')
     .orderBy('slot', 'asc')
     .execute()
-  return rows.map(asRow)
+  const all = rows.map(asRow)
+  return [
+    ...all.filter(row => isActiveStream(row)),
+    ...all.filter(row => !isActiveStream(row))
+  ]
 }
 
 /** One person's cameras on one game. */
@@ -240,7 +287,8 @@ export async function liveStreamById(
 }
 
 /**
- * The lowest camera number this person does not already have for this game.
+ * The lowest camera number this person is not using on this game, given their
+ * active cameras.
  *
  * Lowest rather than next, so somebody who ends their second camera and asks
  * for another gets `Camera 2` back instead of counting upwards for ever.
@@ -250,6 +298,35 @@ export function freeSlot(mine: LiveStreamRow[]): number | undefined {
     if (!mine.some(row => row.slot === slot)) return slot
   }
   return undefined
+}
+
+/**
+ * The slot a new camera of this person's takes, or the refusal when they or
+ * the game are full. Only active cameras count, and a Director's is one.
+ *
+ * Every path that creates a camera calls this under the game's
+ * `liveStreams:<gameId>` lock, so two asking at once cannot both pass.
+ */
+export async function checkCameraLimits(
+  trx: Kysely<Database>,
+  gameId: string,
+  userId: string
+): Promise<number> {
+  const active = (await liveStreamsFor(trx, gameId)).filter(row =>
+    isActiveStream(row)
+  )
+  const slot = freeSlot(active.filter(row => row.userId === userId))
+  if (slot == null) {
+    throw badRequest(
+      `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
+    )
+  }
+  if (active.length >= MAX_GAME_CAMERAS) {
+    throw badRequest(
+      `This game already has ${MAX_GAME_CAMERAS} cameras. End one to add another.`
+    )
+  }
+  return slot
 }
 
 /** Reads a key back so it can be shown. Throws if the seal cannot be opened. */
@@ -278,6 +355,8 @@ export interface CreateLiveStreamOptions {
   recordsLocally?: boolean
   /** Made by the legacy Director claim route. */
   directorClaimed?: boolean
+  /** What an external camera is. */
+  source?: CameraSource
 }
 
 /**
@@ -339,6 +418,7 @@ export async function createLiveStream(
         device_model: options.deviceModel ?? null,
         records_locally: options.recordsLocally === true,
         director_claimed: options.directorClaimed === true,
+        source: options.source ?? null,
         created_at: now,
         updated_at: now
       })
@@ -368,6 +448,10 @@ export async function createLiveStream(
     localRecording: 'none',
     recordsLocally: options.recordsLocally === true,
     directorClaimed: options.directorClaimed === true,
+    source: options.source ?? null,
+    createdAt: now,
+    publishedAt: null,
+    endedAt: null,
     key: key.key
   }
 }
@@ -658,8 +742,8 @@ export const ENDED_CAMERA =
  *    the legacy Director claim route returned and that nothing is publishing
  *    on: a device updating mid-game keeps that stream's key and live video. A
  *    stream made on the website for streaming software is never adopted.
- * 3. **Create** one in the lowest free slot, after revoking any ended stream
- *    of this device and name, which frees its slot and leaves its video.
+ * 3. **Create** one in the lowest free slot. An ended stream of this device
+ *    and name stays as it is, with its video, beside the new one.
  *
  * A redial names the stream it holds. While that stream is still active on
  * this device it is returned, whatever name the redial sends, so a camera
@@ -771,28 +855,7 @@ export async function requestDeviceStream(
       throw labelTaken(label!)
     }
 
-    // An ended stream of this device and name is history now: revoking it
-    // gives its slot back, and its video stays as it is.
-    const now = new Date()
-    await trx
-      .updateTable('live_streams')
-      .set({ state: 'revoked', updated_at: now })
-      .where('game_id', '=', gameId)
-      .where('user_id', '=', userId)
-      .where('device_id', '=', deviceId)
-      .where(nameIs(label))
-      .where('state', '<>', 'revoked')
-      .where(eb =>
-        eb.or([eb('closes_at', 'is not', null), eb('state', '=', 'ended')])
-      )
-      .execute()
-
-    const slot = freeSlot(await myLiveStreams(trx, gameId, userId))
-    if (slot == null) {
-      throw badRequest(
-        `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-      )
-    }
+    const slot = await checkCameraLimits(trx, gameId, userId)
     const created = await createLiveStream(trx, {
       gameId,
       teamId: request.teamId,

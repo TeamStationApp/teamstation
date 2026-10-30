@@ -810,6 +810,10 @@ export interface LiveStreamsTable {
   records_locally: Generated<boolean>
   /** The legacy Director claim route has returned this stream. */
   director_claimed: Generated<boolean>
+  /** What an external camera is. Null for a phone, Director or the website. */
+  source: 'rtmp' | 'gopro' | 'mevo' | 'mevoStudio' | null
+  /** When its owner deleted it. Such a camera leaves every list. */
+  discarded_at: Timestamp | null
   created_at: Timestamp
   updated_at: Timestamp
 }

@@ -154,6 +154,7 @@ class FakeServer {
   mine: LiveStream[]
   others: LiveStream[]
   maxCameras = 4
+  gameCanAdd = 6
   /** Answered to the next request, whatever it is, instead of the list. */
   failNext: { status: number; body: string } | undefined
   /** Answered to the next reveal, so the list itself can still load. */
@@ -206,8 +207,10 @@ class FakeServer {
       gameId: 'gam_1',
       mine: this.mine,
       others: this.others,
-      canAdd: this.maxCameras - this.mine.length,
-      maxCameras: this.maxCameras
+      canAdd: Math.min(this.maxCameras - this.mine.length, this.gameCanAdd),
+      maxCameras: this.maxCameras,
+      gameCanAdd: this.gameCanAdd,
+      discarded: []
     }
   }
 
@@ -568,6 +571,28 @@ describe('the stream panel', function () {
     // A camera on the air cannot be removed, and an ended one cannot be ended.
     expect(buttonsNamed('Remove camera')).has.lengthOf(3)
     expect(buttonsNamed('End stream')).has.lengthOf(3)
+  })
+
+  it('says a game is full, whether or not any of its cameras are mine', async function () {
+    const server = new FakeServer([], [])
+    server.gameCanAdd = 0
+    await mount(server)
+    const fullGame = 'This game already has 6 cameras. End one to add another.'
+    expect(text()).includes(fullGame)
+    expect(text()).not.includes('That is all 4')
+    expect(buttonsNamed('Create a stream URL')).has.lengthOf(0)
+  })
+
+  it('says a full game before my own limit when both are reached', async function () {
+    const server = new FakeServer(
+      ['1', '2', '3', '4'].map(n => camera(`lst_${n}`, `Camera ${n}`))
+    )
+    server.gameCanAdd = 0
+    await mount(server)
+    expect(text()).includes(
+      'This game already has 6 cameras. End one to add another.'
+    )
+    expect(text()).not.includes('That is all 4')
   })
 
   it('reveals a URL, copies it, and says so for two seconds', async function () {

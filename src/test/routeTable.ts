@@ -109,7 +109,9 @@ export function apiRoutes(): string[] {
       freeDiskFloorGb: 10
     },
     sessionSecret: 'secret',
-    host: '127.0.0.1'
+    host: '127.0.0.1',
+    space: media.space,
+    mediaRoot: media.mediaRoot
   }
   const sendCode = async (): Promise<void> => undefined
   return [
@@ -140,6 +142,7 @@ export function apiRoutes(): string[] {
     ...routesOf(
       directorUploadRoutes(db, {
         uploadsDir: '/tmp',
+        mediaRoot: '/tmp',
         ffmpegPath: '/usr/bin/ffmpeg'
       })
     ),
