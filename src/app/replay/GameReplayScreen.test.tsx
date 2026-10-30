@@ -699,12 +699,17 @@ describe('the replay screen', function () {
       const scroll = propsOf('replay-box-score')
       expect(flat(scroll.contentContainerStyle).alignItems).equals('center')
       // The line score and the tables centre apart, so a long game's line
-      // score that fills a phone leaves the tables centred.
-      for (const id of ['replay-box-score-line', 'replay-box-score-column'])
-        expect(flat(propsOf(id).style)).deep.equals({
-          alignSelf: 'center',
-          maxWidth: '100%'
-        })
+      // score that fills a phone leaves the tables centred. The line score is
+      // a row: its team names beside its scrolling innings.
+      expect(flat(propsOf('replay-box-score-line').style)).deep.equals({
+        alignSelf: 'center',
+        maxWidth: '100%',
+        flexDirection: 'row'
+      })
+      expect(flat(propsOf('replay-box-score-column').style)).deep.equals({
+        alignSelf: 'center',
+        maxWidth: '100%'
+      })
       const line = document.querySelector(
         '[data-testid="replay-box-score-line"]'
       )

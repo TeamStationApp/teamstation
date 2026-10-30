@@ -61,7 +61,9 @@ const tsSuites = [
   'src/app/screens/statColumns.test.ts',
   'src/server/dev/statsTablesSeed.test.ts',
   // The box score's totals (M4).
-  'src/app/screens/boxScoreTotals.test.ts'
+  'src/app/screens/boxScoreTotals.test.ts',
+  // The replay's totals (M5).
+  'src/common/replay/replayBoxScore.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -75,7 +77,10 @@ const appSuites = [
   'src/app/components/WideTable.test.tsx',
   // The box score and the coach's (M3, M4).
   'src/app/screens/BoxScore.test.tsx',
-  'src/app/screens/CoachGameScreen.test.tsx'
+  'src/app/screens/CoachGameScreen.test.tsx',
+  // The replay's line score (M5).
+  'src/app/replay/ReplayBoxScore.test.tsx',
+  'src/app/replay/GameReplayScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

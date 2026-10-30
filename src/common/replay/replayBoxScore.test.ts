@@ -15,7 +15,14 @@ import {
 import type { ScoringAction } from '../scoring/actions'
 import { statLines } from '../scoring/credits'
 import type { Position } from '../scoring/state'
-import { replayBoxScore, scoredFrom } from './replayBoxScore'
+import {
+  battingTotals,
+  pitchingTotals,
+  type ReplayBattingLine,
+  replayBoxScore,
+  type ReplayPitchingLine,
+  scoredFrom
+} from './replayBoxScore'
 import { replayTimelineOf } from './replayTimeline'
 
 const context = replayContext()
@@ -198,5 +205,75 @@ describe('replay box score', function () {
   it('has no blank innings when nothing was imported', async function () {
     const timeline = replayTimelineOf(await finalGame(), context)
     expect(scoredFrom(timeline.start, timeline.derived)).equals(null)
+  })
+})
+
+describe('the replay box score totals', function () {
+  const batter = (
+    id: number,
+    figures: Partial<ReplayBattingLine>
+  ): ReplayBattingLine => ({
+    id,
+    name: `Batter ${id}`,
+    ab: 0,
+    r: 0,
+    h: 0,
+    rbi: 0,
+    bb: 0,
+    k: 0,
+    sub: false,
+    current: false,
+    ...figures
+  })
+  const pitcher = (
+    id: number,
+    outs: number,
+    figures: Partial<ReplayPitchingLine> = {}
+  ): ReplayPitchingLine => ({
+    id,
+    name: `Pitcher ${id}`,
+    outs,
+    ip: `${Math.floor(outs / 3)}.${outs % 3}`,
+    h: 1,
+    r: 1,
+    er: 0,
+    bb: 1,
+    k: 2,
+    pc: 20,
+    current: false,
+    ...figures
+  })
+
+  it('adds up each batting column, a batter yet to bat adding nothing', function () {
+    expect(
+      battingTotals([
+        batter(1, { ab: 3, r: 1, h: 2, rbi: 1, k: 1 }),
+        batter(2, { ab: 4, h: 1, bb: 1, k: 2 }),
+        batter(3, {})
+      ])
+    ).deep.equals({ ab: 7, r: 1, h: 3, rbi: 1, bb: 1, k: 3 })
+    expect(battingTotals([])).deep.equals({
+      ab: 0,
+      r: 0,
+      h: 0,
+      rbi: 0,
+      bb: 0,
+      k: 0
+    })
+  })
+
+  it('adds innings as outs, and the other pitching columns as they are', function () {
+    expect(
+      pitchingTotals([pitcher(1, 4), pitcher(2, 5, { er: 1, pc: 31 })])
+    ).deep.equals({
+      outs: 9,
+      ip: '3.0',
+      h: 2,
+      r: 2,
+      er: 1,
+      bb: 2,
+      k: 4,
+      pc: 51
+    })
   })
 })

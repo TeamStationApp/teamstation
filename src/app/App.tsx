@@ -3274,6 +3274,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         gameId={top.gameId}
         onExit={pop}
+        onOpenPlayer={openPlayer}
         onNotReplayable={() => {
           // The replay sits on its game's page, which it gives way to without
           // leaving a step behind for Back to walk into.
