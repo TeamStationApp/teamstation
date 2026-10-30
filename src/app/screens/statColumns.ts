@@ -7,6 +7,8 @@ export interface StatColumn<T> {
   value: (row: T) => string
   /** Spoken meaning for flags whose visible glyph is not descriptive. */
   accessibilityValue?: (row: T) => string
+  /** Bold figures, as a line score's runs are. */
+  strong?: boolean
 }
 
 const count = (value: number | null | undefined): string =>

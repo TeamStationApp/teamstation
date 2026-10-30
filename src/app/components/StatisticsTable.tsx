@@ -1,5 +1,5 @@
 import React from 'react'
-import { Pressable, Text } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import type { StatColumn } from '../screens/statColumns'
 import { useTheme } from '../theme/ThemeContext'
@@ -28,29 +28,36 @@ export function StatisticsTable<
         // A withdrawn line stands for nobody, and a pool player's page may be
         // one this viewer cannot open: no tap target for either.
         const { userId } = row
-        const opens = onOpen != null && userId != null && row.openable !== false
+        const shown = row.shortName ?? 'Unknown'
+        const text = (
+          <Text
+            numberOfLines={1}
+            style={{
+              fontFamily: theme.regularTextFont,
+              fontSize: theme.rem(0.875),
+              color: theme.primaryTextColor
+            }}
+          >
+            {shown}
+          </Text>
+        )
+        const cell = {
+          flex: 1,
+          minHeight: 44,
+          justifyContent: 'center'
+        } as const
+        if (onOpen == null || userId == null || row.openable === false)
+          return <View style={cell}>{text}</View>
         return (
           <Pressable
-            accessibilityRole={opens ? 'button' : undefined}
-            accessibilityLabel={
-              opens ? `Open ${row.shortName ?? 'Unknown'}` : undefined
-            }
-            disabled={!opens}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${shown}`}
             onPress={() => {
-              if (opens) onOpen({ ...row, userId })
+              onOpen({ ...row, userId })
             }}
-            style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}
+            style={cell}
           >
-            <Text
-              numberOfLines={1}
-              style={{
-                fontFamily: theme.regularTextFont,
-                fontSize: theme.rem(0.875),
-                color: theme.primaryTextColor
-              }}
-            >
-              {row.shortName ?? 'Unknown'}
-            </Text>
+            {text}
           </Pressable>
         )
       }}

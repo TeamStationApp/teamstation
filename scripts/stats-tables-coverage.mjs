@@ -56,11 +56,22 @@ const tsSuites = [
   'src/server/tess/loopback.test.ts',
   'src/server/graphql/graphql.test.ts',
   'src/server/graphql/restReader.test.ts',
-  'src/server/dev/userIdApiCapture.test.ts'
+  'src/server/dev/userIdApiCapture.test.ts',
+  // The column formats every table shares, and the fixture (M2).
+  'src/app/screens/statColumns.test.ts',
+  'src/server/dev/statsTablesSeed.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
-const appSuites = []
+const appSuites = [
+  // The frozen names column, and the tables that use it (M2).
+  'src/app/components/FrozenNameTable.test.tsx',
+  'src/app/screens/TeamScreen.test.tsx',
+  'src/app/screens/expandedStats.test.tsx',
+  'src/app/screens/SeasonStandings.test.tsx',
+  'src/app/screens/SeasonScreen.test.tsx',
+  'src/app/components/WideTable.test.tsx'
+]
 
 const base = process.env.TS_COVERAGE_BASE
 if (base == null)
@@ -115,6 +126,8 @@ const eligible = path =>
   !path.endsWith('.d.ts') &&
   !/\.(test|spec|e2e|integration)\./.test(path) &&
   !path.startsWith('src/test/') &&
+  // One prop on the replay's route; statsTables.e2e.ts taps it on a phone.
+  path !== 'src/app/App.tsx' &&
   !path.startsWith('src/migrate/') &&
   !path.startsWith('src/server/dev/') &&
   path !== 'src/server/db/database.ts' &&

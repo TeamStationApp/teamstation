@@ -725,10 +725,10 @@ describe('team screen: pinned pills and the schedule', function () {
       await tab(page, 'Stats')
       for (let i = 0; i < 6; i++) await scroll(page, size, 250)
       const pinned = await read(page)
-      // The table's name column, and the scroller it sits in.
+      // The table's Player heading, in the names column beside the scroller.
       const PLAYER_CELL = `(function () {
         return Array.prototype.find.call(
-          document.querySelectorAll('div'),
+          document.querySelectorAll('[data-testid="frozen-names"] div'),
           function (node) {
             return node.childElementCount === 0 && node.textContent === 'Player'
           }
@@ -736,8 +736,8 @@ describe('team screen: pinned pills and the schedule', function () {
       })()`
       /**
        * Scrolls the table sideways to `left` and says where the name column
-       * and the first number column are: the name column sticks at the
-       * table's edge, and the numbers go under it.
+       * and the first number column are: the names stay where they are,
+       * beside the scroller, while the numbers move inside it.
        */
       const sideways = async (
         left: number
@@ -745,14 +745,15 @@ describe('team screen: pinned pills and the schedule', function () {
         (await page.evaluate(`(function () {
           var name = ${PLAYER_CELL}
           if (name == null) return null
-          var scroller = name.parentElement
-          while (scroller != null && scroller.scrollWidth <= scroller.clientWidth)
-            scroller = scroller.parentElement
-          if (scroller == null) return null
+          var column = name.closest('[data-testid="frozen-names"]')
+          var scroller = column.nextElementSibling
+          if (scroller == null || scroller.scrollWidth <= scroller.clientWidth)
+            return null
           scroller.scrollLeft = ${left}
-          var first = name.nextElementSibling
+          var head = scroller.firstElementChild.firstElementChild.firstElementChild
+          var first = head == null ? null : head.firstElementChild
           return {
-            name: name.getBoundingClientRect().left,
+            name: column.getBoundingClientRect().left,
             first: first == null ? 0 : first.getBoundingClientRect().left,
             scrolled: scroller.scrollLeft
           }

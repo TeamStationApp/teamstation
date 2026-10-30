@@ -79,6 +79,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dev/samePerson.js',
   'server/dev/scoringGame.js',
   'server/dev/seed.js',
+  'server/dev/statsTablesSeed.js',
   'server/dev/userIdApiCapture.js',
   'server/dev/userIdCheck.js',
   'server/dev/userIdCompare.js',

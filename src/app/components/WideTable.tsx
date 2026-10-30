@@ -60,11 +60,8 @@ export function offsetShowing(
  * the batting average, which is the one people look for — was quietly cut off
  * at the edge of the card with no way to reach it.
  *
- * The name column is pinned while the figures slide under it, so a row
- * scrolled to its last column is still somebody's. That is `position: sticky`
- * on the name cell — a position React Native has no name for, which is what
- * `webStyle` is for — rather than a second column beside the scroll, because
- * splitting every row in two would cost the row its single press target.
+ * A table with a name column does not use this: `FrozenNameTable` keeps the
+ * names outside the scroll, which holds on the phone as well as in a browser.
  *
  * A cell that opens in place, such as the season grid's number cells, holds
  * the table's offset through `useWideTableHold`. Android's horizontal scroll
