@@ -1,6 +1,7 @@
 import React from 'react'
 import { Platform, Pressable, View } from 'react-native'
 
+import { useChatVisualViewport } from '../chat/useChatVisualViewport'
 import { useInsets } from '../platform/safeArea'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -121,6 +122,8 @@ export interface AppNavProps {
   onSelect: (id: NavTabId) => void
   /** A capsule floating over the content, or a row inside the header. */
   mode: NavMode
+  /** Chat can be opened on an entity page's navigation stack. */
+  chatActive?: boolean
   /** Tabs with something unread, which carry a dot. */
   dots?: Partial<Record<NavTabId, boolean>>
   onHeight?: (height: number) => void
@@ -143,6 +146,11 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const floating = mode === 'floating'
+  const visual = useChatVisualViewport(
+    Platform.OS === 'web' &&
+      floating &&
+      (props.chatActive ?? selected === 'chat')
+  )
   // Off the bottom of the window on a page. On iOS, against the home
   // indicator: the inset is the gap, and the capsule adds nothing past it.
   // Android keeps the margin above its own navigation inset.
@@ -154,6 +162,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   )
 
   const capsule = theme.rem(2.5)
+  if (visual?.keyboardOpen === true) return <></>
 
   return (
     <GlassView

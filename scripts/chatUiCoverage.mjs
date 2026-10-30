@@ -43,6 +43,7 @@ await build({
     contents: [
       ...globSync('src/app/chat/**/*.test.tsx'),
       ...globSync('src/app/App.offline*.test.tsx'),
+      'src/app/App.entityChats.test.tsx',
       'src/app/App.navbarPop.test.tsx',
       'src/app/App.tess.test.tsx',
       'src/app/dev/ChatBenchScreen.test.tsx',
@@ -58,7 +59,11 @@ await build({
       'src/app/umpires/noteEditor.test.tsx',
       'src/app/components/Emblem.test.tsx',
       'src/app/components/GlassView.test.tsx',
-      'src/app/components/AppNav.test.tsx'
+      'src/app/components/AppNav.test.tsx',
+      'src/app/screens/NotificationsScreen.test.tsx',
+      'src/app/components/AppHeader.test.tsx',
+      'src/app/components/SuccessToast.test.tsx',
+      'src/app/screens/OAuthScreen.test.tsx'
     ]
       .map(path => `import './${path}'`)
       .join('\n'),
@@ -95,6 +100,7 @@ await build({
 const specs = [
   ...globSync('src/app/chat/**/*.test.ts'),
   ...globSync('src/server/chat/*.test.ts'),
+  ...globSync('src/server/notifications/*.test.ts'),
   ...globSync('src/server/routes/chat*.test.ts'),
   ...globSync('src/migrate/chat*.test.ts'),
   ...globSync('src/common/chatCrypto/*.test.ts'),

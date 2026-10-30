@@ -3827,6 +3827,7 @@ function Shell(props: AppProps): React.ReactElement {
           onHeight={setNavigationHeight}
           mode="floating"
           selected={tab}
+          chatActive={top?.name === 'conversation' || tab === 'chat'}
           onSelect={selectTab}
           dots={{ chat: hasUnread(chatList) }}
         />
