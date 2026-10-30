@@ -243,7 +243,7 @@ export function PlayerSettingsTab(
         />
       </Card>
       <BirthMonthSection client={client} userId={userId} />
-      {teamId != null && (
+      {teamId != null && saved.ownIdentity !== true && (
         <GuardiansSection
           client={client}
           teamId={teamId}
