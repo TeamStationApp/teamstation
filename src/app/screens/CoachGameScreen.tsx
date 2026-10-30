@@ -772,6 +772,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               initialDraft={held}
               onDraftChange={setHeld}
               rosters={opened.rosters}
+              guests={Object.values(
+                (detail ?? opened.game).guestPlayers
+              ).flat()}
               unrostered={(detail ?? opened.game).unrostered}
               onRosteredChange={async (side, userId, rostered) => {
                 const posted = client.setRostered(gameId, {

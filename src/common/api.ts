@@ -1298,6 +1298,11 @@ const cleanRosterEntry = asObject({
   jersey: asNullable(asString),
   positions: asArray(asString),
   isPlayer: asBoolean,
+  /**
+   * A guest who already existed, added for this game only: their name and
+   * hands are their own, and only their jersey and positions are the game's.
+   */
+  pool: asOptional(asBoolean),
   role: asString,
   /** The section they are listed under: the first of these that fits. */
   section: asRosterSection,
@@ -1330,11 +1335,12 @@ const cleanRosterEntry = asObject({
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
-  'teamNames' | 'guardianOf' | 'nameFormat'
+  'teamNames' | 'guardianOf' | 'nameFormat' | 'pool'
 > & {
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
+  pool?: boolean
 }
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 

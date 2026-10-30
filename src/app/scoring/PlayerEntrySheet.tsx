@@ -40,6 +40,7 @@ export function PlayerEntrySheet({
   onAddPlaceholders,
   initialDraft,
   existing,
+  ownIdentity = false,
   onAdd
 }: {
   onClose: () => void
@@ -52,6 +53,11 @@ export function PlayerEntrySheet({
    * and only the jersey and positions are theirs to set here.
    */
   existing?: ExistingEntry
+  /**
+   * Editing a pool player: their name and hands are their own, so they show
+   * greyed, and only the jersey and positions change.
+   */
+  ownIdentity?: boolean
   /** Create Player and Edit Player; unused with `existing`. */
   onAdd?: (draft: PlayerDraft) => void | Promise<void>
 }): React.ReactElement {
@@ -302,7 +308,9 @@ export function PlayerEntrySheet({
                       }}
                       autoFocus={editing && key === 'firstName'}
                       accessibilityLabel={label}
-                      editable={existing == null || key === 'jersey'}
+                      editable={
+                        (existing == null && !ownIdentity) || key === 'jersey'
+                      }
                       value={draft[key]}
                       keyboardType={key === 'jersey' ? 'number-pad' : 'default'}
                       autoCapitalize="words"
@@ -318,6 +326,8 @@ export function PlayerEntrySheet({
               <Text style={text}>Throws</Text>
               {existing != null ? (
                 hands(existing.candidate.throws, 'Throws')
+              ) : ownIdentity ? (
+                hands(draft.throws, 'Throws')
               ) : (
                 <RosterSelector
                   compact
@@ -337,6 +347,8 @@ export function PlayerEntrySheet({
               <Text style={text}>Bats</Text>
               {existing != null ? (
                 hands(existing.candidate.bats, 'Bats')
+              ) : ownIdentity ? (
+                hands(draft.bats, 'Bats')
               ) : (
                 <RosterSelector
                   compact

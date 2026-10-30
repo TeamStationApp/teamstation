@@ -340,6 +340,7 @@ export async function addExistingGuest(
         bats: user.bats,
         throws: user.throws,
         isPlayer: true,
+        pool: true,
         role: 'player',
         section: 'player',
         staffRoles: [],

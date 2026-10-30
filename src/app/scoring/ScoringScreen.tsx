@@ -3247,6 +3247,7 @@ function ScoringPanel(props: {
                 scorekeeperSide={props.scorekeeperSide}
                 state={state}
                 rosters={props.rosters}
+                guests={props.guests}
                 unaccepted={lineupsUnaccepted(state, props.visibleDefaults)}
                 onDraftChange={setRosterInitial}
                 conflict={rosterLive.conflict}

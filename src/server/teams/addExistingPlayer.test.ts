@@ -479,6 +479,7 @@ describe('adding a player who already exists', function () {
         row.throws
       ])
     ).deep.equals([['Freddie F', 'left', 'right']])
+    expect(availability.guestPlayers.away[0].pool).equals(true)
 
     // In the game once: on either side, and not as a player of either team.
     const twice = await guest({ side: 'home', userId: ids['Freddie Freeman'] })

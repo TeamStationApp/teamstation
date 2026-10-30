@@ -130,6 +130,7 @@ export async function gameAvailability(
           bats: user.bats,
           throws: user.throws,
           isPlayer: true,
+          ...(detail?.pool === true ? { pool: true } : {}),
           role: 'player',
           section: 'player',
           staffRoles: [],

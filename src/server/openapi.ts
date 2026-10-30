@@ -2260,6 +2260,11 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'string',
               description: PUBLIC_NAME
             },
+            pool: {
+              type: 'boolean',
+              description:
+                'A guest who already existed, added for this game only.'
+            },
             nameDetails: {
               type: 'object',
               required: ['firstName', 'lastName', 'displayName'],

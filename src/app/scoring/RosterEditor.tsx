@@ -186,6 +186,7 @@ export function RosterEditor({
   defaultSide,
   scorekeeperSide,
   rosters,
+  guests = [],
   unaccepted = false,
   conflict = false,
   onDraftChange,
@@ -267,6 +268,8 @@ export function RosterEditor({
    */
   conflict?: boolean
   onDraftChange?: (draft: RosterEditorDraft) => void
+  /** The game's guests: a pool player among them keeps their own name. */
+  guests?: readonly RosterEntry[]
   /** Whether the draft differs from the game it was opened over, as it changes. */
   onDirtyChange?: (dirty: boolean) => void
   onEditPlayer?: (userId: string, name: string, teamId: string) => void
@@ -376,6 +379,8 @@ export function RosterEditor({
   }, [draft])
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
+  // Pool players added here, whom the game's guests do not list yet.
+  const [pooled, setPooled] = useState<readonly number[]>([])
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
   )
@@ -526,6 +531,10 @@ export function RosterEditor({
         positions: choice.positions
       }
       const teamId = draft.gameData.teams[side].id
+      if (pool && entry.gumboId != null) {
+        const { gumboId } = entry
+        setPooled(held => [...held, gumboId])
+      }
       if (!pool)
         setCreated(held => ({
           ...held,
@@ -1129,6 +1138,12 @@ export function RosterEditor({
       {editingLocal != null && state.readOnly !== true && (
         <PlayerEntrySheet
           key={`edit:${side}:${editingLocal}`}
+          ownIdentity={
+            pooled.includes(editingLocal) ||
+            guests.some(
+              guest => guest.pool === true && guest.gumboId === editingLocal
+            )
+          }
           initialDraft={draftOfLocalPlayer(
             draft.gameData.players[editingLocal]
           )}
