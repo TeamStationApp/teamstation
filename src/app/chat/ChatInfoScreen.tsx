@@ -8,12 +8,7 @@ import { lstrings, plural, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ChatAvatar } from './ChatAvatar'
 import { conversationIdentity, memberIdentity } from './chatIdentityModel'
-import {
-  approvalsIn,
-  conversationPill,
-  conversationTitle,
-  safetyGroups
-} from './chatModel'
+import { approvalsIn, conversationPill, conversationTitle } from './chatModel'
 import { getChatStyles } from './chatStyles'
 import type {
   ConversationView,
@@ -21,6 +16,7 @@ import type {
   MemberView
 } from './engine/engine'
 import { SafetyNumberScreen } from './SafetyNumberScreen'
+import { SafetyWordsGrid } from './SafetyWordsGrid'
 import type { ChatScreenEngine } from './screenEngine'
 
 export interface ChatInfoScreenProps {
@@ -249,9 +245,6 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
       })
   }
 
-  const digits = (number: string | undefined): string =>
-    number == null ? '—' : safetyGroups(number).join(' ')
-
   return (
     <Screen scrollRef={scroll}>
       <View
@@ -316,15 +309,11 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
                 <Text style={shared.sectionLabel}>
                   {lstrings.chat_old_safety_number}
                 </Text>
-                <Text style={styles.digits}>
-                  {digits(approval.oldSafetyNumber)}
-                </Text>
+                <SafetyWordsGrid words={approval.oldSafetyNumber} />
                 <Text style={shared.sectionLabel}>
                   {lstrings.chat_new_safety_number}
                 </Text>
-                <Text style={styles.digits}>
-                  {digits(approval.newSafetyNumber)}
-                </Text>
+                <SafetyWordsGrid words={approval.newSafetyNumber} />
                 <Button
                   label={lstrings.chat_approve}
                   accessibilityLabel={sprintf(
@@ -439,13 +428,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   approval: {
     gap: theme.rem(theme.spaceXsRem)
-  },
-  digits: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375),
-    fontWeight: '600',
-    letterSpacing: theme.rem(0.04),
-    color: theme.primaryTextColor
   },
   member: {
     flexDirection: 'row',

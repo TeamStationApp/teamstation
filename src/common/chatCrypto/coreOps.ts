@@ -35,7 +35,8 @@ export const OP = {
   newMessageId: 30,
   newIdentityId: 31,
   sha256Update: 32,
-  sha256Finish: 33
+  sha256Finish: 33,
+  safetyBytes: 34
 } as const
 
 export type OpName = keyof typeof OP

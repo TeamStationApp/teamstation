@@ -4826,7 +4826,7 @@ export class Scenarios {
     )
     await this.openInfo()
     const rowId = 'chat-info-member-' + peerId
-    const label = 'Safety number with ' + member.name + ', ' + member.role
+    const label = 'Safety words with ' + member.name + ', ' + member.role
     const ui = this.ui
     type Box = NonNullable<PublicNode['bounds']>
     const samples: Json[] = []
@@ -4970,25 +4970,25 @@ export class Scenarios {
         const groups = (await this.ui.nodes()).filter(node =>
           /^chat-safety-group-\d+$/.test(node.id ?? '')
         )
-        if (groups.length !== 12) return undefined
+        if (groups.length !== 16) return undefined
         const ordered = groups.sort(
           (a, b) => Number(a.id!.slice(18)) - Number(b.id!.slice(18))
         )
-        assert.equal(new Set(ordered.map(n => n.id)).size, 12)
-        assert(ordered.every(n => /^[0-9]{5}$/.test(n.text ?? '')))
+        assert.equal(new Set(ordered.map(n => n.id)).size, 16)
+        assert(ordered.every(n => /^[a-z]+$/.test(n.text ?? '')))
         assert.equal(
-          ordered.map(n => n.text).join(''),
+          ordered.map(n => n.text).join(' '),
           expected,
-          'Actual installed safety digits must match the original public-key baseline'
+          'Actual installed safety words must match the original public-key baseline'
         )
         return true
       },
-      'actual safety digits',
+      'actual safety words',
       15000
     )
     await this.ui.shot(
       'identity-safety',
-      'Actual installed account safety digits matched the authenticated counterpart'
+      'Actual installed account safety words matched the authenticated counterpart'
     )
     await this.ui.text('Done')
     await this.openGroup()
@@ -5801,7 +5801,7 @@ export class Scenarios {
         assert.equal(onSecond.quote?.authorId, this.viewerId)
         const safety = need(
           await own.engine.safetyNumber(peerId),
-          'Mixed safety digits required'
+          'Mixed safety words required'
         )
         assert.equal(safety, await peer.engine.safetyNumber(this.viewerId))
         await this.identitySafety(peerId, safety)
@@ -6180,7 +6180,7 @@ export class Scenarios {
           await ui.tapObserved(row)
         } else await ui.id('chat-info-member-' + member.userId)
         await ui.device.assertVisible({
-          text: 'Safety number.*',
+          text: 'Safety words.*',
           timeout: 10000
         })
         await ui.text('Done')

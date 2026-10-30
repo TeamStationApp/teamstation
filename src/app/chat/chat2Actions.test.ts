@@ -1535,7 +1535,7 @@ describe('chat native adapter compatibility', function () {
         expect(['info', 'members']).includes(stack.at(-1))
         expect(safety, 'Safety must be closed with Done').equals(false)
       } else {
-        expect(args.text).equals('Safety number.*')
+        expect(args.text).equals('Safety words.*')
         expect(safety).equals(true)
       }
       return {}
@@ -5016,15 +5016,15 @@ describe('chat native adapter compatibility', function () {
         }),
         node(2, 'Other', {
           parentIndex: 0,
-          label: 'Safety number with Member Z',
+          label: 'Safety words with Member Z',
           rect: { x: 0, y: 20, width: 300, height: 450 }
         }),
         node(3, 'Button', {
           parentIndex: 2,
-          label: 'Safety number with Member Z'
+          label: 'Safety words with Member Z'
         })
       ]),
-      { text: '^Safety number with Member Z$', childOf: { id: 'members' } },
+      { text: '^Safety words with Member Z$', childOf: { id: 'members' } },
       'Button'
     )
     expect(result.element?.index).equals(3)
@@ -8014,7 +8014,11 @@ describe('identity safety row ownership', () => {
     const peer = userIdOfGumbo(2)
     const other = userIdOfGumbo(3)
     const viewer = userIdOfGumbo(1)
-    const expected = '12345'.repeat(12)
+    const words =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid'.split(
+        ' '
+      )
+    const expected = words.join(' ')
     const calls: unknown[] = []
     let opened = false
     let coachY = mode === 'below-footer' ? 770 : 180
@@ -8027,7 +8031,7 @@ describe('identity safety row ownership', () => {
       memberY += 80
     }
     const document = new JSDOM(
-      `<div data-testid="chat-info-members"><button data-testid="chat-info-member-${other}" aria-label="Safety number with Kyle Tucker, Member"><span>Kyle Tucker</span><span>Member</span></button><button data-testid="chat-info-member-${peer}" aria-label="Safety number with Kyle Tucker, Coach, Moderator"><span>Kyle Tucker</span><span>Coach</span></button></div>`,
+      `<div data-testid="chat-info-members"><button data-testid="chat-info-member-${other}" aria-label="Safety words with Kyle Tucker, Member"><span>Kyle Tucker</span><span>Member</span></button><button data-testid="chat-info-member-${peer}" aria-label="Safety words with Kyle Tucker, Coach, Moderator"><span>Kyle Tucker</span><span>Coach</span></button></div>`,
       { runScripts: 'outside-only' }
     )
     const buttons = Array.from(
@@ -8058,7 +8062,7 @@ describe('identity safety row ownership', () => {
       },
       {
         id: 'chat-info-member-' + other,
-        text: 'Safety number with Kyle Tucker, Member',
+        text: 'Safety words with Kyle Tucker, Member',
         type: surface === 'android' ? 'android.view.View' : 'Button',
         bounds: { x: 10, y: 100, width: 380, height: 60 }
       },
@@ -8071,8 +8075,8 @@ describe('identity safety row ownership', () => {
         id: 'chat-info-member-' + peer,
         text:
           mode === 'wrong-spoken-role'
-            ? 'Safety number with Kyle Tucker, Member'
-            : 'Safety number with Kyle Tucker, Coach, Moderator',
+            ? 'Safety words with Kyle Tucker, Member'
+            : 'Safety words with Kyle Tucker, Coach, Moderator',
         type: surface === 'android' ? 'android.view.View' : 'Button',
         bounds: { x: 10, y: coachY, width: 380, height: 60 }
       },
@@ -8088,9 +8092,9 @@ describe('identity safety row ownership', () => {
       metrics: () => ({ width: 400, height: 800 }),
       nodes: async () =>
         opened
-          ? Array.from({ length: 12 }, (_, i) => ({
+          ? Array.from({ length: 16 }, (_, i) => ({
               id: 'chat-safety-group-' + i,
-              text: mode === 'wrong-digits' && i === 0 ? '54321' : '12345'
+              text: mode === 'wrong-words' && i === 0 ? 'zoo' : words[i]
             }))
           : ordinary().filter(node => !native || node.type !== 'TextView'),
       dom: async (script: string) =>
@@ -8175,7 +8179,7 @@ describe('identity safety row ownership', () => {
   }
   for (const native of [false, true])
     it(
-      'opens the role-qualified peer among duplicate names with exact safety digits: ' +
+      'opens the role-qualified peer among duplicate names with exact safety words: ' +
         (native ? 'Android View hierarchy model' : 'real DOM model'),
       async () => {
         const actual = model('normal', native)
@@ -8251,7 +8255,7 @@ describe('identity safety row ownership', () => {
       actual.close()
     }
   })
-  for (const mode of ['ambiguous-role', 'ambiguous-dom', 'wrong-digits'])
+  for (const mode of ['ambiguous-role', 'ambiguous-dom', 'wrong-words'])
     it(
       'rejects ' + mode + ' without claiming successful safety verification',
       async () => {
@@ -8261,8 +8265,8 @@ describe('identity safety row ownership', () => {
             actual.scenario.identitySafety(userIdOfGumbo(2), actual.expected)
           )
           expect(String(failure)).includes(
-            mode === 'wrong-digits'
-              ? 'Actual installed safety digits must match'
+            mode === 'wrong-words'
+              ? 'Actual installed safety words must match'
               : mode === 'ambiguous-dom'
                 ? 'Unique actual name and role'
                 : 'Unique public safety name and role'

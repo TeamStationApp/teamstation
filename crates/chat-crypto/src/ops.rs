@@ -34,9 +34,10 @@ pub const NEW_MESSAGE_ID: u32 = 30;
 pub const NEW_IDENTITY_ID: u32 = 31;
 pub const SHA256_UPDATE: u32 = 32;
 pub const SHA256_FINISH: u32 = 33;
+pub const SAFETY_BYTES: u32 = 34;
 
 /// Every op, as `(number, name)`.
-pub const ALL: [(u32, &str); 33] = [
+pub const ALL: [(u32, &str); 34] = [
     (SHA256, "sha256"),
     (RANDOM_BYTES, "randomBytes"),
     (NEW_BOX_KEY_PAIR, "newBoxKeyPair"),
@@ -70,6 +71,7 @@ pub const ALL: [(u32, &str); 33] = [
     (NEW_IDENTITY_ID, "newIdentityId"),
     (SHA256_UPDATE, "sha256Update"),
     (SHA256_FINISH, "sha256Finish"),
+    (SAFETY_BYTES, "safetyBytes"),
 ];
 
 #[cfg(test)]
