@@ -1,12 +1,19 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { type LayoutChangeEvent, View } from 'react-native'
 import Animated, {
+  type AnimatedRef,
+  scrollTo,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useComposedEventHandler,
   useSharedValue
 } from 'react-native-reanimated'
+import { scheduleOnUI } from 'react-native-worklets'
 
+import {
+  pageScroller,
+  type PageScrollViewProps
+} from '../components/PageScrollView'
 import { PinnedSpacer } from '../components/PinnedBands'
 import {
   SlidingContent,
@@ -47,12 +54,14 @@ export function GameWatchLayout(
     tabsHeight,
     height,
     style,
-    contentStyle
+    contentStyle,
+    pagedList
   } = props
   const theme = useTheme()
   // A pane sliding out lets go of the pinned head's scroller and its
   // handlers, as `Screen` does.
   const handleLayout = useActiveRef(pinned.screen.onLayout)
+  const pageRef = useActiveRef(pinned.screen.scrollRef)
   const sharedScroll = useActiveRef(pinned.screen.onScroll)
   const insets = useInsets()
   const scrollY = useSharedValue(0)
@@ -92,17 +101,48 @@ export function GameWatchLayout(
     // upload rows and Record video with no way to reach them.
     if (!sideBySide) return { maxHeight: UNCAPPED }
     const top = headerHeight + bodyTop.value + listTop.value - scrollY.value
-    return { maxHeight: Math.max(120, height - top) }
+    // Never taller than the window under the pinned head, as on the web. The
+    // page can be far down when the phone turns, from reading the list
+    // upright, and with no ceiling the pane took that depth as room: the
+    // page then had as much again to scroll, the pane was thousands of
+    // points tall, and its list drew every row for a viewport that size.
+    const ceiling = height - headerHeight - tabsHeight
+    return { maxHeight: Math.max(120, Math.min(ceiling, height - top)) }
     // Named, so it is worked out again when the phone turns wherever the
     // worklet's closure is not tracked for it (a build without the plugin).
-  }, [sideBySide, height, headerHeight])
+  }, [sideBySide, height, headerHeight, tabsHeight])
+  // Turned to side by side, the page comes back to where the pills pin, and
+  // the list beside the picture starts at its top under them. Read upright to
+  // the end of a long list, the page stays thousands of points down, held
+  // there by the pinned head's room, and the pane, capped to the window, would
+  // be that far above the screen.
+  useEffect(() => {
+    if (!sideBySide || pageRef == null) return
+    const page = pageRef as unknown as AnimatedRef<Animated.ScrollView>
+    const frame = requestAnimationFrame(() => {
+      scheduleOnUI((tabs: number) => {
+        'worklet'
+        const pin = Math.max(0, bodyTop.value - tabs)
+        if (scrollY.value > pin) scrollTo(page, 0, pin, false)
+      }, tabsHeight)
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+    // Once a turn: the page's own scrolling after it is the reader's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sideBySide])
   const measurePeg = (event: LayoutChangeEvent): void => {
     pegTop.value = event.nativeEvent.layout.y
     pegHeight.value = event.nativeEvent.layout.height
   }
+  const Scroller = pageScroller(pagedList)
+  // Upright the pane does not scroll, and its list follows the page.
+  const paneScroll: PageScrollViewProps =
+    pagedList === true ? { inert: !sideBySide } : {}
   return (
-    <Animated.ScrollView
-      ref={useActiveRef(pinned.screen.scrollRef)}
+    <Scroller
+      ref={pageRef}
       onLayout={handleLayout}
       style={style}
       // A tap on a button in a dialog opened from this tab (Record video's
@@ -163,7 +203,8 @@ export function GameWatchLayout(
             {player}
             {short ? null : description}
           </Animated.View>
-          <Animated.ScrollView
+          <Scroller
+            {...paneScroll}
             scrollEnabled={sideBySide}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
@@ -191,7 +232,7 @@ export function GameWatchLayout(
             {short ? description : null}
             {highlightList}
             {footer}
-          </Animated.ScrollView>
+          </Scroller>
         </SlidingContent>
         <PinnedSpacer
           part={{
@@ -207,6 +248,6 @@ export function GameWatchLayout(
           }}
         />
       </View>
-    </Animated.ScrollView>
+    </Scroller>
   )
 }

@@ -1,9 +1,13 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React, { act, useState } from 'react'
-import { AccessibilityInfo } from 'react-native'
+import React, { act, useContext, useState } from 'react'
+import { AccessibilityInfo, View } from 'react-native'
 
 import { mount, settle, unmount } from '../../test/gameFormDom'
+import {
+  PageScrollContext,
+  type PageScrollSource
+} from '../components/pageScroll'
 import { TabPages } from '../components/TabPages'
 import { usePinnedHead } from '../components/usePinnedHead'
 import { watchLayout } from '../layout/watch'
@@ -265,5 +269,79 @@ describe('browser event pane in pill pages', function () {
     }
     await settle()
     await unmount()
+  })
+
+  describe('a paged list in the highlights', function () {
+    let list: PageScrollSource | undefined
+    let page: PageScrollSource | undefined
+    function List(): React.ReactElement {
+      list = useContext(PageScrollContext)
+      return <View testID="highlights" />
+    }
+    function Beside(): null {
+      page = useContext(PageScrollContext)
+      return null
+    }
+    function Watch(props: {
+      sideways: boolean
+      pagedList: boolean
+    }): React.ReactElement {
+      const { sideways, pagedList } = props
+      const [width, height] = sideways ? [1440, 900] : [402, 874]
+      const layout = watchLayout({
+        width,
+        height,
+        chromeHeight: 108,
+        aspect: 16 / 9,
+        previous: sideways ? 'sideBySide' : 'stacked'
+      })
+      const pinned = usePinnedHead({
+        headerHeight: 48,
+        ready: true,
+        tab: 'watch',
+        anchorOnRow: false,
+        tail: 80,
+        onScroll: () => {}
+      })
+      return (
+        <GameWatchLayout
+          pinned={pinned}
+          head={<Beside />}
+          player={<div />}
+          description={<div />}
+          sections={<div />}
+          highlightList={<List />}
+          footer={<div />}
+          layout={layout}
+          short={layout.short}
+          sideBySide={layout.mode === 'sideBySide'}
+          headerHeight={48}
+          tabsHeight={60}
+          height={height}
+          pagedList={pagedList}
+        />
+      )
+    }
+
+    it('follows the page upright and the pane’s own node side by side', async function () {
+      await mount(<Watch sideways={false} pagedList />)
+      expect(list).equals(page)
+      expect(list?.element).not.equals(null)
+      await unmount()
+      await mount(<Watch sideways pagedList />)
+      expect(list).not.equals(page)
+      expect(
+        (list?.element as unknown as HTMLElement).contains(
+          document.querySelector('[data-testid="highlights"]')
+        )
+      ).equals(true)
+      expect(list?.element).not.equals(page?.element)
+    })
+
+    it('has no scroller to follow without `pagedList`', async function () {
+      list = undefined
+      await mount(<Watch sideways pagedList={false} />)
+      expect(list).equals(undefined)
+    })
   })
 })
