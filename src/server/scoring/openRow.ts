@@ -15,6 +15,7 @@ import {
   nameHalves,
   scopeOf
 } from '../users/nameBook'
+import { survivorsOf } from '../users/survivors'
 import { resolveGumboIds } from './gumboIds'
 import { projectScoringGame, scoringIdsIn } from './projection'
 
@@ -113,6 +114,42 @@ function withHalves(
 }
 
 /** The players of `teams` a game's setups hold. */
+/**
+ * `ids` without the game's pool players and the players withdrawn from it:
+ * people who already exist, whose whole names an add never gave the game, and
+ * who are nobody's here to correct (`renameGuestPlayer`).
+ */
+async function withoutBorrowed(
+  db: Kysely<Database>,
+  gameId: string | undefined,
+  ids: number[]
+): Promise<number[]> {
+  if (gameId == null || ids.length === 0) return ids
+  const [pool, withdrawn] = await Promise.all([
+    db
+      .selectFrom('game_guest_details')
+      .select('user_id')
+      .where('game_id', '=', gameId)
+      .where('pool', '=', true)
+      .execute(),
+    db
+      .selectFrom('game_withdrawn_players')
+      .select('user_id')
+      .where('game_id', '=', gameId)
+      .execute()
+  ])
+  const users = [...pool, ...withdrawn].map(row => row.user_id)
+  if (users.length === 0) return ids
+  const survivors = await survivorsOf(db, users)
+  const borrowed = await db
+    .selectFrom('gumbo_ids')
+    .select('gumbo_id')
+    .where('user_id', 'in', [...users, ...survivors.values()])
+    .execute()
+  const gone = new Set(borrowed.map(row => Number(row.gumbo_id)))
+  return ids.filter(id => !gone.has(id))
+}
+
 function playersOf(stored: StoredGame, teams: ReadonlySet<string>): number[] {
   const ids = new Set<number>()
   const collect = (setup: unknown): void => {
@@ -182,7 +219,10 @@ export async function namedScoringGame<T extends StoredGame>(
   const halves =
     teams.size === 0
       ? new Map<number, NameHalves>()
-      : await nameHalves(db, playersOf(projected, teams))
+      : await nameHalves(
+          db,
+          await withoutBorrowed(db, options.gameId, playersOf(projected, teams))
+        )
   const name = <D extends GumboDocument>(document: D): D => {
     if (document == null) return document
     const named = withNames(document, names.nameOf)

@@ -618,6 +618,81 @@ describe('naming a scoring game from the accounts', function () {
     })
   })
 
+  it("answers no halves of a game's pool or withdrawn player, who keep their own names", async () => {
+    const { db } = fixture
+    const teams = ['tem_borrowed_away', 'tem_borrowed_home']
+    await db
+      .insertInto('teams')
+      .values(teams.map(id => ({ id, name: id })))
+      .execute()
+    await db
+      .insertInto('games')
+      .values({
+        id: 'gam_borrowed',
+        away_team_id: teams[0],
+        home_team_id: teams[1],
+        start_at: new Date()
+      })
+      .execute()
+    const userId = userIdOfGumbo(guests.away.userId)
+    const halvesOf = async (): Promise<unknown> => {
+      const named = await resolveScoringGame(db, stored, {
+        halves: [REPLAY_TEAMS.away.id],
+        gameId: 'gam_borrowed'
+      })
+      return recordOf(named.currentPlay, REPLAY_TEAMS)!.setupBefore.players[
+        guests.away.userId
+      ].firstName
+    }
+    expect(await halvesOf()).equals('Ichiro')
+    await db
+      .insertInto('game_guest_details')
+      .values({
+        game_id: 'gam_borrowed',
+        user_id: userId,
+        positions: [],
+        pool: true
+      })
+      .execute()
+    expect(await halvesOf()).equals(undefined)
+    await db
+      .deleteFrom('game_guest_details')
+      .where('game_id', '=', 'gam_borrowed')
+      .execute()
+    // A rejected add takes the details away; the plays stay.
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_borrowed',
+        kind: 'playerAdd',
+        sender_id: userId,
+        sender_scope_type: 'team',
+        sender_scope_id: teams[0],
+        terms: '{}',
+        status: 'declined',
+        sent_at: new Date(0),
+        expires_at: new Date(1)
+      })
+      .execute()
+    await db
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: 'gam_borrowed',
+        user_id: userId,
+        side: 'away',
+        request_id: 'grq_borrowed',
+        label: 'RFLCNS A'
+      })
+      .execute()
+    expect(await halvesOf()).equals(undefined)
+    await db.deleteFrom('games').where('id', '=', 'gam_borrowed').execute()
+    await db
+      .deleteFrom('group_requests')
+      .where('id', '=', 'grq_borrowed')
+      .execute()
+    await db.deleteFrom('teams').where('id', 'in', teams).execute()
+  })
+
   it('stores no name from a build that sends named sentences and no said, and reads its sentences back the same', async () => {
     const teams = Object.values(REPLAY_TEAMS)
     await fixture.db
