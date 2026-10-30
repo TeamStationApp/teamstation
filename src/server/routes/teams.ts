@@ -35,6 +35,11 @@ import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForHighlight } from '../events/credits'
 import { teamEventDetail } from '../events/eventInfo'
+import {
+  eventWindow,
+  parseTeamGamesQuery,
+  schedulePageAsk
+} from '../events/eventListQuery'
 import { teamPlayerRsvps } from '../events/playerRsvps'
 import {
   accessibleVideoGames,
@@ -96,7 +101,9 @@ import { gameNames } from '../users/nameBook'
 import {
   externalIdsAsked,
   schedulableSeasonIds,
+  type ScheduleFilter,
   scheduleOf,
+  schedulePage,
   valuesAsked
 } from './seasons'
 
@@ -516,7 +523,13 @@ export function teamRoutes(
       const outside = await nonMemberTeam(db, actor, scopes, teamId)
       if (!outside && !canSeeTeam(scopes, teamId)) throw notFound()
 
-      const rows = await scheduleOf(db, media, {
+      const parsed = parseTeamGamesQuery(req.query)
+      const now = new Date()
+      const filter: ScheduleFilter = {
+        ...eventWindow(parsed, now),
+        now,
+        hasVideo: parsed.hasVideo,
+        limit: parsed.limit,
         teamId,
         actor,
         gamesOnly: outside,
@@ -525,7 +538,11 @@ export function teamRoutes(
         visible: outside
           ? { teamIds: new Set([teamId]), seasonIds: new Set(), isAdmin: false }
           : scopes
-      })
+      }
+      const page = parsed.paged
+        ? await schedulePage(db, media, filter, schedulePageAsk(parsed, now))
+        : undefined
+      const rows = page?.items ?? (await scheduleOf(db, media, filter))
       const attendance = outside
         ? new Map<string, PlayerRsvpCounts>()
         : await teamPlayerRsvps(
@@ -533,16 +550,15 @@ export function teamRoutes(
             teamId,
             rows.filter(row => !row.pendingApproval)
           )
-      res.json(
-        rows.map(({ homeLogoPath, awayLogoPath, ...row }) => ({
-          ...row,
-          ...(attendance.has(row.id)
-            ? { playerRsvps: attendance.get(row.id) }
-            : {}),
-          homeLogoUrl: imageUrl(media.space, homeLogoPath),
-          awayLogoUrl: imageUrl(media.space, awayLogoPath)
-        }))
-      )
+      const items = rows.map(({ homeLogoPath, awayLogoPath, ...row }) => ({
+        ...row,
+        ...(attendance.has(row.id)
+          ? { playerRsvps: attendance.get(row.id) }
+          : {}),
+        homeLogoUrl: imageUrl(media.space, homeLogoPath),
+        awayLogoUrl: imageUrl(media.space, awayLogoPath)
+      }))
+      res.json(page == null ? items : { ...page, items })
     })
   )
 

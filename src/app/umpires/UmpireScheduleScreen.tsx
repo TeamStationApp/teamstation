@@ -11,6 +11,7 @@ import {
 import Animated from 'react-native-reanimated'
 
 import type { TeamStationClient } from '../../common/api'
+import { initialUmpireGame } from '../../common/nextGame'
 import { umpirePositionName } from '../../common/umpires'
 import type {
   UmpireGameRow,
@@ -109,16 +110,7 @@ export function assignmentRemovable(
   )
 }
 
-export function initialUmpireGame(
-  games: UmpireGameRow[],
-  now: number
-): UmpireGameRow | undefined {
-  return (
-    games.find(
-      g => g.status === 'inProgress' || Date.parse(g.startAt) >= now
-    ) ?? games.at(-1)
-  )
-}
+export { initialUmpireGame }
 export function UmpireScheduleScreen({
   client,
   route,

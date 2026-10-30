@@ -299,6 +299,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/schedule/gameApprovalOpenApi.js',
   'server/schedule/gameApprovals.js',
   'server/schedule/pendingProjection.js',
+  'server/schedule/scheduleCursor.js',
   'server/schedule/scheduleGames.js',
   'server/schedule/seasonGameConsent.js',
   'server/scheduler/schedulingSetupOpenApi.js',
