@@ -48,6 +48,7 @@ import {
   googlePlacesStub,
   MORE_PARKS
 } from '../test/googlePlacesStub'
+import { isShownMapFrame } from '../test/mapFrameProbe'
 import {
   type BrowserSession,
   browserSession,
@@ -1489,7 +1490,7 @@ async function mapFrame(
   while (Date.now() < deadline) {
     for (const candidate of b.page.frames())
       if (
-        candidate.url() === 'about:srcdoc' &&
+        (await isShownMapFrame(candidate).catch(() => false)) &&
         (await candidate
           .evaluate(
             (wanted: string) =>

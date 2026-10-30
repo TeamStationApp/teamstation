@@ -18,7 +18,10 @@ export const asServerConfig = asObject({
   logWriteToken: asOptional(asString),
   oauth: asOptional(asOAuthConfig),
   buildsUrl: asOptional(asHttpsUrl),
-  /** Browser-restricted display key; never a server or Android credential. */
+  /**
+   * The display key for browsers; never a server or Android credential. The web
+   * map sends no `Referer`, so it cannot carry an HTTP-referrer restriction.
+   */
   googleMaps: asOptional(asObject({ webApiKey: asString })),
   googlePlaces: asOptional(
     asObject({

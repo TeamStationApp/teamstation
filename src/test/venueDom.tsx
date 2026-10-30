@@ -4,6 +4,7 @@ import { act } from 'react'
 import type { VenueDetail, VenueField } from '../common/venues'
 import { pressSchedule, typeSchedule } from './eventScheduleDom'
 import { settle } from './gameFormDom'
+import { mapDocumentOf } from './mapFrameDom'
 
 /** A venue detail for the venue and field screens' tests. */
 export function venueDetail(overrides: Partial<VenueDetail> = {}): VenueDetail {
@@ -48,10 +49,9 @@ export function pinMapDrawn(): {
   config: Record<string, unknown>
   foreignTiles: boolean
 } {
-  const html =
-    document
-      .querySelector('iframe[data-testid="pin-map"]')
-      ?.getAttribute('srcdoc') ?? ''
+  const html = mapDocumentOf(
+    document.querySelector('iframe[data-testid="pin-map"]')
+  )
   const config = /const config=(\{.*?\});/.exec(html)
   expect(config, 'the pin map document').not.equals(null)
   return {
