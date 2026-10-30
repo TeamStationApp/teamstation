@@ -108,10 +108,16 @@ const live: LiveRouteOptions = {
     freeDiskFloorGb: 10
   },
   sessionSecret: 'secret',
-  host: '127.0.0.1'
+  host: '127.0.0.1',
+  space: media.space,
+  mediaRoot: media.mediaRoot
 }
 
-const uploads = { uploadsDir: '/tmp', ffmpegPath: '/usr/bin/ffmpeg' }
+const uploads = {
+  uploadsDir: '/tmp',
+  mediaRoot: '/tmp',
+  ffmpegPath: '/usr/bin/ffmpeg'
+}
 
 /**
  * Routes that are deliberately not in the document.

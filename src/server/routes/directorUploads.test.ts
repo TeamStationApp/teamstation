@@ -96,6 +96,7 @@ describe('a Director sending a recording in', function () {
       '/api/v1',
       directorUploadRoutes(db, {
         uploadsDir: mediaDir,
+        mediaRoot: mediaDir,
         ffmpegPath: '/usr/bin/ffmpeg',
         space: {
           bucket: 'test',
