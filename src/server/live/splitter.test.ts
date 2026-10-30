@@ -46,7 +46,9 @@ import {
   isPublishableKey,
   keyFromSession,
   type LiveEvent,
+  liveKeys,
   nextSegmentNumber,
+  outputsSettled,
   playlistContinuation,
   publishArrivedForTest,
   publishGoneForTest,
@@ -669,6 +671,34 @@ describe('a publisher replaced by its own reconnect', function () {
     expect(ended?.type === 'publishEnded' ? ended.reason : '').equals(
       'The stream ended'
     )
+  })
+
+  it('looks at the codec of every publish on a key, not only its first', function () {
+    const withCodec = (id: string, videoCodec: number): TestSession =>
+      Object.assign(publisher(id), { videoCodec })
+    const refusals = (): Array<Date | undefined> =>
+      events.flatMap(event =>
+        event.type === 'publishEnded' && event.refusedSince != null
+          ? [event.refusedSince]
+          : []
+      )
+
+    const hevc = withCodec('hevc', 12)
+    push(hevc)
+    tickSamplerForTest()
+    expect(refusals(), 'HEVC goes through').deep.equals([])
+    broadcast.donePublish(hevc)
+
+    const before = Date.now()
+    push(withCodec('first refused', 7))
+    tickSamplerForTest()
+    expect(refusals().length, 'H.264 after HEVC').equals(1)
+    expect(refusals()[0]?.getTime()).is.at.least(before)
+    expect(statusFor(KEY)?.ingress.publishing).equals(false)
+
+    push(withCodec('second refused', 7))
+    tickSamplerForTest()
+    expect(refusals().length, 'H.264 after H.264').equals(2)
   })
 
   it('answers each lookup the way the controller answered it', async function () {
@@ -2250,6 +2280,19 @@ describe('signalling the live HLS writer', function () {
     tickSamplerForTest()
     clearLive(KEY, 'revoked')
     expect(sigterms(child.pid ?? 0)).equals(1)
+  })
+
+  it('waits for a refused writer to exit, leaving the key open', async function () {
+    setLive(KEY, { ...spec(), hlsDir: dir })
+    forcePublishForTest(KEY, true)
+    const child = await writer()
+    attachSessionForTest(KEY, { id: 's1', inBytes: 1, videoCodec: 7 })
+    tickSamplerForTest()
+    await outputsSettled(KEY)
+    expect(sigterms(child.pid ?? 0)).equals(1)
+    expect(child.exitCode ?? child.signalCode).not.equals(null)
+    expect(liveKeys()).includes(KEY)
+    await outputsSettled('ts_nobody')
   })
 })
 

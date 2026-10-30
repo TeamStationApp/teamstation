@@ -177,7 +177,17 @@ export interface LiveSpec {
 
 export type LiveEvent =
   | { type: 'publishStarted'; key: string; liveStreamId: string }
-  | { type: 'publishEnded'; key: string; liveStreamId: string; reason: string }
+  | {
+      type: 'publishEnded'
+      key: string
+      liveStreamId: string
+      reason: string
+      /**
+       * Set when the ingest turned the publish away: when it connected. A
+       * first publish stamped at or after this was this one.
+       */
+      refusedSince?: Date
+    }
   | { type: 'rejected'; key: string; reason: string }
   /**
    * A first writer's frame wall clocks say when the picture at its
@@ -356,6 +366,8 @@ interface IngressRuntime {
   session?: NmsSession
   /** Whether the stream's codec has been looked at yet. Once per publish. */
   codecChecked?: boolean
+  /** When the publish now on this key connected. */
+  connectedAt?: Date
   /**
    * Consecutive one-second ticks of "publishing, but no bytes". At
    * STALE_INGRESS_TICKS the publisher is taken to be a corpse whose socket
@@ -699,11 +711,27 @@ export async function clearLiveSettled(
   key: string,
   reason: string
 ): Promise<void> {
-  const entry = entries.get(key)
-  // A child leaves `spawned` when its exit handling runs. The sampler may
-  // drop a phantom whose PID has gone before the poll finishes its exit, but
-  // the output still holds it as its writer until then.
-  const children = new Set(
+  const children = childrenOf(entries.get(key))
+  clearLive(key, reason)
+  await exitsHandled(children)
+}
+
+/**
+ * Waits for the ffmpeg children a key has already been told to stop, as
+ * `clearLiveSettled` does, and leaves the key open.
+ */
+export async function outputsSettled(key: string): Promise<void> {
+  await exitsHandled(childrenOf(entries.get(key)))
+}
+
+/**
+ * Everything of a key's that may still be running. A child leaves `spawned`
+ * when its exit handling runs. The sampler may drop a phantom whose PID has
+ * gone before the poll finishes its exit, but the output still holds it as its
+ * writer until then.
+ */
+function childrenOf(entry: LiveEntry | undefined): Set<ChildProcess> {
+  return new Set(
     entry == null
       ? []
       : entry.outputs.flatMap(output =>
@@ -712,7 +740,9 @@ export async function clearLiveSettled(
             : [...output.spawned, output.child]
         )
   )
-  clearLive(key, reason)
+}
+
+async function exitsHandled(children: Set<ChildProcess>): Promise<void> {
   // A child that never got a process has no exit to wait for.
   const exited = [...children].flatMap(child => {
     const handled = child.pid == null ? undefined : exitHandledFor.get(child)
@@ -1787,6 +1817,7 @@ function pollSampler(): void {
         const refusal = codecRefusal(ingress.session.videoCodec)
         if (refusal != null) {
           ingress.codecChecked = true
+          const refusedSince = ingress.connectedAt
           requireConfig().log(`[live:${entry.liveStreamId}] ${refusal}`)
           requireConfig().onEvent({
             type: 'rejected',
@@ -1800,7 +1831,8 @@ function pollSampler(): void {
             type: 'publishEnded',
             key: entry.key,
             liveStreamId: entry.liveStreamId,
-            reason: refusal
+            reason: refusal,
+            refusedSince
           })
           report(entry)
           continue
@@ -2144,6 +2176,8 @@ function accept(entry: LiveEntry, session: NmsSession): void {
   entry.ingress.path = publishPath(session)
   entry.ingress.session = session
   entry.ingress.publishing = true
+  entry.ingress.codecChecked = false
+  entry.ingress.connectedAt = new Date()
   entry.ingress.bytesAtLastTick = session.inBytes ?? 0
   entry.ingress.bytesReceived = session.inBytes ?? 0
   entry.ingress.receivingPackets = false
@@ -2565,6 +2599,8 @@ export function forcePublishForTest(key: string, publishing: boolean): void {
   if (entry == null) return
   if (publishing && !entry.ingress.publishing) {
     entry.ingress.publishing = true
+    entry.ingress.codecChecked = false
+    entry.ingress.connectedAt = new Date()
     entry.ingress.bytesAtLastTick = 0
     entry.ingress.bytesReceived = 0
     entry.ingress.receivingPackets = false
