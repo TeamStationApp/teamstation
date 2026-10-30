@@ -80,7 +80,9 @@ const appSuites = [
   'src/app/screens/CoachGameScreen.test.tsx',
   // The replay's line score (M5).
   'src/app/replay/ReplayBoxScore.test.tsx',
-  'src/app/replay/GameReplayScreen.test.tsx'
+  'src/app/replay/GameReplayScreen.test.tsx',
+  // A player's stats tables (M6).
+  'src/app/screens/PlayerScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

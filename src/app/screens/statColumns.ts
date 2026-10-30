@@ -79,16 +79,6 @@ export const pitchingColumns: Array<StatColumn<PitchingRow>> = [
   { label: 'BAA', sample: '.999', value: row => average(row.rates.baa) }
 ]
 
-export function playerStats<T>(
-  row: T,
-  columns: Array<StatColumn<T>>
-): Array<{ label: string; value: string }> {
-  return columns.map(column => ({
-    label: column.label,
-    value: column.value(row)
-  }))
-}
-
 /** A quarter rem separates adjacent figures; the first column has no gutter. */
 export const STAT_COLUMN_GAP_REM = 0.25
 /** Between a compact table's columns, whose widths have no slack in them. */

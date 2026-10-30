@@ -235,18 +235,32 @@ async function main(): Promise<void> {
       await shot('pitching-detail')
       await open('/players/102?tab=stats', 'Career')
       await shot('player-pitcher-after')
+      // A player's figures are a table of rows, a team each; its columns
+      // scroll sideways beside the team names.
+      const sidewaysTo = async (label: string): Promise<void> => {
+        const heading = (await nodes())
+          .filter(n => n.text === 'Team' && onscreen(n))
+          .at(-1)
+        assert(heading?.bounds != null, `table for ${label}`)
+        const y = heading.bounds.y + 38
+        for (let i = 0; i < 12 && (await find(label)) == null; i++)
+          await gesture({ x: width * 0.8, y }, { x: width * 0.3, y })
+        assert((await find(label)) != null, `${label} is reachable`)
+      }
       await reach('Pitching')
-      await reach('SV%')
+      await scroll()
+      await sidewaysTo('SV%')
       assert(
         (await nodes()).some(n => n.text === '—'),
         'Official decisions display unavailable'
       )
       await shot('player-decisions')
-      await reach('BAA')
+      await sidewaysTo('BAA')
       await shot('player-pitching-detail')
       await open('/players/101?tab=stats', 'Career')
       await shot('player-hitter-after')
-      await reach('PIK')
+      await reach('Batting')
+      await sidewaysTo('PIK')
       await scroll()
       const hitter = await nodes()
       assert(
