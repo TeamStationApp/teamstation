@@ -900,6 +900,46 @@ describe('api client', function () {
     )
     expect(answer.removed).equals(true)
 
+    const access = stubFetch(200, {
+      canFilm: false,
+      canRequest: true,
+      requested: false,
+      teamId: 'tem_home'
+    })
+    expect(
+      await new TeamStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: access.fetch
+      }).streamAccess('gam 1')
+    ).deep.equals({
+      canFilm: false,
+      canRequest: true,
+      requested: false,
+      teamId: 'tem_home'
+    })
+    expect(access.calls[0].method).equals('GET')
+    expect(access.calls[0].url).equals(
+      'http://x/api/v1/games/gam%201/stream-access'
+    )
+
+    const filmRequest = stubFetch(201, { id: 'inv_1', status: 'pending' })
+    await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: filmRequest.fetch
+    }).inviteRelationship({
+      kind: 'videographer',
+      teamId: 'tem_home',
+      idempotencyKey: 'film-request'
+    })
+    expect(filmRequest.calls[0].url).equals(
+      'http://x/api/v1/relationship-requests'
+    )
+    expect(JSON.parse(filmRequest.calls[0].body ?? '')).deep.equals({
+      kind: 'videographer',
+      teamId: 'tem_home',
+      idempotencyKey: 'film-request'
+    })
+
     // An older server says neither: room for the game, nothing discarded.
     const older = stubFetch(200, {
       gameId: 'gam 1',

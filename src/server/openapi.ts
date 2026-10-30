@@ -1753,6 +1753,16 @@ export function openApiDocument(version: string): OpenApiDocument {
             }
           }
         },
+        StreamAccess: {
+          type: 'object',
+          required: ['canFilm', 'canRequest', 'requested', 'teamId'],
+          properties: {
+            canFilm: { type: 'boolean' },
+            canRequest: { type: 'boolean' },
+            requested: { type: 'boolean' },
+            teamId: { type: 'string' }
+          }
+        },
         LiveStream: {
           type: 'object',
           required: ['gameId', 'exists'],
@@ -8618,6 +8628,35 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'Newest first, and empty on every day when nothing is on'
             },
             401: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/stream-access': {
+        get: {
+          summary: 'Whether I film this game, and if not whether I can ask to',
+          description:
+            '`canFilm` is the Videographer role on either team, which ' +
+            'administrators hold. `teamId` is the team a request goes to: the ' +
+            'home team if I am a member of it, otherwise the away team. ' +
+            '`canRequest` is true for a member of that team who cannot film, ' +
+            'on a game whose date is today or later in the game\u2019s own ' +
+            'time, unless the team is a placeholder. `requested` says my ' +
+            'request to film `teamId` is waiting. Asking is `POST ' +
+            '/relationship-requests` with kind `videographer`. 404 for somebody ' +
+            'who cannot see the game.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description: 'What I may do about filming this game',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/StreamAccess' }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
           }
         }
       },

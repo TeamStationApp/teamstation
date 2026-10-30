@@ -1794,6 +1794,20 @@ export type LiveStream = Omit<CleanedLiveStream, AbsentLiveStreamField> &
   Partial<Pick<CleanedLiveStream, AbsentLiveStreamField>>
 export const asLiveStream: (raw: unknown) => LiveStream = cleanLiveStream
 
+/**
+ * What a person may do about filming one game. `teamId` is the team a request
+ * goes to: the home team for one of its members, otherwise the away team.
+ */
+export const asStreamAccess = asObject({
+  canFilm: asBoolean,
+  /** A member who cannot film, on a game not yet past in its own time. */
+  canRequest: asBoolean,
+  /** Their request to film `teamId` is waiting. */
+  requested: asBoolean,
+  teamId: asString
+})
+export type StreamAccess = ReturnType<typeof asStreamAccess>
+
 /** What a device sends with a camera name to get its own stream. */
 export interface DeviceStreamOptions {
   /** The install id. With it, asking again returns the same stream. */
@@ -4818,6 +4832,15 @@ export class TeamStationClient {
       'DELETE',
       `/videos/${encodeURIComponent(videoId)}`,
       asDeletedVideo
+    )
+  }
+
+  /** Whether I film this game, and if not whether I can ask to. */
+  async streamAccess(gameId: string): Promise<StreamAccess> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/stream-access`,
+      asStreamAccess
     )
   }
 
