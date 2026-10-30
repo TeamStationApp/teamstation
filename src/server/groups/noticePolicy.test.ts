@@ -1826,4 +1826,23 @@ describe('adds made with a notice', function () {
       lastSignInAt: null
     })
   })
+
+  it('counts no team holding them only by an open add as their side, or a tie', async function () {
+    // On the Bears, whose coach stands in, and added to the Falcons by notice.
+    await person('Held Twice', { teamId: TEAM.bears })
+    const added = await add('roster', 'Held Twice')
+    expect(added.policy).equals('notice')
+    const held = await playerAddApprovers(db!, ids['Held Twice'], TEAM.herons)
+    expect(held.userIds).includes(ids['Bears Coach'])
+    expect(held.userIds).not.includes(ids.coach)
+    // Settled, the Falcons are a team they play for.
+    await db!
+      .updateTable('group_requests')
+      .set({ sent_at: new Date(0), expires_at: new Date(1) })
+      .where('id', '=', added.requestId!)
+      .execute()
+    expect(
+      (await playerAddApprovers(db!, ids['Held Twice'], TEAM.herons)).userIds
+    ).includes(ids.coach)
+  })
 })

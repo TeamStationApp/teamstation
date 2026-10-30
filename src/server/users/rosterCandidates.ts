@@ -9,6 +9,7 @@ import {
   canScore,
   canSeeTeam,
   nonMemberTeam,
+  openAddTeams,
   roleScopes,
   visibleScopes
 } from '../access'
@@ -245,6 +246,8 @@ export async function hasTie(
       ? sql`select ${target.gameSeasonId}::text as season_id`
       : sql`select season_id from team_seasons where team_id = ${target.teamId}`
   const ids = sql.join(userIds)
+  // A team holding them only by an open add is no tie to them yet.
+  const held = sql.join(['', ...(await openAddTeams(db, userIds))])
   const { rows } = await sql`
     with recursive
     team_seasons as (
@@ -262,6 +265,7 @@ export async function hasTie(
     select 1 from memberships m
       join teams t on t.id = m.team_id and t.merged_into is null
       where m.is_player and m.user_id in (${ids})
+        and m.team_id not in (${held})
         and (m.team_id in (select team_id from caller_teams)
           or m.team_id in (
             select team_id from team_seasons

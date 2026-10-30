@@ -11,7 +11,7 @@ import {
 import { recordOf } from '../../common/scoring/gumbo'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
-import { guardiansWhoCanAct } from '../access'
+import { guardiansWhoCanAct, openAddTeams } from '../access'
 import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
@@ -109,6 +109,7 @@ export async function playerAddApprovers(
     .executeTakeFirst()
   if (self?.login_enabled === true)
     return { userIds: [person.userId], standIn: false }
+  const held = await openAddTeams(db, person.userIds)
   const coaches = await db
     .selectFrom('scope_roles')
     .innerJoin('users', 'users.id', 'scope_roles.user_id')
@@ -125,6 +126,9 @@ export async function playerAddApprovers(
         .where('user_id', 'in', person.userIds)
         .where('is_player', '=', true)
         .where('team_id', '!=', teamId)
+        // A team holding them only by an open add is not their side, for
+        // this add or the next.
+        .where('team_id', 'not in', ['', ...held])
     )
     .orderBy('scope_roles.user_id')
     .execute()
