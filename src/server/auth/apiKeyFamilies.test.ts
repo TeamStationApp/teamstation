@@ -139,6 +139,7 @@ describe('what an API key may call', function () {
     expect(keyNeeds('HEAD', '/me/account')).equals('account:read')
     expect(keyNeeds('PUT', '/me/account/name')).equals('account:write')
     expect(keyNeeds('GET', '/teams/tem_1/games')).equals('schedule:read')
+    expect(keyNeeds('GET', '/seasons/sea_1/games')).equals('schedule:read')
     expect(keyNeeds('POST', '/teams/tem_1/games')).equals('schedule:write')
     // The scoring log and the calendar share a name, not a family.
     expect(keyNeeds('POST', '/games/gam_1/events')).equals('gameEvents:write')

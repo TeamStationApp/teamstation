@@ -6,6 +6,7 @@ import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { parseUmpirePageQuery } from '../events/eventListQuery'
 import { requireGroupAdmin } from '../groups/rights'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
@@ -23,7 +24,8 @@ import { savePeople } from '../umpires/savePeople'
 import {
   parseUmpireFilters,
   schedule,
-  umpireLeagues
+  umpireLeagues,
+  umpireSchedulePage
 } from '../umpires/schedule'
 import { addType, removeType, types } from '../umpires/types'
 
@@ -284,15 +286,18 @@ export function umpireRoutes(
       const view = req.query.view ?? 'umpire'
       if (view !== 'umpire' && view !== 'league' && view !== 'schedule')
         throw badRequest('Choose umpire, league or schedule view')
-      res.json(
-        await schedule(
-          db,
-          req.actor,
-          String(req.params.leagueId),
-          view,
-          parseUmpireFilters(req.query)
+      const leagueId = String(req.params.leagueId)
+      const filters = parseUmpireFilters(req.query)
+      const page = parseUmpirePageQuery(req.query)
+      if (page.paged) {
+        if (view === 'league')
+          throw badRequest('paged does not apply with view=league')
+        res.json(
+          await umpireSchedulePage(db, req.actor, leagueId, view, filters, page)
         )
-      )
+        return
+      }
+      res.json(await schedule(db, req.actor, leagueId, view, filters))
     })
   )
 

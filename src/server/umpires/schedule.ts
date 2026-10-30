@@ -1,12 +1,15 @@
 import type { Kysely, Selectable } from 'kysely'
 
+import type { UmpireSchedulePage } from '../../common/api'
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { calendarDateText } from '../../common/groupCreation'
+import { initialUmpireGame } from '../../common/nextGame'
 import { umpirePositions } from '../../common/umpires'
-import type {
-  UmpireGameRow,
-  UmpireLeague,
-  UmpireSchedule
+import {
+  umpireColumns,
+  type UmpireGameRow,
+  type UmpireLeague,
+  type UmpireSchedule
 } from '../../common/umpireSchedule'
 import {
   hardUmpireConflict,
@@ -23,9 +26,11 @@ import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { now } from '../clock'
 import type { Database, SeasonsTable } from '../db/database'
+import type { ParsedEventList } from '../events/eventListQuery'
 import { canAdminister, requireGroupAdmin } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { inListOrder, pageAround, pageOfHeld } from '../schedule/scheduleCursor'
 import { levels } from './admin'
 import { umpireAffiliations } from './affiliations'
 import {
@@ -459,6 +464,37 @@ export async function schedule(
     viewerId: family[0].userId,
     isAdmin,
     view
+  }
+}
+/**
+ * `schedule` a page at a time, soonest first.
+ *
+ * A row's conflicts and choices weigh every game against every other, and
+ * `positions` are the whole filtered list's, so each page reads the schedule
+ * whole and cuts its rows from it, whose decoding and drawing is what a page
+ * saves. `around` opens on the row the table opens on.
+ */
+export async function umpireSchedulePage(
+  db: Kysely<Database>,
+  actor: Actor,
+  leagueId: string,
+  view: 'umpire' | 'schedule',
+  filters: UmpireFilters,
+  ask: Pick<ParsedEventList, 'cursor' | 'around' | 'limit'>
+): Promise<UmpireSchedulePage> {
+  const { games, ...head } = await schedule(db, actor, leagueId, view, filters)
+  const rows = inListOrder(games, 'asc')
+  // `paged` always has one.
+  const limit = ask.limit!
+  const opening = ask.around ? initialUmpireGame(rows, now()) : undefined
+  return {
+    ...head,
+    ...(ask.around
+      ? pageAround(rows, Math.max(0, rows.indexOf(opening!)), limit)
+      : pageOfHeld(rows, 'asc', limit, ask.cursor)),
+    anchorId: opening?.id ?? null,
+    counts: null,
+    positions: umpireColumns(head.types, games)
   }
 }
 export function parseUmpireFilters(

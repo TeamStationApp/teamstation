@@ -272,6 +272,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/routes/people.js',
   'server/routes/pictures.js',
   'server/routes/players.js',
+  'server/routes/publicGames.js',
   'server/routes/schedule.js',
   'server/routes/schedulePreviews.js',
   'server/routes/schedulingSetup.js',

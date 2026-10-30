@@ -94,6 +94,7 @@ import {
 import { followMerges } from '../teams/followMerges'
 import { outsideSpoken } from '../users/readerNames'
 import { inviteUrl } from './invites'
+import { publicGamesRoute } from './publicGames'
 
 function clean<T>(fn: (raw: unknown) => T, raw: unknown): T {
   try {
@@ -807,6 +808,7 @@ export function groupRoutes(
       })
     )
   }
+  router.get('/seasons/:seasonId/games', publicGamesRoute(db, 'season'))
   router.post(
     '/parent-previews',
     requireActor,

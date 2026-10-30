@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { birthMonthText } from '../../common/age'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
@@ -298,7 +298,7 @@ export function playerRoutes(
       const userId = userIdParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       const limit = limitOf(req.query.limit)
-      const before = dateOf(req.query.before)
+      const before = highlightPlaceOf(req.query.before)
       // The same season, team and year the page's stats are narrowed to, so
       // the Videos tab and the Stats tab answer one question.
       const filter = playerFilterOf(req.query)
@@ -343,7 +343,7 @@ export function playerRoutes(
         return
       }
 
-      let query = db
+      let plays = db
         .selectFrom('events')
         .innerJoin('games', 'games.id', 'events.gameId')
         .select([
@@ -360,17 +360,14 @@ export function playerRoutes(
         .$if(withdrawn.length > 0, query =>
           query.where('events.gameId', 'not in', withdrawn)
         )
-      if (before != null) {
-        query = query.where('events.startTime', '<', before)
-      }
       // Narrowed before the page is cut, so a filtered page is as full as an
       // unfiltered one and `nextBefore` pages through the filtered plays.
       const { seasonId, teamId, year } = filter
       if (seasonId != null) {
-        query = query.where('games.season_id', '=', seasonId)
+        plays = plays.where('games.season_id', '=', seasonId)
       }
       if (teamId != null) {
-        query = query.where(eb =>
+        plays = plays.where(eb =>
           eb.or([
             eb('games.home_team_id', '=', teamId),
             eb('games.away_team_id', '=', teamId)
@@ -378,78 +375,43 @@ export function playerRoutes(
         )
       }
       if (year != null) {
-        query = query
+        plays = plays
           .where('games.start_at', '>=', new Date(Date.UTC(year, 0, 1)))
           .where('games.start_at', '<', new Date(Date.UTC(year + 1, 0, 1)))
       }
 
-      const rows = await query
-        .orderBy('events.startTime', 'desc')
-        // One extra, so the page knows whether there is another without
-        // counting every play this child has ever been part of.
-        .limit(limit + 1)
-        .execute()
-
-      const seen = rows.filter(
-        row =>
-          scopes.isAdmin ||
-          ownPlays ||
-          scopes.teamIds.has(row.homeTeamId) ||
-          scopes.teamIds.has(row.awayTeamId) ||
-          (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
-      )
-      const page = seen.slice(0, limit)
-      const hasMore = seen.length > limit
-
-      // A game whose plays did not add up is not offered as highlights until
-      // somebody has accepted it: a wrong seek is worse than none. The same
-      // rule the game's own highlight list follows.
-      const usable = page.filter(row => row.ingestStatus !== 'scoreMismatch')
-
-      const videos =
-        usable.length === 0
-          ? []
-          : await db
-              .selectFrom('videos')
-              .select([
-                'id',
-                'game_id as gameId',
-                'kind',
-                'storage',
-                'start_at as startAt',
-                'sync_offset_sec as syncOffsetSec',
-                'duration_sec as durationSec'
-              ])
-              .where(
-                'game_id',
-                'in',
-                usable.map(row => row.gameId)
+      // JavaScript sees a start to the millisecond, and `nextBefore` holds
+      // what it sees, so the plays are read that way too.
+      const start = sql<Date>`date_trunc('milliseconds', events."startTime")`
+      const playId = sql<string>`events.id collate "C"`
+      type PlayRow = Awaited<ReturnType<typeof plays.execute>>[number]
+      const readPlays = async (
+        from: HighlightPlace | undefined,
+        size: number
+      ): Promise<PlayRow[]> =>
+        await (
+          from == null
+            ? plays
+            : plays.where(
+                from.id == null
+                  ? sql<boolean>`${start} < ${from.at}::timestamptz`
+                  : sql<boolean>`(${start}, ${playId}) < (${from.at}::timestamptz, ${from.id}::text collate "C")`
               )
-              // The videos the game page shows, as its own list has them: a
-              // recording replaced by another is hidden, and a highlight
-              // named on it would open on a video that page never offers.
-              .where('hidden', '=', false)
-              .where(isRealVideo)
-              // The program file first, which is the one a game is watched
-              // on. Not `kind` alone: alphabetically, `live` comes first.
-              .orderBy(eb =>
-                eb.case().when('kind', '=', 'program').then(0).else(1).end()
-              )
-              .orderBy('kind')
-              .execute()
+        )
+          .orderBy(start, 'desc')
+          .orderBy(playId, 'desc')
+          .limit(size)
+          .execute()
+
+      const sees = (row: PlayRow): boolean =>
+        scopes.isAdmin ||
+        ownPlays ||
+        scopes.teamIds.has(row.homeTeamId) ||
+        scopes.teamIds.has(row.awayTeamId) ||
+        (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
 
       const settings = await highlightSettings(db)
       const standings = await teamStandings(db)
-      // One book for the games of the page, each game's players named over
-      // its own players, as the game's own highlights name them.
-      const books = await gameNames(
-        db,
-        usable.map(row => row.gameId)
-      )
-      const names = await teamNames(
-        db,
-        page.flatMap(row => [row.homeTeamId, row.awayTeamId])
-      )
 
       interface Row {
         eventId: string
@@ -468,76 +430,163 @@ export function playerRoutes(
         storage: 'peertube' | 'local' | 'spaces'
       }
       const now = Date.now()
-      const out: Row[] = []
 
-      for (const row of usable) {
-        const credits = creditsByEvent.get(row.id) ?? []
-        // The play's credits for this person, by any of their rows.
-        const mine = credits.filter(
-          outcome =>
-            outcome.creditUserId != null &&
-            creditedIds.includes(outcome.creditUserId)
+      /** The plays of `visible` that have something to show, by play. */
+      const highlightsOf = async (
+        visible: PlayRow[]
+      ): Promise<Map<string, Row>> => {
+        // A game whose plays did not add up is not offered as highlights until
+        // somebody has accepted it: a wrong seek is worse than none. The same
+        // rule the game's own highlight list follows.
+        const usable = visible.filter(
+          row => row.ingestStatus !== 'scoreMismatch'
         )
-        if (mine.length === 0) continue
+        const shown = new Map<string, Row>()
+        if (usable.length === 0) return shown
 
-        // The video that was running when the play happened, in the order
-        // above: the program file first.
-        for (const video of videos.filter(item => item.gameId === row.gameId)) {
-          const computed = withDropped(
-            [
-              highlightEvent(row, credits, id =>
-                books.get(row.gameId)?.nameOf(id)
-              )
-            ],
-            {
-              startAt: video.startAt == null ? null : new Date(video.startAt),
-              syncOffsetSec: video.syncOffsetSec,
-              durationSec: video.durationSec
-            },
-            settings,
-            standings
+        const videos = await db
+          .selectFrom('videos')
+          .select([
+            'id',
+            'game_id as gameId',
+            'kind',
+            'storage',
+            'start_at as startAt',
+            'sync_offset_sec as syncOffsetSec',
+            'duration_sec as durationSec'
+          ])
+          .where(
+            'game_id',
+            'in',
+            usable.map(row => row.gameId)
           )
-          const highlight = computed.highlights[0]
-          if (highlight == null) continue
+          // The videos the game page shows, as its own list has them: a
+          // recording replaced by another is hidden, and a highlight
+          // named on it would open on a video that page never offers.
+          .where('hidden', '=', false)
+          .where(isRealVideo)
+          // The program file first, which is the one a game is watched
+          // on. Not `kind` alone: alphabetically, `live` comes first.
+          .orderBy(eb =>
+            eb.case().when('kind', '=', 'program').then(0).else(1).end()
+          )
+          .orderBy('kind')
+          .execute()
 
-          const outcome = mine[0]
-          const teamId = (outcome as { teamId?: string | null }).teamId ?? null
-          out.push({
-            eventId: row.id,
-            gameId: row.gameId,
-            videoId: video.id,
-            teamId,
-            teamName: teamId == null ? null : (names.get(teamId) ?? null),
-            outcome: outcomeName(outcome),
-            title: highlight.title,
-            tag: highlight.tag ?? null,
-            playAt: highlight.playAt.toISOString(),
-            startOffsetSec: highlight.startOffsetSec,
-            playOffsetSec: highlight.playOffsetSec,
-            endOffsetSec: highlight.endOffsetSec,
-            stillUrl: stillUrl(media, video.id, highlight.playOffsetSec, now),
-            storage: video.storage
-          })
-          // One row per play: the first video that covers it is the one the
-          // list opens, and the same moment twice is two thumbnails of one
-          // piece of video.
-          break
+        // One book for the games of the batch, each game's players named over
+        // its own players, as the game's own highlights name them.
+        const books = await gameNames(
+          db,
+          usable.map(row => row.gameId)
+        )
+        const names = await teamNames(
+          db,
+          usable.flatMap(row => [row.homeTeamId, row.awayTeamId])
+        )
+
+        for (const row of usable) {
+          const credits = creditsByEvent.get(row.id) ?? []
+          // The play's credits for this person, by any of their rows.
+          const mine = credits.filter(
+            outcome =>
+              outcome.creditUserId != null &&
+              creditedIds.includes(outcome.creditUserId)
+          )
+          if (mine.length === 0) continue
+
+          // The video that was running when the play happened, in the order
+          // above: the program file first.
+          for (const video of videos.filter(
+            item => item.gameId === row.gameId
+          )) {
+            const computed = withDropped(
+              [
+                highlightEvent(row, credits, id =>
+                  books.get(row.gameId)?.nameOf(id)
+                )
+              ],
+              {
+                startAt: video.startAt == null ? null : new Date(video.startAt),
+                syncOffsetSec: video.syncOffsetSec,
+                durationSec: video.durationSec
+              },
+              settings,
+              standings
+            )
+            const highlight = computed.highlights[0]
+            if (highlight == null) continue
+
+            const outcome = mine[0]
+            const teamId =
+              (outcome as { teamId?: string | null }).teamId ?? null
+            shown.set(row.id, {
+              eventId: row.id,
+              gameId: row.gameId,
+              videoId: video.id,
+              teamId,
+              teamName: teamId == null ? null : (names.get(teamId) ?? null),
+              outcome: outcomeName(outcome),
+              title: highlight.title,
+              tag: highlight.tag ?? null,
+              playAt: highlight.playAt.toISOString(),
+              startOffsetSec: highlight.startOffsetSec,
+              playOffsetSec: highlight.playOffsetSec,
+              endOffsetSec: highlight.endOffsetSec,
+              stillUrl: stillUrl(media, video.id, highlight.playOffsetSec, now),
+              storage: video.storage
+            })
+            // One row per play: the first video that covers it is the one the
+            // list opens, and the same moment twice is two thumbnails of one
+            // piece of video.
+            break
+          }
         }
+        return shown
+      }
+
+      // A page is `limit` rows that survive everything above, so plays are
+      // read in growing batches until a row past the page turns up, which
+      // says there is another, or the list ends. A long run of plays nobody
+      // can show stops at the scan's cap with `nextBefore` set, however short
+      // the page, and the next request reads on from there.
+      const out: Row[] = []
+      let seen = 0
+      let scanned = 0
+      let place = before
+      let nextBefore: string | null = null
+      let ended = false
+      let size = limit + 1
+      while (nextBefore == null && !ended) {
+        const batch = await readPlays(place, size)
+        const shown = await highlightsOf(batch.filter(sees))
+        for (const row of batch) {
+          const highlight = shown.get(row.id)
+          if (highlight != null && out.length === limit) {
+            nextBefore = placeText(place)
+            break
+          }
+          place = { at: new Date(row.startTime!), id: row.id }
+          scanned++
+          if (sees(row)) seen++
+          if (highlight != null) out.push(highlight)
+        }
+        ended = batch.length < size
+        if (!ended && scanned >= HIGHLIGHT_SCAN_MOST) {
+          nextBefore ??= placeText(place)
+        }
+        size = Math.min(size * 2, HIGHLIGHT_SCAN_MOST - scanned)
       }
 
       res.json({
         highlights: out.map(({ storage, ...rest }) => rest),
-        /** The play time to ask for the next page from. */
-        nextBefore:
-          hasMore && page.length > 0
-            ? new Date(page[page.length - 1].startTime!).toISOString()
-            : null,
+        /** The `before` to ask for the next page with. */
+        nextBefore,
         /**
          * Plays of theirs that no recording covers. Counted rather than shown:
          * `no highlights` and `no camera was there` are different answers, and
          * a child who played all season reads the first as being left out.
          */
-        withoutVideo: page.length - out.length
+        withoutVideo: seen - out.length
       })
 
       // Answered first, then the frames are cut, and only for the page just
@@ -886,10 +935,30 @@ function limitOf(raw: unknown): number {
   return Math.min(Math.floor(value), 50)
 }
 
-function dateOf(raw: unknown): Date | undefined {
-  if (typeof raw !== 'string' || raw === '') return undefined
-  const date = new Date(raw)
-  return Number.isNaN(date.getTime()) ? undefined : date
+/** Where a page of a player's highlights stops: a start, and the play on it. */
+interface HighlightPlace {
+  at: Date
+  /** Missing on the bare time an older client holds. */
+  id?: string
+}
+
+/** The plays one request reads looking for a full page. */
+const HIGHLIGHT_SCAN_MOST = 500
+
+function placeText(place: HighlightPlace | undefined): string {
+  return `${place!.at.toISOString()}|${place!.id}`
+}
+
+/** `<iso>|<id>`, or a bare time. Anything else is a 400. */
+function highlightPlaceOf(raw: unknown): HighlightPlace | undefined {
+  if (raw === undefined || raw === '') return undefined
+  const text = typeof raw === 'string' ? raw : ''
+  const mark = text.indexOf('|')
+  const id = mark < 0 ? undefined : text.slice(mark + 1)
+  const at = new Date(mark < 0 ? text : text.slice(0, mark))
+  if (Number.isNaN(at.getTime()) || id === '')
+    throw badRequest('before must be a time, or a nextBefore this list gave')
+  return { at, id }
 }
 
 export interface PlayerTeam {

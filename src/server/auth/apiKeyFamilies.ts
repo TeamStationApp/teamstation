@@ -87,6 +87,7 @@ export const API_KEY_FAMILIES: Record<ApiKeyArea, readonly string[]> = {
   ],
   schedule: [
     'GET /teams/{teamId}/games',
+    'GET /seasons/{seasonId}/games',
     'GET /games/{gameId}',
     'GET /games/{gameId}/scheduling',
     'GET /game-requests',

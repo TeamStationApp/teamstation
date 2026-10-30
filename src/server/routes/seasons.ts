@@ -302,12 +302,24 @@ export interface ScheduleFilter {
   page?: { cursor?: ScheduleCursor }
 }
 
+/** What a list's filter and its `counts` read of a row. */
+type ListedRow = Pick<
+  ScheduleRow,
+  | 'id'
+  | 'startAt'
+  | 'homeScore'
+  | 'awayScore'
+  | 'status'
+  | 'videoCount'
+  | 'seasonId'
+>
+
 /**
  * Whether a row belongs to the list. The games query asks the same in SQL;
- * this is what proposals and team events answer to.
+ * this is what proposals, team events and a public list answer to.
  */
-function inSchedule(
-  row: ScheduleRow,
+export function inSchedule(
+  row: ListedRow,
   filter: ScheduleFilter,
   nowMs: number
 ): boolean {
@@ -736,12 +748,12 @@ export async function scheduleOf(
 }
 
 /** What a paged list's first page says of the whole list, read in `order`. */
-function listCounts(
-  rows: ScheduleRow[],
+export function listCounts(
+  rows: ListedRow[],
   order: 'asc' | 'desc',
   nowMs: number
 ): ListCounts {
-  const hasSeason = (row: ScheduleRow): boolean => row.seasonId != null
+  const hasSeason = (row: ListedRow): boolean => row.seasonId != null
   const newest =
     order === 'desc' ? rows.find(hasSeason) : rows.findLast(hasSeason)
   return {

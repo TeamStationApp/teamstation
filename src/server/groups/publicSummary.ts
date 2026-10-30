@@ -1,5 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
+import type { Page } from '../../common/api'
 import { notFound } from '../../common/errors'
 import {
   calendarDateText,
@@ -24,11 +25,14 @@ import {
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { eventWindow, type ParsedEventList } from '../events/eventListQuery'
 import { gameIsLive } from '../games/gameLive'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
+import { inSchedule, listCounts } from '../routes/seasons'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
+import { inListOrder, pageOfHeld } from '../schedule/scheduleCursor'
 import { followMerges } from '../teams/followMerges'
 import { assignedUmpireGames } from '../umpires/presence'
 import { loadPlayerNamePrivacy } from './playerNamePrivacy'
@@ -338,11 +342,48 @@ export async function publicGames(
       pendingApproval: true,
       pendingRequestId: row.pendingRequestId
     }))
-  return [...annotatePending(published, pending), ...projected].sort((a, b) =>
-    a.startAt.localeCompare(b.startAt) !== 0
-      ? a.startAt.localeCompare(b.startAt)
-      : a.id.localeCompare(b.id)
+  return inListOrder(
+    [...annotatePending(published, pending), ...projected],
+    'asc'
   )
+}
+
+/**
+ * `publicGames` a page at a time, over the cursor a schedule pages by.
+ *
+ * What may be shown is `publicGames`' to say, so each page reads that list
+ * whole, as the group's page does, and cuts its rows from it. `counts` take
+ * in the whole list, leaving out `when` and `hasVideo`, as a schedule's do.
+ */
+export async function publicGamesPage(
+  db: Kysely<Database>,
+  ref: GroupRef,
+  actor: Actor | undefined,
+  query: ParsedEventList
+): Promise<Page<PublicGame>> {
+  const group: GroupRef =
+    ref.kind === 'team'
+      ? { kind: 'team', id: await followMerges(db, ref.id) }
+      : ref
+  const found = await db
+    .selectFrom(group.kind === 'team' ? 'teams' : 'seasons')
+    .select('id')
+    .where('id', '=', group.id)
+    .executeTakeFirst()
+  if (found == null) throw notFound()
+  const now = new Date()
+  const window = eventWindow(query, now)
+  const games = await publicGames(db, group, actor)
+  const listed = games.filter(game =>
+    inSchedule(game, { ...window, hasVideo: query.hasVideo }, now.getTime())
+  )
+  const { cursor, limit } = query
+  return {
+    // `paged` always has one.
+    ...pageOfHeld(listed, window.order, limit!, cursor),
+    anchorId: null,
+    counts: cursor == null ? listCounts(games, 'asc', now.getTime()) : null
+  }
 }
 
 export async function groupDetail(

@@ -6,8 +6,10 @@ import {
   decodeScheduleCursor,
   encodeScheduleCursor,
   firstPage,
+  inListOrder,
   pageAround,
   pageFromCursor,
+  pageOfHeld,
   pastCursor,
   readingOrder,
   type ScheduleCursor
@@ -223,6 +225,46 @@ describe('cutting a page', function () {
     expect(cursorOf(page.nextCursor).id).equals('gam_5')
     expect(cursorOf(page.prevCursor).order).equals('asc')
     expect(cursorOf(page.nextCursor).order).equals('asc')
+  })
+
+  it('runs a list by start, then by id in byte order, either way', function () {
+    const rows = [
+      row('gam_b'),
+      row('gam_a', placed[1].startAt),
+      row('gam_A'),
+      row('pending:1', '2027-04-01T19:00:00Z')
+    ]
+    expect(inListOrder(rows, 'asc').map(one => one.id)).deep.equals([
+      'gam_A',
+      'gam_b',
+      'pending:1',
+      'gam_a'
+    ])
+    expect(inListOrder(rows, 'desc').map(one => one.id)).deep.equals([
+      'gam_a',
+      'pending:1',
+      'gam_b',
+      'gam_A'
+    ])
+  })
+
+  it('cuts a list held whole as a list read by cursor is cut', function () {
+    const shuffled = [...placed].reverse()
+    const first = pageOfHeld(shuffled, 'asc', 3)
+    expect(first.items.map(one => one.id)).deep.equals([
+      'gam_0',
+      'gam_1',
+      'gam_2'
+    ])
+    const on = pageOfHeld(shuffled, 'asc', 3, cursorOf(first.nextCursor))
+    expect(on.items.map(one => one.id)).deep.equals(['gam_3', 'gam_4', 'gam_5'])
+    const back = pageOfHeld(shuffled, 'asc', 2, cursorOf(on.prevCursor))
+    expect(back.items.map(one => one.id)).deep.equals(['gam_1', 'gam_2'])
+    expect(cursorOf(back.prevCursor).id).equals('gam_1')
+    const falling = pageOfHeld(placed, 'desc', 6)
+    const rest = pageOfHeld(placed, 'desc', 6, cursorOf(falling.nextCursor))
+    expect(rest.items.map(one => one.id)).deep.equals(['gam_0'])
+    expect(rest.nextCursor).equals(null)
   })
 
   it('has no cursor for a side with no rows', function () {

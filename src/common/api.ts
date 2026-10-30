@@ -102,9 +102,11 @@ import type {
 import { asStatSplit, asStatSplitBy } from './playerStatSplits'
 import {
   asGroupDetail,
+  asPublicGame,
   asPublicGroup,
   asSearchRow,
   type GroupDetail,
+  type PublicGame,
   type PublicGroup,
   type SearchRow
 } from './publicGroups'
@@ -152,12 +154,15 @@ import {
 } from './seasonScheduling'
 import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
 import {
+  asUmpireColumn,
+  asUmpireGameRow,
   asUmpireLeaderboard,
   asUmpireLeagues,
   asUmpireLevel,
   asUmpireLevels,
   asUmpirePeople,
   asUmpireSchedule,
+  asUmpireScheduleHead,
   asUmpireSeasons,
   asUmpireSettings,
   asUmpireTypes
@@ -173,6 +178,8 @@ import type {
   UmpireTypeCount
 } from './umpires'
 import type {
+  UmpireColumn,
+  UmpireGameRow,
   UmpireLeaderboard,
   UmpireLeague,
   UmpireSchedule
@@ -1674,15 +1681,34 @@ export interface Page<T> {
   counts: ListCounts | null
 }
 
-export function asPage<T>(asItem: Cleaner<T>): Cleaner<Page<T>> {
-  return asObject({
+function pageShape<T>(asItem: Cleaner<T>): {
+  [Key in keyof Page<T>]: Cleaner<Page<T>[Key]>
+} {
+  return {
     items: asArray(asItem),
     nextCursor: asNullable(asString),
     prevCursor: asNullable(asString),
     anchorId: asNullable(asString),
     counts: asNullable(asListCounts)
-  })
+  }
 }
+
+export function asPage<T>(asItem: Cleaner<T>): Cleaner<Page<T>> {
+  return asObject(pageShape(asItem))
+}
+
+/**
+ * The umpire schedule a page at a time. `positions` are the columns of the
+ * whole filtered list, so a table's columns and headers hold as rows arrive.
+ */
+export type UmpireSchedulePage = Omit<UmpireSchedule, 'games'> &
+  Page<UmpireGameRow> & { positions: UmpireColumn[] }
+
+const asUmpireSchedulePage: Cleaner<UmpireSchedulePage> = asObject({
+  ...asUmpireScheduleHead,
+  ...pageShape(asUmpireGameRow),
+  positions: asArray(asUmpireColumn)
+})
 
 /** What `paged=1` reads of a schedule take. */
 export interface GamesPageQuery {
@@ -1711,6 +1737,17 @@ function gamesPageParams(query: GamesPageQuery): string {
     params.push(`cursor=${encodeURIComponent(query.cursor)}`)
   if (query.limit != null) params.push(`limit=${query.limit}`)
   return params.join('&')
+}
+
+/** A schedule query as the server takes it: one value to a repeated key. */
+function umpireScheduleParams(query: string): URLSearchParams {
+  const params = new URLSearchParams(query)
+  for (const key of ['days', 'levels']) {
+    const values = params.getAll(key).flatMap(value => value.split(','))
+    params.delete(key)
+    for (const value of values) if (value !== '') params.append(key, value)
+  }
+  return params
 }
 
 /** A player a roster manager may add, as the search card draws them. */
@@ -3183,16 +3220,29 @@ export class TeamStationClient {
   }
 
   async umpireSchedule(league: string, query = ''): Promise<UmpireSchedule> {
-    const params = new URLSearchParams(query)
-    for (const key of ['days', 'levels']) {
-      const values = params.getAll(key).flatMap(value => value.split(','))
-      params.delete(key)
-      for (const value of values) if (value !== '') params.append(key, value)
-    }
+    const params = umpireScheduleParams(query)
     return await this.request(
       'GET',
       `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
       asUmpireSchedule
+    )
+  }
+
+  /** `umpireSchedule`, a page at a time. */
+  async umpireSchedulePage(
+    league: string,
+    query = '',
+    page: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+  ): Promise<UmpireSchedulePage> {
+    const params = umpireScheduleParams(query)
+    params.set('paged', '1')
+    if (page.around != null) params.set('around', page.around)
+    if (page.cursor != null) params.set('cursor', page.cursor)
+    if (page.limit != null) params.set('limit', String(page.limit))
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
+      asUmpireSchedulePage
     )
   }
 
@@ -4623,6 +4673,24 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/games`,
       asArray(asGameSummary)
+    )
+  }
+
+  /**
+   * The games a team's or a season's public page shows, a page at a time, to
+   * anybody signed in or not. `PublicGame` is another shape from the member
+   * reads above.
+   */
+  async publicGamesPage(
+    kind: 'team' | 'season',
+    id: string,
+    query: Omit<GamesPageQuery, 'around'> = {}
+  ): Promise<Page<PublicGame>> {
+    const groups = kind === 'team' ? 'teams' : 'seasons'
+    return await this.request(
+      'GET',
+      `/${groups}/${encodeURIComponent(id)}/games?public=1&${gamesPageParams(query)}`,
+      asPage(asPublicGame)
     )
   }
 
