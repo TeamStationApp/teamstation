@@ -87,6 +87,13 @@ interface NmsPacket {
   flags: number
   /** Milliseconds, on the publisher's clock. */
   dts: number
+  /**
+   * What a video packet says it carries, read as `videoCodec` is. Nought when
+   * node-media-server could not read it.
+   */
+  codec_id?: number
+  /** The FLV tag's body. */
+  data?: Buffer
 }
 
 /**
@@ -177,7 +184,12 @@ export interface LiveSpec {
 
 export type LiveEvent =
   | { type: 'publishStarted'; key: string; liveStreamId: string }
-  | { type: 'publishEnded'; key: string; liveStreamId: string; reason: string }
+  | {
+      type: 'publishEnded'
+      key: string
+      liveStreamId: string
+      reason: string
+    }
   | { type: 'rejected'; key: string; reason: string }
   /**
    * A first writer's frame wall clocks say when the picture at its
@@ -278,6 +290,11 @@ interface OutputRuntime {
    * next keyframe, and nothing else starts one meanwhile.
    */
   respawnAtKeyframe?: boolean
+  /**
+   * Since when a writer has waited to hear the publish's codec, in
+   * milliseconds (`mustKnowCodec`). The publish saying what it is starts it.
+   */
+  awaitingCodecSince?: number
   /** A start is reading the playlist before its ffmpeg exists. */
   preparing?: boolean
   /** Another start arrived while that read was in progress. */
@@ -356,6 +373,12 @@ interface IngressRuntime {
   session?: NmsSession
   /** Whether the stream's codec has been looked at yet. Once per publish. */
   codecChecked?: boolean
+  /**
+   * The publish now on this key has shown it is HEVC, and the controller has
+   * heard of it. Until then it is only somebody connected: nothing is said of
+   * it, because a publish the ingest goes on to refuse was never a publish.
+   */
+  accepted?: boolean
   /**
    * Consecutive one-second ticks of "publishing, but no bytes". At
    * STALE_INGRESS_TICKS the publisher is taken to be a corpse whose socket
@@ -572,6 +595,7 @@ function toStatus(entry: LiveEntry): LiveStatus {
 }
 
 function report(entry: LiveEntry): void {
+  if (entry.ingress.publishing && entry.ingress.accepted !== true) return
   requireConfig().onEvent({
     type: 'status',
     key: entry.key,
@@ -699,11 +723,19 @@ export async function clearLiveSettled(
   key: string,
   reason: string
 ): Promise<void> {
-  const entry = entries.get(key)
-  // A child leaves `spawned` when its exit handling runs. The sampler may
-  // drop a phantom whose PID has gone before the poll finishes its exit, but
-  // the output still holds it as its writer until then.
-  const children = new Set(
+  const children = childrenOf(entries.get(key))
+  clearLive(key, reason)
+  await exitsHandled(children)
+}
+
+/**
+ * Everything of a key's that may still be running. A child leaves `spawned`
+ * when its exit handling runs. The sampler may drop a phantom whose PID has
+ * gone before the poll finishes its exit, but the output still holds it as its
+ * writer until then.
+ */
+function childrenOf(entry: LiveEntry | undefined): Set<ChildProcess> {
+  return new Set(
     entry == null
       ? []
       : entry.outputs.flatMap(output =>
@@ -712,7 +744,9 @@ export async function clearLiveSettled(
             : [...output.spawned, output.child]
         )
   )
-  clearLive(key, reason)
+}
+
+async function exitsHandled(children: Set<ChildProcess>): Promise<void> {
   // A child that never got a process has no exit to wait for.
   const exited = [...children].flatMap(child => {
     const handled = child.pid == null ? undefined : exitHandledFor.get(child)
@@ -981,8 +1015,23 @@ async function spawnPrepared(
   // of them. Getting this wrong silently overwrites the first half of a game
   // with the second.
   let installStamp: (() => void) | undefined
+  let wallClock = (): number => Date.now()
   if (output.kind === 'hls') {
     const next = nextSegmentNumber(entry.hlsDir)
+    if (mustKnowCodec(entry)) {
+      output.awaitingCodecSince ??= Date.now()
+      return
+    }
+    // A wait for the codec is not an absence: this writer goes on the wall
+    // clock where it would have gone had it not waited.
+    const waitedMs = Date.now() - (output.awaitingCodecSince ?? Date.now())
+    if (output.awaitingCodecSince != null) {
+      log(
+        `[live:${entry.liveStreamId}] the HLS writer waited ${String(waitedMs)} ms for the publish's codec`
+      )
+    }
+    output.awaitingCodecSince = undefined
+    wallClock = () => Date.now() - waitedMs
     output.firstSegmentNumber = next
     let placement: WriterPlacement | undefined
     if (next > 0) {
@@ -997,7 +1046,11 @@ async function spawnPrepared(
           `[live:${entry.liveStreamId}] playlist lists nothing but ${String(next)} segments are on disk: the recording before this will be missing`
         )
       }
-      output.continuation = playlistContinuation(playlist, next, new Date())
+      output.continuation = playlistContinuation(
+        playlist,
+        next,
+        new Date(wallClock())
+      )
       const offsetSec = output.continuation.offsetSec
       if (offsetSec > 0) {
         // A segment closed before the last stamp is still on the publisher's
@@ -1017,7 +1070,11 @@ async function spawnPrepared(
         // they take a while. The wall clock the writer starts at is now, with
         // nothing awaited between here and the spawn: measured before them,
         // a return with no frame wall clocks went early by that long.
-        output.continuation = playlistContinuation(playlist, next, new Date())
+        output.continuation = playlistContinuation(
+          playlist,
+          next,
+          new Date(wallClock())
+        )
         // Never before the end of what is listed, as for a frame wall clock.
         // The program dates run behind the timeline by the first writer's
         // capture-to-start lag, so a quick return after a part its frame
@@ -1025,7 +1082,7 @@ async function spawnPrepared(
         // can date itself inside the pictures already there.
         const wallClockSec = Math.max(output.continuation.offsetSec, floorSec)
         placement = {
-          startedAt: Date.now(),
+          startedAt: wallClock(),
           continuing: true,
           floorSec,
           offsetSec: wallClockSec,
@@ -1036,7 +1093,7 @@ async function spawnPrepared(
       }
     } else {
       placement = {
-        startedAt: Date.now(),
+        startedAt: wallClock(),
         continuing: false,
         floorSec: 0,
         offsetSec: 0,
@@ -1048,7 +1105,7 @@ async function spawnPrepared(
     if (placement != null) {
       const held = placement
       installStamp = () => {
-        held.startedAt = Date.now()
+        held.startedAt = wallClock()
         // Every segment on disk now is placed, or recovered above. This
         // writer's are numbered from `next` on, closed in order, so the
         // stamper looks only past the lowest one it has not handled yet:
@@ -1315,6 +1372,97 @@ async function spawnPrepared(
     output.lastError = `spawn error: ${String(error)}`
     report(entry)
   })
+}
+
+/**
+ * Whether the HLS writer has to wait to hear what this publish carries.
+ *
+ * A writer is not harmless to a recording while it decides: starting one takes
+ * the playlist's end off and corrects its last line, FFmpeg replaces
+ * `init.mp4` and the origin can carry that to the Space, and leaving writes a
+ * part-made segment into the playlist. In a codec the recording cannot hold,
+ * that loses every picture already here, and it is `pollSampler` that refuses
+ * the publish, up to a second in. So a publish that has not shown it is HEVC
+ * writes nothing, which leaves nothing to undo if it is refused or this
+ * process dies first.
+ *
+ * An HEVC publish loses no pictures by it. Its metadata arrives within a
+ * moment, often before the key has been looked up, and any wait ends there
+ * rather than at the sampler. The server replays its headers and everything
+ * since the last keyframe to a reader that joins late, which leaves out only
+ * sound sent before the first keyframe, and `spawnPrepared` takes the wait off
+ * the writer's wall clock.
+ */
+function mustKnowCodec(entry: LiveEntry): boolean {
+  if (entry.ingress.session == null) return false
+  return !shownHevc(entry)
+}
+
+/** Whether the publish on a key has said what it carries, and that is HEVC. */
+function shownHevc(entry: LiveEntry): boolean {
+  const codec = entry.ingress.session?.videoCodec
+  if (codec == null || codec === 0 || codec === '') return false
+  return codecRefusal(codec) == null
+}
+
+/**
+ * Tells the controller of a publish, once it has shown it is HEVC.
+ *
+ * The publish connected a moment ago, but this is when it counts: what stamps
+ * the camera as published, puts it on the air and starts its video's clock.
+ * A publish refused for its codec never gets here, so there is nothing to take
+ * back and a camera that only ever refused reads as never published.
+ */
+function acceptIfHevc(entry: LiveEntry): void {
+  if (entry.ingress.accepted === true || !shownHevc(entry)) return
+  entry.ingress.accepted = true
+  requireConfig().onEvent({
+    type: 'publishStarted',
+    key: entry.key,
+    liveStreamId: entry.liveStreamId
+  })
+  report(entry)
+}
+
+/** Classic FLV's number for HEVC. */
+const FLV_CODEC_HEVC = 12
+
+/**
+ * Says which packets of a classic FLV HEVC publish are its header and its
+ * keyframes.
+ *
+ * node-media-server reads those for H.264 and Enhanced RTMP. Any other codec
+ * is all ordinary video to it, so it replays neither to a reader that joins
+ * late: a writer that joined after the header, as one held for the codec
+ * always does, gets a stream it cannot read, and FFmpeg empties `init.mp4` on
+ * its way out.
+ */
+function classifyClassicHevc(packet: NmsPacket): void {
+  if (packet.codec_id !== FLV_CODEC_HEVC || packet.data == null) return
+  if (packet.data[1] === 0) packet.flags = 2
+  else if (packet.data[0] >> 4 === 1) packet.flags = 3
+}
+
+/**
+ * Hears what a publish carries from its packets, for the writer waiting on it.
+ *
+ * A publisher that sends no `videocodecid` says it with its first video
+ * packet, which also lets the sampler refuse one that is not HEVC.
+ */
+function codecHeard(entry: LiveEntry, packet: NmsPacket): void {
+  const session = entry.ingress.session
+  if (session == null) return
+  const video = packet.flags >= 2 && packet.flags <= 4
+  if (video && packet.codec_id != null && packet.codec_id !== 0) {
+    if (session.videoCodec == null || session.videoCodec === 0) {
+      session.videoCodec = packet.codec_id
+    }
+  }
+  acceptIfHevc(entry)
+  const hls = hlsOutputOf(entry)
+  if (hls?.awaitingCodecSince != null && shownHevc(entry)) {
+    spawnOutput(entry, hls)
+  }
 }
 
 /**
@@ -1673,6 +1821,7 @@ const terminated = new WeakSet<ChildProcess>()
  */
 function stopOutput(output: OutputRuntime, signal = true): void {
   output.stopGeneration += 1
+  output.awaitingCodecSince = undefined
   if (output.restartTimer != null) {
     clearTimeout(output.restartTimer)
     output.restartTimer = undefined
@@ -1812,6 +1961,7 @@ function pollSampler(): void {
           ingress.session.videoCodec !== 0
         ) {
           ingress.codecChecked = true
+          acceptIfHevc(entry)
         }
       }
       const delta = currentInBytes - ingress.bytesAtLastTick
@@ -2032,6 +2182,7 @@ function watchForJumps(entry: LiveEntry, raw: NmsBroadcast | undefined): void {
   const pass = broadcast.broadcastMessage?.bind(broadcast)
   const done = broadcast.donePublish?.bind(broadcast)
   broadcast.broadcastMessage = packet => {
+    classifyClassicHevc(packet)
     const video = packet.flags === 3 || packet.flags === 4
     const jump = watch.detector.feed({
       video,
@@ -2049,6 +2200,8 @@ function watchForJumps(entry: LiveEntry, raw: NmsBroadcast | undefined): void {
       }
     }
     pass?.(packet)
+    // After passing it on, which is where its metadata is read.
+    codecHeard(watch.entry, packet)
   }
   broadcast.donePublish = session => {
     // As node-media-server's own: only the session publishing ends the
@@ -2135,7 +2288,7 @@ function cutAtJump(
  * had gone quiet was already replaced by `replaceQuietPublisher`.
  */
 function accept(entry: LiveEntry, session: NmsSession): void {
-  const { log, onEvent } = requireConfig()
+  const { log } = requireConfig()
   if (entry.ingress.session != null && entry.ingress.publishing) {
     log(`[live:${entry.liveStreamId}] second publisher ignored`)
     return
@@ -2144,18 +2297,15 @@ function accept(entry: LiveEntry, session: NmsSession): void {
   entry.ingress.path = publishPath(session)
   entry.ingress.session = session
   entry.ingress.publishing = true
+  entry.ingress.codecChecked = false
+  entry.ingress.accepted = false
   entry.ingress.bytesAtLastTick = session.inBytes ?? 0
   entry.ingress.bytesReceived = session.inBytes ?? 0
   entry.ingress.receivingPackets = false
   entry.ingress.bytesPerSecond = 0
   entry.ingress.zeroByteTicks = 0
   watchForJumps(entry, session.broadcast)
-  onEvent({
-    type: 'publishStarted',
-    key: entry.key,
-    liveStreamId: entry.liveStreamId
-  })
-  report(entry)
+  acceptIfHevc(entry)
   startOutputs(entry)
 }
 
@@ -2536,11 +2686,17 @@ export interface TestSession {
   streamName?: string
   streamPath?: string
   inBytes?: number
+  videoCodec?: number
   close?: () => void
   socket?: { destroy?: () => void }
   broadcast?: {
     donePublish?: (session: never) => void
-    broadcastMessage?: (packet: { flags: number; dts: number }) => void
+    broadcastMessage?: (packet: {
+      flags: number
+      dts: number
+      codec_id?: number
+      data?: Buffer
+    }) => void
     subscribers?: Map<
       string,
       { close?: () => void; streamQuery?: Record<string, unknown> }
@@ -2565,6 +2721,8 @@ export function forcePublishForTest(key: string, publishing: boolean): void {
   if (entry == null) return
   if (publishing && !entry.ingress.publishing) {
     entry.ingress.publishing = true
+    entry.ingress.codecChecked = false
+    entry.ingress.accepted = true
     entry.ingress.bytesAtLastTick = 0
     entry.ingress.bytesReceived = 0
     entry.ingress.receivingPackets = false

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,9 +17,15 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
-import { beganPublishing, handleLiveEventForTest } from '../live/controller'
+import {
+  beganPublishing,
+  handleLiveEventForTest,
+  liveVideoDir,
+  resolveKey
+} from '../live/controller'
 import {
   placeByFrameWall,
   placeByPublisher,
@@ -72,6 +78,15 @@ const LIVE = {
   app: 'live',
   segmentSeconds: 4,
   freeDiskFloorGb: 10
+}
+
+/** No Space: what a discard deletes here is on this disk. */
+const NO_SPACE = {
+  bucket: '',
+  region: '',
+  endpoint: '',
+  accessKeyId: '',
+  secretAccessKey: ''
 }
 
 const owner = mintUserId(() => false)
@@ -135,7 +150,24 @@ describe('phones and Directors asking for their streams by device', function () 
     app.use(withAudit(db))
     const host = 'live.example.test'
     const sessionSecret = 'k'.repeat(32)
-    app.use('/api/v1', liveRoutes(db, { live: LIVE, sessionSecret, host }))
+    const space = {
+      bucket: 'test',
+      region: 'sfo3',
+      endpoint: 'https://space.example.test',
+      accessKeyId: 'k',
+      secretAccessKey: 's'
+    }
+    // None configured for the live routes: what a discard deletes is local.
+    app.use(
+      '/api/v1',
+      liveRoutes(db, {
+        live: LIVE,
+        sessionSecret,
+        host,
+        space: NO_SPACE,
+        mediaRoot: uploadsDir
+      })
+    )
     app.use(
       '/api/v1',
       directorRoutes(db, {
@@ -149,14 +181,9 @@ describe('phones and Directors asking for their streams by device', function () 
       '/api/v1',
       directorUploadRoutes(db, {
         uploadsDir,
+        mediaRoot: uploadsDir,
         ffmpegPath: '/usr/bin/ffmpeg',
-        space: {
-          bucket: 'test',
-          region: 'sfo3',
-          endpoint: 'https://space.example.test',
-          accessKeyId: 'k',
-          secretAccessKey: 's'
-        }
+        space
       })
     )
     app.use('/api/v1', notificationRoutes(db))
@@ -465,14 +492,20 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(fresh.body.slot).equals(1)
       expect(fresh.body.videoId).not.equals(first.body.videoId)
       expect(fresh.body.url).not.equals(first.body.url)
+      // The ended row stays beside the new one, with its video.
       const old = await stream(first.body.id)
-      expect(old.state).equals('revoked')
+      expect(old.state).equals('idle')
+      expect(old.closesAt).not.equals(null)
       expect(old.videoId).equals(first.body.videoId)
 
-      // Replaced by an upload: revoked, so its name and slot are free.
+      // Replaced by an upload: ended, so its name and slot are free.
       await db
         .updateTable('live_streams')
-        .set({ state: 'revoked', local_recording: 'uploaded' })
+        .set({
+          state: 'ended',
+          closes_at: new Date(),
+          local_recording: 'uploaded'
+        })
         .where('id', '=', fresh.body.id)
         .execute()
       const next = await ask(gameId, phone('Home Plate'))
@@ -551,7 +584,8 @@ describe('phones and Directors asking for their streams by device', function () 
       // An explicit start sends no held stream, and goes live again.
       const start = await ask(gameId, phone('Home Plate'))
       expect(start.status).equals(201)
-      expect((await stream(made.body.id)).state).equals('revoked')
+      expect((await stream(made.body.id)).state).not.equals('revoked')
+      expect(await streamsOn(gameId)).equals(2)
     })
 
     it('refuses a redial of a revoked stream', async function () {
@@ -585,10 +619,11 @@ describe('phones and Directors asking for their streams by device', function () 
         phone('Home Plate', IPHONE, { heldStreamId: made.body.id })
       )
       expect(redial.status).equals(410)
-      // An explicit start goes live again on a fresh stream.
+      // An explicit start goes live again on a fresh stream, and the finished
+      // one stays.
       const start = await ask(gameId, phone('Home Plate'))
       expect(start.status).equals(201)
-      expect((await stream(made.body.id)).state).equals('revoked')
+      expect((await stream(made.body.id)).state).equals('ended')
     })
 
     it('returns a held stream that is still active', async function () {
@@ -1497,7 +1532,7 @@ describe('phones and Directors asking for their streams by device', function () 
       )
     })
 
-    it('replaces an ended angle that a new take has since revoked, and clears its reminder', async function () {
+    it('replaces an ended angle that a new take has since followed, and clears its reminder', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
       const take1 = await ask(gameId, phone('Home Plate'))
@@ -1506,7 +1541,7 @@ describe('phones and Directors asking for their streams by device', function () 
       await end(gameId, take1.body.id)
       const take2 = await ask(gameId, phone('Home Plate'))
       expect(take2.status).equals(201)
-      expect((await stream(take1.body.id)).state).equals('revoked')
+      expect((await stream(take1.body.id)).closesAt).not.equals(null)
 
       const opened = await open(gameId, {
         liveStreamId: take1.body.id,
@@ -1627,7 +1662,7 @@ describe('phones and Directors asking for their streams by device', function () 
       expect((await video(homeUpload)).title).equals(replaced.title)
       expect(replaced.title).contains('Home Plate')
       const after = await stream(home.body.id)
-      expect(after.state).equals('revoked')
+      expect(after.state).equals('ended')
       expect(after.localRecording).equals('uploaded')
       expect((await receipt(home.body.id))?.dismissedAt).not.equals(null)
       expect((await video(firstVideo)).hidden).equals(false)
@@ -1699,7 +1734,7 @@ describe('phones and Directors asking for their streams by device', function () 
         ).deep.equals([])
         const after = await stream(home.body.id)
         expect(after.localRecording, String(wholeStream)).equals('uploaded')
-        expect(after.state).equals('revoked')
+        expect(after.state).equals('ended')
         expect((await receipt(home.body.id))?.dismissedAt).not.equals(null)
         expect((await video(upload)).hidden).equals(false)
       }
@@ -1959,6 +1994,874 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(reminderDescription('Home Plate', null)).equals(
         'Home Plate — provide a higher-quality copy for future viewing.'
       )
+    })
+  })
+
+  describe('S8 limits, and ended cameras that stay', function () {
+    const SEVENTH = 'This game already has 6 cameras. End one to add another.'
+    const FIFTH =
+      'You already have 4 cameras on this game. End one to add another.'
+    const list = async (gameId: string, token = OWNER): Promise<Body> => {
+      const listed = await call('GET', `/games/${gameId}/live-streams`, token)
+      expect(listed.status).equals(200)
+      return listed.body
+    }
+    /** Four of the owner's and two of the other manager's. */
+    const fullGame = async (gameId: string): Promise<string[]> => {
+      const made: string[] = []
+      for (const label of ['One', 'Two', 'Three', 'Four']) {
+        const answer = await ask(gameId, { label })
+        expect(answer.status).equals(201)
+        made.push(answer.body.id)
+      }
+      for (const label of ['Five', 'Six']) {
+        const answer = await ask(gameId, { label }, OTHER)
+        expect(answer.status).equals(201)
+        made.push(answer.body.id)
+      }
+      return made
+    }
+    const discard = async (
+      gameId: string,
+      streamId: string,
+      token = OWNER
+    ): Promise<{ status: number; body: Body }> =>
+      await call(
+        'POST',
+        `/games/${gameId}/live-streams/${streamId}/discard`,
+        token
+      )
+    const uploadFor = async (
+      gameId: string,
+      streamId: string,
+      state: 'ready' | 'open',
+      videoId: string | null,
+      createdAt = new Date()
+    ): Promise<string> => {
+      const id = makeId('directorUpload')
+      await db!
+        .insertInto('director_uploads')
+        .values({
+          id,
+          user_id: userIdOfGumbo(owner.userId),
+          game_id: gameId,
+          title: 'Home Plate recording',
+          filename: 'home-plate.mp4',
+          size_bytes: '20',
+          part_size: 10,
+          state,
+          video_id: videoId,
+          live_stream_id: streamId,
+          created_at: createdAt
+        })
+        .execute()
+      return id
+    }
+    const madeVideo = async (
+      gameId: string,
+      patch: { hidden?: boolean; durationSec?: number } = {}
+    ): Promise<string> => {
+      const id = makeId('video')
+      await db!
+        .insertInto('videos')
+        .values({
+          id,
+          game_id: gameId,
+          kind: 'program',
+          title: 'What the app called it',
+          storage: 'local',
+          status: 'ready',
+          hidden: patch.hidden === true,
+          duration_sec: patch.durationSec ?? 600,
+          created_at: new Date(),
+          updated_at: new Date()
+        })
+        .execute()
+      return id
+    }
+    const exists = async (videoId: string): Promise<boolean> =>
+      (await db!
+        .selectFrom('videos')
+        .select('id')
+        .where('id', '=', videoId)
+        .executeTakeFirst()) != null
+
+    it('lets an ended camera free its slot and stay listed', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const first = await ask(gameId, { label: 'One' })
+      await ask(gameId, { label: 'Two' })
+      await ask(gameId, { label: 'Three' })
+      await ask(gameId, { label: 'Four' })
+      expect((await list(gameId)).canAdd).equals(0)
+      await end(gameId, first.body.id)
+
+      const listed = await list(gameId)
+      expect(listed.canAdd).equals(1)
+      expect(listed.mine.map((row: Body) => row.label)).deep.equals([
+        'Two',
+        'Three',
+        'Four',
+        'One'
+      ])
+
+      const fifth = await ask(gameId, { label: 'Five' })
+      expect(fifth.status).equals(201)
+      expect(fifth.body.slot).equals(1)
+      expect((await list(gameId)).mine).has.lengthOf(5)
+    })
+
+    it('counts a closing camera as ended, while it is still publishing', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const first = await ask(gameId, phone('Home Plate'))
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'publishing', closes_at: new Date() })
+        .where('id', '=', first.body.id)
+        .execute()
+      expect((await list(gameId)).canAdd).equals(4)
+      const again = await ask(gameId, phone('Home Plate'))
+      expect(again.status).equals(201)
+      expect(again.body.slot).equals(1)
+    })
+
+    it('frees the slot and name of a stream the ingest finished without an End', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const first = await ask(gameId, phone('Home Plate'))
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'ended', ended_at: new Date() })
+        .where('id', '=', first.body.id)
+        .execute()
+      const again = await ask(gameId, phone('Home Plate'))
+      expect(again.status).equals(201)
+      expect(again.body.slot).equals(1)
+      expect(await streamsOn(gameId)).equals(2)
+    })
+
+    it('refuses a fifth concurrent camera on every create path', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      for (const label of ['One', 'Two', 'Three', 'Four']) {
+        expect((await ask(gameId, { label })).status).equals(201)
+      }
+      for (const refused of [
+        await ask(gameId, { label: 'Five' }),
+        await ask(gameId, phone('Five')),
+        await ask(gameId, { label: 'Five', source: 'gopro' })
+      ]) {
+        expect(refused.status).equals(400)
+        expect(refused.body.message).equals(FIFTH)
+      }
+      expect(await streamsOn(gameId)).equals(4)
+    })
+
+    it('refuses a seventh on the game for each create path, and counts a Director', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      for (const label of ['One', 'Two', 'Three']) {
+        expect((await ask(gameId, phone(label))).status).equals(201)
+      }
+      expect((await claim(gameId, 'Director')).status).equals(200)
+      const fifth = await ask(gameId, phone('Five', PIXEL), OTHER)
+      expect(fifth.status).equals(201)
+      const sixth = await ask(gameId, phone('Six', PIXEL), OTHER)
+      expect(sixth.status).equals(201)
+      expect(await streamsOn(gameId)).equals(6)
+
+      for (const refused of [
+        await ask(gameId, { label: 'Seven' }, OTHER),
+        await ask(gameId, phone('Seven', PIXEL), OTHER),
+        await claim(gameId, 'Seven', OTHER)
+      ]) {
+        expect(refused.status).equals(400)
+        expect(refused.body.message).equals(SEVENTH)
+      }
+      expect(await streamsOn(gameId)).equals(6)
+
+      await call(
+        'POST',
+        `/games/${gameId}/live-streams/${fifth.body.id}/end`,
+        OTHER
+      )
+      expect((await ask(gameId, { label: 'Seven' }, OTHER)).status).equals(201)
+    })
+
+    it('never lets two creates at once pass the limit', async function () {
+      if (db == null) this.skip()
+      for (let round = 0; round < 4; round += 1) {
+        const gameId = await newGame()
+        for (const label of ['One', 'Two', 'Three', 'Four']) {
+          expect((await ask(gameId, phone(label))).status).equals(201)
+        }
+        const fifth = await ask(gameId, phone('Five', PIXEL), OTHER)
+        expect(fifth.status).equals(201)
+        const answers = await Promise.all([
+          ask(gameId, { label: 'Six' }, OTHER),
+          ask(gameId, phone('Seven', PIXEL), OTHER),
+          ask(gameId, phone('Eight', IPAD), OTHER)
+        ])
+        expect(answers.filter(one => one.status === 201)).has.lengthOf(1)
+        expect(answers.filter(one => one.status === 400)).has.lengthOf(2)
+        expect(await streamsOn(gameId)).equals(6)
+      }
+    })
+
+    it('leaves both rows when an ended name is recorded again', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const first = await ask(gameId, phone('Home Plate'))
+      await end(gameId, first.body.id)
+      const second = await ask(gameId, phone('Home Plate'))
+      expect(second.status).equals(201)
+
+      const { mine } = await list(gameId)
+      expect(mine.map((row: Body) => row.id)).deep.equals([
+        second.body.id,
+        first.body.id
+      ])
+      expect(mine.map((row: Body) => row.label)).deep.equals([
+        'Home Plate',
+        'Home Plate'
+      ])
+    })
+
+    it('puts active rows first in mine, each oldest first', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const one = await ask(gameId, phone('One'))
+      const two = await ask(gameId, phone('Two'))
+      const three = await ask(gameId, phone('Three'))
+      await end(gameId, one.body.id)
+      const four = await ask(gameId, phone('One'))
+      expect((await list(gameId)).mine.map((row: Body) => row.id)).deep.equals([
+        two.body.id,
+        three.body.id,
+        four.body.id,
+        one.body.id
+      ])
+    })
+
+    it('answers canAdd and gameCanAdd as the room left, counting active cameras', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      expect(await list(gameId)).includes({ canAdd: 4, gameCanAdd: 6 })
+      const made = await fullGame(gameId)
+      expect(await list(gameId)).includes({ canAdd: 0, gameCanAdd: 0 })
+      expect(await list(gameId, OTHER)).includes({ canAdd: 0, gameCanAdd: 0 })
+      await end(gameId, made[0])
+      expect(await list(gameId)).includes({ canAdd: 1, gameCanAdd: 1 })
+      expect(await list(gameId, OTHER)).includes({ canAdd: 1, gameCanAdd: 1 })
+    })
+
+    it('says each list item’s row data, for a device stream and an external camera', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const gopro = await ask(gameId, {
+        label: 'Backstop',
+        deviceId: IPAD,
+        source: 'gopro'
+      })
+      expect(gopro.status).equals(201)
+      expect(gopro.body.deviceId).equals(undefined)
+      expect((await stream(gopro.body.id)).deviceId).equals(null)
+      const heard = new Date('2026-05-20T16:00:00.000Z')
+      const finished = new Date('2026-05-20T17:00:00.000Z')
+      await db
+        .updateTable('live_streams')
+        .set({
+          state: 'ended',
+          first_published_at: heard,
+          ended_at: finished
+        })
+        .where('id', '=', made.body.id)
+        .execute()
+      await db
+        .updateTable('users')
+        .set({ avatar_path: null })
+        .where('id', '=', userIdOfGumbo(owner.userId))
+        .execute()
+
+      const { mine } = await list(gameId)
+      const [external, phoneRow] = mine as Body[]
+      expect(external.source).equals('gopro')
+      expect(external.publishedAt).equals(null)
+      expect(phoneRow.source).equals(null)
+      expect(phoneRow.publishedAt).equals(heard.toISOString())
+      expect(phoneRow.endedAt).equals(finished.toISOString())
+      expect(Date.parse(phoneRow.createdAt)).is.a('number')
+      expect(phoneRow.ownerPicture).equals(null)
+      expect(phoneRow.playableVideoId).equals(null)
+      expect(phoneRow.durationSec).equals(null)
+
+      const refused = await ask(gameId, { label: 'Odd', source: 'vhs' })
+      expect(refused.status).equals(400)
+    })
+
+    it('plays the newest finished visible upload, then the visible live video, then nothing', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const liveVideo = String(made.body.videoId)
+      await end(gameId, made.body.id)
+      const row = async (): Promise<Body> => (await list(gameId)).mine[0]
+
+      // Hidden until video arrives.
+      expect((await row()).playableVideoId).equals(null)
+      await db
+        .updateTable('videos')
+        .set({ hidden: false, status: 'ready', duration_sec: 120 })
+        .where('id', '=', liveVideo)
+        .execute()
+      expect(await row()).includes({
+        playableVideoId: liveVideo,
+        durationSec: 120
+      })
+
+      const hiddenUpload = await madeVideo(gameId, { hidden: true })
+      await uploadFor(gameId, made.body.id, 'ready', hiddenUpload)
+      const standalone = await madeVideo(gameId, { durationSec: 300 })
+      await uploadFor(
+        gameId,
+        made.body.id,
+        'ready',
+        standalone,
+        new Date(Date.now() - 60_000)
+      )
+      await uploadFor(gameId, made.body.id, 'open', null)
+      expect(await row()).includes({
+        playableVideoId: standalone,
+        durationSec: 300
+      })
+    })
+
+    it('keeps an uploaded camera listed as ended, with its upload to play', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      await db
+        .updateTable('videos')
+        .set({ hidden: false, status: 'ready', duration_sec: 600 })
+        .where('id', '=', made.body.videoId)
+        .execute()
+      await end(gameId, made.body.id)
+      const upload = await madeVideo(gameId, { durationSec: 590 })
+      await uploadFor(gameId, made.body.id, 'ready', upload)
+      expect(
+        await replaceLiveRecording(db, gameId, upload, {
+          liveStreamId: made.body.id,
+          wholeStream: true
+        })
+      ).deep.equals([made.body.videoId])
+
+      const [row] = (await list(gameId)).mine as Body[]
+      expect(row.id).equals(made.body.id)
+      expect(row.state).equals('ended')
+      expect(row.localRecording).equals('uploaded')
+      expect(row.playableVideoId).equals(upload)
+      expect(row.durationSec).equals(590)
+      expect((await list(gameId)).canAdd).equals(4)
+    })
+
+    it('still answers reveal and PATCH for an uploaded camera, and its key cannot publish', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      await end(gameId, made.body.id)
+      const upload = await madeVideo(gameId)
+      await replaceLiveRecording(db, gameId, upload, {
+        liveStreamId: made.body.id,
+        wholeStream: true
+      })
+      const path = `/games/${gameId}/live-streams/${made.body.id}`
+      const revealed = await call('POST', `${path}/reveal`, OWNER)
+      expect(revealed.status).equals(200)
+      expect(revealed.body.url).equals(made.body.url)
+      const renamed = await call('PATCH', path, OWNER, { label: 'Backstop' })
+      expect(renamed.status).equals(200)
+      expect(renamed.body.label).equals('Backstop')
+
+      const key = String(made.body.url).split('/').pop() ?? ''
+      expect(
+        await resolveKey(key, {
+          db,
+          live: LIVE,
+          ffmpegPath: '/not-used',
+          mediaRoot: uploadsDir,
+          workDir: uploadsDir,
+          sessionSecret: 'k'.repeat(32)
+        })
+      ).equals('This game’s stream has already finished.')
+    })
+
+    it('lets only the owner discard, and only once a camera has stopped', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+
+      const active = await discard(gameId, made.body.id)
+      expect(active.status).equals(400)
+      expect(active.body.message).equals(
+        'That camera is still running. End it first.'
+      )
+
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'publishing', closes_at: new Date() })
+        .where('id', '=', made.body.id)
+        .execute()
+      expect((await discard(gameId, made.body.id)).status).equals(400)
+
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'ended', ended_at: new Date() })
+        .where('id', '=', made.body.id)
+        .execute()
+      expect((await discard(gameId, made.body.id, OTHER)).status).equals(404)
+      expect((await discard(gameId, made.body.id, PARENT)).status).equals(404)
+      expect((await list(gameId)).mine).has.lengthOf(1)
+      expect((await discard(gameId, made.body.id)).status).equals(200)
+    })
+
+    it('deletes the live video and its uploads, leaves the list, and says which it dropped', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const kept = await ask(gameId, phone('First Base'))
+      const liveVideo = String(made.body.videoId)
+      await db
+        .updateTable('videos')
+        .set({ hidden: false, status: 'ready', duration_sec: 600 })
+        .where('id', '=', liveVideo)
+        .execute()
+      await end(gameId, made.body.id)
+      const upload = await madeVideo(gameId)
+      await uploadFor(gameId, made.body.id, 'ready', upload)
+      await replaceLiveRecording(db, gameId, upload, {
+        liveStreamId: made.body.id,
+        wholeStream: true
+      })
+
+      const answer = await discard(gameId, made.body.id)
+      expect(answer.status).equals(200)
+      expect(answer.body.mine.map((row: Body) => row.id)).deep.equals([
+        kept.body.id
+      ])
+      expect(answer.body.discarded).deep.equals([made.body.id])
+      expect(await exists(liveVideo)).equals(false)
+      expect(await exists(upload)).equals(false)
+      // Only the owner's list says so.
+      expect((await list(gameId, OTHER)).discarded).deep.equals([])
+    })
+
+    it('removes a standalone upload and settles the reminder', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const marked = await call(
+        'PATCH',
+        `/games/${gameId}/live-streams/${made.body.id}`,
+        OWNER,
+        { localRecording: 'recorded' }
+      )
+      expect(marked.status).equals(200)
+      await end(gameId, made.body.id)
+      const upload = await madeVideo(gameId)
+      await uploadFor(gameId, made.body.id, 'ready', upload)
+
+      expect((await discard(gameId, made.body.id)).status).equals(200)
+      expect(await exists(upload)).equals(false)
+      const receipt = await db
+        .selectFrom('notification_receipts')
+        .innerJoin(
+          'notification_events',
+          'notification_events.id',
+          'notification_receipts.event_id'
+        )
+        .select('notification_receipts.dismissed_at as dismissedAt')
+        .where('notification_events.source_id', '=', made.body.id)
+        .executeTakeFirstOrThrow()
+      expect(receipt.dismissedAt).not.equals(null)
+    })
+
+    it('discards a camera with no video left', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, { label: 'Backstop' })
+      await end(gameId, made.body.id)
+      await db
+        .deleteFrom('videos')
+        .where('id', '=', made.body.videoId)
+        .execute()
+      expect((await discard(gameId, made.body.id)).status).equals(200)
+    })
+
+    it('refuses an upload opened or finished for a discarded stream, and drops one already under way', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      await end(gameId, made.body.id)
+      const waiting = await call('POST', '/director/uploads', OWNER, {
+        gameId,
+        title: 'Home Plate recording',
+        filename: 'home-plate.mp4',
+        sizeBytes: 20,
+        liveStreamId: made.body.id
+      })
+      expect(waiting.status).equals(201)
+      expect((await discard(gameId, made.body.id)).status).equals(200)
+
+      const opened = await call('POST', '/director/uploads', OWNER, {
+        gameId,
+        title: 'Home Plate recording',
+        filename: 'home-plate.mp4',
+        sizeBytes: 20,
+        liveStreamId: made.body.id
+      })
+      expect(opened.status).equals(410)
+      const finished = await call(
+        'POST',
+        `/director/uploads/${waiting.body.uploadId}/finish`,
+        OWNER
+      )
+      expect(finished.status).equals(410)
+
+      const late = await madeVideo(gameId)
+      expect(
+        await replaceLiveRecording(
+          db,
+          gameId,
+          late,
+          { liveStreamId: made.body.id, wholeStream: true },
+          { space: NO_SPACE, mediaRoot: uploadsDir }
+        )
+      ).deep.equals([])
+      expect(await exists(late)).equals(false)
+    })
+  })
+
+  describe('S9 a publish refused for its codec', function () {
+    const REFUSAL = 'TeamStation takes HEVC. This stream is H.264.'
+
+    const ingest = (): Parameters<typeof beganPublishing>[0] => ({
+      db: db!,
+      live: LIVE,
+      ffmpegPath: '/not-used',
+      mediaRoot: uploadsDir,
+      workDir: uploadsDir,
+      sessionSecret: 'k'.repeat(32)
+    })
+
+    const external = async (gameId: string): Promise<Body> =>
+      (await ask(gameId, { label: 'Backstop', source: 'rtmp' })).body
+
+    const keyOf = (made: Body): string => String(made.url).split('/').pop()!
+
+    /** What the controller hears of H.264: nothing until it is refused. */
+    const refuse = async (made: Body): Promise<void> => {
+      const key = keyOf(made)
+      await handleLiveEventForTest(
+        { type: 'rejected', key, reason: REFUSAL },
+        ingest()
+      )
+      await handleLiveEventForTest(
+        {
+          type: 'publishEnded',
+          key,
+          liveStreamId: made.id,
+          reason: REFUSAL
+        },
+        ingest()
+      )
+    }
+
+    /** The folder the ingest makes for a camera's key. */
+    const folderOf = async (made: Body): Promise<string> => {
+      const { videoId } = await stream(made.id)
+      const dir = liveVideoDir(uploadsDir, videoId!)
+      await mkdir(dir, { recursive: true })
+      return dir
+    }
+
+    const revoke = async (
+      gameId: string,
+      streamId: string,
+      token = OWNER
+    ): ReturnType<typeof call> =>
+      await call(
+        'POST',
+        `/games/${gameId}/live-streams/${streamId}/revoke`,
+        token
+      )
+
+    const videoExists = async (videoId: string): Promise<boolean> =>
+      (await db!
+        .selectFrom('videos')
+        .select('id')
+        .where('id', '=', videoId)
+        .executeTakeFirst()) != null
+
+    const folderGone = async (dir: string): Promise<boolean> =>
+      (await readdir(dir).catch(() => 'gone')) === 'gone'
+
+    const row = async (gameId: string, streamId: string): Promise<Body> => {
+      const listed = await call('GET', `/games/${gameId}/live-streams`, OWNER)
+      return (listed.body.mine as Body[]).find(one => one.id === streamId)!
+    }
+
+    it('reads as never published, so Revoke takes the camera, its video and its files', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await external(gameId)
+      const { videoId } = await stream(made.id)
+      const dir = await folderOf(made)
+      await refuse(made)
+
+      const shown = await row(gameId, made.id)
+      expect(shown.publishedAt).equals(null)
+      expect(shown.state).equals('idle')
+      expect(shown.lastError).equals(REFUSAL)
+
+      const revoked = await revoke(gameId, made.id)
+      expect(revoked.status).equals(200)
+      expect(revoked.body.removed).equals(true)
+      expect(revoked.body.streams.mine).deep.equals([])
+
+      expect(await row(gameId, made.id), 'the row went').equals(undefined)
+      expect(await videoExists(videoId!), 'the video went').equals(false)
+      expect(await folderGone(dir), 'the folder went').equals(true)
+    })
+
+    it('counts a later good publish from that publish', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await external(gameId)
+      const { videoId } = await stream(made.id)
+      await refuse(made)
+
+      await new Promise(resolve => setTimeout(resolve, 5))
+      const good = Date.now()
+      await beganPublishing(ingest(), made.id)
+
+      const shown = await row(gameId, made.id)
+      expect(shown.state).equals('publishing')
+      expect(shown.lastError).equals(null)
+      expect(Date.parse(shown.publishedAt)).is.at.least(good)
+      const placed = await db
+        .selectFrom('videos')
+        .select(['start_at as startAt', 'hidden'])
+        .where('id', '=', videoId!)
+        .executeTakeFirstOrThrow()
+      expect(placed.hidden).equals(false)
+      expect(placed.startAt?.getTime()).is.at.least(good)
+    })
+
+    it('stays published when the refusal follows a real publish', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await external(gameId)
+      await beganPublishing(ingest(), made.id)
+      await handleLiveEventForTest(
+        {
+          type: 'publishEnded',
+          key: keyOf(made),
+          liveStreamId: made.id,
+          reason: 'The stream ended'
+        },
+        ingest()
+      )
+      const first = (await row(gameId, made.id)).publishedAt
+      expect(first).not.equals(null)
+
+      await new Promise(resolve => setTimeout(resolve, 5))
+      await refuse(made)
+
+      const shown = await row(gameId, made.id)
+      expect(shown.publishedAt).equals(first)
+      expect(shown.lastError).equals(REFUSAL)
+    })
+
+    describe('Revoke', function () {
+      it('removes a camera with an attempt in flight, and the refusal then lands on nothing', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        const { videoId } = await stream(made.id)
+        const dir = await folderOf(made)
+
+        // An encoder has connected and the sampler has yet to look at it.
+        expect((await revoke(gameId, made.id)).body.removed).equals(true)
+        await refuse(made)
+
+        expect(await row(gameId, made.id)).equals(undefined)
+        expect(await videoExists(videoId!)).equals(false)
+        expect(await folderGone(dir)).equals(true)
+      })
+
+      it('copes with a refusal for a row that is gone altogether', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        await revoke(gameId, made.id)
+        await db.deleteFrom('live_streams').where('id', '=', made.id).execute()
+        await refuse(made)
+      })
+
+      it('turns away an attempt just after it, and makes no folder', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        const { videoId } = await stream(made.id)
+        await revoke(gameId, made.id)
+
+        const answer = await resolveKey(keyOf(made), ingest())
+        expect(answer).to.be.a('string')
+        expect(await folderGone(liveVideoDir(uploadsDir, videoId!))).equals(
+          true
+        )
+      })
+
+      it('wins over a publish accepted after it: no stamp, no video', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        const { videoId } = await stream(made.id)
+        await revoke(gameId, made.id)
+
+        await beganPublishing(ingest(), made.id)
+
+        const left = await db
+          .selectFrom('live_streams')
+          .select(['state', 'first_published_at as first'])
+          .where('id', '=', made.id)
+          .executeTakeFirstOrThrow()
+        expect(left).deep.equals({ state: 'revoked', first: null })
+        expect(await videoExists(videoId!)).equals(false)
+      })
+
+      it('only ends a camera with a real publish, even after a refusal', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        const { videoId } = await stream(made.id)
+        const dir = await folderOf(made)
+        await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\n')
+        await beganPublishing(ingest(), made.id)
+        await handleLiveEventForTest(
+          {
+            type: 'publishEnded',
+            key: keyOf(made),
+            liveStreamId: made.id,
+            reason: 'The stream ended'
+          },
+          ingest()
+        )
+        const first = (await row(gameId, made.id)).publishedAt
+        await refuse(made)
+
+        const revoked = await revoke(gameId, made.id)
+        expect(revoked.body.removed).equals(false)
+
+        const shown = await row(gameId, made.id)
+        expect(shown.publishedAt).equals(first)
+        expect(shown.closesAt).not.equals(null)
+        expect(shown.state).not.equals('revoked')
+        expect(await videoExists(videoId!), 'the recording stays').equals(true)
+        expect(await folderGone(dir), 'its files stay').equals(false)
+      })
+
+      it('only ends a camera live now, while it is publishing', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        await beganPublishing(ingest(), made.id)
+
+        expect((await revoke(gameId, made.id)).body.removed).equals(false)
+        expect((await row(gameId, made.id)).state).equals('publishing')
+        expect((await row(gameId, made.id)).closesAt).not.equals(null)
+      })
+
+      it('goes by the row, not by what a list said a moment ago', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        const stale = await row(gameId, made.id)
+        expect(stale.publishedAt).equals(null)
+        await beganPublishing(ingest(), made.id)
+
+        expect((await revoke(gameId, made.id)).body.removed).equals(false)
+      })
+
+      it('leaves when it was ended first, as it is when it never published', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        await end(gameId, made.id)
+        const closed = (await row(gameId, made.id)).closesAt
+        expect(closed).not.equals(null)
+
+        expect((await revoke(gameId, made.id)).body.removed).equals(true)
+        expect(await row(gameId, made.id)).equals(undefined)
+      })
+
+      it('keeps the closing time of a published camera already ended', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        await beganPublishing(ingest(), made.id)
+        await end(gameId, made.id)
+        const closed = (await row(gameId, made.id)).closesAt
+        await new Promise(resolve => setTimeout(resolve, 5))
+
+        expect((await revoke(gameId, made.id)).body.removed).equals(false)
+        expect((await row(gameId, made.id)).closesAt).equals(closed)
+      })
+
+      it('only ends a camera whose recording was uploaded', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+        await db
+          .updateTable('live_streams')
+          .set({ local_recording: 'uploaded' })
+          .where('id', '=', made.id)
+          .execute()
+
+        expect((await revoke(gameId, made.id)).body.removed).equals(false)
+        expect(await row(gameId, made.id)).not.equals(undefined)
+      })
+
+      it('is for the camera’s owner alone, and 404s for anyone else', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+
+        expect((await revoke(gameId, made.id, OTHER)).status).equals(404)
+        expect((await revoke(gameId, 'liv_nobody')).status).equals(404)
+        const shown = await row(gameId, made.id)
+        expect(shown.closesAt).equals(null)
+      })
+
+      it('waits its turn under the game’s lock', async function () {
+        if (db == null) this.skip()
+        const gameId = await newGame()
+        const made = await external(gameId)
+
+        let answered = false
+        let revoking: ReturnType<typeof revoke> | undefined
+        await db.transaction().execute(async trx => {
+          await lockKeys(trx, [`liveStreams:${gameId}`])
+          revoking = revoke(gameId, made.id).finally(() => {
+            answered = true
+          })
+          await new Promise(resolve => setTimeout(resolve, 150))
+          expect(answered, 'it waited for the lock').equals(false)
+        })
+        expect((await revoking)?.body.removed).equals(true)
+      })
     })
   })
 
