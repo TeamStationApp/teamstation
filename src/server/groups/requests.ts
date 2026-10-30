@@ -16,6 +16,7 @@ import type {
 } from '../../common/notifications'
 import {
   canCoach,
+  canFilm,
   canSeeTeam,
   guardiansWhoCanAct,
   guardsPlayer,
@@ -118,7 +119,7 @@ export function relationshipSides(
   sender: GroupRef | null = null,
   senderId?: string
 ): RequestSide[] {
-  if (terms.kind === 'membership')
+  if (terms.kind === 'membership' || terms.kind === 'videographer')
     return [
       { kind: 'user', id: String(terms.userId) },
       { kind: 'team', id: terms.teamId }
@@ -190,6 +191,9 @@ export function relationshipSides(
  * guardian. A guardian's invitation's inviting side is that guardian, while
  * they still are one. A site administrator speaks for either whatever the
  * player has.
+ *
+ * A videographer request's team side is an administrator, coach or assistant
+ * of the team.
  */
 export async function approvesSide(
   db: Kysely<Database>,
@@ -217,6 +221,8 @@ export async function approvesSide(
           (await guardsPlayer(db, fresh.userId, terms.playerUserId)))
       )
   }
+  if (request.kind === 'videographer' && side.kind === 'team')
+    return await coachesTeam(db, fresh, side.id)
   if (side.kind === 'user') {
     if (!side.id.startsWith('email:')) return side.id === String(fresh.userId)
     return (
@@ -671,6 +677,52 @@ export async function oweGuardianMail(
     .execute()
 }
 
+/** Whether a team is a full TeamStation team that was not merged into another. */
+export async function isFullTeam(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<boolean> {
+  const team = await db
+    .selectFrom('teams')
+    .select(['kind', 'merged_into'])
+    .where('id', '=', teamId)
+    .executeTakeFirst()
+  return team?.kind === 'full' && team.merged_into == null
+}
+
+/** Somebody's own request about a team, still waiting. */
+export async function waitingOwnRequest(
+  db: Kysely<Database>,
+  kind: 'membership' | 'videographer',
+  senderId: string,
+  teamId: string,
+  now: Date
+): Promise<StoredRequest | undefined> {
+  return await db
+    .selectFrom('group_requests')
+    .selectAll()
+    .where('kind', '=', kind)
+    .where('sender_id', '=', senderId)
+    .where(sql<string>`terms->>'teamId'`, '=', teamId)
+    .where('status', '=', 'pending')
+    .where('expires_at', '>', now)
+    .executeTakeFirst()
+}
+
+/** Only a member of the team who cannot film its games asks to. */
+async function requireCanAskToFilm(
+  db: Kysely<Database>,
+  actor: Actor,
+  teamId: string
+): Promise<void> {
+  const visible = await visibleScopes(db, actor.userId, actor.isAdmin)
+  if (!canSeeTeam(visible, teamId))
+    throw forbidden('Only a member of the team can ask to film its games')
+  const roles = await roleScopes(db, actor.userId, actor.isAdmin)
+  if (canFilm(roles, teamId))
+    throw conflict("You can already film this team's games")
+}
+
 export async function createRelationshipRequest(
   db: Kysely<Database>,
   actor: Actor,
@@ -734,7 +786,11 @@ export async function createRelationshipRequest(
       body.terms.kind === 'guardian'
         ? await authorizeGuardian(trx, fresh, sender, body.terms)
         : body.terms
-    if (terms.kind !== 'guardian' && terms.kind !== 'membership') {
+    if (
+      terms.kind !== 'guardian' &&
+      terms.kind !== 'membership' &&
+      terms.kind !== 'videographer'
+    ) {
       if (sender == null) throw badRequest('Choose the sending organization')
       await requireGroupAdmin(trx, fresh, sender)
     }
@@ -747,25 +803,20 @@ export async function createRelationshipRequest(
       throw forbidden(
         'The sending organization must be a side of this invitation'
       )
-    if (terms.kind === 'membership') {
+    if (terms.kind === 'membership' || terms.kind === 'videographer') {
       if (sender != null || terms.userId !== fresh.userId)
-        throw forbidden('Request membership only for yourself')
-      const team = await trx
-        .selectFrom('teams')
-        .select(['kind', 'merged_into'])
-        .where('id', '=', terms.teamId)
-        .executeTakeFirst()
-      if (team?.kind !== 'full' || team.merged_into != null)
+        throw forbidden('Ask only for yourself')
+      if (!(await isFullTeam(trx, terms.teamId)))
         throw notFound('Choose a full TeamStation team')
-      const waiting = await trx
-        .selectFrom('group_requests')
-        .selectAll()
-        .where('kind', '=', 'membership')
-        .where('sender_id', '=', fresh.userId)
-        .where(sql<string>`terms->>'teamId'`, '=', terms.teamId)
-        .where('status', '=', 'pending')
-        .where('expires_at', '>', clock.now())
-        .executeTakeFirst()
+      if (terms.kind === 'videographer')
+        await requireCanAskToFilm(trx, fresh, terms.teamId)
+      const waiting = await waitingOwnRequest(
+        trx,
+        terms.kind,
+        fresh.userId,
+        terms.teamId,
+        clock.now()
+      )
       if (waiting != null) {
         await trx
           .insertInto('creation_idempotency')
@@ -1066,27 +1117,31 @@ export async function finishRelationshipRequest(
       )
       .execute()
     noteScopeChange(db, { teamId: terms.teamId, seasonId: terms.seasonId })
-  } else if (terms.kind === 'membership') {
+  } else if (terms.kind === 'membership' || terms.kind === 'videographer') {
     const approval = sides.find(side => side.scope_type === 'team')!
     const scope = { kind: 'team' as const, id: terms.teamId }
-    const team = await db
-      .selectFrom('teams')
-      .select(['kind', 'merged_into'])
-      .where('id', '=', terms.teamId)
-      .executeTakeFirst()
-    if (team?.kind !== 'full' || team.merged_into != null) throw notFound()
+    const film = terms.kind === 'videographer'
+    if (!(await isFullTeam(db, terms.teamId))) throw notFound()
     await authorizePersonChange(
       db,
       scope,
       terms.userId,
       approval.approved_by!,
-      false
+      false,
+      film ? 'manager' : 'admin'
     )
+    // A role brings the team's membership with it, so an approval read long
+    // after the request must not put back somebody who has left since.
+    if (
+      film &&
+      !canSeeTeam(await visibleScopes(db, terms.userId, false), terms.teamId)
+    )
+      throw conflict('They are no longer a member of this team')
     const added = await grantAt(
       db,
       scope,
       terms.userId,
-      ['member'],
+      [film ? 'videographer' : 'member'],
       approval.approved_by!
     )
     await notifyGrant(db, {
