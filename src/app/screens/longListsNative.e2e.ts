@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -17,6 +18,9 @@ import { log, maestro } from '../../test/refinementsMaestro.e2e'
  * `TS_LONG_LISTS_DEVICE` is looked up when the run starts, never written here.
  * The manifest is the fixture's, and the app was built against its
  * `apiBaseUrl`. A `later` step names what a milestone asserts there.
+ *
+ * E5 starts from a fresh sign-in, so run it on an app with no session: a
+ * simulator cannot lose its network, so the fixture stops answering it.
  */
 interface Device {
   launchApp: (options?: unknown) => Promise<unknown>
@@ -25,21 +29,39 @@ interface Device {
   tapOn: (selector: unknown) => Promise<unknown>
   assertVisible: (selector: unknown) => Promise<unknown>
   swipe: (options: unknown) => Promise<unknown>
-  hierarchy: () => Promise<unknown>
+  hierarchy: () => Promise<ViewNode>
   screenshot: () => Promise<Uint8Array>
   startRecording: (options: { path: string }) => Promise<unknown>
   stopRecording: () => Promise<unknown>
   detach: () => Promise<unknown>
 }
 
+/** A node of `hierarchy()`. */
+interface ViewNode {
+  text?: string
+  type?: string
+  bounds?: { x: number; y: number; width: number; height: number }
+  children?: ViewNode[]
+}
+
 interface Manifest extends LongListsSeed {
   origin: string
   apiBaseUrl: string
+  controlOrigin: string
   email: string
   signInLinkRoute: string
+  phoneNetworkRoute: string
 }
 
 const APP_ID = 'app.teamstation.app'
+/** The read that stores Schedule's first page, as a phone's prefetch asks. */
+const UPCOMING_PAGE = '/api/v1/events?paged=1&when=upcoming'
+/** A row of the upcoming list, whichever day the run is. */
+const ROW_TEXT = 'Demo Hawks'
+/** How far the pills may stand from where they pinned, in points. */
+const PINNED_SLACK = 2
+/** Swipes that pass the end of a first page of 50 rows. */
+const SWIPES_PAST_A_PAGE = 24
 const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12'
 
 function required(name: string): string {
@@ -66,7 +88,9 @@ async function main(): Promise<void> {
   const chosen = (process.env.TS_LONG_LISTS_CASES ?? ALL_CASES)
     .split(',')
     .map(name => name.trim())
-  const daemon = await maestro(`longListsNative-${platform}`)
+  const daemon = await maestro(
+    process.env.MAESTRO_D ?? `longListsNative-${platform}`
+  )
   const teamId = process.env.MAESTRO_D_TEAM_ID
   const m = (await daemon.attach({
     device,
@@ -94,10 +118,34 @@ async function main(): Promise<void> {
     for (let swipe = 0; swipe < times; swipe++)
       await m.swipe({ start: '50%, 75%', end: '50%, 25%', duration: 300 })
   }
+  const pause = async (ms: number): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, ms))
+  }
   const recorded = async (
     name: string,
     run: () => Promise<void>
   ): Promise<void> => {
+    // maestro-d's iOS driver does not record, and a simulator can itself.
+    if (platform === 'ios') {
+      const video = spawn('xcrun', [
+        'simctl',
+        'io',
+        device,
+        'recordVideo',
+        '--codec=h264',
+        '--force',
+        join(artifacts, name)
+      ])
+      await pause(1000)
+      try {
+        await run()
+      } finally {
+        const stopped = new Promise(resolve => video.once('exit', resolve))
+        video.kill('SIGINT')
+        await stopped
+      }
+      return
+    }
     await m.startRecording({ path: join(artifacts, name) })
     try {
       await run()
@@ -131,6 +179,24 @@ async function main(): Promise<void> {
     await m.openLink({ link: 'teamstation://schedule' })
     await visible('Upcoming')
   }
+  /** Tells the fixture how the phone stands, and hears what it has read. */
+  const phoneNetwork = async (offline?: boolean): Promise<string[]> => {
+    const asked = offline == null ? '' : `?offline=${offline ? 1 : 0}`
+    const answer = await fetch(
+      `${manifest.controlOrigin}${manifest.phoneNetworkRoute}${asked}`
+    )
+    return ((await answer.json()) as { seen: string[] }).seen
+  }
+  /** The top of the pills on the screen. */
+  const pillsTop = async (): Promise<number> => {
+    const find = (node: ViewNode): ViewNode | undefined =>
+      node.text === 'Past' && node.bounds != null
+        ? node
+        : (node.children ?? []).map(find).find(found => found != null)
+    const past = find(await m.hierarchy())
+    assert.ok(past?.bounds != null, 'No Past pill on the screen')
+    return past.bounds.y
+  }
 
   const webOnly = (name: string) => async () => {
     await note(`${name}: a browser scenario, in src/test/longLists.e2e.ts`)
@@ -141,16 +207,77 @@ async function main(): Promise<void> {
     E3: webOnly('E3'),
     E4: webOnly('E4'),
     E5: async () => {
-      later('M5: wait on Home, go offline, open Schedule; it paints offline')
+      // Home's prefetch stores the first page, and Schedule was never opened.
+      for (let wait = 0; wait < 60; wait++) {
+        if ((await phoneNetwork()).includes(UPCOMING_PAGE)) break
+        await pause(500)
+      }
+      assert.ok(
+        (await phoneNetwork()).includes(UPCOMING_PAGE),
+        'E5: Home did not store the first page'
+      )
+      const stored = (await phoneNetwork()).length
+      await pause(2000)
+      await phoneNetwork(true)
+      await onSchedule()
+      await visible(ROW_TEXT)
+      await note('E5: Schedule painted offline, from the prefetch alone')
+      await phoneNetwork(false)
+      assert.ok((await phoneNetwork()).length >= stored)
+
       await recorded(`${platform}-schedule-pills.mp4`, async () => {
-        await onSchedule()
         await tap('Past')
-        await scrollDown(4)
-        await tap('All')
-        await tap('Past')
+        await visible('Demo Owls')
+        const atRest = await pillsTop()
+        await scrollDown(1)
+        const pinned = await pillsTop()
+        assert.ok(pinned < atRest, 'E5: the pills went up with the page')
+        await scrollDown(5)
+        assert.ok(
+          Math.abs((await pillsTop()) - pinned) <= PINNED_SLACK,
+          'E5: the pills stay pinned at depth'
+        )
+        await visible(ROW_TEXT)
+        for (const pill of ['All', 'Past', 'All', 'Upcoming', 'Past']) {
+          await tap(pill)
+          await pause(500)
+          assert.ok(
+            Math.abs((await pillsTop()) - pinned) <= PINNED_SLACK,
+            `E5: ${pill} holds the pills`
+          )
+          await visible(ROW_TEXT)
+          await visible('games')
+        }
+        // The page dragged back, and the head comes down with it.
+        await m.swipe({ start: '50%, 30%', end: '50%, 80%', duration: 300 })
+        await m.swipe({ start: '50%, 30%', end: '50%, 80%', duration: 300 })
+        await pause(800)
+        assert.ok(
+          Math.abs((await pillsTop()) - atRest) <= PINNED_SLACK,
+          'E5: the pills come back down at the top'
+        )
       })
-      later('M5: the card and pills pin; slides show rows; the end shows Retry')
+
+      await phoneNetwork(true)
+      await m.stopApp({ appId: APP_ID })
+      await m.launchApp({ appId: APP_ID, stopApp: true })
+      await visible('Your Home', 30000)
+      await onSchedule()
+      await visible(ROW_TEXT, 30000)
+      await pause(1500)
       await shot(`${platform}-offline-paint.png`)
+      await note('E5: relaunched offline, the stored first page painted')
+      await scrollDown(SWIPES_PAST_A_PAGE)
+      await visible('Could not load more', 30000)
+      await visible('Retry')
+      await shot(`${platform}-offline-retry.png`)
+      await phoneNetwork(false)
+      await tap('Retry')
+      await pause(2000)
+      assert.ok(
+        !(await shown('Could not load more', 1000)),
+        'E5: Retry reads the next page'
+      )
     },
     E6: async () => {
       await recorded(`${platform}-team-older-rows.mp4`, async () => {
