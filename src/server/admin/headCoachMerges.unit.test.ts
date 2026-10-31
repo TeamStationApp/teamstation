@@ -31,11 +31,14 @@ describe('designation transfers in identity merges', () => {
       let transferred = false
       await withQueryReplies(
         ({ sql, parameters }) => {
-          if (
-            sql.startsWith('select "merged_into"') &&
-            parameters[0] === 'source'
-          )
-            return [{ merged_into: redirect ? 'previous' : null }]
+          // Each person asked about is the open row its chain ends at, alone:
+          // the source has been closed into an earlier row when redirected.
+          if (sql.includes('with recursive up('))
+            return (parameters[0] as string[]).map(start => {
+              const survivor =
+                redirect && start === 'source' ? 'previous' : start
+              return { start, survivor, id: survivor }
+            })
           if (sql.includes('with recursive closed'))
             return [{ id: 'source' }, { id: 'descendant' }]
           if (sql.startsWith('select "login_enabled"'))

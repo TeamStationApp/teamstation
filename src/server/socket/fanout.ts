@@ -25,11 +25,25 @@ import {
 /** Somebody subscribed to a game in this worker: one socket. */
 export interface FanoutSubscriber {
   send: (message: GameChange) => void
-  /** Check current rights using this delivery's connection, before each send. */
-  maySee: (game: GameScope, db: Kysely<Database>) => Promise<boolean>
+  /** The credential this socket opened with, asked about at each delivery. */
+  token: string
+  /** Who it was opened as. */
+  userId: string
+  /** The credential no longer answers as this person: ends the socket. */
+  signedOut: () => void
   /** A change could not be sent, so this socket's client reads again. */
   resync: () => void
 }
+
+/**
+ * Which of these subscribers may see the game now, in their order, read on
+ * this delivery's connection. Costs the same however many there are.
+ */
+export type FanoutAuthorize = (
+  subscribers: FanoutSubscriber[],
+  game: GameScope,
+  db: Kysely<Database>
+) => Promise<boolean[]>
 
 /** A walk-up song change, read once for all of the team's games. */
 interface FanoutSong {
@@ -55,6 +69,8 @@ export interface GameFanoutOptions {
   db: Kysely<Database>
   /** The process's feed, on the same database as `db`. */
   feed: ChangeFeed
+  /** Current rights, asked before every send. */
+  authorize: FanoutAuthorize
   /** Identical notifies within this long are sent once. */
   coalesceMs?: number
   readSong?: SongReader
@@ -84,6 +100,7 @@ export class GameFanout {
   /** Settles once the channel is first in place, or that attempt has failed. */
   readonly listening: Promise<void>
   private readonly db: Kysely<Database>
+  private readonly authorize: FanoutAuthorize
   private readonly coalesceMs: number
   private readonly readSong: SongReader
   private readonly now: () => Date
@@ -97,6 +114,7 @@ export class GameFanout {
 
   constructor(options: GameFanoutOptions) {
     this.db = options.db
+    this.authorize = options.authorize
     this.coalesceMs = options.coalesceMs ?? 100
     this.readSong = options.readSong ?? readWalkUpSong
     this.now = options.now ?? (() => new Date())
@@ -335,9 +353,7 @@ export class GameFanout {
                 }
       // Taken once: a subscriber refused here closes, leaving the set.
       const subscribers = [...watched.subscribers]
-      const seeing = await Promise.all(
-        subscribers.map(async subscriber => await subscriber.maySee(scope, trx))
-      )
+      const seeing = await this.authorize(subscribers, scope, trx)
       return {
         game,
         // Read here, with the plays and whoever may see them; replayed

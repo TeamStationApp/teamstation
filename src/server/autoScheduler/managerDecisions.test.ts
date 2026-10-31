@@ -11,10 +11,13 @@ describe('manager identity and booking decisions', () => {
     await withQueryReplies(
       [
         ['from "scope_roles"', [{ user_id: 'alias' }]],
-        ['from "users"', [{ merged_into: 'coach' }]],
-        ['from "users"', [{ merged_into: null }]],
-        ['from "users"', [{ id: 'alias' }]],
-        ['from "users"', []],
+        [
+          'with recursive up(',
+          [
+            { start: 'alias', survivor: 'coach', id: 'coach' },
+            { start: 'alias', survivor: 'coach', id: 'alias' }
+          ]
+        ],
         [
           'from "users"',
           [{ displayName: '', firstName: 'Miguel', lastName: 'Cabrera' }]

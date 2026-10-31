@@ -18,7 +18,7 @@ import { type Database, makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, postGamePlays, readPlays } from '../events/postPlays'
 import { readWalkUpSong } from '../routes/walkUpSongs'
-import { GameFanout } from './fanout'
+import { type FanoutSubscriber, GameFanout } from './fanout'
 import { GAME_CHANGES_CHANNEL } from './gameChanges'
 
 const adminUrl = testDatabaseUrl
@@ -38,11 +38,19 @@ async function until(ready: () => boolean, what: string): Promise<void> {
   }
 }
 
+/** A subscriber whose rights the test decides. */
+interface Seeing {
+  maySee: (game: GameScope) => Promise<boolean>
+}
+
 /** A subscriber that keeps what it is sent. */
 function subscriber(sees = true): {
   sent: GameChange[]
   resynced: { count: number }
   send: (message: GameChange) => void
+  token: string
+  userId: string
+  signedOut: () => void
   maySee: (game: GameScope) => Promise<boolean>
   resync: () => void
 } {
@@ -57,6 +65,9 @@ function subscriber(sees = true): {
     send: message => {
       sent.push(message)
     },
+    token: 'token',
+    userId: 'usr',
+    signedOut: () => undefined,
     maySee: async () => sees
   }
 }
@@ -109,6 +120,13 @@ describe('the game socket fan-out (U15)', function () {
     const made = new GameFanout({
       db: db!,
       feed: feedOf(50),
+      authorize: async (subscribers, game) =>
+        await Promise.all(
+          subscribers.map(
+            async subscriber =>
+              await (subscriber as unknown as Seeing).maySee(game)
+          )
+        ),
       log: message => {
         logs.push(message)
       },
@@ -393,17 +411,21 @@ describe('the game socket fan-out (U15)', function () {
       })
       const asked: string[] = []
       const sent: string[] = []
-      one.watch(today, scopeOf(team, rival), {
+      const holding: FanoutSubscriber & Seeing = {
         send: message => {
           sent.push(message.kind)
         },
+        token: 'token',
+        userId: 'usr',
+        signedOut: () => undefined,
         maySee: async () => {
           asked.push(String(asked.length))
           if (asked.length === 1) await held
           return true
         },
         resync: () => undefined
-      })
+      }
+      one.watch(today, scopeOf(team, rival), holding)
       const first = one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
       await until(() => asked.length === 1, 'the first delivery')
       const second = one.deliver(JSON.stringify({ game: today, kind: 'game' }))
