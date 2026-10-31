@@ -16,6 +16,7 @@ import { sealMessage } from '../../common/chatCrypto/seal'
 import type { GameSocketReply } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import type { ChangeFeed } from '../changeFeed/feed'
 import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { b64, ChatDevices, ok, type TestKeys } from '../chat/chatTestDevices'
 import { type ChatFixture, openChatFixture } from '../chat/chatTestFixture'
@@ -102,6 +103,7 @@ describe('chat on the socket (U9)', function () {
     serverA = createServer()
     socketA = attachGameSocket(serverA, db, fixture.url, {
       stopSignals: null,
+      resyncSpreadMs: 0,
       clock: () => fixture.now.getTime() + ahead,
       log: message => logged.push(message),
       chat: {
@@ -611,6 +613,93 @@ describe('chat on the socket (U9)', function () {
 
     after(async function () {
       await feed.close()
+    })
+
+    describe('with a window for its resyncs', function () {
+      const SPREAD_MS = 200
+      let returned: (() => void) | undefined
+      const held: ChangeFeed = {
+        subscribe: (_channel, handlers) => {
+          returned = () => handlers.onListening?.(false)
+          return { listening: Promise.resolve(), stop: () => undefined }
+        },
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      }
+
+      it('drops the sets at once and sends each socket one frame later, skipping one that left and one that came after', async function () {
+        const fanout = new ChatFanout({
+          db,
+          feed: held,
+          resyncSpreadMs: SPREAD_MS,
+          log: () => undefined
+        })
+        const stays = subscriber(fixture.id('Hc'))
+        const leaves = subscriber(fixture.id('Hc'))
+        fanout.add(stays)
+        fanout.add(leaves)
+        await fanout.deliver(JSON.stringify({ c: members, k: 'read', seq: 1 }))
+        stays.sent.length = 0
+        leaves.sent.length = 0
+        expect(fanout.cached()).deep.equals([members])
+        returned?.()
+        returned?.()
+        expect(fanout.cached()).deep.equals([])
+        expect(stays.sent).deep.equals([])
+        fanout.remove(leaves)
+        const later = subscriber(fixture.id('Hc'))
+        fanout.add(later)
+        await wait(SPREAD_MS + 80)
+        expect(stays.sent).deep.equals([{ type: 'resync' }])
+        expect(leaves.sent).deep.equals([])
+        expect(later.sent).deep.equals([])
+        // Nothing is due now, so the next gap sends again.
+        returned?.()
+        await wait(SPREAD_MS + 80)
+        expect(stays.sent).to.have.length(2)
+        await fanout.close()
+      })
+
+      it('sends what a conversation is owed within the window, once', async function () {
+        let failing = true
+        const fanout = new ChatFanout({
+          db,
+          feed: held,
+          retryMs: 10,
+          resyncSpreadMs: SPREAD_MS,
+          log: () => undefined,
+          readMembers: async (reader, conversationId) => {
+            if (failing)
+              throw new Error('timeout exceeded when trying to connect')
+            return await readMembers(reader, conversationId)
+          }
+        })
+        const coach = subscriber(fixture.id('Hc'))
+        fanout.add(coach)
+        await fanout.deliver(JSON.stringify({ c: members, k: 'read', seq: 1 }))
+        failing = false
+        await wait(40)
+        // Read again by now, and a gap adds no second frame to the one due.
+        returned?.()
+        await wait(SPREAD_MS + 80)
+        expect(coach.sent).deep.equals([{ type: 'resync' }])
+        await fanout.close()
+      })
+
+      it('sends nothing still to come once closed', async function () {
+        const fanout = new ChatFanout({
+          db,
+          feed: held,
+          resyncSpreadMs: 30,
+          log: () => undefined
+        })
+        const coach = subscriber(fixture.id('Hc'))
+        fanout.add(coach)
+        returned?.()
+        await fanout.close()
+        await wait(80)
+        expect(coach.sent).deep.equals([])
+      })
     })
 
     it('reads nothing with nobody connected, keeps no failed read, and keeps a bounded cache', async function () {
