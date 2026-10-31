@@ -5,28 +5,18 @@ import type { LiveStream, TeamStationClient } from '../../common/api'
 import { Button } from '../components/Button'
 import {
   asksTwice,
-  copyStreamUrl,
-  runStreamAction,
-  type StreamAction,
-  streamActionsFor
+  type PhoneStreamAction,
+  phoneStreamActions,
+  runStreamAction
 } from '../components/streamActions'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 /** The label of each action, read when drawn so a chosen language applies. */
-function labelOf(action: StreamAction): string {
-  switch (action) {
-    case 'reveal':
-      return lstrings.stream_action_copy
-    case 'rotate':
-      return lstrings.stream_action_rotate
-    case 'end':
-      return lstrings.stream_action_end
-    case 'deleteVideo':
-      return lstrings.stream_action_delete_video
-    case 'remove':
-      return lstrings.stream_action_remove
-  }
+function labelOf(action: PhoneStreamAction): string {
+  return action === 'rotate'
+    ? lstrings.stream_action_rotate
+    : lstrings.stream_action_end
 }
 
 export interface StreamActionSheetProps {
@@ -35,29 +25,26 @@ export interface StreamActionSheetProps {
   stream: LiveStream
   /** The caller's own camera, rather than somebody else's they may end. */
   mine: boolean
+  /** The camera is filming somewhere else, so End always asks twice. */
+  elsewhere: boolean
   onClose: () => void
   /** After an action changed the camera, so the list is read again. */
   onChanged: () => void
-  /** A word for the panel once the sheet has gone, such as "Copied". */
-  onMessage: (text: string) => void
-  /** The clipboard; a test hands in its own. */
-  copy?: (text: string) => void
 }
 
 /**
- * The "…" on a camera in the phone's list: the web panel's actions on it,
- * offered and guarded by the same rules (`streamActions.ts`). Copy stream URL,
- * Rotate key, End, Delete recording and Remove on one's own camera; End on
+ * The "…" on a camera in the phone's list, guarded by the web panel's rules
+ * (`streamActions.ts`). Rotate key and End on one's own camera; End on
  * somebody else's. Anything that would take a camera off the air asks for a
- * second tap while it is live, and deleting a recording always does.
+ * second tap while it is live, and End on one filming somewhere else always
+ * does.
  */
 export function StreamActionSheet(
   props: StreamActionSheetProps
 ): React.ReactElement {
-  const { client, gameId, stream, mine, onClose, onChanged, onMessage, copy } =
-    props
+  const { client, gameId, stream, mine, elsewhere, onClose, onChanged } = props
   const styles = getStyles(useTheme())
-  const [armed, setArmed] = useState<StreamAction | undefined>(undefined)
+  const [armed, setArmed] = useState<PhoneStreamAction | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
 
@@ -72,25 +59,19 @@ export function StreamActionSheet(
     }
   }, [armed])
 
-  const press = (action: StreamAction): void => {
+  const press = (action: PhoneStreamAction): void => {
     if (busy) return
-    if (asksTwice(action, stream) && armed !== action) {
+    const twice = asksTwice(action, stream) || (action === 'end' && elsewhere)
+    if (twice && armed !== action) {
       setArmed(action)
       return
     }
     setArmed(undefined)
     setBusy(true)
     setError(undefined)
-    const work =
-      action === 'reveal'
-        ? copyStreamUrl(client, gameId, stream, copy).then(() => {
-            onMessage(sprintf(lstrings.stream_action_copied, stream.label))
-          })
-        : runStreamAction(client, gameId, stream, action).then(() => {
-            onChanged()
-          })
-    work.then(
+    runStreamAction(client, gameId, stream, action).then(
       () => {
+        onChanged()
         setBusy(false)
         onClose()
       },
@@ -113,7 +94,7 @@ export function StreamActionSheet(
         />
         <View style={styles.sheet}>
           <Text style={styles.title}>{stream.label}</Text>
-          {streamActionsFor(stream, mine).map(action => {
+          {phoneStreamActions(stream, mine).map(action => {
             const label = labelOf(action)
             const shown =
               armed === action
@@ -134,14 +115,7 @@ export function StreamActionSheet(
                   pressed && styles.pressed
                 ]}
               >
-                <Text
-                  style={[
-                    styles.label,
-                    action !== 'reveal' && styles.destructive
-                  ]}
-                >
-                  {shown}
-                </Text>
+                <Text style={[styles.label, styles.destructive]}>{shown}</Text>
               </Pressable>
             )
           })}
