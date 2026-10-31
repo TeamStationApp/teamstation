@@ -74,6 +74,12 @@ describe('analyse', () => {
     assert.equal(report.flashes[0].camera, 2)
   })
 
+  it('marks the moment of live picture before a replay', () => {
+    const report = analyse([...run(1, 0, 60), ...run(2, 500, 2), ...run(2, 100, 60)])
+    assert.equal(report.flashes.length, 1)
+    assert.equal(report.flashes[0].beforeReplay, true)
+  })
+
   it('reports the longest hold away from any seam apart', () => {
     const report = analyse([...run(1, 0, 30), ...held(1, 30, 9), ...run(1, 31, 30), ...run(2, 100, 30)])
     assert.equal(report.longestHoldElsewhereTicks, 9)

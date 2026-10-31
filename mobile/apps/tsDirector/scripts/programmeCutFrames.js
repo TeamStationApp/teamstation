@@ -124,7 +124,10 @@ function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3 } = {}) {
     pictures: pictures.length,
     unread,
     seams,
-    flashes: segments.filter((segment, index) => index > 0 && segment.ticks < flashTicks),
+    // `beforeReplay`: the moment of live picture between the cut a replay makes and its first picture.
+    flashes: segments
+      .map((segment, index) => ({ ...segment, beforeReplay: seams[index]?.kind === 'jump', index }))
+      .filter(segment => segment.index > 0 && segment.ticks < flashTicks),
     worstHeldMs: seams.reduce((most, seam) => Math.max(most, seam.heldMs), 0),
     longestHoldMs: runs.reduce((most, run) => Math.max(most, run.ticks), 0) * 1000 / fps,
     longestHoldElsewhereTicks: longestElsewhere

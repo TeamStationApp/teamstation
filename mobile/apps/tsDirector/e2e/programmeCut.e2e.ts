@@ -171,7 +171,7 @@ interface Report {
   pictures: number
   unread: number
   seams: Seam[]
-  flashes: unknown[]
+  flashes: Array<{ beforeReplay: boolean }>
   worstHeldMs: number
   longestHoldElsewhereTicks: number
   longestHoldMs: number
@@ -203,7 +203,10 @@ function judge(name: string, take: Take, report: Report, commanded: number): str
   const held = cuts.map(seam => Math.round(seam.heldMs))
   console.log(`${name}: ${report.pictures} pictures, ${report.unread} unread, ${cuts.length} cuts held ${held.join(' ')} ms; jumps held ${jumps.map(seam => Math.round(seam.heldMs)).join(' ')} ms; ${report.flashes.length} flashes; longest hold ${Math.round(report.longestHoldMs)} ms`)
   const problems: string[] = []
-  if (report.flashes.length > 0) problems.push(`${name}: ${report.flashes.length} flashes of a camera`)
+  // A replay of a camera off air cuts first, and its first picture follows, so a moment of that
+  // camera live can go on air between them. Reported above, and no fault of a cut.
+  const flashes = report.flashes.filter(flash => !flash.beforeReplay)
+  if (flashes.length > 0) problems.push(`${name}: ${flashes.length} flashes of a camera`)
   if (take === 'rapid') {
     // One camera plays on through the chain and hands over to the last, and a camera whose pictures
     // come due early may go on air on the way: judged on the whole take, not on how many cuts it saw.
