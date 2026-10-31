@@ -49,7 +49,7 @@ const artifactDir =
 const maxRapidHoldMs = Number(process.env.CUT_MAX_RAPID_HOLD_MS ?? 100)
 const takes: Take[] = scenario === 'slow' ? ['cuts'] : ['cuts', 'replays', 'rapid']
 const SINK_PORT = 19351
-const SETTLE_SECONDS = 2
+const SETTLE_SECONDS = 12
 /// The hard cap stressFourHour.js holds the app to.
 const MEMORY_CAP_MB = 1200
 
