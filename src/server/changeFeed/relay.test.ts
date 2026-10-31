@@ -364,25 +364,42 @@ describe('the feed relay', function () {
   })
 
   it('delivers without a crash while two leaders overlap', async function () {
-    // Two databases, so the lock cannot stop them, on one prefix.
+    // Two databases, so the lock cannot stop them, each blind to the other's key.
     const prefix = testPrefix()
     const feed = feedOf(prefix)
     const probes = hearer()
     await feed.subscribe('feed_probe', probes).listening
     const lines: string[] = []
-    const log = (line: string): void => {
-      lines.push(line)
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      client.get = async () => null
+      client.eval = async () => 1
+      return client
     }
-    await redis.set(feedLeaderKey(prefix), 'someone', { PX: 50 })
-    relayOf(prefix, 'here', { log }, scratchUrl)
-    relayOf(prefix, 'there', { log }, otherUrl)
+    const options: FeedRelayOptions & { log: (line: string) => void } = {
+      makeClient,
+      log: line => lines.push(line)
+    }
+    relayOf(prefix, 'here', options, scratchUrl)
+    relayOf(prefix, 'there', options, otherUrl)
     await until(
-      () => lines.filter(line => line.includes('leads here')).length >= 1,
-      'a leader'
+      () => lines.filter(line => line.includes('leads here')).length === 2,
+      'both leading'
     )
-    await until(async () => (await backends()) === 1, 'the scratch leader')
-    await poker.query(`select pg_notify('feed_probe', 'through')`)
-    await until(() => probes.payloads.includes('through'), 'the hint')
+    await until(() => probes.listenings.length === 3, 'both resyncs')
+    await poker.query(`select pg_notify('feed_probe', 'from here')`)
+    const other = new Client({ connectionString: otherUrl })
+    await other.connect()
+    await other.query(`select pg_notify('feed_probe', 'from there')`)
+    await other.end()
+    await until(() => probes.payloads.length === 2, 'both hints')
+    expect(probes.payloads).members(['from here', 'from there'])
+    expect(lines.some(line => line.includes('stops leading'))).equals(false)
     await Promise.all(
       running.splice(0).map(async relay => {
         await relay.stop()
