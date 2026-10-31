@@ -1,6 +1,6 @@
 # Recording stays up in the background, and programme output appears as system PiP.
 #
-# Device is passed to maestro-runner / run-maestro.js (--device <udid>), not in this file.
+# Device is passed to maestro-d / run-maestro.js (--device <udid>), not in this file.
 #
 # After Record, this flow opens Settings so Director is behind another app. The hovering
 # window is a screenshot artifact; keep-alive is asserted by scripts/assertBackgroundKeepAlive.js

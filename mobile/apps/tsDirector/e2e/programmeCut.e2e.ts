@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
+import { type ChildProcess, spawn } from 'node:child_process'
 import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -39,7 +39,7 @@ const APP_ID = 'app.teamstation.director'
 const { get, resolveHost } = require_(path.join(ROOT, 'scripts/deviceTarget.js'))
 const { analyse, readPictures, readTimes } = require_(path.join(ROOT, 'scripts/programmeCutFrames.js'))
 const { lanAddress } = require_(path.join(ROOT, 'scripts/markedRtspCameras.js'))
-const { newestProgram } = require_(path.join(ROOT, 'scripts/verifyProgram.js'))
+const { newestProgram, programNames, pullProgram } = require_(path.join(ROOT, 'scripts/verifyProgram.js'))
 
 const device = process.env.DIRECTOR_DEVICE_UDID
 const daemon = process.env.MAESTRO_D ?? 'programme-cut'
@@ -117,36 +117,6 @@ function steps(take: Take, first: number, second: number): Step[] {
   ]
   if (scenario === 'slow') return slow
   return [...slow, cut(second, 1), cut(first, 1), cut(second, 1), cut(first, 1), cut(second, 3)]
-}
-
-function newestMaster(): string {
-  const listing = execFileSync(
-    'xcrun',
-    [
-      'devicectl', 'device', 'info', 'files',
-      '--device', device as string,
-      '--domain-type', 'appDataContainer',
-      '--domain-identifier', APP_ID,
-      '--username', 'mobile',
-      '--subdirectory', 'Documents/Program'
-    ],
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
-  )
-  const names = listing.match(/program-\d{8}-\d{6}(-\d+)?\.mp4/g) ?? []
-  const newest: string | undefined = newestProgram(names)
-  assert.ok(newest != null, 'no programme master on the iPad')
-  return newest
-}
-
-function pullMaster(name: string, destination: string): void {
-  execFileSync('xcrun', [
-    'devicectl', 'device', 'copy', 'from',
-    '--device', device as string,
-    '--domain-type', 'appDataContainer',
-    '--domain-identifier', APP_ID,
-    '--source', `Documents/Program/${name}`,
-    '--destination', destination
-  ], { stdio: 'ignore' })
 }
 
 interface Seam {
@@ -337,7 +307,7 @@ async function main(): Promise<void> {
       await wait(8)
 
       const master = path.join(artifactDir, `${take}-master.mp4`)
-      pullMaster(newestMaster(), master)
+      pullProgram(device, newestProgram(programNames(device)), master)
       const newest = readdirSync(sinkDirectory).filter(name => name.endsWith('.flv')).sort().at(-1)
       assert.ok(newest != null, 'the sink saved no stream')
       const stream = path.join(artifactDir, `${take}-stream.flv`)

@@ -83,6 +83,15 @@ describe('analyse', () => {
     assert.ok(Math.abs(report.seams[0].at - 0.5 - 1 / 60) < 1e-9)
   })
 
+  it('refuses timestamps that do not match the pictures', () => {
+    assert.throws(() => analyse(run(1, 0, 3), { times: [0, 1] }), /2 timestamps for 3 pictures/)
+  })
+
+  it('measures the last picture of a file, up to any black it stops on', () => {
+    const report = analyse([...run(1, 0, 30), ...held(1, 30, 60), null, null, null])
+    assert.ok(Math.abs(report.longestHoldMs - 59 * 1000 / 60) < 1e-6)
+  })
+
   it('marks the moment of live picture before a replay', () => {
     const report = analyse([...run(1, 0, 60), ...run(2, 500, 2), ...run(2, 100, 60)])
     assert.equal(report.flashes.length, 1)

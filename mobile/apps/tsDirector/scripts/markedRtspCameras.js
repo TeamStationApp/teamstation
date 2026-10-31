@@ -19,6 +19,7 @@
 // a camera whose clock says its pictures are older than they are.
 
 const { execFileSync } = require('node:child_process')
+const { createHash } = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -56,7 +57,9 @@ function markerFilter(camera) {
 }
 
 function makeClip(camera, directory) {
-  const clip = path.join(directory, `marked-camera-${camera}.mkv`)
+  // Named for what it holds, so a changed strip or length never serves an old clip.
+  const version = createHash('sha256').update(`${CLIP_SECONDS} ${markerFilter(camera)}`).digest('hex').slice(0, 8)
+  const clip = path.join(directory, `marked-camera-${camera}-${version}.mkv`)
   if (fs.existsSync(clip)) return clip
   const partial = `${clip}.partial.mkv`
   execFileSync('ffmpeg', [
@@ -126,7 +129,7 @@ function sdpFor(camera, host, sets) {
 }
 
 async function main() {
-  const host = option('--host', lanAddress())
+  const host = option('--host') ?? lanAddress()
   const basePort = Number(option('--port', '18554'))
   const count = Number(option('--count', '2'))
   const reportedAges = option('--reported-age', '').split(',').map(Number)

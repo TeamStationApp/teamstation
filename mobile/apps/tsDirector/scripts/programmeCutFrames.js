@@ -68,6 +68,10 @@ function readTimes(file) {
   return output.split('\n').map(line => parseFloat(line)).filter(Number.isFinite).sort((a, b) => a - b)
 }
 
+function lastRead(pictures) {
+  return pictures.findLastIndex(picture => picture != null)
+}
+
 function same(left, right) {
   return left != null && right != null && left.camera === right.camera && left.frame === right.frame
 }
@@ -102,8 +106,10 @@ function pictureRuns(pictures) {
 /// that should not have.
 function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3, times = null } = {}) {
   const { runs, unread } = pictureRuns(pictures)
-  const timed = times != null && times.length === pictures.length
-  const at = tick => timed ? times[tick] - times[0] : tick / fps
+  if (times != null && times.length !== pictures.length) {
+    throw new Error(`${times.length} timestamps for ${pictures.length} pictures`)
+  }
+  const at = tick => times != null ? times[tick] - times[0] : tick / fps
   const heldMs = (run, nextStart) => (at(nextStart) - at(run.start)) * 1000
   const seams = []
   for (let index = 1; index < runs.length; index += 1) {
@@ -141,7 +147,8 @@ function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3, times = null
       .map((segment, index) => ({ ...segment, beforeReplay: seams[index]?.kind === 'jump', index }))
       .filter(segment => segment.index > 0 && segment.ticks < flashTicks),
     worstHeldMs: seams.reduce((most, seam) => Math.max(most, seam.heldMs), 0),
-    longestHoldMs: runs.slice(0, -1).reduce((most, run, index) => Math.max(most, heldMs(run, runs[index + 1].start)), 0),
+    // The last run to its last read picture: a recording can stop on a moment of black.
+    longestHoldMs: runs.reduce((most, run, index) => Math.max(most, heldMs(run, runs[index + 1]?.start ?? lastRead(pictures))), 0),
     longestHoldElsewhereTicks: longestElsewhere
   }
 }
