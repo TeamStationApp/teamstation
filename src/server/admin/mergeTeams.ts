@@ -4,6 +4,7 @@ import {
   mostRestrictive,
   type PlayerNamePrivacy
 } from '../../common/playerNamePrivacy'
+import { settledTeams } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -15,6 +16,7 @@ import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
+import { onePerson } from './people'
 
 /**
  * Joining two rows that are one real team.
@@ -248,6 +250,14 @@ async function carryWithdrawals(
   for (const row of carried) {
     if (taken.has(row.user_id)) continue
     const side = flipped === (row.side === 'home') ? 'away' : 'home'
+    // A rejection took back the team that goes, not a team they play for.
+    const { userIds } = await onePerson(trx, row.user_id)
+    if (
+      (await settledTeams(trx, userIds)).includes(
+        side === 'home' ? kept.home_team_id : kept.away_team_id
+      )
+    )
+      continue
     const label = names[side].has(row.label.toLowerCase())
       ? freeLabel(side === 'home' ? kept.homeName : kept.awayName, names[side])
       : row.label

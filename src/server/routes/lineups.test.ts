@@ -975,7 +975,8 @@ describe("saving a side's lineup (U8)", function () {
     contested: makeId('game'),
     movedRoster: makeId('game'),
     movedGuest: makeId('game'),
-    backAsGuest: makeId('game')
+    backAsGuest: makeId('game'),
+    bothHeld: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1946,6 +1947,28 @@ describe("saving a side's lineup (U8)", function () {
           jersey: '9'
         })
         .execute()
+    })
+
+    it('takes a save naming somebody on both rosters whom its setup holds', async function () {
+      const held = await body(games.bothHeld, 'away')
+      const first = await save(games.bothHeld, AWAY_COACH, held)
+      expect(first.status, JSON.stringify(first.body)).equals(200)
+      await db!
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: moverId(),
+          team_id: home,
+          role: 'member',
+          is_player: true
+        })
+        .execute()
+      const again = await save(games.bothHeld, AWAY_COACH, held)
+      expect(again.status, JSON.stringify(again.body)).equals(200)
+      const hosts = await body(games.bothHeld, 'home')
+      expect(hosts.players.map(player => player.gumboId)).not.includes(mover())
+      const theirs = await save(games.bothHeld, COACH, hosts)
+      expect(theirs.status, JSON.stringify(theirs.body)).equals(200)
     })
 
     it('lets the team they joined save them', async function () {

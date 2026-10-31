@@ -26,7 +26,11 @@ import {
 } from '../teams/addExistingPlayer'
 import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId, insertUser } from '../users/insertUser'
-import { guestAlreadyInGame, guestGameOpen } from './guestChecks'
+import {
+  guestAlreadyInGame,
+  guestGameOpen,
+  playedForOther
+} from './guestChecks'
 
 /**
  * What every guest write checks, with the game row held: the side holds the
@@ -302,6 +306,9 @@ export async function addExistingGuest(
     )
     await lockPlayerAdds(trx, person.userId)
     await guestAlreadyInGame(trx, game, person.userIds)
+    // Before anybody is told: somebody stays with the team they played for.
+    if (await playedForOther(trx, gameId, person.userIds, teamId))
+      throw conflict('This player already played for the other team')
     const result = await addByPolicy(
       trx,
       actor,

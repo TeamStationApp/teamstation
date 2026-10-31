@@ -529,12 +529,18 @@ describe('merging two rows that are one team', function () {
         initiating_team_id: houser
       })
       .execute()
+    const carried = await insertUser(db, {
+      display_name: 'Carried Across',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
     await db
       .insertInto('game_withdrawn_players')
       .values([
         {
           game_id: filmedGame,
-          user_id: sender,
+          user_id: carried,
           side: 'away',
           request_id: 'grq_merge_withdrawn',
           label: 'Houser Player 1'
@@ -547,6 +553,34 @@ describe('merging two rows that are one team', function () {
           label: 'Houser Player 1'
         }
       ])
+      .execute()
+    // One the team that stays has as a settled player, withdrawn only from
+    // the team that goes: their own line in the kept game stays theirs.
+    const settled = await insertUser(db, {
+      display_name: 'Settled Hawk',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: settled,
+        team_id: hawks,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await db
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: filmedGame,
+        user_id: settled,
+        side: 'away',
+        request_id: 'grq_merge_withdrawn',
+        label: 'Houser Player 2'
+      })
       .execute()
     const guest = await insertUser(db, {
       display_name: `${placeholderTeamName('Alta Hawks')} ${placeholderSuffix(0)}`,
@@ -576,9 +610,16 @@ describe('merging two rows that are one team', function () {
       await db
         .selectFrom('game_withdrawn_players')
         .select(['game_id', 'user_id'])
-        .where('user_id', '=', sender)
+        .where('user_id', '=', carried)
         .execute()
-    ).deep.equals([{ game_id: scoredGame, user_id: sender }])
+    ).deep.equals([{ game_id: scoredGame, user_id: carried }])
+    expect(
+      await db
+        .selectFrom('game_withdrawn_players')
+        .select('game_id')
+        .where('user_id', '=', settled)
+        .execute()
+    ).deep.equals([])
     const coach = await db
       .selectFrom('group_requests')
       .select(['status', 'terms'])
@@ -640,7 +681,7 @@ describe('merging two rows that are one team', function () {
       .execute()
     expect(new Set(labels.map(row => row.label)).size).equals(labels.length)
     // Nor the name of a guest on that side.
-    expect(labels.find(row => row.user_id === sender)?.label).equals(
+    expect(labels.find(row => row.user_id === carried)?.label).equals(
       `${placeholderTeamName('Alta Hawks')} ${placeholderSuffix(1)}`
     )
     const keptCoach = await here('grq_merge_into_coach')

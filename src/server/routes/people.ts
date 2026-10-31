@@ -133,7 +133,7 @@ export function peopleRoutes(
         throw conflict(
           'Only somebody who can sign in can hold a role. Add an email address to their account first.'
         )
-      if (!(await onPeopleList(db, ref, userId))) throw notFound()
+      if (!(await onPeopleList(db, ref, userId, actor))) throw notFound()
       const added = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
         await authorizePersonChange(

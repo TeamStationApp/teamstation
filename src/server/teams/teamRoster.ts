@@ -283,7 +283,8 @@ export async function levelPeople(
 export async function peopleAt(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
-  ref: { kind: 'league' | 'season' | 'team'; id: string }
+  ref: { kind: 'league' | 'season' | 'team'; id: string },
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<RosterEntry[] | undefined> {
   if (ref.kind !== 'team')
     return await levelPeople(db, space, { kind: ref.kind, id: ref.id })
@@ -293,16 +294,19 @@ export async function peopleAt(
     .where('id', '=', ref.id)
     .where('merged_into', 'is', null)
     .executeTakeFirst()
-  return team == null ? undefined : await teamRoster(db, space, ref.id)
+  return team == null
+    ? undefined
+    : await teamRoster(db, space, ref.id, false, viewer)
 }
 
 /** Whether somebody is on a level's people list, in any section. */
 export async function onPeopleList(
   db: Kysely<Database>,
   ref: { kind: 'league' | 'season' | 'team'; id: string },
-  userId: string
+  userId: string,
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<boolean> {
-  const people = await peopleAt(db, undefined, ref)
+  const people = await peopleAt(db, undefined, ref, viewer)
   return people?.some(person => person.userId === userId) === true
 }
 

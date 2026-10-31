@@ -70,7 +70,7 @@ export async function personProfile(
   const admin = manages && (await canAdminister(db, fresh, ref))
   if (!manages && !self) throw notFound()
   let editable = manages
-  if (!self && !(await onPeopleList(db, ref, userId))) {
+  if (!self && !(await onPeopleList(db, ref, userId, fresh))) {
     const identity = await onePerson(db, userId)
     const umpire =
       ref.kind === 'league' && admin

@@ -41,7 +41,7 @@ import {
 } from '../../common/scoring/lineupHistory'
 import {
   appearedIn,
-  onBothSides
+  reconcileRoster
 } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import {
@@ -589,19 +589,12 @@ async function saveSide(
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
       const availability = await gameAvailability(trx, { id: gameId, ...game })
-      // Somebody on both rosters plays for neither until a coach picks, as a
-      // new game's setup leaves them, so no save has to name them.
-      const contested = onBothSides(
-        availability.roster,
-        availability.guestPlayers,
-        availability.unrostered
-      )
       return {
         stored,
         context,
+        availability,
         guests: availability.guests[body.side].filter(
           id =>
-            !contested.has(id) &&
             !availability.roster[body.side].some(
               row => row.isPlayer && row.gumboId === id
             )
@@ -609,7 +602,6 @@ async function saveSide(
         roster: availability.roster[body.side].filter(
           person =>
             person.isPlayer &&
-            !contested.has(asGumboId(person.gumboId)) &&
             !availability.unrostered[body.side].includes(
               asGumboId(person.gumboId)
             )
@@ -690,7 +682,8 @@ async function saveSide(
     body,
     held,
     read.roster,
-    read.guests
+    read.guests,
+    read.availability
   )
   markRosterVisibility(
     actions,
@@ -833,14 +826,23 @@ function markRosterVisibility(
 function sideActions(
   state: GameState,
   body: SaveLineupsBody,
-  held = true,
-  roster: readonly RosterEntry[] = [],
-  guests: readonly number[] = []
+  held: boolean,
+  roster: readonly RosterEntry[],
+  guests: readonly number[],
+  availability: Awaited<ReturnType<typeof gameAvailability>>
 ): ScoringAction[] {
-  const required = new Set([
-    ...roster.map(row => asGumboId(row.gumboId)),
-    ...guests.filter(id => !roster.some(row => asGumboId(row.gumboId) === id))
-  ])
+  // Who this side fields, read as the app reads it to build this body: with
+  // the setup and who has played, or no body could ever be saved.
+  const required = new Set(
+    reconcileRoster(
+      setupOf(state),
+      state.gameData.teams,
+      availability.roster,
+      availability.guestPlayers,
+      availability.unrostered,
+      appearedIn(state)
+    ).sides[body.side].players
+  )
   const sent = body.players.map(player => player.gumboId)
   if (
     sent.length !== required.size ||
@@ -858,18 +860,13 @@ function sideActions(
     meta: { tagOrder: setup.tagOrder }
   }
   const teamId = state.gameData.teams[side].id
-  const appeared = appearedIn(state)
-  // Somebody the other side's setup still names, and who has not played for
-  // it, is only a saved setup: this side fields them now.
-  const takeOver = (id: number, name: string): void => {
-    const existing = setup.players[id]
-    if (existing == null || existing.teamId === teamId) return
-    if (appeared.has(id))
-      throw badRequest(`${name} is already on the other team`)
+  // Somebody the other side's setup still names is only a saved setup, or
+  // `required` would not hold them: this side fields them now.
+  const takeOver = (id: number): void => {
+    if (setup.players[id]?.teamId === teamId) return
     const other = setup.sides[side === 'away' ? 'home' : 'away']
     other.players = other.players.filter(held => held !== id)
     other.battingOrder = other.battingOrder.filter(held => held !== id)
-    other.battingIndex = 0
     for (const position of POSITIONS)
       if (other.defense[position] === id) other.defense[position] = null
   }
@@ -879,7 +876,7 @@ function sideActions(
       throw badRequest('Create the player before saving the lineup')
     let known = team.players.find(id => id === player.gumboId)
     if (known == null && guests.includes(player.gumboId)) {
-      takeOver(player.gumboId, player.fullName)
+      takeOver(player.gumboId)
       known = addPlayer(
         draft,
         side,
@@ -899,7 +896,7 @@ function sideActions(
         throw badRequest(`${player.fullName} is not on this team's roster`)
       const id = asGumboId(entry.gumboId)
       if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
-      takeOver(id, player.fullName)
+      takeOver(id)
       // Use current roster data, never caller-provided identity/name details.
       const existing = setup.players[id]
       setup.players[id] =

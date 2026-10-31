@@ -76,6 +76,25 @@ export async function inGameAs(
     : null
 }
 
+/** Whether a stored play of this game has them for another team. */
+export async function playedForOther(
+  trx: Trx,
+  gameId: string,
+  userIds: string[],
+  teamId: string
+): Promise<boolean> {
+  const row = await trx
+    .selectFrom('event_players')
+    .innerJoin('events', 'events.id', 'event_players.event_id')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
+    .select('event_players.id')
+    .where('events.gameId', '=', gameId)
+    .where('gumbo_ids.user_id', 'in', userIds)
+    .where('event_players.team_id', '!=', teamId)
+    .executeTakeFirst()
+  return row != null
+}
+
 /** Refuses a guest who is in the game already. */
 export async function guestAlreadyInGame(
   trx: Trx,

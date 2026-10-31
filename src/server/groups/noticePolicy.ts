@@ -16,7 +16,7 @@ import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
-import { guestGameOpen, inGameAs } from '../games/guestChecks'
+import { guestGameOpen, inGameAs, playedForOther } from '../games/guestChecks'
 import { hasScoringEventsSql, isRealPlaySql } from '../games/scoringActivity'
 import { reconcileUnbegunLineup } from '../games/unroster'
 import {
@@ -659,6 +659,27 @@ export function freeLabel(teamName: string, used: ReadonlySet<string>): string {
   return `${prefix} ${placeholderSuffix(suffix)}`
 }
 
+/** The game rows undoing an add takes, in one order, for a lock after them. */
+async function lockGamesOfAdd(trx: Db, terms: PlayerAddTerms): Promise<void> {
+  await trx
+    .selectFrom('games')
+    .select('id')
+    .$if(terms.mode === 'pool', query => query.where('id', '=', terms.gameId!))
+    .$if(terms.mode !== 'pool', query =>
+      query
+        .where(eb =>
+          eb.or([
+            eb('home_team_id', '=', terms.teamId),
+            eb('away_team_id', '=', terms.teamId)
+          ])
+        )
+        .where('status', 'not in', ['final', 'cancelled'])
+    )
+    .orderBy('id')
+    .forUpdate()
+    .execute()
+}
+
 /**
  * Serializes every add of one person. The merge lock is shared: two adds run
  * together without this, the second meets the first's row or asks twice, and
@@ -1030,6 +1051,10 @@ async function decideOnce(
   if (request.status === 'applied') {
     if (decision === 'accept') throw conflict('This change is already made')
     if (!open) throw conflict('This can no longer be rejected.')
+    // After the rows the undo takes: a team's next add must meet what this
+    // rejection decides, and not be read as the first.
+    await lockGamesOfAdd(trx, terms)
+    await lockPlayerAdds(trx, (await personOf(trx, terms.userId)).userId)
     if (await supersededPlayerAdd(trx, request))
       throw conflict(
         'They were added again since. Reject the newer notice instead.'
@@ -1066,7 +1091,8 @@ async function decideOnce(
       game.status === 'final' ||
       game.status === 'cancelled' ||
       side !== terms.teamId ||
-      (await inGameAs(trx, game, person.userIds)) != null
+      (await inGameAs(trx, game, person.userIds)) != null ||
+      (await playedForOther(trx, game.id, person.userIds, terms.teamId))
     if (lapsed) {
       await resolve('expired')
       return

@@ -494,6 +494,42 @@ describe('adding a player who already exists', function () {
       .execute()
   })
 
+  it('refuses a pool add of somebody who played for the other team in the game', async function () {
+    await person('Left The Herons', TEAM.owls)
+    const eventId = makeId('event')
+    await db!
+      .insertInto('events')
+      .values({
+        id: eventId,
+        gameId: GAME,
+        startTime: new Date(),
+        battingTeamId: TEAM.herons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'single' }
+        }
+      })
+      .execute()
+    await db!
+      .insertInto('event_players')
+      .values({
+        id: makeId('eventPlayer'),
+        event_id: eventId,
+        gumbo_id: gumbo['Left The Herons'],
+        team_id: TEAM.herons,
+        role: 'batter'
+      })
+      .execute()
+    const asked = await guest({
+      side: 'home',
+      teamId: TEAM.falcons,
+      userId: ids['Left The Herons']
+    })
+    expect(asked.status).equals(409)
+    expect(JSON.stringify(asked.body)).includes('played for the other team')
+    await db!.deleteFrom('events').where('id', '=', eventId).execute()
+  })
+
   it('answers two adds of one person at once as one add', async function () {
     await person('Twice At Once', TEAM.owls)
     const answers = await Promise.all([

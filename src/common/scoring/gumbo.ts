@@ -423,8 +423,15 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
       },
       count: { balls: 0, strikes: 0, outs },
       matchup: {
-        batter: { id: 0, fullName: '' },
-        pitcher: { id: 0, fullName: '' },
+        // Who appeared, though the rest of this play is not ours to know.
+        batter: {
+          id: sessionId(state, doc?.matchup?.batter) ?? 0,
+          fullName: ''
+        },
+        pitcher: {
+          id: sessionId(state, doc?.matchup?.pitcher) ?? 0,
+          fullName: ''
+        },
         batSide: { code: 'R' }
       },
       runners: [],

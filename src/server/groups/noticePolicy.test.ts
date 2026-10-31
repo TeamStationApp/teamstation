@@ -3791,4 +3791,76 @@ describe('adds made with a notice', function () {
     expect(posted.body.results[0].result).equals('error')
     expect(await membership('Guest Elsewhere', TEAM.falcons)).equals(undefined)
   })
+
+  it('opens a held player’s parent for a reader the roster shows them to', async function () {
+    await person('Both Teams Kid', { login: true, teamId: TEAM.owls })
+    await person('Both Teams Parent', { login: true })
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Both Teams Parent'],
+        related_user_id: ids['Both Teams Kid'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    await add('roster', 'Both Teams Kid')
+    await role(ids.coach, TEAM.owls, 'coach')
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    const open = async (): Promise<unknown> =>
+      await personProfile(
+        db!,
+        undefined,
+        coach,
+        { kind: 'team', id: TEAM.falcons },
+        ids['Both Teams Parent']
+      )
+    try {
+      expect(await open()).to.be.an('object')
+    } finally {
+      await db!
+        .deleteFrom('scope_roles')
+        .where('user_id', '=', ids.coach)
+        .where('scope_id', '=', TEAM.owls)
+        .execute()
+    }
+    let refused: unknown
+    try {
+      await open()
+    } catch (error) {
+      refused = error
+    }
+    expect((refused as { status?: number })?.status).equals(404)
+  })
+
+  it('serializes a rejection with the next add of that person', async function () {
+    await person('Reject Race', { login: true })
+    const added = await add('roster', 'Reject Race')
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let acquired = (): void => undefined
+    const taken = new Promise<void>(resolve => {
+      acquired = resolve
+    })
+    const holding = atomic(db!, async trx => {
+      await lockPlayerAdds(trx, ids['Reject Race'])
+      acquired()
+      await held
+    })
+    await taken
+    let finished = false
+    const rejected = decide('Reject Race', added.requestId!, 'decline').finally(
+      () => {
+        finished = true
+      }
+    )
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(finished).equals(false)
+    release()
+    await holding
+    expect(await rejected).equals('declined')
+  })
 })
