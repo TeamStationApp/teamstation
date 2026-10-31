@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { ageOn } from '../../common/age'
+import { openAddsOf, openArrivalsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
@@ -227,7 +228,7 @@ async function teamMemberIds(
   if (teamIds.length === 0) return []
   const people = await db
     .selectFrom('memberships')
-    .select(['user_id'])
+    .select(['user_id', 'team_id'])
     .where('team_id', 'in', teamIds)
     .where(eb =>
       eb.or([
@@ -236,9 +237,16 @@ async function teamMemberIds(
       ])
     )
     .execute()
+  // Neither somebody an open add brought to the team, nor the guardians of
+  // anybody it holds so, until it can no longer be rejected: a player without
+  // their parents is no better in the team's chat than a parent without their
+  // child. Somebody on the team before the add stays in its chat.
+  const open = await openArrivalsOf(db, teamIds)
   return [
     ...(await teamStaffIds(db, teamIds)),
-    ...people.map(row => row.user_id),
+    ...people
+      .filter(row => open.get(row.team_id)?.has(row.user_id) !== true)
+      .map(row => row.user_id),
     ...(await teamGuardianRows(db, teamIds))
   ]
 }
@@ -254,12 +262,18 @@ export async function teamGuardianRows(
   teamIds: string[]
 ): Promise<string[]> {
   if (teamIds.length === 0) return []
-  const players = await db
+  const rows = await db
     .selectFrom('memberships')
-    .select(['user_id'])
+    .select(['user_id', 'team_id'])
     .where('team_id', 'in', teamIds)
     .where('is_player', '=', true)
     .execute()
+  // Not the guardians of somebody a team holds only by an open add: who they
+  // are is not that team's to read until the add can no longer be rejected.
+  const open = await openAddsOf(db, teamIds)
+  const players = rows.filter(
+    row => open.get(row.team_id)?.has(row.user_id) !== true
+  )
   if (players.length === 0) return []
   const links = await db
     .selectFrom('user_links')
@@ -291,9 +305,9 @@ async function playersAmong(
       eb.or([eb('id', 'in', survivorIds), eb('merged_into', 'in', survivorIds)])
     )
     .execute()
-  const players = await db
+  const memberships = await db
     .selectFrom('memberships')
-    .select(['user_id'])
+    .select(['user_id', 'team_id'])
     .where(
       'user_id',
       'in',
@@ -301,6 +315,15 @@ async function playersAmong(
     )
     .where('is_player', '=', true)
     .execute()
+  // A team holding them only by an open add does not make them a player: they
+  // are in no team's chat for it, and stay among its fans.
+  const open = await openAddsOf(
+    db,
+    memberships.map(row => row.team_id)
+  )
+  const players = memberships.filter(
+    row => open.get(row.team_id)?.has(row.user_id) !== true
+  )
   const survivorOf = await survivors(
     db,
     players.map(row => row.user_id)

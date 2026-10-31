@@ -4,6 +4,7 @@ import { ageOn } from '../../common/age'
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import { openAddTeams } from '../access'
 import type { Database } from '../db/database'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
 import {
@@ -91,6 +92,7 @@ export interface RuleBreak {
 export class DmFacts {
   private readonly rows = new Map<string, UserRow | null>()
   private readonly teams = new Map<string, string[]>()
+  private readonly settled = new Map<string, string[]>()
   private readonly seasons = new Map<string, string[]>()
   private readonly staff = new Map<string, Set<string>>()
   private readonly kin = new Map<
@@ -162,6 +164,22 @@ export class DmFacts {
     return this.teams.get(userId) ?? []
   }
 
+  /**
+   * The teams that stand to this person as theirs: not one holding them only
+   * by an add their side may still reject. A message cannot be unsent, so
+   * such a team is nobody's staff, however the rest of chat counts them a
+   * player.
+   */
+  async settledTeams(userId: string): Promise<string[]> {
+    const known = this.settled.get(userId)
+    if (known != null) return known
+    const teams = await this.playerTeams(userId)
+    const held = teams.length === 0 ? [] : await openAddTeams(this.db, [userId])
+    const settled = teams.filter(team => !held.includes(team))
+    this.settled.set(userId, settled)
+    return settled
+  }
+
   async isPlayer(userId: string): Promise<boolean> {
     return (await this.playerTeams(userId)).length > 0
   }
@@ -194,7 +212,7 @@ export class DmFacts {
   async staffOf(playerId: string): Promise<Set<string>> {
     const held = this.staff.get(playerId)
     if (held != null) return held
-    const teams = await this.playerTeams(playerId)
+    const teams = await this.settledTeams(playerId)
     const seasons = await this.seasonsOf(teams)
     const raw = [
       ...(await teamStaffIds(this.db, teams)),
@@ -210,7 +228,7 @@ export class DmFacts {
    * owners and managers included. Survivors.
    */
   async coachesOf(playerId: string): Promise<Set<string>> {
-    const teams = await this.playerTeams(playerId)
+    const teams = await this.settledTeams(playerId)
     if (teams.length === 0) return new Set()
     const roles = await this.db
       .selectFrom('scope_roles')
@@ -266,8 +284,8 @@ export class DmFacts {
 
   /** Whether two players share a team or a season. */
   async sharesSeason(a: string, b: string): Promise<boolean> {
-    const teamsA = await this.playerTeams(a)
-    const teamsB = await this.playerTeams(b)
+    const teamsA = await this.settledTeams(a)
+    const teamsB = await this.settledTeams(b)
     if (teamsA.some(team => teamsB.includes(team))) return true
     const seasonsA = await this.seasonsOf(teamsA)
     const seasonsB = await this.seasonsOf(teamsB)
@@ -867,7 +885,7 @@ export async function dmCandidateIds(
       .execute()
     for (const row of rows) seasons.add(row.id)
   }
-  const ownTeams = await facts.playerTeams(callerId)
+  const ownTeams = await facts.settledTeams(callerId)
   for (const season of await facts.seasonsOf([...teams, ...ownTeams])) {
     seasons.add(season)
   }
@@ -991,7 +1009,7 @@ async function staffLabelsFor(
   facts: DmFacts,
   playerId: string
 ): Promise<Map<string, string>> {
-  const teams = await facts.playerTeams(playerId)
+  const teams = await facts.settledTeams(playerId)
   const seasons = await facts.seasonsOf(teams)
   const labels = new Map<string, string>()
   const set = async (userId: string, label: string): Promise<void> => {

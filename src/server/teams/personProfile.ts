@@ -8,6 +8,8 @@ import {
   guardedPlayers,
   levelsAboveTeam,
   mayEditName,
+  openAddTeams,
+  settledTeams,
   teamsPlayedOnNow,
   teamsUnder
 } from '../access'
@@ -68,7 +70,7 @@ export async function personProfile(
   const admin = manages && (await canAdminister(db, fresh, ref))
   if (!manages && !self) throw notFound()
   let editable = manages
-  if (!self && !(await onPeopleList(db, ref, userId))) {
+  if (!self && !(await onPeopleList(db, ref, userId, fresh))) {
     const identity = await onePerson(db, userId)
     const umpire =
       ref.kind === 'league' && admin
@@ -88,8 +90,15 @@ export async function personProfile(
     part => part != null && part.trim() !== ''
   )
   const whole = parts.length === 0 ? person.displayName : parts.join(' ')
+  // Not while every team of theirs here holds them only by an add that may
+  // be rejected.
+  const rows = (await onePerson(db, userId)).userIds
+  const under = await teamsUnder(db, ref)
+  const here = (await teamsPlayedOnNow(db, rows)).filter(id => under.has(id))
+  const holding = await openAddTeams(db, rows)
+  const held = here.length > 0 && here.every(id => holding.includes(id))
   const readsName =
-    manages || (await mayEditName(db, fresh.userId, userId, fresh))
+    (manages && !held) || (await mayEditName(db, fresh.userId, userId, fresh))
 
   return {
     context: { kind: ref.kind, id: ref.id, name },
@@ -152,10 +161,7 @@ async function guardianRows(
   const reach = await teamsUnder(db, ref)
   const found: Array<{ userId: string; teamId: string }> = []
   for (const child of children) {
-    const plays = await teamsPlayedOnNow(
-      db,
-      (await onePerson(db, child)).userIds
-    )
+    const plays = await settledTeams(db, (await onePerson(db, child)).userIds)
     const here = plays.filter(teamId => reach.has(teamId))
     if (here.length === 0) continue
     const named = await db

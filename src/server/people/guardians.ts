@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
-import { canCoach, roleScopes } from '../access'
+import { canCoach, openAddTeams, roleScopes } from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { rowsOfPeople } from '../teams/teamStaff'
@@ -312,7 +312,15 @@ export async function mayKeepBirthMonth(
     .execute()
   if (teams.length > 0) {
     const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-    if (teams.some(team => canCoach(scopes, team.team_id))) return true
+    // Not a team holding them only by an open add: a rejection could not
+    // undo it.
+    const held = await openAddTeams(db, person.userIds)
+    if (
+      teams.some(
+        team => !held.includes(team.team_id) && canCoach(scopes, team.team_id)
+      )
+    )
+      return true
   }
   return await isGuardianOf(db, actor.userId, playerId)
 }
