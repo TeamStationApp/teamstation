@@ -73,9 +73,7 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'tv-scoreboard', timeout: 30000 })
     await tv.assertNotVisible({ id: 'tv-cameras-panel', timeout: 15000 })
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.tapOn({ id: 'Cameras' })
+    await tv.pressKey({ key: 'DPAD_LEFT' })
     await tv.tapOn({ id: 'tv-toggle-1' })
     await writeFile(
       path.join(artifacts, 'tv-camera-panel.png'),
@@ -94,7 +92,6 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'Back to games' })
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.tapOn({ id: 'Box score' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await writeFile(
       path.join(artifacts, 'score-after.png'),
@@ -111,10 +108,8 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'BACK' })
     await tv.assertNotVisible({ id: 'tv-box-panel' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.tapOn({ id: '−10 seconds' })
-    await tv.tapOn({ id: 'Highlights' })
+    await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.pressKey({ key: 'DPAD_RIGHT' })
     await tv.tapOn({ id: 'tv-highlight-0' })
     await tv.assertNotVisible({ id: 'tv-highlights-panel', timeout: 5000 })
     await tv.assertVisible({ id: 'tv-highlights-panel', timeout: 30000 })

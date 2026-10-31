@@ -170,7 +170,7 @@ describe('TV game playback entry', () => {
     const panel = document.querySelector<HTMLElement>(
       '[data-testid="tv-box-panel"]'
     )!
-    expect(panel.style.height).equals('33%')
+    expect(panel.style.height).equals('25%')
     expect(
       document.querySelector('[data-testid="tv-score-column-25"]')
     ).not.equals(null)
