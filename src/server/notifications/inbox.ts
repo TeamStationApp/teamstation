@@ -4,6 +4,7 @@ import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
   isSchedulingNews,
+  LOCAL_COPY_EXPIRING,
   type Notification,
   RECORDING_UPLOAD
 } from '../../common/notifications'
@@ -123,8 +124,8 @@ async function informationFor(
     description = said.description
   }
   // A reminder waits on its owner until they dismiss it or the upload lands,
-  // which settles it the same way.
-  const reminder = event.source_type === RECORDING_UPLOAD
+  // which settles it the same way. So does the warning that a copy expires.
+  const reminder = isReminderType(event.source_type)
   const waiting = reminder && receipt?.dismissed_at == null
   // A player taken off a roster by their side is news to its managers until
   // they dismiss it; there is nothing to do but read it.
@@ -235,9 +236,14 @@ function actorName(
   return name == null || name === '' ? 'An admin' : name
 }
 
+/** What waits on a stream's owner until the phone's copy is settled. */
+function isReminderType(type: string): boolean {
+  return type === RECORDING_UPLOAD || type === LOCAL_COPY_EXPIRING
+}
+
 /** A reminder still waiting: Pending lists these before anything else. */
 function rankOf(row: Notification): number {
-  return row.type === RECORDING_UPLOAD && row.status === 'pending' ? 0 : 1
+  return isReminderType(row.type) && row.status === 'pending' ? 0 : 1
 }
 
 /** Pending reminders first, then oldest first, then by id. */
@@ -608,7 +614,11 @@ export async function inbox(
     .$if(options.history !== true, query =>
       query.where(eb =>
         eb.and([
-          eb('source_type', 'in', [RECORDING_UPLOAD, PLAYER_ADD_REJECTED]),
+          eb('source_type', 'in', [
+            RECORDING_UPLOAD,
+            LOCAL_COPY_EXPIRING,
+            PLAYER_ADD_REJECTED
+          ]),
           eb.not(
             eb.exists(
               eb
