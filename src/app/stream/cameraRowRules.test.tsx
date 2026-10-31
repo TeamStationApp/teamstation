@@ -7,6 +7,7 @@ import type { GameLiveStreams, LiveStream } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   angleState,
+  cameraRefusal,
   cameraSubtitle,
   cameraTap,
   formatDuration,
@@ -45,6 +46,35 @@ const external = (patch: Partial<LiveStream> = {}): LiveStream =>
   stream({ deviceId: null, deviceModel: null, source: 'rtmp', ...patch })
 const live = { state: 'publishing' }
 const ended = { state: 'ended' }
+
+describe('a camera’s refusal', function () {
+  const refused =
+    'TeamStation takes HEVC. This stream is H.264 — change the encoder to HEVC and start it again.'
+
+  it('tells the owner of an idle camera why it sits there', function () {
+    expect(cameraRefusal(external({ lastError: refused }), true)).equals(
+      refused
+    )
+  })
+
+  it('leaves out anything else the ingest wrote', function () {
+    expect(
+      cameraRefusal(external({ lastError: 'The stream ended' }), true)
+    ).equals(undefined)
+    expect(cameraRefusal(external(), true)).equals(undefined)
+  })
+
+  it('goes once the camera is live or over, and is the owner’s alone', function () {
+    const lastError = refused
+    expect(cameraRefusal(external({ lastError, ...live }), true)).equals(
+      undefined
+    )
+    expect(cameraRefusal(external({ lastError, ...ended }), true)).equals(
+      undefined
+    )
+    expect(cameraRefusal(external({ lastError }), false)).equals(undefined)
+  })
+})
 
 describe('a camera row’s words', function () {
   it('says what each external source is, also for a camera with no source', function () {

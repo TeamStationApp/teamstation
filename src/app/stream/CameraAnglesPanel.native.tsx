@@ -23,6 +23,7 @@ import {
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
+  cameraRefusal,
   type CameraTap,
   isEnded,
   orderAngles
@@ -528,12 +529,13 @@ export function CameraAnglesPanel(
         mine={mine}
         myId={myId}
         note={
-          mine &&
+          cameraRefusal(stream, mine) ??
+          (mine &&
           elsewhere &&
           stream.localRecording === 'recorded' &&
           stream.deviceModel != null
             ? sprintf(lstrings.stream_angle_not_uploaded, stream.deviceModel)
-            : undefined
+            : undefined)
         }
         onTap={tap => {
           tapRow(tap, stream)

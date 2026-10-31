@@ -634,6 +634,22 @@ describe('the cameras on a game, on a phone', function () {
       const fake = fakeClient()
       fake.mine = [
         stream({
+  it('says on an own idle row why the ingest refused its camera', async function () {
+    const fake = fakeClient()
+    const refused = 'TeamStation takes HEVC. This stream is H.264.'
+    fake.mine = [
+      stream({
+        id: 'liv_1',
+        label: 'Backstop',
+        deviceId: null,
+        source: 'rtmp',
+        lastError: refused
+      })
+    ]
+    await mount(fake)
+    expect(byTestId('angle-row-liv_1')?.textContent).contains(refused)
+  })
+
           id: 'liv_1',
           label: 'Home Plate',
           state: 'publishing',
@@ -1332,6 +1348,7 @@ describe('setting up a camera on a phone', function () {
     })
   }
 
+      expect(text()).contains('Your camera must stream in HEVC (H.265).')
   describe('a camera with its own app', function () {
     afterEach(function () {
       ;(Platform as { OS: string }).OS = 'web'

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type { GameLiveStreams, LiveStream } from '../../common/api'
+import {
+  CODEC_REFUSAL,
+  type GameLiveStreams,
+  type LiveStream
+} from '../../common/api'
 import { shortName } from '../../common/names'
 import { lstrings, sprintf } from '../locales/strings'
 
@@ -66,6 +70,20 @@ export function cameraSubtitle(stream: LiveStream, mine: boolean): string {
     waiting ? lstrings.stream_row_waiting : lstrings.stream_row_streaming,
     model
   )
+}
+
+/**
+ * Why an own camera sits idle, when the ingest turned it away for its codec.
+ * From the camera's end a refusal looks like a dropped connection, so this
+ * line is the only place the person learns of it.
+ */
+export function cameraRefusal(
+  stream: LiveStream,
+  mine: boolean
+): string | undefined {
+  if (!mine || angleState(stream) !== 'idle') return undefined
+  const { lastError } = stream
+  return lastError?.startsWith(CODEC_REFUSAL) === true ? lastError : undefined
 }
 
 /**
