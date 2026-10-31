@@ -60,17 +60,34 @@ public struct PhoneStorage: Sendable {
 
 /// When a phone may record, by the space it has left.
 ///
-/// A recording does not start with under 2 GB free: that is under an hour at 6 Mbps, and a game is
-/// longer. A part that is running finishes cleanly when free space falls below 500 MB, which leaves
-/// room for its export and for the phone itself; the stream carries on.
+/// A recording does not start with under 10 GB free, which is what a long game takes at 6 Mbps and
+/// leaves the phone room; the stream goes out without one. A part that is running finishes cleanly
+/// when free space falls below 2 GB, which leaves room for its export and for the phone itself; the
+/// stream carries on.
 public struct PhoneStorageRules: Sendable, Equatable {
   public var startFloorBytes: Int64
   public var stopFloorBytes: Int64
 
   public static let standard = PhoneStorageRules(
-    startFloorBytes: 2_000_000_000,
-    stopFloorBytes: 500_000_000
+    startFloorBytes: 10_000_000_000,
+    stopFloorBytes: 2_000_000_000
   )
+
+  /// The launch argument that moves the start floor, in debug builds only.
+  static let startFloorArgument = "-TSPhoneStartFloorBytes"
+
+  /// The rules this launch runs by: `.standard`. A debug build started with
+  /// `-TSPhoneStartFloorBytes <bytes>` has that start floor instead, so a test can reach a
+  /// streaming-only start on a phone with room to spare. Release builds hold none of this.
+  public static func forLaunch(arguments: [String] = ProcessInfo.processInfo.arguments) -> PhoneStorageRules {
+    #if DEBUG
+    if let flag = arguments.firstIndex(of: startFloorArgument), flag + 1 < arguments.count,
+      let floor = Int64(arguments[flag + 1]) {
+      return PhoneStorageRules(startFloorBytes: floor, stopFloorBytes: standard.stopFloorBytes)
+    }
+    #endif
+    return standard
+  }
 
   public init(startFloorBytes: Int64, stopFloorBytes: Int64) {
     self.startFloorBytes = startFloorBytes
@@ -81,30 +98,34 @@ public struct PhoneStorageRules: Sendable, Equatable {
   public func mustStop(freeBytes: Int64) -> Bool { freeBytes < stopFloorBytes }
 }
 
-/// The phone's retention: a recording is the higher-quality copy of what the stream published, so
-/// it is never deleted before the server has it. One whose upload has been ready for seven days goes
-/// on a sweep, files and row; nothing else is ever swept.
+/// The phone's retention: a recording is the higher-quality copy of what the stream published. Once
+/// the server has it, it goes on the next sweep, files and row. One never uploaded goes 30 days after
+/// it ended, and the server warns its owner three days before. A take still running, one whose upload
+/// is pending and one being protected are left alone.
 ///
 /// TS Director's `RetentionPolicy` reclaims camera archive segments, which a phone never writes, so
 /// the phone's rule is its own.
 public struct PhoneRetentionPolicy: Sendable {
-  public static let keepUploadedSeconds: TimeInterval = 7 * 24 * 3_600
+  public static let keepUnuploadedSeconds: TimeInterval = 30 * 24 * 3_600
 
-  public var keepUploadedSeconds: TimeInterval
+  public var keepUnuploadedSeconds: TimeInterval
 
-  public init(keepUploadedSeconds: TimeInterval = PhoneRetentionPolicy.keepUploadedSeconds) {
-    self.keepUploadedSeconds = keepUploadedSeconds
+  public init(keepUnuploadedSeconds: TimeInterval = PhoneRetentionPolicy.keepUnuploadedSeconds) {
+    self.keepUnuploadedSeconds = keepUnuploadedSeconds
   }
 
-  /// The recordings to delete at `now`: uploaded, ready for at least the keep, and not `protecting`.
+  /// The recordings to delete at `now`: uploaded, or ended at least the keep ago with no upload
+  /// wanted, and not `protecting`.
   public func expired(
     _ recordings: [PhoneRecording],
     now: WallClock,
     protecting: Set<Int64> = []
   ) -> [PhoneRecording] {
     recordings.filter { recording in
-      guard let uploadedAt = recording.uploadedAt else { return false }
-      return !protecting.contains(recording.recordingID) && now - uploadedAt >= keepUploadedSeconds
+      if protecting.contains(recording.recordingID) { return false }
+      if recording.isUploaded { return true }
+      guard !recording.hasPendingUpload, let endedAt = recording.endedAt else { return false }
+      return now - endedAt >= keepUnuploadedSeconds
     }
   }
 
