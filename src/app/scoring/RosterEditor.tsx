@@ -382,7 +382,9 @@ export function RosterEditor({
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
   // Pool players added here, whom the game's guests do not list yet.
-  const [pooled, setPooled] = useState<readonly number[]>([])
+  const [pooled, setPooled] = useState<
+    ReadonlyMap<number, RosterEntry['bats']>
+  >(new Map())
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
   )
@@ -536,7 +538,7 @@ export function RosterEditor({
       const teamId = draft.gameData.teams[side].id
       if (pool && entry.gumboId != null) {
         const { gumboId } = entry
-        setPooled(held => [...held, gumboId])
+        setPooled(held => new Map(held).set(gumboId, candidate.bats))
       }
       if (!pool)
         setCreated(held => ({
@@ -1144,10 +1146,15 @@ export function RosterEditor({
         <PlayerEntrySheet
           key={`edit:${side}:${editingLocal}`}
           ownIdentity={
-            pooled.includes(editingLocal) ||
+            pooled.has(editingLocal) ||
             guests.some(
               guest => guest.pool === true && guest.gumboId === editingLocal
             )
+          }
+          ownBats={
+            pooled.get(editingLocal) ??
+            guests.find(guest => guest.gumboId === editingLocal)?.bats ??
+            null
           }
           initialDraft={draftOfLocalPlayer(
             draft.gameData.players[editingLocal]

@@ -264,7 +264,8 @@ describe('player entry sheet', function () {
     expect((node('Last Name') as HTMLInputElement).readOnly).equals(true)
     expect((node('Jersey Number') as HTMLInputElement).readOnly).equals(false)
     expect(node('Throws unknown')).not.equals(null)
-    expect(node('Bats right')).not.equals(null)
+    // A draft's bat side is a guess for scoring: theirs is shown as held.
+    expect(node('Bats unknown')).not.equals(null)
     expect(document.querySelector('[aria-label="Throws L"]')).equals(null)
   })
 })

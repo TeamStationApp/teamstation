@@ -81,13 +81,6 @@ export type RequestTerms =
     }
   | GuardianTerms
 
-/**
- * A roster manager putting a player who already exists onto their team
- * (`roster`) or into one game for one side (`pool`). Applied at once and told
- * to the player's guardians, who may reject it; after a rejection the same
- * team's next add of that player waits for their approval instead. Not an
- * invitation, so not among `RequestTerms`: only the notice code reads it.
- */
 /** Who was told of a player add: the tier of its approvers that had anybody. */
 export type PlayerAddTold = 'guardians' | 'player' | 'coaches'
 
@@ -103,6 +96,13 @@ export function playerAddToldWords(told: PlayerAddTold = 'guardians'): string {
   }
 }
 
+/**
+ * A roster manager putting a player who already exists onto their team
+ * (`roster`) or into one game for one side (`pool`). Applied at once and told
+ * to the player's guardians, who may reject it; after a rejection the same
+ * team's next add of that player waits for their approval instead. Not an
+ * invitation, so not among `RequestTerms`: only the notice code reads it.
+ */
 export interface PlayerAddTerms {
   kind: 'playerAdd'
   mode: 'roster' | 'pool'

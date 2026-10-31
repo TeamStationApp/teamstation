@@ -60,7 +60,7 @@ import { addByPolicy } from '../teams/addExistingPlayer'
 import { personProfile } from '../teams/personProfile'
 import { levelPeople, teamRoster } from '../teams/teamRoster'
 import { ensureGumboId, insertUser } from '../users/insertUser'
-import { gameNames, gameNamesDigest } from '../users/nameBook'
+import { booksOver, gameNames, gameNamesDigest } from '../users/nameBook'
 import {
   applyPlayerAdd,
   decidePlayerAdd,
@@ -2489,5 +2489,310 @@ describe('adds made with a notice', function () {
       (item: any) => item.requestId === 'grq_notice_stand_in'
     )
     expect(standing).to.include({ canReject: true })
+  })
+
+  /** Sets a team's name format, and puts it back when `run` is done. */
+  async function withFormat(
+    format: 'full' | 'initialLast',
+    run: () => Promise<void>
+  ): Promise<void> {
+    await db!
+      .updateTable('teams')
+      .set({ player_name_privacy: format })
+      .where('id', '=', TEAM.falcons)
+      .execute()
+    try {
+      await run()
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ player_name_privacy: null })
+        .where('id', '=', TEAM.falcons)
+        .execute()
+    }
+  }
+
+  for (const format of ['full', 'initialLast'] as const)
+    it(`keeps the name of a held player and a pool guest from a team on ${format}`, async function () {
+      const held = `Held ${format}`
+      await person(held, { login: true })
+      await add('roster', held)
+      const pooled = `Pool ${format}`
+      await person(pooled, { login: true })
+      const gameId = await game()
+      await add('pool', pooled, { gameId, side: 'home' })
+      await person(`Own ${format}`, { teamId: TEAM.falcons })
+      await withFormat(format, async () => {
+        const roster = await teamRoster(db!, undefined, TEAM.falcons, true)
+        const short = (name: string): string | undefined =>
+          roster.find(row => row.userId === ids[name])?.shortName
+        expect(short(held)).equals(`Held ${format[0]}`)
+        // The team's own players read as it says.
+        expect(short(`Own ${format}`)).not.equals(`Own ${format[0]}`)
+        const detail = await call(
+          TOKENS.coach,
+          'GET',
+          `/players/${ids[held]}?forTeam=${TEAM.falcons}`
+        )
+        expect(detail.body.name).equals(`Held ${format[0]}`)
+        const row = await db!
+          .selectFrom('games')
+          .selectAll()
+          .where('id', '=', gameId)
+          .executeTakeFirstOrThrow()
+        const names = (await gameAvailability(db!, row)).guestPlayers.home.map(
+          guest => guest.shortName
+        )
+        expect(names).deep.equals([`Pool ${format[0]}`])
+        const books = await booksOver(
+          db!,
+          new Map([
+            [
+              gameId,
+              {
+                ids: [gumbo[pooled]],
+                teams: new Map([[gumbo[pooled], TEAM.falcons]])
+              }
+            ]
+          ])
+        )
+        const book = books.get(gameId)!
+        expect(book.formatOf(gumbo[pooled])).not.equals(format)
+      })
+    })
+
+  it('ends a hold once their side accepts a later add of them', async function () {
+    await person('Accepted Later', { login: true })
+    const row = makeId('membership')
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: row,
+        user_id: ids['Accepted Later'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const first = await add('roster', 'Accepted Later')
+    expect(await openAdds(db!, TEAM.falcons)).includes(ids['Accepted Later'])
+    // Off the roster, on the same row, and asked for again.
+    await db!
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('id', '=', row)
+      .execute()
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_notice_accepted_later',
+        kind: 'playerAdd',
+        sender_id: ids.coach,
+        sender_scope_type: 'team',
+        sender_scope_id: TEAM.falcons,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: TEAM.falcons,
+          userId: ids['Accepted Later'],
+          jersey: null,
+          positions: [],
+          teamName: 'Ridgeview Falcons'
+        }),
+        status: 'accepted',
+        sent_at: new Date(Date.now() + 1000),
+        expires_at: new Date(Date.now() + DAY),
+        initiating_team_id: TEAM.falcons
+      })
+      .execute()
+    await db!
+      .updateTable('memberships')
+      .set({ is_player: true })
+      .where('id', '=', row)
+      .execute()
+    expect(first.requestId).to.be.a('string')
+    expect(await openAdds(db!, TEAM.falcons)).not.includes(
+      ids['Accepted Later']
+    )
+  })
+
+  it('keeps somebody already on the team in its chat and people list', async function () {
+    await person('Team Adult', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Team Adult'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const before = await audienceOf(
+      db!,
+      'teamMembers',
+      TEAM.falcons,
+      new Date()
+    )
+    expect(before.has(ids['Team Adult'])).equals(true)
+    await add('roster', 'Team Adult')
+    const after = await audienceOf(db!, 'teamMembers', TEAM.falcons, new Date())
+    expect(after.has(ids['Team Adult'])).equals(true)
+    // What is theirs stays held from the team.
+    expect(await openAdds(db!, TEAM.falcons)).includes(ids['Team Adult'])
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    expect(await mayEditName(db!, ids.coach, ids['Team Adult'], coach)).equals(
+      false
+    )
+  })
+
+  it('keeps a rejection of a later approver in their History', async function () {
+    await person('Later Teen', { login: true })
+    await person('Later Parent', { login: true })
+    const added = await add('roster', 'Later Teen')
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Later Parent'],
+        related_user_id: ids['Later Teen'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    const token = 'tok_notice_later_parent_00000000000000'
+    await db!
+      .insertInto('auth_sessions')
+      .values({
+        id: makeId('authSession'),
+        user_id: ids['Later Parent'],
+        token_hash: hashToken(token),
+        created_at: new Date(),
+        expires_at: new Date(Date.now() + 365 * DAY)
+      })
+      .execute()
+    await db!
+      .deleteFrom('user_links')
+      .where('user_id', '=', ids['Later Parent'])
+      .execute()
+    expect(await decide('Later Teen', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+    const teen = 'tok_notice_later_teen_00000000000000000'
+    await db!
+      .insertInto('auth_sessions')
+      .values({
+        id: makeId('authSession'),
+        user_id: ids['Later Teen'],
+        token_hash: hashToken(teen),
+        created_at: new Date(),
+        expires_at: new Date(Date.now() + 365 * DAY)
+      })
+      .execute()
+    expect(
+      (await inbox(teen, true)).items.map((item: any) => item.requestId)
+    ).includes(added.requestId)
+  })
+
+  it('withdraws a pool guest named by a stored play with no pitch in it', async function () {
+    await person('Walked Guest', { login: true })
+    const gameId = await game()
+    const added = await add('pool', 'Walked Guest', { gameId, side: 'home' })
+    const eventId = makeId('event')
+    await db!
+      .insertInto('events')
+      .values({
+        id: eventId,
+        gameId,
+        startTime: now,
+        battingTeamId: TEAM.falcons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'intent_walk' },
+          matchup: { batter: { id: gumbo['Walked Guest'] } }
+        }
+      })
+      .execute()
+    expect(await decide('Walked Guest', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+    expect(
+      await db!
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', gameId)
+        .execute()
+    ).has.length(1)
+  })
+
+  it('reads no guardian of a held player on a profile the team opens', async function () {
+    await heldWithParent(
+      'Held Sibling',
+      'Sibling Parent',
+      'tok_notice_sibling_parent_00000000000'
+    )
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Sibling Parent'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const profile = await personProfile(
+      db!,
+      undefined,
+      { userId: ids.coach, isAdmin: false, scopes: [] },
+      { kind: 'team', id: TEAM.falcons },
+      ids['Sibling Parent']
+    )
+    expect(profile.guardianOf).deep.equals([])
+  })
+
+  it('refuses a held player a role by every writer', async function () {
+    await person('Held Staff', { login: true })
+    await add('roster', 'Held Staff')
+    const path = `/manage/team/${TEAM.falcons}/people/${ids['Held Staff']}/role`
+    expect(
+      (await call(TOKENS.coach, 'PUT', path, { role: 'admin' })).status
+    ).equals(403)
+    await db!
+      .insertInto('user_emails')
+      .values({
+        id: makeId('userEmail'),
+        user_id: ids['Held Staff'],
+        email: 'held-staff@example.test'
+      })
+      .execute()
+    const adults = await call(
+      TOKENS.coach,
+      'POST',
+      `/teams/${TEAM.falcons}/adults`,
+      {
+        adults: [
+          {
+            firstName: 'Held',
+            lastName: 'Staff',
+            email: 'held-staff@example.test',
+            externalId: {
+              system: 'otherLeague',
+              kind: 'member',
+              id: 'held-staff'
+            },
+            staff: true
+          }
+        ]
+      }
+    )
+    expect(adults.status).equals(200)
+    expect(
+      await db!
+        .selectFrom('scope_roles')
+        .select('role')
+        .where('user_id', '=', ids['Held Staff'])
+        .execute()
+    ).deep.equals([])
   })
 })

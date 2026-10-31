@@ -79,7 +79,9 @@ export async function candidatePerson(
     lastName: user.last_name,
     displayName: user.display_name
   }
-  const formats = await publicFormats(trx, [{ person: named, teamId }])
+  const formats = await publicFormats(trx, [
+    { person: named, teamId, candidate: true }
+  ])
   const shortName =
     formatForReader([{ person: named, format: formats.get(user.id)! }]).get(
       user.id

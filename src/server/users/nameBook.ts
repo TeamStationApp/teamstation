@@ -15,6 +15,8 @@ import { atBatOf } from '../events/atBatInProgress'
 import {
   currentFormats,
   formatForReader,
+  lentFormat,
+  lentPlayers,
   teamFormats
 } from '../groups/playerNamePrivacy'
 import { playerTeamsIn, scoringIdsIn } from '../scoring/projection'
@@ -297,11 +299,24 @@ export async function booksOver<K>(
     const team = scope.teams.get(id)
     return team != null && teams.has(team) ? team : undefined
   }
+  const lent = await lentPlayers(
+    db,
+    everyone.flatMap(scope =>
+      scope.ids.flatMap(id => {
+        const teamId = teamOf(scope, id)
+        return teamId == null || !people.has(id)
+          ? []
+          : [{ userId: people.get(id)!.userId, teamId }]
+      })
+    )
+  )
+  const isLent = (scope: GameScope, id: number): boolean =>
+    people.has(id) && lent.has(`${teamOf(scope, id)} ${people.get(id)!.userId}`)
   const current = await currentFormats(
     db,
     everyone.flatMap(scope =>
       scope.ids.flatMap(id =>
-        teamOf(scope, id) != null || !people.has(id)
+        !people.has(id) || (teamOf(scope, id) != null && !isLent(scope, id))
           ? []
           : [people.get(id)!.userId]
       )
@@ -315,9 +330,13 @@ export async function booksOver<K>(
         scope.ids,
         (id, person) => {
           const team = teamOf(scope, id)
+          const own = current.get(person.userId)
           const format =
-            (team == null ? current.get(person.userId) : teams.get(team)) ??
-            DEFAULT_PLAYER_NAME_PRIVACY
+            team == null
+              ? (own ?? DEFAULT_PLAYER_NAME_PRIVACY)
+              : isLent(scope, id)
+                ? lentFormat(teams.get(team)!, own)
+                : (teams.get(team) ?? DEFAULT_PLAYER_NAME_PRIVACY)
           return options.spoken === true ? spokenFormat(format) : format
         },
         options.spoken === true ? true : undefined

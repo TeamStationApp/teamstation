@@ -2279,6 +2279,12 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'A guest who already existed, added for this game only.'
             },
+            ownIdentity: {
+              type: 'boolean',
+              description:
+                'Held from this reader by an add their side may still reject: ' +
+                'their name, hands and family are not the team\u2019s yet.'
+            },
             nameDetails: {
               type: 'object',
               required: ['firstName', 'lastName', 'displayName'],

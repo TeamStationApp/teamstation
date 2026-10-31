@@ -9,6 +9,7 @@ import {
   levelsAboveTeam,
   mayEditName,
   openAddTeams,
+  settledTeams,
   teamsPlayedOnNow,
   teamsUnder
 } from '../access'
@@ -160,10 +161,7 @@ async function guardianRows(
   const reach = await teamsUnder(db, ref)
   const found: Array<{ userId: string; teamId: string }> = []
   for (const child of children) {
-    const plays = await teamsPlayedOnNow(
-      db,
-      (await onePerson(db, child)).userIds
-    )
+    const plays = await settledTeams(db, (await onePerson(db, child)).userIds)
     const here = plays.filter(teamId => reach.has(teamId))
     if (here.length === 0) continue
     const named = await db

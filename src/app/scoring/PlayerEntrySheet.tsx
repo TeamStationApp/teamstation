@@ -41,6 +41,7 @@ export function PlayerEntrySheet({
   initialDraft,
   existing,
   ownIdentity = false,
+  ownBats = null,
   onAdd
 }: {
   onClose: () => void
@@ -58,6 +59,8 @@ export function PlayerEntrySheet({
    * greyed, and only the jersey and positions change.
    */
   ownIdentity?: boolean
+  /** Their own bat side, unknown included: a draft's is a guess for scoring. */
+  ownBats?: 'left' | 'right' | 'switch' | null
   /** Create Player and Edit Player; unused with `existing`. */
   onAdd?: (draft: PlayerDraft) => void | Promise<void>
 }): React.ReactElement {
@@ -359,7 +362,7 @@ export function PlayerEntrySheet({
               {existing != null ? (
                 hands(existing.candidate.bats, 'Bats')
               ) : ownIdentity ? (
-                hands(draft.bats, 'Bats')
+                hands(ownBats, 'Bats')
               ) : (
                 <RosterSelector
                   compact

@@ -22,27 +22,6 @@ import type { MediaContext } from '../media/mediaContext'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
 
 /**
- * Who is on a team. Ordinary reads contain short names, for every viewer. A
- * route that has authorized roster management may explicitly request private
- * name details.
- *
- * The people are every member of the team, everybody a season or league
- * above it makes a member of it, everybody given a role on the team, on the
- * seasons it belongs to or on its league, every guardian of one of its
- * players, and everybody who follows it.
- *
- * Each person is listed once, in the first section that fits: `admin`
- * (owner, manager or an admin role), `staff` (any role flag), `player`,
- * `family` (a guardian of a player here), `spectator` (a member with none of
- * those, of the team or through its season or league), then `follower`.
- * Somebody who coaches and is also a parent is staff, which is what they are
- * here for; a member who follows the team too is a spectator.
- *
- * Each entry carries the person's walk-up song on this team, or `null`: a
- * song belongs to a player's place on a team, so the same child reads
- * another team's song only on that team's roster.
- */
-/**
  * The rows held from this reader: not a site administrator, a guardian, the
  * player, or the staff of a team of theirs, whose rights no add takes away.
  */
@@ -64,6 +43,27 @@ async function heldAgainst(
   return new Set(shown.filter(([, may]) => !may).map(([id]) => id))
 }
 
+/**
+ * Who is on a team. Ordinary reads contain short names, for every viewer. A
+ * route that has authorized roster management may explicitly request private
+ * name details.
+ *
+ * The people are every member of the team, everybody a season or league
+ * above it makes a member of it, everybody given a role on the team, on the
+ * seasons it belongs to or on its league, every guardian of one of its
+ * players, and everybody who follows it.
+ *
+ * Each person is listed once, in the first section that fits: `admin`
+ * (owner, manager or an admin role), `staff` (any role flag), `player`,
+ * `family` (a guardian of a player here), `spectator` (a member with none of
+ * those, of the team or through its season or league), then `follower`.
+ * Somebody who coaches and is also a parent is staff, which is what they are
+ * here for; a member who follows the team too is a spectator.
+ *
+ * Each entry carries the person's walk-up song on this team, or `null`: a
+ * song belongs to a player's place on a team, so the same child reads
+ * another team's song only on that team's roster.
+ */
 export async function teamRoster(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,

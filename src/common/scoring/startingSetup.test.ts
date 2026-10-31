@@ -240,7 +240,9 @@ describe('the lineups a game starts from (U4b)', function () {
 
   it('counts as appeared who batted or pitched, and a play under way once pitched to', function () {
     const play = (batter: number, playEvents: unknown[]): unknown => ({
+      about: { halfInning: 'top' },
       matchup: { batter: { id: batter }, pitcher: { id: 9 } },
+      runners: [],
       playEvents
     })
     const state = (currentPlay: unknown): GameState =>
@@ -250,6 +252,30 @@ describe('the lineups a game starts from (U4b)', function () {
     expect([...appearedIn(state(null))]).members([1, 9])
     expect([...appearedIn(state(play(2, [])))]).members([1, 9])
     expect([...appearedIn(state(play(2, [{}])))]).members([1, 2, 9])
+  })
+
+  it('counts a fielder and a runner of a play as appeared, and not the side at bat', function () {
+    const state = {
+      liveData: {
+        plays: {
+          allPlays: [
+            {
+              about: { halfInning: 'top' },
+              matchup: { batter: { id: 1 }, pitcher: { id: 9 } },
+              runners: [{ details: { runner: { id: 3 } } }],
+              lineups: {
+                began: {
+                  home: { defense: { C: 7, LF: null } },
+                  away: { defense: { C: 8 } }
+                }
+              }
+            }
+          ],
+          currentPlay: null
+        }
+      }
+    } as unknown as GameState
+    expect([...appearedIn(state)]).members([1, 9, 3, 7])
   })
 
   it('keeps roster order without a default', function () {

@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { Kysely, PostgresDialect } from 'kysely'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -11,6 +11,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { listenScreenScopes } from '../../test/screenScopeNotices'
+import { openAdds } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -438,6 +439,45 @@ describe('merging two rows that are one team', function () {
       role: 'owner',
       isPlayer: false
     })
+    // Both teams holding somebody only by an open add: neither row has them
+    // for the other's add to give way to.
+    await addedHere('grq_merge_into_both', 'Held By Both', {
+      role: 'member',
+      isPlayer: true
+    })
+    const both = await db
+      .selectFrom('group_requests')
+      .select(sql<string>`terms->>'userId'`.as('userId'))
+      .where('id', '=', 'grq_merge_into_both')
+      .executeTakeFirstOrThrow()
+    const theirs = await db
+      .selectFrom('memberships')
+      .select('id')
+      .where('user_id', '=', both.userId)
+      .where('team_id', '=', houser)
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_from_both',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: houser,
+          userId: both.userId,
+          membershipId: theirs.id,
+          createdMembership: true
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
     // A withdrawal on the game that goes, for a side of the game that stays.
     await db
       .insertInto('group_requests')
@@ -509,6 +549,9 @@ describe('merging two rows that are one team', function () {
         .where('id', '=', id)
         .executeTakeFirstOrThrow()
     expect((await here('grq_merge_into_player')).status).equals('superseded')
+    expect((await here('grq_merge_into_both')).status).equals('applied')
+    expect((await here('grq_merge_from_both')).status).equals('applied')
+    expect(await openAdds(db, hawks)).includes(both.userId)
     const keptCoach = await here('grq_merge_into_coach')
     expect(keptCoach.status).equals('applied')
     expect(keptCoach.terms).not.has.property('createdMembership')

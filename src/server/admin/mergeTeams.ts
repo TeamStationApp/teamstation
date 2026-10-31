@@ -303,7 +303,8 @@ export async function mergeTeams(
     // either direction: the add made nothing there, and rejecting it must not
     // take them off their own team. As a player, it has nothing left to undo;
     // as anything else, it undoes the playing and leaves the row as it was,
-    // and follows the row that stays.
+    // and follows the row that stays. A row itself held by an open add is no
+    // such thing: the add on the row that stays still answers for them.
     await sql`with recursive family(request_id, id) as (
         select id, terms->>'userId' from group_requests
           where kind = 'playerAdd' and status = 'applied'
@@ -323,6 +324,12 @@ export async function mergeTeams(
           join memberships m on m.user_id = f.id and m.team_id = case
             when asked.initiating_team_id = ${fromTeamId} then ${intoTeamId}
             else ${fromTeamId} end
+          where not exists (
+            select 1 from group_requests open
+              where open.kind = 'playerAdd' and open.status = 'applied'
+                and open.expires_at > now() and open.terms->>'mode' = 'roster'
+                and open.terms->>'membershipId' = m.id
+          )
           order by f.request_id, m.is_player desc
       )
       update group_requests r set

@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { ageOn } from '../../common/age'
-import { openAddsOf } from '../access'
+import { openArrivalsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
@@ -240,7 +240,7 @@ async function teamMemberIds(
   // Neither somebody a team holds only by an open add, nor their guardians,
   // until it can no longer be rejected: a player without their parents is no
   // better in the team's chat than a parent without their child.
-  const open = await openAddsOf(db, teamIds)
+  const open = await openArrivalsOf(db, teamIds)
   return [
     ...(await teamStaffIds(db, teamIds)),
     ...people
@@ -269,7 +269,7 @@ export async function teamGuardianRows(
     .execute()
   // Not the guardians of somebody a team holds only by an open add: who they
   // are is not that team's to read until the add can no longer be rejected.
-  const open = await openAddsOf(db, teamIds)
+  const open = await openArrivalsOf(db, teamIds)
   const players = rows.filter(
     row => open.get(row.team_id)?.has(row.user_id) !== true
   )

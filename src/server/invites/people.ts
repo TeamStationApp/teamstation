@@ -1,9 +1,9 @@
 import type { Kysely } from 'kysely'
 
-import { conflict } from '../../common/errors'
+import { conflict, forbidden } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
-import { openAddsOf } from '../access'
+import { heldByOpenAdd, openArrivalsOf } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -448,7 +448,7 @@ export async function peopleInScope(
   // Somebody here only through open adds shows as the add gave them: a short
   // name, and no addresses, until their side can no longer reject it.
   if (!viewer.isAdmin) {
-    const open = await openAddsOf(db, teamIds)
+    const open = await openArrivalsOf(db, teamIds)
     const held = [...people.values()].filter(
       each =>
         each.teams.length > 0 &&
@@ -709,6 +709,22 @@ export async function rolesAt(
  * never sees half of a change. `authority` is whose say it needs (an
  * administrator's unless the caller says otherwise).
  */
+/** A role keeps them on the team through a rejection, name and addresses too. */
+const HELD_ROLE =
+  'They can be given a role once their side can no longer reject this add'
+
+async function isSiteAdmin(
+  db: Kysely<Database>,
+  userId: string
+): Promise<boolean> {
+  const user = await db
+    .selectFrom('users')
+    .select('is_admin')
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  return user?.is_admin === true
+}
+
 export async function setScopeRoles(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
@@ -736,6 +752,14 @@ export async function setScopeRoles(
       wanted.admin,
       authority
     )
+    const had = await rolesAt(trx, scopeType, scopeId, userId)
+    if (
+      scopeType === 'team' &&
+      roles.some(role => !had.includes(role)) &&
+      (await heldByOpenAdd(trx, scopeId, [userId])) &&
+      !(await isSiteAdmin(trx, grantedBy))
+    )
+      throw forbidden(HELD_ROLE)
     await addToScope(trx, scopeType, scopeId, userId)
     if (scopeType === 'team' && !wanted.admin)
       await trx

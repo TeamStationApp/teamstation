@@ -1360,12 +1360,15 @@ export async function mayEditName(
 interface OpenHold {
   teamId: string
   userIds: string[]
+  /** The add made their row: they were not on the team before it. */
+  newcomer: boolean
 }
 
 /**
  * The holds in force: a roster add inside the window its player's side may
  * reject it in, while the row it landed on stands as a player's. Removing them
- * ends it, and so does a merge that took the row away. Until then their name,
+ * ends it, so does a merge that took the row away, and so does their side
+ * accepting a later add of them. Until then their name,
  * hands and family are not the team's: a rejection undoes the add, and could
  * not undo those. An add made before rows were recorded has none to check, and
  * counts. `userIds` are what a merge since left of the person, so a read by
@@ -1390,12 +1393,25 @@ async function openHolds(
       sql<string>`group_requests.terms->>'userId'`.as('userId'),
       sql<string | null>`group_requests.terms->>'membershipId'`.as(
         'membershipId'
+      ),
+      sql<boolean>`(group_requests.terms->>'createdMembership')::boolean`.as(
+        'createdMembership'
       )
     ])
     .where('group_requests.kind', '=', 'playerAdd')
     .where('group_requests.status', '=', 'applied')
     .where('group_requests.expires_at', '>', new Date())
     .where(sql<string>`group_requests.terms->>'mode'`, '=', 'roster')
+    .where(
+      sql<SqlBool>`not exists (
+        select 1 from group_requests later
+        where later.kind = 'playerAdd' and later.status = 'accepted'
+          and later.sent_at > group_requests.sent_at
+          and later.initiating_team_id = group_requests.initiating_team_id
+          and later.terms->>'mode' = 'roster'
+          and later.terms->>'userId' = group_requests.terms->>'userId'
+      )`
+    )
     .where(
       'teamIds' in scope
         ? sql.ref<string>('group_requests.initiating_team_id')
@@ -1413,7 +1429,8 @@ async function openHolds(
   )
   return standing.map(row => ({
     teamId: row.teamId!,
-    userIds: people.get(row.userId)?.userIds ?? [row.userId]
+    userIds: people.get(row.userId)?.userIds ?? [row.userId],
+    newcomer: row.createdMembership
   }))
 }
 
@@ -1425,6 +1442,22 @@ export async function openAddsOf(
   const held = new Map(teamIds.map(id => [id, new Set<string>()]))
   for (const hold of await openHolds(db, { teamIds }))
     for (const id of hold.userIds) held.get(hold.teamId)?.add(id)
+  return held
+}
+
+/**
+ * `openAddsOf`, of those the add brought to the team: somebody already on it
+ * in another role stays where they were in its chats and people lists, though
+ * what is theirs is held from the team all the same.
+ */
+export async function openArrivalsOf(
+  db: Kysely<Database>,
+  teamIds: readonly string[]
+): Promise<Map<string, Set<string>>> {
+  const held = new Map(teamIds.map(id => [id, new Set<string>()]))
+  for (const hold of await openHolds(db, { teamIds }))
+    if (hold.newcomer)
+      for (const id of hold.userIds) held.get(hold.teamId)?.add(id)
   return held
 }
 

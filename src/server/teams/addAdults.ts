@@ -200,8 +200,11 @@ async function addAdult(
   const links = deleted
     ? { made: 0, missing: 0, refused: 0 }
     : await linkGuardian(trx, teamId, userId, row.guardianOf, linking)
+  // A role keeps a held player on the team through a rejection.
   const rolesAdded =
-    row.staff && !deleted
+    row.staff &&
+    !deleted &&
+    (caller.isAdmin || !(await heldByOpenAdd(trx, teamId, [userId])))
       ? await addStaffRoles(trx, teamId, userId, caller.userId)
       : []
 

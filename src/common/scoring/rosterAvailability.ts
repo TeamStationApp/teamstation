@@ -55,7 +55,7 @@ export function onBothSides(
   return new Set(ids('home').filter(id => away.has(id)))
 }
 
-/** Who has batted or pitched in a game so far. */
+/** Who has batted, pitched, fielded or run in a game so far. */
 export function appearedIn(state: GameState): Set<number> {
   const { allPlays, currentPlay } = state.liveData.plays
   const begun =
@@ -63,7 +63,17 @@ export function appearedIn(state: GameState): Set<number> {
       ? allPlays
       : [...allPlays, currentPlay]
   return new Set(
-    begun.flatMap(play => [play.matchup.batter.id, play.matchup.pitcher.id])
+    begun.flatMap(play => {
+      const fielding = play.about.halfInning === 'top' ? 'home' : 'away'
+      return [
+        play.matchup.batter.id,
+        play.matchup.pitcher.id,
+        ...play.runners.map(runner => runner.details.runner.id),
+        ...Object.values(play.lineups?.began[fielding].defense ?? {}).flatMap(
+          id => id ?? []
+        )
+      ]
+    })
   )
 }
 

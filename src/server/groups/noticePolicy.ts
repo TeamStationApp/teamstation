@@ -28,7 +28,11 @@ import { noteScopeChange } from '../socket/syncRevision'
 import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId } from '../users/insertUser'
 import { shortNamesOf } from '../users/nameBook'
-import type { Clock, StoredRequest } from './requests'
+import {
+  type Clock,
+  recordRequestRecipient,
+  type StoredRequest
+} from './requests'
 
 type Db = Kysely<Database>
 
@@ -404,6 +408,26 @@ async function gameStarted(trx: Db, game: { id: string }): Promise<boolean> {
 }
 
 /**
+ * Whether a stored play names them: an intentional walk begins no game by
+ * `gameStarted`'s reading, and still has its batter on the record.
+ */
+async function namedInPlays(
+  trx: Db,
+  game: { id: string },
+  gumboIds: ReadonlySet<number>
+): Promise<boolean> {
+  if (gumboIds.size === 0) return false
+  const row = await trx
+    .selectFrom('event_players')
+    .innerJoin('events', 'events.id', 'event_players.event_id')
+    .select('event_players.event_id')
+    .where('events.gameId', '=', game.id)
+    .where('event_players.gumbo_id', 'in', [...gumboIds])
+    .executeTakeFirst()
+  return row != null
+}
+
+/**
  * The side of a game an add's player is on now: the list that holds them, for
  * sides swap before a first pitch and a game can move to another team; else
  * the team's side, and the side the add joined last.
@@ -455,7 +479,11 @@ async function playedGames(
       .select(['id', 'currentPlay', 'guests', 'home_team_id', 'away_team_id'])
       .where('id', '=', terms.gameId!)
       .executeTakeFirst()
-    if (game == null || !(await gameStarted(trx, game))) return []
+    if (
+      game == null ||
+      !((await gameStarted(trx, game)) || (await namedInPlays(trx, game, held)))
+    )
+      return []
     return [{ ...game, side: sideOf(game, terms, held) }]
   }
   if (gumbos.length === 0) return []
@@ -577,12 +605,6 @@ async function playedGames(
 }
 
 /**
- * Whether a later add of the same person to the same team (or, for a pool
- * add, the same game) was made since: applied, or accepted after asking.
- * Undoing by team and person would undo that later add with this one's
- * terms, so only the latest add can be rejected.
- */
-/**
  * Serializes every add of one person. The merge lock is shared: two adds run
  * together without this, the second meets the first's row or asks twice, and
  * two teams each pass the other side's check. Taken after any game row.
@@ -613,6 +635,12 @@ export async function rejoinedSince(
   return row != null
 }
 
+/**
+ * Whether a later add of the same person to the same team (or, for a pool
+ * add, the same game) was made since: applied, or accepted after asking.
+ * Undoing by team and person would undo that later add with this one's
+ * terms, so only the latest add can be rejected.
+ */
 export async function supersededPlayerAdd(
   db: Db,
   request: StoredRequest
@@ -946,6 +974,8 @@ async function decideOnce(
 ): Promise<void> {
   if (!(await mayAnswerPlayerAdd(trx, actor, request)))
     throw forbidden('Only the player’s side can decide this')
+  // Told or not at the add, whoever decides keeps it in their History.
+  await recordRequestRecipient(trx, request.id, actor.userId)
   const terms = request.terms as PlayerAddTerms
   const now = clock.now()
   const open = request.expires_at.getTime() > now.getTime()

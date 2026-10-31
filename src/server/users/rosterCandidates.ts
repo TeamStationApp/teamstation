@@ -216,16 +216,6 @@ interface CandidateRow {
 }
 
 /**
- * Every live player the asker may add, nearest first: the asker's own teams
- * and guarded players, then the season (the game's, or any `forTeam` is in),
- * then the team's league, then, once three letters are typed, everyone else.
- * A full account that plays for no team is everyone else too (or the
- * asker's own, when they guard it).
- * Players already on the team, and with a game anybody already in it, are
- * left out. Pages are keyset pages over (tier, folded first, folded last, id),
- * so the list growing between pages repeats and skips nobody.
- */
-/**
  * Whether a person is somebody this team has a reason to know, as the search's
  * tiers read it: on a team of the caller's, in the team's season or league, or
  * somebody the caller guards. Anybody else is a stranger, and an add of a
@@ -284,6 +274,16 @@ export async function hasTie(
   return rows.length > 0
 }
 
+/**
+ * Every live player the asker may add, nearest first: the asker's own teams
+ * and guarded players, then the season (the game's, or any `forTeam` is in),
+ * then the team's league, then, once three letters are typed, everyone else.
+ * A full account that plays for no team is everyone else too (or the
+ * asker's own, when they guard it).
+ * Players already on the team, and with a game anybody already in it, are
+ * left out. Pages are keyset pages over (tier, folded first, folded last, id),
+ * so the list growing between pages repeats and skips nobody.
+ */
 export async function rosterCandidates(
   db: Kysely<Database>,
   actor: Actor,

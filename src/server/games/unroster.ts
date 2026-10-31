@@ -15,6 +15,7 @@ import {
 } from '../../common/gumboPlay'
 import { storedRecordOf } from '../../common/scoring/gumbo'
 import {
+  appearedIn,
   onBothSides,
   reconcileRoster
 } from '../../common/scoring/rosterAvailability'
@@ -195,7 +196,8 @@ async function applyAvailability(
     context.teams,
     availability.roster,
     availability.guestPlayers,
-    unrostered
+    unrostered,
+    appearedIn(session.state)
   )
   const problem = session.apply({ type: 'lineup', kind: 'roster', setup })
     .problems[0]
@@ -228,7 +230,7 @@ export async function reconcileUnbegunLineup(
     .select(hasScoringEventsSql.as('begun'))
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
-  if (begun) return
+  if (begun || (await readPlays(trx, gameId)).length > 0) return
   const stored = await resolveScoringGame(trx, {
     plays: [],
     currentPlay: atBatOf(game, false) as CurrentPlay | null
