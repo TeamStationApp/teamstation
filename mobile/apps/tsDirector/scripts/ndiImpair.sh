@@ -67,7 +67,7 @@ fi
 PIPE_ARGS=""
 [ -n "$BANDWIDTH" ] && PIPE_ARGS="$PIPE_ARGS bw $BANDWIDTH"
 [ -n "$DELAY" ] && PIPE_ARGS="$PIPE_ARGS delay $DELAY"
-[ -n "$LOSS" ] && PIPE_ARGS="$PIPE_ARGS plr $(python3 -c "print(float('$LOSS')/100)")"
+[ -n "$LOSS" ] && PIPE_ARGS="$PIPE_ARGS plr $(node -e 'console.log(Number(process.argv[1]) / 100)' "$LOSS")"
 # dummynet expresses jitter as a delay range rather than a separate figure.
 [ -n "$JITTER" ] && PIPE_ARGS="$PIPE_ARGS delay $(( ${DELAY:-0} + ${JITTER} ))"
 [ -n "$PIPE_ARGS" ] || fail "nothing to do: pass at least one of --loss --delay --jitter --bandwidth"

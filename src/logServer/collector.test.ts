@@ -455,6 +455,7 @@ describe('collector durable HTTP and provider boundary', function () {
       ).equals(403)
       expect((await post('/ingest/missing', wire(row()))).status).equals(404)
       expect((await post('/ingest/__proto__', wire(row()))).status).equals(404)
+      expect((await post('/ingest/demo', '')).status).equals(400)
       const accepted = await post('/ingest/demo', wire(row()), {
         origin: config.origins[0]
       })

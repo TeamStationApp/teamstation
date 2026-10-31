@@ -11,15 +11,33 @@ clip() {
   case "$only" in "  " | *" $1 "*) ;; *) return 0 ;; esac
   say -o "/tmp/$1.aiff" "$2"
   afconvert -f WAVE -d LEI16@16000 -c 1 "/tmp/$1.aiff" "/tmp/$1.raw.wav"
-  python3 - "$1" <<'PY'
-import sys, wave
-name = sys.argv[1]
-with wave.open(f'/tmp/{name}.raw.wav') as w:
-    frames = w.readframes(w.getnframes()); params = w.getparams()
-pad = b'\x00\x00' * 8000
-with wave.open(f'{name}.wav', 'wb') as out:
-    out.setparams(params); out.writeframes(pad + frames + pad)
-PY
+  node - "$1" <<'JS'
+const { readFileSync, writeFileSync } = require('node:fs')
+const name = process.argv[2]
+const raw = readFileSync(`/tmp/${name}.raw.wav`)
+let format, frames
+for (let at = 12; at + 8 <= raw.length; ) {
+  const size = raw.readUInt32LE(at + 4)
+  const chunk = raw.subarray(at + 8, at + 8 + size)
+  const id = raw.toString('latin1', at, at + 4)
+  if (id === 'fmt ') format = chunk.subarray(0, 16)
+  if (id === 'data') frames = chunk
+  at += 8 + size + (size % 2)
+}
+const pad = Buffer.alloc(16000)
+const data = Buffer.concat([pad, frames, pad])
+const header = Buffer.alloc(20)
+header.write('RIFF', 0, 'latin1')
+header.writeUInt32LE(36 + data.length, 4)
+header.write('WAVEfmt ', 8, 'latin1')
+header.writeUInt32LE(16, 16)
+const size = Buffer.alloc(4)
+size.writeUInt32LE(data.length)
+writeFileSync(
+  `${name}.wav`,
+  Buffer.concat([header, format, Buffer.from('data'), size, data])
+)
+JS
   rm -f "/tmp/$1.aiff" "/tmp/$1.raw.wav"
 }
 # E1-E6

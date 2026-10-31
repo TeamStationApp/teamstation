@@ -1739,11 +1739,7 @@ function ScoringPanel(props: {
           openRosters({ dictated: substitution.dictated })
         return
       }
-      if (
-        actions.length > 0 &&
-        !rosterLoading &&
-        (lineupAccepted || hasActivePlay)
-      )
+      if (actions.length > 0 && (lineupAccepted || hasActivePlay))
         dispatch({
           type: 'DICTATED',
           transcript,

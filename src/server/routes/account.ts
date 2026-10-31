@@ -136,14 +136,15 @@ async function limit(
   userId: string,
   action: string,
   maximum: number,
-  email?: string
+  email?: string,
+  windowSec = 900
 ): Promise<void> {
   const rules: LimitRule[] = [
     {
       scope: `account.${action}`,
       key: String(userId),
       limit: maximum,
-      windowSec: 900
+      windowSec
     }
   ]
   if (email != null)
@@ -266,7 +267,11 @@ export function accountRoutes(
         )
       const authorization = await db.transaction().execute(async tx => {
         const held = await lockAccount(tx, userId)
-        await limit(tx, userId, 'password', 10)
+        // A guess at the current password is the one thing to hold down hard. An
+        // email code has its own attempt count, and whoever forgot should get in.
+        if (body.reset == null) {
+          await limit(tx, userId, 'passwordGuess', 3, undefined, 3600)
+        } else await limit(tx, userId, 'password', 10)
         const allowed =
           body.reset == null ||
           (await confirmPasswordReset(tx, userId, held, body.reset, false))

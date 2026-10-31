@@ -130,9 +130,12 @@ export function collector(
       }
       let rows
       try {
+        const body: unknown = req.body
+        if (!Buffer.isBuffer(body)) throw new Error('No event bytes')
+        const bytes = Buffer.from(body)
         rows = req.path.startsWith('/api/')
-          ? envelope(req.body, project.app)
-          : parseBatch((req.body as Buffer).toString('utf8'))
+          ? envelope(bytes, project.app)
+          : parseBatch(bytes.toString('utf8'))
         if (rows.some(row => row.U !== undefined)) {
           const provided = Buffer.from(req.header('authorization') ?? '')
           const expected = Buffer.from(

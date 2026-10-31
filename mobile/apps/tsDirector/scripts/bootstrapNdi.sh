@@ -7,7 +7,7 @@
 # The interesting step is the simulator slice. `lib/iOS/libndi_ios.a` ships arm64 for the
 # device and x86_64 for the simulator, and Xcode will not run an x86_64 simulator on Apple
 # Silicon — so a stock SDK cannot be built for any iPad simulator on this machine.
-# `patchMachoPlatform.py` retargets a copy of the device slice to the simulator platform,
+# `patchMachoPlatform.mjs` retargets a copy of the device slice to the simulator platform,
 # which is a byte edit of one load-command field. See that script for why `vtool` and
 # `ar x` both fail here.
 set -euo pipefail
@@ -97,7 +97,7 @@ lipo -thin x86_64 "$SDK_ROOT/lib/iOS/libndi_ios.a" -output "$SIM_X86"
 
 log "Retargeting the arm64 slice for the iOS simulator"
 cp "$DEVICE_LIB" "$SIM_ARM64"
-python3 "$DIRECTOR_ROOT/scripts/patchMachoPlatform.py" 2 7 "$SIM_ARM64"
+node "$DIRECTOR_ROOT/scripts/patchMachoPlatform.mjs" 2 7 "$SIM_ARM64"
 ranlib "$SIM_ARM64"
 
 log "Recombining the simulator slices"

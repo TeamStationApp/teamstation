@@ -75,7 +75,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
       const charged = await h.db
         .selectFrom('rate_events')
         .select('at')
-        .where('scope', '=', 'account.password')
+        .where('scope', 'in', ['account.password', 'account.passwordGuess'])
         .where('key', '=', userIdOfGumbo(101))
         .executeTakeFirst()
       if (charged != null) return

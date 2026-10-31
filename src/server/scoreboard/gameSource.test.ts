@@ -461,7 +461,7 @@ describe('the game as a scoreboard source', function () {
         console.error = consoleError
       }
       expect(called).deep.equals([gameId])
-      expect(String(errors[0])).includes(`onGameWritten ${gameId}`)
+      expect(String(errors[0])).includes(`onGameWritten %s,${gameId}`)
       expect((await load(gameId)).currentPlay).not.equals(null)
     })
   })

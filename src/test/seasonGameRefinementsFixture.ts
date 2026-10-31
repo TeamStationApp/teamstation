@@ -278,8 +278,14 @@ export async function refinementsFixture(
       res.end(JSON.stringify({ code: f.h.mail.get(email) ?? null }))
       return
     }
+    const url = new URL(req.url ?? '/', f.h.origin)
+    if (url.origin !== new URL(f.h.origin).origin) {
+      res.writeHead(400)
+      res.end()
+      return
+    }
     const upstream = proxyRequest(
-      new URL(req.url ?? '/', f.h.origin),
+      url,
       { method: req.method, headers: req.headers },
       reply => {
         res.writeHead(reply.statusCode ?? 500, reply.headers)

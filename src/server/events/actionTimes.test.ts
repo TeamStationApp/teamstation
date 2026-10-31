@@ -40,14 +40,14 @@ describe('action times on the server (U4)', function () {
       awayTeamId: context.teams.away.id,
       startAt: new Date()
     })
-    const load: EventStore['load'] = async () => {
+    const load: EventStore['load'] = async id => {
       const game = await db
         .selectFrom('games')
         .select('currentPlay')
-        .where('id', '=', gameId)
+        .where('id', '=', id)
         .executeTakeFirstOrThrow()
       return {
-        plays: (await readPlays(db, gameId)).map(row => row.gumbo as GumboPlay),
+        plays: (await readPlays(db, id)).map(row => row.gumbo as GumboPlay),
         currentPlay: game.currentPlay as CurrentPlay | null
       }
     }

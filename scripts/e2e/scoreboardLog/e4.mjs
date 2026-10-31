@@ -72,16 +72,16 @@ const check = (ok, what) => {
 }
 
 /**
- * Runs curl as printed, with the token in the environment and never on the
+ * Runs curl as printed, with the token on its standard input and never on the
  * line, and answers the status and the parsed body.
  */
 function curl(url, { auth = true } = {}) {
   const header = auth ? '-H "Authorization: Bearer $TOKEN" ' : ''
-  const line = `curl -s ${header}"${url}"`
-  console.log(`$ ${line}`)
-  const ran = spawnSync('sh', ['-c', `${line} -w '\\n%{http_code}'`], {
+  console.log(`$ curl -s ${header}"${url}"`)
+  const args = ['-s', ...(auth ? ['-H', '@-'] : []), url]
+  const ran = spawnSync('curl', [...args, '-w', '\n%{http_code}'], {
     encoding: 'utf8',
-    env: { ...process.env, TOKEN: token }
+    input: auth ? `Authorization: Bearer ${token}\n` : undefined
   })
   const text = ran.stdout.trimEnd()
   const cut = text.lastIndexOf('\n')

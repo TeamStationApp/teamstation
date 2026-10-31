@@ -132,7 +132,13 @@ export async function modalFixture(
       }
       if (!u.pathname.startsWith('/api/')) {
         const asset = extname(u.pathname) === '' ? '/' : u.pathname
-        const upstream = await fetch(new URL(asset, assets))
+        const url = new URL(asset, assets)
+        if (url.origin !== new URL(assets).origin) {
+          response.statusCode = 404
+          response.end()
+          return
+        }
+        const upstream = await fetch(url)
         response.statusCode = upstream.status
         response.setHeader(
           'Content-Type',

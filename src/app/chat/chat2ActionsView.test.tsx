@@ -355,7 +355,7 @@ describe('chat message presentation', function () {
       expect(urls).equals(1)
       expect(released).deep.equals([])
       expect(node.querySelector('video,audio')).equals(null)
-      node = await render(
+      await render(
         <>
           <MessageBubble
             key="original"

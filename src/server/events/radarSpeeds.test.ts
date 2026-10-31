@@ -55,13 +55,13 @@ describe('persisted radar speeds', function () {
     })
     let time = Date.parse('2026-01-01T12:00:00Z')
     let version = 0
-    const load: EventStore['load'] = async () => ({
-      plays: (await readPlays(db, id)).map(r => r.gumbo as GumboPlay),
+    const load: EventStore['load'] = async gameId => ({
+      plays: (await readPlays(db, gameId)).map(r => r.gumbo as GumboPlay),
       currentPlay: (
         await db
           .selectFrom('games')
           .select('currentPlay')
-          .where('id', '=', id)
+          .where('id', '=', gameId)
           .executeTakeFirstOrThrow()
       ).currentPlay as CurrentPlay
     })

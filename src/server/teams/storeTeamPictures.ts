@@ -200,7 +200,7 @@ async function storePicture(
     if (error instanceof UnreadableImage) {
       throw unsupportedMedia('That is not a picture TeamStation can read')
     }
-    console.error(`storing a ${kind} picture for ${entityId}`, error)
+    console.error('storing a %s picture for %s', kind, entityId, error)
     throw unavailable('The picture store did not answer')
   }
 

@@ -4,7 +4,6 @@
 
 const { EventEmitter } = require('node:events')
 const { spawn } = require('node:child_process')
-const fs = require('node:fs')
 const net = require('node:net')
 
 const RTP_MTU = 1200

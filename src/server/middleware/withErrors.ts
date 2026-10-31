@@ -56,7 +56,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     return
   }
   if (!(error instanceof HttpError)) {
-    console.error(`${req.method} ${req.path}`, error)
+    console.error('%s %s', req.method, req.path, error)
     captureException(error)
   }
   if (res.headersSent) {

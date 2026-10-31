@@ -421,7 +421,7 @@ describe('replay machine', function () {
         context
       )
       state = replayReducer(state, { type: 'CHANGED', change: ball })
-      let now = run(
+      const now = run(
         state,
         next => next.queue.length === 0 && replayIdle(next.scoring)
       ).now
@@ -441,7 +441,6 @@ describe('replay machine', function () {
         next => next.queue.length === 0 && replayIdle(next.scoring),
         now
       )
-      now = after.now
       expect(after.state.changed).equals(false)
       expect(after.state.scoring.session.pending).equals(null)
       expect(replayCard(after.state, WORDS).line).not.contains('Play changed')

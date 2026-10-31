@@ -1,5 +1,6 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 import { record, type Recording } from '../../../../tools/eventControl/recorder'
@@ -463,7 +464,7 @@ async function receiver(): Promise<void> {
   for (const g of [A, B]) {
     recordings.push(record({
       server: required('SEAT_URL'),
-      token: execFileSync('cat', [required('TOKEN_ONE_FILE')], { encoding: 'utf8' }).trim(),
+      token: readFileSync(required('TOKEN_ONE_FILE'), 'utf8').trim(),
       gameId: g.id,
       log: line => {
         const state = line.state as { pitchSpeed?: number } | undefined

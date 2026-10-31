@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomInt } from 'node:crypto'
 
 import type { Kysely } from 'kysely'
 
@@ -137,9 +137,10 @@ const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'
 const GENERATED_LENGTH = 8
 
 export function makeInviteCode(): string {
-  const bytes = randomBytes(GENERATED_LENGTH)
   let code = ''
-  for (const byte of bytes) code += ALPHABET[byte % ALPHABET.length]
+  for (let i = 0; i < GENERATED_LENGTH; i++) {
+    code += ALPHABET[randomInt(ALPHABET.length)]
+  }
   return code
 }
 

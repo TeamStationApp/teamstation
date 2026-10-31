@@ -288,7 +288,7 @@ x86_64 for the simulator**, and Xcode will not run an x86_64 simulator on Apple 
 stock SDK cannot be built for any iPad simulator on this machine, which would remove simulator
 testing from this feature entirely.
 
-`scripts/patchMachoPlatform.py` retargets a copy of the device slice by rewriting
+`scripts/patchMachoPlatform.mjs` retargets a copy of the device slice by rewriting
 `LC_BUILD_VERSION.platform`, one 4-byte word in a load command whose size does not change. Two
 things that do not work, both established the expensive way and both recorded in the script:
 `vtool -replace` rejects every one of these objects with "not enough space to hold load commands",
