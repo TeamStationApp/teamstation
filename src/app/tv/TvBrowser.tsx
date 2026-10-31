@@ -193,6 +193,14 @@ function Tile({
             )}
           </TvPoster>
         )}
+        {/* A static image-area cue remains visible without artwork or motion. */}
+        {focused && (
+          <View
+            testID={`${id}-focus-cue`}
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.thumbnailFocus]}
+          />
+        )}
       </View>
       <Text numberOfLines={1} style={styles.tileTitle}>
         {title}
@@ -932,6 +940,10 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  thumbnailFocus: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 12
   },
   placeholder: { fontSize: 54, color: '#818b84' },
   tileTitle: { fontSize: 32, color: '#fff' },
