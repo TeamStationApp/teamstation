@@ -3,8 +3,9 @@ import { mkdir, readFile, rm, stat } from 'fs/promises'
 import { type Kysely, sql } from 'kysely'
 import { join } from 'path'
 
-import { canFilm, roleScopes } from '../access'
+import { canFilm, roleScopesForUsers } from '../access'
 import { hashToken } from '../auth/tokens'
+import { anyOf } from '../db/anyOf'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
@@ -1003,6 +1004,10 @@ export async function sync(
   }
   let failure: { error: unknown } | undefined
   try {
+    const authorized = await publishingAuthority(
+      db,
+      rows.filter(row => row.state !== 'revoked')
+    )
     for (const row of rows) {
       if (row.state === 'revoked') {
         finish(
@@ -1013,7 +1018,7 @@ export async function sync(
         )
         continue
       }
-      if (!(await mayPublish(db, row))) {
+      if (!authorized.has(row.id)) {
         await revokePublishing(db, row.id, now)
         finish(row.id, 'streaming permission was removed')
         continue
@@ -1205,29 +1210,57 @@ async function mayPublish(
   db: Kysely<Database>,
   row: { userId: string; gameId: string; teamId: string }
 ): Promise<boolean> {
-  const user = await db
+  const may = await publishingAuthority(db, [{ ...row, id: 'this row' }])
+  return may.has('this row')
+}
+
+/**
+ * The ids of those rows whose key may publish now, in one set of reads however
+ * many rows there are: the sync loop asks about all of them once a second.
+ */
+export async function publishingAuthority(
+  db: Kysely<Database>,
+  rows: ReadonlyArray<{
+    id: string
+    userId: string
+    gameId: string
+    teamId: string
+  }>
+): Promise<Set<string>> {
+  const authorized = new Set<string>()
+  if (rows.length === 0) return authorized
+  const users = await db
     .selectFrom('users')
-    .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
-    .where('id', '=', row.userId)
-    .executeTakeFirst()
-  if (
-    user == null ||
-    user.disabled_at != null ||
-    user.merged_into != null ||
-    !user.login_enabled
-  )
-    return false
-  const game = await db
+    .select('id')
+    .where('id', '=', anyOf([...new Set(rows.map(row => row.userId))]))
+    .where('disabled_at', 'is', null)
+    .where('merged_into', 'is', null)
+    .where('login_enabled', '=', true)
+    .execute()
+  const active = new Set(users.map(user => user.id))
+  const ofActive = rows.filter(row => active.has(row.userId))
+  if (ofActive.length === 0) return authorized
+
+  const games = await db
     .selectFrom('games')
-    .select(['home_team_id', 'away_team_id'])
-    .where('id', '=', row.gameId)
-    .executeTakeFirst()
-  if (
-    game == null ||
-    ![game.home_team_id, game.away_team_id].includes(row.teamId)
+    .select(['id', 'home_team_id', 'away_team_id'])
+    .where('id', '=', anyOf([...new Set(ofActive.map(row => row.gameId))]))
+    .execute()
+  const sides = new Map(
+    games.map(game => [game.id, [game.home_team_id, game.away_team_id]])
   )
-    return false
-  return canFilm(await roleScopes(db, row.userId, user.is_admin), row.teamId)
+  const onASide = ofActive.filter(
+    row => sides.get(row.gameId)?.includes(row.teamId) === true
+  )
+  if (onASide.length === 0) return authorized
+
+  const scopes = await roleScopesForUsers(
+    db,
+    onASide.map(row => row.userId)
+  )
+  for (const row of onASide)
+    if (canFilm(scopes.get(row.userId)!, row.teamId)) authorized.add(row.id)
+  return authorized
 }
 
 /** Lost authority permanently invalidates the old key, even if later restored. */
