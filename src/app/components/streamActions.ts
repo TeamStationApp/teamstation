@@ -34,6 +34,22 @@ export function streamActionsFor(
   return actions
 }
 
+/** What the "…" on a phone's camera row offers. */
+export type PhoneStreamAction = Extract<StreamAction, 'rotate' | 'end'>
+
+/**
+ * The phone's "…": a new key and End on one's own camera, End on somebody
+ * else's, while it has not ended. The phone's RTMP sheet, Revoke and the row's
+ * delete button stand in for the rest of `streamActionsFor`.
+ */
+export function phoneStreamActions(
+  stream: LiveStream,
+  mine: boolean
+): PhoneStreamAction[] {
+  if (stream.state === 'ended' || stream.closesAt != null) return []
+  return mine ? ['rotate', 'end'] : ['end']
+}
+
 /**
  * Whether a press has to be made twice.
  *

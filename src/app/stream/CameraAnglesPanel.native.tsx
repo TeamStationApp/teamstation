@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Platform, Pressable, Text, View } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 
 import type {
   CameraSource,
@@ -10,12 +10,20 @@ import type {
 } from '../../common/api'
 import { observeUpload } from '../../common/observability/upload'
 import { SectionHeader } from '../components/SectionHeader'
-import { streamActionsFor } from '../components/streamActions'
+import { phoneStreamActions } from '../components/streamActions'
 import { lstrings, sprintf } from '../locales/strings'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AngleNamePrompt } from './AngleNamePrompt'
+import { CameraRow } from './CameraRow'
+import {
+  type Angle,
+  type CameraTap,
+  isEnded,
+  orderAngles
+} from './cameraRowRules'
 import { CameraSourceSheet } from './CameraSourceSheet'
+import { ConfirmSheet } from './ConfirmSheet'
 import { deviceId as installId } from './deviceId'
 import {
   type PhoneRecording,
@@ -35,6 +43,8 @@ import {
   type StreamingSession
 } from './StreamingScreen.native'
 import { StreamPill } from './StreamPill'
+import { useLocalCopies } from './useLocalCopies'
+import { VideoDetailsSheet } from './VideoDetailsSheet'
 
 /** How often the game's cameras are read again while the panel is up. */
 export const ANGLES_POLL_MS = 5000
@@ -54,34 +64,24 @@ export interface CameraAnglesPanelProps {
   onPublishing?: (videoIds: string[]) => void
   /** Whether the game has a video to play. Without one the tab says so here. */
   hasVideo: boolean
+  /** Plays one of the game's videos in the player above. */
+  onPlay?: (videoId: string) => void
 }
 
-/** The setup sheet up, or the next once iOS has taken the last away. */
-type SetupStep = 'name' | 'source' | 'rtmp' | 'revoke'
+/** The sheet up, or the next once iOS has taken the last away. */
+type SheetStep =
+  | 'name'
+  | 'source'
+  | 'rtmp'
+  | 'revoke'
+  | 'details'
+  | 'deleteVideo'
+  | 'deleteCopy'
+  | 'end'
 
 interface OpenCamera {
   session: StreamingSession
   id: string
-}
-
-/** The game's cameras, each marked whether it is the caller's own. */
-function anglesOf(
-  streams: GameLiveStreams | undefined
-): Array<{ stream: LiveStream; mine: boolean }> {
-  if (streams == null) return []
-  return [
-    ...streams.mine.map(stream => ({ stream, mine: true })),
-    ...streams.others.map(stream => ({ stream, mine: false }))
-  ]
-}
-
-/** The chip's word: Live while video arrives, Ended once it was ended. */
-export function angleState(stream: LiveStream): 'live' | 'idle' | 'ended' {
-  if (stream.state === 'publishing') return 'live'
-  if (stream.state === 'ended') return 'ended'
-  if (stream.closesAt != null && Date.parse(stream.closesAt) <= Date.now())
-    return 'ended'
-  return 'idle'
 }
 
 /**
@@ -106,10 +106,9 @@ function isUploading(
  * The phone's camera area on a game's Videos tab.
  *
  * - "No videos", while the game has no video and no camera (`StreamEmptyState`).
- * - A row for every camera on the game, the caller's and other people's: its
- *   angle, the device filming it, and whether it is live. This phone's own
- *   rows open the camera again; a camera the caller may manage has a "…" with
- *   the web panel's actions.
+ * - A row for every camera on the game (`CameraRow`), the caller's first, then
+ *   other people's: what it is doing, how long it has run, and what can be
+ *   done with it. Ended cameras go at the bottom, below Record Video.
  * - A row for every take on this phone that TeamStation does not have yet,
  *   with Upload Recording.
  * - Record Video, which steps through setup: the angle's name, then this
@@ -129,7 +128,8 @@ export function CameraAnglesPanel(
     deviceId = installId,
     Screen = StreamingScreen,
     copy,
-    hasVideo
+    hasVideo,
+    onPlay
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -142,18 +142,17 @@ export function CameraAnglesPanel(
   const [capabilities, setCapabilities] = useState<
     PhoneStreamCapabilities | undefined
   >(undefined)
-  const { recordings, refresh } = useRecordingsOf(phone)
+  const takesOnPhone = useRecordingsOf(phone)
+  const { recordings, refresh } = takesOnPhone
   /** Each upload's latest word, from the engine or from the press itself. */
   const [progress, setProgress] = useState<Record<string, UploadProgress>>({})
   /** Takes whose upload was cancelled here, back to their button. */
   const [cancelled, setCancelled] = useState<Record<string, true>>({})
   const [message, setMessage] = useState<string | undefined>(undefined)
-  const [sheet, setSheet] = useState<
-    { stream: LiveStream; mine: boolean } | undefined
-  >(undefined)
-  const [step, setStep] = useState<SetupStep | undefined>(undefined)
+  const [sheet, setSheet] = useState<Angle | undefined>(undefined)
+  const [step, setStep] = useState<SheetStep | undefined>(undefined)
   /** The step that waits for iOS to finish taking the last sheet away. */
-  const [nextStep, setNextStep] = useState<SetupStep | undefined>(undefined)
+  const [nextStep, setNextStep] = useState<SheetStep | undefined>(undefined)
   /** Bumped each time the prompt opens, so it opens empty. */
   const [promptKey, setPromptKey] = useState(0)
   /** The angle's name, carried from the prompt to the camera's make. */
@@ -162,6 +161,10 @@ export function CameraAnglesPanel(
   /** Bumped each time the RTMP sheet opens, so it asks afresh. */
   const [rtmpKey, setRtmpKey] = useState(0)
   const [revoking, setRevoking] = useState<LiveStream | undefined>(undefined)
+  /** The camera Video details, delete or End is about. */
+  const [chosen, setChosen] = useState<LiveStream | undefined>(undefined)
+  /** Where a delete's Cancel goes back to. */
+  const [fromDetails, setFromDetails] = useState(false)
   /** The camera to open once the prompt has gone. */
   const [pending, setPending] = useState<OpenCamera | undefined>(undefined)
   const [open, setOpen] = useState<OpenCamera | undefined>(undefined)
@@ -175,6 +178,18 @@ export function CameraAnglesPanel(
     const next = await client.liveStreams(gameId)
     if (live.current) setStreams(next)
   }, [client, gameId])
+  const reloadQuietly = useCallback((): void => {
+    reload().catch(() => undefined)
+  }, [reload])
+  const { dropCopy } = useLocalCopies({
+    client,
+    gameId,
+    phone,
+    streams,
+    myId,
+    takes: takesOnPhone,
+    reload: reloadQuietly
+  })
 
   useEffect(() => {
     live.current = true
@@ -182,7 +197,7 @@ export function CameraAnglesPanel(
       found => {
         if (!live.current) return
         setAccess(found)
-        if (found.canFilm) reload().catch(() => undefined)
+        if (found.canFilm) reloadQuietly()
       },
       () => {
         if (live.current) setAccess(null)
@@ -203,7 +218,7 @@ export function CameraAnglesPanel(
     return () => {
       live.current = false
     }
-  }, [client, gameId, phone, reload])
+  }, [client, gameId, phone, reloadQuietly])
 
   // Every five seconds while the panel is up: the cameras, and this phone's
   // takes, so a camera another phone starts appears and a finished upload's
@@ -212,21 +227,21 @@ export function CameraAnglesPanel(
   useEffect(() => {
     if (!canFilm) return
     const timer = setInterval(() => {
-      reload().catch(() => undefined)
+      reloadQuietly()
       refresh()
     }, ANGLES_POLL_MS)
     return () => {
       clearInterval(timer)
     }
-  }, [canFilm, refresh, reload])
+  }, [canFilm, refresh, reloadQuietly])
 
   useEffect(
     () =>
       phone.onUpload(next => {
         setProgress(current => ({ ...current, [next.liveStreamId]: next }))
-        if (next.state === 'uploaded') reload().catch(() => undefined)
+        if (next.state === 'uploaded') reloadQuietly()
       }),
-    [phone, reload]
+    [phone, reloadQuietly]
   )
 
   // iOS presents one modal at a time: the camera waits for the prompt to
@@ -237,12 +252,14 @@ export function CameraAnglesPanel(
     setPending(undefined)
   }, [pending, step])
 
-  const angles = anglesOf(streams)
+  const { active, ended } = orderAngles(streams)
+  const angles = [...active, ...ended]
   const takes = recordings.filter(
     recording =>
       recording.gameId === gameId &&
       recording.uploadedAt == null &&
-      recording.liveStreamId !== open?.session.streamId
+      recording.liveStreamId !== open?.session.streamId &&
+      streams?.discarded.includes(recording.liveStreamId) !== true
   )
   const supported = capabilities?.supported === true
   if (access === undefined || (canFilm && streams == null)) return null
@@ -309,7 +326,7 @@ export function CameraAnglesPanel(
   }
 
   /** The next sheet, or none. iOS waits for this one to leave (`sheetGone`). */
-  const goTo = (next: SetupStep | undefined): void => {
+  const goTo = (next: SheetStep | undefined): void => {
     if (Platform.OS === 'ios' && step != null) {
       setStep(undefined)
       setNextStep(next)
@@ -349,15 +366,41 @@ export function CameraAnglesPanel(
 
   const reopen = (stream: LiveStream): void => {
     setMessage(undefined)
-    // An ended or closing camera is held no longer; tapping it starts afresh
-    // under its name, as Record video would.
-    const held =
-      stream.state !== 'ended' && stream.closesAt == null
-        ? stream.id
-        : undefined
-    request(stream.label, held).then(setOpen, (error: unknown) => {
+    const take = recordings.find(one => one.liveStreamId === stream.id)
+    if (take != null && uploading(take)) {
+      setMessage(sprintf(lstrings.stream_error_uploading, stream.label))
+      return
+    }
+    request(stream.label, stream.id).then(setOpen, (error: unknown) => {
       setMessage(error instanceof Error ? error.message : lstrings.common_retry)
     })
+  }
+
+  /** Opens one of the sheets about a camera. */
+  const choose = (stream: LiveStream, next: SheetStep): void => {
+    setMessage(undefined)
+    setChosen(stream)
+    setFromDetails(step === 'details')
+    goTo(next)
+  }
+
+  const tapRow = (tap: CameraTap, stream: LiveStream): void => {
+    switch (tap) {
+      case 'details':
+        choose(stream, 'details')
+        break
+      case 'play':
+        if (stream.playableVideoId != null) onPlay?.(stream.playableVideoId)
+        break
+      case 'rtmp':
+        openRtmp({ stream })
+        break
+      case 'camera':
+        reopen(stream)
+        break
+      case 'none':
+        break
+    }
   }
 
   const upload = (recording: PhoneRecording): void => {
@@ -389,7 +432,7 @@ export function CameraAnglesPanel(
     ).then(
       () => {
         refresh()
-        reload().catch(() => undefined)
+        reloadQuietly()
       },
       (error: unknown) => {
         setProgress(current => ({
@@ -417,9 +460,59 @@ export function CameraAnglesPanel(
       : streams?.canAdd === 0
         ? sprintf(lstrings.stream_limit_person, streams.maxCameras)
         : undefined
-  /** The camera to revoke as the list last gave it, which says if it went live. */
-  const revokeTarget =
-    angles.find(angle => angle.stream.id === revoking?.id)?.stream ?? revoking
+  /** A camera as the list last gave it, or as it was when it was chosen. */
+  const asListed = (stream: LiveStream | undefined): LiveStream | undefined =>
+    angles.find(angle => angle.stream.id === stream?.id)?.stream ?? stream
+  /** The camera to revoke; the list says whether it went live. */
+  const revokeTarget = asListed(revoking)
+  const chosenStream = asListed(chosen)
+  const chosenTake = recordings.find(
+    recording => recording.liveStreamId === chosen?.id
+  )
+  const row = ({ stream, mine }: Angle): React.ReactElement => {
+    const elsewhere = myId != null && stream.deviceId !== myId
+    return (
+      <CameraRow
+        key={stream.id}
+        stream={stream}
+        mine={mine}
+        myId={myId}
+        note={
+          mine &&
+          elsewhere &&
+          stream.localRecording === 'recorded' &&
+          stream.deviceModel != null
+            ? sprintf(lstrings.stream_angle_not_uploaded, stream.deviceModel)
+            : undefined
+        }
+        onTap={tap => {
+          tapRow(tap, stream)
+        }}
+        onEnd={
+          mine && elsewhere && stream.deviceId != null && !isEnded(stream)
+            ? () => {
+                choose(stream, 'end')
+              }
+            : undefined
+        }
+        onDelete={
+          mine && isEnded(stream)
+            ? () => {
+                choose(stream, 'deleteVideo')
+              }
+            : undefined
+        }
+        onMore={
+          phoneStreamActions(stream, mine).length > 0
+            ? () => {
+                setMessage(undefined)
+                setSheet({ stream, mine })
+              }
+            : undefined
+        }
+      />
+    )
+  }
 
   return (
     <View style={styles.section}>
@@ -428,88 +521,7 @@ export function CameraAnglesPanel(
       ) : (
         <>
           <SectionHeader title={lstrings.stream_cameras_title} />
-          {angles.map(({ stream, mine }) => {
-            const own = mine && myId != null && stream.deviceId === myId
-            const state = angleState(stream)
-            const detail = [stream.deviceModel, mine ? null : stream.ownerName]
-              .filter(part => part != null && part !== '')
-              .join(' · ')
-            const take = recordings.find(one => one.liveStreamId === stream.id)
-            const elsewhere =
-              mine &&
-              myId != null &&
-              stream.deviceId !== myId &&
-              stream.localRecording === 'recorded' &&
-              stream.deviceModel != null
-            return (
-              <View key={stream.id} style={styles.angle}>
-                <Pressable
-                  style={styles.angleBody}
-                  disabled={!own}
-                  accessibilityRole={own ? 'button' : undefined}
-                  testID={`angle-row-${stream.id}`}
-                  onPress={() => {
-                    if (take != null && uploading(take)) {
-                      setMessage(
-                        sprintf(lstrings.stream_error_uploading, stream.label)
-                      )
-                      return
-                    }
-                    reopen(stream)
-                  }}
-                >
-                  <View style={styles.angleText}>
-                    <Text style={styles.angleName}>{stream.label}</Text>
-                    {detail !== '' && (
-                      <Text style={styles.detail}>{detail}</Text>
-                    )}
-                    {elsewhere && (
-                      <Text style={styles.detail}>
-                        {sprintf(
-                          lstrings.stream_angle_not_uploaded,
-                          stream.deviceModel ?? ''
-                        )}
-                      </Text>
-                    )}
-                  </View>
-                  <View
-                    style={[styles.chip, state === 'live' && styles.liveChip]}
-                    testID={`angle-state-${stream.id}`}
-                  >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        state === 'live' && styles.liveChipText
-                      ]}
-                    >
-                      {state === 'live'
-                        ? lstrings.stream_angle_live
-                        : state === 'ended'
-                          ? lstrings.stream_angle_ended
-                          : lstrings.stream_angle_idle}
-                    </Text>
-                  </View>
-                </Pressable>
-                {streamActionsFor(stream, mine).length > 0 && (
-                  <Pressable
-                    style={styles.more}
-                    accessibilityRole="button"
-                    accessibilityLabel={sprintf(
-                      lstrings.stream_angle_more,
-                      stream.label
-                    )}
-                    testID={`angle-more-${stream.id}`}
-                    onPress={() => {
-                      setMessage(undefined)
-                      setSheet({ stream, mine })
-                    }}
-                  >
-                    <Text style={styles.moreText}>…</Text>
-                  </Pressable>
-                )}
-              </View>
-            )
-          })}
+          {active.map(row)}
           {takes.map(recording => (
             <RecordingUploadRow
               key={recording.liveStreamId}
@@ -539,6 +551,7 @@ export function CameraAnglesPanel(
               {limit}
             </Text>
           )}
+          {ended.map(row)}
         </>
       )}
       {message != null && <Text style={styles.message}>{message}</Text>}
@@ -566,7 +579,7 @@ export function CameraAnglesPanel(
       />
       {rtmp != null && (
         <RtmpUrlSheet
-          key={rtmpKey}
+          key={`rtmp-${rtmpKey}`}
           visible={step === 'rtmp'}
           client={client}
           gameId={gameId}
@@ -574,11 +587,9 @@ export function CameraAnglesPanel(
           copy={copy}
           onClose={() => {
             goTo(undefined)
-            reload().catch(() => undefined)
+            reloadQuietly()
           }}
-          onCreated={() => {
-            reload().catch(() => undefined)
-          }}
+          onCreated={reloadQuietly}
           onRevoke={stream => {
             setRevoking(stream)
             goTo('revoke')
@@ -597,10 +608,97 @@ export function CameraAnglesPanel(
           }}
           onRevoked={() => {
             goTo(undefined)
-            reload().catch(() => undefined)
+            reloadQuietly()
           }}
           onDismiss={sheetGone}
         />
+      )}
+      {chosenStream != null && (
+        <>
+          <VideoDetailsSheet
+            visible={step === 'details'}
+            stream={chosenStream}
+            take={chosenTake}
+            uploading={chosenTake != null && uploading(chosenTake)}
+            onPlay={videoId => {
+              goTo(undefined)
+              onPlay?.(videoId)
+            }}
+            onDeleteVideo={() => {
+              choose(chosenStream, 'deleteVideo')
+            }}
+            onUpload={take => {
+              goTo(undefined)
+              upload(take)
+            }}
+            onDeleteCopy={() => {
+              choose(chosenStream, 'deleteCopy')
+            }}
+            onClose={() => {
+              goTo(undefined)
+            }}
+            onDismiss={sheetGone}
+          />
+          <ConfirmSheet
+            visible={step === 'deleteVideo'}
+            title={lstrings.stream_delete_title}
+            body={lstrings.stream_delete_body}
+            angle={chosenStream.label}
+            confirmLabel={lstrings.stream_details_delete}
+            id="delete-video"
+            onConfirm={async () => {
+              const next = await client.discardLiveStream(
+                gameId,
+                chosenStream.id
+              )
+              if (live.current) setStreams(next)
+            }}
+            onDone={() => {
+              goTo(undefined)
+            }}
+            onCancel={() => {
+              goTo(fromDetails ? 'details' : undefined)
+            }}
+            onDismiss={sheetGone}
+          />
+          <ConfirmSheet
+            visible={step === 'deleteCopy'}
+            title={lstrings.stream_delete_copy_title}
+            body={lstrings.stream_delete_copy_body}
+            angle={chosenStream.label}
+            confirmLabel={lstrings.stream_details_delete_copy}
+            id="delete-copy"
+            onConfirm={async () => {
+              await dropCopy(chosenStream)
+            }}
+            onDone={() => {
+              goTo('details')
+            }}
+            onCancel={() => {
+              goTo('details')
+            }}
+            onDismiss={sheetGone}
+          />
+          <ConfirmSheet
+            visible={step === 'end'}
+            title={lstrings.stream_end_title}
+            body={lstrings.stream_end_body}
+            angle={chosenStream.label}
+            confirmLabel={lstrings.stream_row_end}
+            id="end-camera"
+            onConfirm={async () => {
+              await client.endLiveStream(gameId, chosenStream.id)
+            }}
+            onDone={() => {
+              goTo(undefined)
+              reloadQuietly()
+            }}
+            onCancel={() => {
+              goTo(undefined)
+            }}
+            onDismiss={sheetGone}
+          />
+        </>
       )}
       {sheet != null && (
         <StreamActionSheet
@@ -608,14 +706,11 @@ export function CameraAnglesPanel(
           gameId={gameId}
           stream={sheet.stream}
           mine={sheet.mine}
-          copy={copy}
+          elsewhere={sheet.stream.deviceId !== myId}
           onClose={() => {
             setSheet(undefined)
           }}
-          onChanged={() => {
-            reload().catch(() => undefined)
-          }}
-          onMessage={setMessage}
+          onChanged={reloadQuietly}
         />
       )}
       {open != null ? (
@@ -627,7 +722,7 @@ export function CameraAnglesPanel(
           phone={phone}
           onClose={() => {
             setOpen(undefined)
-            reload().catch(() => undefined)
+            reloadQuietly()
             refresh()
           }}
         />
@@ -639,63 +734,6 @@ export function CameraAnglesPanel(
 const getStyles = cacheStyles((theme: Theme) => ({
   section: {
     gap: theme.rem(theme.spaceMdRem)
-  },
-  angle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem)
-  },
-  angleBody: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(theme.spaceXsRem)
-  },
-  angleText: {
-    flex: 1,
-    gap: theme.rem(0.125)
-  },
-  angleName: {
-    fontFamily: theme.boldTextFont,
-    fontSize: theme.rem(1),
-    fontWeight: '700',
-    color: theme.primaryTextColor
-  },
-  detail: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.8125),
-    color: theme.secondaryTextColor
-  },
-  chip: {
-    paddingHorizontal: theme.rem(0.5),
-    paddingVertical: theme.rem(0.125),
-    borderRadius: theme.rem(0.75),
-    backgroundColor: theme.inactiveBackgroundColor
-  },
-  liveChip: {
-    backgroundColor: theme.liveColor
-  },
-  chipText: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
-    fontWeight: '600',
-    color: theme.secondaryTextColor
-  },
-  liveChipText: {
-    color: '#FFFFFF'
-  },
-  more: {
-    minWidth: theme.rem(2.75),
-    minHeight: theme.rem(2.75),
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  moreText: {
-    fontFamily: theme.boldTextFont,
-    fontSize: theme.rem(1.25),
-    fontWeight: '700',
-    color: theme.primaryTextColor
   },
   limit: {
     fontFamily: theme.regularTextFont,

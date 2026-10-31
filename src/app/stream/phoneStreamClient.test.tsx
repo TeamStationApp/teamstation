@@ -640,7 +640,9 @@ describe('the phone stream hooks', function () {
     const native = fakePhoneStreamModule({ recordings: [RECORDING] })
     const stream = makePhoneStream(native)
     const recordings = mount(() => useRecordingsOf(stream))
+    expect(recordings.current().loaded).equals(false)
     await flush()
+    expect(recordings.current().loaded).equals(true)
     expect(recordings.current().recordings.map(r => r.parts)).deep.equals([2])
     act(() => {
       native.emitUpload({
@@ -689,6 +691,7 @@ describe('the phone stream hooks', function () {
     const recordings = mount((): Recordings => useRecordingsOf(stream))
     await flush()
     expect(recordings.current().recordings).deep.equals([])
+    expect(recordings.current().loaded).equals(false)
     act(() => {
       root?.unmount()
     })
