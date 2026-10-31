@@ -107,6 +107,7 @@ export function TvPlayer({
   }
   const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const statsOffset = useRef(0)
+  const statsExtent = useRef({ content: 0, viewport: 0 })
   const [placement, setPlacement] = useState<ScoreboardOverlay | null>(null)
   useEffect(() => {
     let active = true
@@ -405,7 +406,10 @@ export function TvPlayer({
         else if (direction === 'down' || direction === 'up') {
           statsOffset.current = Math.max(
             0,
-            statsOffset.current + (direction === 'down' ? 100 : -100)
+            Math.min(
+              statsExtent.current.content - statsExtent.current.viewport,
+              statsOffset.current + (direction === 'down' ? 100 : -100)
+            )
           )
           statsScroll.current?.scrollTo({
             y: statsOffset.current,
@@ -978,16 +982,14 @@ export function TvPlayer({
           focusable={state.box !== 'closed'}
           style={{ flex: 1, display: state.box === 'closed' ? 'none' : 'flex' }}
         >
-          {wideScore && renderedBox !== 'expanded' && (
-            <TvButton
-              label="Team and player statistics"
-              onPress={() => {
-                dispatch({ type: 'box' })
-              }}
-            />
-          )}
           <ScrollView
             ref={statsScroll}
+            onContentSizeChange={(_width, height) => {
+              statsExtent.current.content = height
+            }}
+            onLayout={event => {
+              statsExtent.current.viewport = event.nativeEvent.layout.height
+            }}
             onScroll={event => {
               statsOffset.current = event.nativeEvent.contentOffset.y
             }}
@@ -1026,13 +1028,9 @@ export function TvPlayer({
                       >
                         <StatRow
                           name="Team"
-                          onPress={
-                            wideScore
-                              ? undefined
-                              : () => {
-                                  dispatch({ type: 'box' })
-                                }
-                          }
+                          onPress={() => {
+                            dispatch({ type: 'box' })
+                          }}
                           values={[
                             ...Array.from(
                               {
