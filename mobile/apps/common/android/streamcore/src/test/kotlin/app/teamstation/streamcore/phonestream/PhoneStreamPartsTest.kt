@@ -318,7 +318,7 @@ class PhoneStreamPartsTest {
     }
 
     @Test
-    fun retentionDeletesOnlyTakesUploadedAWeekAgo() {
+    fun retentionSweepsUploadedTakesAndOldUnuploadedOnes() {
         val (catalog, storage) = catalog()
         val index = catalog.index
         val day = 24 * 3_600.0
@@ -330,31 +330,40 @@ class PhoneStreamPartsTest {
             index.insertProgramAnchor(id, 1, 0.0, start)
             return id
         }
-        val old = take("old", 0.0)
-        val recent = take("recent", 1.0)
-        val waiting = take("waiting", 2.0)
-        val protectedTake = take("protected", 3.0)
-        catalog.markUploaded(old, "v1", 0.0)
-        catalog.markUploaded(recent, "v2", 6 * day)
+        fun ended(stream: String): Long = take(stream, 0.0).also { index.endRecording(it, 60.0) }
+        val uploaded = ended("uploaded")
+        val unuploaded = ended("unuploaded")
+        val waiting = ended("waiting")
+        val protectedUpload = ended("protectedUpload")
+        val protectedTake = ended("protected")
+        // Still running, however long ago it began.
+        val running = take("running", 0.0)
+        catalog.markUploaded(uploaded, "v1", 0.0)
         catalog.setUpload("u3", "waiting", waiting)
-        catalog.markUploaded(protectedTake, "v4", 0.0)
-        storage.export(old).apply {
+        catalog.markUploaded(protectedUpload, "v4", 0.0)
+        storage.export(uploaded).apply {
             parentFile!!.mkdirs()
             writeBytes(ByteArray(4))
         }
         val policy = PhoneRetentionPolicy()
-        assertEquals(7 * day, policy.keepUploadedSeconds, 0.0)
-        assertEquals(listOf(old), policy.expired(catalog.recordings(), 7 * day, setOf(protectedTake)).map { it.recordingID })
-        assertEquals(1, policy.sweep(catalog, storage, 7 * day, setOf(protectedTake)))
-        assertFalse(File(storage.program, "program-old.mp4").exists())
-        assertFalse(storage.export(old).exists())
+        assertEquals(30 * day, policy.keepUnuploadedSeconds, 0.0)
+        val shielded = setOf(protectedUpload, protectedTake)
+        // 29 days after the takes ended: only the uploaded one goes.
+        val early = 60 + 29 * day
+        assertEquals(listOf(uploaded), policy.expired(catalog.recordings(), early, shielded).map { it.recordingID })
+        assertEquals(1, policy.sweep(catalog, storage, early, shielded))
+        assertFalse(File(storage.program, "program-uploaded.mp4").exists())
+        assertFalse(storage.export(uploaded).exists())
         assertTrue(File(storage.program, "program-waiting.mp4").exists())
-        assertNull(index.recording(old))
-        assertTrue(index.programAnchors(old).isEmpty())
-        assertEquals(setOf(recent, waiting, protectedTake), catalog.recordings().map { it.recordingID }.toSet())
-        // Never one that has not been uploaded, however old.
+        assertNull(index.recording(uploaded))
+        assertTrue(index.programAnchors(uploaded).isEmpty())
+        // 30 days after: the unuploaded take with nothing holding it goes too.
+        assertEquals(1, policy.sweep(catalog, storage, 60 + 30 * day, shielded))
+        assertEquals(setOf(waiting, protectedUpload, protectedTake, running), catalog.recordings().map { it.recordingID }.toSet())
+        assertNull(index.recording(unuploaded))
+        // Nothing protects them any more: a pending upload and the running take stay, however old.
         assertEquals(2, policy.sweep(catalog, storage, 1_000 * day))
-        assertEquals(setOf(waiting), catalog.recordings().map { it.recordingID }.toSet())
+        assertEquals(setOf(waiting, running), catalog.recordings().map { it.recordingID }.toSet())
         assertEquals(File(context.filesDir, "phoneStream"), PhoneStorage.standard(context).root)
         index.close()
     }
