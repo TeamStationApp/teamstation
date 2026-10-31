@@ -586,4 +586,241 @@ describe('atomic game availability', function () {
         .execute()
     }
   })
+  it('leaves the lineup of a game whose first at-bat has been pitched to', async function () {
+    const id = 'gam_first_at_bat'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const initial = fixture()
+    const document = currentDocumentOf(
+      initial,
+      initial.liveData.plays.currentPlay,
+      { setupBefore: setupOf(initial), actions: [] }
+    )
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: {
+          ...(document as object),
+          playEvents: [{ isPitch: true }]
+        }
+      })
+      .where('id', '=', id)
+      .execute()
+    const before = (
+      await db
+        .selectFrom('games')
+        .select('currentPlay')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    ).currentPlay
+    await db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', userIdOfGumbo(2))
+      .where('team_id', '=', 'team-away')
+      .execute()
+    try {
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, id)
+      })
+      expect(
+        (
+          await db
+            .selectFrom('games')
+            .select('currentPlay')
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+        ).currentPlay
+      ).deep.equals(before)
+    } finally {
+      await db
+        .updateTable('memberships')
+        .set({ is_player: true })
+        .where('user_id', '=', userIdOfGumbo(2))
+        .where('team_id', '=', 'team-away')
+        .execute()
+    }
+  })
+  it('reconciles a game whose only stored play is a lineup change', async () => {
+    const id = 'gam_only_a_change'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const initial = fixture()
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: currentDocumentOf(
+          initial,
+          initial.liveData.plays.currentPlay,
+          { setupBefore: setupOf(initial), actions: [] }
+        )
+      })
+      .where('id', '=', id)
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: id,
+        startTime: new Date(),
+        battingTeamId: 'team-away',
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'defensive_switch' }
+        }
+      })
+      .execute()
+    await db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', userIdOfGumbo(2))
+      .where('team_id', '=', 'team-away')
+      .execute()
+    try {
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, id)
+      })
+      const away = (await open(id)).state.liveData.boxscore.teams.away
+      expect(away.players).not.includes(2)
+    } finally {
+      await db
+        .updateTable('memberships')
+        .set({ is_player: true })
+        .where('user_id', '=', userIdOfGumbo(2))
+        .where('team_id', '=', 'team-away')
+        .execute()
+    }
+  })
+  it('leaves somebody who played with their team when a game under way changes', async () => {
+    const id = 'gam_under_way_both'
+    const pitched = score(fixture(), { type: 'pitch', call: 'B' })
+    const pitcher = pitched.liveData.plays.currentPlay!.matchup.pitcher.id
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date(),
+        unrostered: JSON.stringify({ 'team-away': [pitcher], 'team-home': [] }),
+        currentPlay: currentDocumentOf(
+          pitched,
+          pitched.liveData.plays.currentPlay,
+          {
+            setupBefore: setupOf(fixture()),
+            actions: [{ type: 'pitch', call: 'B' }]
+          }
+        )
+      })
+      .execute()
+    // Their coach runs both teams, as somebody on both rosters often has.
+    const grant = makeId('scopeRole')
+    await db
+      .insertInto('scope_roles')
+      .values({
+        id: grant,
+        user_id: actor.userId,
+        scope_type: 'team',
+        scope_id: 'team-home',
+        role: 'coach'
+      })
+      .execute()
+    const membership = makeId('membership')
+    await db
+      .insertInto('memberships')
+      .values({
+        id: membership,
+        user_id: userIdOfGumbo(pitcher),
+        team_id: 'team-away',
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    try {
+      await setRostered(db, actor, id, {
+        side: 'home',
+        userId: userIdOfGumbo(pitcher),
+        rostered: false
+      })
+      await toggle(id, pitcher, true)
+      expect((await open(id)).state.gameData.players[pitcher].teamId).equals(
+        'team-home'
+      )
+    } finally {
+      await db.deleteFrom('memberships').where('id', '=', membership).execute()
+      await db.deleteFrom('scope_roles').where('id', '=', grant).execute()
+    }
+  })
+  it('leaves a game with a stored play it cannot read as it is', async () => {
+    const id = 'gam_unreadable_change'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const initial = fixture()
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: currentDocumentOf(
+          initial,
+          initial.liveData.plays.currentPlay,
+          { setupBefore: setupOf(initial), actions: [] }
+        )
+      })
+      .where('id', '=', id)
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: id,
+        startTime: new Date(),
+        battingTeamId: 'team-away',
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'defensive_switch' },
+          teamStation: { version: 999 }
+        }
+      })
+      .execute()
+    const before = (await row(id)).currentPlay
+    await db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', userIdOfGumbo(2))
+      .where('team_id', '=', 'team-away')
+      .execute()
+    try {
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, id)
+      })
+      expect((await row(id)).currentPlay).deep.equals(before)
+    } finally {
+      await db
+        .updateTable('memberships')
+        .set({ is_player: true })
+        .where('user_id', '=', userIdOfGumbo(2))
+        .where('team_id', '=', 'team-away')
+        .execute()
+    }
+  })
 })

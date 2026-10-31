@@ -19,7 +19,9 @@ import {
   canSeeTeam,
   guardiansWhoCanAct,
   guardsPlayer,
+  openAddTeams,
   roleScopes,
+  settledTeams,
   teamsPlayedOnNow,
   visibleScopes
 } from '../access'
@@ -304,7 +306,9 @@ async function coachesPlayer(
   actor: Actor,
   player: OnePerson
 ): Promise<boolean> {
-  const plays = await teamsPlayedOnNow(db, player.userIds)
+  // Not a team holding them only by an open add: their guardian is the side
+  // that add answers to.
+  const plays = await settledTeams(db, player.userIds)
   if (plays.length === 0) return false
   const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
   if (plays.some(teamId => canCoach(scopes, teamId))) return true
@@ -500,6 +504,11 @@ async function authorizeGuardian(
         'Only an administrator, coach or assistant of the team can invite a guardian'
       )
     if (!plays.includes(sender.id)) throw notFound()
+    if (
+      !actor.isAdmin &&
+      (await openAddTeams(db, player.userIds)).includes(sender.id)
+    )
+      throw notFound()
     if (!actor.isAdmin && (await hasGuardian(db, player.userId)))
       throw forbidden(await hasGuardianAlready(db, player.userId))
   } else if (
@@ -514,8 +523,10 @@ async function authorizeGuardian(
         'Only a guardian of the player can invite a guardian without a team'
       )
   } else {
+    // A team holding them only by an open add opens no right over them.
     const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-    if (!plays.some(teamId => canSeeTeam(scopes, teamId))) throw notFound()
+    const reach = actor.isAdmin ? plays : await settledTeams(db, player.userIds)
+    if (!reach.some(teamId => canSeeTeam(scopes, teamId))) throw notFound()
   }
   return { ...terms, playerUserId: player.userId }
 }
@@ -1240,16 +1251,17 @@ export async function decideRelationshipRequest(
   clock: Clock = realClock
 ): Promise<StoredRequest> {
   return await atomic(db, async trx => {
-    // A player add writes rosters, guests and lineups: like every roster
-    // writer it holds the player-edit lock before it reads who anybody is,
-    // and before the request's own locks. A request's kind never changes.
+    await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
+    // A player add writes rosters, guests and lineups, so it holds the
+    // player-edit lock before it reads who anybody is. After the locks above,
+    // as a merge and an account deletion take them: the other order
+    // deadlocks with them. A request's kind never changes.
     const kind = await trx
       .selectFrom('group_requests')
       .select('kind')
       .where('id', '=', id)
       .executeTakeFirst()
     if (kind?.kind === 'playerAdd') await lockPlayerEdits(trx)
-    await lockKeys(trx, ['creation:parent-graph', `request:${id}`])
     const fresh = await currentActor(trx, actor)
     const request = await trx
       .selectFrom('group_requests')

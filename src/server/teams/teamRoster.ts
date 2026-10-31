@@ -8,7 +8,10 @@ import {
   givenRoleLevelsAt,
   guardiansOfEach,
   levelsAboveTeam,
+  mayEditName,
   membersOfLevels,
+  openAdds,
+  openAddsOf,
   type RoleLevel,
   teamsUnder
 } from '../access'
@@ -17,6 +20,28 @@ import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
+
+/**
+ * The rows held from this reader: not a site administrator, a guardian, the
+ * player, or the staff of a team of theirs, whose rights no add takes away.
+ */
+async function heldAgainst(
+  db: Kysely<Database>,
+  userIds: string[],
+  held: Set<string>,
+  viewer?: { userId: string; isAdmin: boolean }
+): Promise<Set<string>> {
+  if (viewer == null) return held
+  const shown = await Promise.all(
+    userIds
+      .filter(id => held.has(id))
+      .map(
+        async id =>
+          [id, await mayEditName(db, viewer.userId, id, viewer)] as const
+      )
+  )
+  return new Set(shown.filter(([, may]) => !may).map(([id]) => id))
+}
 
 /**
  * Who is on a team. Ordinary reads contain short names, for every viewer. A
@@ -43,7 +68,9 @@ export async function teamRoster(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   teamId: string,
-  includeFullNames = false
+  includeFullNames = false,
+  /** Who reads it, so a hold holds only against those it keeps out. */
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<RosterEntry[]> {
   const members = await db
     .selectFrom('memberships')
@@ -77,9 +104,18 @@ export async function teamRoster(
   )
   for (const [userId, level] of await membersOfLevels(db, levels))
     memberLevels.set(userId, level)
+  // Not the guardians of somebody held only by an add they may yet reject.
+  const open = await heldAgainst(
+    db,
+    members.map(row => row.userId),
+    await openAdds(db, teamId),
+    viewer
+  )
   const family = await guardiansOfEach(
     db,
-    members.filter(row => row.isPlayer).map(row => row.userId)
+    members
+      .filter(row => row.isPlayer && !open.has(row.userId))
+      .map(row => row.userId)
   )
   const followers = await followersOf(db, teamId)
 
@@ -100,6 +136,7 @@ export async function teamRoster(
       ))
     ],
     {
+      openAdds: open,
       ownLevel: 'team',
       given,
       memberLevels,
@@ -171,6 +208,7 @@ export async function levelPeople(
             'users.bats as bats',
             'users.throws as throws',
             'users.avatar_path as avatarPath',
+            'memberships.team_id as teamId',
             'teams.name as teamName'
           ])
           .where('memberships.team_id', 'in', teamIds)
@@ -187,7 +225,7 @@ export async function levelPeople(
       held.teamNames?.push(row.teamName)
       continue
     }
-    const { teamName, ...person } = row
+    const { teamName, teamId: _, ...person } = row
     players.set(row.userId, {
       ...person,
       jersey: null,
@@ -197,7 +235,18 @@ export async function levelPeople(
       teamNames: [teamName]
     })
   }
-  const family = await guardiansOfEach(db, [...players.keys()])
+  // Not the guardians of somebody every team of theirs here holds only by an
+  // add they may yet reject.
+  const open = await openAddsOf(db, teamIds)
+  const settled = new Set(
+    playing
+      .filter(row => open.get(row.teamId)?.has(row.userId) !== true)
+      .map(row => row.userId)
+  )
+  const family = await guardiansOfEach(
+    db,
+    [...players.keys()].filter(id => settled.has(id))
+  )
   const followers = (
     await db
       .selectFrom('follows')
@@ -234,7 +283,8 @@ export async function levelPeople(
 export async function peopleAt(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
-  ref: { kind: 'league' | 'season' | 'team'; id: string }
+  ref: { kind: 'league' | 'season' | 'team'; id: string },
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<RosterEntry[] | undefined> {
   if (ref.kind !== 'team')
     return await levelPeople(db, space, { kind: ref.kind, id: ref.id })
@@ -244,16 +294,19 @@ export async function peopleAt(
     .where('id', '=', ref.id)
     .where('merged_into', 'is', null)
     .executeTakeFirst()
-  return team == null ? undefined : await teamRoster(db, space, ref.id)
+  return team == null
+    ? undefined
+    : await teamRoster(db, space, ref.id, false, viewer)
 }
 
 /** Whether somebody is on a level's people list, in any section. */
 export async function onPeopleList(
   db: Kysely<Database>,
   ref: { kind: 'league' | 'season' | 'team'; id: string },
-  userId: string
+  userId: string,
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<boolean> {
-  const people = await peopleAt(db, undefined, ref)
+  const people = await peopleAt(db, undefined, ref, viewer)
   return people?.some(person => person.userId === userId) === true
 }
 
@@ -327,6 +380,8 @@ async function sectionPeople(
     memberLevels: Map<string, RoleLevel>
     /** Each guardian of a player on this list, and the players they guard. */
     family: Map<string, string[]>
+    /** Who the team holds only through an add that may yet be rejected. */
+    openAdds?: ReadonlySet<string>
     songs?: Map<string, WalkUpSong>
     /** The team these people are shown on: a roster's, not a level's list. */
     teamId?: string
@@ -423,6 +478,7 @@ async function sectionPeople(
     )
     return { guardianOf: children.filter(name => name !== '') }
   }
+  const open = facts.openAdds ?? new Set<string>()
   const order: Record<RosterSection, number> = {
     admin: 0,
     staff: 1,
@@ -438,8 +494,9 @@ async function sectionPeople(
       return {
         userId: row.userId,
         gumboId: gumboIds.get(row.userId) ?? null,
+        ...(open.has(row.userId) ? { ownIdentity: true } : {}),
         nameDetails:
-          includeFullNames === true && row.isPlayer
+          includeFullNames === true && row.isPlayer && !open.has(row.userId)
             ? {
                 firstName: row.firstName,
                 lastName: row.lastName,

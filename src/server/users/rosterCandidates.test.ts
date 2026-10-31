@@ -510,6 +510,35 @@ describe('roster candidates', function () {
     }
   })
 
+  it('leaves out somebody whose guest entry sits under an account merged since', async function () {
+    const search = async (): Promise<string[]> =>
+      names(
+        (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q: 'jud' }))
+          .body
+      )
+    expect(await search()).includes('Aaron J')
+    const gumbo = await ensureGumboId(db!, id('Aaron Judge (old)'))
+    const { guests } = await db!
+      .selectFrom('games')
+      .select('guests')
+      .where('id', '=', GAME)
+      .executeTakeFirstOrThrow()
+    await db!
+      .updateTable('games')
+      .set({ guests: JSON.stringify({ [team.falcons]: [gumbo] }) })
+      .where('id', '=', GAME)
+      .execute()
+    try {
+      expect(await search()).not.includes('Aaron J')
+    } finally {
+      await db!
+        .updateTable('games')
+        .set({ guests: JSON.stringify(guests) })
+        .where('id', '=', GAME)
+        .execute()
+    }
+  })
+
   it('leaves out a player already in the game for an opponent from another league', async function () {
     // Ohtani, an Owl, also plays for the Gulls, of another league; the
     // Falcons play the Gulls.
@@ -563,6 +592,16 @@ describe('roster candidates', function () {
           .body
       )
     ).deep.equals([])
+  })
+
+  it('counts no word that starts another toward a stranger', async function () {
+    for (const q of ['j j j', 'a a a', 'ab a'])
+      expect(
+        names((await ask(COACH, { forTeam: team.falcons, q })).body).filter(
+          name => name.startsWith('Jos')
+        ),
+        q
+      ).deep.equals([])
   })
 
   it('matches the start of every word typed', async function () {

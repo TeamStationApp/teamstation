@@ -221,7 +221,7 @@ export async function titleAndDescription(
 }
 
 /** `Oct 30`, the game's own day where it is played. */
-function shortDate(at: Date, timeZone: string): string {
+export function shortDate(at: Date, timeZone: string): string {
   const options = { month: 'short', day: 'numeric' } as const
   try {
     return at.toLocaleDateString('en-US', { ...options, timeZone })
@@ -294,12 +294,6 @@ export interface PlayerRemovedMetadata {
   remover: PlayerRemover
 }
 
-const REMOVED_BY: Record<PlayerRemover, string> = {
-  self: 'They removed themselves',
-  guardian: 'A guardian removed',
-  coach: 'A coach of another of their teams removed'
-}
-
 /**
  * The words of the notice a team's roster managers get when a player's side
  * rejected an add, `short` the player's short name as it is now.
@@ -312,7 +306,10 @@ export function playerRemovedWords(
     metadata.mode === 'pool' ? `${metadata.teamName}'s game` : metadata.teamName
   const { games } = metadata
   return {
-    title: `${REMOVED_BY[metadata.remover]} ${short} from ${where}`,
+    title:
+      metadata.remover === 'self'
+        ? `${short} removed themselves from ${where}`
+        : `${metadata.remover === 'guardian' ? 'A guardian' : 'A coach of another of their teams'} removed ${short} from ${where}`,
     description:
       games === 0
         ? `${short} is no longer on it.`

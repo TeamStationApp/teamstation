@@ -682,11 +682,16 @@ describe('a team’s people by external id', function () {
     })
 
     it('lets an administrator of the team’s season or league in, and adds a player from a team they do not administer', async function () {
-      // A player of a team in no season, whom neither administrator reaches.
+      // A player of a team neither administrator runs, in the same season:
+      // somebody an add reaches, as an import's does.
       const elsewhere = makeId('team')
       await database()
         .insertInto('teams')
         .values({ id: elsewhere, name: 'Elsewhere' })
+        .execute()
+      await database()
+        .insertInto('season_teams')
+        .values({ season_id: season, team_id: elsewhere })
         .execute()
       const traveller = await existingUser('traveller')
       await database()
@@ -1539,6 +1544,7 @@ describe('a team’s people by external id', function () {
         error: 0,
         guardianLinks: 2,
         guardiansRefused: 0,
+        rolesRefused: 0,
         staff: 0
       })
 
@@ -2260,6 +2266,7 @@ describe('a team’s people by external id', function () {
         error: 0,
         guardianLinks: 2,
         guardiansRefused: 0,
+        rolesRefused: 0,
         staff: 1
       })
       const tables = async (): Promise<number[]> => [
@@ -2284,6 +2291,7 @@ describe('a team’s people by external id', function () {
         error: 0,
         guardianLinks: 0,
         guardiansRefused: 0,
+        rolesRefused: 0,
         staff: 0
       })
       expect(await tables()).deep.equals(before)

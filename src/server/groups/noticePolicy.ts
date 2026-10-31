@@ -1,30 +1,45 @@
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, sql, type Transaction } from 'kysely'
 
-import { conflict, forbidden, notFound } from '../../common/errors'
+import { conflict, forbidden, HttpError, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { makeId } from '../../common/ids'
-import type { PlayerAddTerms } from '../../common/notifications'
+import type { PlayerAddTerms, PlayerAddTold } from '../../common/notifications'
 import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
+import { recordOf } from '../../common/scoring/gumbo'
+import { appearedBySide } from '../../common/scoring/rosterAvailability'
+import type { GameSetup, SideLineup } from '../../common/scoring/state'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
-import { guardiansWhoCanAct } from '../access'
+import { storedUnrostered } from '../../common/unroster'
+import { guardiansOf, guardiansWhoCanAct, openAddTeams } from '../access'
 import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
-import { readPlays } from '../events/postPlays'
-import { guestGameOpen, inGameAs } from '../games/guestChecks'
+import {
+  guestGameOpen,
+  inGameAs,
+  playedForOther,
+  replayedGame
+} from '../games/guestChecks'
+import { hasScoringEventsSql, isRealPlaySql } from '../games/scoringActivity'
 import { reconcileUnbegunLineup } from '../games/unroster'
-import type {
-  PlayerRemovedMetadata,
-  PlayerRemover
+import {
+  type PlayerRemovedMetadata,
+  type PlayerRemover,
+  shortDate
 } from '../notifications/requestInformation'
 import { noteScopeChange } from '../socket/syncRevision'
+import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId } from '../users/insertUser'
 import { shortNamesOf } from '../users/nameBook'
-import type { Clock, StoredRequest } from './requests'
-import { approvesSide } from './requests'
+import {
+  type Clock,
+  recordRequestRecipient,
+  type StoredRequest
+} from './requests'
 
 type Db = Kysely<Database>
 
@@ -95,17 +110,23 @@ export async function playerAddApprovers(
   db: Db,
   userId: string,
   teamId: string
-): Promise<{ userIds: string[]; standIn: boolean }> {
+): Promise<{
+  userIds: string[]
+  standIn: boolean
+  told: PlayerAddTold | null
+}> {
   const person = await personOf(db, userId)
   const guardians = await guardiansWhoCanAct(db, person.userIds)
-  if (guardians.length > 0) return { userIds: guardians, standIn: false }
+  if (guardians.length > 0)
+    return { userIds: guardians, standIn: false, told: 'guardians' }
   const self = await db
     .selectFrom('users')
     .select('login_enabled')
     .where('id', '=', person.userId)
     .executeTakeFirst()
   if (self?.login_enabled === true)
-    return { userIds: [person.userId], standIn: false }
+    return { userIds: [person.userId], standIn: false, told: 'player' }
+  const held = await openAddTeams(db, person.userIds)
   const coaches = await db
     .selectFrom('scope_roles')
     .innerJoin('users', 'users.id', 'scope_roles.user_id')
@@ -122,11 +143,15 @@ export async function playerAddApprovers(
         .where('user_id', 'in', person.userIds)
         .where('is_player', '=', true)
         .where('team_id', '!=', teamId)
+        // A team holding them only by an open add is not their side, for
+        // this add or the next.
+        .where('team_id', 'not in', ['', ...held])
     )
     .orderBy('scope_roles.user_id')
     .execute()
   const userIds = coaches.map(row => row.userId)
-  return { userIds, standIn: userIds.length > 0 }
+  const standIn = userIds.length > 0
+  return { userIds, standIn, told: standIn ? 'coaches' : null }
 }
 
 /**
@@ -150,11 +175,12 @@ export async function applyPlayerAdd(
       .where('user_id', 'in', person.userIds)
       .orderBy(sql`user_id = ${person.userId}`, 'desc')
       .executeTakeFirst()
+    const membershipId = membership?.id ?? makeId('membership')
     if (membership == null)
       await trx
         .insertInto('memberships')
         .values({
-          id: makeId('membership'),
+          id: membershipId,
           user_id: person.userId,
           team_id: terms.teamId,
           role: 'member',
@@ -178,6 +204,7 @@ export async function applyPlayerAdd(
     noteScopeChange(trx, { teamId: terms.teamId, userId: person.userId })
     return {
       ...terms,
+      membershipId,
       createdMembership: membership == null,
       ...(membership == null
         ? {}
@@ -227,24 +254,28 @@ export async function applyPlayerAdd(
 }
 
 /**
- * A player who plays for the other side, as a pool player, in a game of
- * this team not yet over cannot join this team's roster: one person is never
- * on both sides of a game.
+ * A player who plays for the other side, on its roster or as a pool player,
+ * in a game of this team not yet over cannot join this team's roster: one
+ * person is never on both sides of a game, and a scoring read of such a game
+ * throws. Somebody the other side left out of that game does not count, as
+ * they do not for a merge (`assertMergeAvailabilitySafe`).
  */
 export async function refuseOtherSide(
   trx: Db,
   userIds: string[],
   terms: PlayerAddTerms
 ): Promise<void> {
-  const gumbos = await trx
-    .selectFrom('gumbo_ids')
-    .select('gumbo_id')
-    .where('user_id', 'in', userIds)
-    .execute()
-  if (gumbos.length === 0) return
   const games = await trx
     .selectFrom('games')
-    .select(['id', 'home_team_id', 'away_team_id', 'guests'])
+    .select([
+      'id',
+      'home_team_id',
+      'away_team_id',
+      'guests',
+      'unrostered',
+      'start_at',
+      'timezone'
+    ])
     .where(eb =>
       eb.or([
         eb('home_team_id', '=', terms.teamId),
@@ -252,14 +283,51 @@ export async function refuseOtherSide(
       ])
     )
     .where('status', 'not in', ['final', 'cancelled'])
+    // Nothing moves a game nobody scored out of `scheduled`: one long past
+    // never holds an add up.
+    .where(eb =>
+      eb.or([
+        eb('status', '=', 'inProgress'),
+        eb('start_at', '>=', new Date(Date.now() - DAY))
+      ])
+    )
     .execute()
+  if (games.length === 0) return
+  const gumbos = (
+    await trx
+      .selectFrom('gumbo_ids')
+      .select('gumbo_id')
+      .where('user_id', 'in', userIds)
+      .execute()
+  ).map(row => row.gumbo_id)
+  const rosters = await trx
+    .selectFrom('memberships')
+    .select('team_id')
+    .where('user_id', 'in', userIds)
+    .where('is_player', '=', true)
+    .where(
+      'team_id',
+      'in',
+      games.map(game =>
+        game.home_team_id === terms.teamId
+          ? game.away_team_id
+          : game.home_team_id
+      )
+    )
+    .execute()
+  const onRoster = new Set(rosters.map(row => row.team_id))
   for (const game of games) {
-    const guests = storedGuests(game.guests, teamsOfRow(game))
-    const other = game.home_team_id === terms.teamId ? guests.away : guests.home
-    if (gumbos.some(row => other.includes(row.gumbo_id))) {
+    const teams = teamsOfRow(game)
+    const other = game.home_team_id === terms.teamId ? 'away' : 'home'
+    const guest = storedGuests(game.guests, teams)[other]
+    const left = storedUnrostered(game.unrostered, teams)[other]
+    const member =
+      onRoster.has(teams[other].id) && !gumbos.some(id => left.includes(id))
+    if (member || gumbos.some(id => guest.includes(id))) {
       const name = (await shortNamesOf(trx, [terms.userId])).get(terms.userId)
       throw conflict(
-        `${name} plays for the other team in a game against ${terms.teamName}`
+        `${name} plays for the other team in the game on ${shortDate(game.start_at, game.timezone)} against ${terms.teamName}`,
+        { gameId: game.id }
       )
     }
   }
@@ -337,12 +405,44 @@ export async function recordPlayerAdd(
 }
 
 /** Whether the game has begun: a play stored, or one under way. */
-async function gameStarted(
-  trx: Db,
-  game: { id: string; currentPlay: unknown }
-): Promise<boolean> {
-  if (game.currentPlay != null) return true
-  return (await readPlays(trx, game.id)).length > 0
+async function gameStarted(trx: Db, game: { id: string }): Promise<boolean> {
+  const row = await trx
+    .selectFrom('games')
+    .select(hasScoringEventsSql.as('begun'))
+    .where('id', '=', game.id)
+    .executeTakeFirst()
+  return row?.begun === true
+}
+
+/** Whether a game has a stored play of its own (`isRealPlaySql`). */
+async function hasStoredPlay(trx: Db, game: { id: string }): Promise<boolean> {
+  const row = await trx
+    .selectFrom('events')
+    .select('id')
+    .where('gameId', '=', game.id)
+    .where(isRealPlaySql)
+    .executeTakeFirst()
+  return row != null
+}
+
+/**
+ * The side of a game an add's player is on now: the list that holds them, for
+ * sides swap before a first pitch and a game can move to another team; else
+ * the team's side, and the side the add joined last.
+ */
+function sideOf(
+  game: { home_team_id: string; away_team_id: string; guests: unknown },
+  terms: PlayerAddTerms,
+  gumbos: ReadonlySet<number>
+): 'away' | 'home' {
+  const guests = storedGuests(game.guests, teamsOfRow(game))
+  const holding = (['away', 'home'] as const).find(side =>
+    guests[side].some(id => gumbos.has(id))
+  )
+  if (holding != null) return holding
+  if (game.home_team_id === terms.teamId) return 'home'
+  if (game.away_team_id === terms.teamId) return 'away'
+  return terms.side ?? 'away'
 }
 
 /**
@@ -365,20 +465,25 @@ async function playedGames(
     away_team_id: string
   }>
 > {
+  const gumbos = await trx
+    .selectFrom('gumbo_ids')
+    .select('gumbo_id')
+    .where('user_id', 'in', userIds)
+    .execute()
+  const held = new Set(gumbos.map(row => row.gumbo_id))
   if (terms.mode === 'pool') {
     const game = await trx
       .selectFrom('games')
       .select(['id', 'currentPlay', 'guests', 'home_team_id', 'away_team_id'])
       .where('id', '=', terms.gameId!)
       .executeTakeFirst()
-    if (game == null || !(await gameStarted(trx, game))) return []
-    return [{ ...game, side: terms.side! }]
+    if (
+      game == null ||
+      !((await gameStarted(trx, game)) || (await hasStoredPlay(trx, game)))
+    )
+      return []
+    return [{ ...game, side: sideOf(game, terms, held) }]
   }
-  const gumbos = await trx
-    .selectFrom('gumbo_ids')
-    .select('gumbo_id')
-    .where('user_id', 'in', userIds)
-    .execute()
   if (gumbos.length === 0) return []
   // Games of the team from the day before the add on where they played for
   // it.
@@ -429,19 +534,232 @@ async function playedGames(
             .select('events.id')
             .whereRef('events.gameId', '=', 'games.id')
             .where('events.battingTeamId', '=', terms.teamId)
+            .where(isRealPlaySql)
             .where(
               sql<string>`events.gumbo->'matchup'->'batter'->>'id'`,
               'in',
               gumbos.map(row => String(row.gumbo_id))
             )
+        ),
+        // In a play in any other role: a pitcher, before any line is built.
+        eb.exists(
+          eb
+            .selectFrom('event_players')
+            .innerJoin('events', 'events.id', 'event_players.event_id')
+            .select('event_players.id')
+            .whereRef('events.gameId', '=', 'games.id')
+            .where(isRealPlaySql)
+            .where(
+              'event_players.gumbo_id',
+              'in',
+              gumbos.map(row => row.gumbo_id)
+            )
+            .where(on =>
+              on.or([
+                on('event_players.team_id', '=', terms.teamId),
+                on('event_players.team_id', 'is', null)
+              ])
+            )
         )
       ])
     )
     .execute()
-  return games.map(game => ({
+  const covered = games.map(game => ({
     ...game,
-    side: game.home_team_id === terms.teamId ? 'home' : 'away'
+    side: sideOf(game, terms, new Set())
   }))
+  // Under way, and in the order or the field without a play yet: their
+  // session would have them bat under their own name.
+  const underWay = await trx
+    .selectFrom('games')
+    .select(['id', 'guests', 'home_team_id', 'away_team_id', 'currentPlay'])
+    .where(eb =>
+      eb.or([
+        eb('home_team_id', '=', terms.teamId),
+        eb('away_team_id', '=', terms.teamId)
+      ])
+    )
+    .where('status', 'not in', ['final', 'cancelled'])
+    .where(eb =>
+      eb.or([
+        eb('status', '=', 'inProgress'),
+        eb.exists(
+          eb
+            .selectFrom('events')
+            .select('events.id')
+            .whereRef('events.gameId', '=', 'games.id')
+            .where(isRealPlaySql)
+        )
+      ])
+    )
+    .where('start_at', '>=', new Date(request.sent_at.getTime() - DAY))
+    .execute()
+  const pool = await trx
+    .selectFrom('game_guest_details')
+    .select('game_id')
+    .where('user_id', 'in', userIds)
+    .where('pool', '=', true)
+    .execute()
+  for (const game of underWay) {
+    if (covered.some(row => row.id === game.id)) continue
+    if (pool.some(row => row.game_id === game.id)) continue
+    const side = sideOf(game, terms, new Set())
+    // A history that no longer resolves answers no less than one that stops:
+    // a rejection stays answerable either way.
+    const replay = await replayedGame(trx, game).catch((error: unknown) => {
+      if (error instanceof HttpError) return null
+      throw error
+    })
+    if (placedOn(game, side, replay).some(id => id != null && held.has(id)))
+      covered.push({ ...game, side })
+  }
+  return covered
+}
+
+/**
+ * Everybody a side of a game under way has played or placed, as the game
+ * stands. One that no longer replays stopped short of it, so it reads the
+ * setups its record stores instead.
+ */
+function placedOn(
+  game: {
+    currentPlay: unknown
+    home_team_id: string
+    away_team_id: string
+  },
+  side: 'away' | 'home',
+  replay: Awaited<ReturnType<typeof replayedGame>>
+): Array<number | null> {
+  const record = recordOf(game.currentPlay, teamsOfRow(game))
+  const recorded: GameSetup[] =
+    record == null
+      ? []
+      : [
+          record.setupBefore,
+          ...record.actions.flatMap(action =>
+            action.type === 'lineup' && action.setup != null
+              ? [action.setup]
+              : []
+          )
+        ]
+  const lineups: SideLineup[] =
+    replay == null || replay.problems.length > 0
+      ? recorded.map(setup => setup.sides[side])
+      : [replay.state.liveData.boxscore.teams[side]]
+  return [
+    ...(replay == null ? [] : appearedBySide(replay.state)[side]),
+    ...lineups.flatMap(lineup => [
+      ...lineup.battingOrder,
+      ...Object.values(lineup.defense)
+    ])
+  ]
+}
+
+/**
+ * The names a side of a game already holds, in lower case: its guests', and
+ * those of lines withdrawn before.
+ */
+export async function namesOnSide(
+  db: Db,
+  game: {
+    id: string
+    guests: unknown
+    home_team_id: string
+    away_team_id: string
+  },
+  side: 'away' | 'home'
+): Promise<Set<string>> {
+  const used = new Set(
+    (
+      await db
+        .selectFrom('game_withdrawn_players')
+        .select('label')
+        .where('game_id', '=', game.id)
+        .where('side', '=', side)
+        .execute()
+    ).map(row => row.label.toLowerCase())
+  )
+  const guests = storedGuests(game.guests, teamsOfRow(game))[side]
+  if (guests.length > 0)
+    for (const row of await db
+      .selectFrom('gumbo_ids')
+      .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
+      .select(['users.display_name', 'users.first_name', 'users.last_name'])
+      .where('gumbo_ids.gumbo_id', 'in', guests)
+      .execute()) {
+      used.add(row.display_name.toLowerCase())
+      used.add(
+        [row.first_name, row.last_name]
+          .filter(part => part != null && part !== '')
+          .join(' ')
+          .toLowerCase()
+      )
+    }
+  return used
+}
+
+/** The first of a team's placeholder names not among these. */
+export function freeLabel(teamName: string, used: ReadonlySet<string>): string {
+  const prefix = placeholderTeamName(teamName)
+  let suffix = 0
+  while (used.has(`${prefix} ${placeholderSuffix(suffix)}`.toLowerCase()))
+    suffix++
+  return `${prefix} ${placeholderSuffix(suffix)}`
+}
+
+/** The game rows undoing an add takes, in one order, for a lock after them. */
+async function lockGamesOfAdd(trx: Db, terms: PlayerAddTerms): Promise<void> {
+  await trx
+    .selectFrom('games')
+    .select('id')
+    .$if(terms.mode === 'pool', query => query.where('id', '=', terms.gameId!))
+    .$if(terms.mode !== 'pool', query =>
+      query
+        .where(eb =>
+          eb.or([
+            eb('home_team_id', '=', terms.teamId),
+            eb('away_team_id', '=', terms.teamId)
+          ])
+        )
+        .where('status', 'not in', ['final', 'cancelled'])
+    )
+    .orderBy('id')
+    .forUpdate()
+    .execute()
+}
+
+/**
+ * Serializes every add of one person. The merge lock is shared: two adds run
+ * together without this, the second meets the first's row or asks twice, and
+ * two teams each pass the other side's check. Taken after any game row.
+ */
+export const playerAddKey = (userId: string): string => `playerAdd:${userId}`
+
+export async function lockPlayerAdds(trx: Db, userId: string): Promise<void> {
+  await lockKeys(trx as Transaction<Database>, [playerAddKey(userId)])
+}
+
+/**
+ * Whether a roster add's person plays for the team by a row it did not land
+ * on: they came back another way, or a merge folded theirs into one already
+ * there. A rejection must not take that row. Off the roster, it still takes
+ * the add's games off their record, and leaves any other place on the team.
+ */
+export async function rejoinedSince(
+  db: Db,
+  terms: PlayerAddTerms
+): Promise<boolean> {
+  if (terms.mode !== 'roster' || terms.membershipId == null) return false
+  const person = await personOf(db, terms.userId)
+  const row = await db
+    .selectFrom('memberships')
+    .select('id')
+    .where('team_id', '=', terms.teamId)
+    .where('user_id', 'in', person.userIds)
+    .where('id', '!=', terms.membershipId)
+    .where('is_player', '=', true)
+    .executeTakeFirst()
+  return row != null
 }
 
 /**
@@ -531,40 +849,8 @@ export async function undoPlayerAdd(
     .where('id', '=', terms.teamId)
     .executeTakeFirstOrThrow()
   for (const game of played) {
-    const guests = storedGuests(game.guests, teamsOfRow(game))
-    // The first of the side's placeholder names not already on it: a guest
-    // of the side, or a line withdrawn before.
-    const used = new Set(
-      (
-        await trx
-          .selectFrom('game_withdrawn_players')
-          .select('label')
-          .where('game_id', '=', game.id)
-          .where('side', '=', game.side)
-          .execute()
-      ).map(row => row.label.toLowerCase())
-    )
-    const sideGuests = guests[game.side]
-    if (sideGuests.length > 0)
-      for (const row of await trx
-        .selectFrom('gumbo_ids')
-        .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
-        .select(['users.display_name', 'users.first_name', 'users.last_name'])
-        .where('gumbo_ids.gumbo_id', 'in', sideGuests)
-        .execute()) {
-        used.add(row.display_name.toLowerCase())
-        used.add(
-          [row.first_name, row.last_name]
-            .filter(part => part != null && part !== '')
-            .join(' ')
-            .toLowerCase()
-        )
-      }
-    const prefix = placeholderTeamName(team.name)
-    let suffix = 0
-    while (used.has(`${prefix} ${placeholderSuffix(suffix)}`.toLowerCase()))
-      suffix++
-    const label = `${prefix} ${placeholderSuffix(suffix)}`
+    const used = await namesOnSide(trx, game, game.side)
+    const label = freeLabel(team.name, used)
     await trx
       .insertInto('game_withdrawn_players')
       .values({
@@ -579,27 +865,52 @@ export async function undoPlayerAdd(
     noteScopeChange(trx, { gameId: game.id })
   }
   if (terms.mode === 'roster') {
-    if (terms.createdMembership === true)
+    // Whatever has come to rest on the row since the add stays: somebody
+    // given a role on the team is on it for that, not for the add.
+    const staff = await trx
+      .selectFrom('scope_roles')
+      .select('role')
+      .where('scope_type', '=', 'team')
+      .where('scope_id', '=', terms.teamId)
+      .where('user_id', 'in', person.userIds)
+      .executeTakeFirst()
+    const held = await trx
+      .selectFrom('memberships')
+      .select('role')
+      .where('team_id', '=', terms.teamId)
+      .where('user_id', 'in', person.userIds)
+      .where('role', '!=', 'member')
+      .executeTakeFirst()
+    if (terms.createdMembership === true && staff == null && held == null)
       await trx
         .deleteFrom('memberships')
         .where('team_id', '=', terms.teamId)
         .where('user_id', 'in', person.userIds)
+        .$if(terms.membershipId != null, query =>
+          query.where('id', '=', terms.membershipId!)
+        )
         .execute()
     else
       await trx
         .updateTable('memberships')
         .set({
           is_player: false,
-          // As it was before the add.
-          ...(terms.previous == null
-            ? {}
-            : {
-                jersey: terms.previous.jersey,
-                positions: terms.previous.positions
-              })
+          // As it was before the add: a row it made, kept for a role, had
+          // no jersey before it.
+          ...(terms.createdMembership === true
+            ? { jersey: null, positions: [] }
+            : terms.previous == null
+              ? {}
+              : {
+                  jersey: terms.previous.jersey,
+                  positions: terms.previous.positions
+                })
         })
         .where('team_id', '=', terms.teamId)
         .where('user_id', 'in', person.userIds)
+        .$if(terms.membershipId != null, query =>
+          query.where('id', '=', terms.membershipId!)
+        )
         .execute()
     await trx
       .updateTable('teams')
@@ -622,7 +933,7 @@ export async function undoPlayerAdd(
     if (game != null) {
       const teams = teamsOfRow(game)
       const guests = storedGuests(game.guests, teams)
-      const side = terms.side!
+      const side = sideOf(game, terms, gumboIds)
       guests[side] = guests[side].filter(id => !gumboIds.has(id))
       await trx
         .updateTable('games')
@@ -664,14 +975,9 @@ async function removerOf(
 ): Promise<PlayerRemover> {
   const person = await personOf(trx, terms.userId)
   if (person.userIds.includes(actor.userId)) return 'self'
-  const guardian = await trx
-    .selectFrom('user_links')
-    .select('id')
-    .where('user_id', '=', actor.userId)
-    .where('related_user_id', 'in', person.userIds)
-    .where('kind', '=', 'guardian')
-    .executeTakeFirst()
-  return guardian != null ? 'guardian' : 'coach'
+  const actorRows = (await personOf(trx, actor.userId)).userIds
+  const guardians = await guardiansOf(trx, person.userIds)
+  return guardians.some(id => actorRows.includes(id)) ? 'guardian' : 'coach'
 }
 
 /**
@@ -722,6 +1028,24 @@ async function noticeRemoval(
 }
 
 /**
+ * Whether this person is the player's side now, whoever was told at the add:
+ * a guardian removed since, or a stand-in who has left the player's other
+ * team, may no longer reject it, and a guardian added since may. Whoever made
+ * the add is never the side that answers it.
+ */
+export async function mayAnswerPlayerAdd(
+  db: Db,
+  actor: Actor,
+  request: StoredRequest
+): Promise<boolean> {
+  const terms = request.terms as PlayerAddTerms
+  const { userIds } = await playerAddApprovers(db, terms.userId, terms.teamId)
+  const rows = (await personOf(db, actor.userId)).userIds
+  const sender = (await personOf(db, request.sender_id)).userIds
+  return userIds.some(id => !sender.includes(id) && rows.includes(id))
+}
+
+/**
  * Decides a `playerAdd` request for one of its approvers. A notice
  * (`applied`) can only be rejected, within its 90 days, which undoes it; a
  * pending one is accepted, which makes the add then, or declined.
@@ -748,23 +1072,10 @@ async function decideOnce(
   decision: 'accept' | 'decline',
   clock: Clock
 ): Promise<void> {
-  const sides = await trx
-    .selectFrom('group_request_sides')
-    .selectAll()
-    .where('request_id', '=', request.id)
-    .execute()
-  let permitted = false
-  for (const side of sides)
-    if (
-      await approvesSide(
-        trx,
-        actor,
-        { kind: side.scope_type, id: side.scope_id },
-        request
-      )
-    )
-      permitted = true
-  if (!permitted) throw forbidden('Only the player’s side can decide this')
+  if (!(await mayAnswerPlayerAdd(trx, actor, request)))
+    throw forbidden('Only the player’s side can decide this')
+  // Told or not at the add, whoever decides keeps it in their History.
+  await recordRequestRecipient(trx, request.id, actor.userId)
   const terms = request.terms as PlayerAddTerms
   const now = clock.now()
   const open = request.expires_at.getTime() > now.getTime()
@@ -788,10 +1099,16 @@ async function decideOnce(
   if (request.status === 'applied') {
     if (decision === 'accept') throw conflict('This change is already made')
     if (!open) throw conflict('This can no longer be rejected.')
+    // After the rows the undo takes: a team's next add must meet what this
+    // rejection decides, and not be read as the first.
+    await lockGamesOfAdd(trx, terms)
+    await lockPlayerAdds(trx, (await personOf(trx, terms.userId)).userId)
     if (await supersededPlayerAdd(trx, request))
       throw conflict(
         'They were added again since. Reject the newer notice instead.'
       )
+    if (await rejoinedSince(trx, terms))
+      throw conflict('They are on the team another way now.')
     const games = await undoPlayerAdd(trx, request, terms)
     await resolve('declined')
     await noticeRemoval(trx, actor, request, terms, games, clock)
@@ -806,6 +1123,7 @@ async function decideOnce(
     await resolve('declined')
     return
   }
+  const person = await personOf(trx, terms.userId)
   if (terms.mode === 'pool') {
     const game = await trx
       .selectFrom('games')
@@ -814,24 +1132,39 @@ async function decideOnce(
       .forUpdate()
       .executeTakeFirst()
     if (game == null) throw notFound()
+    await lockPlayerAdds(trx, person.userId)
     const side = terms.side === 'home' ? game.home_team_id : game.away_team_id
     // Over, swapped, or the player in the game by now: it can never apply.
     const lapsed =
       game.status === 'final' ||
       game.status === 'cancelled' ||
       side !== terms.teamId ||
-      (await inGameAs(
-        trx,
-        game,
-        (await personOf(trx, terms.userId)).userIds
-      )) != null
+      (await inGameAs(trx, game, person.userIds)) != null ||
+      (await playedForOther(trx, game, person.userIds, terms.teamId))
     if (lapsed) {
       await resolve('expired')
       return
     }
     // Between a pitch and its result: accept again once it is in.
     await guestGameOpen(trx, game)
+  } else {
+    await lockPlayerAdds(trx, person.userId)
+    // On the roster by now: nothing is left to accept, and an accept would
+    // read as saying yes to an add it never saw.
+    const playing = await trx
+      .selectFrom('memberships')
+      .select('id')
+      .where('team_id', '=', terms.teamId)
+      .where('user_id', 'in', person.userIds)
+      .where('is_player', '=', true)
+      .executeTakeFirst()
+    if (playing != null) {
+      await resolve('expired')
+      return
+    }
   }
+  // Deleted since it was asked: a later add must not bring them back.
+  await refuseDeleted(trx, person.userId)
   const applied = await applyPlayerAdd(trx, terms)
   await trx
     .updateTable('group_requests')

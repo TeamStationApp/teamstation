@@ -2,7 +2,13 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { birthMonthText } from '../../common/age'
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
+import type { PlayerAddTold } from '../../common/notifications'
 import { outcomeName } from '../../common/outcomes'
 import {
   asPersonSettings,
@@ -15,8 +21,10 @@ import {
   canSeePerson,
   canSeePlayedFor,
   guardsPerson,
+  heldByOpenAdd,
   mayEditName,
   mayManagePlayer,
+  openAddTeams,
   roleScopes,
   teamsPlayedOnNow,
   visibleScopes
@@ -186,6 +194,10 @@ export function playerRoutes(
         ).get(userId),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
+        openAddTeams: (await openAddTeams(db, person.userIds)).filter(id => {
+          const team = teams.find(held => held.teamId === id)
+          return team != null && (ownPage || canSeePlayedFor(scopes, team))
+        }),
         /**
          * How this person may invite a guardian of the player: as a guardian,
          * with no sending team; from a team they coach, while the player has
@@ -601,14 +613,19 @@ export function playerRoutes(
           const entry = roster.find(row => row.userId === result.userId)
           if (entry == null) throw notFound()
           return result.kind === 'unchanged'
-            ? { status: 200, body: entry }
+            ? { status: 200, body: { ...entry, unchanged: true } }
             : {
                 status: 201,
                 body: {
                   ...entry,
                   ...(result.requestId == null
                     ? {}
-                    : { notice: { requestId: result.requestId } })
+                    : {
+                        notice: {
+                          requestId: result.requestId,
+                          told: result.told
+                        }
+                      })
                 }
               }
         }
@@ -726,20 +743,31 @@ export function playerRoutes(
 
         const body = cleanBody(asPlayerSettings, req.body)
         // The jersey and positions are the team's; the rest is the person's.
-        if (
+        const touchesPerson =
           body.name !== undefined ||
           body.bats !== undefined ||
           body.throws !== undefined
-        )
-          await refuseDeleted(trx, userId)
-        if (
-          body.name !== undefined &&
-          !(await mayEditName(trx, actor.userId, userId, {
+        if (touchesPerson) await refuseDeleted(trx, userId)
+        const mayEdit =
+          touchesPerson &&
+          (await mayEditName(trx, actor.userId, userId, {
             isAdmin: actor.isAdmin
           }))
-        ) {
-          throw notFound()
-        }
+        if (body.name !== undefined && !mayEdit) throw notFound()
+        // Held only through an add that can still be rejected: a rejection
+        // could not undo a change to them.
+        if (
+          (body.bats !== undefined || body.throws !== undefined) &&
+          !mayEdit &&
+          (await heldByOpenAdd(
+            trx,
+            teamId,
+            (await onePerson(trx, userId)).userIds
+          ))
+        )
+          throw forbidden(
+            'How they bat and throw are their own while their side may reject this add'
+          )
 
         if (body.jersey !== undefined || body.positions !== undefined) {
           await trx
@@ -815,7 +843,7 @@ export function playerRoutes(
         }
       })
 
-      const roster = await teamRoster(db, media.space, teamId, true)
+      const roster = await teamRoster(db, media.space, teamId, true, actor)
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()
       res.json(entry)
@@ -1102,18 +1130,20 @@ function userIdParam(value: string | string[] | undefined): string {
 
 /** An existing-player add as an idempotency claim keeps it. */
 function existingResultId(result: ExistingAdd): string {
-  return result.kind === 'pending'
-    ? `pending ${result.userId} ${result.requestId}`
-    : `${result.kind} ${result.userId} ${result.kind === 'added' ? (result.requestId ?? '') : ''}`
+  if (result.kind === 'pending')
+    return `pending ${result.userId} ${result.requestId}`
+  if (result.kind === 'unchanged') return `unchanged ${result.userId}`
+  return `added ${result.userId} ${result.requestId ?? ''} ${result.told ?? ''}`
 }
 
 function existingResultOf(held: string): ExistingAdd {
-  const [kind, userId, requestId] = held.split(' ')
+  const [kind, userId, requestId, told] = held.split(' ')
   if (kind === 'pending') return { kind, userId, requestId }
   if (kind === 'unchanged') return { kind, userId }
   return {
     kind: 'added',
     userId,
-    requestId: requestId === '' ? null : requestId
+    requestId: requestId === '' ? null : requestId,
+    told: told === undefined || told === '' ? null : (told as PlayerAddTold)
   }
 }
