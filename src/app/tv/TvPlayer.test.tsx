@@ -250,6 +250,25 @@ describe('TV game playback entry', () => {
     await press('Play')
     expect(videos[1].currentTime).equals(0)
   })
+  it('offers retry when every native camera fails before loading', async () => {
+    count = 2
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    for (const video of videos) {
+      await act(async () => {
+        Object.defineProperty(video, 'error', {
+          configurable: true,
+          value: { code: 3, message: 'fixture' }
+        })
+        video.dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+    }
+    expect(document.body.textContent).contains('cameras could not play')
+    await press('Retry video')
+    expect(document.querySelectorAll('video')).length(2)
+    expect(document.body.textContent).not.contains('Retry video')
+  })
   it('plays available cameras when another URL fails or is still preparing', async () => {
     mixed = true
     await render()

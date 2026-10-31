@@ -142,7 +142,7 @@ export class PlaybackClock {
   /** A failed master must never hand the clock back to an exhausted camera. */
   fail(index: number): boolean {
     this.ports[index].failed = true
-    if (index !== this.master) return false
+    if (this.available(this.master)) return false
     const next = this.ports.findIndex((p, i) => p.loaded && this.available(i))
     if (next >= 0) {
       this.master = next
