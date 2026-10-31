@@ -338,7 +338,13 @@ export async function rosterEditFixture(
         }
         if (!u.pathname.startsWith('/api/')) {
           const path = extname(u.pathname) === '' ? '/' : u.pathname
-          const response = await fetch(new URL(path, assets))
+          const url = new URL(path, assets)
+          if (url.origin !== new URL(assets).origin) {
+            res.statusCode = 404
+            res.end()
+            return
+          }
+          const response = await fetch(url)
           res.statusCode = response.status
           res.setHeader(
             'Content-Type',

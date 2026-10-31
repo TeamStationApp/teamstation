@@ -405,9 +405,9 @@ subset throws every icon away.
 
 ```sh
 python3 -m venv tools/.venv                      # gitignored, and still there in a month
-tools/.venv/bin/pip install fonttools cairosvg
+tools/.venv/bin/pip install fonttools
 tools/.venv/bin/python tools/makeFonts.py        # after adding to IconName
-tools/.venv/bin/python tools/makeAppIcons.py     # the icon, from the mark's own paths
+node tools/makeAppIcons.mjs                      # the icon, from the mark's own paths
 ```
 
 ## Testing

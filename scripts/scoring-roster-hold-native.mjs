@@ -124,7 +124,7 @@ try {
     return n.bounds
   }
   const sourceLabel = 'Add Player 2 to Lineup'
-  let from = center(await row(sourceLabel))
+  const from = center(await row(sourceLabel))
   await gesture([from, { x: from.x, y: from.y - 90, duration: 250 }], 40)
   await shot('quick-scroll')
   const shifted = await row(sourceLabel)
@@ -137,7 +137,7 @@ try {
     ],
     40
   )
-  from = center(await row(sourceLabel))
+  await row(sourceLabel)
   await m.dragAndDrop({
     from: { text: '^Add Player 2 to Lineup$' },
     to: { text: '^Reorder Player 3$' },

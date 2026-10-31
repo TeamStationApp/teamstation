@@ -356,7 +356,13 @@ async function open(fixture: Fixture = {}): Promise<{
       const u = new URL(request.url ?? '/', 'http://127.0.0.1')
       if (!u.pathname.startsWith('/api/')) {
         const assetPath = extname(u.pathname) === '' ? '/' : u.pathname
-        const upstream = await fetch(new URL(assetPath + u.search, base))
+        const url = new URL(assetPath + u.search, base)
+        if (url.origin !== new URL('/', base).origin) {
+          response.statusCode = 404
+          response.end()
+          return
+        }
+        const upstream = await fetch(url)
         response.statusCode = upstream.status
         response.setHeader(
           'Content-Type',

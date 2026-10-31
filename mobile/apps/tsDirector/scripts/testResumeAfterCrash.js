@@ -601,7 +601,7 @@ async function scenarioExpired(options) {
   // One second of grace, so being away for the few seconds a relaunch takes is already too long.
   process.stdout.write('  relaunching with a one-second resume limit\n')
   launch(['-resumeLimit', '1'])
-  const after = await waitFor('the app to settle', 90, snapshot => snapshot.clockSeconds > 0)
+  await waitFor('the app to settle', 90, snapshot => snapshot.clockSeconds > 0)
   await sleep(4_000)
   const settled = await state()
 

@@ -80,7 +80,6 @@ if (existsSync(testLog)) {
 }
 expect(gradle.status === 0, 'RecordingExportTest passed')
 
-const exported = join(work, 'kotlin-recording-export.mp4')
 const streams = run('ffprobe', ['-v', 'error', '-show_entries', 'stream=index,codec_type,codec_name,width,height', '-of', 'compact', 'kotlin-recording-export.mp4'])
 const kinds = streams.output.split('\n').filter(Boolean)
 expect(kinds.filter(line => line.includes('codec_type=video')).length === 1 && /codec_name=hevc\|codec_type=video\|width=1920\|height=1080/.test(streams.output), 'one HEVC 1920x1080 track')

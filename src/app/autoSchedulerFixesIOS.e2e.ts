@@ -127,8 +127,14 @@ function lanServer(
     start: async upstream => {
       const target = new URL(upstream)
       const started = createServer((req, res) => {
+        const url = new URL(req.url ?? '/', target)
+        if (url.origin !== target.origin) {
+          res.writeHead(400)
+          res.end()
+          return
+        }
         const outgoing = forward(
-          new URL(req.url ?? '/', target),
+          url,
           {
             method: req.method,
             headers: { ...req.headers, host: target.host }

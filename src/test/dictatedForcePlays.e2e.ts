@@ -149,7 +149,7 @@ const EXPECTED: Record<string, Expected> = {
 }
 
 /** When a frame is: a picture's middle, the wild ball passing the bag, its contact, or after the play. */
-function frameAt(frame: Frame, report: Report): number | undefined {
+function frameAt(frame: Frame, report: Report): number {
   const pictures = report.timeline
   const last = pictures.at(-1)
   const done =
@@ -337,7 +337,6 @@ async function play(
       for (const frame of expected.frames) {
         if (frame.afterOnly === true && label === 'before') continue
         const at = frameAt(frame, report)
-        if (at == null) continue
         const file = path.join(output, `${frame.file}-${label}.png`)
         execFileSync('ffmpeg', [
           '-v',

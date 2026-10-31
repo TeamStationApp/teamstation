@@ -1206,7 +1206,7 @@ async function main() {
   let encoderResetIncreaseTicks = 0
   let lastEncoderResetCount = 0
   let abortReason = null
-  let lastProgram = (state.programSource ?? 0) + 1
+  let lastProgram
   const memoryGuard = new MemoryPeakGuard({ hardCapMB: 1200 })
   const cameramanMemoryGuard = new MemoryPeakGuard({ hardCapMB: 800 })
   const hourResults = []

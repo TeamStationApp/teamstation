@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { appendFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
@@ -61,7 +62,7 @@ export function spawnText(command: string, args: string[]): string {
 /** The local stack's database, from the API's own config. */
 export function databaseUrl(): string {
   const config = JSON.parse(
-    execFileSync('cat', [resolve('serverConfig.json')], { encoding: 'utf8' })
+    readFileSync(resolve('serverConfig.json'), 'utf8')
   ) as { databaseUrl: string }
   return config.databaseUrl
 }

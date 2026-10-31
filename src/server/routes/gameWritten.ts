@@ -9,6 +9,6 @@ export function tellGameWritten(
   try {
     onGameWritten?.(gameId)
   } catch (error) {
-    console.error(`onGameWritten ${gameId}`, error)
+    console.error('onGameWritten %s', gameId, error)
   }
 }

@@ -267,9 +267,8 @@ describe('following a team (U1)', function () {
       .selectFrom('team_follows')
       .select(['user_id'])
       .where('team_id', '=', teamId)
-      .orderBy('user_id')
       .execute()
-    return rows.map(row => row.user_id)
+    return rows.map(row => row.user_id).sort()
   }
 
   describe('search', function () {

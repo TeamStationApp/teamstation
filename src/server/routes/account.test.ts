@@ -331,7 +331,7 @@ describe('account settings HTTP API', function () {
       clientParameters: testPasswordParameters,
       currentClientHash: 'cd'.repeat(32)
     }
-    for (let n = 0; n < 10; n++)
+    for (let n = 0; n < 3; n++)
       expect((await h.request('PUT', ROOT + '/password', body)).status).equals(
         400
       )

@@ -48,7 +48,8 @@ export function readTitle(title: string, team: string): Parsed | null {
     .replace(/ - raw videos$/i, '')
     .replace(/(^| )(raw|combined)$/i, '')
   // A league's name may sit in front of the team's: `QPLL Seagulls vs …`.
-  const versus = new RegExp(`${team}\\s+vs\\.?\\s+(.+)$`, 'i').exec(rest)
+  const name = team.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const versus = new RegExp(`${name}\\s+vs\\.?\\s+(.+)$`, 'i').exec(rest)
   if (versus == null) return null
   return { day, opponent: versus[1].trim(), composite }
 }

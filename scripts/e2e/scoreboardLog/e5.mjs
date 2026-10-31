@@ -104,16 +104,17 @@ const check = (ok, what) => {
 const iso = ms => new Date(ms).toISOString()
 
 /**
- * Runs curl as printed, with the token in the environment and never on the
+ * Runs curl as printed, with the token on its standard input and never on the
  * line, and answers the parsed body. A timeline is printed as a summary and
  * its turns: hundreds of points say nothing more than that.
  */
 function curl(url, { method = 'GET' } = {}) {
-  const line = `curl -s${method === 'GET' ? '' : ` -X ${method}`} -H "Authorization: Bearer $TOKEN" "${url}"`
-  console.log(`$ ${line}`)
-  const ran = spawnSync('sh', ['-c', `${line} -w '\\n%{http_code}'`], {
+  const line = `curl -s${method === 'GET' ? '' : ` -X ${method}`} -H "Authorization: Bearer $TOKEN"`
+  console.log(`$ ${line} "${url}"`)
+  const args = ['-s', '-X', method, '-H', '@-', url, '-w', '\n%{http_code}']
+  const ran = spawnSync('curl', args, {
     encoding: 'utf8',
-    env: { ...process.env, TOKEN: token },
+    input: `Authorization: Bearer ${token}\n`,
     maxBuffer: 1 << 26
   })
   const text = ran.stdout.trimEnd()
