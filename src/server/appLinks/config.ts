@@ -1,4 +1,11 @@
-import { asArray, asObject, asOptional, asString, type Cleaner } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asObject,
+  asOptional,
+  asString,
+  type Cleaner
+} from 'cleaners'
 
 /**
  * An origin exactly as a browser writes one: `https://host[:port]`, no path,
@@ -42,6 +49,8 @@ export const asFingerprint: Cleaner<string> = (raw: unknown): string => {
 const asAppLink = asObject({
   /** The host the app's sign-in links name, and that its OS verifies. */
   origin: asOrigin,
+  /** Enable TV approval links for the TeamStation companion app only. */
+  tvLogin: asOptional(asBoolean),
   /** `<team>.<bundle id>` for each iOS app the host opens. */
   apple: asOptional(asObject({ appIds: asArray(asString) })),
   /** The Android package the host opens, and the keys that sign it. */

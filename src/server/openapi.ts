@@ -40,6 +40,43 @@ import { venuePaths } from './venues/venuesOpenApi'
 const PUBLIC_NAME =
   "The public name: first name and last initial, unless the player's league, season or team chose another format."
 
+const videoCollectionParameters = [
+  {
+    name: 'hasVideo',
+    in: 'query',
+    schema: { type: 'string', enum: ['1', 'true'] },
+    description:
+      'Omitted: existing collection behavior. When set, only games with visible ready/live single-camera video, and their teams or recorded participants. Other legacy filters cannot be combined. Results contain no access-request candidates.'
+  },
+  {
+    name: 'team',
+    in: 'query',
+    schema: { type: 'string' },
+    description:
+      'With hasVideo: games involving this team; omitted: all accessible games.'
+  },
+  {
+    name: 'participant',
+    in: 'query',
+    schema: { type: 'string' },
+    description:
+      'With hasVideo: recorded game participant user ID, never current roster membership. Omitted: any participant.'
+  },
+  {
+    name: 'offset',
+    in: 'query',
+    schema: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
+    description: 'With hasVideo: number of matching rows to skip.'
+  },
+  {
+    name: 'sort',
+    in: 'query',
+    schema: { type: 'string', enum: ['date', 'upload'], default: 'date' },
+    description:
+      'With hasVideo: event ordering by game date or latest video creation time; identities always sort by public name. Stable ID ties. Events include latestVideoId and latestVideoAt.'
+  }
+]
+
 const recordSchema = {
   type: 'object',
   required: ['w', 'l', 't'],
@@ -3263,6 +3300,25 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{}, { bearer: [] }],
           parameters: [
             {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', default: '' },
+              description:
+                'With hasVideo: case-insensitive public name substring; omitted: all.'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 50
+              },
+              description: 'With hasVideo: rows per page.'
+            },
+            ...videoCollectionParameters,
+            {
               name: 'view',
               in: 'query',
               schema: { type: 'string', enum: ['public'] },
@@ -5620,6 +5676,20 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [],
           parameters: [
             {
+              name: 'personalized',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'Omitted: public preview behavior. 1 requires signed-in playback access (404 otherwise) and adds preferred, true when the viewer or a guarded player is credited, including assists.'
+            },
+            {
+              name: 'participant',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'With personalized=1: return only highlights crediting this player, including assists and historical merged identities. Omitted: all highlights with viewer/family preference.'
+            },
+            {
               name: 'videoId',
               in: 'path',
               required: true,
@@ -6109,6 +6179,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
+            ...videoCollectionParameters,
             {
               name: 'view',
               in: 'query',
@@ -6163,13 +6234,14 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+                'With hasVideo: case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
             },
             {
               name: 'limit',
               in: 'query',
               schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
-              description: 'With forTeam: rows per page.'
+              description:
+                'With hasVideo: default 50, maximum 100. With forTeam: default 30, maximum 50.'
             },
             {
               name: 'after',
@@ -8933,6 +9005,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [
             {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', default: '' },
+              description:
+                'With hasVideo: case-insensitive matchup substring; omitted: all.'
+            },
+            ...videoCollectionParameters,
+            {
               name: 'scope',
               in: 'query',
               schema: { type: 'string', enum: ['visible', 'run', 'film'] }
@@ -8982,6 +9062,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
+              description:
+                'With hasVideo: default 50, maximum 100. Otherwise omitted means uncapped.',
               schema: { type: 'integer', minimum: 1 }
             },
             {
@@ -9351,6 +9433,273 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             401: errorResponse
           }
+        }
+      },
+      '/auth/tv/start': {
+        post: {
+          summary: 'Start a two-minute TV approval request',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    platform: {
+                      type: 'string',
+                      enum: ['Apple TV', 'Google TV']
+                    }
+                  },
+                  required: ['platform']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Private TV request credentials; do not log or share clientSecret',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      requestId: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]{43}$'
+                      },
+                      clientSecret: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]{43}$'
+                      },
+                      displayCode: {
+                        type: 'string',
+                        description:
+                          'Eight uppercase letters grouped four\u2013four'
+                      },
+                      qrUrl: {
+                        type: 'string',
+                        format: 'uri'
+                      },
+                      expiresAt: {
+                        type: 'number',
+                        description: 'Unix milliseconds'
+                      }
+                    },
+                    required: [
+                      'requestId',
+                      'clientSecret',
+                      'displayCode',
+                      'qrUrl',
+                      'expiresAt'
+                    ]
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            }
+          }
+        }
+      },
+      '/auth/tv/claim': {
+        post: {
+          summary: 'Claim a TV session once approved',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    requestId: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    },
+                    clientSecret: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    }
+                  },
+                  required: ['requestId', 'clientSecret']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'One-time claim of a 180-day named TV session',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/Session'
+                  }
+                }
+              }
+            },
+            '202': {
+              description: 'Waiting for approval',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ready: {
+                        type: 'boolean',
+                        enum: [false]
+                      }
+                    },
+                    required: ['ready']
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            }
+          }
+        }
+      },
+      '/auth/tv/inspect': {
+        post: {
+          summary: 'Preview a QR request for a signed-in human',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    token: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    }
+                  },
+                  required: ['token']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Approximate device location, or null when unavailable; does not approve',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      platform: {
+                        type: 'string',
+                        enum: ['Apple TV', 'Google TV']
+                      },
+                      location: {
+                        type: ['string', 'null']
+                      },
+                      expiresAt: {
+                        type: 'number',
+                        description: 'Unix milliseconds'
+                      }
+                    },
+                    required: ['platform', 'location', 'expiresAt']
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            },
+            '403': {
+              description: 'Human session required'
+            },
+            '409': {
+              description: 'Approved by another account'
+            }
+          },
+          description:
+            'Requires a signed-in human session; API keys, machine tokens and delegated agents cannot approve.'
+        }
+      },
+      '/auth/tv/approve': {
+        post: {
+          summary: 'Approve a TV as the signed-in human',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: {
+                        code: {
+                          type: 'string',
+                          description:
+                            'Eight alphabetic letters, case insensitive; grouping optional'
+                        }
+                      },
+                      required: ['code']
+                    },
+                    {
+                      type: 'object',
+                      properties: {
+                        token: {
+                          type: 'string',
+                          pattern: '^[A-Za-z0-9_-]{43}$'
+                        }
+                      },
+                      required: ['token']
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          responses: {
+            '204': {
+              description: 'Approved; TV claims its own session'
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            },
+            '403': {
+              description: 'Human session required'
+            },
+            '409': {
+              description: 'Approved by another account'
+            }
+          },
+          description:
+            'Requires a signed-in human session; API keys, machine tokens and delegated agents cannot approve.'
         }
       },
       '/auth/request/claim': {

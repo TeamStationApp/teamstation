@@ -113,6 +113,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
+import { signInRequest } from './platform/signInRequest'
 import {
   sessionUserOf,
   type StoredUser,
@@ -166,6 +167,7 @@ import { SeasonScreen } from './screens/SeasonScreen'
 import { SeasonTimeFrameScreen } from './screens/SeasonTimeFrameScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
+import { TeamStationTvScreen } from './screens/TeamStationTvScreen'
 import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
@@ -297,6 +299,7 @@ type Pushed =
       highlightUntil?: number
     }
   | { name: 'account' }
+  | { name: 'teamStationTv'; token?: string }
   /** Create API key, above Account. */
   | { name: 'apiKeyNew' }
   /** Chat devices, from the account screen or `/chat/devices`. */
@@ -1907,7 +1910,11 @@ function Shell(props: AppProps): React.ReactElement {
   const signedIn = (next: Session): void => {
     rememberSession(next)
     const returnPath = safeNext(
-      route.name === 'signIn' ? (route.next ?? next.next) : next.next
+      route.name === 'teamStationTv'
+        ? routePath(route)
+        : route.name === 'signIn'
+          ? (route.next ?? next.next)
+          : next.next
     )
     if (returnPath != null) {
       const [path, search = ''] = returnPath.split('?')
@@ -1915,7 +1922,8 @@ function Shell(props: AppProps): React.ReactElement {
       goToRoute(destination)
       if (
         destination.name === 'oauthApprove' ||
-        destination.name === 'oauthNative'
+        destination.name === 'oauthNative' ||
+        destination.name === 'teamStationTv'
       )
         showRoute(destination, true)
     }
@@ -2080,7 +2088,13 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : (
           <LoginScreen
-            next={route.name === 'signIn' ? route.next : undefined}
+            next={
+              route.name === 'teamStationTv'
+                ? routePath(route)
+                : route.name === 'signIn'
+                  ? route.next
+                  : undefined
+            }
             client={client}
             onSignedIn={signedIn}
             onDiscover={() => {
@@ -2945,9 +2959,19 @@ function Shell(props: AppProps): React.ReactElement {
       session == null ? null : (
         <NewApiKeyScreen client={client} onCreated={pop} />
       )
+    ) : top.name === 'teamStationTv' && session != null ? (
+      <TeamStationTvScreen
+        key={`${session.user.id}:${top.token ?? ''}`}
+        client={client}
+        token={top.token}
+        appOrigin={signInRequest.appOrigin}
+      />
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
+        onTeamStationTv={() => {
+          push({ name: 'teamStationTv' })
+        }}
         onCreateApiKey={() => {
           push({ name: 'apiKeyNew' })
         }}
@@ -3814,6 +3838,13 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
       ]
     }
   }
+  if (route.name === 'teamStationTv')
+    return {
+      [tab]: [
+        { name: 'account' },
+        { name: 'teamStationTv', token: route.token }
+      ]
+    }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
   // Back from Create API key is Account.
   if (route.name === 'apiKeyNew')
@@ -3929,6 +3960,8 @@ function routeOf(
         when: top.when
       }
     }
+    if (top.name === 'teamStationTv')
+      return { name: 'teamStationTv', token: top.token }
     if (top.name === 'account') return { name: 'account' }
     if (top.name === 'apiKeyNew') return { name: 'apiKeyNew' }
     if (top.name === 'chatDevices') return { name: 'chatDevices' }
@@ -4126,6 +4159,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
         ? 'Notifications'
         : undefined
     if (top.name === 'season') return undefined
+    if (top.name === 'teamStationTv') return 'TeamStation TV'
     if (top.name === 'account') return 'Account'
     if (top.name === 'apiKeyNew') return lstrings.api_key_new_create
     if (top.name === 'chatDevices') return lstrings.chat_devices_title
