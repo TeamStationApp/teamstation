@@ -490,6 +490,26 @@ export const CAMERAS_PER_PERSON = 4
 
 export type SpawnPattern = (url: string, seconds: number) => ChildProcess
 
+/** A URL's host in lower case, which a scheme like `rtmp:` is not put in. */
+function hostOf(url: string): string {
+  return new URL(url).hostname.toLowerCase()
+}
+
+/**
+ * Refuses a stream URL for a host this run is not testing. A server with no
+ * `primaryUrlOverride` names the production host in the URLs it mints, and a
+ * publisher would push its test pattern there. The message names the host and
+ * not the URL, whose path is a live stream key.
+ */
+export function requireServerHost(url: string, servers: string[]): void {
+  const hosts = servers.map(hostOf)
+  const host = URL.canParse(url) ? hostOf(url) : 'something unreadable'
+  if (hosts.includes(host)) return
+  throw new Error(
+    `Refusing to publish: the server minted a stream URL for ${host}, which is not a --server host (${hosts.join(', ')}). Set the server's primaryUrlOverride to the name it is tested on.`
+  )
+}
+
 /** The repository's test pattern, pushing to the URL for the whole run. */
 export const spawnTestPattern: SpawnPattern = (url, seconds) =>
   spawn(
@@ -540,14 +560,22 @@ export class Publishers implements Actor {
     for (let i = 0; i < this.streams; i++) {
       const account = videographers[i % videographers.length]
       const game = this.tokens.games[account.gameIndex ?? 0]
+      let stream: MintedStream
       try {
-        const stream = await mintStream(
+        stream = await mintStream(
           serverFor(this.servers, i),
           account,
           game.id,
           this.tally
         )
-        this.minted.push(stream)
+      } catch (error) {
+        this.tally.failure(error)
+        continue
+      }
+      // Stops the run: every stream the server mints would go the same way.
+      requireServerHost(stream.url, this.servers)
+      this.minted.push(stream)
+      try {
         const child = this.spawnPattern(stream.url, this.seconds)
         child.on('error', () => {
           this.tally.fail('stream-spawn')

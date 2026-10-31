@@ -29,7 +29,7 @@ import { sessionToken } from '../auth/tokens'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
-import type { Database } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import {
   ChatFanout,
   type ChatFanoutOptions,
@@ -216,6 +216,23 @@ interface Connection {
   typedAt: number
 }
 
+/** Each frame's bytes, for as long as somebody still holds the frame. */
+const encodedFrames = new WeakMap<GameSocketReply, Buffer>()
+
+/**
+ * A frame as it goes out, made once however many sockets hear it. One delivery
+ * carries a game's whole list of plays to everybody watching it, and encoding
+ * that again for each of them holds the worker up for seconds.
+ */
+function encodedFrame(frame: GameSocketReply): Buffer {
+  let encoded = encodedFrames.get(frame)
+  if (encoded == null) {
+    encoded = Buffer.from(JSON.stringify(frame))
+    encodedFrames.set(frame, encoded)
+  }
+  return encoded
+}
+
 /**
  * Which of these subscribers may see the game, on the delivery's connection: a
  * read of their credentials and a set of reads of their scopes, however many
@@ -318,6 +335,23 @@ export function attachGameSocket(
       spreadTimers
     )
   }
+  // Notices went unheard or unsent: each screen subscribes again and reads, at
+  // its own moment. A frame still to come covers whatever is missed before it.
+  const resyncScreens = (targets: Connection[]): void => {
+    const due = targets.filter(
+      connection => connection.screen != null && !connection.screenResyncDue
+    )
+    for (const connection of due) connection.screenResyncDue = true
+    spread(
+      due,
+      resyncSpreadMs,
+      connection => {
+        connection.screenResyncDue = false
+        if (connection.screen != null) reply(connection, { type: 'resync' })
+      },
+      spreadTimers
+    )
+  }
   const fanout = new GameFanout({
     ...options.fanout,
     db,
@@ -337,22 +371,8 @@ export function attachGameSocket(
     deliver: async payload => {
       await announce(payload)
     },
-    // Notices went unheard: every screen subscribes again and reads, at its
-    // own moment. A frame still to come covers whatever is missed before it.
     onResync: () => {
-      const due = [...connections].filter(
-        connection => connection.screen != null && !connection.screenResyncDue
-      )
-      for (const connection of due) connection.screenResyncDue = true
-      spread(
-        due,
-        resyncSpreadMs,
-        connection => {
-          connection.screenResyncDue = false
-          if (connection.screen != null) reply(connection, { type: 'resync' })
-        },
-        spreadTimers
-      )
+      resyncScreens([...connections])
     }
   })
   const chat = new ChatFanout({ ...options.chat, db, feed, resyncSpreadMs })
@@ -407,7 +427,7 @@ export function attachGameSocket(
 
   const reply = (connection: Connection, frame: GameSocketReply): void => {
     if (connection.ws.readyState !== connection.ws.OPEN) return
-    connection.ws.send(JSON.stringify(frame))
+    connection.ws.send(encodedFrame(frame), { binary: false })
   }
   const refuse = (
     connection: Connection,
@@ -639,10 +659,12 @@ export function attachGameSocket(
    * Nothing else is told: a notice nobody matches is dropped.
    */
   const announce = async (payload: ScreenScopePayload): Promise<void> => {
-    const holding = [...connections].filter(
-      connection => connection.screen != null
+    const asked = [...connections].flatMap(connection =>
+      connection.screen == null
+        ? []
+        : [{ connection, screen: connection.screen }]
     )
-    if (holding.length === 0) return
+    if (asked.length === 0) return
     const { gameId, teamId, seasonId, userId, revision } = payload
     // A notice of one game alone (a play, its score) names it to home and
     // schedule too, so a list that shows no games can let it pass.
@@ -673,23 +695,29 @@ export function attachGameSocket(
             awayTeamId: row.away_team_id,
             seasonId: row.season_id
           }
+    // A socket that closed or changed its screen during that read is not
+    // told, and does not stop the others being told.
+    const holding = asked.filter(
+      ({ connection, screen }) => connection.screen === screen
+    )
     // Everybody whose answer turns on their scopes, read together.
     readScopesOf(
-      holding.filter(connection => {
-        const screen = connection.screen!
-        if (gameId != null)
-          return (
-            game != null &&
-            (screen.scope !== 'event' || screen.gameId === gameId)
-          )
-        if (screen.scope === 'event') return false
-        if (userId != null && connection.actor.userId === userId) return false
-        return teamId != null || seasonId != null
-      })
+      holding
+        .filter(({ connection, screen }) => {
+          if (gameId != null)
+            return (
+              game != null &&
+              (screen.scope !== 'event' || screen.gameId === gameId)
+            )
+          if (screen.scope === 'event') return false
+          if (userId != null && connection.actor.userId === userId) return false
+          return teamId != null || seasonId != null
+        })
+        .map(({ connection }) => connection)
     )
+    const unread: Connection[] = []
     await Promise.all(
-      holding.map(async connection => {
-        const screen = connection.screen!
+      holding.map(async ({ connection, screen }) => {
         try {
           if (gameId != null) {
             if (screen.scope === 'event' && screen.gameId !== gameId) return
@@ -718,10 +746,16 @@ export function attachGameSocket(
           )
             tell(connection, screen)
         } catch (error: unknown) {
-          log(`game socket: telling ${screen.scope}: ${String(error)}`)
+          if (isConnectionUnavailable(error)) unread.push(connection)
+          else log(`game socket: telling ${screen.scope}: ${String(error)}`)
         }
       })
     )
+    if (unread.length === 0) return
+    log(
+      `game socket: resyncing ${unread.length} screen(s): no database connection in time`
+    )
+    resyncScreens(unread)
   }
 
   /**
@@ -963,7 +997,16 @@ export function attachGameSocket(
       },
       (error: unknown) => {
         console.error(`game socket: signing in an upgrade: ${String(error)}`)
-        refuseUpgrade(socket, 500, 'Internal Server Error')
+        // Out of connections for the moment, so it is told to come back, as a
+        // starved request is.
+        if (isConnectionUnavailable(error))
+          refuseUpgrade(
+            socket,
+            503,
+            'Service Unavailable',
+            'Retry-After: 1\r\n'
+          )
+        else refuseUpgrade(socket, 500, 'Internal Server Error')
       }
     )
     return true
@@ -1041,8 +1084,13 @@ function rawText(data: RawData): string {
   return data.toString('utf8')
 }
 
-function refuseUpgrade(socket: Duplex, status: number, text: string): void {
+function refuseUpgrade(
+  socket: Duplex,
+  status: number,
+  text: string,
+  headers = ''
+): void {
   socket.end(
-    `HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
+    `HTTP/1.1 ${status} ${text}\r\n${headers}Connection: close\r\nContent-Length: 0\r\n\r\n`
   )
 }
