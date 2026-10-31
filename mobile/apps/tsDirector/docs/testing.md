@@ -139,6 +139,30 @@ Per camera, `loss=` in the HUD counts RTP packets that never arrived, and `src=`
 source last stopped delivering — `no frames for 5s` is a session that went quiet without an error,
 which is the failure a flapping link actually produces.
 
+## A cut, frame by frame
+
+A cut holds no picture: the outgoing camera plays on until the new camera's first picture is due. A
+screenshot cannot show that, and neither can the preview, which changes at the button. So
+`e2e/programmeCut.e2e.ts` reads every picture of the master and of the stream a viewer gets. Its two
+fake cameras (`scripts/markedRtspCameras.js`) carry a camera and frame barcode, and
+`scripts/programmeCutFrames.js` reads it back and reports how long each cut held the outgoing picture.
+
+```bash
+# The regular check, about two minutes on the iPad, after anything on the programme path
+MAESTRO_D=<daemon> DIRECTOR_DEVICE_UDID=<udid> MAESTRO_D_TEAM_ID=<team> socket npm run test:programme-cut
+
+# The whole thing, when the programme, the compositor or a camera's timing changed: cuts, replays,
+# and cuts faster than the live delay; then with one camera's clock 300 ms behind, each way round
+MAESTRO_D=<daemon> DIRECTOR_DEVICE_UDID=<udid> MAESTRO_D_TEAM_ID=<team> \
+  node -r sucrase/register mobile/apps/tsDirector/e2e/programmeCut.e2e.ts
+CUT_REPORTED_AGE=0,300 … ; CUT_REPORTED_AGE=300,0 …
+```
+
+The fake cameras send RTCP sender reports because a camera without them has no capture time: its
+pictures skip the wait for capture plus D, and the test would pass whatever the queue did. A replay
+ending, and a cut away from a replay, hold the last picture until live pictures come due. Those holds
+are reported and not judged.
+
 ## Measuring rather than sampling
 
 `framesPerSecond` in a single dump is instantaneous and jitters hard with network sources — one

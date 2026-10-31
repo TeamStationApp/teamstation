@@ -12,8 +12,6 @@ const path = require('path')
 
 const { resolveDevice } = require('./deviceTarget')
 
-// Resolved when the script runs, not when it is loaded, so a test can import `newestProgram`.
-let UDID
 const BUNDLE = 'app.teamstation.director'
 const OUT = path.join(__dirname, '..', 'artifacts', 'program')
 
@@ -21,23 +19,27 @@ function run (command, args) {
   return execFileSync(command, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 }
 
-function listing () {
-  return run('xcrun', [
+/// Every programme file on the iPad `udid`.
+function programNames (udid) {
+  const listing = run('xcrun', [
     'devicectl', 'device', 'info', 'files',
-    '--device', UDID,
+    '--device', udid,
     '--domain-type', 'appDataContainer',
     '--domain-identifier', BUNDLE,
-    '--username', 'mobile'
+    '--username', 'mobile',
+    // The whole container runs to more entries than a listing can buffer.
+    '--subdirectory', 'Documents/Program'
   ])
+  return [ ...new Set(listing.match(/program-\d{8}-\d{6}(?:-\d+)?\.mp4/g) ?? []) ]
 }
 
-function pull (remote, local) {
+function pullProgram (udid, name, local) {
   run('xcrun', [
     'devicectl', 'device', 'copy', 'from',
-    '--device', UDID,
+    '--device', udid,
     '--domain-type', 'appDataContainer',
     '--domain-identifier', BUNDLE,
-    '--source', remote,
+    '--source', `Documents/Program/${name}`,
     '--destination', local
   ])
 }
@@ -69,17 +71,16 @@ function newestProgram (names) {
 }
 
 function main () {
-  UDID = resolveDevice().udid
+  const udid = resolveDevice().udid
   rmSync(OUT, { recursive: true, force: true })
   mkdirSync(OUT, { recursive: true })
 
-  const names = [ ...listing().matchAll(/Documents\/Program\/([^\s/]+\.mp4)/g) ].map((m) => m[1])
-  const unique = [ ...new Set(names) ]
-  if (!unique.length) throw new Error('no program files on device')
+  const names = programNames(udid)
+  if (!names.length) throw new Error('no program files on device')
 
-  const name = newestProgram(unique)
+  const name = newestProgram(names)
   const local = path.join(OUT, name)
-  pull(`Documents/Program/${name}`, local)
+  pullProgram(udid, name, local)
   if (!existsSync(local)) throw new Error(`copy produced nothing for ${name}`)
 
   console.log(`program: ${name}\n`)
@@ -110,4 +111,4 @@ function main () {
 
 if (require.main === module) main()
 
-module.exports = { newestProgram }
+module.exports = { newestProgram, programNames, pullProgram }

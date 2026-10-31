@@ -3,7 +3,7 @@
 // control-server keep-alive probe, then return to Director and stop.
 //
 // Invoked by run-maestro.js instead of handing operator-background-record.yaml to
-// maestro-runner as a single file, because the keep-alive assert has to run while
+// maestro-d as a single file, because the keep-alive assert has to run while
 // another app is in front.
 
 const { spawnSync } = require('node:child_process')
@@ -12,7 +12,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const ROOT = path.resolve(__dirname, '..')
-const RUNNER = path.join(os.homedir(), '.maestro-runner', 'bin', 'maestro-runner')
+const RUNNER = path.join(os.homedir(), '.maestro-d', 'bin', 'maestro-d')
 /** The team that signs this app: its clientConfig.json's, checked by scripts/clientConfig.mjs; empty when there is none. */
 function clientTeam() {
   const result = spawnSync(
@@ -51,7 +51,7 @@ function main() {
   const useSimulator = args.includes('--sim')
 
   if (!fs.existsSync(RUNNER)) {
-    fail(`maestro-runner not found at ${RUNNER}`)
+    fail(`maestro-d not found at ${RUNNER}`)
   }
 
   const common = [
