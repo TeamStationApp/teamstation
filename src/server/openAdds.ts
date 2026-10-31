@@ -10,13 +10,15 @@ import type { Database } from './db/database'
  */
 
 /** However deep a chain of merges can go, as `onePerson` walks it. */
-const MAX_MERGE_DEPTH = 16
+/** However deep a chain of merges can sensibly go before it is a mistake. */
+export const MAX_MERGE_DEPTH = 16
 
 /**
- * `onePerson` for several rows at once, in one query: each row asked about,
- * keyed by itself, as the open row it is now and every row closed into that
- * one. Walks the merges the way `onePerson` does: up to whoever is still open,
- * stopping at a loop or after `MAX_MERGE_DEPTH` steps, then back down.
+ * Each row asked about, in one query, keyed by itself, as the open row it is
+ * now and every row closed into that one. The one walk of merges the server
+ * uses (`onePeople`, `onePerson` and sign-in's `openRowOf` share its limit): up
+ * to whoever is still open, stopping at a loop or after `MAX_MERGE_DEPTH`
+ * steps, then back down.
  */
 export async function peopleOf(
   db: Kysely<Database>,
