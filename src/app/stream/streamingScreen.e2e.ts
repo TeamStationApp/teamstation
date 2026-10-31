@@ -1,4 +1,4 @@
-// E11 and E12: Record video opens the streaming screen with the Cameraman
+// E11 and E12: Record Video opens the streaming screen with the Cameraman
 // overlay, records and streams, and rides out an outage on a real phone.
 // Through maestro-d's JavaScript client, on an iOS simulator or an iPhone, or
 // on an Android phone with TS_STREAM_ANDROID_SERIAL in place of the UDID.
@@ -29,7 +29,7 @@
 // says which way up the phone is held, so the stream is upright. It is set
 // once the streaming screen is up.
 //
-//   1. Record video → the angle's name → Start.
+//   1. Record Video → the angle's name → Record with this phone.
 //   2. The overlay: the name, "Press record to start stream", a thermal
 //      label, and on a phone the battery. Screenshot.
 //   3. Record → "Broadcasting"; ffprobe the live HLS (HEVC 1080p). With the
@@ -813,7 +813,7 @@ async function main(): Promise<void> {
     }
     const token = await apiToken()
 
-    // 1. Record video, the prompt, Start.
+    // 1. Record Video, the prompt, Record with this phone.
     say(`$ openLink teamstation://games/${game}?tab=watch`)
     await m.openLink({ link: `teamstation://games/${game}?tab=watch` })
     await sleep(3000)
@@ -823,7 +823,7 @@ async function main(): Promise<void> {
       // swipe below it instead (the hierarchy holds only what is on screen).
       const below = async (): Promise<boolean> => {
         // Off screen, or reaching down to where the floating tab bar starts.
-        const bounds = (await find(byText('Record video'), 1000))?.bounds
+        const bounds = (await find(byText('Record Video'), 1000))?.bounds
         const screen = (await m.hierarchy()).bounds?.height ?? 2400
         return bounds == null || bounds.y + bounds.height > screen * 0.88
       }
@@ -837,15 +837,15 @@ async function main(): Promise<void> {
         await sleep(800)
       }
     } else {
-      say('$ scrollUntilVisible Record video')
+      say('$ scrollUntilVisible Record Video')
       await m.scrollUntilVisible({
-        element: { text: 'Record video' },
+        element: { text: 'Record Video' },
         centerElement: true
       })
     }
-    say('$ tapOn Record video')
+    say('$ tapOn Record Video')
     const recordVideo = android
-      ? await find(byText('Record video'), 3000)
+      ? await find(byText('Record Video'), 3000)
       : undefined
     if (recordVideo?.bounds != null) {
       // In the middle: the watch tab leaves room under its last row for the
@@ -855,17 +855,17 @@ async function main(): Promise<void> {
         point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
       })
     } else {
-      await m.tapOn({ text: 'Record video' })
+      await m.tapOn({ text: 'Record Video' })
     }
     assert(
       (await find(byText('Name this camera angle'))) != null,
-      'Record video asks for the angle’s name'
+      'Record Video asks for the angle’s name'
     )
     await shot('angle-name-prompt')
     say(`$ inputText ${angle}`)
     await m.inputText({ text: angle })
-    say('$ tapOn Start')
-    await m.tapOn({ text: 'Start' })
+    say('$ tapOn Record with this phone')
+    await m.tapOn({ text: 'Record with this phone' })
     const badge = await find(
       node => node.id === 'camera-name' || node.text === angle,
       20000
@@ -875,7 +875,7 @@ async function main(): Promise<void> {
       'the streaming screen opened'
     )
     results.push(
-      `1 Record video → “${angle}” → Start opened the streaming screen`
+      `1 Record Video → “${angle}” → Record with this phone opened the streaming screen`
     )
     // Once the screen is up: WebDriverAgent refuses to turn an upright-only one.
     if (hold != null) {
@@ -1129,8 +1129,8 @@ async function main(): Promise<void> {
     await m.tapOn({ id: 'camera-close' })
     assert(
       // Android lists only what is on the screen, and the game page comes
-      // back at its top, with Record video below the fold.
-      (await find(byText(android ? 'Box score' : 'Record video'), 10000)) !=
+      // back at its top, with Record Video below the fold.
+      (await find(byText(android ? 'Box score' : 'Record Video'), 10000)) !=
         null,
       'Close goes back to the game'
     )

@@ -18,6 +18,7 @@ const {
   main,
   underSpecs
 } = require('../../scripts/changed-line-check.cjs')
+const { nativeExcludes } = require('../../scripts/app-native-excludes.cjs')
 const swift = require('../../scripts/swift-changed-line-coverage.cjs')
 
 /**
@@ -911,5 +912,36 @@ describe('the Swift changed-line coverage', function () {
       expect(run.log[0]).includes('usage:')
       expect(run.calls).deep.equals([])
     }
+  })
+})
+
+describe('the app coverage gate', function () {
+  const excluded = (path: string): boolean =>
+    (nativeExcludes() as string[]).some(
+      glob => globPattern(glob).test(path) === true
+    )
+
+  it('counts the camera area’s native files, which run under jsdom', function () {
+    for (const path of [
+      'src/app/stream/CameraAnglesPanel.native.tsx',
+      'src/app/stream/StreamFooter.native.tsx',
+      'src/app/stream/useGameRecording.native.tsx'
+    ])
+      expect(excluded(path), path).equals(false)
+  })
+
+  it('leaves out every other native twin, in the stream folders too', function () {
+    for (const path of [
+      'src/app/App.native.tsx',
+      'src/app/components/SideCamera.native.tsx',
+      'src/app/player/deep/er/Surface.native.tsx',
+      'src/app/stream/overlay/Overlay.native.tsx'
+    ])
+      expect(excluded(path), path).equals(true)
+  })
+
+  it('never times a test out at two seconds, and leaves when it ends', function () {
+    const script = readFileSync('scripts/app-changed-coverage.mjs', 'utf8')
+    expect(script).matches(/'--timeout',\s+'60000',\s+'--exit'/)
   })
 })
