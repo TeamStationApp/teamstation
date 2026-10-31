@@ -318,7 +318,7 @@ class PhoneStreamPartsTest {
     }
 
     @Test
-    fun retentionDeletesOnlyTakesUploadedAWeekAgo() {
+    fun retentionSweepsUploadedTakesAndOldUnuploadedOnes() {
         val (catalog, storage) = catalog()
         val index = catalog.index
         val day = 24 * 3_600.0
