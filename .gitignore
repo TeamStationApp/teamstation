@@ -38,6 +38,7 @@ ios/*.xcworkspace
 ios/Podfile.lock.bak
 *.xcuserdatad/
 DerivedData/
+DeviceDerivedData/
 
 # React Native, Android
 android/.gradle/

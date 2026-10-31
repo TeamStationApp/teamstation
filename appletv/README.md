@@ -30,3 +30,9 @@ node -r sucrase/register appletv/e2e/probe.e2e.ts
 ```
 
 The development-only probe checks that four native playback clocks keep advancing while the second angle is hidden, the first is enlarged, and both changes are reversed. These simulator results do not establish physical-device decoder capacity or frame pacing. Production builds ignore development API, Metro, and probe environment overrides.
+
+## App icon and device installation
+
+Regenerate the tvOS layered icon and top-shelf assets from the shared TeamStation app logo with `swift appletv/scripts/make-icons.swift`, run from the repository root. The asset catalog is validated by the tvOS build.
+
+For a paired Apple TV, build the `TeamStationTV` workspace scheme in Release using the device destination and your local signing team. Release embeds the JavaScript bundle and connects to `https://app.teamstation.app/api/v1`; it does not require Metro. Keep device identifiers and signing configuration outside source control. The production server must have the TV authentication and collection endpoints deployed before sign-in can succeed.
