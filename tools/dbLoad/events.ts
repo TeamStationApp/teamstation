@@ -20,6 +20,7 @@ import { type Consumable, CONSUMABLES, systemOf, taggedIn } from './fixture'
 export interface EventResult {
   event: Consumable
   copy: number
+  startedAt: number
   ms: number
   /** What the event did, in its own function's terms. */
   detail: string
@@ -150,9 +151,16 @@ export async function runEvent(
   const people = [...(tags.get('user')?.entries() ?? [])]
     .filter(([label]) => label.startsWith(`chatAdd.${copy}.person`))
     .map(([, id]) => id)
+  const startedAt = Date.now()
   const started = performance.now()
   const detail = await WORK[name](db, labelled, copy, people)
-  return { event: name, copy, ms: performance.now() - started, detail }
+  return {
+    event: name,
+    copy,
+    startedAt,
+    ms: performance.now() - started,
+    detail
+  }
 }
 
 export interface EventSchedule {

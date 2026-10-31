@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { signEpoch, signPuk } from '../../src/common/chatCrypto/chain'
 import { epochAad, hpkeSeal, pukAad } from '../../src/common/chatCrypto/hpke'
@@ -21,6 +21,7 @@ import { makeId } from '../../src/common/ids'
 import { closeInto } from '../../src/server/admin/people'
 import { mergeTeams } from '../../src/server/admin/mergeTeams'
 import { addEmail } from '../../src/server/auth/emails'
+import { hashPassword } from '../../src/server/auth/passwords'
 import {
   createSession,
   revokeSession,
@@ -35,6 +36,7 @@ import { reconcileScope } from '../../src/server/chat/reconciler'
 import { atomic } from '../../src/server/db/atomic'
 import type { Database } from '../../src/server/db/database'
 import { postGamePlays } from '../../src/server/events/postPlays'
+import { ownershipPreflight } from '../../src/server/groups/ownershipPreflight'
 import { addToScope } from '../../src/server/invites/people'
 import { sealSecret } from '../../src/server/live/secrets'
 import { linkGuardian } from '../../src/server/people/guardians'
@@ -113,6 +115,47 @@ export interface TokensFile {
   games: SeededGame[]
 }
 
+/** Somebody who signs in with a browser, as `credentials.json` holds them. */
+export interface BrowserAccount {
+  label: string
+  email: string
+  password: string
+  userId: string
+  teamId: string | null
+}
+
+/**
+ * What a browser run needs of a seeded run: `credentials.json`, at mode 0600.
+ * It holds generated accounts on generated addresses, and the seeded things
+ * those people are sent to, since the browser's machine cannot reach the
+ * database to look them up.
+ */
+export interface CredentialsFile {
+  runId: string
+  accounts: BrowserAccount[]
+  places: BrowserPlaces
+}
+
+export interface BrowserPlaces {
+  /** The live game the browser run scores, which the rig's crowd is not on. */
+  liveGameId: string
+  liveTeamId: string
+  finishedGameId: string
+  finishedTeamId: string
+  /** The long game, which has the largest box score. */
+  largeGameId: string
+  seasonId: string
+  leagueId: string
+  /** A player merged after his games were built, and the games he played. */
+  mergedPlayerId: string
+  mergedPlayerGames: number
+  /** The guardian's child. */
+  childId: string
+  /** A team chat, and one holding a member whose row was merged. */
+  teamChatTeamId: string
+  mergedChatTeamId: string
+}
+
 export interface SeedOptions {
   /** Letters and digits. */
   runId: string
@@ -123,6 +166,8 @@ export interface SeedOptions {
   streams?: number
   /** Where the tokens go. They are written even when a seed fails partway. */
   tokensPath?: string
+  /** Where browser accounts' passwords go. Without it none are set. */
+  credentialsPath?: string
   log?: (message: string) => void
   now?: Date
 }
@@ -148,6 +193,21 @@ export function readTokens(path: string): TokensFile {
 export function writeTokens(path: string, tokens: TokensFile): void {
   writeFileSync(path, JSON.stringify(tokens), { mode: 0o600 })
   // The mode above only applies to a file that did not exist.
+  chmodSync(path, 0o600)
+}
+
+export function readCredentials(path: string): CredentialsFile {
+  const credentials = JSON.parse(readFileSync(path, 'utf8')) as CredentialsFile
+  if (!Array.isArray(credentials.accounts))
+    throw new Error(`${path} is not a credentials file`)
+  return credentials
+}
+
+export function writeCredentials(
+  path: string,
+  credentials: CredentialsFile
+): void {
+  writeFileSync(path, JSON.stringify(credentials, null, 2), { mode: 0o600 })
   chmodSync(path, 0o600)
 }
 
@@ -183,6 +243,23 @@ async function joinScope(
   })
 }
 
+/** Who signs in with a password, for a browser run. */
+const BROWSER_LABELS = new Set([
+  'person.admin',
+  'person.coach',
+  'person.guardian',
+  'person.stranger',
+  'browser.scorekeeper',
+  'browser.coach',
+  'browser.viewer',
+  'browser.viewerAway',
+  'browser.revoked',
+  'browser.removed',
+  'browser.videographer',
+  'browser.chatKept',
+  'browser.chatFriend'
+])
+
 const pad = (value: number): string => String(value).padStart(5, '0')
 
 /** A chat identity, whose secret keys the server never holds. */
@@ -196,6 +273,8 @@ interface ChatKeys {
 
 class Seeder {
   readonly accounts: SeededAccount[] = []
+  readonly browserAccounts: BrowserAccount[] = []
+  readonly places: Partial<BrowserPlaces> = {}
   readonly games: SeededGame[] = []
   readonly system: string
   private tags: Array<{
@@ -217,6 +296,7 @@ class Seeder {
     readonly scale: string,
     readonly amounts: Amounts,
     readonly videographers: number,
+    readonly browser: boolean,
     now: Date | undefined,
     readonly log: (message: string) => void
   ) {
@@ -258,8 +338,12 @@ class Seeder {
       first?: string
       account?: boolean
       admin?: boolean
+      browser?: boolean
     } = {}
   ): Promise<string> {
+    const password =
+      values.browser === true ? randomBytes(18).toString('base64url') : null
+    const passwordHash = password == null ? null : await hashPassword(password)
     const last = label.replace(/[^a-zA-Z0-9]+/g, ' ')
     const first = values.first ?? 'Load'
     const displayName = `${first} ${last}`.slice(0, 120)
@@ -273,7 +357,8 @@ class Seeder {
         // Adults, which is what a direct message between two of them needs.
         birth_year: 1985,
         birth_month: 6,
-        login_enabled: values.account === true
+        login_enabled: values.account === true,
+        password_hash: passwordHash
       })
       if (values.account === true)
         await addEmail(trx, id, email, {
@@ -284,6 +369,14 @@ class Seeder {
       return id
     })
     await this.tag('user', label, userId)
+    if (password != null)
+      this.browserAccounts.push({
+        label,
+        email,
+        password,
+        userId,
+        teamId: null
+      })
     return userId
   }
 
@@ -300,6 +393,8 @@ class Seeder {
     const userId = await this.person(label, {
       account: true,
       admin: options.admin,
+      // Only a run writing credentials pays for their hashes.
+      browser: this.browser && BROWSER_LABELS.has(label),
       first: kind === 'viewer' ? 'Viewer' : 'Load'
     })
     return await this.signIn(label, kind, userId, options)
@@ -325,6 +420,12 @@ class Seeder {
     }
     this.accounts.push(account)
     return account
+  }
+
+  userOf(label: string): string {
+    const account = this.accounts.find(row => row.label === label)
+    if (account == null) throw new Error(`No account ${label}`)
+    return account.userId
   }
 
   async league(label: string): Promise<string> {
@@ -493,7 +594,10 @@ class Seeder {
 
   /**
    * Copies of a written game, under the same teams at earlier dates: only the
-   * ids and dates differ, so its plays go through the same triggers again.
+   * ids and dates differ. What the plays' triggers wrote for the source is
+   * copied with them, row for row, because running those triggers again for
+   * every play of thousands of games is most of a full seed's time. Their table
+   * is locked meanwhile, so this runs alone and with no server on the database.
    */
   async cloneGames(
     source: string,
@@ -507,27 +611,51 @@ class Seeder {
       (_, i) => new Date(this.now.getTime() - (newestDaysAgo + i) * 86_400_000)
     )
     const columns = await columnsOf(this.db, 'games', ['id', 'start_at'])
-    const list = sql.join(columns.map(column => sql.ref(column)))
-    const fromSource = sql.join(columns.map(column => sql.ref(`g.${column}`)))
-    await sql`
-      insert into games (id, start_at, ${list})
-      select copy.id, copy.start_at, ${fromSource}
-      from games g,
-        unnest(${ids}::text[], ${dates.map(date => date.toISOString())}::timestamptz[])
-          as copy(id, start_at)
-      where g.id = ${source}
-    `.execute(this.db)
     const eventColumns = await columnsOf(this.db, 'events', ['id', 'gameId'])
-    const eventList = sql.join(eventColumns.map(column => sql.ref(column)))
-    const fromEvent = sql.join(
-      eventColumns.map(column => sql.ref(`e.${column}`))
-    )
-    await sql`
-      insert into events (id, "gameId", ${eventList})
-      select 'evt_' || md5(copy.id || e.id), copy.id, ${fromEvent}
-      from events e, unnest(${ids}::text[]) as copy(id)
-      where e."gameId" = ${source}
-    `.execute(this.db)
+    const playerColumns = await columnsOf(this.db, 'event_players', [
+      'id',
+      'event_id'
+    ])
+    const creditColumns = await columnsOf(this.db, 'eventCredits', [
+      'id',
+      'eventId'
+    ])
+    await this.db.transaction().execute(async trx => {
+      await sql`alter table events disable trigger user`.execute(trx)
+      await sql`
+        insert into games (id, start_at, ${listOf(columns)})
+        select copy.id, copy.start_at, ${listOf(columns, 'g')}
+        from games g,
+          unnest(${ids}::text[], ${dates.map(date => date.toISOString())}::timestamptz[])
+            as copy(id, start_at)
+        where g.id = ${source}
+      `.execute(trx)
+      await sql`
+        insert into events (id, "gameId", ${listOf(eventColumns)})
+        select 'evt_' || md5(copy.id || e.id), copy.id, ${listOf(eventColumns, 'e')}
+        from events e, unnest(${ids}::text[]) as copy(id)
+        where e."gameId" = ${source}
+      `.execute(trx)
+      await sql`
+        insert into event_players (id, event_id, ${listOf(playerColumns)})
+        select 'evp_' || md5(copy.id || p.id), 'evt_' || md5(copy.id || e.id),
+          ${listOf(playerColumns, 'p')}
+        from event_players p
+          join events e on e.id = p.event_id,
+          unnest(${ids}::text[]) as copy(id)
+        where e."gameId" = ${source}
+      `.execute(trx)
+      await sql`
+        insert into "eventCredits" (id, "eventId", ${listOf(creditColumns)})
+        select 'evc_' || md5(copy.id || c.id), 'evt_' || md5(copy.id || e.id),
+          ${listOf(creditColumns, 'c')}
+        from "eventCredits" c
+          join events e on e.id = c."eventId",
+          unnest(${ids}::text[]) as copy(id)
+        where e."gameId" = ${source}
+      `.execute(trx)
+      await sql`alter table events enable trigger user`.execute(trx)
+    })
     await inTurn(ids, CONCURRENCY, async (id, i) => {
       await this.tag('game', `${label}.${pad(i)}`, id)
     })
@@ -706,6 +834,15 @@ async function columnsOf(
     order by ordinal_position
   `.execute(db)
   return rows.map(row => row.name).filter(name => !leaving.includes(name))
+}
+
+/** Columns for a statement, each under `table` if one is named. */
+function listOf(columns: string[], table?: string): RawBuilder<unknown> {
+  return sql.join(
+    columns.map(column =>
+      sql.ref(table == null ? column : `${table}.${column}`)
+    )
+  )
 }
 
 interface Groups {
@@ -892,6 +1029,7 @@ async function seedKinds(seeder: Seeder, groups: Groups): Promise<void> {
 
   const guardian = await seeder.account('person.guardian', 'person')
   const [child] = await seeder.chain('person.child', 0, teamId)
+  seeder.places.childId = child
   await atomic(db, async trx => {
     await linkGuardian(trx, child, guardian.userId, teamId, null)
   })
@@ -1156,6 +1294,7 @@ async function seedFinished(seeder: Seeder, groups: Groups): Promise<void> {
     await requestGameStats(db, id)
   })
   await drain(db, () => new Date())
+  if (seeder.browser) await mergeFinishedPlayer(seeder, finished, home)
   if (amounts.historyGames > 0) {
     const short = await writtenGame(
       seeder,
@@ -1167,6 +1306,32 @@ async function seedFinished(seeder: Seeder, groups: Groups): Promise<void> {
     )
     await seeder.cloneGames(short, 'history', amounts.historyGames, 10_000)
   }
+}
+
+/**
+ * A player closed into another row after his games were built, so his totals
+ * have to be found under a row that played none of them.
+ */
+async function mergeFinishedPlayer(
+  seeder: Seeder,
+  finished: string[],
+  teamId: string
+): Promise<void> {
+  const { db } = seeder
+  await seeder.flushTags()
+  const player = await taggedIn(db, seeder.runId, 'user').then(tags =>
+    tags.get('finished.home.player00000')
+  )
+  if (player == null) throw new Error('finished.home has no first player')
+  const kept = await seeder.person('finished.mergedPlayer')
+  const merge = await closeInto(db, player, kept)
+  if (!merge.closed) throw new Error('finished.home.player00000 did not close')
+  Object.assign(seeder.places, {
+    finishedGameId: finished[0],
+    finishedTeamId: teamId,
+    mergedPlayerId: kept,
+    mergedPlayerGames: finished.length
+  })
 }
 
 /** The fresh copies of each shape an event uses up, one for each use. */
@@ -1286,6 +1451,138 @@ async function seedChats(seeder: Seeder, groups: Groups): Promise<void> {
 }
 
 /**
+ * The people a browser run signs in as. They watch a game of their own, so a
+ * run can revoke and remove them with the rig's crowd on another, and every one
+ * holds a password. The chat is for a member whose row is merged once in it.
+ */
+async function seedBrowserPeople(
+  seeder: Seeder,
+  groups: Groups
+): Promise<void> {
+  const { db, games } = seeder
+  const game = games[Math.min(1, games.length - 1)]
+  const teamId = game.sides.home.id
+  const scorer = await seeder.account('browser.scorekeeper', 'person', {
+    teamId
+  })
+  await seeder.grant(scorer.userId, 'team', teamId, 'scorekeeper')
+  const coach = await seeder.account('browser.coach', 'person', { teamId })
+  await seeder.grant(coach.userId, 'team', teamId, 'coach')
+  // A team keeps a direct administrator, whoever else is removed from it.
+  await seeder.grant(coach.userId, 'team', teamId, 'admin')
+  await seeder.account('browser.viewer', 'person', { teamId })
+  await seeder.account('browser.viewerAway', 'person', { teamId })
+  await seeder.account('browser.revoked', 'person', { teamId })
+  const removed = await seeder.account('browser.removed', 'person', { teamId })
+  // Somebody on the roster stays while they play, so this one only follows it.
+  await db
+    .updateTable('memberships')
+    .set({ is_player: false })
+    .where('user_id', '=', removed.userId)
+    .where('team_id', '=', teamId)
+    .execute()
+  const videographer = await seeder.account('browser.videographer', 'person', {
+    teamId
+  })
+  await seeder.grant(videographer.userId, 'team', teamId, 'videographer')
+
+  // Nothing is said in these chats yet, because whoever says it holds the keys.
+  const talkTeam = await seeder.team('browser.talkTeam', groups.seasons[0])
+  for (const label of [
+    'browser.viewer',
+    'browser.viewerAway',
+    'browser.removed'
+  ])
+    await joinScope(db, 'team', talkTeam, seeder.userOf(label))
+  const talk = await reconcileScope(db, 'teamMembers', talkTeam, seeder.now)
+  if (talk.conversationId == null) throw new Error('The talk has no members')
+
+  const chatTeam = await seeder.team('browser.chatTeam', groups.seasons[0])
+  const league = await db
+    .selectFrom('seasons')
+    .select('league_id')
+    .where('id', '=', game.seasonId)
+    .executeTakeFirstOrThrow()
+  const kept = await seeder.account('browser.chatKept', 'person')
+  const friend = await seeder.account('browser.chatFriend', 'person', {
+    teamId: chatTeam
+  })
+  const mergedRow = await seeder.person('browser.chatMerged', {
+    account: true
+  })
+  await joinScope(db, 'team', chatTeam, mergedRow)
+  const chat = await reconcileScope(db, 'teamMembers', chatTeam, seeder.now)
+  if (chat.conversationId == null) throw new Error('The chat has no members')
+  await seeder.tag('conversation', 'browser.chat', chat.conversationId)
+  const merge = await closeInto(db, mergedRow, kept.userId)
+  if (!merge.closed) throw new Error('browser.chatMerged did not close')
+
+  for (const account of seeder.browserAccounts)
+    account.teamId =
+      seeder.accounts.find(row => row.label === account.label)?.teamId ?? null
+  Object.assign(seeder.places, {
+    liveGameId: game.id,
+    liveTeamId: teamId,
+    largeGameId: games[games.length - 1].id,
+    seasonId: game.seasonId,
+    leagueId: league.league_id,
+    teamChatTeamId: talkTeam,
+    mergedChatTeamId: chatTeam
+  })
+}
+
+/**
+ * What a node administrator finishes before anybody may create a group: every
+ * group has a direct administrator, then the app's own cutover. A browser run
+ * creates groups, so a seed for one ends where a working node is.
+ */
+async function finishOrganizationSetup(seeder: Seeder): Promise<void> {
+  const { db } = seeder
+  const adminId = seeder.userOf('person.admin')
+  const held = await db
+    .selectFrom('scope_roles')
+    .select(['scope_type', 'scope_id'])
+    .where('role', '=', 'admin')
+    .execute()
+  const has = new Set(held.map(row => `${row.scope_type}:${row.scope_id}`))
+  const leagues = await db.selectFrom('leagues').select('id').execute()
+  const seasons = await db.selectFrom('seasons').select('id').execute()
+  const teams = await db
+    .selectFrom('teams')
+    .select('id')
+    .where('kind', '=', 'full')
+    .where('merged_into', 'is', null)
+    .execute()
+  const groups = [
+    ...leagues.map(row => ({
+      scope_type: 'league' as const,
+      scope_id: row.id
+    })),
+    ...seasons.map(row => ({
+      scope_type: 'season' as const,
+      scope_id: row.id
+    })),
+    ...teams.map(row => ({ scope_type: 'team' as const, scope_id: row.id }))
+  ].filter(group => !has.has(`${group.scope_type}:${group.scope_id}`))
+  await db
+    .insertInto('scope_roles')
+    .values(
+      groups.map(group => ({
+        id: makeId('scopeRole'),
+        user_id: adminId,
+        role: 'admin' as const,
+        ...group
+      }))
+    )
+    .execute()
+  const report = await ownershipPreflight(db, { dryRun: false })
+  if (!report.ready)
+    throw new Error(
+      `Organization setup did not finish: ${JSON.stringify(report.conflicts.slice(0, 3))}`
+    )
+}
+
+/**
  * Puts worst-case people where they can watch something: the first few on the
  * crowded game's team, and the rest on the long game's.
  */
@@ -1351,6 +1648,7 @@ export async function seedFixture(
     options.scale,
     amounts,
     videographers,
+    options.credentialsPath != null,
     options.now,
     log
   )
@@ -1364,8 +1662,10 @@ export async function seedFixture(
     log(`seeded ${name} in ${((Date.now() - started) / 1000).toFixed(1)} s`)
   }
   try {
-    const groups = await seedGroups(seeder)
-    await seeder.flushTags()
+    let groups: Groups = { seasons: [], teams: [], sides: [] }
+    await step('leagues, seasons and teams', async () => {
+      groups = await seedGroups(seeder)
+    })
     await step('live games', async () => {
       await seedLiveGames(seeder, groups)
     })
@@ -1394,6 +1694,11 @@ export async function seedFixture(
       await seedChats(seeder, groups)
       await placeWorstPeople(seeder)
     })
+    if (seeder.browser)
+      await step('browser people', async () => {
+        await seedBrowserPeople(seeder, groups)
+        await finishOrganizationSetup(seeder)
+      })
     seeder.accounts.splice(
       0,
       seeder.accounts.length,
@@ -1404,6 +1709,12 @@ export async function seedFixture(
     await seeder.flushTags()
     if (options.tokensPath != null)
       writeTokens(options.tokensPath, seeder.tokens())
+    if (options.credentialsPath != null)
+      writeCredentials(options.credentialsPath, {
+        runId: seeder.runId,
+        accounts: seeder.browserAccounts,
+        places: seeder.places as BrowserPlaces
+      })
   }
 }
 

@@ -1,10 +1,12 @@
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { onePerson } from '../../src/server/admin/people'
 import { actorForToken } from '../../src/server/auth/sessions'
 import { amountsFor, SCALES } from './amounts'
 import {
@@ -16,6 +18,7 @@ import {
   interleaved,
   newRunId,
   parseShard,
+  readCredentials,
   readTokens,
   type SeededAccount,
   seedFixture,
@@ -27,6 +30,41 @@ import {
 } from './fixture'
 import { TEST_AMOUNTS } from './testAmounts'
 import { openScratch, type Scratch } from './testSupport'
+
+describe('the scale table', function () {
+  it('has the amounts of the full-scale fixtures', function () {
+    expect(SCALES.full).deep.include({
+      accounts: 5000,
+      leagues: 2,
+      seasons: 6,
+      teams: 100,
+      liveGames: 50,
+      finishedGames: 500,
+      historyGames: 8000,
+      dmShare: 0.1,
+      mergedRows: 24,
+      chainDepth: 10,
+      guardianChildren: 8,
+      guardianChildDepth: 5,
+      roleTeams: 80,
+      roleSeasons: 30,
+      roleLeagues: 6,
+      largeLeagueSeasons: 20,
+      largeLeagueTeams: 300,
+      duplicateTeams: 24,
+      teamChainDepth: 4,
+      longTeamGames: 600,
+      longGameInnings: 24,
+      crowdedViewers: 600,
+      crowdedWorstCaseViewers: 20,
+      largeChatMembers: 600,
+      largeChatMessages: 10000,
+      manyChats: 60,
+      manySessions: 20,
+      chatAddPeople: 50
+    })
+  })
+})
 
 describe('the fixture', function () {
   this.timeout(180_000)
@@ -118,6 +156,32 @@ describe('the fixture', function () {
       statsRebuild: 3,
       chatAdd: 3
     })
+  })
+
+  it('copies what the triggers wrote for a game with its copies', async function () {
+    const count = async (table: string): Promise<number[]> => {
+      const { rows } = await sql<{ n: string }>`
+        select count(*) as n from ${sql.table(table)} c
+          join events e on e.id = c.${sql.ref(table === 'eventCredits' ? 'eventId' : 'event_id')}
+          join external_ids t on t.entity_id = e."gameId"
+        where t.system = 'dbloadfirst'
+          and t.external_id in ('history.source', 'history.00000')
+        group by e."gameId"
+      `.execute(scratch.db)
+      return rows.map(row => Number(row.n))
+    }
+    const players = await count('event_players')
+    expect(players.length).equals(2)
+    expect(players[0]).above(0)
+    expect(players[0]).equals(players[1])
+    const credits = await count('eventCredits')
+    expect(credits.length).equals(2)
+    expect(credits[0]).equals(credits[1])
+    const { rows } = await sql<{ tgenabled: string }>`
+      select tgenabled from pg_trigger
+      where not tgisinternal and tgrelid = 'events'::regclass
+    `.execute(scratch.db)
+    expect(rows.every(row => row.tgenabled === 'O')).equals(true)
   })
 
   it('says which shape differs when one is short', async function () {
@@ -325,5 +389,74 @@ describe('the fixture', function () {
     })
     expect(answers).deep.equals([2, 4, 6, 8, 10])
     expect(most).equals(2)
+  })
+})
+
+describe('a seed for a browser run', function () {
+  this.timeout(180_000)
+
+  let scratch: Scratch
+  let dir: string
+  let credentialsPath: string
+  const amounts = amountsFor('small', TEST_AMOUNTS)
+
+  before(async function () {
+    scratch = await openScratch('browser')
+    dir = mkdtempSync(join(tmpdir(), 'dbload-browser-'))
+    credentialsPath = join(dir, 'credentials.json')
+    await seedFixture(scratch.db, {
+      runId: 'browser',
+      scale: 'small',
+      overrides: TEST_AMOUNTS,
+      credentialsPath
+    })
+  })
+  after(async function () {
+    rmSync(dir, { recursive: true })
+    await scratch.drop()
+  })
+
+  it('writes credentials at mode 0600, holding only generated accounts', async function () {
+    expect(statSync(credentialsPath).mode & 0o777).equals(0o600)
+    const read = readCredentials(credentialsPath)
+    expect(read.runId).equals('browser')
+    expect(read.accounts.length).above(10)
+    for (const row of read.accounts) {
+      expect(row.email).matches(/@example\.test$/)
+      expect(row.password.length).at.least(20)
+    }
+    expect(new Set(read.accounts.map(row => row.password)).size).equals(
+      read.accounts.length
+    )
+    const stored = await scratch.db
+      .selectFrom('users')
+      .select('password_hash')
+      .where('id', '=', read.accounts[0].userId)
+      .executeTakeFirstOrThrow()
+    expect(stored.password_hash).not.includes(read.accounts[0].password)
+    expect(Object.values(read.places).every(value => value != null)).equals(
+      true
+    )
+    expect(() => {
+      writeFileSync(join(dir, 'other.json'), '{}')
+      readCredentials(join(dir, 'other.json'))
+    }).throws('is not a credentials file')
+  })
+
+  it('merges a played player into a row that played none of it', async function () {
+    const { mergedPlayerId, mergedPlayerGames } =
+      readCredentials(credentialsPath).places
+    const kept = await onePerson(scratch.db, mergedPlayerId)
+    expect(kept.userIds.length).equals(2)
+    expect(mergedPlayerGames).equals(amounts.finishedGames)
+  })
+
+  it('ends with the organization set up, so people may create groups', async function () {
+    const setting = await scratch.db
+      .selectFrom('system_settings')
+      .select('value')
+      .where('key', '=', 'creation.hierarchyReady')
+      .executeTakeFirstOrThrow()
+    expect(setting.value).equals(true)
   })
 })

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -114,6 +114,33 @@ describe('the command line', function () {
     expect(data.socketsOpened).at.least(4)
     expect(data.connections.peak).above(0)
     expect(data.streamsStarted).equals(1)
+  })
+
+  it('holds a run to the thresholds when asked, counting the servers logs', async function () {
+    const log = join(dir, 'api.log')
+    writeFileSync(log, 'error: sorry, too many clients already\nfine\n')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '4',
+      '--shard',
+      '1/2',
+      '--minutes',
+      '0.01',
+      '--assert',
+      '--pool-limit',
+      '10',
+      '--server-log',
+      log
+    )
+    expect(code).equals(1)
+    const text = lines.join('\n')
+    expect(text).contains('MISSED too many clients: seen 1 times')
+    expect(text).contains('MISSED p95 POST: no data')
+    expect(text).contains('thresholds missed')
+    expect(text).matches(/rig: CPU \d+% of one core/)
   })
 
   it('leaves the scoring to the first of two rigs, and classes the pooler', async function () {

@@ -7,9 +7,13 @@ import { describe, it } from 'mocha'
 
 import { Tally } from './actors'
 import {
+  assertThresholds,
   buildReport,
   connectionFigures,
+  eventFigures,
+  longestGap,
   percentile,
+  type ReportData,
   renderReport,
   slowestRequests,
   writeReport
@@ -152,5 +156,161 @@ describe('the load report', function () {
     } finally {
       rmSync(dir, { recursive: true })
     }
+  })
+
+  describe('--assert', function () {
+    /** A run that meets every limit: each case then spoils just one figure. */
+    const passing = (): ReportData => {
+      const tally = new Tally()
+      tally.postMs.push(100, 200)
+      tally.postAt.push(1000, 2000)
+      tally.deliveryLagMs.push(50)
+      tally.framesDelivered = 1
+      tally.frameSeconds.push(60)
+      tally.socketsOpened = 2000
+      return buildReport({
+        title: 'run',
+        startedAt: 0,
+        finishedAt: 61_000,
+        measurements: tally,
+        samples: [
+          sample({
+            backends: [
+              {
+                applicationName: 'api',
+                state: 'idle',
+                pooled: true,
+                count: 90
+              },
+              {
+                applicationName: 'relay',
+                state: 'idle',
+                pooled: false,
+                count: 5
+              },
+              {
+                applicationName: 'dbload-sampler',
+                state: 'active',
+                pooled: false,
+                count: 3
+              }
+            ]
+          })
+        ],
+        statements: [],
+        sequentialScans: [],
+        hasStatements: false,
+        events: [{ event: 'teamMerge', startedAt: 0, ms: 10_000 }],
+        rig: { cpuPercent: 40, loopDelayP95Ms: 12 }
+      })
+    }
+    const limits = { poolLimit: 97 }
+    const missed = (
+      change: (data: ReportData) => void,
+      options: Parameters<typeof assertThresholds>[1] = limits
+    ): string[] => {
+      const data = passing()
+      change(data)
+      return assertThresholds(data, options)
+    }
+
+    it('passes a run within every limit, not counting its own connections', function () {
+      expect(assertThresholds(passing(), limits)).deep.equals([])
+    })
+
+    it('fails each threshold on its own', function () {
+      const one = (change: (data: ReportData) => void, words: RegExp): void => {
+        const lines = missed(change)
+        expect(lines.length, lines.join('; ')).equals(1)
+        expect(lines[0]).matches(words)
+      }
+      one(data => {
+        data.connections.peakPooled = 98
+      }, /server connections: peak 98/)
+      one(data => {
+        data.connections.peakDirectServers = 6
+      }, /direct connections: peak 6/)
+      one(data => {
+        data.errors['too-many-clients'] = 1
+      }, /too many clients: seen 1/)
+      one(data => {
+        data.errors['http-503'] = 1
+        data.errors['socket-http-503'] = 1
+      }, /503 rate: 2 of 2000/)
+      one(data => {
+        data.answers = 0
+      }, /503 rate: no requests/)
+      one(data => {
+        data.postP95Ms = 500
+      }, /p95 POST: 500 ms/)
+      one(data => {
+        data.postP95Ms = null
+      }, /p95 POST: no data/)
+      one(data => {
+        data.deliveryLagP95Ms = 1000
+      }, /p95 delivery lag: 1000 ms/)
+      one(data => {
+        data.deliveryLagP95Ms = null
+      }, /p95 delivery lag: no data/)
+      one(data => {
+        data.longestDeliveryGapSeconds = 61
+      }, /recovery: 61 s/)
+      one(data => {
+        data.longestDeliveryGapSeconds = null
+      }, /recovery: no frames/)
+      one(data => {
+        data.events[0].postP95DuringMs = 1001
+      }, /event teamMerge: p95 scoring 1001 ms/)
+      one(data => {
+        data.events[0].ms = 60_001
+      }, /event teamMerge: 60 s, above/)
+      one(data => {
+        data.oldestTransactionSeconds = 61
+      }, /oldest transaction: 61 s/)
+    })
+
+    it('takes servers logs and a missing pool limit as misses too', function () {
+      expect(
+        missed(() => undefined, { poolLimit: 97, tooManyClients: 2 })
+      ).deep.equals(['too many clients: seen 2 times'])
+      expect(missed(() => undefined, {})).deep.equals([
+        'server connections: no --pool-limit to hold them to'
+      ])
+      expect(assertThresholds(passing())).deep.equals([
+        'server connections: no --pool-limit to hold them to'
+      ])
+    })
+
+    it('reads the rig and each event in what it renders', function () {
+      const text = renderReport(passing())
+      expect(text).includes(
+        'rig: CPU 40% of one core, event loop delay p95 12.0 ms'
+      )
+      expect(text).includes('longest time with no frame: 1 s')
+      expect(text).matches(/event teamMerge: 10000 ms, 2 posts during it/)
+      const none = { ...passing(), rig: null, longestDeliveryGapSeconds: null }
+      expect(renderReport(none)).includes('rig: no data')
+      expect(renderReport(none)).includes('longest time with no frame: no data')
+    })
+  })
+
+  it('finds the longest gap in frames, up to the end of the run', function () {
+    expect(longestGap([], 100_000)).equals(null)
+    expect(longestGap([10, 80, 90], 95_000)).equals(70)
+    expect(longestGap([10, 20], 95_000)).equals(75)
+  })
+
+  it('looks for an event in scoring for as long as its effect lasts', function () {
+    const [short, long] = eventFigures(
+      [
+        { event: 'signOut', startedAt: 1000, ms: 5 },
+        { event: 'teamMerge', startedAt: 100_000, ms: 40_000 }
+      ],
+      [10, 20, 30],
+      [500, 20_000, 139_000]
+    )
+    expect(short.postsDuring).equals(1)
+    expect(short.postP95DuringMs).equals(20)
+    expect(long.postP95DuringMs).equals(30)
   })
 })
