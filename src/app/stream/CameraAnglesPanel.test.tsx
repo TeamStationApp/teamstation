@@ -87,6 +87,12 @@ interface FakeClient {
   others: LiveStream[]
   canAdd: number
   gameCanAdd: number
+  /** The ids the list says this person deleted. */
+  discarded: string[]
+  discard: () => Promise<void>
+  /** What the last `updateLiveStream`s sent, as `<id> <localRecording>`. */
+  patched: string[]
+  patch: () => Promise<void>
   next: () => Promise<LiveStream>
   reveal: () => Promise<LiveStream>
   end: () => Promise<LiveStream>
@@ -105,6 +111,10 @@ function fakeClient(): FakeClient {
     others: [],
     canAdd: 4,
     gameCanAdd: 6,
+    discarded: [],
+    discard: async () => {},
+    patched: [],
+    patch: async () => {},
     next: async () => stream(),
     reveal: async () => stream(),
     end: async () => stream(),
@@ -143,8 +153,24 @@ function fakeClient(): FakeClient {
         canAdd: fake.canAdd,
         maxCameras: 4,
         gameCanAdd: fake.gameCanAdd,
-        discarded: []
+        discarded: fake.discarded
       }
+    },
+    discardLiveStream: async (gameId: string, id: string) => {
+      fake.acted.push(`discard ${id}`)
+      await fake.discard()
+      fake.mine = fake.mine.filter(one => one.id !== id)
+      fake.discarded = [...fake.discarded, id]
+      return await fake.client.liveStreams(gameId)
+    },
+    updateLiveStream: async (
+      _gameId: string,
+      id: string,
+      change: { localRecording?: string }
+    ) => {
+      fake.patched.push(`${id} ${String(change.localRecording)}`)
+      await fake.patch()
+      return stream({ id })
     },
     rotateLiveStream: acting('rotate'),
     endLiveStream: acting('end'),
@@ -171,6 +197,8 @@ function fakeClient(): FakeClient {
 
 /** What the panel opened, in place of the real camera. */
 const opened: StreamingScreenProps[] = []
+/** What the panel asked the player above it to play. */
+const played: string[] = []
 function FakeScreen(props: StreamingScreenProps): React.ReactElement {
   opened.push(props)
   return (
@@ -205,6 +233,7 @@ async function mount(
           Screen={FakeScreen as never}
           copy={text => copied.push(text)}
           hasVideo={hasVideo}
+          onPlay={id => played.push(id)}
         />
       </ThemeProvider>
     )
@@ -574,25 +603,48 @@ describe('the cameras on a game, on a phone', function () {
     opened.length = 0
   })
 
-  it('lists every angle with its device, owner and state, and reads them again every five seconds', async function () {
+  it('lists every angle with its subtitle, state and duration, and reads them again every five seconds', async function () {
     const poll = heldPoll()
     try {
       const fake = fakeClient()
       fake.mine = [
-        stream({ id: 'liv_1', label: 'Home Plate', state: 'publishing' }),
+        stream({
+  it('says on an own idle row why the ingest refused its camera', async function () {
+    const fake = fakeClient()
+    const refused = 'TeamStation takes HEVC. This stream is H.264.'
+    fake.mine = [
+      stream({
+        id: 'liv_1',
+        label: 'Backstop',
+        deviceId: null,
+        source: 'rtmp',
+        lastError: refused
+      })
+    ]
+    await mount(fake)
+    expect(byTestId('angle-row-liv_1')?.textContent).contains(refused)
+  })
+
+          id: 'liv_1',
+          label: 'Home Plate',
+          state: 'publishing',
+          publishedAt: new Date(Date.now() - 3_900_000).toISOString()
+        }),
         stream({
           id: 'liv_2',
           label: 'First Base',
           deviceModel: 'Pixel 10',
           deviceId: OTHER_DEVICE,
           localRecording: 'recorded',
-          closesAt: '2026-05-20T17:00:00.000Z'
+          closesAt: '2026-05-20T17:00:00.000Z',
+          durationSec: 125
         }),
         stream({
           id: 'liv_3',
           label: 'Bullpen',
           deviceModel: null,
           deviceId: null,
+          source: 'mevo',
           state: 'ended'
         })
       ]
@@ -606,16 +658,21 @@ describe('the cameras on a game, on a phone', function () {
         })
       ]
       await mount(fake)
-      expect(byTestId('angle-row-liv_1')?.textContent).equals(
-        'Home PlateiPhone 13 ProLive'
+      const subtitle = (id: string): string | null | undefined =>
+        byTestId(`angle-subtitle-${id}`)?.textContent
+      expect(subtitle('liv_1')).equals('Streaming with iPhone 13 Pro')
+      expect(byTestId('angle-state-liv_1')?.textContent).equals('Live')
+      expect(byTestId('angle-duration-liv_1')?.textContent).equals('1:05')
+      expect(subtitle('liv_2')).equals('Streaming with Pixel 10')
+      expect(byTestId('angle-row-liv_2')?.textContent).contains(
+        'Recording on Pixel 10 not uploaded'
       )
-      expect(byTestId('angle-row-liv_2')?.textContent).equals(
-        'First BasePixel 10Recording on Pixel 10 not uploadedEnded'
-      )
-      expect(byTestId('angle-row-liv_3')?.textContent).equals('BullpenEnded')
-      expect(byTestId('angle-row-liv_4')?.textContent).equals(
-        'Center FieldiPad Pro · Shohei OhtaniIdle'
-      )
+      expect(byTestId('angle-state-liv_2')?.textContent).equals('Ended')
+      expect(byTestId('angle-duration-liv_2')?.textContent).equals('0:02')
+      expect(subtitle('liv_3')).equals('Using Mevo')
+      expect(byTestId('angle-duration-liv_3')).equals(null)
+      expect(subtitle('liv_4')).equals('Waiting for stream from Shohei O')
+      expect(byTestId('angle-state-liv_4')?.textContent).equals('Idle')
       expect(text()).contains('Record Video')
 
       const before = fake.listed
@@ -676,10 +733,7 @@ describe('the cameras on a game, on a phone', function () {
     // a second stream, video and slot, and the phone filmed a different angle
     // from the row tapped.
     const fake = fakeClient()
-    fake.mine = [
-      stream({ id: 'liv_2', slot: 2, label: 'Camera 2' }),
-      stream({ id: 'liv_3', label: 'Bullpen', state: 'ended' })
-    ]
+    fake.mine = [stream({ id: 'liv_2', slot: 2, label: 'Camera 2' })]
     fake.next = async () => stream({ id: 'liv_2', slot: 2, label: 'Camera 2' })
     await mount(fake)
     await press(byTestId('angle-row-liv_2')!)
@@ -687,18 +741,9 @@ describe('the cameras on a game, on a phone', function () {
       (fake.added.at(-1)?.device as DeviceStreamOptions).heldStreamId
     ).equals('liv_2')
     expect(opened.at(-1)?.session.streamId).equals('liv_2')
-    await press(byTestId('fake-screen')!)
-
-    // An ended camera is not held any more: tapping it starts it afresh.
-    fake.next = async () => stream({ id: 'liv_5', label: 'Bullpen' })
-    await press(byTestId('angle-row-liv_3')!)
-    expect(fake.added.at(-1)?.label).equals('Bullpen')
-    expect(
-      (fake.added.at(-1)?.device as DeviceStreamOptions).heldStreamId
-    ).equals(undefined)
   })
 
-  it('offers on each camera exactly what the web panel offers', async function () {
+  it('offers Rotate key and End on an own camera, End on somebody else’s, and nothing once ended', async function () {
     const fake = fakeClient()
     fake.mine = [
       stream({ id: 'liv_1', label: 'Home Plate' }),
@@ -727,45 +772,21 @@ describe('the cameras on a game, on a phone', function () {
       await settle()
       return found
     }
-    expect(await offered('liv_1')).deep.equals([
-      'reveal',
-      'rotate',
-      'end',
-      'remove'
-    ])
-    expect(await offered('liv_2')).deep.equals(['reveal', 'rotate', 'end'])
-    expect(await offered('liv_3')).deep.equals([
-      'reveal',
-      'rotate',
-      'deleteVideo',
-      'remove'
-    ])
+    expect(await offered('liv_1')).deep.equals(['rotate', 'end'])
+    expect(await offered('liv_2')).deep.equals(['rotate', 'end'])
     expect(await offered('liv_4')).deep.equals(['end'])
+    expect(byTestId('angle-more-liv_3')).equals(null)
     expect(byTestId('angle-more-liv_5')).equals(null)
-    await press(byTestId('angle-more-liv_1')!)
-    expect(text()).contains('Copy stream URL')
-    expect(text()).contains('Rotate key')
-    expect(text()).contains('End')
-    expect(text()).contains('Remove')
   })
 
-  it('copies the URL, and acts at once off the air but asks twice on it', async function () {
+  it('acts at once off the air but asks twice on it, and for a camera filming elsewhere', async function () {
     const fake = fakeClient()
     fake.mine = [
-      stream({ id: 'liv_1', label: 'Home Plate', url: undefined }),
-      stream({ id: 'liv_2', label: 'Live One', state: 'publishing' })
+      stream({ id: 'liv_1', label: 'Home Plate' }),
+      stream({ id: 'liv_2', label: 'Live One', state: 'publishing' }),
+      stream({ id: 'liv_3', label: 'Elsewhere', deviceId: OTHER_DEVICE })
     ]
-    fake.reveal = async () =>
-      stream({ id: 'liv_1', url: 'rtmp://ingest.example.test/live/ts_1' })
-    const copied: string[] = []
-    await mount(fake, undefined, undefined, copied)
-
-    await press(byTestId('angle-more-liv_1')!)
-    await press(byTestId('stream-action-reveal')!)
-    await settle()
-    expect(copied).deep.equals(['rtmp://ingest.example.test/live/ts_1'])
-    expect(text()).contains('Copied the stream URL for Home Plate')
-    expect(sheetActions()).deep.equals([])
+    await mount(fake)
 
     await press(byTestId('angle-more-liv_1')!)
     await press(byTestId('stream-action-rotate')!)
@@ -780,11 +801,20 @@ describe('the cameras on a game, on a phone', function () {
     await settle()
     expect(fake.acted).deep.equals(['rotate liv_1', 'end liv_2'])
 
+    await press(byTestId('angle-more-liv_3')!)
+    await press(byTestId('stream-action-end')!)
+    expect(fake.acted).deep.equals(['rotate liv_1', 'end liv_2'])
+    await press(byTestId('stream-action-end')!)
+    await settle()
+    expect(fake.acted.at(-1)).equals('end liv_3')
+
     // A failure stays in the sheet.
-    fake.reveal = async () => stream({ id: 'liv_1', url: undefined })
+    fake.end = async () => {
+      throw new HttpError('gone', 'This camera was ended')
+    }
     await press(byTestId('angle-more-liv_1')!)
-    await press(byTestId('stream-action-reveal')!)
-    expect(text()).contains('This camera has no URL to copy')
+    await press(byTestId('stream-action-end')!)
+    expect(text()).contains('This camera was ended')
   })
 
   it('offers Upload Recording, shows its progress, cancels, retries, and goes when it lands', async function () {
@@ -1470,5 +1500,448 @@ describe('setting up a camera on a phone', function () {
     )
     await pressId('record-video')
     expect(text()).not.contains('Name this camera angle')
+  })
+})
+
+describe('camera rows on a phone', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    opened.length = 0
+    played.length = 0
+  })
+
+  /** A native module holding `takes`, and the engine calls made on it. */
+  const holding = (...takes: Array<typeof RECORDING>): FakePhoneStreamModule =>
+    fakePhoneStreamModule({ capabilities: CAN_RECORD, recordings: takes })
+  const called = (native: FakePhoneStreamModule): string[] =>
+    native.calls
+      .filter(call => ['cancelUpload', 'deleteRecording'].includes(call.name))
+      .map(call => `${call.name} ${String(call.args[0])}`)
+  /** Cancel on the warning, not the Cancel of an upload's row behind it. */
+  const cancelSheet = async (id: string): Promise<void> => {
+    const found = [
+      ...(byTestId(id)?.querySelectorAll<HTMLElement>('[role="button"]') ?? [])
+    ].find(node => node.textContent === 'Cancel')
+    expect(found, id).not.equals(undefined)
+    await press(found!)
+    await settle()
+  }
+  const rowOrder = (): string[] =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid^="angle-row-"], [data-testid="record-video"]'
+      )
+    ].map(node => node.getAttribute('data-testid')!.replace('angle-row-', ''))
+
+  it('draws mine then others’, oldest first, and ended rows below Record Video', async function () {
+    const fake = fakeClient()
+    const at = (minute: number): string =>
+      `2026-05-20T16:${String(minute).padStart(2, '0')}:00.000Z`
+    fake.mine = [
+      stream({ id: 'liv_b', createdAt: at(5), deviceId: OTHER_DEVICE }),
+      stream({ id: 'liv_a', createdAt: at(9), state: 'ended' }),
+      stream({ id: 'liv_c', createdAt: at(1) }),
+      stream({ id: 'liv_d', createdAt: at(2), state: 'ended' })
+    ]
+    fake.others = [
+      stream({ id: 'liv_e', createdAt: at(7), deviceId: undefined }),
+      stream({
+        id: 'liv_f',
+        createdAt: at(0),
+        deviceId: undefined,
+        closesAt: at(3)
+      }),
+      stream({ id: 'liv_g', createdAt: at(0), deviceId: undefined })
+    ]
+    await mount(fake)
+    expect(rowOrder()).deep.equals([
+      'liv_c',
+      'liv_b',
+      'liv_g',
+      'liv_e',
+      'record-video',
+      'liv_d',
+      'liv_a',
+      'liv_f'
+    ])
+  })
+
+  it('opens the RTMP sheet from an own external row, with no source or a chosen one', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({
+        id: 'liv_1',
+        deviceId: null,
+        deviceModel: null,
+        source: null,
+        url: undefined
+      })
+    ]
+    fake.reveal = async () => stream({ id: 'liv_1', url: RTMP_URL })
+    await mount(fake)
+    expect(byTestId('angle-subtitle-liv_1')?.textContent).equals(
+      'Using RTMP URL'
+    )
+    await press(byTestId('angle-row-liv_1')!)
+    await settle()
+    expect(fake.revealed).deep.equals(['liv_1'])
+    expect(byTestId('rtmp-url')?.textContent).equals(RTMP_URL)
+    expect(fake.added).deep.equals([])
+  })
+
+  it('plays somebody else’s ended row only when it has a video', async function () {
+    const fake = fakeClient()
+    fake.others = [
+      stream({
+        id: 'liv_1',
+        deviceId: undefined,
+        state: 'ended',
+        playableVideoId: 'vid_1'
+      }),
+      stream({ id: 'liv_2', deviceId: undefined, state: 'ended' }),
+      stream({ id: 'liv_3', deviceId: undefined })
+    ]
+    await mount(fake)
+    await press(byTestId('angle-row-liv_1')!)
+    expect(played).deep.equals(['vid_1'])
+    expect(byTestId('angle-row-liv_2')?.getAttribute('role')).not.equals(
+      'button'
+    )
+    await press(byTestId('angle-row-liv_2')!)
+    await press(byTestId('angle-row-liv_3')!)
+    expect(played).deep.equals(['vid_1'])
+    expect(fake.added).deep.equals([])
+  })
+
+  it('shows End on an own phone row elsewhere only, and asks before it ends', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', label: 'Mine Here' }),
+      stream({
+        id: 'liv_2',
+        label: 'Third Base',
+        deviceId: OTHER_DEVICE,
+        deviceModel: 'Pixel 10',
+        state: 'publishing'
+      }),
+      stream({
+        id: 'liv_3',
+        label: 'Over There',
+        deviceId: OTHER_DEVICE,
+        state: 'ended'
+      }),
+      stream({ id: 'liv_4', deviceId: null, deviceModel: null })
+    ]
+    fake.others = [stream({ id: 'liv_5', deviceId: undefined })]
+    await mount(fake)
+    for (const id of ['liv_1', 'liv_3', 'liv_4', 'liv_5'])
+      expect(byTestId(`angle-end-${id}`), id).equals(null)
+    await press(byTestId('angle-row-liv_2')!)
+    expect(fake.added).deep.equals([])
+
+    await press(byTestId('angle-end-liv_2')!)
+    expect(byTestId('end-camera-angle')?.textContent).equals('Third Base')
+    await cancelSheet('end-camera-sheet')
+    expect(fake.acted).deep.equals([])
+
+    fake.end = async () => {
+      throw new HttpError('badRequest', 'Could not end it')
+    }
+    await press(byTestId('angle-end-liv_2')!)
+    await pressId('end-camera-confirm')
+    expect(text()).contains('Could not end it')
+    fake.end = async () => stream()
+    const listed = fake.listed
+    await pressId('end-camera-confirm')
+    await settle()
+    expect(fake.acted).deep.equals(['end liv_2', 'end liv_2'])
+    expect(fake.listed).equals(listed + 1)
+  })
+
+  it('warns before the delete button, then deletes the video, the upload and the copy', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', state: 'ended' }),
+      stream({ id: 'liv_2', label: 'Live One', state: 'publishing' })
+    ]
+    const native = holding(take({ uploadRunning: true }))
+    await mount(fake, CAN_RECORD, native)
+    expect(byTestId('angle-delete-liv_2')).equals(null)
+
+    await press(byTestId('angle-delete-liv_1')!)
+    expect(text()).contains('deletes the video of')
+    expect(text()).contains('cannot be undone')
+    expect(byTestId('delete-video-angle')?.textContent).equals('Home Plate')
+    await cancelSheet('delete-video-sheet')
+    expect(fake.acted).deep.equals([])
+    expect(called(native)).deep.equals([])
+
+    // Refused: nothing on this phone goes.
+    fake.discard = async () => {
+      throw new HttpError('badRequest', 'That camera is still running')
+    }
+    await press(byTestId('angle-delete-liv_1')!)
+    await pressId('delete-video-confirm')
+    expect(text()).contains('That camera is still running')
+    expect(called(native)).deep.equals([])
+
+    fake.discard = async () => {}
+    await pressId('delete-video-confirm')
+    await settle()
+    expect(fake.acted).deep.equals(['discard liv_1', 'discard liv_1'])
+    expect(byTestId('angle-row-liv_1')).equals(null)
+    expect(byTestId('upload-row-liv_1')).equals(null)
+    expect(called(native)).deep.equals([
+      'cancelUpload liv_1',
+      'deleteRecording liv_1'
+    ])
+  })
+
+  it('offers each detail only when it applies', async function () {
+    const offers = async (
+      row: Partial<LiveStream>,
+      native: FakePhoneStreamModule
+    ): Promise<string[]> => {
+      const fake = fakeClient()
+      fake.mine = [stream({ id: 'liv_1', state: 'ended', ...row })]
+      await mount(fake, CAN_RECORD, native)
+      await press(byTestId('angle-row-liv_1')!)
+      const found = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid^="video-details-"]'
+        )
+      ].map(node => node.getAttribute('data-testid')!.slice(14))
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.textContent = ''
+      return found
+    }
+    const base = ['sheet', 'angle', 'delete']
+    expect(await offers({}, holding())).deep.equals(base)
+    expect(await offers({ deviceId: null }, holding())).deep.equals(base)
+    expect(await offers({ playableVideoId: 'vid_1' }, holding())).deep.equals([
+      'sheet',
+      'angle',
+      'play',
+      'delete'
+    ])
+    expect(await offers({}, holding(take()))).deep.equals([
+      ...base,
+      'upload',
+      'delete-copy'
+    ])
+    expect(
+      await offers({}, holding(take({ uploadedAt: 1_790_000_900_000 })))
+    ).deep.equals([...base, 'delete-copy'])
+    expect(
+      await offers({}, holding(take({ uploadRunning: true })))
+    ).deep.equals([...base, 'delete-copy'])
+  })
+
+  it('plays, uploads and deletes from Video details', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', state: 'ended', playableVideoId: 'vid_1' })
+    ]
+    const native = holding(take())
+    await mount(fake, CAN_RECORD, native)
+    const details = async (): Promise<void> => {
+      await press(byTestId('angle-row-liv_1')!)
+      expect(byTestId('video-details-angle')?.textContent).equals('Home Plate')
+    }
+
+    await details()
+    await pressId('video-details-play')
+    await settle()
+    expect(played).deep.equals(['vid_1'])
+    expect(fake.added).deep.equals([])
+
+    await details()
+    await pressId('video-details-upload')
+    await settle()
+    expect(
+      native.calls.filter(call => call.name === 'uploadRecording')
+    ).lengthOf(1)
+
+    // Cancel on the warning goes back to the details.
+    await details()
+    await pressId('video-details-delete')
+    await settle()
+    await cancelSheet('delete-video-sheet')
+    expect(byTestId('video-details-sheet')).not.equals(null)
+    await pressId('sheet-cancel')
+    await settle()
+    expect(byTestId('video-details-sheet')).equals(null)
+    expect(fake.acted).deep.equals([])
+  })
+
+  it('deletes the local copy after asking, and tells the server', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', state: 'ended', localRecording: 'recorded' })
+    ]
+    const native = holding(take())
+    await mount(fake, CAN_RECORD, native)
+    await press(byTestId('angle-row-liv_1')!)
+    await pressId('video-details-delete-copy')
+    await settle()
+    expect(text()).contains('deletes the copy of')
+    await cancelSheet('delete-copy-sheet')
+    expect(called(native)).deep.equals([])
+
+    await pressId('video-details-delete-copy')
+    await settle()
+    native.answers.recordings = []
+    fake.patch = async () => {
+      throw new HttpError('badRequest', 'Offline')
+    }
+    await pressId('delete-copy-confirm')
+    await settle()
+    expect(called(native)).deep.equals([
+      'cancelUpload liv_1',
+      'deleteRecording liv_1'
+    ])
+    expect(fake.patched[0]).equals('liv_1 removed')
+    expect(fake.acted).deep.equals([])
+    // Back on the details, which no longer offer a copy.
+    expect(byTestId('video-details-sheet')).not.equals(null)
+    expect(byTestId('video-details-delete-copy')).equals(null)
+  })
+
+  it('shows a refused local delete in its sheet', async function () {
+    const fake = fakeClient()
+    fake.mine = [stream({ id: 'liv_1', state: 'ended' })]
+    const native = holding(take())
+    native.failures.deleteRecording = { code: 'stillRecording' }
+    await mount(fake, CAN_RECORD, native)
+    await press(byTestId('angle-row-liv_1')!)
+    await pressId('video-details-delete-copy')
+    await settle()
+    await pressId('delete-copy-confirm')
+    expect(byTestId('delete-copy-sheet')).not.equals(null)
+    expect(fake.patched).deep.equals([])
+  })
+
+  it('deletes a take the list says was discarded, and no other, again after a refusal', async function () {
+    const poll = heldPoll()
+    try {
+      const fake = fakeClient()
+      fake.discarded = ['liv_1']
+      fake.mine = [stream({ id: 'liv_2', state: 'ended' })]
+      const native = holding(take(), take({ liveStreamId: 'liv_2' }))
+      native.failures.deleteRecording = { code: 'uploadInProgress' }
+      await mount(fake, CAN_RECORD, native)
+      expect(byTestId('upload-row-liv_1')).equals(null)
+      expect(byTestId('upload-row-liv_2')).not.equals(null)
+      expect(called(native)).deep.equals([
+        'cancelUpload liv_1',
+        'deleteRecording liv_1'
+      ])
+      delete native.failures.deleteRecording
+      native.calls.length = 0
+      await poll.poll()
+      expect(called(native)).deep.equals([
+        'cancelUpload liv_1',
+        'deleteRecording liv_1'
+      ])
+      expect(fake.acted).deep.equals([])
+    } finally {
+      poll.restore()
+    }
+  })
+
+  it('says removed only for this phone’s own recorded row it holds no take of', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_1', localRecording: 'recorded' }),
+      stream({ id: 'liv_2', localRecording: 'recorded' }),
+      stream({ id: 'liv_3', localRecording: 'none' }),
+      stream({ id: 'liv_4', localRecording: 'uploaded' }),
+      stream({
+        id: 'liv_5',
+        localRecording: 'recorded',
+        deviceId: OTHER_DEVICE
+      })
+    ]
+    fake.others = [
+      stream({ id: 'liv_6', localRecording: 'recorded', deviceId: undefined })
+    ]
+    const poll = heldPoll()
+    try {
+      await mount(fake, CAN_RECORD, holding(take({ liveStreamId: 'liv_2' })))
+      expect(fake.patched).deep.equals(['liv_1 removed'])
+      await poll.poll()
+      expect(fake.patched).deep.equals(['liv_1 removed'])
+    } finally {
+      poll.restore()
+    }
+  })
+
+  it('says nothing until the takes have been read', async function () {
+    const fake = fakeClient()
+    fake.mine = [stream({ id: 'liv_1', localRecording: 'recorded' })]
+    const native = holding()
+    native.failures.recordings = { code: 'notReady' }
+    await mount(fake, CAN_RECORD, native)
+    expect(fake.patched).deep.equals([])
+  })
+
+  it('trusts a read of the takes made after the list’s, and says it again after a failure', async function () {
+    const poll = heldPoll()
+    try {
+      const fake = fakeClient()
+      fake.mine = [stream({ id: 'liv_1', localRecording: 'recorded' })]
+      // The hook's read predates the take; the read after the list finds it.
+      const native = holding()
+      const reads = { count: 0 }
+      const recordings = native.recordings.bind(native)
+      native.recordings = async () => {
+        reads.count += 1
+        native.answers.recordings = reads.count > 1 ? [take()] : []
+        return await recordings()
+      }
+      await mount(fake, CAN_RECORD, native)
+      expect(reads.count).greaterThan(1)
+      expect(fake.patched).deep.equals([])
+
+      // The take goes, and the first word fails.
+      native.recordings = recordings
+      native.answers.recordings = []
+      fake.patch = async () => {
+        throw new HttpError('badRequest', 'Offline')
+      }
+      await poll.poll()
+      expect(fake.patched).deep.equals(['liv_1 removed'])
+      fake.patch = async () => {}
+      await poll.poll()
+      expect(fake.patched).deep.equals(['liv_1 removed', 'liv_1 removed'])
+      await poll.poll()
+      expect(fake.patched).lengthOf(2)
+    } finally {
+      poll.restore()
+    }
+  })
+
+  it('waits on iOS for Video details to leave before the warning comes up', async function () {
+    const real = Platform.OS
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true })
+    try {
+      const fake = fakeClient()
+      fake.mine = [stream({ id: 'liv_1', state: 'ended' })]
+      await mount(fake)
+      await press(byTestId('angle-row-liv_1')!)
+      await pressId('video-details-delete')
+      await settle()
+      expect(byTestId('delete-video-confirm')).not.equals(null)
+    } finally {
+      Object.defineProperty(Platform, 'OS', {
+        value: real,
+        configurable: true
+      })
+    }
   })
 })

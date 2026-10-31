@@ -26,7 +26,7 @@
 //      stream: the game still has one Home Plate, with the same id. Close.
 //   6. Signed in as somebody who may not film: no Cameras. Back as the
 //      seeded user.
-//   7. "…" on "Home Plate": Copy stream URL, Rotate key, End and Remove.
+//   7. "…" on "Home Plate": Rotate key and End.
 import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -416,7 +416,7 @@ async function main(): Promise<void> {
     say(`$ tapOn angle-more-${home.id}`)
     await m.tapOn({ id: `angle-more-${home.id}` })
     const offered: string[] = []
-    for (const word of ['Copy stream URL', 'Rotate key', 'End', 'Remove']) {
+    for (const word of ['Rotate key', 'End']) {
       const found = await find(byText(word), 8000)
       assert(found != null, `the sheet offers ${word}`)
       say(`$ assertVisible ${word}`)

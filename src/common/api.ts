@@ -1679,6 +1679,9 @@ export const asUserMatch = asObject({
 })
 export type UserMatch = ReturnType<typeof asUserMatch>
 
+/** How the ingest's `lastError` begins when it refused a camera's codec. */
+export const CODEC_REFUSAL = 'TeamStation takes HEVC.'
+
 /**
  * A live stream's own state, as the ingest last reported it.
  *

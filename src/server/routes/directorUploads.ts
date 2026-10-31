@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { asBoolean, asNumber, asObject, asOptional, asString } from 'cleaners'
 import express, { Router } from 'express'
-import type { Kysely, Selectable, Transaction } from 'kysely'
+import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import {
   badRequest,
@@ -862,7 +862,8 @@ async function replaceNamedStream(
  * for a fresh stream and video while this one stays listed, and says whether
  * it did: only while it is neither publishing nor replaced already, since the
  * phone may have dialled it again since it was read. Its key stops here, and
- * the ingest closes its playlist if it was never finished.
+ * the ingest closes its playlist if it was never finished. A camera its owner
+ * removed stays removed, however late its upload lands.
  */
 async function claimAsUploaded(
   trx: Transaction<Database>,
@@ -873,7 +874,7 @@ async function claimAsUploaded(
     .updateTable('live_streams')
     .set({
       local_recording: 'uploaded',
-      state: 'ended',
+      state: sql`case when state = 'revoked' then 'revoked' else 'ended' end`,
       closes_at: now,
       updated_at: now
     })
