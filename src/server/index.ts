@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { deliverSignInCode } from './auth/codeDelivery'
+import { accountCodeSender, deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
 import { spaceObjectStore, startChatPurge } from './chat/attachments'
@@ -28,8 +28,7 @@ import {
   type GuardianInvitation,
   guardianInviteSender,
   mailConfigured,
-  sendInvitation,
-  sendSignInCode
+  sendInvitation
 } from './email/sendMail'
 import { jsonBody } from './jsonBody'
 import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
@@ -737,11 +736,7 @@ function runWorker(): void {
     '/api/v1',
     accountRoutes(db, {
       ...mediaContext,
-      sendCode: async (email, code) => {
-        if (!mailConfigured(serverConfig.smtp))
-          throw new Error('Email is not configured')
-        await sendSignInCode(serverConfig.smtp, email, code)
-      }
+      sendCode: accountCodeSender(serverConfig.smtp)
     })
   )
   app.use(

@@ -10,11 +10,23 @@ import {
   type JudgeRuntime,
   statusFromCheckpoints
 } from './checkpoint'
+import {
+  baselineManifestPath,
+  findAccount,
+  type FixtureManifest,
+  readBaselineManifest,
+  requireMailbox,
+  runSeatFixture,
+  signInWithPassword,
+  worldIdsOf
+} from './fixtures'
 import { deviceClassOf } from './goldens'
 import type { ServerError } from './invariants'
 import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
 import { attachDevice, connectDaemon } from './maestro'
+import { gogRunner, readMail, testAddressFor, waitForMail } from './mail'
 import { findScenario, ROOT } from './manifest'
+import { prepareApp } from './prepare'
 import {
   BlockedError,
   exitCodeFor,
@@ -49,6 +61,8 @@ export interface RunOptions {
   concurrent?: boolean
   /** The fault this run proves. Only an isolated stack can carry one. */
   fault?: string
+  /** Stands in for building and installing an app, in tests. */
+  prepare?: typeof prepareApp
   /** Stands in for the configured judge, in tests. */
   judges?: JudgeRuntime
   settings: LocalSettings
@@ -261,6 +275,12 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         origin: seat.origin,
         webDir: undefined,
         adopt: async origin => origin,
+        baselineManifest: baselineManifestPath(options.settings, {
+          kind: 'seat',
+          seat: options.seat
+        }),
+        seedWorld: async name =>
+          runSeatFixture(options.settings, options.seat ?? '', name),
         serverErrors: async since => seatServerErrors(options.settings, since)
       }
     } else {
@@ -274,9 +294,22 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         native: surface === 'ios-app' || surface === 'android-app',
         services: spec.services,
         root,
-        fault: options.fault
+        fault: options.fault,
+        mailbox: options.settings.mailbox
       })
       handle = stack
+      if (surface === 'ios-app' || surface === 'android-app') {
+        // A native app's server is fixed when its bundle is made, so it is built here,
+        // for this stack.
+        const [device] = needs.devices
+        ;(options.prepare ?? prepareApp)({
+          app:
+            surface === 'ios-app' ? 'teamstation-ios' : 'teamstation-android',
+          device: devices[device.role],
+          origin: stack.origin,
+          metroPort: stack.metroPort
+        })
+      }
     }
 
     targetKind =
@@ -291,11 +324,12 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       settings: options.settings,
       serverErrors: async () => await handle.serverErrors(started),
       alone: options.concurrent !== true,
-      worldIds: () => [],
+      worldIds: () => worldIdsOf(worlds),
       judges: options.judges ?? configuredJudges(options, root)
     })
     const running = checkpoints
 
+    const worlds: FixtureManifest[] = []
     const sessions: WebSession[] = []
     const attached: Array<() => Promise<void>> = []
     const targets: CheckpointTarget[] = []
@@ -331,6 +365,51 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         sessions.push(session)
         watch(session.m, { deviceClass: session.deviceClass })
         return session
+      },
+      lastDevice: () => {
+        const target = targets[targets.length - 1]
+        if (target == null) throw new HarnessError('No device is attached yet')
+        return target.device
+      },
+      fixture: async name => {
+        if (handle.seedWorld == null) {
+          throw new BlockedError('this target has no database to seed')
+        }
+        const manifest = await handle.seedWorld(name)
+        worlds.push(manifest)
+        return manifest
+      },
+      signIn: async (role, on) => {
+        const account = findAccount(
+          role,
+          worlds,
+          readBaselineManifest(handle.baselineManifest)
+        )
+        const target =
+          on == null
+            ? targets[targets.length - 1]
+            : targets.find(row => row.device === on)
+        if (target == null) {
+          throw new HarnessError(`Signing in "${role}" has no device to use`)
+        }
+        await signInWithPassword(target.device, account)
+        return account
+      },
+      address: label => testAddressFor(requireMailbox(options.settings), label),
+      mail: async (address, from) => {
+        const mailbox = requireMailbox(options.settings)
+        const run = gogRunner(options.settings)
+        const message = await waitForMail({
+          run,
+          mailbox,
+          to: address,
+          from,
+          since: started
+        })
+        return {
+          subject: message.subject,
+          body: () => readMail(run, mailbox, message.id)
+        }
       },
       attach: async (role, attachOptions) => {
         const id = ctx.device(role)

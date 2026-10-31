@@ -633,6 +633,37 @@ describe('run', function () {
     expect(existsSync(join(failed.root, 'run', 'failure-1.json'))).equals(true)
   })
 
+  it('builds a native app for a stack it starts, against that stack', async function () {
+    this.timeout(120000)
+    const built: Array<Record<string, unknown>> = []
+    const passed = await outcome(
+      'return',
+      {
+        surface: 'ios-app',
+        devices: { phone: 'sim' },
+        prepare: (options: Record<string, unknown>) => {
+          built.push(options)
+        }
+      },
+      "stack: 'seat',"
+    )
+    expect(passed.status).equals('passed')
+    expect(built.length).equals(1)
+    expect(built[0].app).equals('teamstation-ios')
+    expect(built[0].device).equals('sim')
+    expect(built[0].origin).not.includes('127.0.0.1')
+    expect(built[0].metroPort).a('number')
+    const none: unknown[] = []
+    await outcome('return', {
+      surface: 'ios-app',
+      devices: { phone: 'sim' },
+      prepare: () => {
+        none.push(1)
+      }
+    })
+    expect(none).deep.equals([])
+  })
+
   it('reports an unknown scenario as a harness error', async function () {
     expect(
       (await outcome('return', { id: 'area/feature/thing#gone' })).exit

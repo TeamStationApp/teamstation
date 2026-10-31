@@ -18,6 +18,7 @@ export interface PrepareOptions {
   device: string
   packagePath?: string
   origin?: string
+  metroPort?: number
 }
 
 type Run = (command: string, args: string[], env?: NodeJS.ProcessEnv) => void
@@ -53,17 +54,27 @@ function buildLocally(options: PrepareOptions, run: Run): void {
   const { app, device, origin } = options
   if (origin == null)
     throw new HarnessError('No stack or seat to build against')
-  const env = { TS_API_BASE_URL: apiBaseFor(origin) }
+  // The React Native CLI runs `pod install`, which wants a UTF-8 locale.
+  const env = { TS_API_BASE_URL: apiBaseFor(origin), LANG: 'en_US.UTF-8' }
+  const port =
+    options.metroPort == null ? [] : ['--port', String(options.metroPort)]
   if (app.endsWith('-ios')) {
     run(
       'npx',
-      ['react-native', 'run-ios', '--udid', device, '--no-packager'],
+      ['react-native', 'run-ios', '--udid', device, '--no-packager', ...port],
       env
     )
   } else if (app.endsWith('-android')) {
     run(
       'npx',
-      ['react-native', 'run-android', '--deviceId', device, '--no-packager'],
+      [
+        'react-native',
+        'run-android',
+        '--deviceId',
+        device,
+        '--no-packager',
+        ...port
+      ],
       env
     )
   } else {

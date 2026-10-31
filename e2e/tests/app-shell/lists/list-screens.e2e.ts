@@ -33,7 +33,7 @@ const USER = {
   id: userIdOfGumbo(7),
   gumboId: 7,
   displayName: 'Pat Neshek',
-  email: 'pat@example.com',
+  email: 'pat@example.test',
   isAdmin: false
 }
 
@@ -814,6 +814,7 @@ export default defineE2e({
   guards: [],
   faults: ['layout-shift', 'hidden-element', 'missing-font', 'blank-screen'],
   manual: false,
+  sendsNoMail: true,
   quarantine: {
     reason:
       'These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.',

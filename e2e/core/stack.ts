@@ -8,10 +8,15 @@ import { join } from 'node:path'
 import { Pool } from 'pg'
 
 import { type FaultProxy, startFaultProxy } from '../faults/proxy'
+import {
+  baselineManifestPath,
+  runLocalFixture,
+  writeManifestFile
+} from './fixtures'
 import { startFront } from './front'
 import { ROOT } from './manifest'
 import { startPlacesStub } from './placesStub'
-import { HarnessError } from './result'
+import { BlockedError, HarnessError } from './result'
 import type { StackHandle } from './spec'
 
 export interface StackOptions {
@@ -22,6 +27,8 @@ export interface StackOptions {
   native?: boolean
   services: string[]
   root?: string
+  /** Seeds `baseline` on this mailbox, so its accounts can sign in. */
+  mailbox?: string
   /** Breaks the API this way, through a proxy between the front server and it. */
   fault?: string
 }
@@ -29,6 +36,8 @@ export interface StackOptions {
 export interface RunningStack extends StackHandle {
   id: string
   dir: string
+  /** Where a native surface's Metro listens, on a stack that started one. */
+  metroPort?: number
   stop: () => Promise<void>
 }
 
@@ -252,10 +261,21 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       await untilHealthy(front.url, api)
     }
 
+    let metroPort: number | undefined
     if (options.native === true) {
+      // The API's address is inlined by Babel and cached by Metro, so an old one stays
+      // baked in without a reset.
+      metroPort = await freePort()
       const metro = spawn(
         process.execPath,
-        ['node_modules/.bin/react-native', 'start', '--port', '0'],
+        [
+          'node_modules/.bin/react-native',
+          'start',
+          '--port',
+          String(metroPort),
+          '--no-interactive',
+          '--reset-cache'
+        ],
         {
           cwd: root,
           env: { ...process.env, TS_API_BASE_URL: `${front.url}/api/v1` },
@@ -271,6 +291,15 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
     front.errors.length = 0
     for (const proxy of proxies) proxy.errors.length = 0
 
+    const manifestPath = baselineManifestPath({}, { kind: 'isolated', dir })
+    const { mailbox } = options
+    if (wantsApi && mailbox != null && manifestPath != null) {
+      writeManifestFile(
+        manifestPath,
+        runLocalFixture(root, dir, 'baseline', mailbox)
+      )
+    }
+
     let origin = front.url
     return {
       id,
@@ -284,6 +313,16 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         const proxy = await addProxy(adopted, new URL(adopted).hostname)
         origin = proxy.url
         return proxy.url
+      },
+      baselineManifest: manifestPath,
+      metroPort,
+      seedWorld: async name => {
+        if (mailbox == null) {
+          throw new BlockedError(
+            'no test mailbox: set mailbox in the local settings'
+          )
+        }
+        return runLocalFixture(root, dir, name, mailbox)
       },
       serverErrors: async since =>
         [front.errors, ...proxies.map(proxy => proxy.errors)]

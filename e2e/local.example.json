@@ -3,6 +3,7 @@
   "seatCommand": "/Users/dev/git/deploy-tools/src/deploy/testerSeat.sh",
   "goldenStore": "/Users/dev/git/teamstation-e2e-goldens",
   "mailbox": "testmailbox@example.test",
+  "seatManifest": "/Users/dev/e2e-runs/tester-manifest.json",
   "gogEnvFile": "/Users/dev/.keys/gog-keyring.env",
   "maestroClientRoot": "/Users/dev/git/maestro-d/npm/maestro-d",
   "maestroBin": "/Users/dev/.maestro-d/bin/maestro-d",
