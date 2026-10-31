@@ -37,7 +37,11 @@ export interface RunResult {
   durationMs: number
   costUsd: number
   degradations: string[]
+  /** What the run ran against: only fixture data can make a golden. */
+  target?: { kind: string; seat?: string }
   checkpoints: unknown[]
+  /** A seat's server errors no running scenario can claim, for the night's report. */
+  unattributedServerErrors?: unknown[]
 }
 
 export function writeResult(runDir: string, result: RunResult): string {

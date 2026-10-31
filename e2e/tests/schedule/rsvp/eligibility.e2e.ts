@@ -1,23 +1,6 @@
-import { writeFile } from 'node:fs/promises'
-
 import { expect } from 'chai'
 
-import {
-  attachDevice,
-  connectDaemon,
-  type MaestroDevice
-} from '../../../core/maestro'
-import { loadSettings } from '../../../core/settings'
 import { defineE2e, type E2eContext } from '../../../core/spec'
-
-async function capture(
-  m: MaestroDevice,
-  ctx: E2eContext,
-  name: string
-): Promise<void> {
-  await m.waitForAnimationToEnd()
-  await writeFile(ctx.artifact(name), await m.screenshot())
-}
 
 /** Real RSVP eligibility, roster removal and write authorization, in Safari. */
 async function rosterRemoval(ctx: E2eContext): Promise<void> {
@@ -32,10 +15,7 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     throw new Error('This scenario needs a web build')
   const f = await guardianFixture(ctx.stack.webDir)
   ctx.stack.adopt(f.h.origin)
-  const device = ctx.device('browser')
-  const daemon = await connectDaemon(loadSettings(), `e2e-rsvp-${process.pid}`)
-  const m = await attachDevice(daemon, ctx.runDir, {
-    device,
+  const m = await ctx.attach('browser', {
     platform: 'ios',
     appId: 'com.apple.mobilesafari',
     commandTimeout: 30000
@@ -89,6 +69,8 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     await m.openLink({
       link: f.h.origin + '/sign-in?next=' + encodeURIComponent(path)
     })
+    await m.assertVisible({ text: 'Sign in to TeamStation', timeout: 20000 })
+    await m.waitForAnimationToEnd()
     await m.tapOn({ text: 'E-mail address' })
     await m.inputText({ text: f.emails[user] })
     await m.pressKey({ key: 'ENTER' })
@@ -96,12 +78,21 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     const link = f.h.links.get(f.emails[user])!
     await m.openLink({ link: f.h.origin + new URL(link).pathname })
     await m.assertVisible({ text: 'RSVP', timeout: 20000 })
-    await capture(m, ctx, 'eligible-rsvp-card.png')
+    await m.waitForAnimationToEnd()
+    await ctx.checkpoint('rsvp-card', { expect: [{ text: 'RSVP' }] })
     await m.tapOn({ text: 'RSVP' })
     await m.assertVisible({ text: childName })
     await m.assertVisible({ text: ownName })
     await m.assertNotVisible({ text: 'Ken G' })
-    await capture(m, ctx, 'eligible-rsvp-modal.png')
+    await m.waitForAnimationToEnd()
+    await ctx.checkpoint('rsvp-list', {
+      expect: [
+        { text: childName },
+        { text: ownName },
+        { text: 'Ken G', absent: true }
+      ],
+      golden: {}
+    })
     await f.h.db
       .deleteFrom('memberships')
       .where('user_id', '=', userIdOfGumbo(child))
@@ -119,17 +110,20 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     await m.tapOn({ text: 'RSVP' })
     await m.assertVisible({ text: ownName })
     await m.assertNotVisible({ text: childName })
-    await capture(m, ctx, 'removed-player-rsvp.png')
-  } catch (error) {
-    await writeFile(
-      ctx.artifact('failure-hierarchy.json'),
-      JSON.stringify(await m.hierarchy(), null, 2)
-    )
-    await capture(m, ctx, 'failure.png')
-    throw error
+    await m.waitForAnimationToEnd()
+    await ctx.checkpoint('rsvp-after-removal', {
+      expect: [{ text: ownName }, { text: childName, absent: true }],
+      golden: {},
+      readBack: async () => {
+        const stored = asEventInfo(
+          await (
+            await f.h.request('GET', `/events/${game.id}/info`, undefined, user)
+          ).json()
+        )
+        expect(stored.replyUserIds).not.includes(userIdOfGumbo(child))
+      }
+    })
   } finally {
-    await m.detach()
-    await daemon.shutdown()
     await f.h.close()
   }
 }

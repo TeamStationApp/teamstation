@@ -492,6 +492,118 @@ describe('run', function () {
     expect(missing.status).equals('blocked')
   })
 
+  const WATCH = `const device = {
+    hierarchy: async () => ({ children: [{ text: 'Sox' }] }),
+    screenshot: async () => Buffer.from('x'),
+    getConsoleLogs: async () => ({ data: '[]' }),
+    assertVisible: async () => ({}),
+    assertScreenshot: async options => {
+      fs.mkdirSync(require('path').dirname(options.captureOut), { recursive: true })
+      fs.writeFileSync(options.captureOut, 'frame')
+      throw Object.assign(new Error('no golden'), { code: 'COMMAND_FAILED', result: { data: { code: 'BASELINE_MISSING' } } })
+    }
+  }
+  ctx.watch(device, { deviceClass: 'class-1' })`
+
+  it('reports a screen with no golden as inconclusive, and records its checkpoints', async function () {
+    const root = tempRoot()
+    writeSpec(root, `${WATCH}; await ctx.checkpoint('screen', { golden: {} })`)
+    const runDir = join(root, 'run')
+    const { result, exitCode } = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir
+    })
+    expect(result.status).equals('unbaselined')
+    expect(exitCode).equals(4)
+    expect(result.deviceClass).equals('class-1')
+    expect(result.target).deep.equals({ kind: 'none' })
+    const record = result.checkpoints[0] as {
+      id: string
+      visual: { key: string }
+    }
+    expect(record.id).equals('screen')
+    expect(record.visual.key).equals(
+      'area/feature/thing#main/screen/web-chromium@class-1'
+    )
+    expect(
+      JSON.parse(readFileSync(join(runDir, 'result.json'), 'utf8')).checkpoints
+    ).length(1)
+  })
+
+  it('fails on a broken checkpoint, and a retry replaces the last verdicts', async function () {
+    const failing = await outcome(`${WATCH}
+      device.assertVisible = async () => { throw new Error('not there') }
+      await ctx.checkpoint('screen', { expect: [{ text: 'Sox' }] })`)
+    expect(failing.status).equals('failed')
+    expect(failing.reason).includes('Checkpoint "screen": not there')
+    const root = tempRoot()
+    writeSpec(
+      root,
+      `${WATCH}
+      if (!fs.existsSync(ctx.artifact('tried'))) {
+        fs.writeFileSync(ctx.artifact('tried'), '')
+        await ctx.checkpoint('first', {})
+        throw new Error('first attempt')
+      }
+      await ctx.checkpoint('second', {})`
+    )
+    const { result } = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir: join(root, 'run'),
+      retries: 1
+    })
+    expect(result.status).equals('passed')
+    expect(
+      (result.checkpoints as Array<{ id: string }>).map(row => row.id)
+    ).deep.equals(['second'])
+  })
+
+  it('fails on a moved screen even when the scenario finishes', async function () {
+    const moved = await outcome(`${WATCH}
+      device.assertScreenshot = async () => {
+        throw Object.assign(new Error('moved'), { code: 'COMMAND_FAILED', result: { data: {} } })
+      }
+      await ctx.checkpoint('screen', { golden: {} })`)
+    expect(moved.status).equals('failed')
+    expect(moved.reason).includes('Checkpoint "screen"')
+    const quarantined = await outcome(
+      `${WATCH}
+      device.assertScreenshot = async () => {
+        throw Object.assign(new Error('moved'), { code: 'COMMAND_FAILED', result: { data: {} } })
+      }
+      await ctx.checkpoint('screen', { golden: {} })`,
+      {},
+      'quarantine: { reason: "known", since: "2026-10-30" },'
+    )
+    expect(quarantined.status).equals('quarantined')
+  })
+
+  it('is a harness error when a checkpoint has nothing to look at', async function () {
+    const none = await outcome(`await ctx.checkpoint('screen', {})`)
+    expect(none.exit).equals(3)
+    expect(none.reason).includes('no device to look at')
+    const other = await outcome(`${WATCH}
+      await ctx.checkpoint('screen', {}, {})`)
+    expect(other.exit).equals(3)
+  })
+
+  it('checks the device it is pointed at, and keeps evidence of a failure', async function () {
+    const failed = await outcome(`${WATCH}
+      const other = { ...device, hierarchy: async () => ({ text: 'Render Error' }) }
+      ctx.watch(other, { deviceClass: 'class-2' })
+      await ctx.checkpoint('fine', {}, device)
+      await ctx.checkpoint('broken', {})`)
+    expect(failed.reason).includes('Checkpoint "broken": errorText')
+    expect(existsSync(join(failed.root, 'run', 'failure-0.png'))).equals(true)
+    expect(existsSync(join(failed.root, 'run', 'failure-1.json'))).equals(true)
+  })
+
   it('reports an unknown scenario as a harness error', async function () {
     expect(
       (await outcome('return', { id: 'area/feature/thing#gone' })).exit
@@ -948,6 +1060,79 @@ describe('the command line', function () {
         ])
       ).code
     ).equals(0)
+  })
+
+  it('names what the golden commands want, and syncs the store', async function () {
+    const failure = async (argv: string[]): Promise<string> => {
+      try {
+        await main(argv)
+      } catch (error) {
+        return (error as Error).message
+      }
+      return ''
+    }
+    const root = tempRoot()
+    const settings = join(root, 'local.json')
+    writeFileSync(settings, '{}')
+    const saved = process.env.E2E_LOCAL_SETTINGS
+    process.env.E2E_LOCAL_SETTINGS = settings
+    try {
+      expect(await failure(['golden'])).includes('accept, sync or rotate')
+      expect(await failure(['golden', 'accept'])).includes('--checkpoint')
+      expect(await failure(['golden', 'sync'])).includes('no golden store')
+      expect(
+        await failure(['golden', 'rotate', '--manifest-ref', 'refs/none'])
+      ).not.equals('')
+
+      const run = join(root, 'run')
+      mkdirSync(run)
+      writeFileSync(
+        join(run, 'result.json'),
+        JSON.stringify({ ref: 'other', checkpoints: [] })
+      )
+      const store = join(root, 'store')
+      const env = { ...process.env }
+      for (const name of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE']) {
+        env[name] = undefined
+      }
+      const origin = join(root, 'teamstation-e2e-goldens.git')
+      execFileSync('git', ['init', '-q', '--bare', '-b', 'master', origin], {
+        env
+      })
+      execFileSync('git', ['clone', '-q', origin, store], {
+        env,
+        stdio: 'ignore'
+      })
+      execFileSync(
+        'git',
+        [
+          '-c',
+          'user.name=Pat Neshek',
+          '-c',
+          'user.email=pat@example.test',
+          'commit',
+          '-q',
+          '--allow-empty',
+          '-m',
+          'Start'
+        ],
+        { cwd: store, env }
+      )
+      execFileSync('git', ['push', '-q', 'origin', 'master'], {
+        cwd: store,
+        env
+      })
+      writeFileSync(settings, JSON.stringify({ goldenStore: store }))
+      const synced = await quietly(['golden', 'sync'])
+      expect(synced.code).equals(0)
+      expect(synced.out).includes('"refs"')
+      expect(
+        await failure(['golden', 'accept', run, '--checkpoint', 'screen'])
+      ).includes('The run is from other')
+    } finally {
+      if (saved == null) delete process.env.E2E_LOCAL_SETTINGS
+      else process.env.E2E_LOCAL_SETTINGS = saved
+    }
   })
 
   it('runs a scenario and returns its exit code', async function () {
