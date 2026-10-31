@@ -100,6 +100,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/email/accountMail.js',
   'server/email/sendMail.js',
   'server/events/credits.js',
+  'server/events/eventChildren.js',
   'server/events/eventInfo.js',
   'server/events/eventInfoOpenApi.js',
   'server/events/eventListQuery.js',
