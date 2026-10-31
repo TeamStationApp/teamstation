@@ -29,7 +29,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     reactNativeFactory = factory
     let window = UIWindow(windowScene: windowScene)
     self.window = window
-    var properties: [String: Any] = ["apiBaseUrl": "https://app.teamstation.app/api/v1"]
+    var properties: [String: Any] = [
+      "apiBaseUrl": Bundle.main.object(forInfoDictionaryKey: "TVApiBaseUrl") as! String
+    ]
 #if DEBUG
     properties["apiBaseUrl"] = ProcessInfo.processInfo.environment["TV_API_BASE_URL"] ?? properties["apiBaseUrl"]
     properties["probeUrls"] = ProcessInfo.processInfo.environment["TV_PROBE_URLS"] ?? ""

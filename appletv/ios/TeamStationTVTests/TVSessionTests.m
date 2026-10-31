@@ -23,6 +23,15 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @interface TVSessionTests : XCTestCase
 @end
 @implementation TVSessionTests
+- (void)testEmbeddedApiAddress {
+  NSString *address = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"TVApiBaseUrl"];
+  XCTAssertTrue([address isKindOfClass:[NSString class]]);
+  NSURL *url = [NSURL URLWithString:address];
+  XCTAssertEqualObjects(url.scheme, @"https");
+  XCTAssertTrue(url.host.length > 0);
+  XCTAssertEqualObjects(url.path, @"/api/v1");
+  XCTAssertFalse([address containsString:@"$("]);
+}
 - (void)testDevelopmentBundleURL {
   id delegate = [NSClassFromString(@"TeamStationTV.ReactNativeDelegate") new];
   XCTAssertNotNil(delegate);
