@@ -19,7 +19,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mayEditName, mayManagePlayer } from '../access'
 import { MERGE_LOCK } from '../admin/people'
 import { hashToken } from '../auth/tokens'
-import { teamGuardianRows } from '../chat/audiences'
+import { audienceOf, teamGuardianRows } from '../chat/audiences'
 import { DmFacts } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -1861,5 +1861,35 @@ describe('adds made with a notice', function () {
     expect(
       (await playerAddApprovers(db!, ids['Held Twice'], TEAM.herons)).userIds
     ).includes(ids.coach)
+  })
+
+  it('keeps a player held by an open add, and their parent, out of the team’s chat', async function () {
+    await person('Chat Teen', { login: true })
+    await person('Chat Parent', { login: true })
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Chat Parent'],
+        related_user_id: ids['Chat Teen'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    const added = await add('roster', 'Chat Teen')
+    const members = async (): Promise<Set<string>> =>
+      await audienceOf(db!, 'teamMembers', TEAM.falcons, new Date())
+    const held = await members()
+    expect(held.has(ids['Chat Teen'])).equals(false)
+    expect(held.has(ids['Chat Parent'])).equals(false)
+    // Once it stands they both join, together.
+    await db!
+      .updateTable('group_requests')
+      .set({ sent_at: new Date(0), expires_at: new Date(1) })
+      .where('id', '=', added.requestId!)
+      .execute()
+    const settled = await members()
+    expect(settled.has(ids['Chat Teen'])).equals(true)
+    expect(settled.has(ids['Chat Parent'])).equals(true)
   })
 })

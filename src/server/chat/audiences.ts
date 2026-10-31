@@ -228,7 +228,7 @@ async function teamMemberIds(
   if (teamIds.length === 0) return []
   const people = await db
     .selectFrom('memberships')
-    .select(['user_id'])
+    .select(['user_id', 'team_id'])
     .where('team_id', 'in', teamIds)
     .where(eb =>
       eb.or([
@@ -237,11 +237,29 @@ async function teamMemberIds(
       ])
     )
     .execute()
+  // Neither somebody a team holds only by an open add, nor their guardians,
+  // until it can no longer be rejected: a player without their parents is no
+  // better in the team's chat than a parent without their child.
+  const open = await openAddsOf(db, teamIds)
   return [
     ...(await teamStaffIds(db, teamIds)),
-    ...people.map(row => row.user_id),
+    ...people
+      .filter(row => open.get(row.team_id)?.has(row.user_id) !== true)
+      .map(row => row.user_id),
     ...(await teamGuardianRows(db, teamIds))
   ]
+}
+
+/** Each team's open adds (`openAdds`). */
+async function openAddsOf(
+  db: Kysely<Database>,
+  teamIds: string[]
+): Promise<Map<string, Set<string>>> {
+  return new Map(
+    await Promise.all(
+      teamIds.map(async id => [id, await openAdds(db, id)] as const)
+    )
+  )
 }
 
 /**
@@ -263,11 +281,7 @@ export async function teamGuardianRows(
     .execute()
   // Not the guardians of somebody a team holds only by an open add: who they
   // are is not that team's to read until the add can no longer be rejected.
-  const open = new Map(
-    await Promise.all(
-      teamIds.map(async id => [id, await openAdds(db, id)] as const)
-    )
-  )
+  const open = await openAddsOf(db, teamIds)
   const players = rows.filter(
     row => open.get(row.team_id)?.has(row.user_id) !== true
   )
