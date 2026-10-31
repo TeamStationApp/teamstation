@@ -198,6 +198,58 @@ describe('team settings Add Player', function () {
     ])
   })
 
+  for (const [answer, line] of [
+    [
+      { entry, noticeId: 'req_1', told: 'player' },
+      'Added Corbin B to the roster. They were notified.'
+    ],
+    [
+      { entry, noticeId: 'req_1', told: 'coaches' },
+      'Added Corbin B to the roster. Their coaches were notified.'
+    ],
+    [
+      { entry, noticeId: null, unchanged: true },
+      'Corbin B is already on the roster'
+    ]
+  ] as const) {
+    it(`says “${line}”`, async () => {
+      const { fake, added } = await open({ answer: async () => answer })
+      await act(async () => {
+        fake.last().resolve([burnes])
+      })
+      await click('Choose Corbin B')
+      await click('Add to Roster')
+      expect(added).deep.equals([line])
+    })
+  }
+
+  it('sends one add however it is pressed, and says nothing once it is gone', async () => {
+    let finish: (answer: ExistingPlayerAnswer) => void = () => undefined
+    const { fake, sent, added } = await open({
+      answer: async () =>
+        await new Promise(resolve => {
+          finish = resolve
+        })
+    })
+    await act(async () => {
+      fake.last().resolve([burnes])
+    })
+    await click('Choose Corbin B')
+    await act(async () => {
+      node('Add to Roster')!.click()
+      node('Add to Roster')!.click()
+    })
+    expect(sent).has.length(1)
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    await act(async () => {
+      finish({ entry, noticeId: null })
+    })
+    expect(added).deep.equals([])
+  })
+
   it('says nothing of a notice nobody was sent, and Cancel on Add to Roster goes back to the list', async () => {
     const { fake, added } = await open({
       answer: async () => ({ entry, noticeId: null })
@@ -223,9 +275,7 @@ describe('team settings Add Player', function () {
     })
     await click('Choose Corbin B')
     await click('Add to Roster')
-    expect(text()).includes(
-      "This needs a guardian's approval first. We sent the request."
-    )
+    expect(text()).includes('This needs approval first. We sent the request.')
     expect(node('Add to Roster')!.getAttribute('aria-disabled')).equals('true')
     expect(pending.added).has.length(0)
     await act(async () => {

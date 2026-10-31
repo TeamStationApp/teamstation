@@ -276,7 +276,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           : player == null
             ? undefined
             : player.teams.some(
-                team => team.current && managesRoster(roles, team.teamId)
+                team =>
+                  team.current &&
+                  !player.openAddTeams.includes(team.teamId) &&
+                  managesRoster(roles, team.teamId)
               ))
   const canKeepSongs =
     forTeam == null

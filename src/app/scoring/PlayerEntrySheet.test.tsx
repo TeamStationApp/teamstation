@@ -236,4 +236,36 @@ describe('player entry sheet', function () {
     ).deep.equals([0, 0, 0, 1, 1, 2, 2])
     expect(rosterSegmentAt(1, 0, 0, 3)).equals(2)
   })
+
+  it("greys a pool player's name and hands, and leaves their jersey editable", async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <PlayerEntrySheet
+            ownIdentity
+            initialDraft={{
+              firstName: 'Mookie',
+              lastName: 'B',
+              jersey: '50',
+              bats: 'right',
+              throws: null,
+              positions: ['RF']
+            }}
+            onAdd={() => undefined}
+            onClose={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    expect((node('First Name') as HTMLInputElement).readOnly).equals(true)
+    expect((node('Last Name') as HTMLInputElement).readOnly).equals(true)
+    expect((node('Jersey Number') as HTMLInputElement).readOnly).equals(false)
+    expect(node('Throws unknown')).not.equals(null)
+    // A draft's bat side is a guess for scoring: theirs is shown as held.
+    expect(node('Bats unknown')).not.equals(null)
+    expect(document.querySelector('[aria-label="Throws L"]')).equals(null)
+  })
 })
