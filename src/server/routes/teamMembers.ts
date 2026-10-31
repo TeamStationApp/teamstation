@@ -8,6 +8,8 @@ import {
   adminScopes,
   canManageTeam,
   canSeeTeam,
+  heldByOpenAdd,
+  mayEditName,
   visibleScopes
 } from '../access'
 import type { Actor } from '../auth/sessions'
@@ -158,6 +160,13 @@ export function teamMemberRoutes(
         .executeTakeFirst()
       if (plays == null) throw notFound('No such player on this team')
       await refuseDeleted(db, userId)
+      if (
+        (await heldByOpenAdd(db, teamId, [userId])) &&
+        !(await mayEditName(db, actor.userId, userId, actor))
+      )
+        throw forbidden(
+          'Their picture is their own while their side may reject this add'
+        )
       const picture = asPictureBody(req.body)
 
       const answer = await storePlayerAvatar(

@@ -193,7 +193,10 @@ export function playerRoutes(
         ).get(userId),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
-        openAddTeams: await openAddTeams(db, person.userIds),
+        openAddTeams: (await openAddTeams(db, person.userIds)).filter(id => {
+          const team = teams.find(held => held.teamId === id)
+          return team != null && (ownPage || canSeePlayedFor(scopes, team))
+        }),
         /**
          * How this person may invite a guardian of the player: as a guardian,
          * with no sending team; from a team they coach, while the player has
@@ -734,15 +737,13 @@ export function playerRoutes(
 
         const body = cleanBody(asPlayerSettings, req.body)
         // The jersey and positions are the team's; the rest is the person's.
-        if (
+        const touchesPerson =
           body.name !== undefined ||
           body.bats !== undefined ||
           body.throws !== undefined
-        )
-          await refuseDeleted(trx, userId)
-        const person = body.name ?? body.bats ?? body.throws
+        if (touchesPerson) await refuseDeleted(trx, userId)
         const mayEdit =
-          person !== undefined &&
+          touchesPerson &&
           (await mayEditName(trx, actor.userId, userId, {
             isAdmin: actor.isAdmin
           }))
@@ -836,7 +837,7 @@ export function playerRoutes(
         }
       })
 
-      const roster = await teamRoster(db, media.space, teamId, true)
+      const roster = await teamRoster(db, media.space, teamId, true, actor)
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()
       res.json(entry)

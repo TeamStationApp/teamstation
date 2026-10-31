@@ -3,12 +3,17 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { makeId } from '../../common/ids'
 import { asRoleFlags, type RoleFlag } from '../../common/roles'
 import { asUserId } from '../../common/userId'
-import { adminScopes } from '../access'
+import { adminScopes, heldByOpenAdd } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -337,6 +342,19 @@ export function manageRoutes(
         await lockKeys(trx, ['creation:parent-graph'])
         const before = await rolesAt(trx, scopeType, scopeId, userId)
         const was = await heldAt(trx, ref, userId)
+        // A role keeps them on the team through a rejection, with the name and
+        // addresses the hold kept back.
+        if (
+          scopeType === 'team' &&
+          !actor.isAdmin &&
+          [...(body.admin ? ['admin' as const] : []), ...body.flags].some(
+            role => !was.roles.includes(role)
+          ) &&
+          (await heldByOpenAdd(trx, scopeId, [userId]))
+        )
+          throw forbidden(
+            'They can be given a role once their side can no longer reject this add'
+          )
         const roles = await setScopeRoles(
           trx,
           scopeType,

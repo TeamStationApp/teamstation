@@ -8,8 +8,10 @@ import {
   givenRoleLevelsAt,
   guardiansOfEach,
   levelsAboveTeam,
+  mayEditName,
   membersOfLevels,
   openAdds,
+  openAddsOf,
   type RoleLevel,
   teamsUnder
 } from '../access'
@@ -40,11 +42,35 @@ import { teamWalkUpSongs } from '../routes/walkUpSongs'
  * song belongs to a player's place on a team, so the same child reads
  * another team's song only on that team's roster.
  */
+/**
+ * The rows held from this reader: not a site administrator, a guardian, the
+ * player, or the staff of a team of theirs, whose rights no add takes away.
+ */
+async function heldAgainst(
+  db: Kysely<Database>,
+  userIds: string[],
+  held: Set<string>,
+  viewer?: { userId: string; isAdmin: boolean }
+): Promise<Set<string>> {
+  if (viewer == null) return held
+  const shown = await Promise.all(
+    userIds
+      .filter(id => held.has(id))
+      .map(
+        async id =>
+          [id, await mayEditName(db, viewer.userId, id, viewer)] as const
+      )
+  )
+  return new Set(shown.filter(([, may]) => !may).map(([id]) => id))
+}
+
 export async function teamRoster(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   teamId: string,
-  includeFullNames = false
+  includeFullNames = false,
+  /** Who reads it, so a hold holds only against those it keeps out. */
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<RosterEntry[]> {
   const members = await db
     .selectFrom('memberships')
@@ -79,7 +105,12 @@ export async function teamRoster(
   for (const [userId, level] of await membersOfLevels(db, levels))
     memberLevels.set(userId, level)
   // Not the guardians of somebody held only by an add they may yet reject.
-  const open = await openAdds(db, teamId)
+  const open = await heldAgainst(
+    db,
+    members.map(row => row.userId),
+    await openAdds(db, teamId),
+    viewer
+  )
   const family = await guardiansOfEach(
     db,
     members
@@ -177,6 +208,7 @@ export async function levelPeople(
             'users.bats as bats',
             'users.throws as throws',
             'users.avatar_path as avatarPath',
+            'memberships.team_id as teamId',
             'teams.name as teamName'
           ])
           .where('memberships.team_id', 'in', teamIds)
@@ -193,7 +225,7 @@ export async function levelPeople(
       held.teamNames?.push(row.teamName)
       continue
     }
-    const { teamName, ...person } = row
+    const { teamName, teamId: _, ...person } = row
     players.set(row.userId, {
       ...person,
       jersey: null,
@@ -203,7 +235,18 @@ export async function levelPeople(
       teamNames: [teamName]
     })
   }
-  const family = await guardiansOfEach(db, [...players.keys()])
+  // Not the guardians of somebody every team of theirs here holds only by an
+  // add they may yet reject.
+  const open = await openAddsOf(db, teamIds)
+  const settled = new Set(
+    playing
+      .filter(row => open.get(row.teamId)?.has(row.userId) !== true)
+      .map(row => row.userId)
+  )
+  const family = await guardiansOfEach(
+    db,
+    [...players.keys()].filter(id => settled.has(id))
+  )
   const followers = (
     await db
       .selectFrom('follows')

@@ -32,6 +32,7 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { readEventInfo } from '../events/eventInfo'
 import { gameAvailability } from '../games/rosterAvailability'
 import { peopleInScope } from '../invites/people'
 import { jsonBody } from '../jsonBody'
@@ -43,18 +44,21 @@ import {
   type PlayerRemover
 } from '../notifications/requestInformation'
 import { mayKeepBirthMonth } from '../people/guardians'
+import { chatRoutes } from '../routes/chat'
 import { groupRoutes } from '../routes/groups'
 import { guardianRoutes } from '../routes/guardians'
+import { manageRoutes } from '../routes/manage'
 import { notificationRoutes } from '../routes/notifications'
 import { playerRoutes, teamsOf } from '../routes/players'
 import { statsRoutes } from '../routes/stats'
+import { teamMemberRoutes } from '../routes/teamMembers'
 import { teamRoutes } from '../routes/teams'
 import { resolveScoringGame } from '../scoring/openRow'
 import { battingLines } from '../stats'
 import { statRows } from '../stats/rows'
 import { addByPolicy } from '../teams/addExistingPlayer'
 import { personProfile } from '../teams/personProfile'
-import { teamRoster } from '../teams/teamRoster'
+import { levelPeople, teamRoster } from '../teams/teamRoster'
 import { ensureGumboId, insertUser } from '../users/insertUser'
 import { gameNames, gameNamesDigest } from '../users/nameBook'
 import {
@@ -291,7 +295,8 @@ describe('adds made with a notice', function () {
   async function call(
     token: string,
     method: string,
-    path: string
+    path: string,
+    body: object = {}
   ): Promise<{ status: number; body: any }> {
     const response = await fetch(`${base}${path}`, {
       method,
@@ -299,7 +304,7 @@ describe('adds made with a notice', function () {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json'
       },
-      ...(method === 'GET' ? {} : { body: '{}' })
+      ...(method === 'GET' ? {} : { body: JSON.stringify(body) })
     })
     const text = await response.text()
     return {
@@ -474,13 +479,16 @@ describe('adds made with a notice', function () {
       }
     }
     const app = express()
-    app.use(jsonBody)
     app.use(withActor(db))
+    app.use(jsonBody)
     app.use('/api/v1', groupRoutes(db, media, clock))
     app.use('/api/v1', notificationRoutes(db, clock))
     app.use('/api/v1', statsRoutes(db, media))
     app.use('/api/v1', playerRoutes(db, media))
     app.use('/api/v1', teamRoutes(db, media))
+    app.use('/api/v1', teamMemberRoutes(db, media))
+    app.use('/api/v1', chatRoutes(db, media, clock.now))
+    app.use('/api/v1', manageRoutes(db, { sendInvite: async () => undefined }))
     app.use(
       '/api/v1',
       guardianRoutes(db, { sendInvite: async () => undefined })
@@ -2023,5 +2031,338 @@ describe('adds made with a notice', function () {
     const settled = await members()
     expect(settled.has(ids['Chat Teen'])).equals(true)
     expect(settled.has(ids['Chat Parent'])).equals(true)
+  })
+
+  /** A player with a guardian, added by notice; the add, and how to settle it. */
+  async function heldWithParent(
+    child: string,
+    parent: string,
+    token: string
+  ): Promise<{ requestId: string; settle: () => Promise<void> }> {
+    await person(child, { login: true })
+    await person(parent, { login: true })
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids[parent],
+        related_user_id: ids[child],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    await db!
+      .insertInto('auth_sessions')
+      .values({
+        id: makeId('authSession'),
+        user_id: ids[parent],
+        token_hash: hashToken(token),
+        created_at: new Date(),
+        expires_at: new Date(Date.now() + 365 * DAY)
+      })
+      .execute()
+    const added = await add('roster', child)
+    return {
+      requestId: added.requestId!,
+      settle: async () => {
+        await db!
+          .updateTable('group_requests')
+          .set({ sent_at: new Date(0), expires_at: new Date(1) })
+          .where('id', '=', added.requestId!)
+          .execute()
+      }
+    }
+  }
+
+  it('keeps a held player’s picture, family link and roles from the team', async function () {
+    const held = await heldWithParent(
+      'Held Picture',
+      'Picture Parent',
+      'tok_notice_picture_parent_00000000000'
+    )
+    const child = ids['Held Picture']
+    expect(
+      (
+        await call(
+          TOKENS.coach,
+          'PUT',
+          `/teams/${TEAM.falcons}/players/${child}/avatar`,
+          { image: 'x' }
+        )
+      ).status
+    ).equals(403)
+    // A role would keep them on the team through a rejection.
+    const roles = `/manage/team/${TEAM.falcons}/people/${child}/roles`
+    const coachRole = { admin: false, flags: ['coach'] }
+    expect((await call(TOKENS.coach, 'PUT', roles, coachRole)).status).equals(
+      403
+    )
+    await held.settle()
+    expect((await call(TOKENS.coach, 'PUT', roles, coachRole)).status).equals(
+      200
+    )
+    expect(
+      (
+        await db!
+          .selectFrom('scope_roles')
+          .select('role')
+          .where('user_id', '=', child)
+          .where('scope_id', '=', TEAM.falcons)
+          .execute()
+      ).map(row => row.role)
+    ).deep.equals(['coach'])
+  })
+
+  it('links no adult by an import to a player the team holds', async function () {
+    await person('Held Import', { login: true })
+    const player = ids['Held Import']
+    const added = await add('roster', 'Held Import')
+    await db!
+      .insertInto('external_ids')
+      .values({
+        id: makeId('externalId'),
+        entity_type: 'user',
+        entity_id: player,
+        system: 'otherLeague',
+        kind: 'player',
+        external_id: 'held-import'
+      })
+      .execute()
+    const adult = {
+      firstName: 'Import',
+      lastName: 'Adult',
+      externalId: { system: 'otherLeague', kind: 'member', id: 'adult-1' },
+      guardianOf: [{ system: 'otherLeague', kind: 'player', id: 'held-import' }]
+    }
+    const path = `/teams/${TEAM.falcons}/adults`
+    const refused = await call(TOKENS.coach, 'POST', path, { adults: [adult] })
+    expect(refused.status).equals(200)
+    expect(refused.body.counts).to.include({
+      guardianLinks: 0,
+      guardiansRefused: 1
+    })
+    await db!
+      .updateTable('group_requests')
+      .set({ sent_at: new Date(0), expires_at: new Date(1) })
+      .where('id', '=', added.requestId!)
+      .execute()
+    const linked = await call(TOKENS.coach, 'POST', path, { adults: [adult] })
+    expect(linked.body.counts).to.include({ guardianLinks: 1 })
+  })
+
+  it('lets a guardian clear a held player’s hand', async function () {
+    await heldWithParent(
+      'Held Hand',
+      'Hand Parent',
+      'tok_notice_hand_parent_00000000000000'
+    )
+    const child = ids['Held Hand']
+    const path = `/teams/${TEAM.falcons}/players/${child}/settings`
+    expect(
+      (
+        await call('tok_notice_hand_parent_00000000000000', 'PUT', path, {
+          bats: null
+        })
+      ).status
+    ).equals(200)
+    expect(
+      (await call(TOKENS.coach, 'PUT', path, { bats: null })).status
+    ).equals(403)
+  })
+
+  it('names a hold on a player’s page only to those who can see the team', async function () {
+    await person('Held Page', { login: true, teamId: TEAM.owls })
+    await add('roster', 'Held Page')
+    const page = `/players/${ids['Held Page']}`
+    expect(
+      (await call(TOKENS.coach, 'GET', page)).body.openAddTeams
+    ).deep.equals([TEAM.falcons])
+    expect((await call(TOKENS.owl, 'GET', page)).body.openAddTeams).deep.equals(
+      []
+    )
+  })
+
+  it('keeps a held player’s family and name at a season as at a team', async function () {
+    const held = await heldWithParent(
+      'Held Season',
+      'Season Parent',
+      'tok_notice_season_parent_000000000000'
+    )
+    await db!
+      .insertInto('season_team_parents')
+      .values({ season_id: SEASON, team_id: TEAM.falcons })
+      .execute()
+    const level = { kind: 'season', id: SEASON } as const
+    const listed = async (): Promise<string[]> =>
+      (await levelPeople(db!, undefined, level))!.map(row => row.userId)
+    expect(await listed()).includes(ids['Held Season'])
+    expect(await listed()).not.includes(ids['Season Parent'])
+    await db!
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: ids['Bears Coach'],
+        scope_type: 'season',
+        scope_id: SEASON,
+        role: 'admin'
+      })
+      .execute()
+    const profile = async (): Promise<string | null> =>
+      (
+        await personProfile(
+          db!,
+          undefined,
+          { userId: ids['Bears Coach'], isAdmin: false, scopes: [] },
+          level,
+          ids['Held Season']
+        )
+      ).person.fullName
+    expect(await profile()).equals(null)
+    await held.settle()
+    expect(await listed()).includes(ids['Season Parent'])
+    expect(await profile()).equals('Held Season')
+  })
+
+  it('answers a roster by who reads it, while the team stays held', async function () {
+    await heldWithParent(
+      'Held Reader',
+      'Reader Parent',
+      'tok_notice_reader_parent_000000000000'
+    )
+    const entry = async (viewer?: {
+      userId: string
+      isAdmin: boolean
+    }): Promise<any> =>
+      (await teamRoster(db!, undefined, TEAM.falcons, true, viewer)).find(
+        row => row.userId === ids['Held Reader']
+      )
+    const coach = await entry({ userId: ids.coach, isAdmin: false })
+    expect(coach.ownIdentity).equals(true)
+    expect(coach.nameDetails).equals(undefined)
+    for (const viewer of [
+      { userId: ids['Reader Parent'], isAdmin: false },
+      { userId: ids['Site Admin'], isAdmin: true }
+    ]) {
+      const read = await entry(viewer)
+      expect(read).not.has.property('ownIdentity')
+      expect(read.nameDetails).to.include({ firstName: 'Held' })
+    }
+    // The parent is on the list for a reader the hold does not keep out.
+    const asParent = await teamRoster(db!, undefined, TEAM.falcons, false, {
+      userId: ids['Reader Parent'],
+      isAdmin: false
+    })
+    expect(asParent.map(row => row.userId)).includes(ids['Reader Parent'])
+  })
+
+  it('keeps the parents of a player settled on one team of a game', async function () {
+    const parent = 'Event Parent'
+    await person('Event Both', { teamId: TEAM.herons })
+    await person(parent, { login: true })
+    await person('Event Held', {})
+    await person('Held Parent Two', { login: true })
+    await db!
+      .insertInto('user_links')
+      .values(
+        [
+          [parent, 'Event Both'],
+          ['Held Parent Two', 'Event Held']
+        ].map(([from, to]) => ({
+          id: makeId('userLink'),
+          user_id: ids[from],
+          related_user_id: ids[to],
+          kind: 'guardian' as const,
+          can_manage: true
+        }))
+      )
+      .execute()
+    // Held by the Falcons, settled on the Herons.
+    await db!
+      .updateTable('memberships')
+      .set({ team_id: TEAM.falcons })
+      .where('user_id', '=', ids['Event Both'])
+      .execute()
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Event Both'],
+        team_id: TEAM.herons,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_notice_event_both',
+        kind: 'playerAdd',
+        sender_id: ids.coach,
+        sender_scope_type: 'team',
+        sender_scope_id: TEAM.falcons,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: TEAM.falcons,
+          userId: ids['Event Both']
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: TEAM.falcons
+      })
+      .execute()
+    await add('roster', 'Event Held')
+    const gameId = await game()
+    const info = await readEventInfo(
+      db!,
+      { userId: ids['Site Admin'], isAdmin: true, scopes: [] },
+      gameId,
+      { space: undefined } as unknown as MediaContext
+    )
+    const attendees = info.attendees.map(row => row.userId)
+    expect(attendees).includes(ids[parent])
+    expect(attendees).not.includes(ids['Held Parent Two'])
+  })
+
+  it('opens no chat for a held player until the add settles, by the routes', async function () {
+    const held = await heldWithParent(
+      'Chat Held',
+      'Chat Held Parent',
+      'tok_notice_chat_parent_00000000000000'
+    )
+    const child = ids['Chat Held']
+    await person('Second Adult', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Second Adult'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const candidates = async (): Promise<string[]> =>
+      (
+        await call(TOKENS.coach, 'GET', `/chat/dm-candidates?userId=${child}`)
+      ).body.map((row: { userId: string }) => row.userId)
+    expect(await candidates()).deep.equals([])
+    const adults = `/chat/included-adults?playerIds=${child}`
+    expect((await call(TOKENS.coach, 'GET', adults)).status).equals(403)
+    expect(
+      (
+        await call(TOKENS.coach, 'POST', '/chat/dms', {
+          userIds: [child, ids['Chat Held Parent']]
+        })
+      ).status
+    ).equals(403)
+    await held.settle()
+    expect(await candidates()).deep.equals([child])
+    const included = await call(TOKENS.coach, 'GET', adults)
+    expect(included.status).equals(200)
+    expect(included.body.map((row: { userId: string }) => row.userId)).includes(
+      ids['Chat Held Parent']
+    )
   })
 })

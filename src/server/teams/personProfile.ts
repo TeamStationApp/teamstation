@@ -6,9 +6,9 @@ import type { GroupRef } from '../../common/groupCreation'
 import { ROLES } from '../../common/roles'
 import {
   guardedPlayers,
-  heldByOpenAdd,
   levelsAboveTeam,
   mayEditName,
+  openAddTeams,
   teamsPlayedOnNow,
   teamsUnder
 } from '../access'
@@ -89,10 +89,13 @@ export async function personProfile(
     part => part != null && part.trim() !== ''
   )
   const whole = parts.length === 0 ? person.displayName : parts.join(' ')
-  // Not while the team holds them only by an add that may be rejected.
-  const held =
-    ref.kind === 'team' &&
-    (await heldByOpenAdd(db, ref.id, (await onePerson(db, userId)).userIds))
+  // Not while every team of theirs here holds them only by an add that may
+  // be rejected.
+  const rows = (await onePerson(db, userId)).userIds
+  const under = await teamsUnder(db, ref)
+  const here = (await teamsPlayedOnNow(db, rows)).filter(id => under.has(id))
+  const holding = await openAddTeams(db, rows)
+  const held = here.length > 0 && here.every(id => holding.includes(id))
   const readsName =
     (manages && !held) || (await mayEditName(db, fresh.userId, userId, fresh))
 

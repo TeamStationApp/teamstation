@@ -22,7 +22,7 @@ import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import { type Role, ROLES } from '../../common/roles'
 import { asFieldSize } from '../../common/venues'
-import { canSeeGame, canSeeTeam, openAdds, visibleScopes } from '../access'
+import { canSeeGame, canSeeTeam, openAddsOf, visibleScopes } from '../access'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -268,15 +268,23 @@ async function eventPeople(
           .where('disabled_at', 'is', null)
           .where('merged_into', 'is', null)
           .execute()
-  // Not the guardians of somebody a team holds only by an open add.
-  const openAdded = new Set(
-    (
-      await Promise.all(event.teamIds.map(async id => await openAdds(db, id)))
-    ).flatMap(open => [...open])
-  )
+  const eventMembers = await db
+    .selectFrom('memberships')
+    .select(['user_id', 'is_player', 'team_id'])
+    .where('team_id', 'in', event.teamIds)
+    .execute()
+  // Not the guardians of somebody every team here holds only by an open add.
+  const open = await openAddsOf(db, event.teamIds)
+  const settled = new Set<string>()
+  for (const member of eventMembers)
+    if (
+      member.is_player &&
+      open.get(member.team_id)?.has(member.user_id) !== true
+    )
+      settled.add((await identity(member.user_id)).userId)
   const playerAliases = new Set<string>()
   for (const player of activePlayers)
-    if (!openAdded.has(player.id))
+    if (settled.has(player.id))
       for (const alias of (await identity(player.id)).userIds)
         playerAliases.add(alias)
   const guardianLinks =
@@ -301,11 +309,6 @@ async function eventPeople(
     .execute()
   // RSVP eligibility is explicit on a participating team, never inherited
   // from a season/league, site administration, or guardianship alone.
-  const eventMembers = await db
-    .selectFrom('memberships')
-    .select(['user_id', 'is_player', 'team_id'])
-    .where('team_id', 'in', event.teamIds)
-    .execute()
   const eventStaff = await db
     .selectFrom('scope_roles')
     .select('user_id')

@@ -10,7 +10,7 @@ import type {
   TeamMemberError,
   TeamMemberExternalId
 } from '../../common/teamMembers'
-import { guardiansOf, guardiansWhoCanAct } from '../access'
+import { guardiansOf, guardiansWhoCanAct, heldByOpenAdd } from '../access'
 import { lockPlayerEdits, onePerson, survivorsOf } from '../admin/people'
 import { addEmail } from '../auth/emails'
 import { lockKeys } from '../db/advisoryLocks'
@@ -367,6 +367,12 @@ async function linkGuardian(
       continue
     }
     if (!linking.caller.isAdmin) {
+      // A held player's family is their side's: a link would take the Reject
+      // from whoever has it now.
+      if (await heldByOpenAdd(trx, teamId, [playerId])) {
+        refused += 1
+        continue
+      }
       let before = linking.guardedBefore.get(playerId)
       if (before == null) {
         before = {
