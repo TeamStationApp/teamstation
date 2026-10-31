@@ -44,8 +44,21 @@ public final class SourcePipeline: @unchecked Sendable {
   /// A picture for the programme: the picture, its presentation time, when it was captured (live), and
   /// for a replay when it is due on the host clock.
   private var programSink: (@Sendable (CVPixelBuffer, CMTime, WallClock?, Double?) -> Void)?
-  /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR.
-  public var onProgramDiscontinuity: (@Sendable () -> Void)?
+  private var programDiscontinuity: (@Sendable () -> Void)?
+  /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR. Set from the
+  /// main thread and the programme clock, and read on the camera's and the replay's threads.
+  public var onProgramDiscontinuity: (@Sendable () -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return programDiscontinuity
+    }
+    set {
+      lock.lock()
+      programDiscontinuity = newValue
+      lock.unlock()
+    }
+  }
   private var audioSink: (@Sendable (AudioFrame) -> Void)?
   private var recordingAudioSink: (@Sendable (AudioFrame) -> Void)?
   private var replay: ReplayDecoder?
@@ -730,7 +743,7 @@ public final class TileRouter: @unchecked Sendable {
     return keyframeRequests
   }
   /// The current run. For tests.
-  var outgoingRunForTest: UInt64 {
+  var currentRunForTest: UInt64 {
     lock.lock()
     defer { lock.unlock() }
     return programGeneration
@@ -1382,8 +1395,10 @@ public final class TileRouter: @unchecked Sendable {
     if job.generation == programGeneration, programSource.flatMap({ pipelines[$0] })?.sourceID == job.sourceID {
       return true
     }
-    // A live picture of the camera on air during a handover; a replay begun on it stays off the air.
+    // A live picture of the camera on air during a handover; a replay begun on it stays off the air,
+    // and so does anything of it once the new camera is on and the tick has yet to end the handover.
     return job.dueHost == nil && job.generation == outgoing?.run && job.sourceID == outgoing?.sourceID
+      && programPictures.onAirRun != programGeneration
   }
 
   private func countComposeMiss() {

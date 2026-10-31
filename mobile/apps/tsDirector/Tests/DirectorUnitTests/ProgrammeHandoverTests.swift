@@ -264,6 +264,39 @@ struct ProgrammeHandoverTests {
     #expect(!rig.pipes[2].hasProgramSink)
   }
 
+  @Test("A camera back to live before the cut is handed over to, as the remote's cut-live does it")
+  func cutToACameraJustBackToLive() async throws {
+    let rig = try Rig(cameras: 2)
+    defer { rig.stop() }
+    rig.feed()
+    try await rig.goOnAir()
+    rig.pipes[1].beginScrubbing()
+    rig.pipes[1].returnToLive()
+    rig.router.selectProgram(sourceIndex: 1)
+    #expect(rig.router.outgoingSourceID == rig.id(0))
+  }
+
+  @Test("Once the new camera is on air the old one's pictures are refused, ahead of the tick ending the handover")
+  func outgoingRefusedOnceTheNewCameraIsOn() async throws {
+    let rig = try Rig(cameras: 2)
+    defer { rig.stop() }
+    rig.feed()
+    try await rig.goOnAir()
+    let run = rig.router.currentRunForTest
+    rig.router.selectProgram(sourceIndex: 1)
+    try await Task.sleep(for: .seconds(Self.delay + 0.2))
+    let buffer = try #require(rig.factory.makeBuffer())
+    let job = ProgrammeComposer.Job(
+      buffer: buffer,
+      presentationTime: .zero,
+      captureWall: nil,
+      dueHost: nil,
+      sourceID: rig.id(0),
+      generation: run
+    )
+    #expect(!rig.router.isCurrentProgramme(job))
+  }
+
   @Test("The camera on program leaving live ends a handover")
   func programLeavingLiveEndsTheHandover() async throws {
     let rig = try Rig(cameras: 2)
@@ -283,7 +316,7 @@ struct ProgrammeHandoverTests {
     defer { rig.stop() }
     rig.feed()
     try await rig.goOnAir()
-    let run = rig.router.outgoingRunForTest
+    let run = rig.router.currentRunForTest
     rig.router.selectProgram(sourceIndex: 1)
     let buffer = try #require(rig.factory.makeBuffer())
     let job = { (due: Double?) in
