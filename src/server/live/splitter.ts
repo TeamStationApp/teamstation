@@ -4,6 +4,7 @@ import type { FSWatcher } from 'fs'
 import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
 import type { Server } from 'net'
 
+import { CODEC_REFUSAL } from '../../common/api'
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
 import {
@@ -1898,9 +1899,9 @@ export function codecRefusal(
   const name = codecName(codec)
   if (name === 'hvc1' || name === 'hev1') return null
   if (name === 'avc1') {
-    return 'TeamStation takes HEVC. This stream is H.264 — change the encoder to HEVC and start it again.'
+    return `${CODEC_REFUSAL} This stream is H.264 — change the encoder to HEVC and start it again.`
   }
-  return `TeamStation takes HEVC. This stream is ${name}, which it cannot store.`
+  return `${CODEC_REFUSAL} This stream is ${name}, which it cannot store.`
 }
 
 /**
