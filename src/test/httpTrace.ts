@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path'
 const opened = new Set<string>()
 function redact(value: unknown, key = ''): unknown {
   if (
-    /password|token|code|base64|authorization|clienthash|link|salt|url/i.test(
+    /password|secret|token|code|base64|authorization|clienthash|link|salt|url/i.test(
       key
     )
   )

@@ -11,6 +11,12 @@ import {
 } from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import {
+  accessibleVideoGames,
+  hasVideoFilter,
+  participantsInGames,
+  videoCollectionFilter
+} from '../events/videoCollections'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -61,6 +67,34 @@ export function userRoutes(
     withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      if (hasVideoFilter(req.query)) {
+        const filter = videoCollectionFilter(req.query)
+        const games = await accessibleVideoGames(db, actor, filter)
+        const ids = await participantsInGames(
+          db,
+          games.map(game => game.gameId)
+        )
+        const people = await describe(
+          db,
+          space,
+          ids.map(userId => ({ userId, externalIds: [] }))
+        )
+        res.json(
+          people
+            .filter(person =>
+              person.shortName.toLowerCase().includes(filter.q.toLowerCase())
+            )
+            .sort(
+              (a, b) =>
+                [
+                  a.shortName.localeCompare(b.shortName),
+                  a.userId.localeCompare(b.userId)
+                ].find(order => order !== 0) ?? 0
+            )
+            .slice(filter.offset, filter.offset + filter.limit)
+        )
+        return
+      }
       if (req.query.forTeam !== undefined) {
         const ask = candidateQueryOf(req.query)
         res.json(await rosterCandidates(db, actor, ask, space))
