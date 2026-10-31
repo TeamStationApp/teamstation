@@ -41,12 +41,18 @@ function git(args) {
 const untracked = git(['ls-files', '--others', '--exclude-standard'])
   .split('\n')
   .filter(Boolean)
+const runtimeConfig =
+  /^appletv\/(index|metro.config|babel.config|react-native.config)\.js$/
+const nativePaths = [
+  'appletv/ios/TeamStationTV/AppDelegate.swift',
+  'appletv/ios/TeamStationTV/TVSession.m'
+]
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
 ].filter(path => {
   if (
     !existsSync(path) ||
-    !/^src\/.+\.tsx?$/.test(path) ||
+    (!/^src\/.+\.tsx?$/.test(path) && !runtimeConfig.test(path)) ||
     /\.(test|e2e|integration|smoke)\./.test(path) ||
     path.startsWith('src/test/') ||
     path === 'src/server/chat/chatTestFixture.ts' ||
@@ -95,6 +101,8 @@ run(
     '60000',
     '--exit',
     'src/server/routes/tvLogin.test.ts',
+    'src/app/tv/*.test.ts',
+    'src/test/tvBuildConfig.test.ts',
     'src/server/auth/tvLocation.test.ts',
     'src/app/navigation/*.test.ts',
     'src/server/routes/signup.test.ts',
@@ -152,8 +160,9 @@ writeFileSync(
   resolve(report, 'coverage-final.json'),
   JSON.stringify(map.toJSON())
 )
-let diff = git(['diff', '--unified=0', base, '--', ...paths])
-for (const path of untracked.filter(path => paths.includes(path))) {
+const allPaths = [...paths, ...nativePaths]
+let diff = git(['diff', '--unified=0', base, '--', ...allPaths])
+for (const path of untracked.filter(path => allPaths.includes(path))) {
   const lines = readFileSync(path, 'utf8').trimEnd().split('\n')
   diff += `\ndiff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line => '+' + line).join('\n')}\n`
 }
@@ -171,10 +180,15 @@ for (const path of paths)
       readFileSync(path, 'utf8'),
       istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
     )
+const { validateCounts } = require('./llvm-changed-line-counts.cjs')
+const nativeEnvelope = JSON.parse(
+  readFileSync('appletv/coverage/native-counts.json', 'utf8')
+)
+Object.assign(counts, validateCounts(nativeEnvelope, process.cwd()))
 const result = lineReportFromCounts(
   changedLines(diff),
   counts,
-  path => paths.includes(path),
+  path => allPaths.includes(path),
   { min: combinedMinimum }
 )
 writeFileSync(
