@@ -126,9 +126,14 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 
 #import <UIKit/UIKit.h>
+#import <React/UIView+React.h>
 @interface TVPosterView : UIImageView
 @property(nonatomic, copy) NSString *uri;
 @property(nonatomic, strong) NSURLSessionDataTask *task;
+@property(nonatomic, strong) UIView *previewSurface;
+@property(nonatomic, strong) UIView *previewSheen;
+@property(nonatomic) BOOL previewFocused;
+- (void)updatePreviewFocus;
 - (void)updateMotion;
 @end
 @interface TVSearchCell : UICollectionViewCell
@@ -212,6 +217,30 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.frame = CGRectMake(0,0,1920,356); XCTAssertEqual(layer.bounds.size.height,356);
   view.direction = @"right"; XCTAssertEqual(layer.startPoint.x,1); XCTAssertEqual(layer.endPoint.x,0);
   view.direction = @"left"; XCTAssertEqual(layer.startPoint.x,0); XCTAssertEqual(layer.endPoint.x,1);
+}
+- (void)testPreviewChildrenShareLiftAndReturnToRest {
+  UIView *parent = [[UIView alloc] initWithFrame:CGRectMake(0,0,400,240)];
+  TVPosterView *poster = [[TVPosterView alloc] initWithFrame:parent.bounds];
+  [parent addSubview:poster];
+  UIView *video = [[UIView alloc] initWithFrame:poster.bounds];
+  [poster insertReactSubview:video atIndex:0]; [poster didUpdateReactSubviews]; [poster layoutSubviews];
+  XCTAssertEqual(video.superview,poster.previewSurface);
+  XCTAssertFalse(poster.previewSurface.hidden);
+  XCTAssertEqual(poster.previewSheen.bounds.size.width,400);
+  poster.previewFocused = YES;
+  poster.previewFocused = YES;
+  XCTAssertTrue(poster.previewFocused);
+  if (!UIAccessibilityIsReduceMotionEnabled()) {
+    XCTAssertEqualWithAccuracy(poster.previewSurface.transform.a,1.1,0.001);
+    XCTAssertEqual(poster.previewSurface.motionEffects.count,2);
+    XCTAssertEqual(poster.previewSheen.alpha,1);
+  }
+  poster.previewFocused = NO;
+  XCTAssertFalse(poster.previewFocused);
+  XCTAssertTrue(CGAffineTransformIsIdentity(poster.previewSurface.transform));
+  XCTAssertEqual(poster.previewSurface.motionEffects.count,0);
+  [poster removeReactSubview:video]; [poster didUpdateReactSubviews];
+  XCTAssertTrue(poster.previewSurface.hidden);
 }
 - (void)testPosterReuseAndFailure {
   [NSURLProtocol registerClass:TVFixtureProtocol.class];
