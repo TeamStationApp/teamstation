@@ -175,7 +175,21 @@ describe('validate', function () {
     execFileSync('git', ['init', '-q'], { cwd: root })
     mkdirSync(join(root, 'src'))
     writeFileSync(join(root, 'src/app.ts'), '')
+    writeLegacy(root, {})
     return root
+  }
+
+  function writeLegacy(root: string, list: object): void {
+    writeFileSync(
+      join(root, 'e2e/legacy.json'),
+      JSON.stringify({
+        tests: [],
+        helpers: [],
+        parked: [],
+        pendingCategories: ['area'],
+        ...list
+      })
+    )
   }
 
   it('fails on a stale manifest, then passes once it is current', function () {
@@ -187,6 +201,20 @@ describe('validate', function () {
       renderManifest(buildManifest(root))
     )
     expect(validate(root).problems).deep.equals([])
+  })
+
+  it('holds a category to its faults only once it has no legacy entries', function () {
+    const root = repository()
+    writeSpec(root, 'expect(1)')
+    writeFileSync(
+      join(root, 'e2e/manifest.json'),
+      renderManifest(buildManifest(root))
+    )
+    expect(validate(root).problems).deep.equals([])
+    writeLegacy(root, { pendingCategories: [] })
+    expect(validate(root).problems.join('\n')).includes(
+      'area: no spec names "api-500"'
+    )
   })
 
   it('fails on a covers glob matching nothing and on a bad spec', function () {
@@ -218,7 +246,8 @@ describe('validate', function () {
       JSON.stringify({
         tests: ['src/old.e2e.ts', 'src/moved.e2e.ts'],
         helpers: [],
-        parked: ['src/parked.e2e.ts']
+        parked: ['src/parked.e2e.ts'],
+        pendingCategories: ['area']
       })
     )
     const report = validate(root)
@@ -987,10 +1016,12 @@ describe('the isolated stack', function () {
       expect(existsSync(join(stack.webDir ?? '', 'index.html'))).equals(true)
       const page = await fetch(`${stack.origin}/games/1`)
       expect(await page.text()).includes('<html')
-      expect(stack.adopt('http://x.example.test')).equals(
-        'http://x.example.test'
-      )
-      expect(stack.origin).equals('http://x.example.test')
+      // The 502s of waiting for the API to come up are not the app's errors.
+      expect(await stack.serverErrors(0)).deep.equals([])
+      const adopted = await stack.adopt(stack.origin)
+      expect(adopted).not.equals(stack.webDir)
+      expect(stack.origin).equals(adopted)
+      expect((await fetch(`${adopted}/api/v1/health`)).status).equals(200)
     } finally {
       await stack.stop()
     }

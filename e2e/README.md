@@ -60,3 +60,18 @@ npm run e2e -- judge-corpus add-log <file> --question <statement> --expected pas
 ```
 
 The corpus lives in the private golden store. `add` turns one clean capture into six labelled items: clean, blank, clipped, shifted, wrong text and an error dialog. `run --budget-usd` caps a run's spend, defaulting to `judgeBudgetUsd` in the local settings, and with neither set nothing is spent. Video has free measurements in `core/video.ts` first: frozen, black and silent spans, and a contact sheet for a judge's state questions.
+
+## Proving a test catches failures
+
+`e2e/faults/catalogue.ts` lists every fault, each applied from outside the app, and the layers meant to catch it. A spec names the faults it must catch in `faults`.
+
+```sh
+npm run e2e -- detect <scenario-id> --fault <fault> --surface <surface> [--device role=id]
+npm run e2e -- scorecard
+```
+
+`detect` passes only when the scenario goes red under the fault, and records in the ledger which layer turned it red. A test that merely crashed is recorded as `test-crash`, which no fault expects, because it proves no layer saw anything. A quarantined scenario proves nothing, and a fault that cannot run on the surface reports `blocked` and records nothing. Fault runs use an isolated stack and can never make a golden.
+
+API faults come from a proxy between the front server and the API. `ctx.stack.adopt(origin)` puts the same proxy in front of a server a scenario started, and returns the origin to use, so its 5xx are seen too. Sign-in stays up by default, so a fault reaches the screens a scenario checks. A scenario whose fixture must carry a fault reads `ctx.fault`.
+
+Once a category leaves `pendingCategories` in `legacy.json`, `validate` fails unless its specs name every fault, or `EXCUSED` in the catalogue says why one cannot reach it. A fault that survives is a blind spot: add a checkpoint, or record the reason.

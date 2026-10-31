@@ -14,6 +14,7 @@ import {
   scoreJudge,
   screenItems
 } from './corpus'
+import { detectFault } from './detect'
 import {
   acceptGolden,
   type GoldenManifest,
@@ -30,11 +31,13 @@ import {
   readJudgeBar,
   writeJudgeBar
 } from './judge'
+import { type DetectRow, ledgerPath, readLedger } from './ledger'
 import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
 import { type PlanResource, planScenarios } from './plan'
 import { prepareApp } from './prepare'
 import { BlockedError } from './result'
 import { runScenario } from './run'
+import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
 import { loadSettings, type LocalSettings, readSecret } from './settings'
 import type { StackHandle } from './spec'
@@ -125,6 +128,7 @@ const OPTIONS = {
   'run-dir': { type: 'string' },
   checkpoint: { type: 'string' },
   judge: { type: 'string' },
+  fault: { type: 'string' },
   question: { type: 'string' },
   'false-question': { type: 'string' },
   expected: { type: 'string' },
@@ -308,7 +312,7 @@ export async function main(argv: string[]): Promise<number> {
           kind: 'isolated',
           origin: state.origin,
           webDir: state.webDir,
-          adopt: origin => origin,
+          adopt: async origin => origin,
           serverErrors: async () => undefined
         }
       }
@@ -329,6 +333,36 @@ export async function main(argv: string[]): Promise<number> {
       })
       print({ ...outcome.result, runDir: outcome.runDir })
       return outcome.exitCode
+    }
+
+    case 'detect': {
+      const id = subcommand
+      if (id == null || values.surface == null || values.fault == null) {
+        throw new Error(
+          'detect wants <scenario-id> --fault <fault> --surface <s>'
+        )
+      }
+      const outcome = await detectFault(
+        {
+          id,
+          surface: values.surface,
+          fault: values.fault,
+          devices: roleMap(values.device),
+          runDir: values['run-dir'],
+          settings
+        },
+        ledgerPath(settings, values.ledger)
+      )
+      print({ ...outcome.row, runDir: outcome.runDir })
+      return outcome.exitCode
+    }
+
+    case 'scorecard': {
+      const rows = readLedger(ledgerPath(settings, values.ledger)).filter(
+        (row): row is DetectRow => row.kind === 'detect'
+      )
+      print(buildScorecard(rows))
+      return 0
     }
 
     case 'golden': {

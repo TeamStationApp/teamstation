@@ -218,5 +218,18 @@
     "mobile/apps/tsDirector/e2e/scoreboardDirector.e2e.ts",
     "mobile/apps/tsDirector/e2e/sentry.e2e.ts",
     "mobile/apps/tsDirector/e2e/signInLink.e2e.ts"
+  ],
+  "pendingCategories": [
+    "account",
+    "app-shell",
+    "chat",
+    "people",
+    "platform",
+    "schedule",
+    "scoring",
+    "stats-scoreboard",
+    "streaming",
+    "tess",
+    "video"
   ]
 }

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { faultProblems } from '../faults/catalogue'
 import { globToRegExp } from './glob'
 import { type LegacyReport, legacyReport, readLegacy } from './legacy'
 import { lintFile } from './lint'
@@ -42,6 +43,17 @@ function lintedFiles(tracked: string[], strict: boolean): string[] {
   )
 }
 
+/** Every fault each category's specs name. */
+function namedFaults(root: string): Record<string, string[]> {
+  const named: Record<string, string[]> = {}
+  for (const file of testFiles(root)) {
+    const spec = loadSpec(file, root)
+    const category = spec.id.split('/')[0]
+    named[category] = [...(named[category] ?? []), ...spec.faults]
+  }
+  return named
+}
+
 export function validate(
   root = ROOT,
   options: { strict?: boolean } = {}
@@ -79,7 +91,11 @@ export function validate(
       problems.push(`${problem.file}: ${problem.rule}: ${problem.detail}`)
     }
   }
-  const report = legacyReport(readLegacy(root), tracked)
+  const legacyList = readLegacy(root)
+  problems.push(
+    ...faultProblems(namedFaults(root), legacyList.pendingCategories ?? [])
+  )
+  const report = legacyReport(legacyList, tracked)
   if (strict) {
     for (const file of [...report.legacy, ...report.additions]) {
       problems.push(`${file}: tests belong under e2e/`)

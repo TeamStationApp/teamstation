@@ -25,6 +25,8 @@ export interface LocalSettings {
   secretsFile?: string
   judgeBudgetUsd?: number
   sweepRef?: string
+  /** Where runs and fault proofs are recorded, on the machine that ran them. */
+  ledger?: string
 }
 
 export function settingsPath(env = process.env): string {

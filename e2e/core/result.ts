@@ -39,7 +39,13 @@ export interface RunResult {
   degradations: string[]
   /** What the run ran against: only fixture data can make a golden. */
   target?: { kind: string; seat?: string }
+  /** Set on a fault run, whose captures can never become goldens. */
+  fault?: string
   checkpoints: unknown[]
+  /** What ended the scenario: a check that failed, or the test itself breaking. */
+  failureKind?: 'assertion' | 'crash'
+  /** The API's 5xx during a scenario that failed, whatever stopped it. */
+  serverErrors?: unknown[]
   /** A seat's server errors no running scenario can claim, for the night's report. */
   unattributedServerErrors?: unknown[]
 }

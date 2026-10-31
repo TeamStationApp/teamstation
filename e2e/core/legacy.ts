@@ -10,6 +10,8 @@ export interface LegacyList {
   tests: string[]
   helpers: string[]
   parked: string[]
+  /** Categories still holding unconverted tests, so the fault rule waits for them. */
+  pendingCategories?: string[]
 }
 
 export function readLegacy(root: string): LegacyList {
