@@ -391,14 +391,52 @@ describe('the actors', function () {
       )
       viewer.start()
       await waitFor(() => (tally.errors['socket-notFound'] ?? 0) > 0)
-      const inner = viewer as unknown as { onFrame: (text: string) => void }
-      inner.onFrame('not json')
-      inner.onFrame('{"type":"resync"}')
-      inner.onFrame('{"type":"error"}')
+      const inner = viewer as unknown as { onFrame: (data: Buffer) => void }
+      const frame = (text: string): void => {
+        inner.onFrame(Buffer.from(text))
+      }
+      frame('not json')
+      frame('{"type":"resync"}')
+      frame('{"type":"error"}')
       expect(tally.errors['socket-malformed']).equals(1)
       expect(tally.errors['socket-resync']).equals(1)
       expect(tally.errors['socket-error']).equals(1)
+      // The type comes first from a server, and a frame is read whole only
+      // when it does not: a frame in another order still counts as what it is.
+      frame('{"id":"1","type":"resync"}')
+      frame('{"id":"1","type":"changed"}')
+      frame('{"id":"1","type":"subscribed"}')
+      expect(tally.errors['socket-resync']).equals(2)
+      expect(tally.framesDelivered).equals(1)
       viewer.stop()
+    })
+
+    it('counts a large change frame without reading what is in it', function () {
+      const tally = new Tally()
+      const viewer = new SocketViewer(
+        'http://a.example.test',
+        { token: 't' },
+        'g',
+        tally
+      )
+      const inner = viewer as unknown as { onFrame: (data: Buffer) => void }
+      const large = Buffer.from(
+        `{"type":"change","gameId":"g","data":"${'x'.repeat(1_000_000)}`
+      )
+      const realParse = JSON.parse
+      let parses = 0
+      JSON.parse = (...args: Parameters<typeof JSON.parse>) => {
+        parses += 1
+        return realParse(...args)
+      }
+      try {
+        inner.onFrame(large)
+      } finally {
+        JSON.parse = realParse
+      }
+      expect(tally.framesDelivered).equals(1)
+      expect(tally.frameSeconds.length).equals(1)
+      expect(parses).equals(0)
     })
 
     it('reconnects after a close, counting it', async function () {
