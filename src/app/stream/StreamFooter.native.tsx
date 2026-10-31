@@ -11,7 +11,7 @@ export type { StreamFooterProps }
  * keeps its stream-URL panel (`StreamFooter.tsx`).
  */
 export function StreamFooter(props: StreamFooterProps): React.ReactElement {
-  const { client, gameId, onPublishing, hasVideo } = props
+  const { client, gameId, onPublishing, hasVideo, onPlay } = props
   return (
     <CameraAnglesPanel
       key={gameId}
@@ -19,6 +19,7 @@ export function StreamFooter(props: StreamFooterProps): React.ReactElement {
       gameId={gameId}
       onPublishing={onPublishing}
       hasVideo={hasVideo}
+      onPlay={onPlay}
     />
   )
 }

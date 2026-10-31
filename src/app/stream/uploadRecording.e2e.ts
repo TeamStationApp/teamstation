@@ -25,8 +25,8 @@
 //      no new Center Field stream exists, and Director stays off the air until
 //      it is uploaded from Director's Upload menu and started again by hand,
 //      which this waits for (step 5: a fresh Center Field stream id).
-//   Expect: the angle's stream is replaced (revoked: no longer listed, and
-//   `reveal` answers 404, as for every revoked stream); the game's
+//   Expect: the angle's stream stays listed as an ended row whose local
+//   recording is `uploaded`, and playing it plays the upload; the game's
 //   video for the angle is a new one, which ffprobe reads at its playback URL
 //   as HEVC 1920×1080 at about 6 Mbit/s with no gap of more than a frame
 //   between its pictures; the other angle's live copy (TS_STREAM_OTHER_ANGLE,
@@ -355,20 +355,9 @@ async function main(): Promise<void> {
       longest <= step * 2 + 0.001,
       `no gap of more than a frame in the uploaded copy (longest step ${(longest * 1000).toFixed(1)} ms)`
     )
-    const revealed = await request(
-      'POST',
-      `/games/${game()}/live-streams/${stream.id}/reveal`,
-      {},
-      token
-    )
-    // A replaced stream is revoked (`state` 'revoked', `local_recording`
-    // 'uploaded'), and the server finds no revoked stream to reveal, so its
-    // 404 is the answer the replacement gives: neither listed nor revealable.
-    assert.equal(
-      revealed.status,
-      404,
-      `the replaced stream ${stream.id} is revoked`
-    )
+    // A replaced camera is an ordinary ended row, playing its upload.
+    assert.equal(after?.state, 'ended', 'the replaced camera stays listed')
+    assert.equal(after?.localRecording, 'uploaded', 'as uploaded')
     const other = optional('TS_STREAM_OTHER_ANGLE') ?? 'Home Plate'
     const others = (await gameVideos(token)).filter(video =>
       video.title.endsWith(` — ${other}`)
@@ -378,7 +367,7 @@ async function main(): Promise<void> {
       `${other}'s live copy is still on the game: only ${angle}'s was replaced`
     )
     results.push(
-      `5 ${angle} plays ${videos[0].id} (live copy ${liveVideo ?? '-'} replaced, stream ${stream.id} revoked): ${probe.split('\n').join(' ; ')}; ${bitRate.toFixed(2)} Mbit/s; ${frames} pictures, longest step ${(longest * 1000).toFixed(1)} ms; ${other} still has ${others.map(video => video.id).join(', ')}`
+      `5 ${angle} plays ${videos[0].id} (live copy ${liveVideo ?? '-'} replaced, stream ${stream.id} ended): ${probe.split('\n').join(' ; ')}; ${bitRate.toFixed(2)} Mbit/s; ${frames} pictures, longest step ${(longest * 1000).toFixed(1)} ms; ${other} still has ${others.map(video => video.id).join(', ')}`
     )
     const dir = optional('TS_STREAM_ARTIFACT_DIR')
     if (dir != null) {

@@ -724,6 +724,8 @@ export interface Recordings {
   recordings: PhoneRecording[]
   /** The latest progress of each upload heard of, by live stream. */
   uploads: Record<string, UploadProgress>
+  /** The takes were read at least once, so an empty list means none. */
+  loaded: boolean
   refresh: () => void
 }
 
@@ -734,6 +736,7 @@ export interface Recordings {
 export function useRecordingsOf(stream: PhoneStream): Recordings {
   const [recordings, setRecordings] = useState<PhoneRecording[]>([])
   const [uploads, setUploads] = useState<Record<string, UploadProgress>>({})
+  const [loaded, setLoaded] = useState(false)
   const [generation, setGeneration] = useState(0)
   const refresh = useCallback(() => {
     setGeneration(value => value + 1)
@@ -742,7 +745,9 @@ export function useRecordingsOf(stream: PhoneStream): Recordings {
     let live = true
     stream.recordings().then(
       list => {
-        if (live) setRecordings(list)
+        if (!live) return
+        setRecordings(list)
+        setLoaded(true)
       },
       () => {}
     )
@@ -762,5 +767,5 @@ export function useRecordingsOf(stream: PhoneStream): Recordings {
       }),
     [stream, refresh]
   )
-  return { recordings, uploads, refresh }
+  return { recordings, uploads, loaded, refresh }
 }

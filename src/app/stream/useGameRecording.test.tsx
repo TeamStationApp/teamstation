@@ -202,6 +202,70 @@ describe('recording from the game hero', () => {
     expect(opened?.session.url).equals(held.url)
   })
 
+  describe('with a take of that name uploading', () => {
+    const uploading = { ...RECORDING, gameId: 'gam_1', angleName: 'Home' }
+    const ended: LiveStream = {
+      ...held,
+      state: 'ended',
+      closesAt: '2026-05-20T17:00:00.000Z'
+    }
+    const asking = async (fake: ReturnType<typeof fixture>): Promise<void> => {
+      await mount(fake)
+      await press('Record')
+      await press('Home')
+      await press('Record with this phone')
+    }
+
+    it('films a new camera beside an ended one', async () => {
+      const fake = fixture()
+      fake.mine = [ended]
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: ended.id, uploadId: 'upl_1' }
+      ]
+      await asking(fake)
+      expect(document.body.textContent).not.contains('still uploading')
+      expect(fake.calls.map(call => call.name)).deep.equals(['Home'])
+      expect(fake.calls[0].options?.heldStreamId).equals(undefined)
+    })
+
+    it('films when its camera is no longer listed', async () => {
+      const fake = fixture()
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: 'liv_gone', uploadRunning: true }
+      ]
+      await asking(fake)
+      expect(fake.calls.map(call => call.name)).deep.equals(['Home'])
+    })
+
+    it('refuses on the same active camera', async () => {
+      const fake = fixture()
+      fake.mine = [
+        { ...held, deviceId: '00000000-0000-4000-8000-00000000000a' }
+      ]
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: held.id, uploadId: 'upl_1' }
+      ]
+      await asking(fake)
+      expect(document.body.textContent).contains('Home is still uploading')
+      expect(fake.calls).deep.equals([])
+    })
+
+    it('refuses when the list cannot be read to say which it is', async () => {
+      const fake = fixture()
+      fake.mine = [ended]
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: ended.id, uploadId: 'upl_1' }
+      ]
+      await mount(fake)
+      await press('Record')
+      await press('Home')
+      fake.allowed = false
+      await press('Record with this phone')
+      expect(document.body.textContent).contains('Home is still uploading')
+      expect(fake.calls).deep.equals([])
+    })
+  })
+
   it('waits for the iOS name prompt to dismiss before opening the camera', async () => {
     Platform.OS = 'ios'
     const fake = fixture()

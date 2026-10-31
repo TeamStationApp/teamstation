@@ -4,6 +4,7 @@ import { Platform } from 'react-native'
 import type { LiveStream, TeamStationClient } from '../../common/api'
 import { lstrings, sprintf } from '../locales/strings'
 import { AngleNamePrompt } from './AngleNamePrompt'
+import { isEnded } from './cameraRowRules'
 import { deviceId as installId } from './deviceId'
 import type { GameRecording } from './gameRecording'
 import { type PhoneStream, phoneStream } from './phoneStream'
@@ -91,17 +92,30 @@ export function useGameRecording(
     ])
     if (!current(attempt)) throw new Error(lstrings.common_retry)
     if (!capabilities.supported) throw new Error(lstrings.common_retry)
-    if (
-      recordings.some(
-        take =>
-          take.gameId === gameId &&
-          (take.liveStreamId === held?.id ||
-            take.angleName.toLowerCase() === name.toLowerCase()) &&
-          take.uploadedAt == null &&
-          (take.hasPendingUpload || take.uploadRunning)
-      )
+    const uploading = recordings.filter(
+      take =>
+        take.gameId === gameId &&
+        (take.liveStreamId === held?.id ||
+          take.angleName.toLowerCase() === name.toLowerCase()) &&
+        take.uploadedAt == null &&
+        (take.hasPendingUpload || take.uploadRunning)
     )
-      throw new Error(sprintf(lstrings.stream_error_uploading, name))
+    if (uploading.length > 0) {
+      // Filming would go into that take's stream only while it is active. An
+      // ended camera's upload is safe, and the name gets a new stream beside
+      // it. A list that cannot be read says nothing, so it refuses as if active.
+      const listed = await client.liveStreams(gameId).catch(() => undefined)
+      if (!current(attempt)) throw new Error(lstrings.common_retry)
+      const atRisk =
+        listed == null ||
+        uploading.some(take =>
+          listed.mine.some(
+            stream => stream.id === take.liveStreamId && !isEnded(stream)
+          )
+        )
+      if (atRisk)
+        throw new Error(sprintf(lstrings.stream_error_uploading, name))
+    }
     const stream = await client.addLiveStream(gameId, name, {
       deviceId: id,
       deviceModel: capabilities.deviceModel,

@@ -12,7 +12,8 @@
 //     node -r sucrase/register src/app/stream/twoDevices.e2e.ts
 //
 //   1. The iPhone: Record Video "Home Plate", on the air.
-//   2. The Pixel: its list reads "Home Plate" · "iPhone 13 Pro" · "Live";
+//   2. The Pixel: its list reads "Home Plate" · "Streaming with iPhone 13
+//      Pro" · "Live";
 //      then Record Video "First Base", on the air. With no Pixel, a stand-in
 //      device B (`curl` as the same account, `deviceModel` "Pixel 10",
 //      `recordsLocally`) makes "First Base" and ffmpeg publishes to it.
@@ -261,12 +262,20 @@ async function main(): Promise<void> {
       await pixel.openGame()
       await pixel.scrollTo({ id: `angle-row-${home.id}` })
       pixelLines.push(
-        await rowReads(pixel, home, [HOME, 'iPhone 13 Pro', 'Live'])
+        await rowReads(pixel, home, [
+          HOME,
+          'Streaming with iPhone 13 Pro',
+          'Live'
+        ])
       )
       if (center != null) {
         await pixel.scrollTo({ id: `angle-row-${center.id}` })
         pixelLines.push(
-          await rowReads(pixel, center, [CENTER, 'iPad Pro', 'Live'])
+          await rowReads(pixel, center, [
+            CENTER,
+            'Streaming with iPad Pro',
+            'Live'
+          ])
         )
       }
       for (const line of pixelLines) say(`$ assertVisible ${line}`)
@@ -365,7 +374,7 @@ async function main(): Promise<void> {
         lines.push(
           await rowReads(listing, row, [
             row.label,
-            models.get(row.label) ?? '',
+            `${live ? 'Streaming with' : 'Waiting for stream from'} ${models.get(row.label) ?? ''}`,
             live ? 'Live' : 'Idle'
           ])
         )
