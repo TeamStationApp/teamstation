@@ -48,7 +48,8 @@ public struct PhoneLens: Sendable, Equatable {
  *   drops. Back in the foreground, or after a kill when the streaming screen is opened again within
  *   the hour, `LiveSessionResume` continues the take as its next part, timed from its first picture,
  *   and the stream redials.
- * - A take finishes its part cleanly when free space falls under 500 MB, and the stream goes on.
+ * - A take finishes its part cleanly when free space falls under 2 GB, and the stream goes on. Record
+ *   under 10 GB free starts only the stream.
  * - `uploadRecording` exports the take's programme (placed by wall clock across parts) and sends it
  *   with `UploadService`, keeping the upload id on the take so a killed upload resumes. The export
  *   starts at the take's start, which is its `startAt`, sent with the take's server clock offset.
@@ -264,11 +265,21 @@ public final class PhoneStreamEngine {
     isOpen = true
     radar.start()
     startStatusLoop()
+    sweepTakes()
+  }
+
+  /// Runs the retention sweep, sparing the take on the air and every upload still running, except
+  /// `landed`, whose upload has just finished.
+  private func sweepTakes(landed: Int64? = nil) {
+    var protecting = Set(uploads.keys)
+    if let landed { protecting.remove(landed) }
+    if let recordingID = stream?.recordingID { protecting.insert(recordingID) }
     _ = try? environment.retention.sweep(
       catalog: catalog,
       index: index,
       storage: environment.storage,
-      now: environment.clock.now
+      now: environment.clock.now,
+      protecting: protecting
     )
   }
 
@@ -343,7 +354,13 @@ public final class PhoneStreamEngine {
 
   // MARK: - Recording and streaming
 
-  /// Starts the recording and the stream from the same programme tick.
+  /// Whether Record would keep a recording here now, rather than only streaming.
+  public var canRecordLocally: Bool {
+    environment.storageRules.canStart(freeBytes: environment.freeDiskBytes())
+  }
+
+  /// Starts the recording and the stream from the same programme tick. Under the start floor only the
+  /// stream starts: no part is opened, and a take the stream already has no longer covers all of it.
   public func startRecording(
     rtmpUrl: String,
     liveStreamId: String,
@@ -358,19 +375,52 @@ public final class PhoneStreamEngine {
     if let existing, existing.hasPendingUpload || uploads[existing.recordingID] != nil {
       throw PhoneStreamError.uploadInProgress
     }
-    guard environment.storageRules.canStart(freeBytes: environment.freeDiskBytes()) else {
-      fail(.insufficientStorage)
-      throw PhoneStreamError.insufficientStorage
-    }
     // A take another stream left open when the app stopped is over: it ends where it got to.
     if let live = try catalog.live(), live.liveStreamId != liveStreamId {
       closeInterruptedTake()
     }
     self.angleName = angleName
     lastError = nil
+    let recordingID: Int64?
+    if canRecordLocally {
+      recordingID = try openPart(of: existing, liveStreamId: liveStreamId, gameId: gameId, angleName: angleName)
+    } else {
+      recordingID = nil
+      lastError = .recordingStoppedLowStorage
+    }
+    try? catalog.setLive(.init(liveStreamId: liveStreamId, gameId: gameId, angleName: angleName))
+    stream = StreamTake(
+      liveStreamId: liveStreamId,
+      gameId: gameId,
+      angleName: angleName,
+      request: request,
+      recordingID: recordingID ?? existing?.recordingID,
+      firstURL: rtmpUrl,
+      cachedURL: rtmpUrl
+    )
+    if recordingID == nil, let existing {
+      if existing.endedAt == nil { try? catalog.closeAtLastAnchor(existing.recordingID) }
+      try? catalog.markStoppedForLowStorage(existing.recordingID)
+      markPublishedOutsideParts(existing.recordingID)
+    }
+    recordingTakeID = recordingID
+    liveStartWanted = true
+    followServerClock(request.serverURL)
+    beginLiveSession(recording: recordingID)
+    streamController.start(reason: .start)
+    startStorageLoop()
+    publishStatus()
+  }
+
+  /// Opens the next part of `existing`, or a new take of the stream. Answers the take.
+  private func openPart(
+    of existing: PhoneRecording?,
+    liveStreamId: String,
+    gameId: String,
+    angleName: String
+  ) throws -> Int64 {
     let now = environment.clock.now
     let settings = PhoneStreamProfile.recordingSettings
-    let recordingID: Int64
     programme.setFeedsRecording(true)
     do {
       if let existing {
@@ -384,35 +434,18 @@ public final class PhoneStreamEngine {
           previouslyArchived: []
         )
         try recordingSession.resume(take, at: now, settings: settings)
-        recordingID = existing.recordingID
-      } else {
-        recordingID = try recordingSession.open(at: now, settings: settings)
-        try catalog.add(recordingID: recordingID, liveStreamId: liveStreamId, gameId: gameId, angleName: angleName)
-        try recordingSession.startProgramme(at: now, settings: settings)
+        return existing.recordingID
       }
+      let recordingID = try recordingSession.open(at: now, settings: settings)
+      try catalog.add(recordingID: recordingID, liveStreamId: liveStreamId, gameId: gameId, angleName: angleName)
+      try recordingSession.startProgramme(at: now, settings: settings)
+      return recordingID
     } catch {
       telemetry.recordRecordingError("\(error)")
       if recordingSession.isRecording { recordingSession.close(endedAt: now) }
       fail(.recordingFailed)
       throw PhoneStreamError.recordingFailed
     }
-    try? catalog.setLive(.init(liveStreamId: liveStreamId, gameId: gameId, angleName: angleName))
-    stream = StreamTake(
-      liveStreamId: liveStreamId,
-      gameId: gameId,
-      angleName: angleName,
-      request: request,
-      recordingID: recordingID,
-      firstURL: rtmpUrl,
-      cachedURL: rtmpUrl
-    )
-    recordingTakeID = recordingID
-    liveStartWanted = true
-    followServerClock(request.serverURL)
-    beginLiveSession(recording: recordingID)
-    streamController.start(reason: .start)
-    startStorageLoop()
-    publishStatus()
   }
 
   /// Stops the stream and the recording, the recording with its hold fill and sound check.
@@ -509,7 +542,7 @@ public final class PhoneStreamEngine {
         deviceId: take.request.deviceId,
         deviceModel: take.request.deviceModel,
         heldStreamId: take.liveStreamId,
-        recordsLocally: true
+        recordsLocally: take.recordingID != nil
       )
       guard let url = held.url else { throw TeamStationError.server("no stream address") }
       stream?.cachedURL = url
@@ -548,7 +581,8 @@ public final class PhoneStreamEngine {
 
   /// Continues the interrupted take as its next part, timed from its first picture, and redials its
   /// stream with the stream held. False when there is nothing to continue; a take away longer than
-  /// the hour is closed where it got to.
+  /// the hour is closed where it got to. Between the two floors the take goes on: only `mustStop`
+  /// ends a recording that has started.
   @discardableResult
   public func resumeInterrupted(request: PhoneStreamRequest) throws -> Bool {
     guard isOpen, stream == nil, finishing == nil else { throw PhoneStreamError.notReady }
@@ -572,7 +606,7 @@ public final class PhoneStreamEngine {
       recordingID: take?.recordingID ?? (try? catalog.current(forLiveStream: live.liveStreamId))?.recordingID
     )
     if let take {
-      if environment.storageRules.canStart(freeBytes: environment.freeDiskBytes()) {
+      if !environment.storageRules.mustStop(freeBytes: environment.freeDiskBytes()) {
         do {
           programme.setFeedsRecording(true)
           try recordingSession.resume(take, at: environment.clock.now, settings: PhoneStreamProfile.recordingSettings)
@@ -586,6 +620,8 @@ public final class PhoneStreamEngine {
         try? catalog.markStoppedForLowStorage(take.recordingID)
         lastError = .recordingStoppedLowStorage
       }
+    } else if !canRecordLocally {
+      lastError = .recordingStoppedLowStorage
     }
     suspendedInBackground = false
     liveStartWanted = true
@@ -1073,6 +1109,7 @@ public final class PhoneStreamEngine {
       recordingID: recordingID,
       in: storage.prepared
     ))
+    sweepTakes(landed: recordingID)
     report(
       PhoneUploadProgress(liveStreamId: liveStreamId, state: .uploaded, fraction: 1, videoId: videoId),
       for: recordingID

@@ -107,8 +107,12 @@ final class TSPhoneStreamBridge: NSObject {
   /// failing at Record.
   @objc func capabilities(_ reply: @escaping PhoneStreamReply) {
     Task { @MainActor in
-      let supported = PhoneStreamCapabilities.isSupported && PhoneStreamEngine.shared != nil
-      reply(["supported": supported, "deviceModel": PhoneStreamCapabilities.deviceModel], nil, nil)
+      let engine = PhoneStreamEngine.shared
+      reply([
+        "supported": PhoneStreamCapabilities.isSupported && engine != nil,
+        "deviceModel": PhoneStreamCapabilities.deviceModel,
+        "canRecordLocally": engine?.canRecordLocally ?? false
+      ], nil, nil)
     }
   }
 

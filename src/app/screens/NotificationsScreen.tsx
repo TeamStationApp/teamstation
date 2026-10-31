@@ -6,6 +6,7 @@ import { HttpError } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
   isSchedulingNews,
+  LOCAL_COPY_EXPIRING,
   type Notification,
   RECORDING_UPLOAD
 } from '../../common/notifications'
@@ -30,9 +31,9 @@ const inviteDate = (time: string): string =>
     minute: '2-digit'
   })
 
-/** A reminder to upload a phone's recording of one camera angle. */
+/** A reminder to upload a phone's recording, or that its copy is expiring. */
 const isReminder = (item: Notification): boolean =>
-  item.type === RECORDING_UPLOAD
+  item.type === RECORDING_UPLOAD || item.type === LOCAL_COPY_EXPIRING
 
 export function NotificationsScreen({
   client,

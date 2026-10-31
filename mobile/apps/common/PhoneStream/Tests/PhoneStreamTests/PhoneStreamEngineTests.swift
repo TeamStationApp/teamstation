@@ -600,27 +600,164 @@ extension PhoneStreamTests {
       #expect(StubServer.read { $0.finishes } == 1)
       #expect(StubServer.read { $0.partsSent } == [ 0, 1, 2, 3 ])
       #expect(again.runningUploadProgress.isEmpty)
-      let uploaded = try #require(try again.recordings().first)
-      #expect(uploaded.isUploaded)
-      #expect(uploaded.videoId == "vid_0001")
-      #expect(!FileManager.default.fileExists(atPath: RecordingExport.preparedDirectory(
-        recordingID: uploaded.recordingID,
-        in: again.environment.storage.prepared
-      ).path))
-      // Finished rows are skipped, and asking again answers the video it became.
-      #expect(again.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 0)
-      #expect(try await again.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
-                                              token: rig.request.token, title: Self.angle) == "vid_0001")
-      // Uploaded, the take is kept for a week, then swept; and it can be deleted by hand.
-      try await again.deleteRecording(liveStreamId: Self.stream)
+      // Swept as its upload landed: the take's files and rows are gone, and nothing is left to resume.
       #expect(try again.recordings().isEmpty)
+      let storage = again.environment.storage
+      #expect(try FileManager.default.contentsOfDirectory(atPath: storage.program.path).isEmpty)
+      #expect(try FileManager.default.contentsOfDirectory(atPath: storage.prepared.path).isEmpty)
+      #expect(again.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 0)
+      await #expect(throws: PhoneStreamError.noRecording) {
+        try await again.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
+                                        token: rig.request.token, title: Self.angle)
+      }
       try await again.deleteRecording(liveStreamId: Self.stream)
       await again.close()
       sink.drop()
     }
 
+    @Test("Under 10 GB free Record streams with no take, says so, and its redials keep no recording")
+    func streamingOnlyStart() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      rig.free.bytes = 9_900_000_000
+      let engine = try rig.engine()
+      try engine.open(angleName: Self.angle)
+      #expect(!engine.canRecordLocally)
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                angleName: Self.angle, request: rig.request)
+      #expect(engine.isStreaming)
+      #expect(!engine.isRecording)
+      #expect(engine.status.error == .recordingStoppedLowStorage)
+      #expect(await waitUntil { engine.status.phase == "live" })
+      #expect(try engine.recordings().isEmpty)
+      sink.drop()
+      #expect(await waitUntil { engine.status.phase == "retrying" })
+      try sink.restore()
+      #expect(await waitUntil(30) { engine.status.phase == "live" && sink.snapshot.publishes >= 2 })
+      let asked = StubServer.read { $0.streamRequests }
+      #expect(!asked.isEmpty)
+      #expect(asked.allSatisfy { $0["recordsLocally"] as? Bool == false })
+      await engine.abandonForTesting()
+
+      // Relaunched, still short of room: the stream comes back and the notice with it.
+      rig.free.bytes = 5_000_000_000
+      let again = try rig.engine()
+      try again.open(angleName: Self.angle)
+      #expect(again.interruptedSession()?.recordingID == nil)
+      #expect(try again.resumeInterrupted(request: rig.request))
+      #expect(!again.isRecording)
+      #expect(again.status.error == .recordingStoppedLowStorage)
+      await again.stopRecording()
+
+      // With exactly 10 GB, it records.
+      rig.free.bytes = 10_000_000_000
+      #expect(again.canRecordLocally)
+      try again.startRecording(rtmpUrl: sink.url, liveStreamId: "lst_0002", gameId: Self.game,
+                               angleName: Self.angle, request: rig.request)
+      #expect(again.isRecording)
+      #expect(again.status.error == nil)
+      await again.stopRecording()
+      await again.close()
+      sink.drop()
+    }
+
+    @Test("A second start under 10 GB on a stream with a take leaves it not covering the whole stream")
+    func streamingOnlyOnATake() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      let (engine, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(2))
+      await engine.stopRecording()
+      let first = try #require(try engine.recordings().first)
+      #expect(first.coversWholeStream)
+
+      rig.free.bytes = 9_900_000_000
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                angleName: Self.angle, request: rig.request)
+      #expect(!engine.isRecording)
+      #expect(engine.isStreaming)
+      #expect(engine.status.error == .recordingStoppedLowStorage)
+      let marked = try #require(try engine.recordings().first)
+      #expect(marked.recordingID == first.recordingID)
+      #expect(marked.parts == first.parts)
+      #expect(marked.endedAt == first.endedAt)
+      #expect(marked.stoppedForLowStorage)
+      #expect(marked.publishedOutsideParts)
+      #expect(!marked.coversWholeStream)
+      #expect(await waitUntil { engine.status.phase == "live" })
+      // Marked once: the status loop does not write it again.
+      try await Task.sleep(for: .seconds(1))
+      #expect(engine.outsidePartsWrites == 1)
+      // The stream has a take, so its redial says so.
+      sink.drop()
+      #expect(await waitUntil { engine.status.phase == "retrying" })
+      try sink.restore()
+      #expect(await waitUntil(30) { engine.status.phase == "live" && sink.snapshot.publishes >= 3 })
+      let asked = StubServer.read { $0.streamRequests }
+      #expect(!asked.isEmpty)
+      #expect(asked.allSatisfy { $0["recordsLocally"] as? Bool == true })
+      await engine.stopRecording()
+      await engine.close()
+      sink.drop()
+    }
+
+    @Test("A take left open by a kill, started on again under 10 GB, ends where it got to")
+    func streamingOnlyOnAnOpenTake() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      let (first, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(2))
+      await first.abandonForTesting()
+
+      rig.free.bytes = 9_900_000_000
+      let engine = try rig.engine()
+      try engine.open(angleName: Self.angle)
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                angleName: Self.angle, request: rig.request)
+      let closed = try #require(try engine.recordings().first)
+      #expect(closed.endedAt != nil)
+      #expect(!closed.coversWholeStream)
+      await engine.stopRecording()
+      await engine.close()
+      sink.drop()
+    }
+
+    @Test("Resuming with 5 GB free, between the floors, continues the take")
+    func resumeBetweenTheFloors() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      let (first, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(3))
+      await first.abandonForTesting()
+
+      rig.free.bytes = 5_000_000_000
+      let engine = try rig.engine()
+      try engine.open(angleName: Self.angle)
+      #expect(try engine.resumeInterrupted(request: rig.request))
+      #expect(engine.isRecording)
+      #expect(engine.status.error == nil)
+      await engine.stopRecording()
+      let take = try #require(try engine.recordings().first)
+      #expect(take.parts == 2)
+      #expect(!take.stoppedForLowStorage)
+      await engine.close()
+      sink.drop()
+    }
+
     @Test("""
-      A part finishes cleanly when free space falls under 500 MB while the stream goes on, and the \
+      A part finishes cleanly when free space falls under 2 GB while the stream goes on, and the \
       take's upload then sends no wholeStream
       """)
     func lowStorageStopsThePart() async throws {
@@ -630,7 +767,7 @@ extension PhoneStreamTests {
       let rig = EngineRig(root: try scratchDirectory())
       let (engine, _) = try await recording(rig, sink: sink)
       try await Task.sleep(for: .seconds(3))
-      rig.free.bytes = 400_000_000
+      rig.free.bytes = 1_900_000_000
       #expect(await waitUntil { engine.status.error == .recordingStoppedLowStorage })
       #expect(await waitUntil { !engine.isRecording })
       #expect(engine.status.phase == "live")
@@ -853,6 +990,13 @@ extension PhoneStreamTests {
       try sink.start()
       let rig = EngineRig(root: try scratchDirectory())
       let (engine, _) = try await recording(rig, sink: sink)
+      // The take as the upload sent it: it is swept as the upload lands.
+      var endSent: WallClock?
+      let sending = engine.observe { event in
+        guard case let .upload(progress) = event, progress.state == .uploading else { return }
+        endSent = (try? engine.recordings().first)?.endedAt
+      }
+      defer { sending.cancel() }
       try await Task.sleep(for: .seconds(3))
       let stopping = Task { @MainActor in await engine.stopRecording() }
       #expect(await waitUntil { engine.isFinishingPart })
@@ -870,9 +1014,8 @@ extension PhoneStreamTests {
       #expect(StubServer.read { $0.opens }.count == 1)
       #expect(StubServer.read { $0.finishes } == 1)
       // The end the finish wrote stands: the upload did not close the take again at its last anchor.
-      let uploaded = try #require(try engine.recordings().first)
-      #expect(uploaded.endedAt == closed)
-      #expect(uploaded.isUploaded)
+      #expect(endSent == closed)
+      #expect(try engine.recordings().isEmpty)
       #expect(engine.runningUploads.isEmpty)
       await engine.close()
       sink.drop()
@@ -924,7 +1067,7 @@ extension PhoneStreamTests {
       }
       // The app is active again: the upload resumes under its title and lands.
       #expect(engine.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 1)
-      #expect(await waitUntil(Self.exportWait) { (try? engine.recordings().first?.isUploaded) == true })
+      #expect(await waitUntil(Self.exportWait) { (try? engine.recordings().isEmpty) == true })
       let opened = try #require(StubServer.read { $0.opens }.first)
       #expect(opened["title"] as? String == "Top of the 1st")
       #expect(StubServer.read { $0.opens }.count == 1)
