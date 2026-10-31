@@ -1,0 +1,719 @@
+{
+  "scenarios": [
+    {
+      "id": "app-shell/lists/list-screens#box-score-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#box-score-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#location-row-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#location-row-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#result-pill-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#result-pill-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-filter-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-filter-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-row-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-row-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#stream-address-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#stream-address-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#thumbnails-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#thumbnails-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "quarantine": {
+        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
+        "since": "2026-10-30",
+        "scenarios": [
+          "schedule-row-desktop",
+          "schedule-row-phone",
+          "schedule-filter-desktop",
+          "schedule-filter-phone",
+          "box-score-desktop",
+          "box-score-phone",
+          "stream-address-desktop",
+          "stream-address-phone"
+        ]
+      },
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "schedule/rsvp/eligibility#roster-removal",
+      "title": "RSVP lists only eligible people, and follows a roster removal",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/events.ts",
+        "src/app/screens/**",
+        "src/common/eventInfo.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "manual": false,
+      "spec": "schedule/rsvp/eligibility",
+      "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
+    }
+  ]
+}

@@ -51,6 +51,16 @@ export default [
   },
 
   {
+    files: ['e2e/**/*.ts', 'e2e/**/*.tsx'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.e2e.json'
+      }
+    }
+  },
+
+  {
     files: ['scripts/stampWallClockSei.ts', 'scripts/e2e/**/*.ts'],
     languageOptions: {
       parserOptions: {

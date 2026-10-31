@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "Paul Puey <paul@teamstation.app>",
-  "description": "TeamStation \u2014 a platform for youth sports team management, scoring, and video streaming",
+  "description": "TeamStation — a platform for youth sports team management, scoring, and video streaming",
   "engines": {
     "node": ">=24.9.0"
   },
@@ -85,8 +85,8 @@
     "stats-request": "node -r sucrase/register src/server/statsBuilder/cli.ts",
     "stats-tables-seed": "node -r sucrase/register src/server/dev/statsTablesSeed.ts",
     "tess.sitemap": "node -r sucrase/register src/server/tess/sitemapCli.ts",
-    "test": "node src/migrate/requirePostgres18.js && node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
-    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json",
+    "test": "node src/migrate/requirePostgres18.js && node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec 'e2e/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && tsc -p tsconfig.e2e.json",
     "typecheck.native": "tsc -p tsconfig.native.json",
     "typecheck.android": "tsc -p tsconfig.android.json",
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts",
@@ -123,7 +123,9 @@
     "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs",
     "coverage.observability": "node scripts/observability-coverage.mjs",
     "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
-    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts"
+    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
+    "e2e": "node -r sucrase/register e2e/core/cli.ts",
+    "coverage.e2e": "c8 --all --check-coverage --lines 90 --reporter=text --include 'e2e/core/**/*.ts' --include 'e2e/faults/**/*.ts' --include src/buildWorker.mjs --exclude '**/*.test.ts' mocha --timeout 60000 --exit -r sucrase/register --extension ts --spec 'e2e/**/*.test.ts' --spec src/buildWorker.test.ts"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",
