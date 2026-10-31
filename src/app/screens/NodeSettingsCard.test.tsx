@@ -173,6 +173,7 @@ describe('NodeSettingsCard', function () {
     await render(server.client)
     await pick('Single camera: top', 'Top 12%')
     await pick('Four-angle landscape: height', 'Height 25%')
+    await pick('Four-angle TV: height', 'Height 10%')
     await pick('Four-angle portrait: height', 'Height 20%')
     await pick('Pitch speed display', 'Pitch speed display (seconds) 9')
     await pick('Replay pitch delay', 'Pitch delay (seconds) 7')
@@ -190,6 +191,7 @@ describe('NodeSettingsCard', function () {
       overlayStartDate: '2026-10-01',
       single: { x: 0.01, y: 0.12, height: 0.15 },
       landscape: { x: 0.01, y: 0.01, height: 0.25 },
+      tvLandscape: { x: 0.01, y: 0.01, height: 0.1 },
       portraitHeight: 0.2,
       speedHoldSec: 9
     })

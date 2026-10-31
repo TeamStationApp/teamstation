@@ -124,6 +124,10 @@ export async function scoreboardSettings(
       () => asPlacement(byKey.get('scoreboard.landscape'), 'landscape'),
       defaults.landscape
     ),
+    tvLandscape: or(
+      () => asPlacement(byKey.get('scoreboard.tvLandscape'), 'tvLandscape'),
+      defaults.tvLandscape
+    ),
     portraitHeight: or(
       () => asHeight(byKey.get('scoreboard.portraitHeight'), 'height'),
       defaults.portraitHeight
@@ -180,6 +184,14 @@ export async function setNodeSettings(
     ['scoreboard.overlayStartDate', scoreboard.overlayStartDate],
     ['scoreboard.single', placement(scoreboard.single)],
     ['scoreboard.landscape', placement(scoreboard.landscape)],
+    ...(scoreboard.tvLandscape === undefined
+      ? []
+      : [
+          ['scoreboard.tvLandscape', placement(scoreboard.tvLandscape)] as [
+            string,
+            unknown
+          ]
+        ]),
     ['scoreboard.portraitHeight', scoreboard.portraitHeight],
     ['scoreboard.speedHoldSec', scoreboard.speedHoldSec],
     ['highlights.lagSec', highlights.lagSec],
@@ -247,11 +259,12 @@ export async function scoreboardOverlayFor(
   db: Kysely<Database>,
   startAt: Date | string
 ): Promise<ScoreboardOverlay> {
-  const settings = await scoreboardSettings(db)
+  const settings = await scoreboardSettings(db, Date.now(), true)
   return {
     show: new Date(startAt).getTime() >= utcStartOf(settings.overlayStartDate),
     single: settings.single,
     landscape: settings.landscape,
+    tvLandscape: settings.tvLandscape,
     portraitHeight: settings.portraitHeight
   }
 }

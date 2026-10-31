@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import {
   asNodeSettings,
+  asNodeSettingsUpdate,
   asScoreboardOverlay,
   defaultNodeSettings,
   type NodeSettings,
@@ -32,6 +33,7 @@ describe('node settings', function () {
         overlayStartDate: '2026-10-01',
         single: { x: 0.01, y: 0.01, height: 0.15 },
         landscape: { x: 0.01, y: 0.01, height: 0.15 },
+        tvLandscape: { x: 0.01, y: 0.01, height: 0.15 },
         portraitHeight: 0.15,
         speedHoldSec: 5
       },
@@ -141,10 +143,41 @@ describe('node settings', function () {
       landscape: { x: 0, y: 0, height: 1 },
       portraitHeight: 0.15
     }
-    expect(asScoreboardOverlay(overlay)).deep.equals(overlay)
+    expect(asScoreboardOverlay(overlay)).deep.equals({
+      ...overlay,
+      tvLandscape: defaultNodeSettings.scoreboard.tvLandscape
+    })
     expect(() => asScoreboardOverlay({ ...overlay, show: 'yes' })).throws(
       'The overlay needs show'
     )
+  })
+
+  it('defaults old TV reads while preserving omitted TV writes and rejecting invalid placements', () => {
+    const { tvLandscape: _tv, ...scoreboard } = defaultNodeSettings.scoreboard
+    const legacy = { ...defaultNodeSettings, scoreboard }
+    expect(asNodeSettings(legacy).scoreboard.tvLandscape).deep.equals(_tv)
+    expect(asNodeSettingsUpdate(legacy).scoreboard).not.has.property(
+      'tvLandscape'
+    )
+    const value = { x: 0.12, y: 0.08, height: 0.25 }
+    expect(
+      asNodeSettingsUpdate({
+        ...legacy,
+        scoreboard: { ...scoreboard, tvLandscape: value }
+      }).scoreboard.tvLandscape
+    ).deep.equals(value)
+    for (const invalid of [
+      null,
+      { ...value, x: 1 },
+      { ...value, y: -1 },
+      { ...value, height: 0 }
+    ])
+      expect(() =>
+        asNodeSettingsUpdate({
+          ...legacy,
+          scoreboard: { ...scoreboard, tvLandscape: invalid }
+        })
+      ).throws('scoreboard.tvLandscape')
   })
 
   it('starts a date at 00:00 UTC, whatever zone a game is in', function () {

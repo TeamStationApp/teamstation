@@ -9,6 +9,7 @@ import {
   replayPitchSec,
   replaySettings,
   scoreboardSettings,
+  scoreboardOverlayFor,
   speedHoldMs
 } from './nodeSettings'
 import { forgetSettings, highlightSettings } from './settings'
@@ -34,6 +35,7 @@ describe('node settings', function () {
       overlayStartDate: '2026-11-15',
       single: { x: 0.1, y: 0.2, height: 0.25 },
       landscape: { x: 0.02, y: 0.03, height: 0.2 },
+      tvLandscape: { x: 0.03, y: 0.04, height: 0.1 },
       portraitHeight: 0.3,
       speedHoldSec: 3
     },
@@ -110,6 +112,46 @@ describe('node settings', function () {
     expect(new Set(rows.map(row => row.updated_by))).deep.equals(
       new Set([userIdOfGumbo(105)])
     )
+  })
+
+  it('preserves TV placement on legacy saves and refreshes another worker’s TV placement immediately', async () => {
+    expect(
+      (await f.h.request('PUT', '/node/settings', changed, 105)).status
+    ).equals(200)
+    const { tvLandscape: tv, ...legacy } = changed.scoreboard
+    expect(
+      (
+        await f.h.request(
+          'PUT',
+          '/node/settings',
+          { ...changed, scoreboard: legacy },
+          105
+        )
+      ).status
+    ).equals(200)
+    expect(
+      (await scoreboardOverlayFor(f.h.db, '2027-01-01')).tvLandscape
+    ).deep.equals(tv)
+    const next = { x: 0.15, y: 0.12, height: 0.3 }
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: JSON.stringify(next) })
+      .where('key', '=', 'scoreboard.tvLandscape')
+      .execute()
+    const overlay = await scoreboardOverlayFor(f.h.db, '2027-01-01')
+    expect(overlay.tvLandscape).deep.equals(next)
+    expect(overlay.landscape).deep.equals(changed.scoreboard.landscape)
+    expect((await scoreboardOverlayFor(f.h.db, '2020-01-01')).show).equals(
+      false
+    )
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: JSON.stringify({ height: -1 }) })
+      .where('key', '=', 'scoreboard.tvLandscape')
+      .execute()
+    expect(
+      (await scoreboardOverlayFor(f.h.db, '2027-01-01')).tvLandscape
+    ).deep.equals(defaultNodeSettings.scoreboard.tvLandscape)
   })
 
   it('keeps the node’s tail when an app that sends no tailSec saves', async () => {
