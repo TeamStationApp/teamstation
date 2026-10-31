@@ -40,6 +40,43 @@ import { venuePaths } from './venues/venuesOpenApi'
 const PUBLIC_NAME =
   "The public name: first name and last initial, unless the player's league, season or team chose another format."
 
+const videoCollectionParameters = [
+  {
+    name: 'hasVideo',
+    in: 'query',
+    schema: { type: 'string', enum: ['1', 'true'] },
+    description:
+      'Omitted: existing collection behavior. When set, only games with visible ready/live single-camera video, and their teams or recorded participants. Other legacy filters cannot be combined. Results contain no access-request candidates.'
+  },
+  {
+    name: 'team',
+    in: 'query',
+    schema: { type: 'string' },
+    description:
+      'With hasVideo: games involving this team; omitted: all accessible games.'
+  },
+  {
+    name: 'participant',
+    in: 'query',
+    schema: { type: 'string' },
+    description:
+      'With hasVideo: recorded game participant user ID, never current roster membership. Omitted: any participant.'
+  },
+  {
+    name: 'offset',
+    in: 'query',
+    schema: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
+    description: 'With hasVideo: number of matching rows to skip.'
+  },
+  {
+    name: 'sort',
+    in: 'query',
+    schema: { type: 'string', enum: ['date', 'upload'], default: 'date' },
+    description:
+      'With hasVideo: event ordering by game date or latest video creation time; identities always sort by public name. Stable ID ties. Events include latestVideoId and latestVideoAt.'
+  }
+]
+
 const recordSchema = {
   type: 'object',
   required: ['w', 'l', 't'],
@@ -3263,6 +3300,25 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{}, { bearer: [] }],
           parameters: [
             {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', default: '' },
+              description:
+                'With hasVideo: case-insensitive public name substring; omitted: all.'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 50
+              },
+              description: 'With hasVideo: rows per page.'
+            },
+            ...videoCollectionParameters,
+            {
               name: 'view',
               in: 'query',
               schema: { type: 'string', enum: ['public'] },
@@ -5619,6 +5675,13 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [],
           parameters: [
             {
+              name: 'personalized',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'Omitted: public preview behavior. 1 requires signed-in playback access (404 otherwise) and adds preferred, true when the viewer or a guarded player is credited, including assists.'
+            },
+            {
               name: 'videoId',
               in: 'path',
               required: true,
@@ -6101,6 +6164,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
+            ...videoCollectionParameters,
             {
               name: 'view',
               in: 'query',
@@ -6155,13 +6219,14 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+                'With hasVideo: case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
             },
             {
               name: 'limit',
               in: 'query',
               schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
-              description: 'With forTeam: rows per page.'
+              description:
+                'With hasVideo: default 50, maximum 100. With forTeam: default 30, maximum 50.'
             },
             {
               name: 'after',
@@ -8925,6 +8990,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [
             {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', default: '' },
+              description:
+                'With hasVideo: case-insensitive matchup substring; omitted: all.'
+            },
+            ...videoCollectionParameters,
+            {
               name: 'scope',
               in: 'query',
               schema: { type: 'string', enum: ['visible', 'run', 'film'] }
@@ -8974,6 +9047,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
+              description:
+                'With hasVideo: default 50, maximum 100. Otherwise omitted means uncapped.',
               schema: { type: 'integer', minimum: 1 }
             },
             {

@@ -43,10 +43,13 @@ const untracked = git(['ls-files', '--others', '--exclude-standard'])
   .filter(Boolean)
 const runtimeConfig =
   /^appletv\/(index|metro.config|babel.config|react-native.config)\.js$/
+const changedPaths = [
+  ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
+]
 const nativePaths = [
   'appletv/ios/TeamStationTV/AppDelegate.swift',
   'appletv/ios/TeamStationTV/TVSession.m'
-]
+].filter(path => changedPaths.includes(path))
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
 ].filter(path => {
@@ -101,6 +104,13 @@ run(
     '60000',
     '--exit',
     'src/server/routes/tvLogin.test.ts',
+    'src/server/routes/videoCollections.test.ts',
+    'src/server/routes/teams.test.ts',
+    'src/server/routes/users.test.ts',
+    'src/server/routes/players.test.ts',
+    'src/server/routes/director.test.ts',
+    'src/server/routes/scoreboard.test.ts',
+    'src/server/routes/highlightRoutes.test.ts',
     'src/app/tv/*.test.ts',
     'src/test/tvBuildConfig.test.ts',
     'src/server/auth/tvLocation.test.ts',
@@ -181,10 +191,12 @@ for (const path of paths)
       istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
     )
 const { validateCounts } = require('./llvm-changed-line-counts.cjs')
-const nativeEnvelope = JSON.parse(
-  readFileSync('appletv/coverage/native-counts.json', 'utf8')
-)
-Object.assign(counts, validateCounts(nativeEnvelope, process.cwd()))
+if (nativePaths.length > 0) {
+  const nativeEnvelope = JSON.parse(
+    readFileSync('appletv/coverage/native-counts.json', 'utf8')
+  )
+  Object.assign(counts, validateCounts(nativeEnvelope, process.cwd()))
+}
 const result = lineReportFromCounts(
   changedLines(diff),
   counts,

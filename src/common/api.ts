@@ -1062,6 +1062,14 @@ export type HighlightsResponse = Omit<
   'highlights'
 > & { highlights: Highlight[] }
 
+export type TvHighlight = Highlight & { preferred: boolean }
+const asTvHighlights = asObject({
+  highlights: asArray((raw: unknown): TvHighlight => ({
+    ...asHighlight(raw),
+    ...asObject({ preferred: asBoolean })(raw)
+  }))
+})
+
 const asRates = asObject({
   avg: asOptional(asNumber),
   obp: asOptional(asNumber),
@@ -1633,6 +1641,31 @@ export const asSeasonGame = withEventMetadata(
   })
 )
 export type SeasonGame = ReturnType<typeof asSeasonGame>
+
+export type VideoGame = SeasonGame & {
+  latestVideoId: string
+  latestVideoAt: string
+}
+export const asVideoGame: Cleaner<VideoGame> = raw => ({
+  ...asSeasonGame(raw),
+  ...asObject({ latestVideoId: asString, latestVideoAt: asString })(raw)
+})
+export interface VideoCollectionOptions {
+  team?: string
+  participant?: string
+  q?: string
+  offset?: number
+  limit?: number
+  sort?: 'date' | 'upload'
+}
+function videoCollectionQuery(options: VideoCollectionOptions): string {
+  return [
+    'hasVideo=1',
+    ...Object.entries(options)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+  ].join('&')
+}
 
 /** A player a roster manager may add, as the search card draws them. */
 export interface RosterCandidate {
@@ -4475,6 +4508,34 @@ export class TeamStationClient {
     return await this.request('GET', `/events${query}`, asArray(asSeasonGame))
   }
 
+  async videoGames(options: VideoCollectionOptions = {}): Promise<VideoGame[]> {
+    return await this.request(
+      'GET',
+      `/events?${videoCollectionQuery(options)}`,
+      asArray(asVideoGame)
+    )
+  }
+
+  async videoTeams(
+    options: VideoCollectionOptions = {}
+  ): Promise<TeamSummary[]> {
+    return await this.request(
+      'GET',
+      `/teams?${videoCollectionQuery(options)}`,
+      asArray(asTeamSummary)
+    )
+  }
+
+  async videoPlayers(
+    options: VideoCollectionOptions = {}
+  ): Promise<UserMatch[]> {
+    return await this.request(
+      'GET',
+      `/users?${videoCollectionQuery(options)}`,
+      asArray(asUserMatch)
+    )
+  }
+
   /**
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
@@ -4623,6 +4684,16 @@ export class TeamStationClient {
       `/videos/${encodeURIComponent(videoId)}/highlights`,
       asHighlightsResponse
     )
+  }
+
+  async tvHighlights(videoId: string): Promise<TvHighlight[]> {
+    return (
+      await this.request(
+        'GET',
+        `/videos/${encodeURIComponent(videoId)}/highlights?personalized=1`,
+        asTvHighlights
+      )
+    ).highlights
   }
 
   /**
