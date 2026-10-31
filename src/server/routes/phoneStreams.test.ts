@@ -1811,6 +1811,46 @@ describe('phones and Directors asking for their streams by device', function () 
       }
     })
 
+    it('leaves a removed camera removed when its upload lands late', async function () {
+      if (db == null) this.skip()
+      for (const withVideo of [true, false]) {
+        const gameId = await newGame()
+        const home = await ask(gameId, phone('Home Plate'))
+        if (withVideo) await aired(home.body.id, 0, 600)
+        else
+          await db
+            .updateTable('live_streams')
+            .set({ video_id: null })
+            .where('id', '=', home.body.id)
+            .execute()
+        await recorded(gameId, home.body.id)
+        await end(gameId, home.body.id)
+        const removed = await call(
+          'DELETE',
+          `/games/${gameId}/live-streams/${home.body.id}`,
+          OWNER
+        )
+        expect(removed.status).equals(200)
+
+        const upload = await uploadVideo(gameId, 0, 600)
+        await replaceLiveRecording(db, gameId, upload, {
+          liveStreamId: home.body.id,
+          wholeStream: true
+        })
+        const row = await db
+          .selectFrom('live_streams')
+          .select(['state', 'local_recording as localRecording'])
+          .where('id', '=', home.body.id)
+          .executeTakeFirstOrThrow()
+        expect(row, String(withVideo)).deep.equals({
+          state: 'revoked',
+          localRecording: 'uploaded'
+        })
+        const listed = await call('GET', `/games/${gameId}/live-streams`, OWNER)
+        expect(listed.body.mine).deep.equals([])
+      }
+    })
+
     it('settles nothing for a stream with no video that keeps no recording, or is on the air', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
