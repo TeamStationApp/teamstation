@@ -46,3 +46,17 @@ npm run e2e -- golden rotate                               # retire history; dat
 ```
 
 `accept` pushes the PNG to the private store named by `goldenStore` and updates `goldens/manifest.json` in the working tree, which is what you commit. Review a golden change as that manifest diff, with the before and after in the handoff.
+
+## The AI judge
+
+`ask` in a checkpoint states, in plain words, what a golden cannot pin, such as a video frame or live data. Haiku judges a downscaled screen, and an unsure or low-confidence answer escalates once to Sonnet. Ask about state, not exact counts or pixel positions, which belong to `expect` and goldens.
+
+A judge can fail a test only once it has reached the bar: at least 95% recall on defects and at most 2% false failures on the corpus, recorded in `goldens/judge-bar.json`. Below the bar, or when it is unsure, has no key or has no budget left, the run reports `needs-review` and exits 4, never a pass. On a golden mismatch it may label the difference, which is advice and cannot change the verdict.
+
+```sh
+npm run e2e -- judge-eval --judge haiku [--budget-usd 2]   # scores the corpus, and records the bar
+npm run e2e -- judge-corpus add <run-dir> --checkpoint <id> --question <true statement> --false-question <false statement>
+npm run e2e -- judge-corpus add-log <file> --question <statement> --expected pass|fail
+```
+
+The corpus lives in the private golden store. `add` turns one clean capture into six labelled items: clean, blank, clipped, shifted, wrong text and an error dialog. `run --budget-usd` caps a run's spend, defaulting to `judgeBudgetUsd` in the local settings, and with neither set nothing is spent. Video has free measurements in `core/video.ts` first: frozen, black and silent spans, and a contact sheet for a judge's state questions.

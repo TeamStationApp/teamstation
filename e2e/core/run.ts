@@ -6,9 +6,11 @@ import { join } from 'node:path'
 import {
   Checkpoints,
   type CheckpointTarget,
+  type JudgeRuntime,
   statusFromCheckpoints
 } from './checkpoint'
 import { deviceClassOf } from './goldens'
+import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
 import { attachDevice, connectDaemon } from './maestro'
 import { findScenario, ROOT } from './manifest'
 import {
@@ -20,7 +22,7 @@ import {
   writeResult
 } from './result'
 import { seatServerErrors } from './seatLog'
-import { type LocalSettings, readSecret } from './settings'
+import { hasSecret, type LocalSettings, readSecret } from './settings'
 import {
   type E2eContext,
   SEAT_ONLY_SERVICES,
@@ -43,6 +45,8 @@ export interface RunOptions {
   budgetUsd?: number
   /** Other scenarios share this seat, so a 5xx must name this one's world to count. */
   concurrent?: boolean
+  /** Stands in for the configured judge, in tests. */
+  judges?: JudgeRuntime
   settings: LocalSettings
   root?: string
 }
@@ -105,6 +109,36 @@ function pinStatusBar(udid: string): void {
   ])
 }
 
+/** The judge this machine has a key for, if any. A spent or absent budget stops it. */
+function configuredJudges(options: RunOptions, root: string): JudgeRuntime {
+  const budget = new Budget(
+    options.budgetUsd ?? options.settings.judgeBudgetUsd ?? 0
+  )
+  if (!hasSecret(options.settings, 'anthropic')) {
+    return { judge: undefined, budget, authoritative: false }
+  }
+  const client = {
+    messages: {
+      create: async (body: Record<string, unknown>) =>
+        await createMessage(readSecret(options.settings, 'anthropic'), body)
+    }
+  }
+  return {
+    judge: haikuJudge(client),
+    budget,
+    authoritative: judgeHasAuthority(root, 'haiku')
+  }
+}
+
+function spentOn(checkpoints: Checkpoints | undefined): number {
+  let total = 0
+  for (const record of checkpoints?.records ?? []) {
+    total += record.ask?.costUsd ?? 0
+    total += record.annotation?.costUsd ?? 0
+  }
+  return total
+}
+
 /** Runs one scenario on one surface, and always writes a truthful `result.json`. */
 export async function runScenario(options: RunOptions): Promise<RunOutcome> {
   const root = options.root ?? ROOT
@@ -125,7 +159,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       status,
       ...(reason == null ? {} : { reason }),
       durationMs: Date.now() - started,
-      costUsd: 0,
+      costUsd: spentOn(checkpoints),
       degradations,
       ...(targetKind == null ? {} : { target: targetKind }),
       checkpoints: checkpoints?.records ?? [],
@@ -211,7 +245,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       settings: options.settings,
       serverErrors: async () => await handle.serverErrors(started),
       alone: options.concurrent !== true,
-      worldIds: () => []
+      worldIds: () => [],
+      judges: options.judges ?? configuredJudges(options, root)
     })
     const running = checkpoints
 
@@ -309,9 +344,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     if (failure != null) throw failure
     const verdict = statusFromCheckpoints(running.records)
     if (verdict.status === 'failed') throw new Error(verdict.reason)
-    if (verdict.status === 'unbaselined') {
-      return finish('unbaselined', verdict.reason)
-    }
+    if (verdict.status !== 'passed')
+      return finish(verdict.status, verdict.reason)
     return finish(degradations.length > 0 ? 'passed-degraded' : 'passed')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

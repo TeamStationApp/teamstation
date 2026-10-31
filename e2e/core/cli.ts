@@ -4,6 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import { PNG } from 'pngjs'
+
+import {
+  addToCorpus,
+  type CorpusItem,
+  logItem,
+  readCorpus,
+  scoreJudge,
+  screenItems
+} from './corpus'
 import {
   acceptGolden,
   type GoldenManifest,
@@ -11,15 +21,26 @@ import {
   rotateStore,
   syncStore
 } from './goldens'
+import {
+  Budget,
+  createMessage,
+  HAIKU,
+  haikuJudge,
+  type JudgeInput,
+  readJudgeBar,
+  writeJudgeBar
+} from './judge'
 import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
 import { type PlanResource, planScenarios } from './plan'
 import { prepareApp } from './prepare'
+import { BlockedError } from './result'
 import { runScenario } from './run'
 import { selectScenarios } from './select'
-import { loadSettings, type LocalSettings } from './settings'
+import { loadSettings, type LocalSettings, readSecret } from './settings'
 import type { StackHandle } from './spec'
 import { startStack } from './stack'
 import { trackedFiles, validate } from './validate'
+import { openWebSession } from './web'
 
 const STACKS = join(tmpdir(), 'teamstation-e2e-stacks')
 
@@ -53,6 +74,32 @@ function targetFor(
   return undefined
 }
 
+/** A capture with the app's failure screen over it, drawn by a real browser. */
+async function renderErrorDialog(
+  settings: LocalSettings,
+  runDir: string,
+  capture: Buffer
+): Promise<Buffer> {
+  const { width, height } = PNG.sync.read(capture)
+  const page = join(runDir, 'error-dialog.html')
+  writeFileSync(
+    page,
+    `<!doctype html><body style="margin:0;font-family:sans-serif">
+<img src="data:image/png;base64,${capture.toString('base64')}" style="display:block">
+<div style="position:fixed;inset:20% 10%;background:#fff;border:1px solid #888;padding:24px;text-align:center">
+<h2>Something went wrong</h2><p>The app hit a problem drawing this screen.</p><button>Reload</button>
+</div></body>`
+  )
+  const session = await openWebSession(settings, runDir, { width, height })
+  try {
+    await session.m.openLink({ link: `file://${page}` })
+    await session.m.assertVisible({ text: 'Something went wrong' })
+    return Buffer.from(await session.m.screenshot())
+  } finally {
+    await session.close()
+  }
+}
+
 function gitOutput(args: string[]): string {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim()
 }
@@ -77,6 +124,10 @@ const OPTIONS = {
   package: { type: 'string' },
   'run-dir': { type: 'string' },
   checkpoint: { type: 'string' },
+  judge: { type: 'string' },
+  question: { type: 'string' },
+  'false-question': { type: 'string' },
+  expected: { type: 'string' },
   'manifest-ref': { type: 'string' },
   concurrent: { type: 'boolean' },
   retries: { type: 'string' },
@@ -319,6 +370,99 @@ export async function main(argv: string[]): Promise<number> {
       throw new Error('golden wants accept, sync or rotate')
     }
 
+    case 'judge-eval': {
+      if (values.judge !== 'haiku') {
+        throw new Error('judge-eval wants --judge haiku')
+      }
+      const store = requireStore(settings.goldenStore)
+      const corpus = readCorpus(store)
+      if (corpus.items.length === 0) {
+        throw new BlockedError(
+          'the corpus is empty: run `e2e judge-corpus add`'
+        )
+      }
+      const apiKey = readSecret(settings, 'anthropic')
+      const judge = haikuJudge({
+        messages: { create: async body => await createMessage(apiKey, body) }
+      })
+      const read = (item: CorpusItem): JudgeInput =>
+        item.file.endsWith('.txt')
+          ? { kind: 'text', text: readFileSync(join(store, item.file), 'utf8') }
+          : { kind: 'image', png: readFileSync(join(store, item.file)) }
+      const score = await scoreJudge(
+        judge,
+        corpus,
+        read,
+        new Budget(
+          values['budget-usd'] == null ? 2 : Number(values['budget-usd'])
+        )
+      )
+      const bar = readJudgeBar(ROOT)
+      bar.judges[judge.id] = {
+        passed: score.passed,
+        recall: score.recall,
+        falseFailures: score.falseFailures,
+        model: HAIKU.model,
+        date: new Date().toISOString().slice(0, 10)
+      }
+      writeJudgeBar(ROOT, bar)
+      print(score)
+      return score.passed ? 0 : 1
+    }
+
+    case 'judge-corpus': {
+      const store = requireStore(settings.goldenStore)
+      if (subcommand === 'add') {
+        const runDir = positionals[2]
+        if (
+          runDir == null ||
+          values.checkpoint == null ||
+          values.question == null ||
+          values['false-question'] == null
+        ) {
+          throw new Error(
+            'judge-corpus add wants <run-dir> --checkpoint --question --false-question'
+          )
+        }
+        const capture = readFileSync(
+          join(runDir, 'captures', `${values.checkpoint}.png`)
+        )
+        const dialog = await renderErrorDialog(settings, runDir, capture)
+        print({
+          added: addToCorpus(
+            store,
+            screenItems(
+              capture,
+              values.question,
+              values['false-question'],
+              dialog
+            )
+          )
+        })
+        return 0
+      }
+      if (subcommand === 'add-log') {
+        const file = positionals[2]
+        const expected = values.expected
+        if (
+          file == null ||
+          values.question == null ||
+          (expected !== 'pass' && expected !== 'fail')
+        ) {
+          throw new Error(
+            'judge-corpus add-log wants <file> --question --expected pass|fail'
+          )
+        }
+        print({
+          added: addToCorpus(store, [
+            logItem(readFileSync(file, 'utf8'), expected, values.question)
+          ])
+        })
+        return 0
+      }
+      throw new Error('judge-corpus wants add or add-log')
+    }
+
     default:
       throw new Error(`Unknown command "${command}"`)
   }
@@ -333,6 +477,6 @@ if (require.main === module) {
     })
     .catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error))
-      process.exit(3)
+      process.exit(error instanceof BlockedError ? 2 : 3)
     })
 }
