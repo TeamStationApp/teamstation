@@ -233,6 +233,7 @@ describe('screen scopes on the game socket', function () {
     socket = attachGameSocket(server, db, scratchUrl, {
       pingMs: 60_000,
       stopSignals: null,
+      resyncSpreadMs: 0,
       fanout: { coalesceMs: 20, log: () => undefined },
       screenScopes: {
         coalesceMs: 80,

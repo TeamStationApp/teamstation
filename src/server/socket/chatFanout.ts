@@ -7,6 +7,7 @@ import { asUserId } from '../../common/userId'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
 import { type Database, isPoolTimeout } from '../db/database'
+import { spread } from './spread'
 
 /**
  * What every chat writer notifies on `chat_changes`, inside its
@@ -50,6 +51,8 @@ export interface ChatFanoutOptions {
   feed: ChangeFeed
   /** How long to wait before trying an owed `resync` again. */
   retryMs?: number
+  /** The window `resync` frames are spread over; 0, the default, sends at once. */
+  resyncSpreadMs?: number
   /** How many conversations' member sets are kept. */
   cacheSize?: number
   readMembers?: MemberReader
@@ -96,7 +99,7 @@ export async function notifyTyping(
  *
  * Like `GameFanout`, it acts once the feed returns after a gap. Hints sent
  * meanwhile were never heard, so every chat socket on the worker is told to
- * `resync`.
+ * `resync`, each at its own moment within `resyncSpreadMs`.
  *
  * A hint whose member set cannot be read for want of a connection cannot be
  * sent, and who to tell is exactly what could not be read. So the read is
@@ -108,6 +111,7 @@ export class ChatFanout {
   readonly listening: Promise<void>
   private readonly db: Kysely<Database>
   private readonly retryMs: number
+  private readonly resyncSpreadMs: number
   private readonly cacheSize: number
   private readonly readMembers: MemberReader
   private readonly now: () => Date
@@ -118,12 +122,16 @@ export class ChatFanout {
   private readonly members = new Map<string, Promise<Set<string>>>()
   /** Conversations whose members are owed a `resync`, with its next try. */
   private readonly owed = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Sockets with a spread `resync` still to come, and its timers. */
+  private readonly resyncDue = new Set<ChatSubscriber>()
+  private readonly spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   private readonly stopListening: () => void
   private closed = false
 
   constructor(options: ChatFanoutOptions) {
     this.db = options.db
     this.retryMs = options.retryMs ?? 1000
+    this.resyncSpreadMs = options.resyncSpreadMs ?? 0
     this.cacheSize = options.cacheSize ?? 1000
     this.readMembers = options.readMembers ?? readMembers
     this.now = options.now ?? (() => new Date())
@@ -179,6 +187,9 @@ export class ChatFanout {
     this.stopListening()
     for (const timer of this.owed.values()) clearTimeout(timer)
     this.owed.clear()
+    for (const timer of this.spreadTimers) clearTimeout(timer)
+    this.spreadTimers.clear()
+    this.resyncDue.clear()
     this.subscribers.clear()
     this.members.clear()
   }
@@ -261,7 +272,29 @@ export class ChatFanout {
       this.oweResync(conversationId)
       return
     }
-    for (const userId of members) this.sendTo(userId, { type: 'resync' })
+    this.resync([...members])
+  }
+
+  /**
+   * Tells these users' sockets of this moment to read again. A frame still to
+   * come covers whatever is missed before it, so a socket waiting on one gets
+   * no second. One that left meanwhile is skipped.
+   */
+  private resync(userIds: string[]): void {
+    const due = userIds
+      .flatMap(userId => [...(this.subscribers.get(userId) ?? [])])
+      .filter(subscriber => !this.resyncDue.has(subscriber))
+    for (const subscriber of due) this.resyncDue.add(subscriber)
+    spread(
+      due,
+      this.resyncSpreadMs,
+      subscriber => {
+        this.resyncDue.delete(subscriber)
+        if (this.subscribers.get(subscriber.userId)?.has(subscriber) === true)
+          subscriber.send({ type: 'resync' })
+      },
+      this.spreadTimers
+    )
   }
 
   private sendTo(userId: string, frame: ChatSocketFrame): void {
@@ -302,7 +335,6 @@ export class ChatFanout {
    */
   private returned(): void {
     this.members.clear()
-    for (const userId of [...this.subscribers.keys()])
-      this.sendTo(userId, { type: 'resync' })
+    this.resync([...this.subscribers.keys()])
   }
 }
