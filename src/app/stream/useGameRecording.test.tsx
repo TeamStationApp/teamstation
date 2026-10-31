@@ -56,7 +56,11 @@ function fixture(): {
   client: TeamStationClient
 } {
   const module = fakePhoneStreamModule({
-    capabilities: { supported: true, deviceModel: 'Phone' },
+    capabilities: {
+      supported: true,
+      deviceModel: 'Phone',
+      canRecordLocally: true
+    },
     recordings: []
   })
   const calls: Array<{ name?: string; options?: DeviceStreamOptions }> = []
@@ -172,6 +176,20 @@ describe('recording from the game hero', () => {
     expect(opened?.startOnOpen).equals(true)
   })
 
+  it('asks for a stream that keeps no recording on a phone under the start floor', async () => {
+    const fake = fixture()
+    fake.module.answers.capabilities = {
+      supported: true,
+      deviceModel: 'Phone',
+      canRecordLocally: false
+    }
+    await mount(fake)
+    await press('Record')
+    await press('Home')
+    await press('Start')
+    expect(fake.calls[0].options?.recordsLocally).equals(false)
+  })
+
   it('continues this device’s existing camera directly with its held stream id', async () => {
     const fake = fixture()
     fake.mine = [held]
@@ -228,7 +246,11 @@ describe('recording from the game hero', () => {
 
   it('offers no recording on an unsupported device', async () => {
     const fake = fixture()
-    fake.module.answers.capabilities = { supported: false, deviceModel: '' }
+    fake.module.answers.capabilities = {
+      supported: false,
+      deviceModel: '',
+      canRecordLocally: false
+    }
     await mount(fake)
     expect(document.body.textContent).not.includes('Record')
     expect(fake.reads).equals(0)

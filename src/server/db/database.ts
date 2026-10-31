@@ -808,7 +808,12 @@ export interface LiveStreamsTable {
   /** What that device is, in words: `iPhone 13 Pro`, `iPad Pro`. */
   device_model: string | null
   /** The phone's own recording: `none`, `recorded`, or `uploaded`. */
-  local_recording: Generated<'none' | 'recorded' | 'uploaded'>
+  local_recording: Generated<'none' | 'recorded' | 'uploaded' | 'removed'>
+  /**
+   * When a take older than the phone's 30-day limit started counting them, as
+   * its phone reports it.
+   */
+  local_copy_from: Timestamp | null
   /** Only the phone's own upload replaces this stream's live copy. */
   records_locally: Generated<boolean>
   /** The legacy Director claim route has returned this stream. */

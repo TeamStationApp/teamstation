@@ -29,6 +29,13 @@ public struct PhoneRecording: Sendable, Equatable {
   /// (`ServerClock`). A phone's clock wanders by several parts in a million, so an upload hours later
   /// places the take by this one rather than by a reading taken then.
   public var serverClockOffset: Double?
+  /// Recorded before the phone's 30-day limit began, when a take was kept until the server had it.
+  /// Its 30 days count from `retentionFrom`, and only once the server can warn about them.
+  public var predatesRetention: Bool
+  /// When the first sweep saw a take that predates the limit, or when its report moved that to.
+  public var retentionFrom: WallClock?
+  /// The server knows `retentionFrom`, so its warning counts from the same moment.
+  public var retentionReported: Bool
 
   public init(
     recordingID: Int64,
@@ -44,7 +51,10 @@ public struct PhoneRecording: Sendable, Equatable {
     videoId: String? = nil,
     stoppedForLowStorage: Bool = false,
     publishedOutsideParts: Bool = false,
-    serverClockOffset: Double? = nil
+    serverClockOffset: Double? = nil,
+    predatesRetention: Bool = false,
+    retentionFrom: WallClock? = nil,
+    retentionReported: Bool = false
   ) {
     self.recordingID = recordingID
     self.liveStreamId = liveStreamId
@@ -60,6 +70,9 @@ public struct PhoneRecording: Sendable, Equatable {
     self.stoppedForLowStorage = stoppedForLowStorage
     self.publishedOutsideParts = publishedOutsideParts
     self.serverClockOffset = serverClockOffset
+    self.predatesRetention = predatesRetention
+    self.retentionFrom = retentionFrom
+    self.retentionReported = retentionReported
   }
 
   public var isUploaded: Bool { uploadedAt != nil }
@@ -79,6 +92,9 @@ public struct PhoneRecording: Sendable, Equatable {
 ///
 /// The archive index's `recordings` row carries the game and the live stream as Director's would;
 /// this table carries what only a phone has. Every write goes through the one `SQLiteStore`.
+///
+/// A row says it predates the 30-day limit unless `add` says otherwise: adding the column to a catalog
+/// an older app wrote is one statement, so every take in it reads that way from that moment.
 public final class PhoneCatalog: @unchecked Sendable {
   private let store: SQLiteStore
   private let index: ArchiveIndex
@@ -98,13 +114,28 @@ public final class PhoneCatalog: @unchecked Sendable {
         video_id TEXT,
         low_storage_stop INTEGER NOT NULL DEFAULT 0,
         published_outside_parts INTEGER NOT NULL DEFAULT 0,
-        server_clock_offset REAL
+        server_clock_offset REAL,
+        predates_retention INTEGER NOT NULL DEFAULT 1,
+        retention_from REAL,
+        retention_reported INTEGER NOT NULL DEFAULT 0
       );
       """)
-    // A catalog made before the take kept its clock offset.
-    let columns = try store.query("PRAGMA table_info(phone_recordings);").map { $0.string(1) }
-    if !columns.contains("server_clock_offset") {
-      try store.execute("ALTER TABLE phone_recordings ADD COLUMN server_clock_offset REAL;")
+    // A catalog an older app wrote gains each column it lacks, each checked on its own and all
+    // added in one transaction: an upgrade cut off part-way leaves nothing added, and one that
+    // somehow added only some is finished by the next open, never left missing a column.
+    try store.transaction { trx in
+      let columns = Set(try trx.query("PRAGMA table_info(phone_recordings);").map { $0.string(1) })
+      let added: [(name: String, definition: String)] = [
+        // A catalog made before the take kept its clock offset.
+        ("server_clock_offset", "REAL"),
+        // A catalog made before takes had a 30-day limit.
+        ("predates_retention", "INTEGER NOT NULL DEFAULT 1"),
+        ("retention_from", "REAL"),
+        ("retention_reported", "INTEGER NOT NULL DEFAULT 0"),
+      ]
+      for column in added where !columns.contains(column.name) {
+        try trx.execute("ALTER TABLE phone_recordings ADD COLUMN \(column.name) \(column.definition);")
+      }
     }
     // The stream this phone is on the air with, while it is: what a relaunch after a kill puts back.
     // The live session says whether, and for how long the app was away; this says which.
@@ -116,6 +147,60 @@ public final class PhoneCatalog: @unchecked Sendable {
         angle_name TEXT NOT NULL
       );
       """)
+    // The streams whose take the sweep deleted unuploaded, until the server has been told.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS phone_swept (
+        live_stream_id TEXT PRIMARY KEY,
+        game_id TEXT NOT NULL
+      );
+      """)
+  }
+
+  /// A stream whose take the retention sweep deleted, as `rememberSwept` wrote it.
+  public struct SweptStream: Sendable, Equatable {
+    public var liveStreamId: String
+    public var gameId: String
+
+    public init(liveStreamId: String, gameId: String) {
+      self.liveStreamId = liveStreamId
+      self.gameId = gameId
+    }
+  }
+
+  public func rememberSwept(_ stream: SweptStream) throws {
+    try store.execute(
+      "INSERT OR REPLACE INTO phone_swept (live_stream_id, game_id) VALUES (?, ?);",
+      [ .text(stream.liveStreamId), .text(stream.gameId) ]
+    )
+  }
+
+  public func swept() throws -> [SweptStream] {
+    try store.query("SELECT live_stream_id, game_id FROM phone_swept;").map {
+      SweptStream(liveStreamId: $0.string(0), gameId: $0.string(1))
+    }
+  }
+
+  public func forgetSwept(_ liveStreamId: String) throws {
+    try store.execute("DELETE FROM phone_swept WHERE live_stream_id = ?;", [ .text(liveStreamId) ])
+  }
+
+  /// Starts the 30 days of every take that predates the limit and has not started them.
+  public func startRetention(at wall: WallClock) throws {
+    try store.execute(
+      "UPDATE phone_recordings SET retention_from = ? WHERE predates_retention = 1 AND retention_from IS NULL;",
+      [ .real(wall.seconds) ]
+    )
+  }
+
+  /// The server knows when this stream's take that predates the limit began its 30 days.
+  public func setRetentionReported(_ liveStreamId: String, from wall: WallClock) throws {
+    try store.execute(
+      """
+      UPDATE phone_recordings SET retention_from = ?, retention_reported = 1
+      WHERE live_stream_id = ? AND predates_retention = 1;
+      """,
+      [ .real(wall.seconds), .text(liveStreamId) ]
+    )
   }
 
   /// The stream on the air, as `setLive` wrote it.
@@ -155,8 +240,8 @@ public final class PhoneCatalog: @unchecked Sendable {
     try index.setGame(recordingID, gameId: gameId, title: angleName)
     try store.execute(
       """
-      INSERT OR REPLACE INTO phone_recordings (recording_id, live_stream_id, game_id, angle_name)
-      VALUES (?, ?, ?, ?);
+      INSERT OR REPLACE INTO phone_recordings (recording_id, live_stream_id, game_id, angle_name, predates_retention)
+      VALUES (?, ?, ?, ?, 0);
       """,
       [ .integer(recordingID), .text(liveStreamId), .text(gameId), .text(angleName) ]
     )
@@ -170,7 +255,8 @@ public final class PhoneCatalog: @unchecked Sendable {
     let rows = try store.query(
       """
       SELECT recording_id, live_stream_id, game_id, angle_name, upload_id, upload_title,
-        uploaded_at, video_id, low_storage_stop, published_outside_parts, server_clock_offset
+        uploaded_at, video_id, low_storage_stop, published_outside_parts, server_clock_offset,
+        predates_retention, retention_from, retention_reported
       FROM phone_recordings;
       """
     )
@@ -193,7 +279,10 @@ public final class PhoneCatalog: @unchecked Sendable {
         videoId: Self.optionalText(row, 7),
         stoppedForLowStorage: row.int(8) != 0,
         publishedOutsideParts: row.int(9) != 0,
-        serverClockOffset: row.values[10] == .null ? nil : row.double(10)
+        serverClockOffset: row.values[10] == .null ? nil : row.double(10),
+        predatesRetention: row.int(11) != 0,
+        retentionFrom: row.values[12] == .null ? nil : WallClock(seconds: row.double(12)),
+        retentionReported: row.int(13) != 0
       )
     }
     .sorted { $0.startedAt > $1.startedAt }

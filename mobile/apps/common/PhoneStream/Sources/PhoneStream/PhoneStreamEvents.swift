@@ -53,10 +53,9 @@ public struct PhoneStreamStatus: Sendable, Equatable {
 public enum PhoneStreamError: String, Error, Sendable, Equatable {
   /// The server ended this camera (410): the pill reads "Stream ended", and the recording goes on.
   case streamEnded
-  /// A part finished because free space fell below 500 MB; the stream goes on.
+  /// No part is being recorded for lack of space, and the stream goes on: a part finished because
+  /// free space fell below 2 GB, or Record started under 10 GB free and only the stream went out.
   case recordingStoppedLowStorage
-  /// Recording would not start with under 2 GB free.
-  case insufficientStorage
   /// The take of this stream is being uploaded, or its upload was cut off and will resume: no part
   /// may be added after the export being sent was made.
   case uploadInProgress

@@ -45,6 +45,9 @@ typedef void (^TSPhoneStreamReply)(id _Nullable value, NSString *_Nullable code,
 - (void)radarUnpair:(NSString *)serial reply:(TSPhoneStreamReply)reply;
 - (void)radarState:(TSPhoneStreamReply)reply;
 - (void)recordings:(TSPhoneStreamReply)reply;
+- (void)sweptStreams:(TSPhoneStreamReply)reply;
+- (void)forgetSwept:(NSString *)liveStreamId reply:(TSPhoneStreamReply)reply;
+- (void)retentionReported:(NSString *)liveStreamId from:(double)from reply:(TSPhoneStreamReply)reply;
 - (void)uploadRecording:(NSString *)liveStreamId
                 apiBase:(NSString *)apiBase
                   token:(NSString *)token
@@ -254,6 +257,24 @@ static NSDictionary *requestDictionary(JS::NativePhoneStream::NativePhoneStreamR
 - (void)recordings:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
   [_bridge recordings:settle(resolve, reject)];
+}
+
+- (void)sweptStreams:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+  [_bridge sweptStreams:settle(resolve, reject)];
+}
+
+- (void)forgetSwept:(NSString *)liveStreamId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+  [_bridge forgetSwept:liveStreamId reply:settle(resolve, reject)];
+}
+
+- (void)retentionReported:(NSString *)liveStreamId
+                     from:(double)from
+                  resolve:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject
+{
+  [_bridge retentionReported:liveStreamId from:from reply:settle(resolve, reject)];
 }
 
 - (void)uploadRecording:(NSString *)liveStreamId

@@ -34,7 +34,11 @@ const game = asGameDetail({
 })
 let streams: LiveStream[] = []
 const native = fakePhoneStreamModule({
-  capabilities: { supported: true, deviceModel: 'Phone' },
+  capabilities: {
+    supported: true,
+    deviceModel: 'Phone',
+    canRecordLocally: true
+  },
   recordings: []
 })
 const phone = makePhoneStream(native)

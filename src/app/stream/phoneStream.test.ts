@@ -19,7 +19,8 @@ describe('phone streaming in a browser', function () {
   it('reports unsupported, so no Record video is offered', async function () {
     expect(await phoneStream.capabilities()).deep.equals({
       supported: false,
-      deviceModel: ''
+      deviceModel: '',
+      canRecordLocally: false
     })
     try {
       await phoneStream.open('Home Plate')

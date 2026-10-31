@@ -33,7 +33,16 @@ data class PhoneRecording(
      * ([ServerClock]). A phone's clock wanders by several parts in a million, so an upload hours later
      * places the take by this one rather than by a reading taken then.
      */
-    val serverClockOffset: Double? = null
+    val serverClockOffset: Double? = null,
+    /**
+     * Recorded before the phone's 30-day limit began, when a take was kept until the server had it.
+     * Its 30 days count from [retentionFrom], and only once the server can warn about them.
+     */
+    val predatesRetention: Boolean = false,
+    /** When the first sweep saw a take that predates the limit, or when its report moved that to. */
+    val retentionFrom: Double? = null,
+    /** The server knows [retentionFrom], so its warning counts from the same moment. */
+    val retentionReported: Boolean = false
 ) {
     val isUploaded: Boolean get() = uploadedAt != null
 
@@ -54,6 +63,9 @@ data class PhoneRecording(
  *
  * The catalog's `recordings` row carries the game and the live stream as TS Director's would; this
  * table carries what only a phone has.
+ *
+ * A row says it predates the 30-day limit unless [add] says otherwise: adding the column to a catalog
+ * an older app wrote is one statement, so every take in it reads that way from that moment.
  */
 class PhoneCatalog(val index: RecordingCatalog) {
     private val database = index.database
@@ -72,16 +84,35 @@ class PhoneCatalog(val index: RecordingCatalog) {
               video_id TEXT,
               low_storage_stop INTEGER NOT NULL DEFAULT 0,
               published_outside_parts INTEGER NOT NULL DEFAULT 0,
-              server_clock_offset REAL
+              server_clock_offset REAL,
+              predates_retention INTEGER NOT NULL DEFAULT 1,
+              retention_from REAL,
+              retention_reported INTEGER NOT NULL DEFAULT 0
             );
             """.trimIndent()
         )
-        // A catalog made before the take kept its clock offset.
-        val columns = database.rawQuery("PRAGMA table_info(phone_recordings);", null).use { cursor ->
-            buildList { while (cursor.moveToNext()) add(cursor.getString(1)) }
-        }
-        if ("server_clock_offset" !in columns) {
-            database.execSQL("ALTER TABLE phone_recordings ADD COLUMN server_clock_offset REAL;")
+        // A catalog an older app wrote gains each column it lacks, each checked on its own and all
+        // added in one transaction: an upgrade cut off part-way leaves nothing added, and one that
+        // somehow added only some is finished by the next open, never left missing a column.
+        database.beginTransaction()
+        try {
+            val columns = database.rawQuery("PRAGMA table_info(phone_recordings);", null).use { cursor ->
+                buildSet { while (cursor.moveToNext()) add(cursor.getString(1)) }
+            }
+            val added = listOf(
+                // A catalog made before the take kept its clock offset.
+                "server_clock_offset" to "REAL",
+                // A catalog made before takes had a 30-day limit.
+                "predates_retention" to "INTEGER NOT NULL DEFAULT 1",
+                "retention_from" to "REAL",
+                "retention_reported" to "INTEGER NOT NULL DEFAULT 0",
+            )
+            for ((name, definition) in added) {
+                if (name !in columns) database.execSQL("ALTER TABLE phone_recordings ADD COLUMN $name $definition;")
+            }
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
         }
         // The stream this phone is on the air with, while it is: what a relaunch after a kill puts
         // back. The live session says whether, and for how long the app was away; this says which.
@@ -94,6 +125,50 @@ class PhoneCatalog(val index: RecordingCatalog) {
               angle_name TEXT NOT NULL
             );
             """.trimIndent()
+        )
+        // The streams whose take the sweep deleted unuploaded, until the server has been told.
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS phone_swept (
+              live_stream_id TEXT PRIMARY KEY,
+              game_id TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+    }
+
+    /** A stream whose take the retention sweep deleted, as [rememberSwept] wrote it. */
+    data class SweptStream(val liveStreamId: String, val gameId: String)
+
+    fun rememberSwept(stream: SweptStream) {
+        database.execSQL(
+            "INSERT OR REPLACE INTO phone_swept (live_stream_id, game_id) VALUES (?, ?);",
+            arrayOf<Any>(stream.liveStreamId, stream.gameId)
+        )
+    }
+
+    fun swept(): List<SweptStream> =
+        database.rawQuery("SELECT live_stream_id, game_id FROM phone_swept;", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(SweptStream(cursor.getString(0), cursor.getString(1))) }
+        }
+
+    fun forgetSwept(liveStreamId: String) {
+        database.execSQL("DELETE FROM phone_swept WHERE live_stream_id = ?;", arrayOf<Any>(liveStreamId))
+    }
+
+    /** Starts the 30 days of every take that predates the limit and has not started them. */
+    fun startRetention(wall: Double) {
+        database.execSQL(
+            "UPDATE phone_recordings SET retention_from = ? WHERE predates_retention = 1 AND retention_from IS NULL;",
+            arrayOf<Any>(wall)
+        )
+    }
+
+    /** The server knows when this stream's take that predates the limit began its 30 days. */
+    fun setRetentionReported(liveStreamId: String, from: Double) {
+        database.execSQL(
+            "UPDATE phone_recordings SET retention_from = ?, retention_reported = 1 WHERE live_stream_id = ? AND predates_retention = 1;",
+            arrayOf<Any>(from, liveStreamId)
         )
     }
 
@@ -119,7 +194,10 @@ class PhoneCatalog(val index: RecordingCatalog) {
         index.setLiveStreamId(liveStreamId, recordingID)
         index.setGame(recordingID, gameId, angleName)
         database.execSQL(
-            "INSERT OR REPLACE INTO phone_recordings (recording_id, live_stream_id, game_id, angle_name) VALUES (?, ?, ?, ?);",
+            """
+            INSERT OR REPLACE INTO phone_recordings (recording_id, live_stream_id, game_id, angle_name, predates_retention)
+            VALUES (?, ?, ?, ?, 0);
+            """.trimIndent(),
             arrayOf<Any>(recordingID, liveStreamId, gameId, angleName)
         )
     }
@@ -136,7 +214,8 @@ class PhoneCatalog(val index: RecordingCatalog) {
         return database.rawQuery(
             """
             SELECT recording_id, live_stream_id, game_id, angle_name, upload_id, upload_title,
-              uploaded_at, video_id, low_storage_stop, published_outside_parts, server_clock_offset
+              uploaded_at, video_id, low_storage_stop, published_outside_parts, server_clock_offset,
+              predates_retention, retention_from, retention_reported
             FROM phone_recordings;
             """.trimIndent(),
             null
@@ -159,7 +238,10 @@ class PhoneCatalog(val index: RecordingCatalog) {
                             videoId = cursor.text(7),
                             stoppedForLowStorage = cursor.getInt(8) != 0,
                             publishedOutsideParts = cursor.getInt(9) != 0,
-                            serverClockOffset = if (cursor.isNull(10)) null else cursor.getDouble(10)
+                            serverClockOffset = if (cursor.isNull(10)) null else cursor.getDouble(10),
+                            predatesRetention = cursor.getInt(11) != 0,
+                            retentionFrom = if (cursor.isNull(12)) null else cursor.getDouble(12),
+                            retentionReported = cursor.getInt(13) != 0
                         )
                     )
                 }

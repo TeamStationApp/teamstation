@@ -173,8 +173,6 @@ let closing: Promise<void> = Promise.resolve()
 export function describeRefusal(error: unknown, angleName: string): string {
   if (error instanceof PhoneStreamError) {
     if (error.code === 'permission') return lstrings.stream_error_permission
-    if (error.code === 'insufficientStorage')
-      return lstrings.stream_error_storage
     if (error.code === 'uploadInProgress')
       return sprintf(lstrings.stream_error_uploading, angleName)
     if (error.code === CAMERA_UNAVAILABLE)
@@ -201,9 +199,10 @@ export function describeRefusal(error: unknown, angleName: string): string {
  *
  * Record starts the recording and the stream together, on the stream URL the
  * server gave this phone for the angle; stopping takes a slide, and Close and
- * Android's back are held while either runs. The first time a part ends, the
- * server is told this phone holds a recording, which starts the upload
- * reminder. Opened again after a kill on the stream whose take was rolling,
+ * Android's back are held while either runs. A phone short of space streams
+ * without recording, and says so. The first time a part ends, the server is
+ * told this phone holds a recording, which starts the upload reminder. Opened
+ * again after a kill on the stream whose take was rolling,
  * it carries that take on.
  *
  * The gear opens the settings sheet (microphone, lenses, the angle's name,
@@ -312,6 +311,9 @@ function StreamingOverlay(
   // Record until it is back, so Record is not offered meanwhile. A recording
   // or stream already running can still be stopped.
   const cameraLost = cameraUnavailable(status)
+  // On the air with no part recording, for lack of space.
+  const streamingOnly =
+    streaming && status?.error === 'recordingStoppedLowStorage'
   // The game's scoreboard hears each radar reading while a radar is paired.
   useScoreboardRadarPublisher({
     apiBase: client.baseUrl,
@@ -514,9 +516,14 @@ function StreamingOverlay(
     phone
       .stopRecording()
       .then(
-        () => {
+        async () => {
           setRecordingHere(false)
-          report()
+          // A camera that only streamed holds nothing to report. Unreadable,
+          // `useResumePendingUploads` says it when the app next opens.
+          const takes = await phone.recordings().catch(() => [])
+          if (takes.some(take => take.liveStreamId === session.streamId)) {
+            report()
+          }
         },
         (error: unknown) => {
           analytics?.('recording_failed', { ec: 'internal' })
@@ -526,7 +533,7 @@ function StreamingOverlay(
       .finally(() => {
         setBusy(false)
       })
-  }, [angleName, phone, report, analytics])
+  }, [angleName, phone, report, analytics, session.streamId])
 
   const flip = (): void => {
     phone.flip().then(
@@ -591,6 +598,22 @@ function StreamingOverlay(
           ]}
         >
           {lstrings.stream_camera_unavailable}
+        </Text>
+      ) : null}
+
+      {streamingOnly && problem == null ? (
+        <Text
+          testID="streaming-only"
+          style={[
+            styles.notice,
+            {
+              top: top + BUTTON_SIZE + ROW_SPACING,
+              left: insets.left + EDGE_INSET,
+              maxWidth: window.width / 2
+            }
+          ]}
+        >
+          {lstrings.stream_streaming_only}
         </Text>
       ) : null}
 
@@ -740,6 +763,17 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     backgroundColor: ENDED_RED,
+    borderRadius: 10,
+    overflow: 'hidden',
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  notice: {
+    position: 'absolute',
+    color: WHITE,
+    fontSize: 15,
+    fontWeight: '600',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
     borderRadius: 10,
     overflow: 'hidden',
     paddingHorizontal: 12,

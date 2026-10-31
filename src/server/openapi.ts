@@ -9000,9 +9000,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'A device stream\u2019s new name must not be one of my other ' +
             'active device streams\u2019 on the game (409). ' +
-            '`localRecording` takes only `recorded`, and only on a device ' +
-            'stream; the first change from `none` records an upload reminder ' +
-            'for me. `liveStartedAt` says when the stream\u2019s first picture ' +
+            '`localRecording` takes `recorded` or `removed`, and only on a ' +
+            'device stream; each change to `recorded` records an upload ' +
+            'reminder for me, and `removed` (the phone no longer holds its ' +
+            'copy) settles it. `localCopyFrom`, on a device stream, says when ' +
+            'a take recorded before the 30-day limit started counting them, ' +
+            'which is what its warning counts from. `liveStartedAt` says when the stream\u2019s first picture ' +
             'was captured, on the server\u2019s clock (`GET /time`): the live ' +
             'video is placed there unless a publisher already placed it, or ' +
             'the instant is too far from when the publish arrived to be of it. ' +
@@ -9017,7 +9020,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                   type: 'object',
                   properties: {
                     label: { type: 'string' },
-                    localRecording: { type: 'string', enum: ['recorded'] },
+                    localRecording: {
+                      type: 'string',
+                      enum: ['recorded', 'removed']
+                    },
+                    localCopyFrom: { type: 'string', format: 'date-time' },
                     liveStartedAt: { type: 'string', format: 'date-time' }
                   }
                 }

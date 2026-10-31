@@ -112,7 +112,7 @@ export interface LiveStreamRow {
   /** What that device is, in words. */
   deviceModel: string | null
   /** How far the phone's own recording of it has got. */
-  localRecording: 'none' | 'recorded' | 'uploaded'
+  localRecording: 'none' | 'recorded' | 'uploaded' | 'removed'
   /** Only the phone's own upload replaces its live copy. */
   recordsLocally: boolean
   /** The legacy Director claim route has returned it. */
@@ -308,17 +308,21 @@ export async function refuseDiscarded(
   if (await isDiscarded(db, liveStreamId)) throw gone(DELETED_CAMERA)
 }
 
-/** One key, by its id, whoever it belongs to. */
+/**
+ * One key, by its id, whoever it belongs to. Not a removed one (`revoked`)
+ * unless `removed` is `'allow'`.
+ */
 export async function liveStreamById(
   db: Kysely<Database>,
-  id: string
+  id: string,
+  options: { removed?: 'allow' } = {}
 ): Promise<LiveStreamRow | undefined> {
-  const row = await db
+  let query = db
     .selectFrom('live_streams')
     .select(STREAM_FIELDS)
     .where('id', '=', id)
-    .where('state', '<>', 'revoked')
-    .executeTakeFirst()
+  if (options.removed !== 'allow') query = query.where('state', '<>', 'revoked')
+  const row = await query.executeTakeFirst()
   return row == null ? undefined : asRow(row)
 }
 

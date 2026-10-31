@@ -98,7 +98,10 @@ class PhoneStreamMapsTest {
         assertEquals("back", lens["position"])
         assertEquals("13 mm", lens["title"])
         assertEquals(13.0, lens["focalLengthMM"])
-        assertEquals(PhoneStreamMaps.capabilities(PhoneCapabilities(true, "Google Pixel 10")), mapOf("supported" to true, "deviceModel" to "Google Pixel 10"))
+        assertEquals(
+            PhoneStreamMaps.capabilities(PhoneCapabilities(true, "Google Pixel 10", canRecordLocally = true)),
+            mapOf("supported" to true, "deviceModel" to "Google Pixel 10", "canRecordLocally" to true)
+        )
     }
 
     @Test

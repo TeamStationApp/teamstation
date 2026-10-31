@@ -5,6 +5,7 @@ import type { GroupRef } from '../../common/groupCreation'
 import {
   CHAT_DEVICE_APPROVAL,
   isSchedulingNews,
+  LOCAL_COPY_EXPIRING,
   type Notification,
   type PlayerAddTerms,
   RECORDING_UPLOAD
@@ -131,8 +132,8 @@ async function informationFor(
     description = said.description
   }
   // A reminder waits on its owner until they dismiss it or the upload lands,
-  // which settles it the same way.
-  const reminder = event.source_type === RECORDING_UPLOAD
+  // which settles it the same way. So does the warning that a copy expires.
+  const reminder = isReminderType(event.source_type)
   const waiting = reminder && receipt?.dismissed_at == null
   let link: { status: Notification['status']; expiresAt: string } | undefined
   if (event.source_type === CHAT_DEVICE_APPROVAL) {
@@ -272,9 +273,14 @@ function actorName(
   return name == null || name === '' ? 'An admin' : name
 }
 
+/** What waits on a stream's owner until the phone's copy is settled. */
+function isReminderType(type: string): boolean {
+  return type === RECORDING_UPLOAD || type === LOCAL_COPY_EXPIRING
+}
+
 /** A reminder still waiting: Pending lists these before anything else. */
 function rankOf(row: Notification): number {
-  return row.type === RECORDING_UPLOAD && row.status === 'pending' ? 0 : 1
+  return isReminderType(row.type) && row.status === 'pending' ? 0 : 1
 }
 
 /** Pending reminders first, then oldest first, then by id. */
@@ -717,7 +723,11 @@ export async function inbox(
             )
           ]),
           eb.and([
-            eb('source_type', 'in', [RECORDING_UPLOAD, PLAYER_ADD_REJECTED]),
+            eb('source_type', 'in', [
+              RECORDING_UPLOAD,
+              LOCAL_COPY_EXPIRING,
+              PLAYER_ADD_REJECTED
+            ]),
             eb.not(
               eb.exists(
                 eb

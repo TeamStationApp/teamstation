@@ -256,10 +256,11 @@ export function CameraAnglesPanel(
     if (uploadingNamed(name))
       throw new Error(sprintf(lstrings.stream_error_uploading, name))
     const id = myId ?? (await deviceId())
+    const { canRecordLocally } = await phone.capabilities()
     const stream = await client.addLiveStream(gameId, name, {
       deviceId: id,
       deviceModel,
-      recordsLocally: true,
+      recordsLocally: canRecordLocally,
       ...(held == null ? {} : { heldStreamId: held })
     })
     const url =

@@ -512,6 +512,9 @@ export function directorUploadRoutes(
    * response has been sent — so every outcome, including an unexpected one,
    * is written to the row. An upload whose row says nothing is an upload an
    * app waits on for ever.
+   *
+   * A video made by an earlier try is on the row, and a retry uses it: it goes
+   * only with the upload, when the camera is deleted or the upload given up on.
    */
   async function takeItIn(work: {
     app: unknown
@@ -524,7 +527,9 @@ export function directorUploadRoutes(
     const { row, game, space, dir, total } = work
     const whole = join(dir, 'whole')
     const ingest = options.ingest ?? ingestVideoFile
-    let videoId: string | undefined
+    // An earlier try may have made the video and failed after it. A retry goes
+    // on from that one, so a game never holds two copies of one upload.
+    let videoId = row.video_id ?? undefined
     /**
      * The camera was deleted, or the upload given up on, while this ran. That
      * is no failure and no success: nothing of it stays and nobody is told.
@@ -557,90 +562,122 @@ export function directorUploadRoutes(
     const offsetMs = row.started_at == null ? null : row.server_clock_offset_ms
     const recorded = startOf(row.started_at, game.startAt)
     try {
-      await assembleParts({ dir, total, into: whole })
-      const ingested = await ingest({
-        db,
-        space,
-        ffmpegPath: options.ffmpegPath,
-        file: whole,
-        gameId: game.id,
-        kind: 'program',
-        title: row.title,
-        // What the app said when it opened the upload; failing that, the
-        // game's own time. Never when the upload happened to be opened —
-        // that is a property of the network, and using it put a take's two
-        // cameras thirty-four minutes apart in the multi-camera view.
-        startAt:
-          offsetMs == null ? recorded : new Date(recorded.getTime() + offsetMs),
-        startAtClockOffsetMs: offsetMs,
-        // How the start was *worked out*, not which program sent it. Every
-        // value in this column is a method — a filename, a live session, a
-        // publish date, somebody typing — and `distributor` is "the
-        // recording told us". Both apps derive it the same way, out of the
-        // take's own archive index, so both say this; it reads like an app
-        // name and is not one.
-        startAtSource: 'distributor',
-        onStep: step => {
-          notes(step).catch(() => {
-            // A step nobody could write down is not worth failing an upload
-            // for: it costs the screen its word, not the recording.
-          })
+      if (videoId == null) {
+        await assembleParts({ dir, total, into: whole })
+        const ingested = await ingest({
+          db,
+          space,
+          ffmpegPath: options.ffmpegPath,
+          file: whole,
+          gameId: game.id,
+          kind: 'program',
+          title: row.title,
+          // What the app said when it opened the upload; failing that, the
+          // game's own time. Never when the upload happened to be opened —
+          // that is a property of the network, and using it put a take's two
+          // cameras thirty-four minutes apart in the multi-camera view.
+          startAt:
+            offsetMs == null
+              ? recorded
+              : new Date(recorded.getTime() + offsetMs),
+          startAtClockOffsetMs: offsetMs,
+          // How the start was *worked out*, not which program sent it. Every
+          // value in this column is a method — a filename, a live session, a
+          // publish date, somebody typing — and `distributor` is "the
+          // recording told us". Both apps derive it the same way, out of the
+          // take's own archive index, so both say this; it reads like an app
+          // name and is not one.
+          startAtSource: 'distributor',
+          onStep: step => {
+            notes(step).catch(() => {
+              // A step nobody could write down is not worth failing an upload
+              // for: it costs the screen its word, not the recording.
+            })
+          }
+        })
+
+        videoId = ingested.videoId
+
+        // On the row before the camera is looked at, because a discard writes
+        // `discarded_at` before it reads these rows. However the two fall, one
+        // of them sees the other and this video goes.
+        await db
+          .updateTable('director_uploads')
+          .set({ video_id: videoId, updated_at: new Date() })
+          .where('id', '=', row.id)
+          .execute()
+      }
+      const video = videoId
+
+      // Replaced and ready in one step, with the row held: an upload given up
+      // on replaces nothing, and one given up on a moment later finds it ready.
+      // A failure undoes the replacement as well, so a retry starts clean.
+      const finished = await atomic(db, async trx => {
+        const held = await trx
+          .selectFrom('director_uploads')
+          .select(['state', 'video_id as videoId'])
+          .where('id', '=', row.id)
+          .forUpdate()
+          .executeTakeFirst()
+        if (
+          held?.state !== 'assembling' ||
+          held.videoId == null ||
+          (await isDiscarded(trx, row.live_stream_id))
+        ) {
+          return false
         }
+        await replaceLiveRecording(trx, game.id, video, namedBy(row))
+        await trx
+          .updateTable('director_uploads')
+          .set({ state: 'ready', step: null, updated_at: new Date() })
+          .where('id', '=', row.id)
+          .execute()
+        return true
       })
-
-      videoId = ingested.videoId
-
-      // On the row before the camera is looked at, because a discard writes
-      // `discarded_at` before it reads these rows. However the two fall, one
-      // of them sees the other and this video goes.
-      await db
-        .updateTable('director_uploads')
-        .set({ video_id: videoId, updated_at: new Date() })
-        .where('id', '=', row.id)
-        .execute()
-      if (await isDiscarded(db, row.live_stream_id)) {
+      if (!finished) {
         await drop()
         return
       }
 
-      await replaceLiveRecording(db, game.id, videoId, namedBy(row))
-
-      const finished = await db
-        .updateTable('director_uploads')
-        .set({ state: 'ready', step: null, updated_at: new Date() })
-        .where('id', '=', row.id)
-        .where('state', '=', 'assembling')
-        .where('video_id', 'is not', null)
-        .executeTakeFirst()
-      if (Number(finished.numUpdatedRows) === 0) {
-        await drop()
-        return
+      // It is ready from here on, and what is left only tidies up after it.
+      const andLog = (error: unknown): void => {
+        console.error(`after taking in ${row.id}: ${String(error)}`)
       }
-
-      // The parts have done their job and are several gigabytes.
+      if (row.live_stream_id != null) {
+        await settleUploadedCopy(db, row.live_stream_id).catch(andLog)
+      }
       await recordOutcome(
         db,
         work.app,
         { userId: row.user_id, isAdmin: false },
         'processing_ready',
-        { vi: ingested.videoId, bytes: Number(row.size_bytes) }
+        { vi: video, bytes: Number(row.size_bytes) }
       )
-      await rm(dir, { recursive: true, force: true })
+      // The parts have done their job and are several gigabytes.
+      await rm(dir, { recursive: true, force: true }).catch(andLog)
     } catch (error) {
       // The whole of it goes to the log; what the operator is shown is the
       // sentence without the server's paths in it.
       console.error(`taking in ${row.id}: ${String(error)}`)
-      // Its parts can go from under it, and then this is what that looks like.
-      if (await isDiscarded(db, row.live_stream_id)) {
+      // Its parts can go from under it, and then this is what that looks like:
+      // the camera was deleted or the upload given up on, and nobody is told.
+      const failed = (await isDiscarded(db, row.live_stream_id))
+        ? undefined
+        : await db
+            .updateTable('director_uploads')
+            .set({
+              state: 'failed',
+              step: null,
+              message: failureToShow(error),
+              updated_at: new Date()
+            })
+            .where('id', '=', row.id)
+            .where('state', '=', 'assembling')
+            .executeTakeFirst()
+      if (Number(failed?.numUpdatedRows ?? 0) === 0) {
         await drop()
         return
       }
-      const message = failureToShow(error)
-      await db
-        .updateTable('director_uploads')
-        .set({ state: 'failed', step: null, message, updated_at: new Date() })
-        .where('id', '=', row.id)
-        .execute()
       await recordOutcome(
         db,
         work.app,
@@ -666,15 +703,28 @@ export function directorUploadRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const row = await mine(String(req.params.uploadId), actor.userId)
-      await rm(uploadDir(options.uploadsDir, row.id), {
-        recursive: true,
-        force: true
-      })
-      await db
+      // Abandoned before its parts go, so an upload assembling finds out why
+      // they went. A finished one is a video on the game, and stays.
+      const given = await db
         .updateTable('director_uploads')
         .set({ state: 'abandoned', updated_at: new Date() })
         .where('id', '=', row.id)
-        .execute()
+        .where('state', '<>', 'ready')
+        .executeTakeFirst()
+      if (Number(given.numUpdatedRows) > 0) {
+        await rm(uploadDir(options.uploadsDir, row.id), {
+          recursive: true,
+          force: true
+        })
+        // A failed try's video has nothing left that would go on to use it.
+        // One assembling is deleted by the work that is making it.
+        if (row.state === 'failed' && row.video_id != null) {
+          await deleteVideoIfThere(
+            { db, space: theSpace(), mediaRoot: options.mediaRoot },
+            row.video_id
+          )
+        }
+      }
       setAudit(res.locals, { entityType: 'directorUpload', entityId: row.id })
       res.status(204).end()
     })
@@ -714,7 +764,8 @@ export function namedBy(row: {
  * whatever the coverage test says; without, only if the test passes. When it
  * is hidden, the upload takes its title, the stream is ended and marked
  * `uploaded`, and its reminder is settled. When it is not, the upload stands
- * as a video of its own and the reminder stays. A stream with no live copy at
+ * as a video of its own, and `settleUploadedCopy` settles the reminder once it
+ * is ready, since the phone has deleted its copy. A stream with no live copy at
  * all — its phone never reached the server, so the placeholder went when it
  * ended — has nothing to hide: the upload is the angle's only copy, and the
  * stream is ended, marked `uploaded` and its reminder settled all the same.
@@ -872,6 +923,30 @@ async function replaceNamedStream(
     return true
   })
   return replaced ? [live.id] : []
+}
+
+/**
+ * What a finished upload of a phone's take settles when it replaced nothing:
+ * the phone deletes a take once its upload lands (`markUploaded`), so a stream
+ * still marked `recorded` holds no copy any more. It becomes `removed`, and its
+ * reminder and copy warning are settled. Not while it is publishing again, when
+ * the phone may be filming into it.
+ */
+async function settleUploadedCopy(
+  db: Kysely<Database>,
+  streamId: string
+): Promise<void> {
+  const now = new Date()
+  const marked = await db
+    .updateTable('live_streams')
+    .set({ local_recording: 'removed', updated_at: now })
+    .where('id', '=', streamId)
+    .where('local_recording', '=', 'recorded')
+    .where('state', '<>', 'publishing')
+    .executeTakeFirst()
+  if (Number(marked.numUpdatedRows) > 0) {
+    await settleRecordingReminder(db, streamId, now)
+  }
 }
 
 /**

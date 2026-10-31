@@ -94,8 +94,13 @@ export interface LiveRouteOptions {
 
 const asStreamChange = asObject({
   label: asOptional(asString),
-  /** Only `recorded`, and only on the caller's own device stream. */
+  /** `recorded` or `removed`, and only on the caller's own device stream. */
   localRecording: asOptional(asString),
+  /**
+   * When a take older than the phone's 30-day limit started counting them, as
+   * an ISO 8601 instant: what its warning counts from.
+   */
+  localCopyFrom: asOptional(asString),
   /**
    * When the stream's first picture was captured, on the publisher's wall
    * clock, as an ISO 8601 instant: where its live video starts.
@@ -160,15 +165,19 @@ export function liveRoutes(
    * One its owner deleted answers `410` to everything but the delete, which
    * can be asked for again until it has finished: a phone still holding it
    * must not rename it, record a reminder against it or put it on the air.
+   *
+   * One its owner removed is not found either, unless `removed` is `'allow'`.
    */
   const myStream = async (
     userId: string,
     gameId: string,
     streamId: string,
     from: Kysely<Database> = db,
-    options: { deleted?: 'allow' } = {}
+    options: { deleted?: 'allow'; removed?: 'allow' } = {}
   ): Promise<LiveStreamRow> => {
-    const row = await liveStreamById(from, streamId)
+    const row = await liveStreamById(from, streamId, {
+      removed: options.removed
+    })
     // 404 rather than 403 for another person's camera: its id is not something
     // to confirm to somebody who may not act on it.
     if (row?.gameId !== gameId || row.userId !== userId) {
@@ -457,10 +466,16 @@ export function liveRoutes(
    * saying when its first picture was captured.
    *
    * A device stream's new name follows the label rule: no two of the
-   * caller's active device streams on the game share one. The first change
-   * of `localRecording` from `none` to `recorded` records the upload
-   * reminder. `liveStartedAt` places the live video by the publisher's own
-   * clock, once; see `placeByPublisher`.
+   * caller's active device streams on the game share one. A change of
+   * `localRecording` to `recorded`, from `none` or from `removed`, a new take
+   * after the last one went, records an upload reminder, and `removed`, the
+   * phone's copy gone, settles it. `localCopyFrom` moves when that copy's 30
+   * days began, for a take recorded before they counted. `liveStartedAt` places
+   * the live video by the publisher's own clock, once; see `placeByPublisher`.
+   *
+   * A camera its owner removed still takes what its phone says of its copy,
+   * `localRecording` and `localCopyFrom`, and nothing else: its take can still
+   * be uploaded, so the reminder and the warning about it are kept true.
    */
   router.patch(
     '/games/:gameId/live-streams/:streamId',
@@ -473,20 +488,37 @@ export function liveRoutes(
         actor.isAdmin,
         pathParam(req.params.gameId)
       )
+      const body = cleanBody(asStreamChange, req.body)
+      const aboutTheCopy =
+        body.label === undefined && body.liveStartedAt == null
       const row = await myStream(
         actor.userId,
         game.id,
-        pathParam(req.params.streamId)
+        pathParam(req.params.streamId),
+        db,
+        aboutTheCopy ? { removed: 'allow' } : {}
       )
-      const body = cleanBody(asStreamChange, req.body)
       const named = cameraLabelOf(body.label)
       if (body.localRecording != null) {
-        if (body.localRecording !== 'recorded') {
-          throw badRequest('localRecording can only be set to recorded.')
+        if (
+          body.localRecording !== 'recorded' &&
+          body.localRecording !== 'removed'
+        ) {
+          throw badRequest(
+            'localRecording can only be set to recorded or removed.'
+          )
         }
-        if (row.deviceId == null) {
-          throw badRequest('Only a device stream holds a recording.')
-        }
+      }
+      if (
+        (body.localRecording != null || body.localCopyFrom != null) &&
+        row.deviceId == null
+      ) {
+        throw badRequest('Only a device stream holds a recording.')
+      }
+      const localCopyFrom =
+        body.localCopyFrom == null ? undefined : new Date(body.localCopyFrom)
+      if (localCopyFrom != null && Number.isNaN(localCopyFrom.getTime())) {
+        throw badRequest('localCopyFrom must be an ISO 8601 instant.')
       }
       const liveStartedAt =
         body.liveStartedAt == null ? undefined : new Date(body.liveStartedAt)
@@ -510,7 +542,8 @@ export function liveRoutes(
       if (named !== undefined) {
         await setCameraName(db, row.id, named)
       }
-      if (body.localRecording != null) {
+      let localRecording = row.localRecording
+      if (body.localRecording === 'recorded') {
         // A device that holds a recording keeps its own, whatever the
         // request that made its stream said: the upload that settles the
         // reminder looks for streams that do.
@@ -522,10 +555,32 @@ export function liveRoutes(
             updated_at: new Date()
           })
           .where('id', '=', row.id)
-          .where('local_recording', '=', 'none')
+          .where('local_recording', 'in', ['none', 'removed'])
           .executeTakeFirst()
         if (Number(marked.numUpdatedRows) > 0) {
+          localRecording = 'recorded'
           await recordRecordingReminder(db, row.id)
+        }
+      }
+      if (localCopyFrom != null) {
+        await db
+          .updateTable('live_streams')
+          .set({ local_copy_from: localCopyFrom, updated_at: new Date() })
+          .where('id', '=', row.id)
+          .where('local_recording', '<>', 'uploaded')
+          .execute()
+      }
+      if (body.localRecording === 'removed') {
+        const now = new Date()
+        const marked = await db
+          .updateTable('live_streams')
+          .set({ local_recording: 'removed', updated_at: now })
+          .where('id', '=', row.id)
+          .where('local_recording', '<>', 'uploaded')
+          .executeTakeFirst()
+        if (Number(marked.numUpdatedRows) > 0) {
+          localRecording = 'removed'
+          await settleRecordingReminder(db, row.id, now)
         }
       }
       const placed =
@@ -538,14 +593,12 @@ export function liveRoutes(
         before: { label: row.label, localRecording: row.localRecording },
         after: {
           label: named === undefined ? row.label : named,
-          localRecording:
-            body.localRecording != null && row.localRecording === 'none'
-              ? 'recorded'
-              : row.localRecording,
+          localRecording,
           ...(placed ? { liveStartedAt: liveStartedAt.toISOString() } : {})
         }
       })
-      const fresh = (await liveStreamById(db, row.id)) ?? row
+      const fresh =
+        (await liveStreamById(db, row.id, { removed: 'allow' })) ?? row
       res.json(await summaryOf(db, space, fresh, actor.userId))
     })
   )
@@ -913,7 +966,9 @@ function oneStream(
     ...(device
       ? {
           deviceModel: row.deviceModel,
-          localRecording: row.localRecording,
+          // Installed builds know three states: a copy gone is no copy held.
+          localRecording:
+            row.localRecording === 'removed' ? 'none' : row.localRecording,
           ...(row.userId === askedBy ? { deviceId: row.deviceId } : {})
         }
       : {}),

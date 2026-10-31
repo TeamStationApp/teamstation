@@ -107,8 +107,12 @@ final class TSPhoneStreamBridge: NSObject {
   /// failing at Record.
   @objc func capabilities(_ reply: @escaping PhoneStreamReply) {
     Task { @MainActor in
-      let supported = PhoneStreamCapabilities.isSupported && PhoneStreamEngine.shared != nil
-      reply(["supported": supported, "deviceModel": PhoneStreamCapabilities.deviceModel], nil, nil)
+      let engine = PhoneStreamEngine.shared
+      reply([
+        "supported": PhoneStreamCapabilities.isSupported && engine != nil,
+        "deviceModel": PhoneStreamCapabilities.deviceModel,
+        "canRecordLocally": engine?.canRecordLocally ?? false
+      ], nil, nil)
     }
   }
 
@@ -319,6 +323,26 @@ final class TSPhoneStreamBridge: NSObject {
     }
   }
 
+  @objc func sweptStreams(_ reply: @escaping PhoneStreamReply) {
+    Self.run(reply) { engine in
+      try engine.sweptStreams().map { [ "liveStreamId": $0.liveStreamId, "gameId": $0.gameId ] }
+    }
+  }
+
+  @objc func forgetSwept(_ liveStreamId: String, reply: @escaping PhoneStreamReply) {
+    Self.run(reply) { engine in
+      try engine.forgetSwept(liveStreamId: liveStreamId)
+      return nil
+    }
+  }
+
+  @objc func retentionReported(_ liveStreamId: String, from: Double, reply: @escaping PhoneStreamReply) {
+    Self.run(reply) { engine in
+      try engine.retentionReported(liveStreamId: liveStreamId, fromSeconds: from / 1_000)
+      return nil
+    }
+  }
+
   @objc func uploadRecording(
     _ liveStreamId: String,
     apiBase: String,
@@ -499,6 +523,8 @@ final class TSPhoneStreamBridge: NSObject {
     if let title = recording.uploadTitle { value["uploadTitle"] = title }
     if let uploadedAt = recording.uploadedAt { value["uploadedAt"] = uploadedAt.seconds * 1_000 }
     if let videoId = recording.videoId { value["videoId"] = videoId }
+    if let retentionFrom = recording.retentionFrom { value["retentionFrom"] = retentionFrom.seconds * 1_000 }
+    if recording.retentionReported { value["retentionReported"] = true }
     if running, let progress { value["uploadProgress"] = dictionary(progress) }
     return value
   }

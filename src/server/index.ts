@@ -43,6 +43,7 @@ import { withAudit } from './middleware/withAudit'
 import { spokenRequests, withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
 import { errorHandler, notFoundHandler } from './middleware/withErrors'
+import { recordLocalCopyWarnings } from './notifications/recordingReminders'
 import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
 import { createOAuthProvider } from './oauth/provider'
 import { oauthInteractionRoutes } from './oauth/routes'
@@ -365,6 +366,28 @@ function startKeySweep(db: ReturnType<typeof makeDatabase>): void {
   timer.unref?.()
 }
 
+/** How often cameras nearing the phone's 30-day limit are looked for. */
+const LOCAL_COPY_WARNING_INTERVAL_MS = 60 * 60 * 1000
+
+/**
+ * Warns the owners of cameras whose phone's copy is about to expire, on the way
+ * up and then every hour: the window is a day wide, so a restart misses none.
+ */
+function startLocalCopyWarnings(db: ReturnType<typeof makeDatabase>): void {
+  const sweep = (): void => {
+    recordLocalCopyWarnings(db)
+      .then(warned => {
+        if (warned > 0) console.log(`warned of ${warned} expiring local copies`)
+      })
+      .catch((error: unknown) => {
+        console.error(`warning of expiring local copies: ${String(error)}`)
+      })
+  }
+  sweep()
+  const timer = setInterval(sweep, LOCAL_COPY_WARNING_INTERVAL_MS)
+  timer.unref?.()
+}
+
 /**
  * Where uploads wait while their parts arrive: a Director's recordings, and
  * chat attachments under `chat/`.
@@ -391,6 +414,7 @@ function runPrimary(workerCount: number): void {
   startPurge(primaryDb)
   startDiscardSweep(primaryDb)
   startKeySweep(primaryDb)
+  startLocalCopyWarnings(primaryDb)
   startChatAttachmentPurge(primaryDb)
   startChatReconciler(primaryDb, serverConfig.databaseUrl)
   const builder = startStatsBuilder({
@@ -812,6 +836,7 @@ function runWorker(): void {
     reopenInterrupted(db)
     startPurge(db)
     startDiscardSweep(db)
+    startLocalCopyWarnings(db)
     startChatAttachmentPurge(db)
     startChatReconciler(db, serverConfig.databaseUrl)
     builder = startStatsBuilder({

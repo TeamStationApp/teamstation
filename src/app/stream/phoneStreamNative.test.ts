@@ -43,7 +43,11 @@ function load(reactNative: Record<string, unknown>): NativeFacade {
 describe('phone streaming on a phone', function () {
   it('finds TSPhoneStream, asks Android for permissions, and draws the preview component', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'Google Pixel 10' }
+      capabilities: {
+        supported: true,
+        deviceModel: 'Google Pixel 10',
+        canRecordLocally: true
+      }
     })
     const looked: string[] = []
     const asked: string[][] = []
@@ -77,7 +81,8 @@ describe('phone streaming on a phone', function () {
 
     expect(await facade.phoneStream.capabilities()).deep.equals({
       supported: true,
-      deviceModel: 'Google Pixel 10'
+      deviceModel: 'Google Pixel 10',
+      canRecordLocally: true
     })
 
     const seen: unknown[] = []
@@ -113,7 +118,8 @@ describe('phone streaming on a phone', function () {
     })
     expect(await facade.phoneStream.capabilities()).deep.equals({
       supported: false,
-      deviceModel: ''
+      deviceModel: '',
+      canRecordLocally: false
     })
     const quiet = load({
       Platform: { OS: 'ios', Version: '18.0' },

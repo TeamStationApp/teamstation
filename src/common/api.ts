@@ -4912,12 +4912,18 @@ export class TeamStationClient {
 
   /**
    * Renames one of my cameras, or says this phone holds its recording
-   * (`localRecording: 'recorded'`), which starts the upload reminder.
+   * (`localRecording: 'recorded'`), which starts the upload reminder, or no
+   * longer does (`'removed'`), which settles it. `localCopyFrom` says when a
+   * take older than the phone's 30-day limit started counting them.
    */
   async updateLiveStream(
     gameId: string,
     streamId: string,
-    change: { label?: string; localRecording?: 'recorded' }
+    change: {
+      label?: string
+      localRecording?: 'recorded' | 'removed'
+      localCopyFrom?: string
+    }
   ): Promise<LiveStream> {
     return await this.request(
       'PATCH',
