@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_END
 
 /** Posted by the bridge after the engine opens or closes. */
 static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPreviewSessionChanged";
+/** `Notification.Name.tsWindowSceneChanged` in `AppDelegate.swift`. */
+static NSString *const TSWindowSceneChanged = @"TSWindowSceneChanged";
 
 /**
  * `TSPhoneStreamPreview`: the camera straight from the capture session, the
@@ -73,6 +75,10 @@ static void *TSPhoneStreamPreviewGeometryContext = &TSPhoneStreamPreviewGeometry
                                            selector:@selector(sessionChanged)
                                                name:TSPhoneStreamPreviewSessionChanged
                                              object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(observeScene)
+                                               name:TSWindowSceneChanged
+                                             object:nil];
     [self sessionChanged];
   }
   return self;
@@ -119,9 +125,17 @@ static void *TSPhoneStreamPreviewGeometryContext = &TSPhoneStreamPreviewGeometry
 - (void)didMoveToWindow
 {
   [super didMoveToWindow];
-  // A modal that only turns sideways is presented before its scene has turned: the preview is laid
-  // out once, while the interface still reads upright. Watching the scene's geometry turns the
-  // picture when the interface itself turns.
+  [self observeScene];
+}
+
+/**
+ * A modal that only turns sideways is presented before its scene has turned: the preview is laid
+ * out once, while the interface still reads upright. Watching the scene's geometry turns the
+ * picture when the interface itself turns. Run again when iOS moves the window to a new scene,
+ * which no view hears as a move to a window.
+ */
+- (void)observeScene
+{
   [self stopObservingScene];
   UIWindowScene *scene = self.window.windowScene;
   if (scene != nil) {

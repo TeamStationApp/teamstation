@@ -465,6 +465,24 @@ system Back walks the **address**, so from the box score the first press
 returns to the video and the second leaves the game — which is what a browser
 does with the same two addresses.
 
+### The native tests
+
+`TeamStationTests` runs inside the app, against its real scene, window and
+links, on a simulator with no other build that claims `teamstation://`. Debug
+loads its JS from Metro, and a red box leaves `testTheAppRunsInOneSceneWindow`
+presenting on a root that is already presenting, so start a fresh Metro, and
+restart it after any install:
+
+```sh
+npm run metro
+cd ios
+xcodebuild test -workspace TeamStation.xcworkspace -scheme TeamStation \
+  -destination 'platform=iOS Simulator,id=<simulator>'
+```
+
+`mobile/test/teamStationAppSceneLifecycle.e2e.ts` covers launch and the four
+kinds of link on a device.
+
 ## What this costs the server
 
 `.gitattributes` keeps `ios/`, `android/`, `maestro/` and `tools/` out of a
