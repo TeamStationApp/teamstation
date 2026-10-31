@@ -15,6 +15,7 @@ import {
   type Labels,
   labelsOf,
   namedActor,
+  namedRoles,
   namedScopes,
   readGolden,
   seedAgreementShapes,
@@ -23,12 +24,20 @@ import {
 } from '../../tools/dbLoad/scopeGolden'
 import { TEST_AMOUNTS } from '../../tools/dbLoad/testAmounts'
 import { openScratch, type Scratch } from '../../tools/dbLoad/testSupport'
-import { visibleScopes, visibleScopesForUsers } from './access'
+import {
+  canFilm,
+  type RoleScopes,
+  roleScopes,
+  roleScopesForUsers,
+  visibleScopes,
+  visibleScopesForUsers
+} from './access'
 import { onePeople, type OnePerson, onePerson } from './admin/people'
 import { actorForToken, actorsForTokens, createSession } from './auth/sessions'
 import { hashToken } from './auth/tokens'
 import type { Database } from './db/database'
 import { checkScopeAgreement } from './dev/scopeAgreementCheck'
+import { publishingAuthority } from './live/controller'
 
 const RUN = 'golden'
 
@@ -69,6 +78,36 @@ const sortedPerson = (person: OnePerson | undefined): unknown =>
   person == null
     ? person
     : { userId: person.userId, userIds: [...person.userIds].sort() }
+
+/** The rows `sync` used to ask about one by one, kept as the measure. */
+async function mayPublishAlone(
+  db: Kysely<Database>,
+  row: { userId: string; gameId: string; teamId: string }
+): Promise<boolean> {
+  const user = await db
+    .selectFrom('users')
+    .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
+    .where('id', '=', row.userId)
+    .executeTakeFirst()
+  if (
+    user == null ||
+    user.disabled_at != null ||
+    user.merged_into != null ||
+    !user.login_enabled
+  )
+    return false
+  const game = await db
+    .selectFrom('games')
+    .select(['home_team_id', 'away_team_id'])
+    .where('id', '=', row.gameId)
+    .executeTakeFirst()
+  if (
+    game == null ||
+    ![game.home_team_id, game.away_team_id].includes(row.teamId)
+  )
+    return false
+  return canFilm(await roleScopes(db, row.userId, user.is_admin), row.teamId)
+}
 
 /** Reorders `ids` the same way each run, so that batches mix kinds of person. */
 function shuffled(ids: string[]): string[] {
@@ -241,6 +280,75 @@ describe('who may see what, batched and one at a time', function () {
         }
       })
 
+      it('answers everybody roles at once as the snapshot does', async function () {
+        const golden = readGolden()[mode].people
+        const named = (scopes: RoleScopes): unknown => ({
+          roles: namedRoles(labels, scopes),
+          rolesAdmin: scopes.isAdmin
+        })
+        const batched = await roleScopesForUsers(scratch.db, [
+          ...everybody,
+          ...everybody.slice(0, 10)
+        ])
+        expect(batched.size).equals(everybody.length)
+        let holders = 0
+        for (const [label, id] of labels.users) {
+          const { roles, rolesAdmin } = golden[label]
+          expect(named(batched.get(id)!), label).deep.equals({
+            roles,
+            rolesAdmin
+          })
+          if (Object.keys(roles).length > 0) holders += 1
+        }
+        expect(holders).above(10)
+      })
+
+      it('answers roles the same in any company', async function () {
+        const single = new Map<string, unknown>()
+        const named = (scopes: RoleScopes): unknown => [
+          namedRoles(labels, scopes),
+          scopes.isAdmin
+        ]
+        for (const id of everybody)
+          single.set(id, named(await roleScopes(scratch.db, id, false)))
+        const mixed = shuffled(everybody)
+        for (const size of [2, 3, 7, 31]) {
+          for (let at = 0; at < mixed.length; at += size) {
+            const ids = mixed.slice(at, at + size)
+            const batched = await roleScopesForUsers(scratch.db, ids)
+            for (const id of ids)
+              expect(named(batched.get(id)!), id).deep.equals(single.get(id))
+          }
+        }
+      })
+
+      it('answers who may publish as each row alone would', async function () {
+        const game = tokens.games[0]
+        const row = await scratch.db
+          .selectFrom('games')
+          .select(['home_team_id', 'away_team_id'])
+          .where('id', '=', game.id)
+          .executeTakeFirstOrThrow()
+        const otherGame = tokens.games[tokens.games.length - 1]
+        const rows = everybody.flatMap(userId =>
+          [
+            { gameId: game.id, teamId: row.home_team_id },
+            { gameId: game.id, teamId: row.away_team_id },
+            { gameId: otherGame.id, teamId: row.home_team_id },
+            { gameId: 'gam_nobody_has_this', teamId: row.home_team_id }
+          ].map((side, at) => ({ id: `${userId} ${at}`, userId, ...side }))
+        )
+        const authorized = await publishingAuthority(scratch.db, rows)
+        let allowed = 0
+        for (const asked of rows) {
+          const alone = await mayPublishAlone(scratch.db, asked)
+          expect(authorized.has(asked.id), asked.id).equals(alone)
+          if (alone) allowed += 1
+        }
+        expect(allowed).above(0)
+        expect(allowed).below(rows.length)
+      })
+
       it('finds no disagreement over the whole database', async function () {
         const lines: string[] = []
         const result = await checkScopeAgreement(scratch.db, {
@@ -256,6 +364,58 @@ describe('who may see what, batched and one at a time', function () {
         ])
       })
     })
+
+  describe('roleScopesForUsers', function () {
+    it('reads nothing for nobody, and the same reads however many', async function () {
+      const statements: string[] = []
+      const counting = new Kysely<Database>({
+        dialect: new PostgresDialect({
+          pool: new Pool({ connectionString: scratch.url, max: 1 })
+        }),
+        log: event => {
+          statements.push(event.query.sql)
+        }
+      })
+      try {
+        expect((await roleScopesForUsers(counting, [])).size).equals(0)
+        expect(statements).deep.equals([])
+        const userOf = (label: string): string => labels.users.get(label)!
+        const some = ['shape.bothLevels', 'person.leagueRole'].map(userOf)
+        await roleScopesForUsers(counting, some)
+        const forTwo = [...statements]
+        statements.length = 0
+        await roleScopesForUsers(counting, [...some, ...everybody])
+        expect(statements).deep.equals(forTwo)
+        expect(statements.length).below(7)
+      } finally {
+        await counting.destroy()
+      }
+    })
+
+    it('reads no roles for somebody with no open row', async function () {
+      const statements: string[] = []
+      const counting = new Kysely<Database>({
+        dialect: new PostgresDialect({
+          pool: new Pool({ connectionString: scratch.url, max: 1 })
+        }),
+        log: event => {
+          statements.push(event.query.sql)
+        }
+      })
+      try {
+        const scopes = await roleScopesForUsers(counting, [
+          labels.users.get('person.disabled')!,
+          labels.users.get('person.merged')!,
+          GHOST_ID
+        ])
+        expect(statements).to.have.length(1)
+        expect(scopes.size).equals(3)
+        for (const [, one] of scopes) expect(one.isAdmin).equals(false)
+      } finally {
+        await counting.destroy()
+      }
+    })
+  })
 
   describe('onePeople', function () {
     it('agrees with the walk for every row in the database', async function () {
@@ -461,6 +621,26 @@ describe('who may see what, batched and one at a time', function () {
       expect(
         lines.filter(line => line.startsWith('disagreement'))
       ).to.have.length(2)
+      expect(lines.at(-1)).contains('2 disagreements')
+    })
+
+    it('names somebody whose roles the reads disagree about', async function () {
+      const lines: string[] = []
+      const wrong = labels.users.get('person.coach')!
+      const missing = labels.users.get('person.admin')!
+      const result = await checkScopeAgreement(scratch.db, {
+        batchSize: 1000,
+        print: line => {
+          lines.push(line)
+        },
+        batchedRoles: async (db, ids) => {
+          const scopes = await roleScopesForUsers(db, ids)
+          scopes.get(wrong)?.videographer.teamIds.add('tea_extra')
+          scopes.delete(missing)
+          return scopes
+        }
+      })
+      expect(result.disagreements.sort()).deep.equals([wrong, missing].sort())
       expect(lines.at(-1)).contains('2 disagreements')
     })
   })

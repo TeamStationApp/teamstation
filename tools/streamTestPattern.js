@@ -9,8 +9,11 @@
  *   node tools/streamTestPattern.js --url rtmp://... --duration 60
  *   node tools/streamTestPattern.js --url rtmp://... --duration 60 --size 1920x1080 --rate 30
  *   node tools/streamTestPattern.js --url rtmp://... --codec hevc
+ *   node tools/streamTestPattern.js --url rtmp://... --codec libx265
  *
  * `--codec hevc` is what a game's stream URL takes: its ingest refuses H.264.
+ * It encodes with VideoToolbox on a Mac and libx265 elsewhere. Any other value
+ * is an ffmpeg encoder name, used as given.
  *
  * Requires `ffmpeg` on PATH. Stop early with Ctrl-C; ffmpeg will exit cleanly.
  */
@@ -44,7 +47,7 @@ function parseArgs(argv) {
       i += 1
     } else if (a === '--help' || a === '-h') {
       console.log(
-        'Usage: streamTestPattern.js --url <rtmp-url> [--duration <s>] [--size WxH] [--rate fps] [--codec h264|hevc]'
+        'Usage: streamTestPattern.js --url <rtmp-url> [--duration <s>] [--size WxH] [--rate fps] [--codec h264|hevc|<encoder>]'
       )
       process.exit(0)
     } else {
@@ -57,6 +60,23 @@ function parseArgs(argv) {
     process.exit(2)
   }
   return out
+}
+
+/** ffmpeg's video encoder arguments for `--codec`. */
+function videoEncoder(codec) {
+  if (codec === 'hevc' && process.platform === 'darwin')
+    return ['hevc_videotoolbox', '-realtime', '1', '-b:v', '2M']
+  const encoder =
+    codec === 'h264' ? 'libx264' : codec === 'hevc' ? 'libx265' : codec
+  return [
+    encoder,
+    '-preset',
+    'veryfast',
+    '-tune',
+    'zerolatency',
+    '-pix_fmt',
+    'yuv420p'
+  ]
 }
 
 function main() {
@@ -76,17 +96,7 @@ function main() {
     '-i',
     'sine=frequency=1000:sample_rate=48000',
     '-c:v',
-    ...(opts.codec === 'hevc'
-      ? ['hevc_videotoolbox', '-realtime', '1', '-b:v', '2M']
-      : [
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-tune',
-          'zerolatency',
-          '-pix_fmt',
-          'yuv420p'
-        ]),
+    ...videoEncoder(opts.codec),
     '-g',
     String(opts.rate * 2),
     '-c:a',
