@@ -89,7 +89,7 @@ if (!serverOnly) {
       '--exit',
       'lib/scoring-tests.cjs',
       '--grep',
-      'TeamStation TV|TV |account|Account'
+      'TeamStation TV|TV |account|Account|NodeSettingsCard'
     ],
     { NODE_V8_COVERAGE: temp },
     true
@@ -124,7 +124,11 @@ run(
     'src/server/routes/appSignIn.test.ts',
     'src/server/routes/appLinks.test.ts',
     'src/server/openapi.test.ts',
-    'src/common/api.test.ts'
+    'src/common/api.test.ts',
+    'src/common/nodeSettings.test.ts',
+    'src/server/nodeSettings.test.ts',
+    'src/app/player/multiCam/playerLayout.test.ts',
+    'src/app/player/scoreboardOverlay/overlayLayout.test.ts'
   ],
   { NODE_V8_COVERAGE: temp },
   true
