@@ -11,6 +11,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { appearedIn } from '../../common/scoring/rosterAvailability'
 import { reconcileRoster } from '../../common/scoring/startingSetup'
 import { withNames } from '../../common/scoring/storedNames'
 import { deviceStorage } from '../platform/deviceStorage'
@@ -182,13 +183,14 @@ export class ServerScoringSource implements ScoringSource {
     return await ScoringSession.open(store, game.id, held.context, {
       requireCurrentSetup: true,
       now: () => this.clock.now(),
-      reconcileSetup: setup =>
+      reconcileSetup: (setup, state) =>
         reconcileRoster(
           setup,
           teamsOf(currentGame),
           rosters,
           currentGame.guestPlayers,
-          currentGame.unrostered
+          currentGame.unrostered,
+          appearedIn(state)
         )
     })
   }

@@ -170,7 +170,7 @@ export interface SessionContext {
 }
 export interface SessionOptions {
   /** Live availability is staged on read and written with the next scoring change. */
-  reconcileSetup?: (setup: GameSetup) => GameSetup
+  reconcileSetup?: (setup: GameSetup, game: GameState) => GameSetup
   /** Live scorekeeping requires current setup; record replay remains compatible. */
   requireCurrentSetup?: boolean
   now?: () => Date
@@ -660,7 +660,7 @@ export class ScoringSession {
     // changing the stored play until the scorer makes another change.
     if (state !== this.game) {
       const before = setupOf(state)
-      const setup = this.options.reconcileSetup?.(before)
+      const setup = this.options.reconcileSetup?.(before, state)
       if (setup != null && JSON.stringify(setup) !== JSON.stringify(before)) {
         const action: ScoringAction = { type: 'lineup', kind: 'roster', setup }
         const applied = applyAction(state, action)
@@ -865,7 +865,7 @@ export class ScoringSession {
 
   private reconcileCurrent(): void {
     const before = setupOf(this.game)
-    const setup = this.options.reconcileSetup?.(before)
+    const setup = this.options.reconcileSetup?.(before, this.game)
     if (setup == null || JSON.stringify(setup) === JSON.stringify(before))
       return
     const action: ScoringAction = { type: 'lineup', kind: 'roster', setup }

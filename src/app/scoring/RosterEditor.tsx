@@ -32,6 +32,7 @@ import {
   type RosterTab,
   type StagedRunner
 } from '../../common/scoring/rosterCommands'
+import { appearedIn } from '../../common/scoring/rosterAvailability'
 import { rosterError } from '../../common/scoring/rules'
 import {
   reconcileRoster,
@@ -430,7 +431,8 @@ export function RosterEditor({
       next.gameData.teams,
       { away: roster('away'), home: roster('home') },
       { away: entries('away', true), home: entries('home', true) },
-      lists
+      lists,
+      appearedIn(next)
     )
     next.gameData.players = setup.players
     next.liveData.boxscore.teams[side] = setup.sides[side]

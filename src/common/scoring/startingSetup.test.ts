@@ -8,10 +8,10 @@ import {
   type LineupPerson,
   type RosterEntry
 } from '../api'
-import { userIdOfGumbo } from '../userId'
+import { asGumboId, userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { freshGame } from './lineup'
-import { reconcileRoster } from './rosterAvailability'
+import { appearedIn, reconcileRoster } from './rosterAvailability'
 import {
   defaultPending,
   defaultsUnaccepted,
@@ -22,6 +22,7 @@ import {
 } from './startingSetup'
 import {
   type GameSetup,
+  type GameState,
   type Position,
   POSITIONS,
   setupOf,
@@ -201,6 +202,54 @@ describe('the lineups a game starts from (U4b)', function () {
     expect(removed.sides.away.battingIndex).equals(0)
     expect(removed.sides.away.defense.P).equals(null)
     expect(removed.sides.away.defense.C).equals(null)
+  })
+
+  it('moves a saved entry to the side fielding them, unless they have been in the game', function () {
+    const held = startingSetup(game, away, home)
+    const id = 101
+    const joined = {
+      away: away.filter(row => asGumboId(row.gumboId) !== id),
+      home: [...home, ...away.filter(row => asGumboId(row.gumboId) === id)]
+    }
+    const none = { away: [], home: [] }
+    const moved = reconcileRoster(held, teamsOf(game), joined, none, none)
+    expect(moved.players[id].teamId).equals(teamsOf(game).home.id)
+    expect(moved.sides.home.players).includes(id)
+    expect(moved.sides.away.players).not.includes(id)
+    const played = reconcileRoster(
+      held,
+      teamsOf(game),
+      joined,
+      none,
+      none,
+      new Set([id])
+    )
+    expect(played.players[id].teamId).equals(teamsOf(game).away.id)
+    expect(played.sides.home.players).not.includes(id)
+    // Still fielded by the side the entry names, it stays there.
+    const both = reconcileRoster(
+      held,
+      teamsOf(game),
+      { away, home: joined.home },
+      none,
+      none
+    )
+    expect(both.players[id].teamId).equals(teamsOf(game).away.id)
+    expect(both.sides.home.players).not.includes(id)
+  })
+
+  it('counts as appeared who batted or pitched, and a play under way once pitched to', function () {
+    const play = (batter: number, playEvents: unknown[]): unknown => ({
+      matchup: { batter: { id: batter }, pitcher: { id: 9 } },
+      playEvents
+    })
+    const state = (currentPlay: unknown): GameState =>
+      ({
+        liveData: { plays: { allPlays: [play(1, [{}])], currentPlay } }
+      }) as unknown as GameState
+    expect([...appearedIn(state(null))]).members([1, 9])
+    expect([...appearedIn(state(play(2, [])))]).members([1, 9])
+    expect([...appearedIn(state(play(2, [{}])))]).members([1, 2, 9])
   })
 
   it('keeps roster order without a default', function () {
