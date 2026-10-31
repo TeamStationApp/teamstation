@@ -10,6 +10,7 @@ import {
   spokenFormat
 } from '../../common/playerNamePrivacy'
 import type { NameOf } from '../../common/scoring/storedNames'
+import { openAddsOf } from '../access'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import {
@@ -610,6 +611,8 @@ export async function modelNames(
     .innerJoin('gumbo_ids', 'gumbo_ids.user_id', 'memberships.user_id')
     .innerJoin('users', 'users.id', 'memberships.user_id')
     .select([
+      'memberships.team_id as teamId',
+      'memberships.user_id as userId',
       'gumbo_ids.gumbo_id as gumboId',
       'users.display_name as displayName',
       'users.first_name as firstName',
@@ -619,11 +622,22 @@ export async function modelNames(
     .where('memberships.is_player', '=', true)
     .where('users.merged_into', 'is', null)
     .execute()
+  // Somebody a team holds only by an open add reads as their own teams say.
+  const open = await openAddsOf(db, teamIds)
+  const held = rows.filter(
+    row => open.get(row.teamId)?.has(row.userId) === true
+  )
+  const own = await currentFormats(
+    db,
+    held.map(row => row.userId)
+  )
   return Object.fromEntries(
     rows.map(row => {
       const name = modelLabel(
         { ...row, id: row.gumboId },
-        DEFAULT_PLAYER_NAME_PRIVACY
+        (open.get(row.teamId)?.has(row.userId) === true
+          ? own.get(row.userId)
+          : undefined) ?? DEFAULT_PLAYER_NAME_PRIVACY
       )
       return [
         String(row.gumboId),

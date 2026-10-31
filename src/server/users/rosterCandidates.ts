@@ -268,7 +268,7 @@ export async function hasTie(
           or t.league_id = ${target.leagueId})
     union all
     select 1 from user_links
-      where user_id = ${actor.userId} and related_user_id in (${ids})
+      where user_id in (${sql.join(own.userIds)}) and related_user_id in (${ids})
         and kind in ('guardian', 'family')
     limit 1`.execute(db)
   return rows.length > 0
@@ -348,7 +348,8 @@ export async function rosterCandidates(
     ),
     guarded as (
       select related_user_id as user_id from user_links
-        where user_id = ${actor.userId} and kind in ('guardian', 'family')
+        where user_id in (${sql.join((await onePerson(db, actor.userId)).userIds)})
+          and kind in ('guardian', 'family')
     ),
     named as (select u.id from users u where ${matches}),
     named_origins as (

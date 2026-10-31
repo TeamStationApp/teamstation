@@ -390,14 +390,20 @@ async function foldOpenAdds(
       where kind = 'playerAdd' and status = 'applied'
         and terms->>'membershipId' = ${kept.id}`.execute(db)
   else if (addOnGoing != null && addOnKept != null) {
-    // The row that stays predates the add on it: it predates this one too.
-    const earlier = addOnKept.terms as PlayerAddTerms
-    await sql`update group_requests set terms = ${
-      earlier.createdMembership === true
+    // A row that predates the add on it predates the other add too, and the
+    // row that stays stands for both.
+    const predating = (other: { terms: unknown }): RawBuilder<unknown> => {
+      const { createdMembership, previous } = other.terms as PlayerAddTerms
+      return createdMembership === true
         ? sql`terms`
-        : sql`(terms - 'createdMembership')
-            || jsonb_build_object('previous', ${JSON.stringify(earlier.previous ?? null)}::jsonb)`
-    } || jsonb_build_object('membershipId', ${kept.id}::text)
+        : sql`(terms - 'createdMembership') || jsonb_build_object(
+            'previous', ${JSON.stringify(previous ?? null)}::jsonb)`
+    }
+    await sql`update group_requests set terms = ${predating(addOnGoing)}
+      where kind = 'playerAdd' and status = 'applied'
+        and terms->>'membershipId' = ${kept.id}`.execute(db)
+    await sql`update group_requests set terms = ${predating(addOnKept)}
+        || jsonb_build_object('membershipId', ${kept.id}::text)
       where ${onGoing}`.execute(db)
   } else if (going.is_player && !kept.is_player)
     await sql`update group_requests set terms = (terms - 'createdMembership')

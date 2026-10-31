@@ -39,6 +39,7 @@ import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { inbox as inbox_ } from '../notifications/inbox'
 import {
   playerRemovedWords,
   type PlayerRemover
@@ -61,7 +62,13 @@ import { addByPolicy } from '../teams/addExistingPlayer'
 import { personProfile } from '../teams/personProfile'
 import { levelPeople, teamRoster } from '../teams/teamRoster'
 import { ensureGumboId, insertUser } from '../users/insertUser'
-import { booksOver, gameNames, gameNamesDigest } from '../users/nameBook'
+import {
+  booksOver,
+  gameNames,
+  gameNamesDigest,
+  modelNames
+} from '../users/nameBook'
+import { hasTie } from '../users/rosterCandidates'
 import {
   applyPlayerAdd,
   decidePlayerAdd,
@@ -3050,7 +3057,8 @@ describe('adds made with a notice', function () {
         sender_scope_id: TEAM.falcons,
         terms: JSON.stringify({
           kind: 'guardian',
-          playerUserId: ids['Asked Child']
+          playerUserId: ids['Asked Child'],
+          guardian: { userId: ids.coach }
         }),
         status: 'pending',
         sent_at: new Date(),
@@ -3336,5 +3344,164 @@ describe('adds made with a notice', function () {
     expect(await membership('Back Member', TEAM.falcons)).to.include({
       is_player: false
     })
+  })
+
+  it('finds a parent’s tie to their child across a merge of the parent', async function () {
+    await person('Merged Parent', { login: true })
+    await person('Kept Parent', { login: true })
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_noticeAway', name: 'Far Terns' })
+      .execute()
+    await person('Far Child', { teamId: 'tem_noticeAway' })
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Merged Parent'],
+        related_user_id: ids['Far Child'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    await closeInto(db!, ids['Merged Parent'], ids['Kept Parent'])
+    await role(ids['Kept Parent'], TEAM.falcons, 'coach')
+    await role(ids['Kept Parent'], TEAM.falcons, 'admin')
+    expect(
+      await hasTie(
+        db!,
+        { userId: ids['Kept Parent'], isAdmin: false, scopes: [] },
+        TEAM.falcons,
+        undefined,
+        [ids['Far Child']]
+      )
+    ).equals(true)
+  })
+
+  it('withdraws a roster add from a game whose only play holds no pitch', async function () {
+    await person('Walked Past', { login: true })
+    const added = await add('roster', 'Walked Past')
+    const gameId = await game()
+    const setup = newSetup(
+      {
+        away: { id: TEAM.herons, name: 'Ridgeview Herons' },
+        home: { id: TEAM.falcons, name: 'Ridgeview Falcons' }
+      },
+      {
+        away: [],
+        home: [
+          {
+            gumboId: gumbo['Walked Past'],
+            shortName: 'Walked P'
+          }
+        ]
+      },
+      false
+    )
+    setup.sides.home.battingOrder = [gumbo['Walked Past']]
+    await db!
+      .updateTable('games')
+      .set({
+        currentPlay: JSON.stringify({
+          about: { atBatIndex: 1 },
+          teamStation: { version: 2, setupBefore: setup, actions: [] }
+        })
+      })
+      .where('id', '=', gameId)
+      .execute()
+    await db!
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId,
+        startTime: now,
+        battingTeamId: TEAM.herons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'intent_walk' }
+        }
+      })
+      .execute()
+    expect(await decide('Walked Past', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+    expect(
+      await db!
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', gameId)
+        .execute()
+    ).has.length(1)
+  })
+
+  it('tells a model a held player’s name as their own team has it', async function () {
+    await db!
+      .updateTable('teams')
+      .set({ player_name_privacy: 'initials' })
+      .where('id', '=', TEAM.owls)
+      .execute()
+    try {
+      await person('Strict Person', { login: true, teamId: TEAM.owls })
+      await add('roster', 'Strict Person')
+      const names = await modelNames(db!, [TEAM.falcons])
+      expect(names[String(gumbo['Strict Person'])]).not.includes('Strict')
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ player_name_privacy: null })
+        .where('id', '=', TEAM.owls)
+        .execute()
+    }
+  })
+
+  it('reads nothing more for an add nobody can answer any longer', async function () {
+    // A coach of the player's own team, and of nothing else.
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_noticeClosed', name: 'Closed Kites' })
+      .execute()
+    await person('Kites Coach', { login: true })
+    await role(ids['Kites Coach'], 'tem_noticeClosed', 'coach')
+    let queries = 0
+    const watched = db!.withPlugin({
+      transformQuery: args => {
+        queries += 1
+        return args.node
+      },
+      transformResult: async args => await Promise.resolve(args.result)
+    })
+    const actor = { userId: ids['Kites Coach'], isAdmin: false, scopes: [] }
+    await person('Closed Long Ago', {
+      login: true,
+      teamId: 'tem_noticeClosed'
+    })
+    await inbox_(watched, actor)
+    const before = queries
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_notice_closed',
+        kind: 'playerAdd',
+        sender_id: ids.coach,
+        sender_scope_type: 'team',
+        sender_scope_id: TEAM.falcons,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: TEAM.falcons,
+          userId: ids['Closed Long Ago'],
+          jersey: null,
+          positions: [],
+          teamName: 'Ridgeview Falcons'
+        }),
+        status: 'applied',
+        sent_at: new Date(0),
+        expires_at: new Date(1),
+        initiating_team_id: TEAM.falcons
+      })
+      .execute()
+    queries = 0
+    await inbox_(watched, actor)
+    expect(queries).equals(before)
   })
 })

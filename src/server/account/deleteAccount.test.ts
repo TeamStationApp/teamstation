@@ -902,6 +902,32 @@ describe('deleting an account', function () {
         players: [{ externalId: goneId, bats: 'left', throws: 'left' }]
       }).players
     )
+    // Nor a place on any other team, or a notice of one.
+    await h.db
+      .insertInto('teams')
+      .values({ id: 'tem_accountOther', name: 'Other' })
+      .execute()
+    const elsewhere = await addPlayers(
+      h.db,
+      { userId: nodeAdmin, isAdmin: true, scopes: [] },
+      'tem_accountOther',
+      asTeamPlayersBody({ players: [{ externalId: goneId }] }).players
+    )
+    expect(elsewhere.results[0].result).equals('error')
+    expect(
+      await h.db
+        .selectFrom('memberships')
+        .select('id')
+        .where('team_id', '=', 'tem_accountOther')
+        .execute()
+    ).deep.equals([])
+    expect(
+      await h.db
+        .selectFrom('group_requests')
+        .select('id')
+        .where('initiating_team_id', '=', 'tem_accountOther')
+        .execute()
+    ).deep.equals([])
     const adults = await addAdults(
       h.db,
       'tem_account',

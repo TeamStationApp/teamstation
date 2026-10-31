@@ -22,6 +22,7 @@ import { externalIdLockKey, recordExternalId } from '../db/externalIds'
 import { playerAddKey } from '../groups/noticePolicy'
 import { realClock } from '../groups/requests'
 import { noteScopeChange } from '../socket/syncRevision'
+import { isDeleted } from '../users/deleted'
 import { insertUser } from '../users/insertUser'
 import { addByPolicy, teamName } from './addExistingPlayer'
 
@@ -282,6 +283,7 @@ async function joinByPolicy(
     result: 'error',
     error: { code: 'conflict', message }
   })
+  if (await isDeleted(trx, userId)) return refused('That account was deleted')
   // A place on the team keeps its jersey, unless it had none.
   const place = await trx
     .selectFrom('memberships')

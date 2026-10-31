@@ -527,13 +527,15 @@ export function RosterEditor({
       })
       if ('pendingRequestId' in answer) return 'pending'
       const { entry } = answer
+      // Somebody on the roster already plays as it holds them, not as typed.
+      const held = answer.unchanged === true
       const player: PlayerDraft = {
         firstName: candidate.shortParts.first,
         lastName: candidate.shortParts.last,
-        jersey: choice.jersey,
+        jersey: held ? (entry.jersey ?? '') : choice.jersey,
         bats: candidate.bats ?? 'right',
         throws: candidate.throws,
-        positions: choice.positions
+        positions: held ? [...entry.positions] : choice.positions
       }
       const teamId = draft.gameData.teams[side].id
       if (pool && entry.gumboId != null) {

@@ -611,6 +611,7 @@ export async function inbox(
         eb.and([
           eb('kind', '=', 'playerAdd'),
           eb('status', 'in', ['pending', 'applied']),
+          eb('expires_at', '>', clock.now()),
           eb(sql<string>`terms->>'userId'`, 'in', ownRows.map(String))
         ]),
         ...(teamIds.length === 0
@@ -619,6 +620,7 @@ export async function inbox(
               eb.and([
                 eb('kind', '=', 'playerAdd'),
                 eb('status', 'in', ['pending', 'applied']),
+                eb('expires_at', '>', clock.now()),
                 eb(sql<string>`terms->>'userId'`, 'in', rowsOfPlayers(teamIds))
               ])
             ]),

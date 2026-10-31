@@ -408,21 +408,15 @@ async function gameStarted(trx: Db, game: { id: string }): Promise<boolean> {
 }
 
 /**
- * Whether a stored play names them: an intentional walk begins no game by
- * `gameStarted`'s reading, and still has its batter on the record.
+ * Whether a game has a stored play: an intentional walk begins no game by
+ * `gameStarted`'s reading, and is on the record all the same, with the game's
+ * lineup past reconciling.
  */
-async function namedInPlays(
-  trx: Db,
-  game: { id: string },
-  gumboIds: ReadonlySet<number>
-): Promise<boolean> {
-  if (gumboIds.size === 0) return false
+async function hasStoredPlay(trx: Db, game: { id: string }): Promise<boolean> {
   const row = await trx
-    .selectFrom('event_players')
-    .innerJoin('events', 'events.id', 'event_players.event_id')
-    .select('event_players.event_id')
-    .where('events.gameId', '=', game.id)
-    .where('event_players.gumbo_id', 'in', [...gumboIds])
+    .selectFrom('events')
+    .select('id')
+    .where('gameId', '=', game.id)
     .executeTakeFirst()
   return row != null
 }
@@ -481,7 +475,7 @@ async function playedGames(
       .executeTakeFirst()
     if (
       game == null ||
-      !((await gameStarted(trx, game)) || (await namedInPlays(trx, game, held)))
+      !((await gameStarted(trx, game)) || (await hasStoredPlay(trx, game)))
     )
       return []
     return [{ ...game, side: sideOf(game, terms, held) }]
@@ -579,7 +573,18 @@ async function playedGames(
         eb('away_team_id', '=', terms.teamId)
       ])
     )
-    .where('status', '=', 'inProgress')
+    .where('status', 'not in', ['final', 'cancelled'])
+    .where(eb =>
+      eb.or([
+        eb('status', '=', 'inProgress'),
+        eb.exists(
+          eb
+            .selectFrom('events')
+            .select('events.id')
+            .whereRef('events.gameId', '=', 'games.id')
+        )
+      ])
+    )
     .where('start_at', '>=', new Date(request.sent_at.getTime() - DAY))
     .execute()
   const pool = await trx
