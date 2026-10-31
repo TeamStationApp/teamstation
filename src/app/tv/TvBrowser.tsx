@@ -12,6 +12,7 @@ import { fourAcross, gameDate, monthSections } from './browseLayout'
 import { loadTvCollection, type TvClip, type TvCollection } from './collections'
 import { HeroPreview } from './HeroPreview'
 import {
+  NativeGradient,
   NativeSearch,
   nativeTvPresentation,
   TvPoster,
@@ -60,6 +61,33 @@ export function TvScrim({
 }: {
   header?: boolean
 }): React.ReactElement {
+  if (!header && NativeGradient !== null)
+    return (
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <NativeGradient
+          direction="left"
+          maxOpacity={0.35}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '75%'
+          }}
+        />
+        <NativeGradient
+          direction="bottom"
+          maxOpacity={0.15}
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '35%'
+          }}
+        />
+      </View>
+    )
   return (
     <Svg
       pointerEvents="none"
@@ -69,20 +97,20 @@ export function TvScrim({
     >
       <Defs>
         <LinearGradient id="left" x1="0" y1="0" x2="1" y2="0">
-          <Stop offset="0" stopColor="#454545" />
-          <Stop offset="0.45" stopColor="#454545" stopOpacity={0.88} />
-          <Stop offset="0.8" stopColor="#454545" stopOpacity={0.08} />
+          <Stop offset="0" stopColor="#000" stopOpacity={0.35} />
+          <Stop offset="0.4" stopColor="#000" stopOpacity={0.18} />
+          <Stop offset="0.75" stopColor="#000" stopOpacity={0} />
         </LinearGradient>
         <LinearGradient id="bottom" x1="0" y1="0" x2="0" y2="1">
           <Stop
             offset={header ? '0' : '0.3'}
-            stopColor={header ? '#171717' : '#454545'}
+            stopColor={header ? '#171717' : '#000'}
             stopOpacity={header ? 0.98 : 0}
           />
           <Stop
             offset="1"
-            stopColor={header ? '#171717' : '#454545'}
-            stopOpacity={header ? 0 : 1}
+            stopColor={header ? '#171717' : '#000'}
+            stopOpacity={header ? 0 : 0.15}
           />
         </LinearGradient>
       </Defs>
@@ -100,7 +128,9 @@ function Tile({
   width,
   preferred,
   onPress,
-  onFocus
+  onFocus,
+  preview,
+  onPreviewFocus
 }: {
   id: string
   image: string | null
@@ -110,13 +140,26 @@ function Tile({
   preferred: boolean
   onPress: () => void
   onFocus: (id: string) => void
+  preview?: {
+    client: TeamStationClient
+    gameId: string
+    active: boolean
+    videoId?: string
+  }
+  onPreviewFocus?: (id: string, focused: boolean) => void
 }): React.ReactElement {
   const [focused, setFocused] = useState(false)
+  const [previewPosition, setPreviewPosition] = useState<number | null>(null)
   return (
     <Pressable
       testID={id}
       accessibilityRole="button"
-      accessibilityLabel={`${title}${detail === undefined ? '' : `, ${detail}`}`}
+      accessibilityValue={
+        focused && previewPosition !== null
+          ? { text: `Preview: ${previewPosition} seconds` }
+          : undefined
+      }
+      accessibilityLabel={`${title}${detail === undefined ? '' : `, ${detail}`}${focused && previewPosition !== null ? `, Preview: ${previewPosition} seconds` : ''}`}
       {...{
         hasTVPreferredFocus: preferred,
         // UIImageView owns lift, parallax and Reduce Motion without a second scale.
@@ -125,18 +168,38 @@ function Tile({
       onFocus={() => {
         setFocused(true)
         onFocus(id)
+        onPreviewFocus?.(id, true)
       }}
       onBlur={() => {
         setFocused(false)
+        setPreviewPosition(null)
+        onPreviewFocus?.(id, false)
       }}
       onPress={onPress}
-      style={[styles.tile, { width }, focused && styles.tileFocus]}
+      style={[styles.tile, { width }]}
     >
       <View style={[styles.thumbnail, { height: (width * 9) / 16 }]}>
         {image === null ? (
-          <Text style={styles.placeholder}>▶</Text>
+          <View style={StyleSheet.absoluteFill}>
+            <Text style={styles.placeholder}>▶</Text>
+            {preview !== undefined && focused && preview.active && (
+              <HeroPreview {...preview} muted onPosition={setPreviewPosition} />
+            )}
+          </View>
         ) : (
-          <TvPoster uri={image} />
+          <TvPoster uri={image} focused={focused}>
+            {preview !== undefined && focused && preview.active && (
+              <HeroPreview {...preview} muted onPosition={setPreviewPosition} />
+            )}
+          </TvPoster>
+        )}
+        {/* A static image-area cue remains visible without artwork or motion. */}
+        {focused && (
+          <View
+            testID={`${id}-focus-cue`}
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.thumbnailFocus]}
+          />
         )}
       </View>
       <Text numberOfLines={1} style={styles.tileTitle}>
@@ -521,9 +584,20 @@ function BrowsePage({
       if (alive.current) setMore(false)
     }
   }
+  const [previewFocus, setPreviewFocus] = useState<string | null>(null)
+  const previewFocusChanged = useCallback(
+    (id: string, focused: boolean): void => {
+      setPreviewFocus(current =>
+        focused ? id : current === id ? null : current
+      )
+    },
+    []
+  )
   const gameTile = (game: VideoGame, prefix: string): React.ReactElement => (
     <Tile
       key={game.id}
+      preview={{ client, gameId: game.id, active }}
+      onPreviewFocus={previewFocusChanged}
       id={`${prefix}-${game.id}`}
       image={game.posterUrl}
       title={`${game.awayTeamName} at ${game.homeTeamName}`}
@@ -572,7 +646,7 @@ function BrowsePage({
           <HeroPreview
             client={client}
             gameId={hero.id}
-            active={active && heroVisible}
+            active={active && heroVisible && previewFocus === null}
           />
         )}
         <TvScrim />
@@ -685,6 +759,13 @@ function BrowsePage({
               {collection.highlights.map(clip => (
                 <Tile
                   key={`${clip.game.id}-${clip.eventId}`}
+                  preview={{
+                    client,
+                    gameId: clip.game.id,
+                    videoId: clip.videoId,
+                    active
+                  }}
+                  onPreviewFocus={previewFocusChanged}
                   id={`clip-${clip.game.id}-${clip.eventId}`}
                   title={clip.title}
                   detail={gameDate(clip.game)}
@@ -859,6 +940,10 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  thumbnailFocus: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 12
   },
   placeholder: { fontSize: 54, color: '#818b84' },
   tileTitle: { fontSize: 32, color: '#fff' },

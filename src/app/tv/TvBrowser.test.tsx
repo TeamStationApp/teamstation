@@ -174,6 +174,87 @@ afterEach(async () => {
   failSearch = false
 })
 describe('TV browser journeys', () => {
+  it('keeps a static thumbnail focus cue with or without artwork and native motion', async () => {
+    await render()
+    for (const id of ['recent-game-0', 'recent-game-1']) {
+      await act(async () => {
+        document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.focus()
+      })
+      const cue = document.querySelector<HTMLElement>(
+        `[data-testid="${id}-focus-cue"]`
+      )!
+      expect(cue).not.equals(null)
+      expect(window.getComputedStyle(cue).backgroundColor).equals(
+        'rgba(255, 255, 255, 0.16)'
+      )
+      expect(cue.parentElement!.textContent).not.contains('Demo Hawks')
+      expect(document.querySelectorAll('[data-testid$="-focus-cue"]')).length(1)
+    }
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-testid="tv-search"]')!.focus()
+    })
+    expect(document.querySelectorAll('[data-testid$="-focus-cue"]')).length(0)
+  })
+
+  it('arbitrates one muted focused preview and restores hero audio after leaving tiles', async () => {
+    const configured = client as unknown as Record<string, unknown>
+    configured.game = async (id: string) => ({
+      videos: [
+        {
+          id: id.replace('game', 'video'),
+          title: 'Primary',
+          status: 'ready',
+          numCameras: 1,
+          durationSec: 60
+        }
+      ]
+    })
+    configured.playback = async () => ({
+      url: 'https://example.test/preview.mp4'
+    })
+    try {
+      await render()
+      await act(async () => {
+        await pause()
+      })
+      const focus = async (selector: string): Promise<void> => {
+        await act(async () => {
+          document.querySelector<HTMLElement>(selector)!.focus()
+          await pause()
+        })
+        await act(async () => {
+          await pause()
+        })
+      }
+      await focus('[data-testid="recent-game-0"]')
+      const first = document.querySelector('video')!
+      expect(document.querySelectorAll('video')).length(1)
+      expect(first.muted).equals(true)
+      await act(async () => {
+        Object.defineProperty(first, 'duration', {
+          configurable: true,
+          value: 60
+        })
+        first.dispatchEvent(new window.Event('durationchange'))
+      })
+      expect(first.currentTime).equals(30)
+      expect(
+        document
+          .querySelector('[data-testid="recent-game-0"]')!
+          .getAttribute('aria-label')
+      ).contains('Preview: 30 seconds')
+      await focus('[data-testid="recent-game-1"]')
+      expect(first.isConnected).equals(false)
+      expect(document.querySelectorAll('video')).length(1)
+      expect(document.querySelector('video')!.muted).equals(true)
+      await focus('[data-testid="tv-search"]')
+      expect(document.querySelectorAll('video')).length(1)
+      expect(document.querySelector('video')!.muted).equals(false)
+    } finally {
+      delete configured.game
+      delete configured.playback
+    }
+  })
   it('browses the hero, game and highlight rows, restores the home page and pages the remaining grid', async () => {
     await render()
     expect(document.body.textContent)
