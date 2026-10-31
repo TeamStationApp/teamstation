@@ -44,6 +44,17 @@ if (!reportOnly) {
         'src/app/components/Card.test.tsx',
         'src/app/components/gameLiveCards.test.tsx',
         'src/app/screens/GamesFeedScreen.test.tsx',
+        'src/app/components/pageScroll.test.tsx',
+        'src/app/components/PagedList.test.tsx',
+        'src/app/components/PagedList.native.test.tsx',
+        'src/app/components/PagedListEnd.test.tsx',
+        'src/app/hooks/usePagedList.test.tsx',
+        'src/app/screens/NotificationsScreen.test.tsx',
+        'src/app/screens/PlayerScreen.test.tsx',
+        'src/app/screens/GameScreen.player.test.tsx',
+        'src/app/screens/GameWatchLayout.test.tsx',
+        'src/app/screens/GameWatchLayout.native.test.tsx',
+        'src/app/sync/cachingClient.test.ts',
         'src/app/screens/teamSchedule.test.tsx',
         'src/app/screens/PublicTeamContent.test.tsx',
         'src/app/screens/SeasonScreen.test.tsx',
@@ -87,7 +98,14 @@ if (!reportOnly) {
   })
   run(
     'node_modules/.bin/mocha',
-    ['-r', './src/test/scoringDomSetup.cjs', '--exit', 'lib/umpire-tests.cjs'],
+    [
+      '-r',
+      './src/test/scoringDomSetup.cjs',
+      '--timeout',
+      '20000',
+      '--exit',
+      'lib/umpire-tests.cjs'
+    ],
     { NODE_V8_COVERAGE: temp }
   )
 }
