@@ -12,6 +12,7 @@
 		4D747196BDE1ED80948568E0 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		52A11B11F7AEFA2549D576F4 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2ABAB91049ED3EB36F05FEA4 /* Foundation.framework */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
+		7843261282C7588F0083C2F4 /* TVPresentation.m in Sources */ = {isa = PBXBuildFile; fileRef = B07BF87C9B725F317E2F05EE /* TVPresentation.m */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		9559AD39C08CA420A0861081 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F836794C6ECABBE885FD120B /* GameController.framework */; };
 		9C06081B13CABEFEC7E39C54 /* TVSession.m in Sources */ = {isa = PBXBuildFile; fileRef = C663E67657F971B682BD1A28 /* TVSession.m */; };
@@ -43,6 +44,7 @@
 		5F14EDF84EB60D7A822E0D4B /* TVRemote.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TVRemote.m; path = TeamStationTV/TVRemote.m; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = TeamStationTV/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = TeamStationTV/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		B07BF87C9B725F317E2F05EE /* TVPresentation.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TVPresentation.m; path = TeamStationTV/TVPresentation.m; sourceTree = "<group>"; };
 		C663E67657F971B682BD1A28 /* TVSession.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = TeamStationTV/TVSession.m; sourceTree = "<group>"; };
 		D5BB1612FB42C96057530C8D /* TVSessionTests.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = TVSessionTests.m; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -81,6 +83,7 @@
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
 				C663E67657F971B682BD1A28 /* TVSession.m */,
 				5F14EDF84EB60D7A822E0D4B /* TVRemote.m */,
+				B07BF87C9B725F317E2F05EE /* TVPresentation.m */,
 			);
 			name = TeamStationTV;
 			sourceTree = "<group>";
@@ -330,6 +333,7 @@
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				9C06081B13CABEFEC7E39C54 /* TVSession.m in Sources */,
 				D20F5A289D14340E8CAB6086 /* TVRemote.m in Sources */,
+				7843261282C7588F0083C2F4 /* TVPresentation.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
