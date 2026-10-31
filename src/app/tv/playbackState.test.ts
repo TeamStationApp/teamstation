@@ -1,14 +1,15 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { defaultScoreboardSettings } from '../../common/nodeSettings'
 import { PlaybackClock } from './playbackClock'
 import {
   angleLayout,
-  edgeSwipe,
   initialPlayback,
   playbackReducer as reduce
 } from './playbackState'
 import { commonStart, targetTime, timelineFor } from './playbackTimeline'
+import { angleNeighbor, tvLayout } from './tvLayout'
 
 const timeline = (offset = 0): ReturnType<typeof timelineFor> =>
   timelineFor(new Date(100000 + offset).toISOString())
@@ -21,7 +22,7 @@ describe('TV playback composition and remote state', () => {
     expect(angleLayout(1, state)).includes({ opacity: 1, width: 50 })
     state = reduce(state, { type: 'collapse' })
     for (const index of [3, 2]) state = reduce(state, { type: 'toggle', index })
-    expect(angleLayout(0, state)).includes({ top: 25, height: 50 })
+    expect(angleLayout(0, state)).includes({ top: 50, height: 50 })
     expect(angleLayout(3, state)).includes({ opacity: 0, width: 50 })
     state = reduce(state, { type: 'toggle', index: 1 })
     expect(angleLayout(0, state)).includes({ width: 100 })
@@ -71,15 +72,53 @@ describe('TV playback composition and remote state', () => {
       })
     ).includes({ side: null, box: 'closed' })
   })
-  it('requires edge-origin displacement and leaves center touches to focus navigation', () => {
-    expect(edgeSwipe({ x: 0.1, y: 0.5 }, { x: 0.7, y: 0.5 })).equals('cameras')
-    expect(edgeSwipe({ x: 0.9, y: 0.5 }, { x: 0.3, y: 0.5 })).equals(
-      'highlights'
+  it('moves within rows and columns before reaching a panel boundary', () => {
+    const four = initialPlayback(4)
+    expect(angleNeighbor(four, 0, 'right')).equals(1)
+    expect(angleNeighbor(four, 1, 'right')).equals(null)
+    expect(angleNeighbor(four, 0, 'down')).equals(2)
+    expect(angleNeighbor(four, 2, 'down')).equals(null)
+    expect(angleNeighbor(four, 2, 'up')).equals(0)
+    expect(angleNeighbor(four, 1, 'left')).equals(0)
+    expect(angleNeighbor(four, 0, 'left')).equals(null)
+    const three = initialPlayback(3)
+    expect(angleNeighbor(three, 0, 'left')).equals(null)
+    expect(angleNeighbor(three, 0, 'down')).equals(2)
+    expect(angleNeighbor(three, 1, 'up')).equals(null)
+    expect(angleNeighbor(initialPlayback(2), 0, 'right')).equals(1)
+    expect(angleNeighbor(initialPlayback(1), 0, 'down')).equals(null)
+    expect(angleNeighbor({ ...four, full: 1 }, 1, 'left')).equals(null)
+    expect(angleNeighbor(four, 8, 'right')).equals(null)
+    expect(angleNeighbor({ ...four, visible: [1, 3] }, 1, 'right')).equals(3)
+  })
+  it('shares landscape geometry and isolates the four-angle TV setting', () => {
+    const screen = { width: 1920, height: 1080 }
+    const settings = { ...defaultScoreboardSettings, show: true }
+    const three = tvLayout(initialPlayback(3), screen, settings, true, true)
+    expect(three.tiles[0].x).equals(960)
+    expect(three.tiles[1].y).equals(540)
+    expect(three.box).not.equals(null)
+    const two = tvLayout(initialPlayback(2), screen, settings, true, true)
+    expect(two.tiles[0].y).equals(540)
+    expect(two.box!.x).lessThan(960)
+    expect(two.board!.x).greaterThan(960)
+    const four = initialPlayback(4)
+    const normal = tvLayout(four, screen, settings, true, true)
+    const changed = tvLayout(
+      four,
+      screen,
+      { ...settings, tvLandscape: { x: 0.2, y: 0.2, height: 0.3 } },
+      true,
+      true
     )
-    expect(edgeSwipe({ x: 0.5, y: 0.95 }, { x: 0.5, y: 0.3 })).equals('box')
-    expect(edgeSwipe({ x: 0.5, y: 0.5 }, { x: 1, y: 0.5 })).equals(null)
-    expect(edgeSwipe({ x: 0, y: 0.5 }, { x: 0.2, y: 0.5 })).equals(null)
-    expect(edgeSwipe({ x: 0.5, y: 0 }, { x: 0.5, y: 0.9 })).equals(null)
+    expect(changed.board!.x).greaterThan(normal.board!.x)
+    expect(changed.tiles).deep.equals(normal.tiles)
+    expect(
+      tvLayout(initialPlayback(3), screen, null, false, false).boardCell
+    ).equals(true)
+    expect(
+      tvLayout(initialPlayback(1), screen, settings, true, true).box
+    ).equals(null)
   })
 })
 describe('TV native playback clock contracts', () => {
