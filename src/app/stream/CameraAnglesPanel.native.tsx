@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Platform, Text, View } from 'react-native'
+import { Linking, Platform, Text, View } from 'react-native'
 
 import type {
   CameraSource,
@@ -15,6 +15,11 @@ import { lstrings, sprintf } from '../locales/strings'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AngleNamePrompt } from './AngleNamePrompt'
+import {
+  type CameraLinks,
+  launchCamera,
+  type LinkedCamera
+} from './cameraDeepLinks'
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
@@ -61,12 +66,23 @@ export interface CameraAnglesPanelProps {
   Screen?: typeof StreamingScreen
   /** The clipboard; a test hands in its own. */
   copy?: (text: string) => void
+  /** Opens the camera apps; a test hands in its own. */
+  links?: CameraLinks
   /** The videos this game's cameras are publishing to, each time that changes. */
   onPublishing?: (videoIds: string[]) => void
   /** Whether the game has a video to play. Without one the tab says so here. */
   hasVideo: boolean
   /** Plays one of the game's videos in the player above. */
   onPlay?: (videoId: string) => void
+}
+
+const systemLinks: CameraLinks = {
+  canOpenURL: async url => await Linking.canOpenURL(url),
+  openURL: async url => {
+    await Linking.openURL(url)
+  },
+  appInstalled: phoneStream.appInstalled,
+  openInApp: phoneStream.openInApp
 }
 
 /** The sheet up, or the next once iOS has taken the last away. */
@@ -113,8 +129,9 @@ function isUploading(
  * - A row for every take on this phone that TeamStation does not have yet,
  *   with Upload Recording.
  * - Record Video, which steps through setup: the angle's name, then this
- *   phone's camera or an external one (its make, then its RTMP URL). Disabled
- *   with the reason beside it at either limit on cameras.
+ *   phone's camera or an external one: its make, then its own app or, for any
+ *   other camera, its RTMP URL. Disabled with the reason beside it at either
+ *   limit on cameras.
  *
  * It asks `streamAccess` first, and only somebody who may film reads the
  * cameras: anybody else is answered `404` for them.
@@ -129,6 +146,7 @@ export function CameraAnglesPanel(
     deviceId = installId,
     Screen = StreamingScreen,
     copy,
+    links = systemLinks,
     hasVideo,
     onPlay
   } = props
@@ -158,6 +176,8 @@ export function CameraAnglesPanel(
   const [promptKey, setPromptKey] = useState(0)
   /** The angle's name, carried from the prompt to the camera's make. */
   const [angleName, setAngleName] = useState('')
+  /** Why the camera's row went nowhere, shown on the sheet that is still up. */
+  const [sourceError, setSourceError] = useState<string | undefined>(undefined)
   const [rtmp, setRtmp] = useState<RtmpTarget | undefined>(undefined)
   /** Bumped each time the RTMP sheet opens, so it asks afresh. */
   const [rtmpKey, setRtmpKey] = useState(0)
@@ -170,6 +190,8 @@ export function CameraAnglesPanel(
   const [pending, setPending] = useState<OpenCamera | undefined>(undefined)
   const [open, setOpen] = useState<OpenCamera | undefined>(undefined)
   const live = useRef(true)
+  /** A row's camera is being made, so a second tap must not make another. */
+  const launching = useRef(false)
   const askDeviceId = useRef(deviceId)
   askDeviceId.current = deviceId
 
@@ -361,8 +383,38 @@ export function CameraAnglesPanel(
     goTo('rtmp')
   }
 
+  const launch = (source: LinkedCamera): void => {
+    if (launching.current) return
+    launching.current = true
+    setSourceError(undefined)
+    launchCamera({
+      client,
+      gameId,
+      name: angleName,
+      source,
+      links,
+      os: Platform.OS,
+      onCreated: reloadQuietly
+    })
+      .then(
+        launched => {
+          if (launched.kind === 'opened') goTo(undefined)
+          if (launched.kind === 'sheet') openRtmp(launched.target)
+        },
+        (error: unknown) => {
+          setSourceError(
+            error instanceof Error ? error.message : lstrings.common_retry
+          )
+        }
+      )
+      .finally(() => {
+        launching.current = false
+      })
+  }
+
   const chooseSource = (source: CameraSource): void => {
-    openRtmp({ name: angleName, source })
+    if (source === 'rtmp') openRtmp({ name: angleName, source })
+    else launch(source)
   }
 
   const reopen = (stream: LiveStream): void => {
@@ -567,6 +619,7 @@ export function CameraAnglesPanel(
         onStart={start}
         onExternal={name => {
           setAngleName(name)
+          setSourceError(undefined)
           goTo('source')
         }}
         onDismiss={sheetGone}
@@ -578,6 +631,7 @@ export function CameraAnglesPanel(
           goTo(undefined)
         }}
         onDismiss={sheetGone}
+        error={sourceError}
       />
       {rtmp != null && (
         <RtmpUrlSheet

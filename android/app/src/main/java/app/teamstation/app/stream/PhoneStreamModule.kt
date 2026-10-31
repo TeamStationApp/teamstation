@@ -1,7 +1,11 @@
 package app.teamstation.app.stream
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -245,6 +249,31 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     override fun cancelUpload(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.cancelUpload(liveStreamId) }
 
     override fun deleteRecording(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.deleteRecording(liveStreamId) }
+
+    // MARK: - Camera apps
+
+    override fun appInstalled(packageName: String, promise: Promise) {
+        val enabled = try {
+            reactApplicationContext.packageManager.getApplicationInfo(packageName, 0).enabled
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+        promise.resolve(enabled)
+    }
+
+    /** Held to the one package, so a link that app does not take can never reach a browser. */
+    override fun openInApp(url: String, packageName: String, promise: Promise) {
+        val link = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            .setPackage(packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val opened = try {
+            reactApplicationContext.startActivity(link)
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        }
+        promise.resolve(opened)
+    }
 
     // MARK: - Display rotation
 

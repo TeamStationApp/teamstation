@@ -544,8 +544,12 @@ export class Phone {
         await sleep(150)
       }
     }
+    // A sheet still settling under a leaving keyboard can miss the first tap.
+    await sleep(800)
     say('$ tapOn Record with this phone')
     await this.m.tapOn({ text: 'Record with this phone' })
+    if ((await this.find(node => node.id === 'broadcast-button', 6000)) == null)
+      await this.m.tapOn({ text: 'Record with this phone' })
     assert(
       (await this.find(node => node.id === 'broadcast-button', 20000)) != null,
       'the streaming screen opened'
