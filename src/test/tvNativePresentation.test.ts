@@ -25,8 +25,14 @@ describe('TV native presentation bridge', () => {
     expect(bridge.nativeTvPresentation).equals(true)
     expect(bridge.NativeSearch).equals('TVSearch')
     expect(bridge.NativeGradient).equals('TVGradient')
-    const poster = bridge.TvPoster({ uri: 'https://example.test/poster.jpg' })
+    const poster = bridge.TvPoster({
+      uri: 'https://example.test/poster.jpg',
+      focused: true,
+      children: 'moving preview'
+    })
     expect(poster.type).equals('TVPoster')
+    expect(poster.props.previewFocused).equals(true)
+    expect(poster.props.children).equals('moving preview')
     expect(poster.props.uri).equals('https://example.test/poster.jpg')
     expect(poster.props.pointerEvents).equals('none')
     expect(poster.props.style).deep.equals({ position: 'absolute' })
