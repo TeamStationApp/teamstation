@@ -10,15 +10,19 @@ import {
   gameProposalFields,
   loadedGameDraft,
   swapSides
-} from '../app/screens/gameDraft'
-import { type Lineup, type RosterEntry, TeamStationClient } from '../common/api'
-import type { ScoringAction } from '../common/scoring/actions'
-import { ScoringSession } from '../common/scoring/session'
-import { startingSetup, teamsOf } from '../common/scoring/startingSetup'
-import { type GameState, setupOf } from '../common/scoring/state'
-import type { LineupFixture } from '../server/dev/lineupFixture'
-import { signInTestAccount } from './passwordFixtures'
-import type { BrowserSession } from './refinementsMaestro.e2e'
+} from '../../src/app/screens/gameDraft'
+import {
+  type Lineup,
+  type RosterEntry,
+  TeamStationClient
+} from '../../src/common/api'
+import type { ScoringAction } from '../../src/common/scoring/actions'
+import { ScoringSession } from '../../src/common/scoring/session'
+import { startingSetup, teamsOf } from '../../src/common/scoring/startingSetup'
+import { type GameState, setupOf } from '../../src/common/scoring/state'
+import type { LineupFixture } from '../../src/server/dev/lineupFixture'
+import { signInTestAccount } from '../../src/test/passwordFixtures'
+import type { BrowserSession } from './refinementsMaestro'
 
 /**
  * What the scoring end-to-end drivers share: the local stack's addresses, a

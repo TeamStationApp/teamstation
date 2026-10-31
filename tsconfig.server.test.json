@@ -7,7 +7,9 @@
   // server check `npm run typecheck` runs.
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Unit tests import rigs and fixtures from `e2e/`.
+    "rootDir": "."
   },
   "include": [
     "src/common/**/*.ts",
@@ -22,7 +24,7 @@
     "src/test/fakeScoreboardSocket.ts",
     "src/test/scoringHelpers.ts",
     "src/test/scoreboardServer.e2e.ts",
-    "src/test/scoringBrowser.e2e.ts",
+    "e2e/rigs/scoringBrowser.ts",
     "src/test/nativeLocationFailure.ts",
     "src/test/responderDrag.ts",
     "src/common/chatCrypto/core.web.ts",

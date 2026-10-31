@@ -11,7 +11,9 @@
     "moduleResolution": "bundler",
     // The app runs in a browser, so it gets the DOM as well as the language
     // library. The server config deliberately does not.
-    "lib": ["es2023", "dom", "dom.iterable"]
+    "lib": ["es2023", "dom", "dom.iterable"],
+    // Unit tests import rigs and fixtures from `e2e/`.
+    "rootDir": "."
   },
   "include": [
     "src/app/**/*.ts",

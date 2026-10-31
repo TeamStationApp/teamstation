@@ -4,8 +4,8 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import type { PrivacyNativeManifest } from '../test/playerNamePrivacyNativeFixture.e2e'
-import { maestro } from '../test/refinementsMaestro.e2e'
+import type { PrivacyNativeManifest } from '../../e2e/fixtures/playerNamePrivacyNativeFixture'
+import { maestro } from '../../e2e/rigs/refinementsMaestro'
 
 /**
  * Player name privacy in the phone app, driven by maestro-d against

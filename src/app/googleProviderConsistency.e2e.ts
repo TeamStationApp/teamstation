@@ -10,18 +10,18 @@ import {
 import { createServer } from 'node:http'
 import { resolve } from 'node:path'
 
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { serverConfig } from '../server/serverConfig'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   browserSession,
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { serverConfig } from '../server/serverConfig'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 
 type MapMode =
   'success' | 'authentication' | 'network' | 'initialization' | 'timeout'

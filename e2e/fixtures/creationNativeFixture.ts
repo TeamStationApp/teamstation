@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { groupFixture } from './groupFixtures'
+import { groupFixture } from '../../src/test/groupFixtures'
 
 /** Own isolated API/mail/object/Metro services; no production account or route. */
 async function main(): Promise<void> {

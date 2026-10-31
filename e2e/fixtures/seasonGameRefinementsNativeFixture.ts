@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { refinementsFixture } from './seasonGameRefinementsFixture'
+import { refinementsFixture } from '../../src/test/seasonGameRefinementsFixture'
 
 /** Fresh native scenarios use the same synthetic results before browser mutations. */
 async function main(): Promise<void> {

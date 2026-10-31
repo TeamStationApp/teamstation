@@ -42,7 +42,6 @@ import path from 'node:path'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { lstrings } from '../locales/strings'
 import {
   api,
   apiToken,
@@ -59,7 +58,8 @@ import {
   standIn,
   type StreamRow,
   waitPublishing
-} from './phoneStreamRig.e2e'
+} from '../../../e2e/rigs/phoneStreamRig'
+import { lstrings } from '../locales/strings'
 
 const HOME = 'Home Plate'
 const FIRST = 'First Base'

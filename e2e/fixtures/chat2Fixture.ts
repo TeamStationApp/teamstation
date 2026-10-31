@@ -17,19 +17,19 @@ import {
   asValue
 } from 'cleaners'
 
-import { ChatEngine } from '../app/chat/engine/engine'
+import { ChatEngine } from '../../src/app/chat/engine/engine'
 import {
   approveLink,
   ensureEnrolled,
   rotatePuk
-} from '../app/chat/engine/links'
+} from '../../src/app/chat/engine/links'
 import {
   type ChatKeyStore,
   recordFromJson,
   recordToJson
-} from '../app/chat/keyRecord'
-import { TeamStationClient } from '../common/api'
-import { asUserId } from '../common/userId'
+} from '../../src/app/chat/keyRecord'
+import { TeamStationClient } from '../../src/common/api'
+import { asUserId } from '../../src/common/userId'
 
 export const CHAT2_SURFACES = [
   'web-wide',
@@ -545,8 +545,8 @@ export function loadChat2Fixture(path: string): Chat2Fixture {
 /** The chat2 harness's own files, named because they are its core. */
 const CHAT2_HARNESS_FILES: ReadonlySet<string> = new Set([
   'src/app/chat/chat2.e2e.ts',
-  'src/test/chat2Maestro.e2e.ts',
-  'src/test/chat2Fixture.e2e.ts',
+  'e2e/rigs/chat2Maestro.ts',
+  'e2e/fixtures/chat2Fixture.ts',
   'src/app/chat/chat2Actions.test.ts',
   'src/test/chat2FixtureIdentity.test.ts',
   'src/app/chat/engine/dmTitle.test.ts'
@@ -577,6 +577,7 @@ export function isChat2HarnessPath(path: string): boolean {
     CHAT2_HARNESS_FILES.has(path) ||
     /\.(test|e2e)\.tsx?$/.test(path) ||
     path.startsWith('src/test/') ||
+    path.startsWith('e2e/') ||
     /^scripts\/[^/]+\.e2e\./.test(path)
   )
 }

@@ -35,7 +35,7 @@ import {
   privateJson,
   redact,
   sourceBinding
-} from './chat2Fixture.e2e'
+} from '../fixtures/chat2Fixture'
 
 type Args = Record<string, unknown>
 export interface Chat2Device {

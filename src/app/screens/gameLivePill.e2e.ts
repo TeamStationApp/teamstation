@@ -3,12 +3,12 @@ import { resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { groupFixture } from '../../test/groupFixtures'
 import {
   browserSession,
   capture,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { groupFixture } from '../../test/groupFixtures'
 
 /** Real schedule API and mobile browser, including stored state after undo. */
 async function main(): Promise<void> {

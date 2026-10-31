@@ -7,15 +7,15 @@ import { createInterface } from 'node:readline'
 
 import express from 'express'
 
-import { userIdOfGumbo } from '../common/userId'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { devMediaRoutes } from '../server/routes/devMedia'
-import { healthRoutes } from '../server/routes/health'
-import { mediaRoutes } from '../server/routes/media'
-import { googlePlacesStub } from './googlePlacesStub'
-import { groupFixture } from './groupFixtures'
-import { insertFixtureUsers } from './insertFixtureUsers'
-import { seedSettingsCleanup3 } from './settingsCleanup3Fixture'
+import { userIdOfGumbo } from '../../src/common/userId'
+import { googlePlaces } from '../../src/server/location/googlePlaces'
+import { devMediaRoutes } from '../../src/server/routes/devMedia'
+import { healthRoutes } from '../../src/server/routes/health'
+import { mediaRoutes } from '../../src/server/routes/media'
+import { googlePlacesStub } from '../../src/test/googlePlacesStub'
+import { groupFixture } from '../../src/test/groupFixtures'
+import { insertFixtureUsers } from '../../src/test/insertFixtureUsers'
+import { seedSettingsCleanup3 } from '../../src/test/settingsCleanup3Fixture'
 
 /** Isolated real API/database/mail fixture, supplied explicitly per platform. */
 async function main(): Promise<void> {

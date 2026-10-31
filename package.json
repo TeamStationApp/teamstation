@@ -87,7 +87,7 @@
     "stats-tables-seed": "node -r sucrase/register src/server/dev/statsTablesSeed.ts",
     "tess.sitemap": "node -r sucrase/register src/server/tess/sitemapCli.ts",
     "test": "node src/migrate/requirePostgres18.js && node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/**/*.test.ts' --spec 'e2e/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
-    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && tsc -p tsconfig.e2e.json",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && node scripts/typecheckE2e.mjs",
     "typecheck.native": "tsc -p tsconfig.native.json",
     "typecheck.android": "tsc -p tsconfig.android.json",
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts",

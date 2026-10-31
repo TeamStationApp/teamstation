@@ -13,15 +13,6 @@ import { join, resolve } from 'node:path'
 
 import emojiData from 'emojibase-data/en/compact.json'
 
-import type {
-  ChatDevice,
-  ChatMyKeys,
-  TeamStationClient
-} from '../../common/api'
-import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
-import { blobLength } from '../../common/chatCrypto/stream'
-import { HttpError } from '../../common/errors'
-import { gumboOfUserId } from '../../common/userId'
 import {
   CHAT2_SCENARIOS,
   CHAT2_SURFACES,
@@ -39,7 +30,7 @@ import {
   privateJson,
   requireAfterArchive,
   sourceBinding
-} from '../../test/chat2Fixture.e2e'
+} from '../../../e2e/fixtures/chat2Fixture'
 import {
   androidScopedBounds,
   Chat2UI,
@@ -53,7 +44,16 @@ import {
   readIosComposerKeyboard,
   saveCapture,
   until
-} from '../../test/chat2Maestro.e2e'
+} from '../../../e2e/rigs/chat2Maestro'
+import type {
+  ChatDevice,
+  ChatMyKeys,
+  TeamStationClient
+} from '../../common/api'
+import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
+import { blobLength } from '../../common/chatCrypto/stream'
+import { HttpError } from '../../common/errors'
+import { gumboOfUserId } from '../../common/userId'
 import { type MessageView, reactionKey } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>

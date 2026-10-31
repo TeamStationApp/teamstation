@@ -9,7 +9,7 @@ import {
   required,
   shot,
   signInPhone
-} from '../replay/kit.e2e'
+} from '../../../e2e/rigs/replayKit'
 
 /**
  * The scoring screen's field sounds on a phone, heard by the bench webcam:

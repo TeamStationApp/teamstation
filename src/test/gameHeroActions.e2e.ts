@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { maestro } from './refinementsMaestro.e2e'
+import { maestro } from '../../e2e/rigs/refinementsMaestro'
 
 interface Measurement {
   width: number

@@ -16,6 +16,19 @@ import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  absent,
+  type BrowserSession,
+  browserSession,
+  capture,
+  contains,
+  fill,
+  log,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
   api,
@@ -31,19 +44,6 @@ import {
 } from '../test/autoSchedulerFixture'
 import { interceptGoogleMaps } from '../test/googleMapsIntercept'
 import { googlePlacesStub } from '../test/googlePlacesStub'
-import {
-  absent,
-  type BrowserSession,
-  browserSession,
-  capture,
-  contains,
-  fill,
-  log,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 const WIDTH = 402
 const HEIGHT = 874

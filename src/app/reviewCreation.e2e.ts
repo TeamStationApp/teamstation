@@ -4,6 +4,13 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  fill,
+  freezeBrowserClock,
+  press,
+  text
+} from '../../e2e/rigs/creationBrowserActions'
 import { asParentActions } from '../common/groupLinks'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
@@ -11,13 +18,6 @@ import { applyParents, previewParents } from '../server/groups/relationships'
 import { rolesAt } from '../server/invites/people'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { actor, demoLocality, groupFixture } from '../test/groupFixtures'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import {
-  fill,
-  freezeBrowserClock,
-  press,
-  text
-} from './creationBrowserActions.e2e'
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_CREATION_ARTIFACTS
