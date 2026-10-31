@@ -53,6 +53,8 @@ export interface E2eContext {
   secret: (name: string) => string
   artifact: (name: string) => string
   degrade: (reason: string) => void
+  /** The fault this run proves, for a scenario whose fixture must carry it. */
+  fault: string | undefined
   browser: (
     size: { width: number; height: number },
     emulation?: Emulation
@@ -78,8 +80,11 @@ export interface StackHandle {
   kind: StackKind
   origin: string
   webDir: string | undefined
-  /** Registers a server the scenario started, so the stack's tools reach it. */
-  adopt: (origin: string) => string
+  /**
+   * Puts the stack's proxy in front of a server the scenario started, and returns the
+   * origin to reach it through, so its errors are seen and faults can reach it.
+   */
+  adopt: (origin: string) => Promise<string>
   /** The API's 5xx since a time, or undefined when nothing can see them. */
   serverErrors: (since: number) => Promise<ServerError[] | undefined>
 }

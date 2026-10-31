@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { Pool } from 'pg'
 
+import { type FaultProxy, startFaultProxy } from '../faults/proxy'
 import { startFront } from './front'
 import { ROOT } from './manifest'
 import { startPlacesStub } from './placesStub'
@@ -21,6 +22,8 @@ export interface StackOptions {
   native?: boolean
   services: string[]
   root?: string
+  /** Breaks the API this way, through a proxy between the front server and it. */
+  fault?: string
 }
 
 export interface RunningStack extends StackHandle {
@@ -148,10 +151,30 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       buildWeb(root, webDir, store.url)
     }
 
-    const apiPort = wantsApi ? await freePort() : await freePort()
+    const apiPort = await freePort()
+    const proxies: FaultProxy[] = []
+    const addProxy = async (
+      target: string,
+      host_: string
+    ): Promise<FaultProxy> => {
+      const proxy = await startFaultProxy({
+        target,
+        fault: options.fault,
+        host: host_
+      })
+      proxies.push(proxy)
+      stops.push(async () => {
+        await proxy.close()
+      })
+      return proxy
+    }
+    const apiProxy =
+      options.fault == null
+        ? undefined
+        : await addProxy(`http://127.0.0.1:${apiPort}`, '127.0.0.1')
     const front = await startFront({
       webDir: webDir ?? dir,
-      apiPort,
+      apiPort: apiProxy?.port ?? apiPort,
       host,
       port: 0
     })
@@ -244,8 +267,11 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       })
     }
 
+    // Waiting for the API to come up answers 502s that are nobody's failure.
+    front.errors.length = 0
+    for (const proxy of proxies) proxy.errors.length = 0
+
     let origin = front.url
-    let adoptedAny = false
     return {
       id,
       dir,
@@ -254,13 +280,15 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         return origin
       },
       webDir,
-      adopt: adopted => {
-        origin = adopted
-        adoptedAny = true
-        return adopted
+      adopt: async adopted => {
+        const proxy = await addProxy(adopted, new URL(adopted).hostname)
+        origin = proxy.url
+        return proxy.url
       },
       serverErrors: async since =>
-        adoptedAny ? undefined : front.errors.filter(row => row.at >= since),
+        [front.errors, ...proxies.map(proxy => proxy.errors)]
+          .flat()
+          .filter(row => row.at >= since),
       stop
     }
   } catch (error) {

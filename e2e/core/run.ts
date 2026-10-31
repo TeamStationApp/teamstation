@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { killApp, refuseUnreachable, styleScript } from '../faults/apply'
 import {
   Checkpoints,
   type CheckpointTarget,
@@ -10,6 +11,7 @@ import {
   statusFromCheckpoints
 } from './checkpoint'
 import { deviceClassOf } from './goldens'
+import type { ServerError } from './invariants'
 import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
 import { attachDevice, connectDaemon } from './maestro'
 import { findScenario, ROOT } from './manifest'
@@ -45,6 +47,8 @@ export interface RunOptions {
   budgetUsd?: number
   /** Other scenarios share this seat, so a 5xx must name this one's world to count. */
   concurrent?: boolean
+  /** The fault this run proves. Only an isolated stack can carry one. */
+  fault?: string
   /** Stands in for the configured judge, in tests. */
   judges?: JudgeRuntime
   settings: LocalSettings
@@ -86,6 +90,37 @@ async function keepEvidence(
     } catch (error) {
       console.error(`No failure evidence: ${String(error)}`)
     }
+  }
+}
+
+/**
+ * A check that failed, as opposed to the test itself breaking. A crash under a fault
+ * goes red without proving any layer saw it.
+ */
+function isAssertion(error: Error): boolean {
+  return (
+    error.name === 'AssertionError' ||
+    error.name === 'MaestroError' ||
+    error.message.startsWith('Checkpoint "')
+  )
+}
+
+/** Breaks the screen just before a checkpoint looks at it. */
+async function applyFault(
+  fault: string | undefined,
+  target: CheckpointTarget,
+  surface: Surface,
+  devices: Record<string, string>
+): Promise<void> {
+  if (fault == null) return
+  const script = styleScript(fault)
+  if (script != null) {
+    await target.device.evalBrowserScript({ script })
+    return
+  }
+  if (fault === 'app-crash' && target.appId != null) {
+    const [udid] = Object.values(devices)
+    killApp(surface, udid, target.appId)
   }
 }
 
@@ -150,6 +185,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
   let checkpoints: Checkpoints | undefined
   let targetKind: RunResult['target']
   let deviceClass: string | undefined
+  let failureKind: RunResult['failureKind']
+  let serverErrors: ServerError[] = []
   const finish = (status: Status, reason?: string): RunOutcome => {
     const result: RunResult = {
       scenario: options.id,
@@ -162,6 +199,9 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       costUsd: spentOn(checkpoints),
       degradations,
       ...(targetKind == null ? {} : { target: targetKind }),
+      ...(options.fault == null ? {} : { fault: options.fault }),
+      ...(failureKind == null ? {} : { failureKind }),
+      ...(serverErrors.length === 0 ? {} : { serverErrors }),
       checkpoints: checkpoints?.records ?? [],
       ...(checkpoints == null || checkpoints.unattributed.length === 0
         ? {}
@@ -175,6 +215,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
   try {
     const { entry, spec } = findScenario(options.id, root)
     const surface = options.surface as Surface
+    if (options.fault != null) refuseUnreachable(options.fault, surface)
     const needs = spec.surfaces[surface]
     if (needs == null) {
       throw new BlockedError(`${spec.id} does not run on ${options.surface}`)
@@ -201,10 +242,14 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         kind: 'none',
         origin: '',
         webDir: undefined,
-        adopt: origin => origin,
+        adopt: async origin => origin,
         serverErrors: async () => undefined
       }
-    } else if (spec.stack === 'seat' && options.seat != null) {
+    } else if (
+      spec.stack === 'seat' &&
+      options.seat != null &&
+      options.fault == null
+    ) {
       const seat = options.settings.seats?.[options.seat]
       if (seat == null) {
         throw new BlockedError(
@@ -215,7 +260,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         kind: 'seat',
         origin: seat.origin,
         webDir: undefined,
-        adopt: origin => origin,
+        adopt: async origin => origin,
         serverErrors: async since => seatServerErrors(options.settings, since)
       }
     } else {
@@ -228,7 +273,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         lan: surface !== 'web-chromium',
         native: surface === 'ios-app' || surface === 'android-app',
         services: spec.services,
-        root
+        root,
+        fault: options.fault
       })
       handle = stack
     }
@@ -274,6 +320,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       degrade: reason => {
         degradations.push(reason)
       },
+      fault: options.fault,
       browser: async (size, emulation) => {
         const session = await openWebSession(
           options.settings,
@@ -322,6 +369,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         if (target == null) {
           throw new HarnessError(`Checkpoint "${id}" has no device to look at`)
         }
+        await applyFault(options.fault, target, surface, devices)
         await running.check(id, checkpoint, target)
       }
     }
@@ -338,12 +386,19 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         failure = error instanceof Error ? error : new Error(error as string)
       }
     }
-    if (failure != null) await keepEvidence(targets, runDir)
+    if (failure != null) {
+      await keepEvidence(targets, runDir)
+      failureKind = isAssertion(failure) ? 'assertion' : 'crash'
+      serverErrors = (await handle.serverErrors(started)) ?? []
+    }
     for (const session of sessions) await session.close().catch(() => undefined)
     for (const close of attached) await close().catch(() => undefined)
     if (failure != null) throw failure
     const verdict = statusFromCheckpoints(running.records)
-    if (verdict.status === 'failed') throw new Error(verdict.reason)
+    if (verdict.status === 'failed') {
+      failureKind = 'assertion'
+      throw new Error(verdict.reason)
+    }
     if (verdict.status !== 'passed')
       return finish(verdict.status, verdict.reason)
     return finish(degradations.length > 0 ? 'passed-degraded' : 'passed')
