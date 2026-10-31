@@ -170,6 +170,7 @@ export type Route =
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
+  | { name: 'teamStationTv'; token?: string }
   /** Create API key, from Account. */
   | { name: 'apiKeyNew' }
   | { name: 'team'; teamId: string; tab?: string }
@@ -507,7 +508,14 @@ export function parseRoute(path: string, search = ''): Route {
       // Upcoming: a schedule is the question of what is still to come. An
       // address that names past or all still opens on that filter.
       return { name: 'schedule', when: whenOf(query.get('when'), 'upcoming') }
+    case 'tv-login': {
+      const token = query.get('token')
+      return token != null && /^[A-Za-z0-9_-]{43}$/.test(token)
+        ? { name: 'teamStationTv', token }
+        : { name: 'teamStationTv' }
+    }
     case 'account':
+      if (parts[1] === 'tv') return { name: 'teamStationTv' }
       if (parts[1] === 'api-keys' && parts[2] === 'new' && parts.length === 3)
         return { name: 'apiKeyNew' }
       return { name: 'account' }
@@ -834,6 +842,10 @@ export function routePath(route: Route): string {
       return route.when === 'upcoming'
         ? '/schedule'
         : `/schedule?when=${route.when}`
+    case 'teamStationTv':
+      return route.token == null
+        ? '/account/tv'
+        : `/tv-login?token=${encodeURIComponent(route.token)}`
     case 'account':
       return '/account'
     case 'apiKeyNew':
