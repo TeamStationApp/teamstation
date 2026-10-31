@@ -9,14 +9,15 @@ import { TurboModuleRegistry } from 'react-native'
 // adapter the screens use is shaped in phoneStreamClient.ts.
 //
 // A call the engine refuses rejects with the engine's error as its code:
-// `notReady`, `uploadInProgress`, `insufficientStorage`, `recordingFailed`,
-// `noRecording`, `stillRecording`, `permission` when the camera or the
+// `notReady`, `uploadInProgress`, `recordingFailed`, `noRecording`, `stillRecording`, `permission` when the camera or the
 // microphone was not allowed, or `cameraUnavailable` while the camera is
 // lost (Android says so; iOS may not).
 
 export interface NativePhoneStreamCapabilities {
   supported: boolean
   deviceModel: string
+  /** Whether Record would keep a recording now, rather than only streaming. */
+  canRecordLocally: boolean
 }
 
 /** What the engine's own redial needs to ask for this device's stream again. */

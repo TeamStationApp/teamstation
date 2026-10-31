@@ -139,8 +139,10 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     override fun capabilities(promise: Promise) =
         settle(promise) {
             val current = PhoneStreamCapabilities.current()
-            val made = engineOrNull(reactApplicationContext) != null
-            PhoneStreamMaps.capabilities(if (made) current else current.copy(supported = false))
+            val made = engineOrNull(reactApplicationContext)
+            PhoneStreamMaps.capabilities(
+                current.copy(supported = current.supported && made != null, canRecordLocally = made?.canRecordLocally() == true)
+            )
         }
 
     override fun open(angleName: String, audioEnabled: Boolean, disabledLenses: ReadableArray, promise: Promise) {

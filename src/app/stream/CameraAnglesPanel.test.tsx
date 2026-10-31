@@ -147,7 +147,11 @@ function FakeScreen(props: StreamingScreenProps): React.ReactElement {
 
 async function mount(
   fake: FakeClient,
-  capabilities: unknown = { supported: true, deviceModel: 'iPhone 13 Pro' },
+  capabilities: unknown = {
+    supported: true,
+    deviceModel: 'iPhone 13 Pro',
+    canRecordLocally: true
+  },
   native: FakePhoneStreamModule = fakePhoneStreamModule({ capabilities }),
   copied: string[] = []
 ): Promise<void> {
@@ -292,7 +296,11 @@ describe('Record video on a phone', function () {
   })
 
   it('is hidden on a phone that cannot record, and from anybody who may not film', async function () {
-    await mount(fakeClient(), { supported: false, deviceModel: '' })
+    await mount(fakeClient(), {
+      supported: false,
+      deviceModel: '',
+      canRecordLocally: false
+    })
     expect(text()).equals('')
     await act(async () => {
       root?.unmount()
@@ -301,6 +309,23 @@ describe('Record video on a phone', function () {
     refused.allowed = false
     await mount(refused)
     expect(text()).equals('')
+  })
+
+  it('asks for a stream that keeps no recording on a phone under the start floor', async function () {
+    const fake = fakeClient()
+    await mount(fake, {
+      supported: true,
+      deviceModel: 'iPhone 13 Pro',
+      canRecordLocally: false
+    })
+    await press(button('Record video'))
+    await type('Home Plate')
+    await press(button('Start'))
+    expect(fake.added[0].device).deep.equals({
+      deviceId: DEVICE_ID,
+      deviceModel: 'iPhone 13 Pro',
+      recordsLocally: false
+    })
   })
 
   it('asks for the angle’s name, shows a 409 inline, then opens the camera on its stream', async function () {
@@ -712,7 +737,11 @@ describe('the cameras on a game, on a phone', function () {
 
   it('offers Upload Recording, shows its progress, cancels, retries, and goes when it lands', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [take()],
       uploadRecording: new Promise(() => {}),
       cancelUpload: undefined
@@ -788,7 +817,11 @@ describe('the cameras on a game, on a phone', function () {
 
   it('says why an upload could not start', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [take()]
     })
     native.failures.uploadRecording = {
@@ -804,7 +837,11 @@ describe('the cameras on a game, on a phone', function () {
 
   it('reads a finished upload, and lists takes after the camera closes', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [take()],
       uploadRecording: 'vid_1'
     })
@@ -816,7 +853,11 @@ describe('the cameras on a game, on a phone', function () {
 
   it('names a take by its angle as the server calls it now, after a rename', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [
         take({ angleName: 'Second Base' }),
         take({ liveStreamId: 'liv_gone', angleName: 'Left Field' })
@@ -835,7 +876,11 @@ describe('the cameras on a game, on a phone', function () {
 
   it('keeps an uploading angle closed, and Record video under its name says so', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [
         take({ uploadId: 'upl_1', uploadRunning: true }),
         take({
@@ -870,7 +915,11 @@ describe('the cameras on a game, on a phone', function () {
     // Resumed at launch, the upload reported before this panel listened: its
     // row read 0% until the next report, which came only as a part landed.
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [
         take({
           uploadId: 'upl_1',
@@ -906,7 +955,11 @@ describe('the cameras on a game, on a phone', function () {
 
   it('says an upload cut off in another run was interrupted, and Retry carries it on', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       recordings: [take({ uploadId: 'upl_1' })],
       uploadRecording: new Promise(() => {})
     })
@@ -921,7 +974,11 @@ describe('the cameras on a game, on a phone', function () {
   it('shows the cameras without Record video on a phone that cannot record', async function () {
     const fake = fakeClient()
     fake.others = [stream({ id: 'liv_4', label: 'Center Field' })]
-    await mount(fake, { supported: false, deviceModel: '' })
+    await mount(fake, {
+      supported: false,
+      deviceModel: '',
+      canRecordLocally: false
+    })
     expect(byTestId('angle-row-liv_4')).not.equals(null)
     expect(text()).not.contains('Record video')
   })

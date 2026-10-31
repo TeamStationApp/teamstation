@@ -1038,11 +1038,10 @@ export const enUs = {
   stream_flip: 'Flip camera',
   stream_error_permission:
     'TeamStation needs the camera and the microphone to record. Allow them in Settings.',
-  stream_error_storage:
-    'There is not enough free space on this phone to record.',
   stream_error_uploading: '%s is still uploading',
   stream_error_failed: 'That did not work: %s',
   stream_camera_unavailable: 'Camera unavailable',
+  stream_streaming_only: 'Streaming only: not enough free space to record',
   stream_angle_live: 'Live',
   stream_angle_idle: 'Idle',
   stream_angle_ended: 'Ended',

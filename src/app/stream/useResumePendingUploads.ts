@@ -35,6 +35,9 @@ export interface AppStateLike {
  * left waiting for them. Opened under the wrong account it would land as that
  * account's upload, and its maker's reminder would never settle.
  *
+ * A take whose camera was deleted (the list's `discarded`) has nothing to come
+ * back to, so it is deleted from the phone rather than retried for ever.
+ *
  * It also tells the server about every ended take of this account's it has
  * not heard of. The streaming screen says so when a part ends, and a failed
  * report is said again only when another part ends: after a take's last
@@ -92,15 +95,13 @@ export function useResumePendingUploads(
         gameOf(recording.gameId).unopened.push(recording)
       }
       for (const [gameId, { pending: takes, unopened: unreported }] of games) {
-        // Only takes the server has not opened yet need the camera list.
-        // Unreadable, or not this account's game to film: whose those takes
-        // are is unknown, so they wait.
-        const streams =
-          unreported.length === 0
-            ? undefined
-            : await client.liveStreams(gameId).catch(() => undefined)
+        // Unreadable, or not this account's game to film: whose an unopened
+        // take is, and whether a camera was deleted, are unknown, so a take
+        // the server has not opened waits, and one it has opened resumes.
+        const streams = await client.liveStreams(gameId).catch(() => undefined)
         if (!alive) return
         const mine = new Set(streams?.mine.map(stream => stream.id) ?? [])
+        const discarded = new Set(streams?.discarded)
         for (const take of unreported) {
           const stream = streams?.mine.find(
             item => item.id === take.liveStreamId
@@ -111,6 +112,10 @@ export function useResumePendingUploads(
             .catch(() => undefined)
         }
         for (const take of takes) {
+          if (discarded.has(take.liveStreamId)) {
+            phone.deleteRecording(take.liveStreamId).catch(() => undefined)
+            continue
+          }
           if (take.uploadId == null && !mine.has(take.liveStreamId)) continue
           observeUpload(
             async () =>

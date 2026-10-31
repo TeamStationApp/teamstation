@@ -179,7 +179,11 @@ describe('the phone stream bridge', function () {
 
   it('shapes what the module answers', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       zoomScale: {
         presets: [0.5, 1, 3],
         switchOvers: [1, 3],
@@ -253,7 +257,8 @@ describe('the phone stream bridge', function () {
     const stream = makePhoneStream(native)
     expect(await stream.capabilities()).deep.equals({
       supported: true,
-      deviceModel: 'iPhone 13 Pro'
+      deviceModel: 'iPhone 13 Pro',
+      canRecordLocally: true
     })
     expect(await stream.zoomScale()).deep.equals({
       presets: [0.5, 1, 3],
@@ -378,7 +383,8 @@ describe('the phone stream bridge', function () {
     expect(await rejection(stream.recordings())).deep.equals({ code: '' })
     expect(await stream.capabilities()).deep.equals({
       supported: false,
-      deviceModel: ''
+      deviceModel: '',
+      canRecordLocally: false
     })
   })
 
@@ -495,7 +501,8 @@ describe('the phone stream bridge', function () {
     const stream = makePhoneStream(null)
     expect(await stream.capabilities()).deep.equals({
       supported: false,
-      deviceModel: ''
+      deviceModel: '',
+      canRecordLocally: false
     })
     for (const call of [
       async () => {
