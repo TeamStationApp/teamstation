@@ -16,6 +16,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import {
   attachGameSocket,
@@ -232,10 +233,9 @@ describe('screen scopes on the game socket', function () {
     socket = attachGameSocket(server, db, scratchUrl, {
       pingMs: 60_000,
       stopSignals: null,
-      fanout: { coalesceMs: 20, retryMs: 50, log: () => undefined },
+      fanout: { coalesceMs: 20, log: () => undefined },
       screenScopes: {
         coalesceMs: 80,
-        retryMs: 50,
         log: message => {
           logged.push(message)
         }
@@ -520,15 +520,13 @@ describe('screen scopes on the game socket', function () {
     const marks = [home.frames.length, games.frames.length]
     await admin.query(
       `select pg_terminate_backend(pid) from pg_stat_activity
-       where datname = $1 and query = $2`,
-      [scratchName, `listen ${SCREEN_SCOPES_CHANNEL}`]
+       where datname = $1 and application_name = $2`,
+      [scratchName, FEED_APPLICATION_NAME]
     )
     expect(
       await home.next(frame => frame.type === 'resync', marks[0])
     ).deep.equals({ type: 'resync' })
-    expect(logged.some(line => line.includes('lost the screen_scopes'))).equals(
-      true
-    )
+    expect(logged.some(line => line.includes('lost the feed'))).equals(true)
     // The socket stays up, and a notice after the new LISTEN arrives.
     const revision = await commit({ gameId: seen })
     await home.next(
@@ -542,8 +540,12 @@ describe('screen scopes on the game socket', function () {
 
   it('lets the listener close while a notice waits, and ignores one after', async function () {
     const delivered: string[] = []
-    const listener = new ScreenScopeListener({
+    const feed = new PostgresFeed({
       databaseUrl: scratchUrl,
+      log: () => undefined
+    })
+    const listener = new ScreenScopeListener({
+      feed,
       coalesceMs: 1000,
       deliver: async payload => {
         delivered.push(payload.revision)
@@ -558,30 +560,17 @@ describe('screen scopes on the game socket', function () {
     listener.notified(JSON.stringify({ revision: '2', gameId: seen }))
     await wait(50)
     expect(delivered).deep.equals([])
+    await feed.close()
   })
 
-  it('retries a LISTEN that cannot connect, and logs a delivery that fails', async function () {
+  it('logs a delivery that fails', async function () {
     const lines: string[] = []
-    const unreachable = new ScreenScopeListener({
-      databaseUrl: testDatabaseUrl.replace(
-        /\/[^/]*$/,
-        `/${scratchName}_missing`
-      ),
-      retryMs: 10_000,
-      deliver: async () => undefined,
-      onResync: () => undefined,
-      log: line => {
-        lines.push(line)
-      }
-    })
-    await unreachable.listening
-    expect(lines.some(line => line.includes('lost the screen_scopes'))).equals(
-      true
-    )
-    await unreachable.close()
-
-    const failingDelivery = new ScreenScopeListener({
+    const feed = new PostgresFeed({
       databaseUrl: scratchUrl,
+      log: () => undefined
+    })
+    const failingDelivery = new ScreenScopeListener({
+      feed,
       coalesceMs: 5,
       deliver: async () => {
         throw new Error('no socket')

@@ -12,7 +12,8 @@ import {
   dropScratchDatabase,
   testDatabaseUrl
 } from '../../migrate/testDatabase'
-import { type Database, makeDatabase } from '../db/database'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
+import { type Database, isPoolTimeout, makeDatabase } from '../db/database'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
 import { createDm } from './dms'
 import { appendLog, joinMembers, openGrantRequests } from './membershipLog'
@@ -693,6 +694,130 @@ describe('the chat reconciler (U5)', function () {
     await fixture.drain()
   })
 
+  /** A database whose reconciling finds no connection, nor does putting a mark back. */
+  const starvedWrites = (starving: () => boolean): Kysely<Database> =>
+    new Proxy(db, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target)
+        if (starving() && (prop === 'transaction' || prop === 'insertInto'))
+          return () => {
+            throw new Error('timeout exceeded when trying to connect')
+          }
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+
+  it('keeps every mark when connections run out, without a checkout to put them back', async function () {
+    await fixture.drain()
+    const league = {
+      scope_type: 'league' as const,
+      scope_id: fixture.seed.leagueId
+    }
+    await db.insertInto('chat_dirty').values([league, league]).execute()
+    const failure = await drainDirty(
+      starvedWrites(() => true),
+      fixture.now
+    ).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(isPoolTimeout(failure)).equals(true)
+    expect(
+      await db
+        .selectFrom('chat_dirty')
+        .select(['scope_type', 'scope_id'])
+        .execute()
+    ).deep.equals([league, league])
+    expect(await drainDirty(db, fixture.now)).equals(1)
+    expect(await db.selectFrom('chat_dirty').selectAll().execute()).deep.equals(
+      []
+    )
+  })
+
+  it('leaves a mark added during a drain for the next one', async function () {
+    await fixture.drain()
+    const league = {
+      scope_type: 'league' as const,
+      scope_id: fixture.seed.leagueId
+    }
+    await db.insertInto('chat_dirty').values(league).execute()
+    const addingDuring = new Proxy(db, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target)
+        if (prop !== 'deleteFrom')
+          return typeof value === 'function' ? value.bind(target) : value
+        // The last moment of the drain, once what it read is done.
+        return (table: 'chat_dirty') => ({
+          where: (...where: [never]) => ({
+            execute: async () => {
+              await db.insertInto('chat_dirty').values(league).execute()
+              return await db
+                .deleteFrom(table)
+                .where(...where)
+                .execute()
+            }
+          })
+        })
+      }
+    })
+    expect(await drainDirty(addingDuring, fixture.now)).equals(1)
+    expect(
+      await db
+        .selectFrom('chat_dirty')
+        .select(['scope_type', 'scope_id'])
+        .execute()
+    ).deep.equals([league])
+    await fixture.drain()
+  })
+
+  it('asks again on a timer when connections run out, and reconciles once they return', async function () {
+    await fixture.drain()
+    let starving = true
+    const lines: string[] = []
+    const j9 = await fixture.person('J9')
+    const feed = new PostgresFeed({
+      databaseUrl: fixture.url,
+      log: () => undefined
+    })
+    const reconciler = new ChatReconciler({
+      db: starvedWrites(() => starving),
+      feed,
+      retryMs: 30,
+      now: () => fixture.now,
+      log: line => lines.push(line)
+    })
+    try {
+      await reconciler.listening
+      await db
+        .insertInto('league_members')
+        .values({
+          id: makeId('leagueMember'),
+          user_id: j9,
+          league_id: fixture.seed.leagueId
+        })
+        .execute()
+      await reconciler.drain()
+      expect(lines.join()).includes('timeout exceeded')
+      expect(
+        (await db.selectFrom('chat_dirty').selectAll().execute()).length
+      ).greaterThan(0)
+      const announcements = await conversation(
+        'seasonAnnouncements',
+        fixture.seed.seasonId
+      )
+      expect(await members(announcements.id)).not.includes('J9')
+      starving = false
+      const marks = async (): Promise<number> =>
+        (await db.selectFrom('chat_dirty').selectAll().execute()).length
+      for (let i = 0; i < 100 && (await marks()) > 0; i += 1) await wait(20)
+      expect(await marks()).equals(0)
+      expect(await members(announcements.id)).includes('J9')
+    } finally {
+      await reconciler.close()
+      await feed.close()
+    }
+  })
+
   it('listens, drains on start, and listens again after losing the connection', async function () {
     const lines: string[] = []
     const j6 = await fixture.person('J6')
@@ -705,9 +830,13 @@ describe('the chat reconciler (U5)', function () {
         league_id: fixture.seed.leagueId
       })
       .execute()
+    const feed = new PostgresFeed({
+      databaseUrl: fixture.url,
+      log: line => lines.push(line)
+    })
     const reconciler = new ChatReconciler({
       db,
-      databaseUrl: fixture.url,
+      feed,
       debounceMs: 20,
       now: () => fixture.now,
       log: line => lines.push(line)
@@ -741,7 +870,8 @@ describe('the chat reconciler (U5)', function () {
       const pool = new Pool({ connectionString: fixture.url })
       await pool.query(
         `select pg_terminate_backend(pid) from pg_stat_activity
-         where datname = current_database() and query ilike 'listen chat_dirty%'`
+         where datname = current_database() and application_name = $1`,
+        [FEED_APPLICATION_NAME]
       )
       await pool.end()
       await wait(100)
@@ -761,13 +891,12 @@ describe('the chat reconciler (U5)', function () {
       }
       expect(await members(announcements.id)).includes('J8')
       expect(Date.now() - cutAt).to.be.greaterThan(700)
-      expect(lines.some(line => line.includes('lost the chat_dirty'))).equals(
-        true
-      )
+      expect(lines.some(line => line.includes('lost the feed'))).equals(true)
       await reconciler.sweep()
       reconciler.notified()
     } finally {
       await reconciler.close()
+      await feed.close()
     }
     reconciler.notified()
     await reconciler.drain()

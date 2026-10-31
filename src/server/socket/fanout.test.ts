@@ -13,6 +13,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, postGamePlays, readPlays } from '../events/postPlays'
@@ -68,6 +69,7 @@ describe('the game socket fan-out (U15)', function () {
   let db: Kysely<Database> | undefined
   let poker: Client | undefined
   const fanouts: GameFanout[] = []
+  const feeds: PostgresFeed[] = []
   const logs: string[] = []
   const taken = new Set<number>()
   const mint = (): { userId: number; legacyId: string } => {
@@ -89,13 +91,24 @@ describe('the game socket fan-out (U15)', function () {
     seasonId: null
   })
 
+  const feedOf = (retryMs: number): PostgresFeed => {
+    const made = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      retryMs,
+      log: message => {
+        logs.push(message)
+      }
+    })
+    feeds.push(made)
+    return made
+  }
+
   const fanout = (
     options: Partial<ConstructorParameters<typeof GameFanout>[0]> = {}
   ): GameFanout => {
     const made = new GameFanout({
       db: db!,
-      databaseUrl: scratchUrl,
-      retryMs: 50,
+      feed: feedOf(50),
       log: message => {
         logs.push(message)
       },
@@ -196,6 +209,7 @@ describe('the game socket fan-out (U15)', function () {
 
   after(async function () {
     for (const made of fanouts) await made.close()
+    for (const made of feeds) await made.close()
     await poker?.end()
     if (db != null) await db.destroy()
     if (adminPool != null) {
@@ -698,47 +712,36 @@ describe('the game socket fan-out (U15)', function () {
     await one.close()
   })
 
-  it('reports a lost listener, and listens again', async function () {
-    let lost = 0
+  it('resyncs once the feed has returned, not while it is away, and hears the next change', async function () {
+    let resyncs = 0
+    const before = logs.length
     const one = fanout({
-      onLost: () => {
-        lost++
+      feed: feedOf(300),
+      onResync: () => {
+        resyncs++
       }
     })
     await one.listening
+    expect(resyncs).equals(0)
     const heard = subscriber()
     one.watch(today, scopeOf(team, rival), heard)
     await adminPool!.query(
       `select pg_terminate_backend(pid) from pg_stat_activity
-       where datname = $1 and query ilike 'listen %'`,
-      [scratchName]
+       where datname = $1 and application_name = $2`,
+      [scratchName, FEED_APPLICATION_NAME]
     )
-    await until(() => lost === 1, 'the loss')
-    expect(logs.some(line => line.includes('lost the game_changes'))).equals(
-      true
+    await until(
+      () => logs.slice(before).some(line => line.includes('lost the feed')),
+      'the loss'
     )
-    // Listening again, it hears the next change.
+    expect(resyncs).equals(0)
+    await until(() => resyncs === 1, 'the return')
     await until(() => {
       notify({ game: today, kind: 'game' }).catch(() => undefined)
       return heard.sent.length > 0
-    }, 'a change after listening again')
+    }, 'a change after the return')
+    expect(resyncs).equals(1)
     await one.close()
-  })
-
-  it('retries a listener that cannot connect, and stops when closed', async function () {
-    let lost = 0
-    const one = fanout({
-      databaseUrl: adminUrl.replace(/\/[^/]*$/, '/teamstation_no_such_db'),
-      onLost: () => {
-        lost++
-      }
-    })
-    await one.listening
-    await until(() => lost >= 2, 'two failed attempts')
-    await one.close()
-    const counted = lost
-    await wait(150)
-    expect(lost).equals(counted)
   })
 
   it('reads no song for a player who has none', async function () {
