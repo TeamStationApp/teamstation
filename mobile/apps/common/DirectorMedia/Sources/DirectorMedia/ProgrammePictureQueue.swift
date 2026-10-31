@@ -106,15 +106,15 @@ public struct ProgrammePictureQueue<Picture> {
     if queued.count > 1_000 { queued.removeFirst(queued.count - 1_000) }
   }
 
-  /// A cut: pictures from the camera that was on air are no longer wanted. The one on air stays
-  /// until the new camera's first picture is due.
-  public mutating func removeQueued() {
-    queued.removeAll()
+  /// When `run`'s first queued picture belongs on the programme; nil with none queued.
+  public func firstMoment(ofRun run: UInt64) -> Double? {
+    queued.first { $0.run == run }?.moment(delay: delaySeconds)
   }
 
-  /// Everything queued goes but the pictures of `run`. The picture on air stays.
-  public mutating func dropRuns(keeping run: UInt64?) {
-    queued.removeAll { $0.run != run }
+  /// A cut: everything queued goes but the pictures of `runs`, the camera on air's when it plays on
+  /// until the new camera's first picture is due. The picture on air stays.
+  public mutating func dropRuns(keeping runs: UInt64?...) {
+    queued.removeAll { !runs.contains($0.run) }
   }
 
   /// The picture for the tick at wall-clock `now`, ticks being `period` apart: the newest that is
