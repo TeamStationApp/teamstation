@@ -228,6 +228,10 @@ struct ProgrammePicturePlacementTests {
     queue.add(99.8, capture: 99.8, run: 2)
     #expect(tick(&queue, at: 101.2) == 99.5)
     #expect(queue.latePictures == 1)
+    // And nothing of the earlier run comes back.
+    queue.add(99.9, capture: 99.9, run: 1)
+    #expect(queue.count == 0)
+    #expect(tick(&queue, at: 101.3) == 99.5)
   }
 
   @Test("Dropping runs leaves only the run named, and leaves what is on air")

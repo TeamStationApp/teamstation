@@ -16,8 +16,9 @@ import Foundation
 /// the moment it is due instead (`ReplayCadence`) and is taken by the same rule; a picture with
 /// neither is due at once.
 ///
-/// Each cut starts a run: the pictures one camera hands over from then on. Capture times are compared
-/// only within a run, because each camera's are on its own clock. A later run takes the air on the
+/// Each cut starts a run: the pictures one camera hands over from then on. Pictures are put in order
+/// within a run, because a camera's clock can sit behind another's; across runs only their moments
+/// are compared, in `pick`. A later run takes the air on the
 /// tick its first picture is due, late or not, and everything left of the earlier runs goes, due or
 /// not. Until then the earlier run plays on, so a cut holds no picture. Two runs overlap for that
 /// long because a cut back must find the camera on air unbroken.
@@ -71,6 +72,8 @@ public struct ProgrammePictureQueue<Picture> {
   /// Adds a picture as it arrives from a camera, in capture order, or a replay's picture, in tape
   /// order, with the moment it is `due`.
   public mutating func add(_ picture: Picture, capture: Double?, due: Double? = nil, run: UInt64 = 0) {
+    // Of a run a later one has replaced on air: nothing can show it now.
+    if let current, run < current.run { return }
     // Older than what is already on air: it arrived after its moment, and after a newer picture's.
     if let capture, let current, current.run == run, let shown = current.capture, capture < shown {
       latePictures &+= 1
