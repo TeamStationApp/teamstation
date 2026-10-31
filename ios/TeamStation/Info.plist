@@ -124,6 +124,8 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>comgooglemaps</string>
+		<string>goprocontrol</string>
+		<string>mevostream</string>
 	</array>
 </dict>
 </plist>
