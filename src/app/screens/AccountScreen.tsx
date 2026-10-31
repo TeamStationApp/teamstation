@@ -61,6 +61,7 @@ export interface AccountScreenProps {
   pickPhoto?: typeof pickAccountPhoto
   /** Opens Create API key. */
   onCreateApiKey?: () => void
+  onTeamStationTv?: () => void
   /** Where closing the Apple Music walkthrough is remembered. */
   readiness?: ReadinessStore
 }
@@ -656,6 +657,15 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         </Text>
       )}
 
+      {props.onTeamStationTv != null && (
+        <ListCard>
+          <ListRow
+            title="TeamStation TV"
+            emblemIcon="smart_display"
+            onPress={props.onTeamStationTv}
+          />
+        </ListCard>
+      )}
       {onChatDevices != null && (
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_chat} />
