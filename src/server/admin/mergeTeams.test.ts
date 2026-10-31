@@ -452,7 +452,8 @@ describe('merging two rows that are one team', function () {
       into: string,
       from: string,
       name: string,
-      fromLater: boolean
+      fromLater: boolean,
+      fromTerms: object = { createdMembership: true }
     ): Promise<void> => {
       await addedHere(into, name, { role: 'member', isPlayer: true })
       const { userId } = await db!
@@ -481,7 +482,7 @@ describe('merging two rows that are one team', function () {
             teamId: houser,
             userId,
             membershipId: theirs.id,
-            createdMembership: true
+            ...fromTerms
           }),
           status: 'applied',
           sent_at: sentAt,
@@ -501,6 +502,15 @@ describe('merging two rows that are one team', function () {
       'grq_merge_from_first',
       'Held By Both Again',
       false
+    )
+    // One add on a place that predates it: the other add, on the row that
+    // stays, must not delete that place by rejecting.
+    await heldByBoth(
+      'grq_merge_into_new',
+      'grq_merge_from_old',
+      'Held On An Old Place',
+      false,
+      { previous: { jersey: '4', positions: [] } }
     )
     // A withdrawal on the game that goes, whose sides are the other way round
     // from the game that stays, for a side already holding that placeholder.
@@ -617,6 +627,11 @@ describe('merging two rows that are one team', function () {
       expect(await supersededPlayerAdd(db, await stored(earlier))).equals(true)
       expect(await openAdds(db, hawks)).includes(terms.userId)
     }
+    const onOldPlace = await here('grq_merge_into_new')
+    expect(onOldPlace.terms).not.has.property('createdMembership')
+    expect(onOldPlace.terms)
+      .has.property('previous')
+      .that.includes({ jersey: '4' })
     // The label its side already holds on the game that stays is not reused.
     const labels = await db
       .selectFrom('game_withdrawn_players')
