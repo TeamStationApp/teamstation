@@ -1,6 +1,12 @@
 import { chronological, gamesFor } from '../app/screens/whenFilter'
-import type { GamesPageQuery, ListCounts, Page } from '../common/api'
-import { nextGameIndex } from '../common/nextGame'
+import type {
+  GamesPageQuery,
+  ListCounts,
+  Page,
+  UmpireSchedulePage
+} from '../common/api'
+import { initialUmpireGame, nextGameIndex } from '../common/nextGame'
+import { umpireColumns, type UmpireSchedule } from '../common/umpireSchedule'
 
 export interface PageQuery {
   cursor?: string | null
@@ -120,5 +126,30 @@ export function pageOfGames<T extends ListedGame>(
     ...page,
     nextCursor: carry(page.nextCursor),
     prevCursor: carry(page.prevCursor)
+  }
+}
+
+/**
+ * A fake of `umpireSchedulePage`: `schedule` as the server cuts it, its games
+ * in the order they stand, with the whole list's columns on every page.
+ */
+export function pageOfUmpireSchedule(
+  schedule: UmpireSchedule,
+  query: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+): UmpireSchedulePage {
+  const { games, ...head } = schedule
+  const anchor =
+    query.around == null ? undefined : initialUmpireGame(games, Date.now())
+  const page = pageOf(
+    games,
+    query,
+    anchor == null
+      ? {}
+      : { anchorIndex: games.indexOf(anchor), anchorId: anchor.id }
+  )
+  return {
+    ...head,
+    ...page,
+    positions: umpireColumns(head.types, games)
   }
 }

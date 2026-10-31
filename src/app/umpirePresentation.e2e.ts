@@ -138,11 +138,8 @@ async function main(): Promise<void> {
           expect(target.shell).equals(24)
         }
         const headers = await b!.page.$eval(
-          '[data-testid="umpire-game-gam_umpire_g1"]',
-          el =>
-            [...el.previousElementSibling!.children].map(
-              cell => cell.textContent
-            )
+          '[data-testid="umpire-table-header"]',
+          el => [...el.children].map(cell => cell.textContent)
         )
         expect(headers.at(-1)).equals('Conflicts')
         expect(headers.at(-2)).equals('Jersey Color')

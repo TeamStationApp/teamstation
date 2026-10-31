@@ -21,7 +21,7 @@ import { log, maestro } from '../../test/refinementsMaestro.e2e'
  *
  * `TS_LONG_LISTS_DEVICE` is looked up when the run starts, never written here.
  * The manifest is the fixture's, and the app was built against its
- * `apiBaseUrl`. A `later` step names what a milestone asserts there.
+ * `apiBaseUrl`.
  *
  * E5 starts from a fresh sign-in, so run it on an app with no session: a
  * simulator cannot lose its network, so the fixture stops answering it.
@@ -35,6 +35,7 @@ interface Device {
   swipe: (options: unknown) => Promise<unknown>
   hierarchy: () => Promise<ViewNode>
   tapOnPoint: (options: { point: string }) => Promise<unknown>
+  inputText: (options: { text: string }) => Promise<unknown>
   setOrientation: (options: { orientation: string }) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
   detach: () => Promise<unknown>
@@ -89,17 +90,15 @@ const FLING_MS = 90
 const MOMENTUM_KEPT = 0.7
 /** The section title and its space, from the pills to the first row. */
 const MOST_BELOW_PILLS = 110
+/** The screen's width, and where a row is clear of the tab bar. */
+const PHONE_WIDTH = 402
+const LOWEST_ROW = 700
 const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12'
 
 function required(name: string): string {
   const value = process.env[name]
   if (value == null || value === '') throw new Error(`Supply ${name}`)
   return value
-}
-
-/** One of a milestone's steps, empty until that milestone. */
-function later(step: string): void {
-  console.log(`  later: ${step}`)
 }
 
 async function main(): Promise<void> {
@@ -126,9 +125,6 @@ async function main(): Promise<void> {
     artifacts: 'on-failure',
     ...(teamId != null && teamId !== '' ? { teamId } : {})
   })) as unknown as Device
-  const note = async (line: string): Promise<void> => {
-    await log(support, `longLists-${platform}.log`, line)
-  }
   /** A hierarchy's unit in points: an Android phone's is the pixel. */
   const scale =
     platform === 'android'
@@ -141,6 +137,9 @@ async function main(): Promise<void> {
         ) / 160
       : 1
   const phone = platform === 'android'
+  const note = async (line: string): Promise<void> => {
+    await log(support, `longLists-${platform}.log`, line)
+  }
   const visible = async (text: string, timeout = 15000): Promise<void> => {
     await m.assertVisible({ text, timeout })
   }
@@ -350,9 +349,6 @@ async function main(): Promise<void> {
     assert.ok(content?.bounds != null, 'No tab content')
     return content.bounds
   }
-  /**
-   * How far down the list the second reading stands from the first, in
-   * points. Measured at the list's foot, which rows landing above it leave
   /** The first game drawn, by its place in the seed. */
   const gameAt = (nodes: ViewNode[]): number => {
     const places = rowsOf(nodes).map(({ name }) =>
@@ -360,14 +356,17 @@ async function main(): Promise<void> {
     )
     return places.find(place => !Number.isNaN(place)) ?? Number.NaN
   }
+  /**
+   * How far down the list the second reading stands from the first, in
+   * points. Measured at the list's foot, which rows landing above it leave
    * where the reader's rows are. An Android tree stops at the screen, so
    * there it is in games passed.
    */
   const travel = (from: ViewNode[], to: ViewNode[]): number => {
+    if (phone) return Math.abs(gameAt(from) - gameAt(to))
     const a = contentOf(from)
     const b = contentOf(to)
     return Math.abs(a.y + a.height - (b.y + b.height))
-    if (phone) return Math.abs(gameAt(from) - gameAt(to))
   }
   const olderReads = (seen: string[]): number =>
     seen.filter(
@@ -387,9 +386,6 @@ async function main(): Promise<void> {
   ): Promise<void> => {
     const x = 200
     const from = dy > 0 ? 300 : 700
-    const move = (y: number, duration: number): unknown => ({
-      type: 'pointerMove',
-      duration,
     if (platform === 'android') {
       const place = (points: number): string =>
         String(Math.round(points * scale))
@@ -407,6 +403,9 @@ async function main(): Promise<void> {
       ])
       return
     }
+    const move = (y: number, duration: number): unknown => ({
+      type: 'pointerMove',
+      duration,
       x,
       y,
       origin: 'viewport'
@@ -792,15 +791,15 @@ async function main(): Promise<void> {
           )?.bounds
           if (pill != null && pill.y > 90 && pill.y < 700) return
           await m.swipe({ start: '50%, 25%', end: '50%, 85%', duration: 200 })
-        await pause(800)
-        const seen = new Set<string>()
-        for (let still = 0; still < 3;) {
         }
         throw new Error('E9: the mode pills never came back')
       }
       /** Down the list to its end, from the top. */
       const readDown = async (): Promise<Set<string>> => {
         await toPills()
+        await pause(800)
+        const seen = new Set<string>()
+        for (let still = 0; still < 3;) {
           const before = seen.size
           for (const row of await rowsOnShow()) seen.add(row)
           assert.ok(!(await shown('Load more', 300)), 'E9: no Load more')
@@ -927,6 +926,11 @@ async function main(): Promise<void> {
       /** A tap opens the full-screen player; closing it leaves the row marked. */
       const playRow = async (layout: string): Promise<void> => {
         const nodes = await settled()
+        // On the screen and clear of the picture, the first in the tree being
+        // any row the list holds.
+        const frame = nodes.find(
+          node => node.id === 'event-pegged-video'
+        )!.bounds!
         const row = nodes.find(
           ({ id, bounds }) =>
             id?.startsWith(ROW) === true &&
@@ -936,11 +940,6 @@ async function main(): Promise<void> {
             (bounds.y >= frame.y + frame.height ||
               bounds.x >= frame.x + frame.width)
         )
-        // On the screen and clear of the picture, the first in the tree being
-        // any row the list holds.
-        const frame = nodes.find(
-          node => node.id === 'event-pegged-video'
-        )!.bounds!
         assert.ok(row?.bounds != null, `E11: ${layout}: no row to tap`)
         const place = picture(nodes)
         const { x, y, width, height } = row.bounds
@@ -977,23 +976,228 @@ async function main(): Promise<void> {
       await pause(1500)
       await readDown('page', '50%, 75%', '50%, 45%')
       await playRow('page')
-      await m.setOrientation({ orientation: 'LANDSCAPE_LEFT' })
-      await pause(1500)
-      await readDown('beside', '85%, 75%', '85%, 25%')
       // An iPhone stands upright on every screen but the camera and the
       // full-screen sheet, so side by side is an iPad's or an Android phone's.
       if (platform === 'ios' && (await all())[0].bounds!.width < 700) {
         await note('E11: an iPhone stays upright, with no side by side')
         return
       }
+      await m.setOrientation({ orientation: 'LANDSCAPE_LEFT' })
+      await pause(1500)
+      await readDown('beside', '85%, 75%', '85%, 25%')
       await playRow('beside')
       await m.setOrientation({ orientation: 'PORTRAIT' })
       await pause(1000)
     },
     E12: async () => {
-      await m.openLink({ link: `teamstation://umpires/${manifest.leagueId}` })
+      const ROW = 'umpire-game-'
+      const STACK = 'umpire-sticky-stack'
+      const gameId = manifest.umpireSignupGameId
+      const noteId = `umpire-note-${gameId}-unt_long_uniform`
+      const leftOf = (nodes: ViewNode[], text: string): number => {
+        const heading = nodes.find(node => node.text === text)
+        assert.ok(heading?.bounds != null, `E12: no heading ${text}`)
+        return heading.bounds.x
+      }
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const stackBottom = (nodes: ViewNode[]): number => {
+        const { y, height } = byId(nodes, STACK)!.bounds!
+        return y + height
+      }
+      /** A pill by its name, above the tab bar's item of the same name. */
+      const tapHighest = async (text: string): Promise<void> => {
+        const found = (await all())
+          .filter(node => node.text === text && node.bounds != null)
+          .sort((one, other) => one.bounds!.y - other.bounds!.y)[0]?.bounds
+        assert.ok(found != null, `E12: no ${text}`)
+        await m.tapOnPoint({
+          point: `${Math.round(found.x + found.width / 2)},${Math.round(found.y + found.height / 2)}`
+        })
+        await pause(700)
+      }
+      /** Whether a cell's middle lies within the game's row. */
+      const onRow = (nodes: ViewNode[], node: ViewNode): boolean => {
+        const row = byId(nodes, `${ROW}${gameId}`)?.bounds
+        const cell = node.bounds
+        if (row == null || cell == null) return false
+        const middle = cell.y + cell.height / 2
+        return middle > row.y && middle < row.y + row.height
+      }
+      /** All of a cell in the phone's width, the table scrolling sideways. */
+      const onScreen = ({ x, width }: { x: number; width: number }): boolean =>
+        x >= 0 && x + width <= PHONE_WIDTH
+      /** The first row at or below the sticky header. */
+      const readerRow = (nodes: ViewNode[]): ViewNode => {
+        const bottom = stackBottom(nodes)
+        const row = nodes
+          .filter(node => node.id?.startsWith(ROW) === true)
+          .filter(node => node.bounds != null && node.bounds.y >= bottom)
+          .sort((a, b) => a.bounds!.y - b.bounds!.y)[0]
+        assert.ok(row != null, 'E12: no row under the sticky header')
+        return row
+      }
+      /** Up or down until `id` is on the screen, under the sticky header. */
+      const scrollTo = async (id: string, up = false): Promise<ViewNode[]> => {
+        for (let swipe = 0; swipe < SWIPES_PAST_A_PAGE * 3; swipe++) {
+          const nodes = await settled()
+          const found = byId(nodes, id)
+          if (
+            found != null &&
+            found.bounds!.y >= stackBottom(nodes) &&
+            found.bounds!.y < LOWEST_ROW
+          )
+            return nodes
+          await m.swipe(
+            up
+              ? { start: '50%, 40%', end: '50%, 75%', duration: 600 }
+              : { start: '50%, 75%', end: '50%, 40%', duration: 600 }
+          )
+        }
+        throw new Error(`E12: never reached ${id}`)
+      }
+      const pagesRead = async (): Promise<string[]> =>
+        (await phoneNetwork()).filter(
+          url => url.includes('/umpire-schedule?') && url.includes('cursor=')
+        )
+
+      await m.openLink({
+        link: `teamstation://umpires/${manifest.leagueId}`
+      })
       await visible('Umpire')
-      later("M9: opens on the rule's game; sideways; notes; sign-up; removal")
+      await pause(1500)
+      const opened = await settled()
+      const anchor = byId(opened, `${ROW}${manifest.nextGameId}`)
+      assert.ok(anchor != null, "E12: opens on the rule's game")
+      assert.ok(
+        Math.abs(anchor.bounds!.y - stackBottom(opened)) <= PINNED_SLACK,
+        `E12: the row is at ${anchor.bounds!.y}, the header ends at ${stackBottom(opened)}`
+      )
+      const older = (await pagesRead()).length
+      await shot(`${platform}-umpire-table.png`)
+
+      // Up past the rows the first page holds; the reader's rows stay put.
+      for (let swipe = 0; swipe < SWIPES_PAST_A_PAGE; swipe++) {
+        if ((await pagesRead()).length > older) break
+        await m.swipe({ start: '50%, 40%', end: '50%, 75%', duration: 600 })
+      }
+      assert.ok((await pagesRead()).length > older, 'E12: older rows are read')
+      const moving = await settled()
+      const reader = readerRow(moving)
+      await pause(1500)
+      const landed = byId(await settled(), reader.id!)
+      assert.ok(landed != null, 'E12: the reader kept their row')
+      assert.ok(
+        Math.abs(landed.bounds!.y - reader.bounds!.y) <= PINNED_SLACK,
+        `E12: the reader's row moved from ${reader.bounds!.y} to ${landed.bounds!.y}`
+      )
+
+      // Down past the first page's end, then sideways, header and all.
+      const atSignup = await scrollTo(`${ROW}${gameId}`)
+      const headed = leftOf(atSignup, 'Away team')
+      await m.swipe({ start: '80%, 60%', end: '30%, 60%', duration: 600 })
+      const across = await settled()
+      assert.ok(
+        leftOf(across, 'Away team') < headed,
+        'E12: the header goes with the table'
+      )
+      await shot(`${platform}-umpire-sideways.png`)
+
+      // Typed, and dragged away from: the drag takes the keyboard, which saves.
+      for (let swipe = 0; swipe < 6; swipe++) {
+        const cell = byId(await settled(), noteId)?.bounds
+        if (cell != null && onScreen(cell)) break
+        await m.swipe({ start: '80%, 60%', end: '30%, 60%', duration: 600 })
+      }
+      await m.tapOn({ id: noteId, timeout: 15000 })
+      await m.inputText({ text: 'Demo stripes' })
+      await pause(600)
+      await scrollDown(4)
+      // The open editor's field has its own id, so go by the row.
+      await scrollTo(`${ROW}${gameId}`, true)
+      await visible('Demo stripes')
+      await note('E12: the typed note stayed')
+
+      // A sign-up on that row, which leaves the page where it is.
+      for (let swipe = 0; swipe < 12; swipe++) {
+        const nodes = await settled()
+        const button = nodes.find(
+          node =>
+            node.text === 'Sign Up' &&
+            node.bounds != null &&
+            onRow(nodes, node) &&
+            onScreen(node.bounds)
+        )
+        if (button != null) {
+          const before = byId(nodes, `${ROW}${gameId}`)!.bounds!.y
+          const { x, y, width, height } = button.bounds!
+          await m.tapOnPoint({
+            point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+          })
+          await tap('Confirm')
+          await pause(1000)
+          const after = byId(await settled(), `${ROW}${gameId}`)
+          assert.ok(
+            after != null && Math.abs(after.bounds!.y - before) <= PINNED_SLACK,
+            'E12: the page stays where it is'
+          )
+          break
+        }
+        await m.swipe({ start: '30%, 60%', end: '80%, 60%', duration: 600 })
+        assert.notEqual(swipe, 11, 'E12: no Sign Up on the row')
+      }
+      await tapHighest('Leaderboard')
+      if (!(await shown('SCHEDULED AND COMPLETED GAMES', 5000))) {
+        await note('E12: the Leaderboard pill took a second press')
+        await tapHighest('Leaderboard')
+        await visible('SCHEDULED AND COMPLETED GAMES')
+      }
+      await shot(`${platform}-umpire-leaderboard.png`)
+      await tapHighest('Schedule')
+      await scrollTo(`${ROW}${gameId}`)
+      await note('E12: signed up, and the Leaderboard followed')
+
+      // And taken off again, the same way.
+      const signedUp = async (): Promise<ViewNode | undefined> => {
+        const nodes = await settled()
+        return nodes.find(
+          node =>
+            node.text?.includes(', uty_') === true &&
+            node.text.startsWith('Babe R') &&
+            onRow(nodes, node)
+        )
+      }
+      let named = await signedUp()
+      for (
+        let swipe = 0;
+        swipe < 12 && named?.bounds != null && !onScreen(named.bounds);
+        swipe++
+      ) {
+        await m.swipe(
+          named.bounds.x > 0
+            ? { start: '80%, 60%', end: '45%, 60%', duration: 600 }
+            : { start: '45%, 60%', end: '80%, 60%', duration: 600 }
+        )
+        named = await signedUp()
+      }
+      assert.ok(named?.bounds != null, 'E12: the sign-up shows on its row')
+      assert.ok(onScreen(named.bounds), 'E12: the sign-up is on the screen')
+      const { x, y, width, height } = named.bounds
+      await m.tapOnPoint({
+        point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+      })
+      await tap('Remove assignment')
+      await pause(1000)
+      const removed = await settled()
+      assert.ok(
+        byId(removed, `${ROW}${gameId}`) != null,
+        'E12: the page stays where it is'
+      )
+      assert.ok(
+        removed.some(node => node.text === 'Sign Up' && onRow(removed, node)),
+        'E12: Sign Up is back'
+      )
+      await note('E12: removed')
     }
   }
 

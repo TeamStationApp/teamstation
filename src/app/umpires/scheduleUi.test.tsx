@@ -9,6 +9,8 @@ import {
   UMPIRE_RANK_SYMBOLS,
   type UmpireSchedule
 } from '../../common/umpireSchedule'
+import { reportAnchor } from '../../test/PagedListStandIn'
+import { pageOfUmpireSchedule } from '../../test/pageOf'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { AppHeader } from '../components/AppHeader'
 import { SceneShownProvider } from '../components/sceneShown'
@@ -74,7 +76,7 @@ describe('scheduleUi.test.tsx', () => {
       measure('umpire-conflict-measure', 80)
       measure('umpire-table', 1200, 300, 200)
       measure('umpire-sticky-stack', 1200, 96)
-      measure('umpire-game-game', 1200, 49, 0)
+      reportAnchor(0)
     })
     const header = document.querySelector(
       '[data-testid="umpire-table-header-scroll"]'
@@ -95,7 +97,7 @@ describe('scheduleUi.test.tsx', () => {
       props('umpire-table-body-scroll').onScroll({
         nativeEvent: { contentOffset: { x: 200 } }
       })
-      measure('umpire-game-game', 1200, 49, 400)
+      reportAnchor(400)
     })
   })
   it('requests the viewer timezone and puts compact conflicts after custom notes', async () => {
@@ -104,9 +106,9 @@ describe('scheduleUi.test.tsx', () => {
       { id: 'note', name: 'Jersey Color', position: 0, inUse: false }
     ]
     let query = ''
-    f.client.umpireSchedule = async (_id, q) => {
+    f.client.umpireSchedulePage = async (_id, q, page) => {
       query = q ?? ''
-      return f.schedule
+      return pageOfUmpireSchedule(f.schedule, page)
     }
     await mount(
       <UmpireScheduleScreen
@@ -217,8 +219,9 @@ describe('scheduleUi.test.tsx', () => {
     const revealed: unknown[][] = []
     const os = Platform.OS
     try {
-      Platform.OS = 'ios'
       await press(label)
+      // Only for the focus: drawn as a phone, the page's scroller is another.
+      Platform.OS = 'ios'
       scroll!.scrollResponderScrollNativeHandleToKeyboard = (...args) => {
         revealed.push(args)
       }
@@ -386,7 +389,8 @@ describe('scheduleUi.test.tsx', () => {
         }
       ]
     }
-    client.umpireSchedule = async () => schedule
+    client.umpireSchedulePage = async (_id, _query, page) =>
+      pageOfUmpireSchedule(schedule, page)
     client.umpireLeaderboard = async () => ({
       completed: [{ userId: 'uma', name: 'Uma L', count: 1, symbol: '🏆' }],
       scheduled: [],
@@ -488,7 +492,7 @@ describe('scheduleUi.test.tsx', () => {
     expect(initialUmpireGame([past, ongoing, game], now)?.id).equals('ongoing')
     expect(initialUmpireGame([past, game], now)?.id).equals('game')
     expect(initialUmpireGame([past], now)?.id).equals('past')
-    expect(initialUmpireGame([], now)).equals(undefined)
+    expect(initialUmpireGame<typeof game>([], now)).equals(undefined)
   })
   it('does not offer an umpire-only view to an administrator without that role', async () => {
     const f = fixture()
@@ -513,13 +517,16 @@ describe('scheduleUi.test.tsx', () => {
       view: string | null
       levels: string | null
     }> = []
-    f.client.umpireSchedule = async (id, query) => {
+    f.client.umpireSchedulePage = async (id, query, page) => {
       const params = new URLSearchParams(query)
       const view = params.get('view')
       requests.push({ id, view, levels: params.get('levels') })
       if (id === 'visitors' && view === 'league')
         throw new Error('Forbidden league view')
-      return { ...f.schedule, isAdmin: id === 'demo' }
+      return pageOfUmpireSchedule(
+        { ...f.schedule, isAdmin: id === 'demo' },
+        page
+      )
     }
     function Harness(): React.ReactElement {
       const [route, setRoute] = useState<UmpireScheduleRoute>({
