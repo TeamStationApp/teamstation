@@ -287,7 +287,7 @@ describe('the revision on every read a screen scope uses', function () {
     }
   })
 
-  it('reads the events’ revision after their lock, so a post that held the game is in it', async function () {
+  it('answers the events beneath an open post with an older revision, and the post with its own', async function () {
     let release!: () => void
     const mayCommit = new Promise<void>(resolve => {
       release = resolve
@@ -321,11 +321,19 @@ describe('the revision on every read a screen scope uses', function () {
       undefined,
       101
     )
-    await new Promise(resolve => setTimeout(resolve, 200))
-    release()
-    const revision = await post
+    // It does not wait for the post, and shows nothing the post wrote.
     const response = await reading
     expect(response.status).equals(200)
-    expect(response.headers.get(REVISION_HEADER)).equals(revision)
+    const before = response.headers.get(REVISION_HEADER)
+    release()
+    const revision = await post
+    expect(BigInt(before!) < BigInt(revision)).equals(true)
+    const after = await f.h.request(
+      'GET',
+      `/games/${gameId}/events`,
+      undefined,
+      101
+    )
+    expect(after.headers.get(REVISION_HEADER)).equals(revision)
   })
 })
