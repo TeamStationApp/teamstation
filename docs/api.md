@@ -47,6 +47,68 @@ no name.
   entry.** A parameter that needs another, or a value it does not take,
   answers 400 with a message that says which.
 
+## Paging
+
+A long list answers a page at a time when the caller asks with `paged=1`.
+Leaving `paged` out keeps the bare array, in the order it always had, so the
+Director and scoreboard clients decode what they did.
+
+`GET /events`, `GET /teams/:teamId/games` and
+`GET /leagues/:leagueId/umpire-schedule` take these, and all share one shape,
+`Page<T>` in [`src/common/api.ts`](../src/common/api.ts):
+
+```ts
+interface Page<T> {
+  items: T[]
+  nextCursor: string | null // null at the end
+  prevCursor: string | null // on any page with rows before it
+  anchorId: string | null // the row `around` opened on
+  counts: ListCounts | null // first page only
+}
+```
+
+- **`limit`** is the page size, 50 by default and at most 100.
+- **`cursor`** is a `nextCursor` or `prevCursor`, opaque, sent back with the
+  filters of the query that gave it. It carries its list's order, so `order`
+  may be left out, and an `order` that disagrees is a 400. A malformed cursor,
+  or one without `paged`, is a 400. Requests with a cursor walk rows that tie on
+  their start time without losing or repeating one.
+- **`around=next`** opens a first page on the list's next game, in `asc` order,
+  with `limit / 2` rows before it and `limit` from it, and names that row in
+  `anchorId`. It does not take `cursor` or `order=desc`. The rule is
+  `nextGameIndex` in [`src/common/nextGame.ts`](../src/common/nextGame.ts), the
+  one the app uses, and it runs over the merged list because a team's next item
+  can be a practice.
+- **`hasVideo=1`** keeps only games with a video that is not hidden.
+- **`counts`** are `{ total, upcoming, withVideo, videos, newestSeasonId }`,
+  counted for the list's whole filter ignoring `when`, so a hero or a note is
+  right with one page loaded. They come on a first page only.
+- **`scoreboard=open`** does not take `paged`, since that filter runs per row
+  after the query.
+
+A first page costs the server what the whole list costs, because `counts` and
+`around` need the merged list. A later page costs only its own rows.
+
+**Public lists.** `GET /teams/:teamId/games?public=1&paged=1` and
+`GET /seasons/:seasonId/games?public=1&paged=1` answer `Page<PublicGame>` to
+anybody, signed in or not, with `when`, `order`, `hasVideo`, `cursor` and
+`limit`. Only `public=1` admits a guest, and it does not take `around`.
+
+**The umpire schedule** adds `positions` to its pages: the position columns of
+the whole filtered list, each with its `optionalHeader` text, so a table's
+columns do not depend on which rows are loaded.
+
+**Lists with their own cursor.** `GET /players/:userId/highlights` pages with
+`before`, passing back a `nextBefore` of `<iso>|<id>`. It reads on until a page
+is full or it has scanned 500 plays, so a short page with `nextBefore` set can
+happen, and only a null `nextBefore` ends the list. A bare date-time `before`
+still reads, and anything else is a 400. `GET /me/notifications` keeps the
+cursor it had. `GET /videos/:videoId/highlights` answers whole, because one
+game bounds it and marking dropped plays needs every play of the game.
+
+**Phones.** A first page is stored for offline. A request with a `cursor` is
+never stored, so it reaches only the network.
+
 ## When a new path is right
 
 Only for a new resource, or for an action that is not a read or a write of an
