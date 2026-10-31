@@ -586,4 +586,66 @@ describe('atomic game availability', function () {
         .execute()
     }
   })
+  it('leaves the lineup of a game whose first at-bat has been pitched to', async function () {
+    const id = 'gam_first_at_bat'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const initial = fixture()
+    const document = currentDocumentOf(
+      initial,
+      initial.liveData.plays.currentPlay,
+      { setupBefore: setupOf(initial), actions: [] }
+    )
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: {
+          ...(document as object),
+          playEvents: [{ isPitch: true }]
+        }
+      })
+      .where('id', '=', id)
+      .execute()
+    const before = (
+      await db
+        .selectFrom('games')
+        .select('currentPlay')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    ).currentPlay
+    await db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', userIdOfGumbo(2))
+      .where('team_id', '=', 'team-away')
+      .execute()
+    try {
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, id)
+      })
+      expect(
+        (
+          await db
+            .selectFrom('games')
+            .select('currentPlay')
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+        ).currentPlay
+      ).deep.equals(before)
+    } finally {
+      await db
+        .updateTable('memberships')
+        .set({ is_player: true })
+        .where('user_id', '=', userIdOfGumbo(2))
+        .where('team_id', '=', 'team-away')
+        .execute()
+    }
+  })
 })

@@ -40,6 +40,7 @@ import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { gameAvailability } from './rosterAvailability'
+import { hasScoringEventsSql } from './scoringActivity'
 
 /** A switch and its lineup change commit together, serialized with scoring writes. */
 export async function setRostered(
@@ -221,8 +222,13 @@ export async function reconcileUnbegunLineup(
     .executeTakeFirst()
   if (game == null || game.status === 'final' || game.status === 'cancelled')
     return
-  const rows = await readPlays(trx, gameId)
-  if (rows.length > 0) return
+  // Its first at-bat lives only on the game row: under way, it is begun.
+  const { begun } = await trx
+    .selectFrom('games')
+    .select(hasScoringEventsSql.as('begun'))
+    .where('id', '=', gameId)
+    .executeTakeFirstOrThrow()
+  if (begun) return
   const stored = await resolveScoringGame(trx, {
     plays: [],
     currentPlay: atBatOf(game, false) as CurrentPlay | null
