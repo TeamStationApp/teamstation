@@ -139,6 +139,7 @@ describe('TV native playback clock contracts', () => {
     clock.fail(1)
     expect(clock.move(999)).equals(119900)
     const missing = new PlaybackClock()
+    expect(missing.available(0)).equals(false)
     missing.register(0, timelineFor(null), () => undefined)
     missing.load(0, 10)
     expect(missing.move(10)).equals(null)

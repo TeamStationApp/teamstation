@@ -288,5 +288,8 @@ describe('TV game playback entry', () => {
       await pause()
     })
     expect(document.body.textContent).contains('cameras could not play')
+    await press('Retry video')
+    expect(document.querySelectorAll('video')).length(1)
+    expect(document.body.textContent).not.contains('Retry video')
   })
 })

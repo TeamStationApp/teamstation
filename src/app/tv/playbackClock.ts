@@ -147,7 +147,7 @@ export class PlaybackClock {
 
   available(index: number): boolean {
     const port = this.ports[index]
-    if (port.failed || port.ended) return false
+    if (port === undefined || port.failed || port.ended) return false
     return (
       this.wall === null ||
       targetTime(port.timeline, this.wall, port.duration)?.available !== false
