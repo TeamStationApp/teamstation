@@ -142,6 +142,10 @@ function launcher(patch: {
   installed?: string[]
   canOpenURL?: CameraLinks['canOpenURL']
   openURL?: (url: string) => Promise<void>
+  /** Android's packages. */
+  apps?: string[]
+  appInstalled?: CameraLinks['appInstalled']
+  openInApp?: CameraLinks['openInApp']
   url?: string
   addLiveStream?: () => Promise<LiveStream>
   revealed?: () => Promise<LiveStream>
@@ -149,7 +153,10 @@ function launcher(patch: {
   source?: LinkedCamera
 }): {
   run: () => ReturnType<typeof launchCamera>
+  /** Every URL opened, whatever opened it. */
   fired: string[]
+  /** The links held to one app, which no browser can take. */
+  inApp: Array<[string, string]>
   added: unknown[]
   created: number[]
   stream: LiveStream
@@ -160,6 +167,7 @@ function launcher(patch: {
     url: 'url' in patch ? patch.url : RTMP
   } as unknown as LiveStream
   const fired: string[] = []
+  const inApp: Array<[string, string]> = []
   const added: unknown[] = []
   const created: number[] = []
   const client = {
@@ -172,6 +180,7 @@ function launcher(patch: {
   } as unknown as TeamStationClient
   return {
     fired,
+    inApp,
     added,
     created,
     stream,
@@ -189,6 +198,14 @@ function launcher(patch: {
           openURL: async url => {
             fired.push(url)
             await patch.openURL?.(url)
+          },
+          appInstalled:
+            patch.appInstalled ??
+            (async name => (patch.apps ?? []).includes(name)),
+          openInApp: async (url, name) => {
+            inApp.push([url, name])
+            fired.push(url)
+            return (await patch.openInApp?.(url, name)) ?? true
           }
         },
         onCreated: () => created.push(1)
@@ -198,6 +215,7 @@ function launcher(patch: {
 
 const GOPRO_SCHEME = 'goprocontrol://com.gopro.smarty/home'
 const MEVO_SCHEME = 'mevostream://configure'
+const STUDIO_APP = 'com.mevo.multicam'
 
 describe('launchCamera', function () {
   for (const os of ['android', 'ios'])
@@ -246,12 +264,77 @@ describe('launchCamera', function () {
     expect(await go.run()).deep.equals({ kind: 'store' })
   })
 
-  it('opens Mevo Studio’s link with no check, on either platform', async function () {
+  it('holds each https link to its app, so no browser can take the key', async function () {
     for (const os of ['android', 'ios']) {
-      const go = launcher({ os, source: 'mevoStudio' })
-      expect(await go.run()).deep.equals({ kind: 'opened' })
-      expect(go.fired).deep.equals([cameraLink('mevoStudio', RTMP, 'Home')])
+      const gopro = launcher({ os, source: 'gopro', installed: [GOPRO_SCHEME] })
+      await gopro.run()
+      expect(gopro.inApp).deep.equals([
+        [cameraLink('gopro', RTMP, 'Home'), 'com.gopro.smarty']
+      ])
+      const studio = launcher({ os, source: 'mevoStudio', apps: [STUDIO_APP] })
+      expect(await studio.run()).deep.equals({ kind: 'opened' })
+      expect(studio.inApp).deep.equals([
+        [cameraLink('mevoStudio', RTMP, 'Home'), STUDIO_APP]
+      ])
     }
+  })
+
+  it('leaves Mevo’s own scheme to the system, which only its app answers', async function () {
+    const go = launcher({ installed: [MEVO_SCHEME] })
+    await go.run()
+    expect(go.inApp).deep.equals([])
+    expect(go.fired).deep.equals([cameraLink('mevo', RTMP, 'Home')])
+  })
+
+  it('opens Android’s store page with Mevo Studio missing, with no key and no camera', async function () {
+    const go = launcher({ source: 'mevoStudio' })
+    expect(await go.run()).deep.equals({ kind: 'store' })
+    expect(go.fired).deep.equals([storePage(STUDIO_APP)])
+    expect(go.fired[0]).not.contains(KEY)
+    expect(go.added).deep.equals([])
+    expect(go.created).deep.equals([])
+  })
+
+  it('treats a package check that fails as a missing app', async function () {
+    const go = launcher({
+      source: 'mevoStudio',
+      appInstalled: async () => {
+        throw new Error('unsupported')
+      }
+    })
+    expect(await go.run()).deep.equals({ kind: 'store' })
+    expect(go.added).deep.equals([])
+  })
+
+  it('shows the URL on iOS with Mevo Studio missing, and opens nothing else', async function () {
+    const go = launcher({
+      os: 'ios',
+      source: 'mevoStudio',
+      appInstalled: async () => {
+        throw new Error('iOS cannot ask')
+      },
+      openInApp: async () => false
+    })
+    expect(await go.run()).deep.equals({
+      kind: 'sheet',
+      target: { stream: go.stream }
+    })
+    expect(go.added).to.have.length(1)
+    expect(go.fired, 'one try, held to the app').deep.equals([
+      cameraLink('mevoStudio', RTMP, 'Home')
+    ])
+  })
+
+  it('shows the URL when Quik will not take its link, rather than a browser', async function () {
+    const go = launcher({
+      source: 'gopro',
+      installed: [GOPRO_SCHEME],
+      openInApp: async () => false
+    })
+    expect(await go.run()).deep.equals({
+      kind: 'sheet',
+      target: { stream: go.stream }
+    })
   })
 
   it('reveals the URL when the answer leaves it out', async function () {
@@ -278,7 +361,7 @@ describe('launchCamera', function () {
 
   it('shows the URL of a camera whose link would not open', async function () {
     const go = launcher({
-      source: 'mevoStudio',
+      installed: [MEVO_SCHEME],
       openURL: async () => {
         throw new Error('No activity')
       }
@@ -293,7 +376,7 @@ describe('launchCamera', function () {
   it('shows the URL of a camera whose URL could not be read', async function () {
     const go = launcher({
       url: undefined,
-      source: 'mevoStudio',
+      installed: [MEVO_SCHEME],
       revealed: async () => {
         throw new Error('The server is away')
       }
@@ -303,7 +386,10 @@ describe('launchCamera', function () {
   })
 
   it('shows the URL of a camera whose URL has no link', async function () {
-    const go = launcher({ url: 'https://example.test/', source: 'mevoStudio' })
+    const go = launcher({
+      url: 'https://example.test/',
+      installed: [MEVO_SCHEME]
+    })
     expect(await go.run()).deep.equals({
       kind: 'sheet',
       target: { stream: go.stream }

@@ -80,7 +80,9 @@ const systemLinks: CameraLinks = {
   canOpenURL: async url => await Linking.canOpenURL(url),
   openURL: async url => {
     await Linking.openURL(url)
-  }
+  },
+  appInstalled: phoneStream.appInstalled,
+  openInApp: phoneStream.openInApp
 }
 
 /** The sheet up, or the next once iOS has taken the last away. */

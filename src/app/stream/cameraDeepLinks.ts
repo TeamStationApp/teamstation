@@ -21,6 +21,10 @@ export interface RtmpUrlParts {
 export interface CameraLinks {
   canOpenURL: (url: string) => Promise<boolean>
   openURL: (url: string) => Promise<unknown>
+  /** Whether Android has this app, enabled. */
+  appInstalled: (packageName: string) => Promise<boolean>
+  /** Opens a link in the app alone, never a browser; false if it could not. */
+  openInApp: (url: string, packageName: string) => Promise<boolean>
 }
 
 /** What became of a tap on a camera's row. */
@@ -52,18 +56,20 @@ const MEVO_STUDIO_APP = 'com.mevo.multicam'
 
 /**
  * How each app is known to be on this phone, and its Play Store page. Mevo
- * Studio answers to no scheme of its own, so nothing can tell whether it is
- * here: its link is simply opened.
+ * Studio answers to no scheme of its own: Android's package manager knows of
+ * it, and iOS finds out only by opening its link.
  */
-const INSTALL_CHECKS: Partial<
-  Record<LinkedCamera, { url: string; packageName: string }>
+const INSTALL_CHECKS: Record<
+  LinkedCamera,
+  { url?: string; packageName: string }
 > = {
   // Quik's Android filters name a host and path: the bare scheme matches none.
   gopro: {
     url: 'goprocontrol://com.gopro.smarty/home',
     packageName: 'com.gopro.smarty'
   },
-  mevo: { url: 'mevostream://configure', packageName: 'com.livestream.mevo' }
+  mevo: { url: 'mevostream://configure', packageName: 'com.livestream.mevo' },
+  mevoStudio: { packageName: MEVO_STUDIO_APP }
 }
 
 export function storePage(packageName: string): string {
@@ -137,16 +143,18 @@ async function urlOf(
 }
 
 /**
- * Sends a camera's row to its app: makes the camera, then fires its link. With
- * the app missing nothing is made on Android, whose store page comes up and
- * leaves the person free to tap the row again once it is installed. iOS shows
- * the URL instead. A camera whose link cannot fire keeps its row, and shows its
- * URL too. A refused camera throws, and nothing fires.
+ * Sends a camera's row to its app: makes the camera, then fires its link. A
+ * link carries the stream key, so an `https` one goes to the app alone: a
+ * browser would hand the key to a website. With the app missing nothing is made
+ * on Android, whose store page comes up and leaves the person free to tap the
+ * row again once it is installed. iOS shows the URL instead. A camera whose link
+ * cannot fire keeps its row, and shows its URL too. A refused camera throws, and
+ * nothing fires.
  */
 export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
   const { client, gameId, name, source, links, os, onCreated } = args
   const check = INSTALL_CHECKS[source]
-  if (check != null && !(await installed(links, check.url))) {
+  if (!(await installed(links, check.url, check.packageName, os))) {
     if (os !== 'android') return { kind: 'sheet', target: { name, source } }
     await links.openURL(storePage(check.packageName))
     return { kind: 'store' }
@@ -156,16 +164,32 @@ export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
   try {
     const url = await urlOf(client, stream)
     const link = url == null ? undefined : cameraLink(source, url, name)
-    if (link != null) {
-      await links.openURL(link)
+    if (link != null && (await fire(links, link, check.packageName)))
       return { kind: 'opened' }
-    }
   } catch {
     // Its row exists, so the person still needs its URL.
   }
   return { kind: 'sheet', target: { stream } }
 }
 
-async function installed(links: CameraLinks, url: string): Promise<boolean> {
-  return await links.canOpenURL(url).catch(() => false)
+async function installed(
+  links: CameraLinks,
+  url: string | undefined,
+  packageName: string,
+  os: string
+): Promise<boolean> {
+  if (url != null) return await links.canOpenURL(url).catch(() => false)
+  if (os !== 'android') return true
+  return await links.appInstalled(packageName).catch(() => false)
+}
+
+/** Only an app of its own takes a custom scheme, so no browser can get it. */
+async function fire(
+  links: CameraLinks,
+  link: string,
+  packageName: string
+): Promise<boolean> {
+  if (link.startsWith('https:')) return await links.openInApp(link, packageName)
+  await links.openURL(link)
+  return true
 }

@@ -226,6 +226,12 @@ function fakeLinks(installed: string[] = []): FakeLinks {
     openURL: async url => {
       links.fired.push(url)
       await links.answer(url)
+    },
+    appInstalled: async () => false,
+    openInApp: async url => {
+      links.fired.push(url)
+      await links.answer(url)
+      return true
     }
   }
   return links
@@ -628,12 +634,6 @@ describe('the cameras on a game, on a phone', function () {
     opened.length = 0
   })
 
-  it('lists every angle with its subtitle, state and duration, and reads them again every five seconds', async function () {
-    const poll = heldPoll()
-    try {
-      const fake = fakeClient()
-      fake.mine = [
-        stream({
   it('says on an own idle row why the ingest refused its camera', async function () {
     const fake = fakeClient()
     const refused = 'TeamStation takes HEVC. This stream is H.264.'
@@ -650,6 +650,12 @@ describe('the cameras on a game, on a phone', function () {
     expect(byTestId('angle-row-liv_1')?.textContent).contains(refused)
   })
 
+  it('lists every angle with its subtitle, state and duration, and reads them again every five seconds', async function () {
+    const poll = heldPoll()
+    try {
+      const fake = fakeClient()
+      fake.mine = [
+        stream({
           id: 'liv_1',
           label: 'Home Plate',
           state: 'publishing',
@@ -1342,6 +1348,7 @@ describe('setting up a camera on a phone', function () {
       expect(text()).contains(
         'If your app requests a stream key, leave it blank.'
       )
+      expect(text()).contains('Your camera must stream in HEVC (H.265).')
       expect(text()).contains(
         'You may now return to the app and stream to the RTMP URL at any time.'
       )
@@ -1414,7 +1421,7 @@ describe('setting up a camera on a phone', function () {
       expect(fake.added).to.have.length(1)
     })
 
-    it('fires Mevo Studio’s link with nothing installed that can answer for it', async function () {
+    it('hands Mevo Studio’s link to its app where no package can be asked about', async function () {
       const fake = fakeClient()
       listed(fake)
       const links = fakeLinks()
