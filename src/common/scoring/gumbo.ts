@@ -2,7 +2,7 @@ import { asArray, asObject, asUnknown, type Cleaner } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
 import { eventTypeName } from '../gumboEventTypes'
-import type { CurrentPlay, GumboPlay } from '../gumboPlay'
+import { type CurrentPlay, type GumboPlay, isRealPlay } from '../gumboPlay'
 import { cleanAction, type Problem, type ScoringAction } from './actions'
 import { type Applied, applyAction } from './apply'
 import {
@@ -394,6 +394,48 @@ function baseNumber(raw: unknown): number {
 }
 
 /**
+ * Who a play scored elsewhere names, for nothing that counts a line: this play
+ * is not ours. Somebody the setup no longer holds appeared all the same.
+ */
+function appearedInDocument(
+  state: GameState,
+  doc: GumboPlay,
+  half: 'top' | 'bottom'
+): { batting: number[]; fielding: number[] } {
+  if (!isRealPlay(doc)) return { batting: [], fielding: [] }
+  const ids = (raws: unknown[]): number[] =>
+    raws.flatMap(raw => {
+      const id = (raw as { id?: unknown } | null | undefined)?.id
+      return typeof id === 'number' ? id : []
+    })
+  const top = half === 'top'
+  // A credit names a side only by a team the game still has.
+  const credited = (side: Side): unknown[] =>
+    (doc.credits ?? [])
+      .filter(credit => credit.teamId === state.gameData.teams[side].id)
+      .map(credit => ({ id: credit.creditUserId }))
+  const runners = doc.runners ?? []
+  const fielded = runners.flatMap(runner => {
+    const credits: unknown = runner.credits
+    return Array.isArray(credits)
+      ? credits.map(credit => (credit as { player?: unknown } | null)?.player)
+      : []
+  })
+  return {
+    batting: ids([
+      doc.matchup?.batter,
+      ...runners.map(runner => runner.details?.runner),
+      ...credited(top ? 'away' : 'home')
+    ]),
+    fielding: ids([
+      doc.matchup?.pitcher,
+      ...fielded,
+      ...credited(top ? 'home' : 'away')
+    ])
+  }
+}
+
+/**
  * The state a run of plays TeamStation did not score leaves behind: the half,
  * the outs, the score, who is on base and who bats next. Each play stands in
  * the game's list so the next play takes the next index.
@@ -429,6 +471,10 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
       },
       runners: [],
       playEvents: [],
+      appeared:
+        doc == null
+          ? undefined
+          : appearedInDocument(state, doc, doc.about.halfInning ?? half),
       source: {
         system: 'teamstation',
         teamstation: { version: 'estimated-v1', outcome: '' }

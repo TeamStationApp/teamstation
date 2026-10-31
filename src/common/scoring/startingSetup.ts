@@ -10,7 +10,7 @@ import {
   sameArrangement,
   unseenLineup
 } from './lineupHistory'
-import { reconcileRoster } from './rosterAvailability'
+import { onBothSides, reconcileRoster } from './rosterAvailability'
 import {
   copyState,
   type GameSetup,
@@ -82,23 +82,20 @@ export function startingSetup(
   defaults: DefaultLineups = {},
   fillRoster = true
 ): GameSetup {
+  const guests = game.guestPlayers ?? { away: [], home: [] }
+  const unrostered = game.unrostered ?? { away: [], home: [] }
+  const contested = onBothSides({ away, home }, guests, unrostered)
+  const playing = (rows: RosterEntry[], side: Side): RosterEntry[] =>
+    rows.filter(row => {
+      if (!row.isPlayer) return true
+      const id = asGumboId(row.gumboId)
+      return !unrostered[side].includes(id) && !contested.has(id)
+    })
   const setup = newSetup(
     teamsOf(game),
     {
-      away: rosterOf(
-        away.filter(
-          row =>
-            !row.isPlayer ||
-            game.unrostered?.away.includes(asGumboId(row.gumboId)) !== true
-        )
-      ),
-      home: rosterOf(
-        home.filter(
-          row =>
-            !row.isPlayer ||
-            game.unrostered?.home.includes(asGumboId(row.gumboId)) !== true
-        )
-      )
+      away: rosterOf(playing(away, 'away')),
+      home: rosterOf(playing(home, 'home'))
     },
     fillRoster
   )
@@ -106,8 +103,8 @@ export function startingSetup(
     setup,
     teamsOf(game),
     { away, home },
-    game.guestPlayers ?? { away: [], home: [] },
-    game.unrostered ?? { away: [], home: [] }
+    guests,
+    unrostered
   )
   for (const side of ['away', 'home'] as const) {
     const lineup = defaults[side]
@@ -242,4 +239,8 @@ export function defaultsUnaccepted(
 }
 
 // Public read projection shared by roster editors and the scoring source.
-export { reconcileRoster, type ScoringRosterEntry } from './rosterAvailability'
+export {
+  appearedIn,
+  reconcileRoster,
+  type ScoringRosterEntry
+} from './rosterAvailability'

@@ -2,16 +2,29 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  after,
+  ball,
+  close,
+  game as scoredGame,
+  strike,
+  strikeout,
+  walk
+} from '../../test/scoringGames'
+import {
   asGameDetail,
   asRosterEntry,
   type Lineup,
   type LineupPerson,
   type RosterEntry
 } from '../api'
-import { userIdOfGumbo } from '../userId'
+import { asGumboId, userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { freshGame } from './lineup'
-import { reconcileRoster } from './rosterAvailability'
+import {
+  appearedBySide,
+  appearedIn,
+  reconcileRoster
+} from './rosterAvailability'
 import {
   defaultPending,
   defaultsUnaccepted,
@@ -22,6 +35,7 @@ import {
 } from './startingSetup'
 import {
   type GameSetup,
+  type GameState,
   type Position,
   POSITIONS,
   setupOf,
@@ -157,15 +171,16 @@ describe('the lineups a game starts from (U4b)', function () {
       { away: [], home: [] }
     )
     expect(empty.sides.away.battingIndex).equals(0)
-    expect(() =>
-      reconcileRoster(
-        held,
-        teamsOf(game),
-        { away, home },
-        { away: [], home: roster([101]) },
-        { away: [], home: [] }
-      )
-    ).throws('both teams')
+    // Fielded by both sides, a player already in the game stays on their team.
+    const both = reconcileRoster(
+      held,
+      teamsOf(game),
+      { away, home },
+      { away: [], home: roster([101]) },
+      { away: [], home: [] }
+    )
+    expect(both.sides.away.players).includes(101)
+    expect(both.sides.home.players).not.includes(101)
   })
 
   it('retains merged historical turns and fielding assignments until that player is unavailable', () => {
@@ -200,6 +215,266 @@ describe('the lineups a game starts from (U4b)', function () {
     expect(removed.sides.away.battingIndex).equals(0)
     expect(removed.sides.away.defense.P).equals(null)
     expect(removed.sides.away.defense.C).equals(null)
+  })
+
+  it('moves a saved entry to the side fielding them, unless they have been in the game', function () {
+    const held = startingSetup(game, away, home)
+    const id = 101
+    const joined = {
+      away: away.filter(row => asGumboId(row.gumboId) !== id),
+      home: [...home, ...away.filter(row => asGumboId(row.gumboId) === id)]
+    }
+    const none = { away: [], home: [] }
+    const moved = reconcileRoster(held, teamsOf(game), joined, none, none)
+    expect(moved.players[id].teamId).equals(teamsOf(game).home.id)
+    expect(moved.sides.home.players).includes(id)
+    expect(moved.sides.away.players).not.includes(id)
+    const played = reconcileRoster(
+      held,
+      teamsOf(game),
+      joined,
+      none,
+      none,
+      new Set([id])
+    )
+    expect(played.players[id].teamId).equals(teamsOf(game).away.id)
+    expect(played.sides.home.players).not.includes(id)
+    // Still fielded by the side the entry names, it stays there.
+    const both = reconcileRoster(
+      held,
+      teamsOf(game),
+      { away, home: joined.home },
+      none,
+      none
+    )
+    expect(both.players[id].teamId).equals(teamsOf(game).away.id)
+    expect(both.sides.home.players).not.includes(id)
+  })
+
+  it('counts as appeared who batted or pitched, and a play under way once pitched to', function () {
+    const play = (batter: number, playEvents: unknown[]): unknown => ({
+      about: { halfInning: 'top' },
+      matchup: { batter: { id: batter }, pitcher: { id: 9 } },
+      runners: [],
+      playEvents
+    })
+    const pitch = { details: { code: 'B' } }
+    const change = { isSubstitution: true, details: { code: 'pinch' } }
+    const state = (currentPlay: unknown): GameState =>
+      ({
+        liveData: { plays: { allPlays: [play(1, [pitch])], currentPlay } }
+      }) as unknown as GameState
+    expect([...appearedIn(state(null))]).members([1, 9])
+    expect([...appearedIn(state(play(2, [])))]).members([1, 9])
+    expect([...appearedIn(state(play(2, [pitch])))]).members([1, 2, 9])
+    // A lineup change is no pitch: somebody announced has not appeared.
+    expect([...appearedIn(state(play(2, [change])))]).members([1, 9])
+  })
+
+  describe('with a lineup change', function () {
+    const add = (side: Side, player: number): ScoringAction => ({
+      type: 'lineup',
+      kind: 'addPlayer',
+      side,
+      player,
+      name: `Bench ${player}`
+    })
+    const onBase = (
+      kind: 'pinchRunner' | 'runner',
+      player = 19
+    ): ScoringAction => ({
+      type: 'lineup',
+      kind,
+      side: 'away',
+      base: '1B',
+      player
+    })
+    const fielder: ScoringAction = {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'home',
+      player: 20,
+      replaces: 16
+    }
+    const walked = (): GameState =>
+      after(
+        walk(scoredGame()),
+        add('away', 19),
+        add('away', 21),
+        add('home', 20)
+      )
+    const { away, home } = {
+      away: (state: GameState) => [...appearedBySide(state).away],
+      home: (state: GameState) => [...appearedBySide(state).home]
+    }
+
+    it('counts somebody who stood on base through plays that never moved them', function () {
+      for (const kind of ['pinchRunner', 'runner'] as const) {
+        const stood = strikeout(
+          strikeout(strikeout(after(walked(), onBase(kind))))
+        )
+        expect(away(stood)).includes(19)
+      }
+    })
+
+    it('counts no runner or fielder until a pitch finds them there', function () {
+      for (const kind of ['pinchRunner', 'runner'] as const) {
+        expect(away(after(walked(), onBase(kind)))).members([1])
+        expect(away(after(walked(), onBase(kind), ball))).includes(19)
+      }
+      expect(home(after(walked(), fielder))).not.includes(20)
+      expect(home(after(walked(), ball, fielder))).not.includes(20)
+      expect(home(after(walked(), ball, fielder, ball))).includes(20)
+    })
+
+    it('counts a fielder who came in during the at-bat that ended the half', function () {
+      const last = strikeout(strikeout(walked()))
+      const over = after(last, ball, fielder, strike, strike, strike, close)
+      expect(over.liveData.plays.currentPlay!.about.halfInning).equals('bottom')
+      expect(home(over)).includes(20)
+    })
+
+    it('counts nobody replaced before a pitch found them', function () {
+      const swapped = after(
+        walked(),
+        onBase('pinchRunner'),
+        onBase('pinchRunner', 21),
+        ball
+      )
+      expect(away(swapped)).includes(21)
+      expect(away(swapped)).not.includes(19)
+    })
+
+    it('counts no substitute waiting in the order or fielding for the side at bat', function () {
+      const waiting: ScoringAction = {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: 19,
+        replaces: 5
+      }
+      expect(away(after(walked(), waiting, ball))).not.includes(19)
+      const fieldingLater: ScoringAction = {
+        type: 'lineup',
+        kind: 'position',
+        side: 'away',
+        position: 'SS',
+        player: 19
+      }
+      const later = after(walked(), ball, fieldingLater, ball)
+      expect(away(later)).not.includes(19)
+      expect(home(later)).not.includes(19)
+    })
+
+    it('counts a batter and a pitcher replaced after a pitch, and their replacements once pitched to', function () {
+      const batter: ScoringAction = {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: 19,
+        replaces: 2
+      }
+      const pitcher: ScoringAction = {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'home',
+        player: 20,
+        replaces: 10
+      }
+      const changed = after(walked(), ball, batter, pitcher)
+      expect(away(changed)).includes(2)
+      expect(away(changed)).not.includes(19)
+      expect(home(changed)).includes(10)
+      expect(home(changed)).not.includes(20)
+      const faced = after(changed, ball)
+      expect(away(faced)).includes(19)
+      expect(home(faced)).includes(20)
+      const out = after(walked(), ball, batter, strike, strike, strike, close)
+      expect(away(out)).members([1, 2, 19])
+    })
+
+    it('counts a batter and a pitcher replaced before any pitch as neither', function () {
+      const swapped = after(
+        walked(),
+        {
+          type: 'lineup',
+          kind: 'substitute',
+          side: 'away',
+          player: 19,
+          replaces: 2
+        },
+        ball
+      )
+      expect(away(swapped)).includes(19)
+      expect(away(swapped)).not.includes(2)
+    })
+
+    it('counts the batter and pitcher of a closed play with no pitch in it', function () {
+      const skipped = after(
+        walked(),
+        { type: 'result', eventType: 'intent_walk' },
+        close
+      )
+      expect(away(skipped)).includes(2)
+    })
+
+    it('counts no change of the hosts off the field', function () {
+      const state = after(walked(), ball)
+      state.liveData.plays.currentPlay!.playEvents.unshift({
+        ...state.liveData.plays.currentPlay!.playEvents[0],
+        isSubstitution: true,
+        position: 'DH',
+        player: { id: 20, fullName: 'Bench 20' }
+      })
+      expect(home(state)).not.includes(20)
+    })
+  })
+
+  it('names each side apart, for who a stand-in play lists too', function () {
+    const state = {
+      liveData: {
+        plays: {
+          allPlays: [
+            {
+              about: { halfInning: 'bottom' },
+              matchup: { batter: { id: 0 }, pitcher: { id: 0 } },
+              runners: [],
+              playEvents: [],
+              appeared: { batting: [1, 5], fielding: [10] }
+            }
+          ],
+          currentPlay: null
+        }
+      }
+    } as unknown as GameState
+    const { away, home } = appearedBySide(state)
+    expect([...home]).members([1, 5])
+    expect([...away]).members([10])
+  })
+
+  it('counts a fielder and a runner of a play as appeared, and not the side at bat', function () {
+    const state = {
+      liveData: {
+        plays: {
+          allPlays: [
+            {
+              about: { halfInning: 'top' },
+              matchup: { batter: { id: 1 }, pitcher: { id: 9 } },
+              runners: [{ details: { runner: { id: 3 } } }],
+              playEvents: [],
+              lineups: {
+                began: {
+                  home: { defense: { C: 7, LF: null } },
+                  away: { defense: { C: 8 } }
+                }
+              }
+            }
+          ],
+          currentPlay: null
+        }
+      }
+    } as unknown as GameState
+    expect([...appearedIn(state)]).members([1, 9, 3, 7])
   })
 
   it('keeps roster order without a default', function () {
@@ -395,5 +670,57 @@ describe('a reader who can see a side left unseen', function () {
     )
     expect(shown).equals(next)
     expect(arranged(setupOf(shown), 'away').order[0]).equals(102)
+  })
+  it('leaves somebody on both rosters off both, until a coach leaves them out of one', function () {
+    const roster = (id: number, name: string): RosterEntry =>
+      asRosterEntry({
+        userId: userIdOfGumbo(id),
+        gumboId: id,
+        shortName: name,
+        jersey: null,
+        positions: [],
+        bats: 'right',
+        throws: 'right',
+        isPlayer: true,
+        role: 'player',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null
+      })
+    const both = roster(70, 'Both Sides')
+    const game = {
+      awayTeamId: 'tem_a',
+      awayTeamName: 'Falcons',
+      awayLogoUrl: null,
+      homeTeamId: 'tem_h',
+      homeTeamName: 'Owls',
+      homeLogoUrl: null
+    }
+    const away = [both, roster(71, 'Only Away')]
+    const home = [both, roster(72, 'Only Home')]
+    const setup = startingSetup(game, away, home, {}, false)
+    expect(setup.players[70]).equals(undefined)
+    expect(setup.sides.away.players).deep.equals([71])
+    expect(setup.sides.home.players).deep.equals([72])
+    // Left out of one side, they play for the other.
+    const chosen = startingSetup(
+      { ...game, unrostered: { away: [70], home: [] } },
+      away,
+      home,
+      {},
+      false
+    )
+    expect(chosen.sides.away.players).deep.equals([71])
+    expect(chosen.sides.home.players).has.members([70, 72])
+    // Somebody who has played stays with the team they played for.
+    const held = reconcileRoster(
+      chosen,
+      teamsOf(game),
+      { away, home },
+      { away: [], home: [] },
+      { away: [], home: [] }
+    )
+    expect(held.sides.home.players).includes(70)
+    expect(held.sides.away.players).not.includes(70)
   })
 })
