@@ -11,8 +11,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
-import { appearedIn } from '../../common/scoring/rosterAvailability'
-import { reconcileRoster } from '../../common/scoring/startingSetup'
+import { appearedIn, reconcileRoster } from '../../common/scoring/startingSetup'
 import { withNames } from '../../common/scoring/storedNames'
 import { deviceStorage } from '../platform/deviceStorage'
 import {

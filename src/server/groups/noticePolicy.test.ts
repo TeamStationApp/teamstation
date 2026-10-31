@@ -64,6 +64,7 @@ import { gameNames, gameNamesDigest } from '../users/nameBook'
 import {
   applyPlayerAdd,
   decidePlayerAdd,
+  lockPlayerAdds,
   mayAnswerPlayerAdd,
   NOTICE_DAYS,
   playerAddApprovers,
@@ -515,17 +516,29 @@ describe('adds made with a notice', function () {
   it('tells the guardian, the player, or the coaches of their other teams, in that order', async function () {
     expect(
       await playerAddApprovers(db!, ids['Mookie Betts'], TEAM.falcons)
-    ).deep.equals({ userIds: [ids['Mookie Guardian']], standIn: false })
+    ).deep.equals({
+      userIds: [ids['Mookie Guardian']],
+      standIn: false,
+      told: 'guardians'
+    })
     expect(
       await playerAddApprovers(db!, ids['Freddie Freeman'], TEAM.falcons)
-    ).deep.equals({ userIds: [ids['Freddie Freeman']], standIn: false })
+    ).deep.equals({
+      userIds: [ids['Freddie Freeman']],
+      standIn: false,
+      told: 'player'
+    })
     expect(
       await playerAddApprovers(db!, ids['Tony Kemp'], TEAM.falcons)
-    ).deep.equals({ userIds: [ids['Bears Coach']], standIn: true })
+    ).deep.equals({
+      userIds: [ids['Bears Coach']],
+      standIn: true,
+      told: 'coaches'
+    })
     // On no other team: nobody, and the add simply applies.
     expect(
       await playerAddApprovers(db!, ids['Lonely Cub'], TEAM.falcons)
-    ).deep.equals({ userIds: [], standIn: false })
+    ).deep.equals({ userIds: [], standIn: false, told: null })
     const cub = await add('roster', 'Lonely Cub')
     expect(cub).deep.equals({ policy: 'notice', requestId: null })
     expect((await membership('Lonely Cub', TEAM.falcons))?.is_player).equals(
@@ -1176,7 +1189,15 @@ describe('adds made with a notice', function () {
         sender_id: ids.coach,
         sender_scope_type: 'team',
         sender_scope_id: TEAM.falcons,
-        terms: JSON.stringify({ userId: ids['Mookie Betts'] }),
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          userId: ids['Mookie Betts'],
+          teamId: TEAM.falcons,
+          jersey: null,
+          positions: [],
+          teamName: 'Ridgeview Falcons'
+        }),
         status: 'declined',
         sent_at: now,
         expires_at: new Date(now.getTime() + DAY),
@@ -1345,7 +1366,15 @@ describe('adds made with a notice', function () {
         sender_id: ids.coach,
         sender_scope_type: 'team',
         sender_scope_id: TEAM.falcons,
-        terms: JSON.stringify({ userId: ids['Mookie Betts'] }),
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          userId: ids['Mookie Betts'],
+          teamId: TEAM.falcons,
+          jersey: null,
+          positions: [],
+          teamName: 'Ridgeview Falcons'
+        }),
         status: 'declined',
         sent_at: now,
         expires_at: new Date(now.getTime() + DAY),
@@ -2364,5 +2393,101 @@ describe('adds made with a notice', function () {
     expect(included.body.map((row: { userId: string }) => row.userId)).includes(
       ids['Chat Held Parent']
     )
+  })
+
+  it('serializes an accept with every other add of that person', async function () {
+    await person('Both Sides', { login: true })
+    const first = await add('roster', 'Both Sides')
+    await decide('Both Sides', first.requestId!, 'decline')
+    const asked = await add('roster', 'Both Sides')
+    expect(asked.policy).equals('approval')
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let acquired = (): void => undefined
+    const taken = new Promise<void>(resolve => {
+      acquired = resolve
+    })
+    const holding = atomic(db!, async trx => {
+      await lockPlayerAdds(trx, ids['Both Sides'])
+      acquired()
+      await held
+    })
+    await taken
+    let finished = false
+    const accepted = decide('Both Sides', asked.requestId!, 'accept').finally(
+      () => {
+        finished = true
+      }
+    )
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(finished).equals(false)
+    release()
+    await holding
+    expect(await accepted).equals('accepted')
+  })
+
+  it('lists an add to whoever may answer it now', async function () {
+    await person('Lost Guardian', { login: true })
+    await person('Late Guardian', { login: true })
+    const link = makeId('userLink')
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: link,
+        user_id: ids['Late Guardian'],
+        related_user_id: ids['Lost Guardian'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    const added = await add('roster', 'Lost Guardian')
+    await db!.deleteFrom('user_links').where('id', '=', link).execute()
+    const token = 'tok_notice_lost_guardian_000000000000'
+    await db!
+      .insertInto('auth_sessions')
+      .values({
+        id: makeId('authSession'),
+        user_id: ids['Lost Guardian'],
+        token_hash: hashToken(token),
+        created_at: new Date(),
+        expires_at: new Date(Date.now() + 365 * DAY)
+      })
+      .execute()
+    // Told through a guardian who has gone: the player answers it now.
+    const card = (await inbox(token)).items.find(
+      (item: any) => item.requestId === added.requestId
+    )
+    expect(card).to.include({ canReject: true })
+    // A stand-in who joined their other team since.
+    await person('Stand Late', { teamId: TEAM.bears })
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_notice_stand_in',
+        kind: 'playerAdd',
+        sender_id: ids.coach,
+        sender_scope_type: 'team',
+        sender_scope_id: TEAM.falcons,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: TEAM.falcons,
+          userId: ids['Stand Late'],
+          jersey: null,
+          positions: [],
+          teamName: 'Ridgeview Falcons'
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + DAY),
+        initiating_team_id: TEAM.falcons
+      })
+      .execute()
+    const standing = (await inbox(TOKENS.bearsCoach)).items.find(
+      (item: any) => item.requestId === 'grq_notice_stand_in'
+    )
+    expect(standing).to.include({ canReject: true })
   })
 })

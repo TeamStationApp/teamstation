@@ -73,6 +73,7 @@ import {
   asNotification,
   asNotificationPage,
   type Notification,
+  type PlayerAddTold,
   type RelationshipRequestInput
 } from './notifications'
 import { type AnalyticsSink, observeApi } from './observability/apiEvents'
@@ -1700,18 +1701,30 @@ export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
  * when there was one, or the request their side must accept first.
  */
 export type ExistingPlayerAnswer =
-  { entry: RosterEntry; noticeId: string | null } | { pendingRequestId: string }
+  | {
+      entry: RosterEntry
+      noticeId: string | null
+      /** Who that notice went to. */
+      told?: PlayerAddTold
+      /** They were on the roster already: nothing was added. */
+      unchanged?: boolean
+    }
+  | { pendingRequestId: string }
+const asTold = asOptional(asValue('guardians', 'player', 'coaches'))
 export function asExistingPlayerAnswer(raw: unknown): ExistingPlayerAnswer {
   const held = raw as {
     pending?: { requestId?: unknown }
-    notice?: { requestId?: unknown }
+    notice?: { requestId?: unknown; told?: unknown }
+    unchanged?: unknown
   }
   if (held?.pending != null)
     return { pendingRequestId: asString(held.pending.requestId) }
   return {
     entry: asRosterEntry(raw),
     noticeId:
-      held?.notice?.requestId == null ? null : asString(held.notice.requestId)
+      held?.notice?.requestId == null ? null : asString(held.notice.requestId),
+    told: asTold(held?.notice?.told),
+    unchanged: held?.unchanged === true
   }
 }
 

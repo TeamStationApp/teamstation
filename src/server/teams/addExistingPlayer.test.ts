@@ -297,6 +297,7 @@ describe('adding a player who already exists', function () {
     expect(added.body.positions).deep.equals(['RF'])
     expect(added.body.nameDetails).equals(undefined)
     expect(added.body.notice.requestId).match(/^inv_/)
+    expect(added.body.notice.told).equals('guardians')
     const again = await roster(
       { userId: ids['Mookie Betts'], jersey: '50', positions: ['RF'] },
       COACH,
@@ -306,6 +307,7 @@ describe('adding a player who already exists', function () {
     // Already on the team, a new call changes nothing.
     const unchanged = await roster({ userId: ids['Mookie Betts'] })
     expect(unchanged.status).equals(200)
+    expect(unchanged.body.unchanged).equals(true)
     expect(unchanged.body.jersey).equals('50')
     expect(unchanged.body.notice).equals(undefined)
   })
@@ -457,6 +459,41 @@ describe('adding a player who already exists', function () {
     expect(await membership('Faraway Child', TEAM.falcons)).equals(undefined)
   })
 
+  it('adds a coach with no player row of their own to the roster and to a game', async function () {
+    const self = ids['Dave Roberts']
+    await db!
+      .insertInto('user_emails')
+      .values({
+        id: makeId('userEmail'),
+        user_id: self,
+        email: 'roberts@example.test'
+      })
+      .execute()
+    const pool = await guest({
+      side: 'home',
+      teamId: TEAM.falcons,
+      userId: self
+    })
+    expect(pool.status).equals(201)
+    await db!
+      .deleteFrom('game_guest_details')
+      .where('user_id', '=', self)
+      .execute()
+    const added = await roster({ userId: self })
+    expect(added.status).equals(201)
+    expect(added.body.notice).equals(undefined)
+    expect(await membership('Dave Roberts', TEAM.falcons)).to.include({
+      is_player: true
+    })
+    // Back as they were, for the tests after.
+    await db!
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', self)
+      .where('team_id', '=', TEAM.falcons)
+      .execute()
+  })
+
   it('answers two adds of one person at once as one add', async function () {
     await person('Twice At Once', TEAM.owls)
     const answers = await Promise.all([
@@ -482,7 +519,7 @@ describe('adding a player who already exists', function () {
       bats: 'left',
       throws: 'right'
     })
-    expect(added.body.notice.requestId).match(/^inv_/)
+    expect(added.body.notice).to.include({ told: 'player' })
     const details = await db!
       .selectFrom('game_guest_details')
       .selectAll()

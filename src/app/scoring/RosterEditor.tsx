@@ -21,6 +21,7 @@ import type {
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import { playerAddToldWords } from '../../common/notifications'
 import {
   type ExistingRosterPlayer,
   PLAYER_POSITIONS as STORED_POSITIONS
@@ -32,9 +33,9 @@ import {
   type RosterTab,
   type StagedRunner
 } from '../../common/scoring/rosterCommands'
-import { appearedIn } from '../../common/scoring/rosterAvailability'
 import { rosterError } from '../../common/scoring/rules'
 import {
+  appearedIn,
   reconcileRoster,
   type ScoringRosterEntry
 } from '../../common/scoring/startingSetup'
@@ -547,9 +548,11 @@ export function RosterEditor({
       addedNote.current = {
         side,
         text:
-          answer.noticeId == null
-            ? `${candidate.shortName} was added.`
-            : `${candidate.shortName} was added. Their guardians were notified.`
+          answer.unchanged === true
+            ? `${candidate.shortName} is already on the roster.`
+            : answer.noticeId == null
+              ? `${candidate.shortName} was added.`
+              : `${candidate.shortName} was added. ${playerAddToldWords(answer.told)}`
       }
       edit(next => {
         if (pool) addPlayerDraft(next, side, player, entry.gumboId!)

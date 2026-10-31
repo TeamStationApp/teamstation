@@ -10,6 +10,7 @@ import {
 } from '../../common/notifications'
 import type { Role } from '../../common/roles'
 import { adminScopes, guardedRows, roleScopes } from '../access'
+import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
 import {
@@ -454,6 +455,28 @@ function playersOf(teamIds: string[]): RawBuilder<string> {
   )`
 }
 
+/**
+ * Every row of those who play on these teams, closed ones too: a player add
+ * names the row it was made with, and a merge since leaves it there.
+ */
+function rowsOfPlayers(teamIds: string[]): RawBuilder<string> {
+  return sql<string>`(
+    with recursive chain(id) as (
+      select memberships.user_id
+      from memberships
+      inner join teams on teams.id = memberships.team_id
+      where memberships.team_id in (${sql.join(teamIds)})
+        and memberships.is_player = true
+        and teams.merged_into is null
+      union
+      select users.id
+      from chain
+      inner join users on users.merged_into = chain.id
+    )
+    select chain.id::text from chain
+  )`
+}
+
 /** SQL selects candidate requests; live side checks govern disclosure and the pending dot. */
 export async function inbox(
   db: Kysely<Database>,
@@ -497,6 +520,7 @@ export async function inbox(
     // and while there are none its coaching staff.
     const teamIds = await coachedTeams(db, fresh, refs)
     const guarded = await guardedRows(db, fresh.userId)
+    const ownRows = (await onePerson(db, fresh.userId)).userIds
     const emails = await db
       .selectFrom('user_emails')
       .select('email')
@@ -580,6 +604,22 @@ export async function inbox(
               eb.and([
                 eb('kind', '=', 'playerAdd'),
                 eb(sql<string>`terms->>'userId'`, 'in', guarded.map(String))
+              ])
+            ]),
+        // So does whoever `playerAddApprovers` names now: the player once no
+        // guardian can act, and the coaches of the teams they play on.
+        eb.and([
+          eb('kind', '=', 'playerAdd'),
+          eb('status', 'in', ['pending', 'applied']),
+          eb(sql<string>`terms->>'userId'`, 'in', ownRows.map(String))
+        ]),
+        ...(teamIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'playerAdd'),
+                eb('status', 'in', ['pending', 'applied']),
+                eb(sql<string>`terms->>'userId'`, 'in', rowsOfPlayers(teamIds))
               ])
             ]),
         ...(teamIds.length === 0

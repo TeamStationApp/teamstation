@@ -8,6 +8,7 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
+import type { PlayerAddTold } from '../../common/notifications'
 import { outcomeName } from '../../common/outcomes'
 import {
   asPersonSettings,
@@ -612,14 +613,19 @@ export function playerRoutes(
           const entry = roster.find(row => row.userId === result.userId)
           if (entry == null) throw notFound()
           return result.kind === 'unchanged'
-            ? { status: 200, body: entry }
+            ? { status: 200, body: { ...entry, unchanged: true } }
             : {
                 status: 201,
                 body: {
                   ...entry,
                   ...(result.requestId == null
                     ? {}
-                    : { notice: { requestId: result.requestId } })
+                    : {
+                        notice: {
+                          requestId: result.requestId,
+                          told: result.told
+                        }
+                      })
                 }
               }
         }
@@ -1124,18 +1130,20 @@ function userIdParam(value: string | string[] | undefined): string {
 
 /** An existing-player add as an idempotency claim keeps it. */
 function existingResultId(result: ExistingAdd): string {
-  return result.kind === 'pending'
-    ? `pending ${result.userId} ${result.requestId}`
-    : `${result.kind} ${result.userId} ${result.kind === 'added' ? (result.requestId ?? '') : ''}`
+  if (result.kind === 'pending')
+    return `pending ${result.userId} ${result.requestId}`
+  if (result.kind === 'unchanged') return `unchanged ${result.userId}`
+  return `added ${result.userId} ${result.requestId ?? ''} ${result.told ?? ''}`
 }
 
 function existingResultOf(held: string): ExistingAdd {
-  const [kind, userId, requestId] = held.split(' ')
+  const [kind, userId, requestId, told] = held.split(' ')
   if (kind === 'pending') return { kind, userId, requestId }
   if (kind === 'unchanged') return { kind, userId }
   return {
     kind: 'added',
     userId,
-    requestId: requestId === '' ? null : requestId
+    requestId: requestId === '' ? null : requestId,
+    told: told === undefined || told === '' ? null : (told as PlayerAddTold)
   }
 }

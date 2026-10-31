@@ -1075,7 +1075,7 @@ describe('Coach Game (U25)', function () {
       await click('Choose Mookie B')
       await click('Add as Pool Player')
       expect(document.body.textContent).includes(
-        "This needs a guardian's approval first."
+        "This needs approval first."
       )
       expect(sent).deep.equals([
         { search: 'home', game: 'g1' },

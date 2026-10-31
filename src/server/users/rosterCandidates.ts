@@ -13,6 +13,7 @@ import {
   roleScopes,
   visibleScopes
 } from '../access'
+import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { publicNames } from '../groups/playerNamePrivacy'
@@ -240,6 +241,9 @@ export async function hasTie(
   userIds: readonly string[]
 ): Promise<boolean> {
   if (actor.isAdmin) return true
+  // Nobody is a stranger to themself: there is no side to ask.
+  const own = await onePerson(db, actor.userId)
+  if (userIds.some(id => own.userIds.includes(id))) return true
   const target = await candidateTarget(db, actor, teamId, gameId)
   const seasons =
     target.gameSeasonId != null

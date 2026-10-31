@@ -82,6 +82,8 @@ export function PlayerEntrySheet({
           }
   )
   const editing = initialDraft != null
+  // Their name is not for this sheet to change: the jersey is the first field.
+  const fromJersey = existing != null || ownIdentity
   const [pending, setPending] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [placeholders, setPlaceholders] = useState(false)
@@ -107,7 +109,7 @@ export function PlayerEntrySheet({
     }
   }, [])
   const focus = (): void => {
-    const field = ownIdentity ? jersey : first
+    const field = fromJersey ? jersey : first
     field.current?.focus()
     // The web modal activates its focus trap after onShow; focus after that commit.
     if (focusFrame.current != null) cancelAnimationFrame(focusFrame.current)
@@ -229,8 +231,7 @@ export function PlayerEntrySheet({
       <>
         {pending && (
           <Text accessibilityRole="alert" style={text}>
-            This needs a guardian's approval first. Use a placeholder for this
-            game.
+            This needs approval first. Use a placeholder for this game.
           </Text>
         )}
         {onAddToRoster != null && (
@@ -281,7 +282,7 @@ export function PlayerEntrySheet({
       textCancel
       scrollReset={scrollReset}
       onClose={onCancel}
-      onShow={editing ? focus : undefined}
+      onShow={editing || existing != null ? focus : undefined}
     >
       <View style={{ gap: 16 }}>
         <View
@@ -314,8 +315,8 @@ export function PlayerEntrySheet({
                         else jersey.current?.blur()
                       }}
                       autoFocus={
-                        editing &&
-                        key === (ownIdentity ? 'jersey' : 'firstName')
+                        (editing || existing != null) &&
+                        key === (fromJersey ? 'jersey' : 'firstName')
                       }
                       accessibilityLabel={label}
                       editable={

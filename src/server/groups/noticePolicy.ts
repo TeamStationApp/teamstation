@@ -1,9 +1,9 @@
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, sql, type Transaction } from 'kysely'
 
 import { conflict, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { makeId } from '../../common/ids'
-import type { PlayerAddTerms } from '../../common/notifications'
+import type { PlayerAddTerms, PlayerAddTold } from '../../common/notifications'
 import {
   placeholderSuffix,
   placeholderTeamName
@@ -14,6 +14,7 @@ import { storedUnrostered } from '../../common/unroster'
 import { guardiansWhoCanAct, openAddTeams } from '../access'
 import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { guestGameOpen, inGameAs } from '../games/guestChecks'
 import { hasScoringEventsSql } from '../games/scoringActivity'
@@ -98,17 +99,22 @@ export async function playerAddApprovers(
   db: Db,
   userId: string,
   teamId: string
-): Promise<{ userIds: string[]; standIn: boolean }> {
+): Promise<{
+  userIds: string[]
+  standIn: boolean
+  told: PlayerAddTold | null
+}> {
   const person = await personOf(db, userId)
   const guardians = await guardiansWhoCanAct(db, person.userIds)
-  if (guardians.length > 0) return { userIds: guardians, standIn: false }
+  if (guardians.length > 0)
+    return { userIds: guardians, standIn: false, told: 'guardians' }
   const self = await db
     .selectFrom('users')
     .select('login_enabled')
     .where('id', '=', person.userId)
     .executeTakeFirst()
   if (self?.login_enabled === true)
-    return { userIds: [person.userId], standIn: false }
+    return { userIds: [person.userId], standIn: false, told: 'player' }
   const held = await openAddTeams(db, person.userIds)
   const coaches = await db
     .selectFrom('scope_roles')
@@ -133,7 +139,8 @@ export async function playerAddApprovers(
     .orderBy('scope_roles.user_id')
     .execute()
   const userIds = coaches.map(row => row.userId)
-  return { userIds, standIn: userIds.length > 0 }
+  const standIn = userIds.length > 0
+  return { userIds, standIn, told: standIn ? 'coaches' : null }
 }
 
 /**
@@ -576,6 +583,15 @@ async function playedGames(
  * terms, so only the latest add can be rejected.
  */
 /**
+ * Serializes every add of one person. The merge lock is shared: two adds run
+ * together without this, the second meets the first's row or asks twice, and
+ * two teams each pass the other side's check. Taken after any game row.
+ */
+export async function lockPlayerAdds(trx: Db, userId: string): Promise<void> {
+  await lockKeys(trx as Transaction<Database>, [`playerAdd:${userId}`])
+}
+
+/**
  * Whether a roster add's person is on the team by a row it did not land on:
  * they came back another way, or a merge folded theirs into one already there.
  * A rejection must not take that row. Off the team altogether, it still may
@@ -999,8 +1015,10 @@ async function decideOnce(
     // Between a pitch and its result: accept again once it is in.
     await guestGameOpen(trx, game)
   }
+  const person = await personOf(trx, terms.userId)
+  await lockPlayerAdds(trx, person.userId)
   // Deleted since it was asked: a later add must not bring them back.
-  await refuseDeleted(trx, (await personOf(trx, terms.userId)).userId)
+  await refuseDeleted(trx, person.userId)
   const applied = await applyPlayerAdd(trx, terms)
   await trx
     .updateTable('group_requests')

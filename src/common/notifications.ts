@@ -88,6 +88,21 @@ export type RequestTerms =
  * team's next add of that player waits for their approval instead. Not an
  * invitation, so not among `RequestTerms`: only the notice code reads it.
  */
+/** Who was told of a player add: the tier of its approvers that had anybody. */
+export type PlayerAddTold = 'guardians' | 'player' | 'coaches'
+
+/** The line that says who was told, for the screen that made the add. */
+export function playerAddToldWords(told: PlayerAddTold = 'guardians'): string {
+  switch (told) {
+    case 'guardians':
+      return 'Their guardians were notified.'
+    case 'player':
+      return 'They were notified.'
+    case 'coaches':
+      return 'Their coaches were notified.'
+  }
+}
+
 export interface PlayerAddTerms {
   kind: 'playerAdd'
   mode: 'roster' | 'pool'

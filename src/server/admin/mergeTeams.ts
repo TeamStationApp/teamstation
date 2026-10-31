@@ -471,6 +471,27 @@ export async function mergeTeams(
         .where('status', '=', 'pending')
         .where('game_id', 'in', [fixture.keptGameId, fixture.retiredGameId])
         .execute()
+      // A pool add's guest goes with the game they were added to, and the
+      // add with them: nothing is left for its side to reject. A withdrawal
+      // of a game already played stays, on the side of the team it was for.
+      await trx
+        .updateTable('group_requests')
+        .set({ status: 'superseded', resolved_at: new Date() })
+        .where('kind', '=', 'playerAdd')
+        .where('status', '=', 'applied')
+        .where('game_id', '=', fixture.retiredGameId)
+        .execute()
+      await sql`insert into game_withdrawn_players
+          (game_id, user_id, side, request_id, label, withdrawn_at)
+        select kept.id, w.user_id,
+          case when retired.home_team_id = kept.home_team_id then w.side
+            when w.side = 'home' then 'away' else 'home' end,
+          w.request_id, w.label, w.withdrawn_at
+        from game_withdrawn_players w
+        join games retired on retired.id = w.game_id
+        join games kept on kept.id = ${fixture.keptGameId}
+        where w.game_id = ${fixture.retiredGameId}
+        on conflict (game_id, user_id) do nothing`.execute(trx)
       await trx
         .updateTable('group_requests')
         .set({ game_id: fixture.keptGameId })

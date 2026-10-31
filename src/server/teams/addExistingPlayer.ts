@@ -1,7 +1,7 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
 import { forbidden, notFound } from '../../common/errors'
-import type { PlayerAddTerms } from '../../common/notifications'
+import type { PlayerAddTerms, PlayerAddTold } from '../../common/notifications'
 import {
   DEFAULT_PLAYER_NAME_PRIVACY,
   type PlayerNamePrivacy
@@ -9,12 +9,13 @@ import {
 import type { ExistingRosterPlayer } from '../../common/playerSettings'
 import { lockPlayerEdits, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
-import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   applyPlayerAdd,
+  lockPlayerAdds,
   personOf,
+  playerAddApprovers,
   playerAddPolicy,
   recordPlayerAdd,
   refuseOtherSide
@@ -106,7 +107,12 @@ export async function teamName(
 
 /** What an existing-player add answers, before the route reads the entry. */
 export type ExistingAdd =
-  | { kind: 'added'; userId: string; requestId: string | null }
+  | {
+      kind: 'added'
+      userId: string
+      requestId: string | null
+      told: PlayerAddTold | null
+    }
   | { kind: 'unchanged'; userId: string }
   | { kind: 'pending'; userId: string; requestId: string }
 
@@ -169,7 +175,11 @@ export async function addByPolicy(
   }
   const applied = await applyPlayerAdd(trx, terms, terms.mode === 'roster')
   const requestId = await recordPlayerAdd(trx, actor, applied, 'applied', clock)
-  return { kind: 'added', userId: terms.userId, requestId }
+  const told =
+    requestId == null
+      ? null
+      : (await playerAddApprovers(trx, terms.userId, terms.teamId)).told
+  return { kind: 'added', userId: terms.userId, requestId, told }
 }
 
 /**
@@ -188,9 +198,7 @@ export async function addExistingRosterPlayer(
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     const person = await candidatePerson(trx, teamId, body.userId)
-    // The merge lock is shared: two adds of one person run together without
-    // this, and the second would meet the first's row or make a second ask.
-    await lockKeys(trx, [`playerAdd:${teamId}:${person.userId}`])
+    await lockPlayerAdds(trx, person.userId)
     const playing = await trx
       .selectFrom('memberships')
       .select('id')

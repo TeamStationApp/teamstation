@@ -1024,7 +1024,7 @@
       "settings": [
         "Retry",
         "Cancel",
-        "This needs a guardian's approval first. We sent the request.",
+        "This needs approval first. We sent the request.",
         "Add to Roster",
         "Left",
         "Right",

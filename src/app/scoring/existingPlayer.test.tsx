@@ -207,6 +207,26 @@ describe('adding an existing player in Set Team Rosters', function () {
     })
   })
 
+  it('opens on the jersey, the first field that takes text', async () => {
+    const { fake } = await open()
+    await chooseBetts(fake)
+    expect(document.activeElement).equals(node('Jersey Number'))
+  })
+
+  it('says when the player was on the roster already', async () => {
+    const { fake } = await open({
+      roster: async () => ({
+        entry: entryOf(9001),
+        noticeId: null,
+        unchanged: true
+      })
+    })
+    await chooseBetts(fake)
+    await click('Add to Roster')
+    expect(text()).includes('Mookie B is already on the roster.')
+    expect(text()).not.includes('was added')
+  })
+
   it('keeps a change made to the draft while the add was on its way', async () => {
     let answer: (value: ExistingPlayerAnswer) => void = () => undefined
     const { fake, sent } = await open({
@@ -272,7 +292,7 @@ describe('adding an existing player in Set Team Rosters', function () {
     await chooseBetts(fake)
     await click('Add to Roster')
     expect(text()).includes(
-      "This needs a guardian's approval first. Use a placeholder for this game."
+      "This needs approval first. Use a placeholder for this game."
     )
     expect(node('First Name')).not.equals(null)
     expect(node('Add to Roster')!.getAttribute('aria-disabled')).equals('true')

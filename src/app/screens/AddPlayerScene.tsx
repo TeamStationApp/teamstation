@@ -20,6 +20,7 @@ import {
 
 import type { RosterCandidate, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { playerAddToldWords } from '../../common/notifications'
 import {
   emptyPlayerForm,
   playerFormError,
@@ -117,9 +118,11 @@ export function AddPlayerScene({
       if ('pendingRequestId' in answer) setPending(true)
       else
         onAdded(
-          answer.noticeId == null
-            ? `Added ${candidate.shortName} to the roster`
-            : `Added ${candidate.shortName} to the roster. Their guardians were notified.`
+          answer.unchanged === true
+            ? `${candidate.shortName} is already on the roster`
+            : answer.noticeId == null
+              ? `Added ${candidate.shortName} to the roster`
+              : `Added ${candidate.shortName} to the roster. ${playerAddToldWords(answer.told)}`
         )
     } catch (caught) {
       setError(
@@ -330,8 +333,7 @@ export function AddPlayerScene({
                   </Card>
                   {pending && (
                     <Text accessibilityRole="alert" style={styles.note}>
-                      This needs a guardian's approval first. We sent the
-                      request.
+                      This needs approval first. We sent the request.
                     </Text>
                   )}
                   {(error ?? problem) != null && (

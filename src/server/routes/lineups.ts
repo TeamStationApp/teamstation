@@ -225,7 +225,7 @@ export function lineupRoutes(
           ...added.entry,
           ...(added.requestId == null
             ? {}
-            : { notice: { requestId: added.requestId } })
+            : { notice: { requestId: added.requestId, told: added.told } })
         })
         return
       }

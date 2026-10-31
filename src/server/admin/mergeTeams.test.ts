@@ -438,6 +438,32 @@ describe('merging two rows that are one team', function () {
       role: 'owner',
       isPlayer: false
     })
+    // A withdrawal on the game that goes, for a side of the game that stays.
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_withdrawn',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({ kind: 'playerAdd', mode: 'pool' }),
+        status: 'declined',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
+    await db
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: filmedGame,
+        user_id: sender,
+        side: 'home',
+        request_id: 'grq_merge_withdrawn',
+        label: 'Houser Player 1'
+      })
+      .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
     const report = await mergeTeams(db, {
@@ -446,6 +472,15 @@ describe('merging two rows that are one team', function () {
       apply: true
     })
     expect(report.applied).equals(true)
+    expect(
+      await db
+        .selectFrom('game_withdrawn_players')
+        .select(['game_id', 'user_id', 'label'])
+        .where('user_id', '=', sender)
+        .execute()
+    ).deep.equals([
+      { game_id: scoredGame, user_id: sender, label: 'Houser Player 1' }
+    ])
     const coach = await db
       .selectFrom('group_requests')
       .select(['status', 'terms'])
@@ -483,10 +518,18 @@ describe('merging two rows that are one team', function () {
     expect(keptCoach.terms).to.include({ membershipId: staying })
     const add = await db
       .selectFrom('group_requests')
-      .select(['initiating_team_id', 'sender_scope_id', 'game_id', 'terms'])
+      .select([
+        'initiating_team_id',
+        'sender_scope_id',
+        'game_id',
+        'terms',
+        'status'
+      ])
       .where('id', '=', 'grq_merge_add')
       .executeTakeFirstOrThrow()
     expect(add).to.deep.include({
+      // Its game is gone, and its guest with it.
+      status: 'superseded',
       initiating_team_id: hawks,
       sender_scope_id: hawks,
       game_id: scoredGame
