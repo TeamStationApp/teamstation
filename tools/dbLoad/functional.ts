@@ -245,6 +245,34 @@ async function scorePitches(
   return heard
 }
 
+/**
+ * After a disruption: pitches, until the far node hears one. A client coming back
+ * reads what it missed rather than being sent it, so a pitch scored before its
+ * socket returned is never a frame, and only a later one shows the view is live.
+ */
+async function scoreUntilHeard(
+  context: Context,
+  scorer: Surface,
+  watcher: Surface
+): Promise<void> {
+  const { liveGameId } = context.credentials.places
+  const end = Date.now() + context.patienceMs
+  for (;;) {
+    const before = pitchMarks(watcher.frames(), liveGameId).length
+    await scorer.press(PITCH_CALLS[context.pitches % PITCH_CALLS.length])
+    context.pitches += 1
+    const nextPitch = Date.now() + Math.min(10000, context.patienceMs)
+    while (Date.now() < nextPitch) {
+      if (pitchMarks(watcher.frames(), liveGameId).length > before) return
+      await new Promise(done => {
+        setTimeout(done, context.pollMs)
+      })
+    }
+    if (Date.now() > end)
+      throw new Error(`Gave up waiting for a pitch to reach the far node`)
+  }
+}
+
 /** A tab watching the live game, with its socket subscribed. */
 async function watching(
   context: Context,
@@ -404,9 +432,20 @@ const editLineup: Action = {
     await scorer.press('Save Rosters')
     await scorer.waitForLabel('Ball', context.patienceMs)
     await scorePitches(context, scorer, watcher, 1)
-    const after = watcher.frames().slice(before) as Array<{ kind?: string }>
-    if (!after.some(frame => frame.kind === 'lineups'))
-      throw new Error('The far node heard of no change of lineup')
+    // A post tells of its plays, then its game, then its lineups, so the pitch
+    // heard above comes before the lineups it carried.
+    const since = (): Array<{ kind?: string }> =>
+      watcher.frames().slice(before) as Array<{ kind?: string }>
+    await waitUntil(
+      context,
+      'the far node to hear of a change of lineup',
+      async () => since().some(frame => frame.kind === 'lineups')
+    ).catch(() => {
+      throw new Error(
+        `The far node heard of no change of lineup, in ${since().length} frames: ${[...new Set(since().map(frame => frame.kind))].join(', ')}`
+      )
+    })
+    const after = since()
     const answer = okBody(
       await watcher.api('GET', `/games/${liveGameId}/events`),
       'reading plays after the edit'
@@ -802,7 +841,7 @@ async function liveAfter(
   if (code !== 0) throw new Error(`${flag} exited ${code}`)
   const started = Date.now()
   await scorer.waitForLabel('Ball', context.patienceMs)
-  await scorePitches(context, scorer, watcher, 1)
+  await scoreUntilHeard(context, scorer, watcher)
   return `a pitch reached the far node ${((Date.now() - started) / 1000).toFixed(1)} s later`
 }
 

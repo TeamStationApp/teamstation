@@ -410,7 +410,9 @@ describe('the browser script', function () {
       )
     }
     const result = await runOne('edit a lineup mid-game', contextFor(app))
-    expect(result.detail).equals('The far node heard of no change of lineup')
+    expect(result.detail).match(
+      /^The far node heard of no change of lineup, in \d+ frames/
+    )
   })
 
   it('fails a merged player whose stats do not follow him', async function () {
@@ -558,6 +560,50 @@ describe('the browser script', function () {
     expect(
       (await runOne('restart an API node mid-game', context)).detail
     ).equals('--restart-command exited 3')
+  })
+
+  it('keeps pitching after a restart until the far node hears one', async function () {
+    const app = new StubApp()
+    let pitches = 0
+    class Returning extends StubSurface {
+      async press(label: string): Promise<void> {
+        if (label === 'Ball' || label === 'Called Strike') pitches += 1
+        // The first pitch is scored before the far node's socket is back.
+        if (pitches !== 1) await super.press(label)
+      }
+    }
+    const context = contextFor(app, {
+      patienceMs: 200,
+      driver: {
+        signIn: async account => new Returning(app, account.label),
+        close: async () => undefined
+      }
+    })
+    const result = await runOne('restart an API node mid-game', context)
+    expect(result.status).equals('passed')
+    expect(pitches).equals(2)
+  })
+
+  it('fails when no pitch ever reaches the far node after a restart', async function () {
+    class Silent extends StubSurface {
+      frames(): unknown[] {
+        return []
+      }
+    }
+    const app = new StubApp()
+    const result = await runOne(
+      'restart an API node mid-game',
+      contextFor(app, {
+        driver: {
+          signIn: async account => new Silent(app, account.label),
+          close: async () => undefined
+        }
+      })
+    )
+    expect(result.status).equals('failed')
+    expect(result.detail).equals(
+      'Gave up waiting for a pitch to reach the far node'
+    )
   })
 
   it('fails on an answer it cannot use', async function () {
