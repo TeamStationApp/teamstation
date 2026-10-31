@@ -138,6 +138,8 @@ export interface LiveControllerOptions {
 interface Tracked {
   key: string
   videoId: string | null
+  /** When a publisher's lookup added it, which a running tick cannot know of. */
+  lookedUpAt?: number
 }
 
 let timer: NodeJS.Timeout | undefined
@@ -910,7 +912,7 @@ export async function resolveKey(
   const known = tracked.get(row.id)
   if (known != null && known.key !== key)
     clearLive(known.key, 'the key was replaced')
-  tracked.set(row.id, { key, videoId: row.videoId })
+  tracked.set(row.id, { key, videoId: row.videoId, lookedUpAt: Date.now() })
   return {
     liveStreamId: row.id,
     hlsDir,
@@ -1105,9 +1107,12 @@ export async function sync(
     }
 
     // Anything the ingest still holds that this pass did not ask for: a revoked
-    // key, a rotated one, a window that closed.
+    // key, a rotated one, a window that closed. A key looked up since this
+    // pass read the rows is a camera too new for it to have seen, publishing
+    // the moment it was made, and the next pass will know of it.
     for (const [liveStreamId, entry] of tracked) {
       if (wanted.has(entry.key)) continue
+      if ((entry.lookedUpAt ?? 0) >= now.getTime()) continue
       clearLive(entry.key, 'no longer open')
       tracked.delete(liveStreamId)
     }
