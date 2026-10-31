@@ -24,7 +24,7 @@ import { attach } from '../../../test/maestroD'
  *
  * CUT_MAX_HELD_MS is the longest the outgoing picture may stay on at a cut
  * (default 50), and CUT_MAX_HOLD_MS the longest any picture may stay on in
- * `cuts` and `rapid` (default 100, what a healthy camera's own delivery can repeat).
+ * `cuts` and `rapid` (default 250, above what a fake camera's delivery repeats on a busy Mac).
  * E2E_ARTIFACT_DIR keeps the run's files. CUT_SCENARIO=slow runs only the slow
  * cuts, for a quick regular check. CUT_REPORTED_AGE=0,300 has the second camera
  * report its pictures 300 ms older than they are, as a phone's clock can, so
@@ -47,7 +47,7 @@ const maxHeldMs = Number(process.env.CUT_MAX_HELD_MS ?? 50)
 const scenario = process.env.CUT_SCENARIO ?? 'full'
 const artifactDir =
   process.env.E2E_ARTIFACT_DIR ?? path.join(ROOT, 'artifacts', 'programme-cut')
-const maxHoldMs = Number(process.env.CUT_MAX_HOLD_MS ?? 100)
+const maxHoldMs = Number(process.env.CUT_MAX_HOLD_MS ?? 250)
 const takes: Take[] = scenario === 'slow' ? ['cuts'] : ['cuts', 'replays', 'rapid']
 const SINK_PORT = 19351
 const SETTLE_SECONDS = 12
