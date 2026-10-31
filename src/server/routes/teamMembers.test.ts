@@ -1539,6 +1539,7 @@ describe('a team’s people by external id', function () {
         error: 0,
         guardianLinks: 2,
         guardiansRefused: 0,
+        rolesRefused: 0,
         staff: 0
       })
 
@@ -2260,6 +2261,7 @@ describe('a team’s people by external id', function () {
         error: 0,
         guardianLinks: 2,
         guardiansRefused: 0,
+        rolesRefused: 0,
         staff: 1
       })
       const tables = async (): Promise<number[]> => [
@@ -2284,6 +2286,7 @@ describe('a team’s people by external id', function () {
         error: 0,
         guardianLinks: 0,
         guardiansRefused: 0,
+        rolesRefused: 0,
         staff: 0
       })
       expect(await tables()).deep.equals(before)

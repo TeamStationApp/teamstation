@@ -605,6 +605,58 @@ async function playedGames(
 }
 
 /**
+ * The names a side of a game already holds, in lower case: its guests', and
+ * those of lines withdrawn before.
+ */
+export async function namesOnSide(
+  db: Db,
+  game: {
+    id: string
+    guests: unknown
+    home_team_id: string
+    away_team_id: string
+  },
+  side: 'away' | 'home'
+): Promise<Set<string>> {
+  const used = new Set(
+    (
+      await db
+        .selectFrom('game_withdrawn_players')
+        .select('label')
+        .where('game_id', '=', game.id)
+        .where('side', '=', side)
+        .execute()
+    ).map(row => row.label.toLowerCase())
+  )
+  const guests = storedGuests(game.guests, teamsOfRow(game))[side]
+  if (guests.length > 0)
+    for (const row of await db
+      .selectFrom('gumbo_ids')
+      .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
+      .select(['users.display_name', 'users.first_name', 'users.last_name'])
+      .where('gumbo_ids.gumbo_id', 'in', guests)
+      .execute()) {
+      used.add(row.display_name.toLowerCase())
+      used.add(
+        [row.first_name, row.last_name]
+          .filter(part => part != null && part !== '')
+          .join(' ')
+          .toLowerCase()
+      )
+    }
+  return used
+}
+
+/** The first of a team's placeholder names not among these. */
+export function freeLabel(teamName: string, used: ReadonlySet<string>): string {
+  const prefix = placeholderTeamName(teamName)
+  let suffix = 0
+  while (used.has(`${prefix} ${placeholderSuffix(suffix)}`.toLowerCase()))
+    suffix++
+  return `${prefix} ${placeholderSuffix(suffix)}`
+}
+
+/**
  * Serializes every add of one person. The merge lock is shared: two adds run
  * together without this, the second meets the first's row or asks twice, and
  * two teams each pass the other side's check. Taken after any game row.
@@ -722,40 +774,8 @@ export async function undoPlayerAdd(
     .where('id', '=', terms.teamId)
     .executeTakeFirstOrThrow()
   for (const game of played) {
-    const guests = storedGuests(game.guests, teamsOfRow(game))
-    // The first of the side's placeholder names not already on it: a guest
-    // of the side, or a line withdrawn before.
-    const used = new Set(
-      (
-        await trx
-          .selectFrom('game_withdrawn_players')
-          .select('label')
-          .where('game_id', '=', game.id)
-          .where('side', '=', game.side)
-          .execute()
-      ).map(row => row.label.toLowerCase())
-    )
-    const sideGuests = guests[game.side]
-    if (sideGuests.length > 0)
-      for (const row of await trx
-        .selectFrom('gumbo_ids')
-        .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
-        .select(['users.display_name', 'users.first_name', 'users.last_name'])
-        .where('gumbo_ids.gumbo_id', 'in', sideGuests)
-        .execute()) {
-        used.add(row.display_name.toLowerCase())
-        used.add(
-          [row.first_name, row.last_name]
-            .filter(part => part != null && part !== '')
-            .join(' ')
-            .toLowerCase()
-        )
-      }
-    const prefix = placeholderTeamName(team.name)
-    let suffix = 0
-    while (used.has(`${prefix} ${placeholderSuffix(suffix)}`.toLowerCase()))
-      suffix++
-    const label = `${prefix} ${placeholderSuffix(suffix)}`
+    const used = await namesOnSide(trx, game, game.side)
+    const label = freeLabel(team.name, used)
     await trx
       .insertInto('game_withdrawn_players')
       .values({
@@ -942,7 +962,8 @@ export async function mayAnswerPlayerAdd(
   const terms = request.terms as PlayerAddTerms
   const { userIds } = await playerAddApprovers(db, terms.userId, terms.teamId)
   const rows = (await personOf(db, actor.userId)).userIds
-  return userIds.some(id => id !== request.sender_id && rows.includes(id))
+  const sender = (await personOf(db, request.sender_id)).userIds
+  return userIds.some(id => !sender.includes(id) && rows.includes(id))
 }
 
 /**

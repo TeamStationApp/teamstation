@@ -5,6 +5,10 @@ import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
 import type { PlayerAddTerms } from '../../common/notifications'
+import {
+  placeholderSuffix,
+  placeholderTeamName
+} from '../../common/placeholderNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -27,7 +31,7 @@ import type { StoredRequest } from '../groups/requests'
  * case — it is the QPLL playoffs, where every team entered its opponent by
  * hand as a new team.
  */
-import { insertUser } from '../users/insertUser'
+import { ensureGumboId, insertUser } from '../users/insertUser'
 import { mergeTeams } from './mergeTeams'
 
 const adminUrl = testDatabaseUrl
@@ -520,7 +524,7 @@ describe('merging two rows that are one team', function () {
         {
           game_id: filmedGame,
           user_id: sender,
-          side: 'home',
+          side: 'away',
           request_id: 'grq_merge_withdrawn',
           label: 'Houser Player 1'
         },
@@ -532,6 +536,22 @@ describe('merging two rows that are one team', function () {
           label: 'Houser Player 1'
         }
       ])
+      .execute()
+    const guest = await insertUser(db, {
+      display_name: `${placeholderTeamName('Alta Hawks')} ${placeholderSuffix(0)}`,
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .updateTable('games')
+      .set({
+        guests: JSON.stringify({
+          [hawks]: [await ensureGumboId(db, guest)],
+          [widows]: []
+        })
+      })
+      .where('id', '=', scoredGame)
       .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
@@ -603,6 +623,10 @@ describe('merging two rows that are one team', function () {
       .where('game_id', '=', scoredGame)
       .execute()
     expect(new Set(labels.map(row => row.label)).size).equals(labels.length)
+    // Nor the name of a guest on that side.
+    expect(labels.find(row => row.user_id === sender)?.label).equals(
+      `${placeholderTeamName('Alta Hawks')} ${placeholderSuffix(1)}`
+    )
     const keptCoach = await here('grq_merge_into_coach')
     expect(keptCoach.status).equals('applied')
     expect(keptCoach.terms).not.has.property('createdMembership')

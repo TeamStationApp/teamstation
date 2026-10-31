@@ -347,6 +347,56 @@ export async function lockPlayerEdits(
   )
 }
 
+interface MergedRow {
+  id: string
+  jersey: string | null
+  positions: string[]
+  is_player: boolean
+}
+
+/**
+ * What a roster add on one of two rows folded into one comes to, as a team
+ * merge decides it (`mergeTeams`). A player's row that no add made has them
+ * anyway, so an add on the row that stays ends. An add made them a player on
+ * the row that goes: it stands on the row that stays, and with an add there
+ * too the later answers; on a row of somebody else's, it undoes the playing
+ * alone.
+ */
+async function foldOpenAdds(
+  db: Kysely<Database>,
+  going: MergedRow,
+  kept: MergedRow
+): Promise<void> {
+  const onRow = async (id: string): Promise<boolean> =>
+    (await db
+      .selectFrom('group_requests')
+      .select('id')
+      .where('kind', '=', 'playerAdd')
+      .where('status', '=', 'applied')
+      .where('expires_at', '>', new Date())
+      .where(sql<string>`terms->>'membershipId'`, '=', id)
+      .executeTakeFirst()) != null
+  const [addOnGoing, addOnKept] = [await onRow(going.id), await onRow(kept.id)]
+  if (going.is_player && !addOnGoing && addOnKept)
+    await sql`update group_requests set status = 'superseded', resolved_at = now()
+      where kind = 'playerAdd' and status = 'applied'
+        and terms->>'membershipId' = ${kept.id}`.execute(db)
+  else if (addOnGoing && addOnKept)
+    await sql`update group_requests
+      set terms = terms || jsonb_build_object('membershipId', ${kept.id}::text)
+      where kind = 'playerAdd' and status = 'applied'
+        and terms->>'membershipId' = ${going.id}`.execute(db)
+  else if (going.is_player && !kept.is_player)
+    await sql`update group_requests set terms = (terms - 'createdMembership')
+        || jsonb_build_object(
+          'membershipId', ${kept.id}::text,
+          'previous', jsonb_build_object(
+            'jersey', ${kept.jersey}::text,
+            'positions', to_jsonb(${kept.positions}::text[])))
+      where kind = 'playerAdd' and status = 'applied'
+        and terms->>'membershipId' = ${going.id}`.execute(db)
+}
+
 /** The merge itself, once `closeInto` has the lock and has ruled out a loop. */
 async function moveAndClose(
   db: Kysely<Database>,
@@ -390,19 +440,8 @@ async function moveAndClose(
       if (kept.positions.length === 0 && membership.positions.length > 0) {
         filled.positions = membership.positions
       }
-      if (!kept.is_player && membership.is_player) {
-        filled.is_player = true
-        // An add made them a player, on the row that goes: it stands on the
-        // row that stays, and a rejection undoes the playing alone.
-        await sql`update group_requests set terms = (terms - 'createdMembership')
-            || jsonb_build_object(
-              'membershipId', ${kept.id}::text,
-              'previous', jsonb_build_object(
-                'jersey', ${kept.jersey}::text,
-                'positions', to_jsonb(${kept.positions}::text[])))
-          where kind = 'playerAdd' and status = 'applied'
-            and terms->>'membershipId' = ${membership.id}`.execute(db)
-      }
+      if (!kept.is_player && membership.is_player) filled.is_player = true
+      await foldOpenAdds(db, membership, kept)
       if (Object.keys(filled).length > 0) {
         await db
           .updateTable('memberships')
@@ -437,21 +476,22 @@ async function moveAndClose(
   // devices are revoked, and the survivor takes its place in its open DMs.
   await mergeChats(db, closing, keeping)
 
-  // What they were asked to answer waits for them under the account that
-  // stays, unless it was asked of that one too.
+  // A player add they were asked to answer waits for them under the account
+  // that stays, unless it was asked of that one too. Other requests compare
+  // a side with ids their terms hold, and keep the row they named.
+  const playerAdds = sql`select id from group_requests where kind = 'playerAdd'`
   await sql`update group_request_sides closed set scope_id = ${keeping}
     where closed.scope_type = 'user' and closed.scope_id = ${closing}
+      and closed.request_id in (${playerAdds})
       and not exists (
         select 1 from group_request_sides kept
         where kept.request_id = closed.request_id
           and kept.scope_type = 'user' and kept.scope_id = ${keeping})`.execute(
     db
   )
-  await db
-    .deleteFrom('group_request_sides')
-    .where('scope_type', '=', 'user')
-    .where('scope_id', '=', closing)
-    .execute()
+  await sql`delete from group_request_sides
+    where scope_type = 'user' and scope_id = ${closing}
+      and request_id in (${playerAdds})`.execute(db)
 
   await db
     .updateTable('users')

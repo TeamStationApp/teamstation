@@ -1,10 +1,6 @@
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import {
-  placeholderSuffix,
-  placeholderTeamName
-} from '../../common/placeholderNames'
-import {
   mostRestrictive,
   type PlayerNamePrivacy
 } from '../../common/playerNamePrivacy'
@@ -13,6 +9,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { retargetGameTeams } from '../games/retargetTeams'
 import { requireDirectAdmin } from '../groups/adminGuard'
+import { freeLabel, namesOnSide } from '../groups/noticePolicy'
 import { teamFormats } from '../groups/playerNamePrivacy'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
@@ -209,50 +206,52 @@ async function carryWithdrawals(
   retiredGameId: string,
   keptGameId: string
 ): Promise<void> {
-  const rows = await trx
+  const carried = await trx
     .selectFrom('game_withdrawn_players')
     .selectAll()
-    .where('game_id', 'in', [retiredGameId, keptGameId])
+    .where('game_id', '=', retiredGameId)
     .execute()
-  const carried = rows.filter(row => row.game_id === retiredGameId)
   if (carried.length === 0) return
-  const games = await trx
+  const retired = await trx
+    .selectFrom('games')
+    .select('home_team_id')
+    .where('id', '=', retiredGameId)
+    .executeTakeFirstOrThrow()
+  const kept = await trx
     .selectFrom('games')
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
     .innerJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
       'games.id',
-      'games.home_team_id as homeTeamId',
+      'games.guests',
+      'games.home_team_id',
+      'games.away_team_id',
       'home.name as homeName',
       'away.name as awayName'
     ])
-    .where('games.id', 'in', [retiredGameId, keptGameId])
-    .execute()
-  const retired = games.find(game => game.id === retiredGameId)!
-  const kept = games.find(game => game.id === keptGameId)!
-  const flipped = retired.homeTeamId !== kept.homeTeamId
-  const used = new Set(
-    rows
-      .filter(row => row.game_id === keptGameId)
-      .map(row => `${row.side} ${row.label}`)
-  )
+    .where('games.id', '=', keptGameId)
+    .executeTakeFirstOrThrow()
+  const flipped = retired.home_team_id !== kept.home_team_id
+  const names = {
+    away: await namesOnSide(trx, kept, 'away'),
+    home: await namesOnSide(trx, kept, 'home')
+  }
   const taken = new Set(
-    rows.filter(row => row.game_id === keptGameId).map(row => row.user_id)
+    (
+      await trx
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', keptGameId)
+        .execute()
+    ).map(row => row.user_id)
   )
   for (const row of carried) {
     if (taken.has(row.user_id)) continue
-    const side =
-      flipped === (row.side === 'home') ? ('away' as const) : ('home' as const)
-    let label = row.label
-    if (used.has(`${side} ${label}`)) {
-      const prefix = placeholderTeamName(
-        side === 'home' ? kept.homeName : kept.awayName
-      )
-      let suffix = 0
-      do label = `${prefix} ${placeholderSuffix(suffix++)}`
-      while (used.has(`${side} ${label}`))
-    }
-    used.add(`${side} ${label}`)
+    const side = flipped === (row.side === 'home') ? 'away' : 'home'
+    const label = names[side].has(row.label.toLowerCase())
+      ? freeLabel(side === 'home' ? kept.homeName : kept.awayName, names[side])
+      : row.label
+    names[side].add(label.toLowerCase())
     await trx
       .insertInto('game_withdrawn_players')
       .values({ ...row, game_id: keptGameId, side, label })

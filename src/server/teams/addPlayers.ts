@@ -11,11 +11,13 @@ import type {
   TeamPlayersResponse
 } from '../../common/teamMembers'
 import { asUserId } from '../../common/userId'
+import { heldByOpenAdd } from '../access'
 import { lockPlayerEdits, survivorsOf } from '../admin/people'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey, recordExternalId } from '../db/externalIds'
+import { playerAddPolicy } from '../groups/noticePolicy'
 import { noteScopeChange } from '../socket/syncRevision'
 import { insertUser } from '../users/insertUser'
 
@@ -225,7 +227,22 @@ async function addPlayer(
   let created = false
   if (holder.held && 'userId' in holder) {
     userId = holder.userId
-    await importHands(trx, userId, row)
+    // An import is no answer to a rejection: the next add waits for their side.
+    if (
+      !(await playsFor(trx, teamId, userId)) &&
+      (await playerAddPolicy(trx, userId, teamId)) === 'approval'
+    )
+      return {
+        index,
+        result: 'error',
+        error: {
+          code: 'conflict',
+          message: 'Their side rejected this team: add them from the roster'
+        }
+      }
+    // Their hands are their own while their side may reject an add.
+    if (!(await heldByOpenAdd(trx, teamId, [userId])))
+      await importHands(trx, userId, row)
   } else {
     const made = await insertUserWithId(trx, row.externalId, holder, {
       displayName: displayNameOf(row.firstName, row.lastName, 'Unknown player'),
@@ -248,6 +265,21 @@ async function addPlayer(
     result: created ? 'created' : joined ? 'joined' : 'unchanged',
     userId
   }
+}
+
+async function playsFor(
+  trx: Transaction<Database>,
+  teamId: string,
+  userId: string
+): Promise<boolean> {
+  const row = await trx
+    .selectFrom('memberships')
+    .select('id')
+    .where('team_id', '=', teamId)
+    .where('user_id', '=', userId)
+    .where('is_player', '=', true)
+    .executeTakeFirst()
+  return row != null
 }
 
 /**

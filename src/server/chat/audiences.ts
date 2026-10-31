@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { ageOn } from '../../common/age'
-import { openAddsOf, openAddTeams, openArrivalsOf } from '../access'
+import { openAddsOf, openArrivalsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
@@ -305,19 +305,25 @@ async function playersAmong(
       eb.or([eb('id', 'in', survivorIds), eb('merged_into', 'in', survivorIds)])
     )
     .execute()
-  const players = await db
+  const memberships = await db
     .selectFrom('memberships')
-    .select(['user_id'])
+    .select(['user_id', 'team_id'])
     .where(
       'user_id',
       'in',
       rows.map(row => row.id)
     )
     .where('is_player', '=', true)
-    // A team holding them only by an open add does not make them a player:
-    // they are in no team's chat for it, and stay among its fans.
-    .where('team_id', 'not in', ['', ...(await openAddTeams(db, survivorIds))])
     .execute()
+  // A team holding them only by an open add does not make them a player: they
+  // are in no team's chat for it, and stay among its fans.
+  const open = await openAddsOf(
+    db,
+    memberships.map(row => row.team_id)
+  )
+  const players = memberships.filter(
+    row => open.get(row.team_id)?.has(row.user_id) !== true
+  )
   const survivorOf = await survivors(
     db,
     players.map(row => row.user_id)

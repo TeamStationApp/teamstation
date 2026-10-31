@@ -1,15 +1,16 @@
 import type { Kysely } from 'kysely'
 
-import { conflict, forbidden } from '../../common/errors'
+import { conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
-import { heldByOpenAdd, openArrivalsOf } from '../access'
+import { mayEditName, openArrivalsOf } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   authorizePersonChange,
   type PersonChangeAuthority,
+  refuseRoleWhileHeld,
   requireDirectAdmin
 } from '../groups/adminGuard'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
@@ -256,7 +257,7 @@ async function teamsOfSeasons(
 export async function peopleInScope(
   db: Kysely<Database>,
   tree: ScopeTree,
-  viewer: { isAdmin: boolean } = { isAdmin: false }
+  viewer: { isAdmin: boolean; userId?: string } = { isAdmin: false }
 ): Promise<ScopePerson[]> {
   const teamIds = tree.teams.map(team => team.id)
   const seasonIds = tree.seasons.map(season => season.id)
@@ -449,13 +450,23 @@ export async function peopleInScope(
   // name, and no addresses, until their side can no longer reject it.
   if (!viewer.isAdmin) {
     const open = await openArrivalsOf(db, teamIds)
-    const held = [...people.values()].filter(
-      each =>
+    const everyone = [...people.values()]
+    const held: Array<(typeof everyone)[number]> = []
+    for (const each of everyone)
+      if (
         each.teams.length > 0 &&
         each.seasons.length === 0 &&
         each.leagues.length === 0 &&
-        each.teams.every(team => open.get(team.id)?.has(each.userId) === true)
-    )
+        each.teams.every(
+          team => open.get(team.id)?.has(each.userId) === true
+        ) &&
+        // Not from a reader whose rights no add takes away.
+        !(
+          viewer.userId != null &&
+          (await mayEditName(db, viewer.userId, each.userId, viewer))
+        )
+      )
+        held.push(each)
     const names = await shortNamesOf(
       db,
       held.map(each => each.userId)
@@ -701,22 +712,6 @@ export async function rolesAt(
   return ROLES.filter(role => rows.some(row => row.role === role))
 }
 
-/** A role keeps them on the team through a rejection, name and addresses too. */
-const HELD_ROLE =
-  'They can be given a role once their side can no longer reject this add'
-
-async function isSiteAdmin(
-  db: Kysely<Database>,
-  userId: string
-): Promise<boolean> {
-  const user = await db
-    .selectFrom('users')
-    .select('is_admin')
-    .where('id', '=', userId)
-    .executeTakeFirst()
-  return user?.is_admin === true
-}
-
 /**
  * Makes somebody's roles on this one level exactly these.
  *
@@ -753,13 +748,13 @@ export async function setScopeRoles(
       authority
     )
     const had = await rolesAt(trx, scopeType, scopeId, userId)
-    if (
-      scopeType === 'team' &&
-      roles.some(role => !had.includes(role)) &&
-      (await heldByOpenAdd(trx, scopeId, [userId])) &&
-      !(await isSiteAdmin(trx, grantedBy))
-    )
-      throw forbidden(HELD_ROLE)
+    if (roles.some(role => !had.includes(role)))
+      await refuseRoleWhileHeld(
+        trx,
+        { kind: scopeType, id: scopeId },
+        userId,
+        grantedBy
+      )
     await addToScope(trx, scopeType, scopeId, userId)
     if (scopeType === 'team' && !wanted.admin)
       await trx
