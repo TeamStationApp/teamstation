@@ -8,6 +8,7 @@
  *   node tools/streamTestPattern.js --url rtmp://localhost:1935/split/myevent
  *   node tools/streamTestPattern.js --url rtmp://... --duration 60
  *   node tools/streamTestPattern.js --url rtmp://... --duration 60 --size 1920x1080 --rate 30
+ *   node tools/streamTestPattern.js --url rtmp://... --codec libx265
  *
  * Requires `ffmpeg` on PATH. Stop early with Ctrl-C; ffmpeg will exit cleanly.
  */
@@ -18,7 +19,8 @@ function parseArgs(argv) {
     url: '',
     duration: 30,
     size: '1280x720',
-    rate: 30
+    rate: 30,
+    codec: 'libx264'
   }
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]
@@ -35,9 +37,12 @@ function parseArgs(argv) {
     } else if (a === '--rate') {
       out.rate = parseInt(next, 10)
       i += 1
+    } else if (a === '--codec') {
+      out.codec = next
+      i += 1
     } else if (a === '--help' || a === '-h') {
       console.log(
-        'Usage: streamTestPattern.js --url <rtmp-url> [--duration <s>] [--size WxH] [--rate fps]'
+        'Usage: streamTestPattern.js --url <rtmp-url> [--duration <s>] [--size WxH] [--rate fps] [--codec encoder]'
       )
       process.exit(0)
     } else {
@@ -69,7 +74,7 @@ function main() {
     '-i',
     'sine=frequency=1000:sample_rate=48000',
     '-c:v',
-    'libx264',
+    opts.codec,
     '-preset',
     'veryfast',
     '-tune',

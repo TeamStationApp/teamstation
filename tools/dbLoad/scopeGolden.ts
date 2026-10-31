@@ -599,7 +599,8 @@ export function namedScopes(
   }
 }
 
-function namedRoles(
+/** One person's roles, by label, for comparing or for the snapshot. */
+export function namedRoles(
   labels: Labels,
   scopes: RoleScopes
 ): GoldenPerson['roles'] {
