@@ -43,7 +43,12 @@ import {
 
 /** Synthetic identities and media only; a real database and authorization routes. */
 export async function tvFixture(
-  options: { scored?: boolean; webRoot?: string; wideStats?: boolean } = {}
+  options: {
+    scored?: boolean
+    webRoot?: string
+    wideStats?: boolean
+    statsInnings?: number
+  } = {}
 ): Promise<
   AccountHarness & {
     tvMedia: { fail: boolean; live: boolean; searchFail: boolean }
@@ -100,14 +105,16 @@ export async function tvFixture(
                 line: {
                   away: {
                     ...step.line.away,
-                    innings: Array.from({ length: 25 }, (_, i) =>
-                      i === 24 ? 7 : 0
+                    innings: Array.from(
+                      { length: options.statsInnings ?? 25 },
+                      (_, i) => (i === 24 ? 7 : 0)
                     )
                   },
                   home: {
                     ...step.line.home,
-                    innings: Array.from({ length: 25 }, (_, i) =>
-                      i === 24 ? 8 : 0
+                    innings: Array.from(
+                      { length: options.statsInnings ?? 25 },
+                      (_, i) => (i === 24 ? 8 : 0)
                     )
                   }
                 }

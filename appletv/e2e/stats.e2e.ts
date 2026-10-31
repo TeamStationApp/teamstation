@@ -24,7 +24,12 @@ async function main(): Promise<void> {
   const { MaestroD } = createRequire(path.join(clientRoot, 'package.json'))(
     './dist/cjs/index.js'
   )
-  const h = await tvFixture({ scored: true, wideStats: true })
+  const innings = Number(process.env.TV_STATS_INNINGS ?? 25)
+  const h = await tvFixture({
+    scored: true,
+    wideStats: true,
+    statsInnings: innings
+  })
   const daemon = await MaestroD.connect({
     name: process.env.MAESTRO_D ?? 'appleTvNative'
   })
@@ -64,7 +69,10 @@ async function main(): Promise<void> {
         device,
         'recordVideo',
         '--force',
-        path.join(artifacts, 'tv-extra-innings.mp4')
+        path.join(
+          artifacts,
+          innings > 18 ? 'tv-extra-innings.mp4' : 'tv-compact-score.mp4'
+        )
       ],
       { stdio: 'ignore' }
     )
@@ -79,37 +87,51 @@ async function main(): Promise<void> {
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
     const column = (node: any): any =>
-      node.id === 'tv-score-column-25'
+      node.id === `tv-score-column-${innings}`
         ? node
         : node.children?.map(column).find(Boolean)
-    const before = column(await tv.hierarchy()).bounds
-    assert(
-      before.x + before.width > 1880,
-      'last inning starts clipped by viewport'
-    )
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.waitForAnimationToEnd({ timeout: 3000 })
-    const after = column(await tv.hierarchy()).bounds
-    assert(
-      after.x < before.x && after.x + after.width <= 1880,
-      'remote scroll brings the final inning fully on screen'
-    )
-    await writeFile(
-      path.join(artifacts, 'extra-innings.png'),
-      await tv.screenshot()
-    )
-    await tv.pressKey({ key: 'DPAD_LEFT' })
-    await tv.waitForAnimationToEnd({ timeout: 3000 })
-    await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
+    if (innings > 18) {
+      const before = column(await tv.hierarchy()).bounds
+      assert(
+        before.x + before.width > 1880,
+        'last inning starts clipped by viewport'
+      )
+      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await tv.waitForAnimationToEnd({ timeout: 3000 })
+      const after = column(await tv.hierarchy()).bounds
+      assert(
+        after.x < before.x && after.x + after.width <= 1880,
+        'remote scroll brings the final inning fully on screen'
+      )
+      await writeFile(
+        path.join(artifacts, 'extra-innings.png'),
+        await tv.screenshot()
+      )
+      await tv.pressKey({ key: 'DPAD_LEFT' })
+      await tv.waitForAnimationToEnd({ timeout: 3000 })
+      await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
+    } else {
+      const home = (node: any): any =>
+        node.text === 'Demo Coastal Valley Hawks'
+          ? node
+          : node.children?.map(home).find(Boolean)
+      const bounds = home(await tv.hierarchy()).bounds
+      assert(
+        bounds.y + bounds.height <= 1080,
+        'home row remains fully on screen'
+      )
+      await writeFile(
+        path.join(artifacts, 'compact-long-names.png'),
+        await tv.screenshot()
+      )
+    }
     await tv.pressKey({ key: 'BACK' })
     await tv.assertNotVisible({ id: 'tv-box-panel' })
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home' })
-    console.log(
-      'PASS long team names, remote horizontal access through inning 25 and panel Back'
-    )
+    console.log(`PASS long team names, ${innings} innings and panel Back`)
   } catch (error) {
     await writeFile(
       '/private/tmp/tv-playback-failure.png',

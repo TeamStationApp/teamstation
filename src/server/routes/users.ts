@@ -14,7 +14,6 @@ import type { Database } from '../db/database'
 import {
   accessibleVideoGames,
   hasVideoFilter,
-  participantsInGames,
   videoCollectionFilter
 } from '../events/videoCollections'
 import { videoSearchDetails } from '../events/videoSearchDetails'
@@ -73,12 +72,10 @@ export function userRoutes(
         const games = await accessibleVideoGames(db, actor, filter)
         const details = await videoSearchDetails(
           db,
-          games.map(game => game.gameId)
+          games.map(game => game.gameId),
+          true
         )
-        const ids = await participantsInGames(
-          db,
-          games.map(game => game.gameId)
-        )
+        const ids = [...details.players.keys()]
         const people = await describe(
           db,
           space,

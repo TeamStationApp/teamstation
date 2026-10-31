@@ -14,6 +14,7 @@ import {
   lineupParticipantIds,
   videoCollectionFilter
 } from '../events/videoCollections'
+import { videoSearchDetails } from '../events/videoSearchDetails'
 import { eventListRoutes } from './eventList'
 import { userRoutes } from './users'
 
@@ -122,6 +123,111 @@ describe('TV video collections', function () {
         role: 'fielder'
       })
       .execute()
+  })
+  it('loads team season metadata in one query regardless of game count', async () => {
+    let queries = 0
+    const db = h.db.withPlugin({
+      transformQuery: args => {
+        queries++
+        return args.node
+      },
+      transformResult: async args => args.result
+    })
+    for (const count of [1, 15]) {
+      queries = 0
+      await videoSearchDetails(
+        db,
+        Array.from(
+          { length: count },
+          (_, i) => `gam_tv_${String(i).padStart(2, '0')}`
+        )
+      )
+      expect(queries).equals(1)
+    }
+  })
+  it('attributes event-only participants to recorded sides without inventing an unknown team', async () => {
+    await insertFixtureUsers(h.db, {
+      id: 104,
+      display_name: 'Mike Trout',
+      first_name: 'Mike',
+      last_name: 'Trout'
+    })
+    const events = [
+      {
+        id: 'evt_metadata_old',
+        gameId: 'gam_tv_02',
+        battingTeamId: 'tem_account',
+        gumbo: { about: { atBatIndex: 1 } }
+      },
+      {
+        id: 'evt_metadata_new',
+        gameId: 'gam_tv_03',
+        battingTeamId: 'tem_account',
+        gumbo: { about: { atBatIndex: 1 } }
+      },
+      {
+        id: 'evt_metadata_unknown',
+        gameId: 'gam_tv_04',
+        gumbo: { about: { atBatIndex: 1 } }
+      },
+      {
+        id: 'evt_metadata_hidden',
+        gameId: 'gam_tv_05',
+        battingTeamId: 'tem_account',
+        hidden: true,
+        gumbo: { about: { atBatIndex: 1 } }
+      }
+    ]
+    await h.db.insertInto('events').values(events).execute()
+    await h.db
+      .insertInto('event_players')
+      .values([
+        {
+          id: 'ep_metadata_old',
+          event_id: 'evt_metadata_old',
+          gumbo_id: 104,
+          role: 'batter'
+        },
+        {
+          id: 'ep_metadata_new',
+          event_id: 'evt_metadata_new',
+          gumbo_id: 104,
+          role: 'pitcher'
+        },
+        {
+          id: 'ep_metadata_unknown',
+          event_id: 'evt_metadata_unknown',
+          gumbo_id: 104,
+          role: 'fielder'
+        },
+        {
+          id: 'ep_metadata_hidden',
+          event_id: 'evt_metadata_hidden',
+          gumbo_id: 104,
+          role: 'batter'
+        }
+      ])
+      .execute()
+    try {
+      const people = await client.videoPlayers()
+      expect(
+        people.find(p => p.userId === userIdOfGumbo(104))?.recentVideoTeams
+      ).deep.equals([
+        { id: 'tem_visitors', name: 'Demo Comets' },
+        { id: 'tem_account', name: 'Demo Hawks' }
+      ])
+      const unknown = await videoSearchDetails(h.db, ['gam_tv_04'], true)
+      expect(unknown.players.get(userIdOfGumbo(104))).deep.equals([])
+    } finally {
+      await h.db
+        .deleteFrom('events')
+        .where(
+          'id',
+          'in',
+          events.map(e => e.id)
+        )
+        .execute()
+    }
   })
   it('describes only recorded teams, newest first, and the latest accessible season', async () => {
     await h.db

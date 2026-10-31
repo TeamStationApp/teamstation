@@ -877,6 +877,7 @@ export function TvPlayer({
                     {(['away', 'home'] as const).map(side => (
                       <StatRow
                         key={side}
+                        singleLine
                         name={stats.line?.teams[side] ?? side}
                         values={[
                           ...Array.from(
@@ -990,18 +991,20 @@ function StatRow({
   name,
   values,
   heading = false,
+  singleLine = false,
   onPress
 }: {
   name: string
   values: Array<string | number>
   heading?: boolean
+  singleLine?: boolean
   onPress?: () => void
 }): React.ReactElement {
   return (
     <View style={styles.statRow}>
       {onPress === undefined ? (
         <Text
-          numberOfLines={2}
+          numberOfLines={singleLine ? 1 : 2}
           style={[
             heading ? styles.statLabel : styles.statText,
             styles.statName
