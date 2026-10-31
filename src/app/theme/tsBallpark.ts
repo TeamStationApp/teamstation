@@ -118,6 +118,8 @@ export const tsBallpark: Theme = {
   clearIconColor: palette.white,
   buttonTextColor: palette.white,
   scoreActionColor: palette.scoreBlue,
+  streamActionColor: palette.scoreBlue,
+  streamActionTextColor: palette.white,
   djActionColor: palette.djPurple,
 
   // Inputs
