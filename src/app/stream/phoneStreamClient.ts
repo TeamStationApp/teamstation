@@ -409,6 +409,8 @@ export interface PhoneStream {
   }) => Promise<string>
   cancelUpload: (liveStreamId: string) => Promise<void>
   deleteRecording: (liveStreamId: string) => Promise<void>
+  appInstalled: (packageName: string) => Promise<boolean>
+  openInApp: (url: string, packageName: string) => Promise<boolean>
   onStatus: (listener: Listener<PhoneStreamStatus>) => () => void
   onRadar: (listener: Listener<RadarState>) => () => void
   onUpload: (listener: Listener<UploadProgress>) => () => void
@@ -628,6 +630,10 @@ export function makePhoneStream(
         await need().deleteRecording(liveStreamId)
       })
     },
+    appInstalled: async packageName =>
+      await call(async () => await need().appInstalled(packageName)),
+    openInApp: async (url, packageName) =>
+      await call(async () => await need().openInApp(url, packageName)),
     onStatus: listener => listen(module?.onStatus ?? null, toStatus, listener),
     onRadar: listener =>
       listen(module?.onRadar ?? null, toRadarState, listener),
