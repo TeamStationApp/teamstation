@@ -23,7 +23,7 @@ const counts = {
   newestSeasonId: null
 }
 
-type Read = (cursor: string | null) => Promise<Page<Row>>
+type Read = (cursor: string | null, count?: number) => Promise<Page<Row>>
 
 let root: Root | undefined
 let list!: PagedRows<Row>
@@ -33,24 +33,37 @@ function Harness(props: {
   read: Read
   listKey: string
   screenRows?: number
+  largestPage?: number
 }): null {
-  const { read, screenRows } = props
+  const { read, screenRows, largestPage } = props
   const [listKey, set] = useState(props.listKey)
   setKey = set
   list = usePagedList<Row>({
     listKey,
     read,
     keyOf: row => row.id,
-    screenRows
+    screenRows,
+    largestPage
   })
   return null
 }
 
-async function open(read: Read, screenRows = 2): Promise<void> {
+async function open(
+  read: Read,
+  screenRows = 2,
+  largestPage?: number
+): Promise<void> {
   const host = document.createElement('div')
   root = createRoot(host)
   await act(async () => {
-    root!.render(<Harness read={read} listKey="a" screenRows={screenRows} />)
+    root!.render(
+      <Harness
+        read={read}
+        listKey="a"
+        screenRows={screenRows}
+        largestPage={largestPage}
+      />
+    )
   })
   await settled()
 }
@@ -494,6 +507,111 @@ describe('usePagedList', function () {
         await list.loadMore()
       })
       expect(calls.at(-1)).equals('next:6')
+    })
+
+    it('reads the held pages again in one read where the server takes a size', async function () {
+      let rows = rowsOf(0, 30)
+      const calls: Array<[string | null, number | undefined]> = []
+      await open(
+        async (cursor, count) => {
+          calls.push([cursor, count])
+          return pageOf(rows, { cursor, limit: count ?? 3 })
+        },
+        2,
+        100
+      )
+      for (let page = 0; page < 4; page++)
+        await act(async () => {
+          await list.loadMore()
+        })
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(0, 15)))
+      rows = rows.map(row =>
+        row.id === 'r13' ? { ...row, note: 'signed up' } : row
+      )
+      calls.length = 0
+      await act(async () => {
+        await list.refreshHeld()
+      })
+      expect(calls).deep.equals([[null, 15]])
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(0, 15)))
+      expect(list.rows[13].note).equals('signed up')
+      // No larger than the server answers, and a page past the held ones.
+      calls.length = 0
+      await act(async () => {
+        root!.render(
+          <Harness
+            read={async (cursor, count) => {
+              calls.push([cursor, count])
+              return pageOf(rows, { cursor, limit: count ?? 3 })
+            }}
+            listKey="a"
+            screenRows={2}
+            largestPage={4}
+          />
+        )
+      })
+      await act(async () => {
+        await list.refreshHeld()
+      })
+      expect(calls).deep.equals([
+        [null, 4],
+        ['next:4', 4],
+        ['next:8', 4],
+        ['next:12', 3]
+      ])
+      expect(ids(list.rows)).deep.equals(ids(rowsOf(0, 15)))
+    })
+
+    it('reads an older top page as it was loaded, and sizes only the reads forward', async function () {
+      let rows = rowsOf(0, 40)
+      const calls: Array<[string | null, number | undefined]> = []
+      await open(
+        async (cursor, count) => {
+          calls.push([cursor, count])
+          return pageOf(
+            rows,
+            { cursor, limit: count ?? 4 },
+            { anchorIndex: 20 }
+          )
+        },
+        2,
+        100
+      )
+      await act(async () => {
+        await list.loadOlder()
+      })
+      await act(async () => {
+        await list.loadMore()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(14, 28)))
+      const before = list.rows
+      rows = rows.map(row =>
+        row.id === 'r15' ? { ...row, note: 'signed up' } : row
+      )
+      calls.length = 0
+      await act(async () => {
+        await list.refreshHeld()
+      })
+      // The older page as the reader loaded it, then the rest in one read.
+      expect(calls).deep.equals([
+        ['prev:18', undefined],
+        ['next:18', 10]
+      ])
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(14, 28)))
+      expect(list.rows[0]).equals(before[0])
+      expect(list.rows[1].note).equals('signed up')
+      // The rows above the first page are still above it, and older pages
+      // read on from the top held one.
+      calls.length = 0
+      await act(async () => {
+        await list.refresh()
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(14, 28)))
+      await act(async () => {
+        await list.loadOlder()
+      })
+      expect(calls.at(-1)).deep.equals(['prev:14', undefined])
+      expect(ids(list.rows)).deep.equals(ids(rows.slice(10, 28)))
     })
 
     it('keeps a page that landed behind a read of the held pages', async function () {

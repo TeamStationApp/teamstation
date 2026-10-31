@@ -706,4 +706,71 @@ describe('a team’s page, from the first page of its lists', function () {
     await read('videos')
     expect(text()).contains('65 with video')
   })
+
+  it('says a team it could not read failed, with Retry, and no spinner', async function () {
+    let down = true
+    const asked: Array<GamesPageQuery | undefined> = []
+    const { client } = fakeClient({
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) => {
+        asked.push(query)
+        if (down) throw new HttpError('internal', 'Something went wrong')
+        return {
+          items: rows(['gam_a'], 'sea_newest'),
+          nextCursor: null,
+          prevCursor: null,
+          anchorId: query?.around == null ? null : 'gam_a',
+          counts
+        }
+      },
+      teamStats: async () => [],
+      teamPitchingStats: async () => [],
+      standings: async () => []
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="schedule"
+        onOpenGame={() => undefined}
+      />
+    )
+    expect(text()).contains('Something went wrong')
+    expect(document.querySelector('[aria-label="Loading games"]')).equals(null)
+    expect(text()).not.contains('No games scheduled.')
+    expect(control('Retry')).not.equals(undefined)
+    for (const tab of ['Videos', 'Schedule']) {
+      await act(async () => {
+        control(tab)!.click()
+        await delay(10)
+      })
+      expect(document.querySelector('[aria-label="Loading games"]')).equals(
+        null
+      )
+      expect(control('Retry')).not.equals(undefined)
+    }
+    down = false
+    asked.length = 0
+    await act(async () => {
+      control('Retry')!.click()
+      await delay(10)
+    })
+    await act(async () => {
+      await delay(10)
+    })
+    expect(asked).deep.equals([
+      { around: 'next', order: 'asc' },
+      { hasVideo: true }
+    ])
+    expect(text()).not.contains('Something went wrong')
+    expect(text()).contains('345 games, 120 to play')
+    // A page kept out of sight is drawn again as it comes on show.
+    await act(async () => {
+      control('Videos')!.click()
+      await delay(10)
+    })
+    expect(text()).contains('65 with video')
+    expect(
+      document.querySelector('[data-testid="paged-list-empty-failed"]')
+    ).equals(null)
+  })
 })

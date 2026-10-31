@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { ActivityIndicator, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import {
   asPage,
@@ -30,7 +30,7 @@ import {
   usePaneWidth
 } from '../components'
 import { PagedList } from '../components/PagedList'
-import { PagedListEnd } from '../components/PagedListEnd'
+import { PagedListEmpty, PagedListEnd } from '../components/PagedListEnd'
 import {
   PillBand,
   PinnedContent,
@@ -325,7 +325,7 @@ function GameCards(props: {
   onOpenGame: GamesFeedScreenProps['onOpenGame']
 }): React.ReactElement {
   const { list, mode, columns, narrow, offline, onOpenGame } = props
-  const { rows, loading, empty, loadMore } = list
+  const { rows, loadMore } = list
   const styles = getStyles(useTheme())
   const renderRow = useCallback(
     (game: SeasonGame) => (
@@ -354,22 +354,23 @@ function GameCards(props: {
         estimatedItemSize={ROW_HEIGHT[mode]}
         // A list that could not be read says so above, and does not spin.
         empty={
-          loading ? (
-            <ActivityIndicator
-              accessibilityLabel="Loading games"
-              style={styles.loading}
-            />
-          ) : empty ? (
-            <View style={styles.cell}>
-              <Card>
-                <Text style={styles.muted}>
-                  {mode === 'videos'
-                    ? 'No recorded games here yet.'
-                    : 'No games here yet.'}
-                </Text>
-              </Card>
-            </View>
-          ) : null
+          <PagedListEmpty
+            list={list}
+            loadingLabel="Loading games"
+            spinnerStyle={styles.loading}
+            saysFailure={false}
+            none={
+              <View style={styles.cell}>
+                <Card>
+                  <Text style={styles.muted}>
+                    {mode === 'videos'
+                      ? 'No recorded games here yet.'
+                      : 'No games here yet.'}
+                  </Text>
+                </Card>
+              </View>
+            }
+          />
         }
         footer={<PagedListEnd list={list} />}
         onEndReached={readOn}

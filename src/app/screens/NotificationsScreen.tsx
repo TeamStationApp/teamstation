@@ -20,7 +20,7 @@ import { PagedList } from '../components/PagedList'
 import { PagedListEnd } from '../components/PagedListEnd'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
-import { type PagedRows, usePagedList } from '../hooks/usePagedList'
+import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -72,15 +72,6 @@ type Mode = 'pending' | 'sent' | 'history'
 
 /** A row's height before it has been measured. */
 const ROW_HEIGHT = 340
-
-/** An inbox page has only a next cursor, and nothing else a list's has. */
-const NOTHING: Page<Notification> = {
-  items: [],
-  nextCursor: null,
-  prevCursor: null,
-  anchorId: null,
-  counts: null
-}
 
 const requestIdOf = (item: Notification): string => item.requestId
 
@@ -136,13 +127,14 @@ export function NotificationsScreen({
         ...(cursor == null ? {} : { cursor })
       })
       setError('')
-      return { ...NOTHING, items: page.items, nextCursor: page.nextCursor }
+      // An inbox page has only a next cursor, and nothing else a list's has.
+      return { ...EMPTY_PAGE, items: page.items, nextCursor: page.nextCursor }
     } catch (caught) {
       // Whatever each list held is no longer theirs to see.
       if (accessRefused(caught)) {
         setError(failureOf(caught, 'Notifications could not load. Retry.'))
         for (const list of Object.values(lists))
-          list.apply(NOTHING).catch(() => undefined)
+          list.apply(EMPTY_PAGE).catch(() => undefined)
       }
       throw caught
     }

@@ -58,8 +58,17 @@ function sameRow(a: RowProps<never>, b: RowProps<never>): boolean {
   return a.item === b.item && a.index === b.index && a.extraData === b.extraData
 }
 
+/** How many times any row has been drawn, for a suite to count. */
+let drawn = 0
+
+/** Rows drawn so far, on every list: a suite compares two counts. */
+export function rowsDrawn(): number {
+  return drawn
+}
+
 function DrawnRow(props: RowProps<never>): React.ReactElement | null {
   const { item, index, render } = props
+  drawn++
   return render(item, index)
 }
 

@@ -1,4 +1,5 @@
 import { badRequest } from '../../common/errors'
+import { UMPIRE_PAGE_MOST } from '../../common/umpireSchedule'
 import { externalIdsAsked } from '../routes/seasons'
 import {
   decodeScheduleCursor,
@@ -110,7 +111,9 @@ function flag(value: unknown, name: string): boolean {
 
 /** What the query string asked for. A bad value is a 400, not a silent default. */
 export function parseEventListQuery(
-  query: Record<string, unknown>
+  query: Record<string, unknown>,
+  /** The most a `paged` read's `limit` may be. */
+  most = PAGE_LIMIT_MOST
 ): ParsedEventList {
   const scopeRaw = scalar(query.scope, 'scope') ?? 'visible'
   if (scopeRaw !== 'visible' && scopeRaw !== 'run' && scopeRaw !== 'film') {
@@ -178,8 +181,8 @@ export function parseEventListQuery(
   if (paged && scoreboardRaw != null) {
     throw badRequest('paged does not apply with scoreboard=open')
   }
-  if (paged && limitRaw != null && Number(limitRaw) > PAGE_LIMIT_MOST) {
-    throw badRequest(`limit must be at most ${PAGE_LIMIT_MOST} with paged`)
+  if (paged && limitRaw != null && Number(limitRaw) > most) {
+    throw badRequest(`limit must be at most ${most} with paged`)
   }
 
   const lookbackApplies =
@@ -260,18 +263,22 @@ export function parsePublicGamesQuery(
 
 /**
  * `GET /leagues/:leagueId/umpire-schedule`: the page parameters of the list
- * above. Like a team's, `limit` waits for `paged`.
+ * above. Like a team's, `limit` waits for `paged`. It may be as large as
+ * `UMPIRE_PAGE_MOST`, since every page computes the whole schedule.
  */
 export function parseUmpirePageQuery(
   query: Record<string, unknown>
 ): ParsedEventList {
   const { paged, cursor, around, limit } = query
-  return parseEventListQuery({
-    paged,
-    cursor,
-    around,
-    limit: paged == null ? undefined : limit
-  })
+  return parseEventListQuery(
+    {
+      paged,
+      cursor,
+      around,
+      limit: paged == null ? undefined : limit
+    },
+    UMPIRE_PAGE_MOST
+  )
 }
 
 /** How a `paged` read cuts the list, for `schedulePage`. */

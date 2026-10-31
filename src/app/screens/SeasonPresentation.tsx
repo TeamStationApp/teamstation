@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { ActivityIndicator, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type {
   BattingRow,
@@ -49,7 +49,7 @@ import { Badge } from '../components/Badge'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { FollowButton } from '../components/FollowButton'
 import { PagedList } from '../components/PagedList'
-import { PagedListEnd } from '../components/PagedListEnd'
+import { PagedListEmpty, PagedListEnd } from '../components/PagedListEnd'
 import { useSceneReveals } from '../components/sceneShown'
 import { SegmentedPill } from '../components/SegmentedPill'
 import { StatisticsTable } from '../components/StatisticsTable'
@@ -980,16 +980,6 @@ export function SeasonPresentation(
   )
 }
 
-/** A spinner until a list's rows are in, and then what `none` says. */
-function noRows(
-  list: Pick<PagedRows<unknown>, 'loading' | 'empty'>,
-  none: React.ReactElement | null
-): React.ReactElement | null {
-  if (list.loading)
-    return <ActivityIndicator accessibilityLabel="Loading games" />
-  return list.empty ? none : null
-}
-
 /** A pill's list of a season's games, for those who may see all of it. */
 function SeasonGames(props: {
   list: PagedRows<SeasonGame>
@@ -1013,12 +1003,19 @@ function SeasonGames(props: {
       keyOf={gameId}
       renderItem={renderRow}
       estimatedItemSize={ROW_HEIGHT.schedule}
-      empty={noRows(
-        list,
-        <Card>
-          <Text style={styles.muted}>Nothing here yet.</Text>
-        </Card>
-      )}
+      // A list that could not be read says so above the pills.
+      empty={
+        <PagedListEmpty
+          list={list}
+          loadingLabel="Loading games"
+          saysFailure={false}
+          none={
+            <Card>
+              <Text style={styles.muted}>Nothing here yet.</Text>
+            </Card>
+          }
+        />
+      }
       footer={
         <>
           <PagedListEnd list={list} />
@@ -1055,7 +1052,14 @@ function PublicGames(props: {
       keyOf={gameId}
       renderItem={renderRow}
       estimatedItemSize={ROW_HEIGHT.public}
-      empty={noRows(list, null)}
+      empty={
+        <PagedListEmpty
+          list={list}
+          loadingLabel="Loading games"
+          saysFailure={false}
+          none={null}
+        />
+      }
       footer={
         <>
           <PagedListEnd list={list} />
@@ -1093,12 +1097,18 @@ function SeasonVideos(props: {
       renderItem={renderRow}
       numColumns={columns}
       estimatedItemSize={ROW_HEIGHT.videos}
-      empty={noRows(
-        list,
-        <Card>
-          <Text style={styles.muted}>No recorded games here yet.</Text>
-        </Card>
-      )}
+      empty={
+        <PagedListEmpty
+          list={list}
+          loadingLabel="Loading games"
+          saysFailure={false}
+          none={
+            <Card>
+              <Text style={styles.muted}>No recorded games here yet.</Text>
+            </Card>
+          }
+        />
+      }
       footer={<PagedListEnd list={list} />}
       onEndReached={() => {
         loadMore().catch(() => undefined)

@@ -836,6 +836,15 @@ describe('umpire schedule pages (U9)', function () {
     expect(((await own.json()) as { view: string }).view).equals('umpire')
   })
 
+  it('answers a page as large as the rows a table holds, up to 500', async () => {
+    // Each page computes the whole schedule, so a table reads what it holds
+    // again in one read.
+    const whole: UmpirePage = await read('&paged=1&limit=500')
+    const paged: UmpirePage = await read('&paged=1&limit=1')
+    expect(whole.items.length).above(paged.items.length)
+    expect(whole.nextCursor).equals(null)
+  })
+
   it('refuses what a page cannot be, naming the parameter', async () => {
     const says = async (query: string): Promise<string> =>
       (await read(query, 400)).message
@@ -845,7 +854,9 @@ describe('umpire schedule pages (U9)', function () {
     expect(await says('&paged=1&cursor=abc')).equals(
       'cursor is not a cursor this list gave'
     )
-    expect(await says('&paged=1&limit=101')).includes('limit')
+    expect(await says('&paged=1&limit=501')).equals(
+      'limit must be at most 500 with paged'
+    )
     expect(await says('&paged=1&around=soon')).equals('around must be next')
     const first: UmpirePage = await read('&paged=1&limit=1')
     expect(

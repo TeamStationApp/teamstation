@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  ActivityIndicator,
   type LayoutChangeEvent,
   Text,
   useWindowDimensions,
@@ -11,7 +10,6 @@ import type {
   BattingRow,
   GamesPageQuery,
   GameSummary,
-  Page,
   PitchingRow,
   RosterEntry,
   StaffEntry,
@@ -53,7 +51,11 @@ import {
 import { AddEventCard } from '../components/AddEventCard'
 import { FollowButton } from '../components/FollowButton'
 import { PagedList } from '../components/PagedList'
-import { PagedListEnd } from '../components/PagedListEnd'
+import {
+  PagedListEmpty,
+  PagedListEnd,
+  PagedListStart
+} from '../components/PagedListEnd'
 import {
   inheritedPill,
   PeopleList,
@@ -63,7 +65,7 @@ import type { PinnedHead } from '../components/pinnedHead'
 import { positionLabel } from '../components/roleLabels'
 import { StatisticsTable } from '../components/StatisticsTable'
 import { ActiveView, TabPages } from '../components/TabPages'
-import { type PagedRows, usePagedList } from '../hooks/usePagedList'
+import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -84,14 +86,6 @@ import { battingColumns, pitchingColumns } from './statColumns'
 /** The first read of each list, which the screen makes as it opens. */
 const SCHEDULE_OPENS: GamesPageQuery = { around: 'next', order: 'asc' }
 const VIDEOS_OPEN: GamesPageQuery = { hasVideo: true }
-
-const NO_GAMES: Page<GameSummary> = {
-  items: [],
-  nextCursor: null,
-  prevCursor: null,
-  anchorId: null,
-  counts: null
-}
 
 /** A row's height before it has been measured, as each list draws them. */
 const ROW_HEIGHT = { schedule: 150, videos: 130 }
@@ -284,8 +278,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         cursor == null ? VIDEOS_OPEN : { ...VIDEOS_OPEN, cursor }
       )
   })
-  const { apply: applySchedule } = schedule
-  const { apply: applyVideos } = videos
+  const { apply: applySchedule, fail: failSchedule } = schedule
+  const { apply: applyVideos, fail: failVideos } = videos
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [pitching, setPitching] = useState<PitchingRow[]>([])
@@ -294,6 +288,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const [place, setPlace] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+  /** Each Retry of a team that could not be read, which reads it again. */
+  const [reloads, setReloads] = useState(0)
+  const reload = useCallback(() => {
+    setReloads(count => count + 1)
+  }, [])
 
   // Browser/native Back can change the address while this team stays mounted.
   useEffect(() => {
@@ -364,13 +363,17 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             caught instanceof HttpError &&
             ['forbidden', 'notFound'].includes(caught.code)
           ) {
-            applySchedule(NO_GAMES).catch(() => undefined)
-            applyVideos(NO_GAMES).catch(() => undefined)
+            applySchedule(EMPTY_PAGE).catch(() => undefined)
+            applyVideos(EMPTY_PAGE).catch(() => undefined)
             setRoster([])
             setBatting([])
             setPitching([])
             setStanding(undefined)
             setPlace(undefined)
+          } else {
+            // A list still opening says so, with Retry, not a spinner.
+            failSchedule(caught)
+            failVideos(caught)
           }
           setError(caught instanceof Error ? caught.message : 'Cannot load')
         }
@@ -385,10 +388,13 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     applySchedule,
     applyVideos,
     client,
+    failSchedule,
+    failVideos,
     team.id,
     publicDetail,
     nonMemberView,
-    refreshRevision
+    refreshRevision,
+    reloads
   ])
 
   const follows = onManage == null && (publicDetail != null || nonMemberView)
@@ -567,6 +573,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   teamId={team.id}
                   nonMemberView={nonMemberView}
                   onOpen={openGame}
+                  onRetry={reload}
                 />
               </View>
             )}
@@ -590,6 +597,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   nextRow={pinned.nextRow}
                   onOpen={openGame}
                   onCreateGame={onCreateGame}
+                  onRetry={reload}
                 />
               </ActiveView>
             )}
@@ -708,10 +716,12 @@ export function ScheduleRows(props: {
   nextRow: PinnedHead['nextRow']
   onOpen: TeamScreenProps['onOpenGame']
   onCreateGame?: () => void
+  /** Reads the team again, when its first read failed. */
+  onRetry?: () => void
 }): React.ReactElement {
   const { client, list, teamId, nonMemberView, nextRow, onOpen } = props
-  const { rows, anchorId, loading, empty, loadMore, loadOlder, update } = list
-  const { onCreateGame } = props
+  const { rows, anchorId, loadMore, loadOlder, update } = list
+  const { onCreateGame, onRetry } = props
   const styles = getStyles(useTheme())
   const { height } = useWindowDimensions()
   const alwaysRenderKeys = useMemo(
@@ -782,12 +792,16 @@ export function ScheduleRows(props: {
       alwaysRenderKeys={alwaysRenderKeys}
       anchorKey={anchorId}
       onAnchorPosition={anchorMoved}
+      header={<PagedListStart list={list} />}
       empty={
-        loading ? (
-          <ActivityIndicator accessibilityLabel="Loading games" />
-        ) : empty ? (
-          <Empty text="No games scheduled." />
-        ) : null
+        // The screen says what failed, above the pills.
+        <PagedListEmpty
+          list={list}
+          loadingLabel="Loading games"
+          saysFailure={false}
+          onRetry={onRetry}
+          none={<Empty text="No games scheduled." />}
+        />
       }
       footer={
         <>
@@ -813,9 +827,11 @@ function VideoRows(props: {
   teamId: string
   nonMemberView: boolean
   onOpen: TeamScreenProps['onOpenGame']
+  /** Reads the team again, when its first read failed. */
+  onRetry?: () => void
 }): React.ReactElement {
-  const { list, teamId, nonMemberView, onOpen } = props
-  const { rows, loading, empty, loadMore } = list
+  const { list, teamId, nonMemberView, onOpen, onRetry } = props
+  const { rows, loadMore } = list
   const styles = getStyles(useTheme())
   const renderRow = useCallback(
     (game: GameSummary) => (
@@ -839,11 +855,13 @@ function VideoRows(props: {
       extraData={nonMemberView}
       estimatedItemSize={ROW_HEIGHT.videos}
       empty={
-        loading ? (
-          <ActivityIndicator accessibilityLabel="Loading games" />
-        ) : empty ? (
-          <Empty text="No game has a video attached yet." />
-        ) : null
+        <PagedListEmpty
+          list={list}
+          loadingLabel="Loading games"
+          saysFailure={false}
+          onRetry={onRetry}
+          none={<Empty text="No game has a video attached yet." />}
+        />
       }
       footer={<PagedListEnd list={list} />}
       onEndReached={() => {

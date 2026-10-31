@@ -332,8 +332,9 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
         {
           name: 'limit',
           in: 'query',
-          schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
-          description: 'Page size. Only with `paged`'
+          schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
+          description:
+            'Page size. Only with `paged`. Every page computes the whole schedule, so a page may hold up to 500 rows'
         },
         {
           name: 'priorSeasons',

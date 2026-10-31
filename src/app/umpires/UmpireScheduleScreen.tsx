@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Linking,
   Platform,
@@ -10,11 +10,12 @@ import {
 } from 'react-native'
 import Animated from 'react-native-reanimated'
 
-import type { TeamStationClient } from '../../common/api'
+import type { TeamStationClient, UmpireSchedulePage } from '../../common/api'
 import { initialUmpireGame } from '../../common/nextGame'
 import { umpirePositionName } from '../../common/umpires'
 import {
   optionalPositionHeader,
+  UMPIRE_PAGE_MOST,
   type UmpireGameRow,
   type UmpireLeaderboard,
   type UmpireLeague,
@@ -25,11 +26,15 @@ import { Button, TextWidthButton } from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { Emblem } from '../components/Emblem'
 import { TimePicker } from '../components/EventScheduleFields'
+import { PagedList } from '../components/PagedList'
+import { PagedListEnd, PagedListStart } from '../components/PagedListEnd'
+import { usePageScroll } from '../components/pageScroll'
 import { PillTabs } from '../components/PillTabs'
 import { useSceneShown } from '../components/sceneShown'
 import { StickySectionLayout } from '../components/StickySectionLayout'
 import { TickerText } from '../components/TickerText'
 import { useTitleHandoff } from '../components/useTitleHandoff'
+import { usePagedList } from '../hooks/usePagedList'
 import type { UmpireScheduleRoute } from '../navigation/routes'
 import { googleDirectionsUrl } from '../platform/eventDirectionsNative'
 import { useTheme } from '../theme/ThemeContext'
@@ -44,6 +49,14 @@ import { UmpireDialog } from './UmpireDialog'
 import { UmpireLeaderboardView } from './UmpireLeaderboardView'
 import { UmpireSignup } from './UmpireSignup'
 import { useUmpireNoteEditor } from './useUmpireNoteEditor'
+/** A row of Sign Up buttons, which is most of them, before it is measured. */
+const ROW_HEIGHT = 49
+/**
+ * The widest `umpireDate` writes. Rows mount near the screen, so a column as
+ * wide as the rows it holds would change width as the table scrolled.
+ */
+const LONGEST_DATE = 'May 28, 12:00 pm'
+const gameId = (game: UmpireGameRow): string => game.id
 const DAYS = [
   'Monday',
   'Tuesday',
@@ -98,6 +111,15 @@ export function assignmentRemovable(
 }
 
 export { initialUmpireGame, optionalPositionHeader }
+/** Says when a person moves the page, not the app. */
+function ReaderMoved({ onMoved }: { onMoved: () => void }): null {
+  const source = usePageScroll()
+  useEffect(
+    () => source.subscribe({ onReaderMoved: onMoved }, { active: true }),
+    [onMoved, source]
+  )
+  return null
+}
 export function UmpireScheduleScreen({
   client,
   route,
@@ -121,7 +143,7 @@ export function UmpireScheduleScreen({
   const theme = useTheme()
   const handoff = useTitleHandoff('Umpire')
   const { error, busy, run, live } = useUmpireWork(route.id)
-  const [schedule, setSchedule] = useState<UmpireSchedule>()
+  const [schedule, setSchedule] = useState<UmpireSchedulePage>()
   const [board, setBoard] = useState<UmpireLeaderboard>()
   const [revision, setRevision] = useState(0)
   const [signup, setSignup] = useState<{ game: UmpireGameRow; slot: string }>()
@@ -140,7 +162,7 @@ export function UmpireScheduleScreen({
   const [priorSeasons, setPriorSeasons] = useState(false)
   const [timePicker, setTimePicker] = useState<'from' | 'to'>()
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
-  const positioned = useRef(false)
+  const readerMoved = useRef(false)
   const [tableY, setTableY] = useState<number>()
   const [firstY, setFirstY] = useState<number>()
   const [sectionHeight, setSectionHeight] = useState(0)
@@ -150,33 +172,50 @@ export function UmpireScheduleScreen({
   const headerScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const bodyScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const horizontalOffset = useRef(0)
+  // The scroller a finger last took. A scroll sent to the other one reports
+  // back late, so if both led, each could copy the other's last offset for
+  // ever, swapping them every frame. Until a finger takes one (always, on the
+  // web, which has no drag events) either leads.
+  const horizontalLeader = useRef<'header' | 'body'>(undefined)
   const showsSchedule = schedule != null && route.pill !== 'leaderboard'
   useEffect(() => {
     // Reset for remounts, not inline note saves that preserve the scroll views.
     horizontalOffset.current = 0
+    horizontalLeader.current = undefined
   }, [showsSchedule])
-  const syncHorizontal = (
-    x: number,
-    target: React.RefObject<React.ComponentRef<typeof ScrollView> | null>
-  ): void => {
+  const syncHorizontal = (side: 'header' | 'body', x: number): void => {
     if (Math.abs(x - horizontalOffset.current) < 0.5) return
+    const [own, other] =
+      side === 'header'
+        ? [headerScroll, bodyScroll]
+        : [bodyScroll, headerScroll]
+    const leader = horizontalLeader.current
+    if (leader != null && side !== leader) {
+      // Late, or its own momentum: back to the leader, which hears nothing.
+      own.current?.scrollTo({ x: horizontalOffset.current, animated: false })
+      return
+    }
     horizontalOffset.current = x
-    target.current?.scrollTo({ x, animated: false })
+    other.current?.scrollTo({ x, animated: false })
   }
+  // The opening row moves as rows above it are measured, so it is followed
+  // until somebody takes the page from it.
   useEffect(() => {
     if (
-      positioned.current ||
+      readerMoved.current ||
       tableY == null ||
       firstY == null ||
       sectionHeight === 0
     )
       return
-    positioned.current = true
     scroll.current?.scrollTo({
       y: firstY === 0 ? 0 : Math.max(0, tableY + firstY - sectionHeight),
       animated: false
     })
   }, [tableY, firstY, sectionHeight])
+  const noteReaderMoved = useCallback(() => {
+    readerMoved.current = true
+  }, [])
   const sequence = useRef(0)
   const query = new URLSearchParams({
     view: 'schedule',
@@ -187,23 +226,47 @@ export function UmpireScheduleScreen({
       )
     )
   }).toString()
+  const list = usePagedList<UmpireGameRow>({
+    listKey: `${route.id}:${query}:${revision}`,
+    auto: false,
+    keyOf: gameId,
+    // Each page computes the whole schedule, so a refresh after a sign-up
+    // reads the held rows in as few pages as it can.
+    largestPage: UMPIRE_PAGE_MOST,
+    read: async (cursor, count) => {
+      const seq = sequence.current
+      // A first page keeps its usual size, which sets the rows before the
+      // game it opens on as well as those after it.
+      const page = await client.umpireSchedulePage(
+        route.id,
+        query,
+        cursor == null
+          ? { around: 'next' }
+          : { cursor, ...(count == null ? {} : { limit: count }) }
+      )
+      if (live() && seq === sequence.current) setSchedule(page)
+      return page
+    }
+  })
+  const { apply: applyPage } = list
   useEffect(() => {
     const seq = ++sequence.current
     setSchedule(undefined)
     setBoard(undefined)
-    positioned.current = false
+    readerMoved.current = false
     setFirstY(undefined)
     run(async () => {
       const [next, ranks] = await Promise.all([
-        client.umpireSchedule(route.id, query),
+        client.umpireSchedulePage(route.id, query, { around: 'next' }),
         client.umpireLeaderboard(route.id)
       ])
       if (live() && seq === sequence.current) {
         setSchedule(next)
         setBoard(ranks)
+        await applyPage(next)
       }
     }, true)
-  }, [client, route.id, query, revision, live, run])
+  }, [applyPage, client, route.id, query, revision, live, run])
   const change = (next: Partial<UmpireScheduleRoute>): void => {
     noteEditor
       .finish()
@@ -212,10 +275,19 @@ export function UmpireScheduleScreen({
       })
       .catch(() => undefined)
   }
+  // A change to one row can reach the conflicts of any other, and the place
+  // on the page stays where it is.
   const refresh = (): void => {
+    const seq = sequence.current
     setSignup(undefined)
     setOpened(undefined)
-    setRevision(n => n + 1)
+    run(async () => {
+      const [ranks] = await Promise.all([
+        client.umpireLeaderboard(route.id),
+        list.refreshHeld()
+      ])
+      if (live() && seq === sequence.current) setBoard(ranks)
+    }, true)
   }
   const openFilters = (): void => {
     noteEditor
@@ -232,13 +304,20 @@ export function UmpireScheduleScreen({
       })
       .catch(() => undefined)
   }
+  // A read of the held rows that failed leaves them on show, as they were.
+  const shownError =
+    error !== '' || list.error == null
+      ? error
+      : list.error instanceof Error
+        ? list.error.message
+        : 'Please try again.'
   const filterError = umpireFilterError({
     days,
     from: from === '' ? undefined : from,
     to: to === '' ? undefined : to
   })
   const [noteErrorHeight, setNoteErrorHeight] = useState(0)
-  const games = schedule?.games ?? []
+  const games = list.rows
   const noteEditor = useUmpireNoteEditor({
     client,
     scope: `${route.id}:${query}:${route.pill ?? 'schedule'}`,
@@ -254,21 +333,10 @@ export function UmpireScheduleScreen({
       )
     },
     onSaved: (cell, value) => {
-      setSchedule(held =>
-        held == null
-          ? held
-          : {
-              ...held,
-              games: held.games.map(g =>
-                g.id === cell.game
-                  ? {
-                      ...g,
-                      umpireNotes: { ...g.umpireNotes, [cell.type]: value }
-                    }
-                  : g
-              )
-            }
-      )
+      list.update(cell.game, g => ({
+        ...g,
+        umpireNotes: { ...g.umpireNotes, [cell.type]: value }
+      }))
     }
   })
   const finish = useRef(noteEditor.finish)
@@ -281,85 +349,275 @@ export function UmpireScheduleScreen({
     () => (shown ? onBeforeLeave?.(beforeLeave) : undefined),
     [onBeforeLeave, beforeLeave, shown]
   )
-  const first = initialUmpireGame(games, Date.now())
-  const positions = (schedule?.types ?? []).flatMap(t => {
-    const held = games.flatMap(g => g.positions).filter(p => p.typeId === t.id)
-    return [...new Map(held.map(p => [p.slot, p])).values()].sort(
-      (a, b) => a.ordinal - b.ordinal
-    )
-  })
+  // Each page brings the whole list's columns again: the same columns keep
+  // one identity, so that the rows are not drawn again for them.
+  const positionsText = JSON.stringify(schedule?.positions ?? [])
+  const positions = useMemo(
+    () => JSON.parse(positionsText) as UmpireSchedulePage['positions'],
+    [positionsText]
+  )
   const columnWidth = Math.ceil(dateWidth + theme.rem(1))
   const roleWidth = Math.ceil(signupWidth + theme.rem(2))
   const conflictsWidth = Math.ceil(conflictWidth + theme.rem(0.75) + 1)
+  const noteTypesText = JSON.stringify(schedule?.noteTypes ?? [])
+  const noteTypes = useMemo(
+    () => JSON.parse(noteTypesText) as UmpireSchedulePage['noteTypes'],
+    [noteTypesText]
+  )
   const customWidth = Math.max(
     160,
-    tableWidth / (7 + positions.length + (schedule?.noteTypes.length ?? 0))
+    tableWidth / (7 + positions.length + noteTypes.length)
   )
-  const link = (
-    text: string,
-    label: string,
-    onPress?: () => void
-  ): React.ReactElement =>
-    onPress == null ? (
-      <Text numberOfLines={2} style={s.tableText}>
-        {text}
-      </Text>
-    ) : (
-      <Pressable
-        accessibilityRole="link"
-        accessibilityLabel={label}
-        onPress={onPress}
-        style={{ minHeight: 48, justifyContent: 'center' }}
-      >
-        <Text numberOfLines={2} style={[s.tableText, { color: '#1565C0' }]}>
-          {text}
-        </Text>
-      </Pressable>
-    )
-  const cell = (game: UmpireGameRow, slot: string): React.ReactElement => {
-    const assignment = game.assignments[slot]
-    const position = game.positions.find(p => p.slot === slot)
-    const required = position != null
-    if (!required || (assignment == null && game.status === 'final'))
-      return <Text style={s.tableHint}>—</Text>
-    if (assignment != null) {
+  const rowWidth =
+    6 * columnWidth +
+    positions.length * roleWidth +
+    noteTypes.length * customWidth +
+    conflictsWidth
+  const editing = noteEditor.editing
+  const alwaysRenderKeys = useMemo(
+    () => (editing == null ? [] : [editing]),
+    [editing]
+  )
+  const view = schedule?.view
+  const isAdmin = schedule?.isAdmin
+  const noteCell = noteEditor.cell
+  const renderRow = useCallback(
+    (game: UmpireGameRow): React.ReactElement => {
+      const link = (
+        text: string,
+        label: string,
+        onPress?: () => void
+      ): React.ReactElement =>
+        onPress == null ? (
+          <Text numberOfLines={2} style={s.tableText}>
+            {text}
+          </Text>
+        ) : (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={label}
+            onPress={onPress}
+            style={{ minHeight: 48, justifyContent: 'center' }}
+          >
+            <Text numberOfLines={2} style={[s.tableText, { color: '#1565C0' }]}>
+              {text}
+            </Text>
+          </Pressable>
+        )
+      const cell = (game: UmpireGameRow, slot: string): React.ReactElement => {
+        const assignment = game.assignments[slot]
+        const position = game.positions.find(p => p.slot === slot)
+        const required = position != null
+        if (!required || (assignment == null && game.status === 'final'))
+          return <Text style={s.tableHint}>—</Text>
+        if (assignment != null) {
+          return (
+            <Pressable
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={`${assignment.name}, ${slot}`}
+              onPress={() => {
+                setOpened({ game, slot })
+              }}
+            >
+              <TickerText style={[s.tableText, { color: '#1565C0' }]}>
+                {assignment.name}
+              </TickerText>
+              {(assignment.teams?.length ?? 0) > 0 && (
+                <TickerText style={s.tableHint}>
+                  {assignment.teams!.map(t => t.name).join(', ')}
+                </TickerText>
+              )}
+            </Pressable>
+          )
+        }
+        return (
+          <TextWidthButton
+            small
+            label="Sign Up"
+            accessibilityLabel={`Sign Up, ${umpirePositionName(position, game.positions)}, ${game.home} vs ${game.away}, ${game.date}`}
+            disabled={view === 'league' || busy}
+            color="#EEEEEE"
+            textColor="#616161"
+            onPress={() => {
+              setSignup({ game, slot })
+            }}
+          />
+        )
+      }
       return (
-        <Pressable
-          disabled={busy}
-          accessibilityRole="button"
-          accessibilityLabel={`${assignment.name}, ${slot}`}
-          onPress={() => {
-            setOpened({ game, slot })
-          }}
+        <View
+          testID={`umpire-game-${game.id}`}
+          style={[
+            s.tableRow,
+            game.conflicts.length > 0 && {
+              backgroundColor: '#FFF3E0'
+            }
+          ]}
         >
-          <TickerText style={[s.tableText, { color: '#1565C0' }]}>
-            {assignment.name}
-          </TickerText>
-          {(assignment.teams?.length ?? 0) > 0 && (
-            <TickerText style={s.tableHint}>
-              {assignment.teams!.map(t => t.name).join(', ')}
-            </TickerText>
-          )}
-        </Pressable>
+          <UmpireCell divided compact width={columnWidth}>
+            {link(
+              game.date,
+              `Open game ${game.date}`,
+              onOpenGame == null
+                ? undefined
+                : () => {
+                    onOpenGame(game.id)
+                  }
+            )}
+          </UmpireCell>
+          <UmpireCell divided compact width={columnWidth}>
+            {link(
+              game.home,
+              `Open ${game.home}`,
+              game.homeTeamId == null || onOpenTeam == null
+                ? undefined
+                : () => {
+                    onOpenTeam(game.homeTeamId!)
+                  }
+            )}
+          </UmpireCell>
+          <UmpireCell divided compact width={columnWidth}>
+            {link(
+              game.away,
+              `Open ${game.away}`,
+              game.awayTeamId == null || onOpenTeam == null
+                ? undefined
+                : () => {
+                    onOpenTeam(game.awayTeamId!)
+                  }
+            )}
+          </UmpireCell>
+          <UmpireCell divided compact width={columnWidth}>
+            {link(
+              game.venue !== '' ? game.venue : (game.location ?? ''),
+              `Map of ${game.venue !== '' ? game.venue : (game.location ?? '')}`,
+              (game.location == null || game.location === ''
+                ? game.venue
+                : game.location
+              ).trim() === ''
+                ? undefined
+                : () => {
+                    run(async () => {
+                      await Linking.openURL(
+                        googleDirectionsUrl(
+                          game.location == null || game.location === ''
+                            ? game.venue
+                            : game.location
+                        )
+                      )
+                    })
+                  }
+            )}
+          </UmpireCell>
+          <UmpireCell divided compact width={columnWidth}>
+            <Text numberOfLines={2} style={s.tableText}>
+              {game.field}
+            </Text>
+          </UmpireCell>
+          <UmpireCell divided compact width={columnWidth}>
+            {game.notes === '' ? (
+              ''
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Notes for ${game.date}`}
+                onPress={() => {
+                  setNotes(game.notes)
+                }}
+              >
+                <Text numberOfLines={2} style={s.tableText}>
+                  {game.notes}
+                </Text>
+              </Pressable>
+            )}
+          </UmpireCell>
+          {positions.map(p => (
+            <UmpireCell
+              divided
+              compact
+              key={p.slot}
+              width={roleWidth}
+              gray={
+                !game.positions.some(position => position.slot === p.slot) ||
+                (game.status === 'final' && game.assignments[p.slot] == null)
+              }
+            >
+              {cell(game, p.slot)}
+            </UmpireCell>
+          ))}
+          {noteTypes.map(t => (
+            <UmpireCell divided compact key={t.id} width={customWidth}>
+              {noteCell(game, t)}
+            </UmpireCell>
+          ))}
+          <UmpireCell divided compact width={conflictsWidth}>
+            {game.conflicts.length > 0 ? (
+              <TextWidthButton
+                small
+                label="Conflict"
+                accessibilityLabel="Conflict"
+                color="#FFE0B2"
+                textColor="#6D4C41"
+                onPress={() => {
+                  setConflicts(game)
+                }}
+              />
+            ) : (
+              '—'
+            )}
+          </UmpireCell>
+        </View>
       )
-    }
-    return (
-      <TextWidthButton
-        small
-        label="Sign Up"
-        accessibilityLabel={`Sign Up, ${umpirePositionName(position, game.positions)}, ${game.home} vs ${game.away}, ${game.date}`}
-        disabled={schedule?.view === 'league' || busy}
-        color="#EEEEEE"
-        textColor="#616161"
-        onPress={() => {
-          setSignup({ game, slot })
-        }}
-      />
-    )
-  }
+    },
+    [
+      busy,
+      columnWidth,
+      conflictsWidth,
+      customWidth,
+      isAdmin,
+      noteCell,
+      noteTypes,
+      onOpenGame,
+      onOpenTeam,
+      positions,
+      roleWidth,
+      run,
+      s,
+      view
+    ]
+  )
+  // A mounted row is drawn again only for a new item or this.
+  const rowsRead = useMemo(
+    () => ({
+      busy,
+      columnWidth,
+      roleWidth,
+      customWidth,
+      conflictsWidth,
+      positions,
+      noteTypes,
+      view,
+      isAdmin,
+      noteCell
+    }),
+    [
+      busy,
+      columnWidth,
+      conflictsWidth,
+      customWidth,
+      isAdmin,
+      noteCell,
+      noteTypes,
+      positions,
+      roleWidth,
+      view
+    ]
+  )
   return (
     <StickySectionLayout
       wide
+      pagedList
       scrollRef={scroll}
       onScroll={handoff.handleScroll}
       contentStyle={{ gap: 0 }}
@@ -406,7 +664,7 @@ export function UmpireScheduleScreen({
               ))}
             </ScrollView>
           )}
-          <UmpireError error={error} />
+          <UmpireError error={shownError} />
           <View style={{ minHeight: noteErrorHeight }}>
             <View
               onLayout={event => {
@@ -421,7 +679,7 @@ export function UmpireScheduleScreen({
                   color="#EEEEEE"
                   textColor="#616161"
                   onPress={() => {
-                    if (noteEditor.discard()) refresh()
+                    if (noteEditor.discard()) setRevision(n => n + 1)
                   }}
                 />
               )}
@@ -467,11 +725,14 @@ export function UmpireScheduleScreen({
               testID="umpire-table-header-scroll"
               showsHorizontalScrollIndicator={false}
               scrollEventThrottle={16}
+              onScrollBeginDrag={() => {
+                horizontalLeader.current = 'header'
+              }}
               onScroll={e => {
-                syncHorizontal(e.nativeEvent.contentOffset.x, bodyScroll)
+                syncHorizontal('header', e.nativeEvent.contentOffset.x)
               }}
             >
-              <View style={s.tableRow}>
+              <View testID="umpire-table-header" style={s.tableRow}>
                 {[
                   'Date',
                   'Home team',
@@ -489,14 +750,12 @@ export function UmpireScheduleScreen({
                     <Text style={[s.tableText, s.tableHeading]}>
                       {umpirePositionName(p, positions)}
                     </Text>
-                    {optionalPositionHeader(games, p.slot) != null && (
-                      <Text style={s.tableHint}>
-                        {optionalPositionHeader(games, p.slot)}
-                      </Text>
+                    {p.optionalHeader != null && (
+                      <Text style={s.tableHint}>{p.optionalHeader}</Text>
                     )}
                   </UmpireCell>
                 ))}
-                {schedule?.noteTypes.map(t => (
+                {noteTypes.map(t => (
                   <UmpireCell divided compact key={t.id} width={customWidth}>
                     <Text style={[s.tableText, s.tableHeading]}>{t.name}</Text>
                   </UmpireCell>
@@ -510,6 +769,7 @@ export function UmpireScheduleScreen({
         </View>
       }
     >
+      <ReaderMoved onMoved={noteReaderMoved} />
       <View
         testID="umpire-table"
         onLayout={e => {
@@ -528,157 +788,39 @@ export function UmpireScheduleScreen({
             {games.length === 0 && (
               <Text style={s.hint}>No games match this schedule.</Text>
             )}
+            <PagedListStart list={list} />
             <ScrollView
               horizontal
               ref={bodyScroll}
               testID="umpire-table-body-scroll"
               keyboardShouldPersistTaps="handled"
               scrollEventThrottle={16}
+              onScrollBeginDrag={() => {
+                horizontalLeader.current = 'body'
+              }}
               onScroll={e => {
-                syncHorizontal(e.nativeEvent.contentOffset.x, headerScroll)
+                syncHorizontal('body', e.nativeEvent.contentOffset.x)
               }}
             >
-              <View>
-                {games.map(game => (
-                  <View
-                    key={game.id}
-                    testID={`umpire-game-${game.id}`}
-                    onLayout={e => {
-                      if (game.id === first?.id)
-                        setFirstY(e.nativeEvent.layout.y)
-                    }}
-                    style={[
-                      s.tableRow,
-                      game.conflicts.length > 0 && {
-                        backgroundColor: '#FFF3E0'
-                      }
-                    ]}
-                  >
-                    <UmpireCell divided compact width={columnWidth}>
-                      {link(
-                        game.date,
-                        `Open game ${game.date}`,
-                        onOpenGame == null
-                          ? undefined
-                          : () => {
-                              onOpenGame(game.id)
-                            }
-                      )}
-                    </UmpireCell>
-                    <UmpireCell divided compact width={columnWidth}>
-                      {link(
-                        game.home,
-                        `Open ${game.home}`,
-                        game.homeTeamId == null || onOpenTeam == null
-                          ? undefined
-                          : () => {
-                              onOpenTeam(game.homeTeamId!)
-                            }
-                      )}
-                    </UmpireCell>
-                    <UmpireCell divided compact width={columnWidth}>
-                      {link(
-                        game.away,
-                        `Open ${game.away}`,
-                        game.awayTeamId == null || onOpenTeam == null
-                          ? undefined
-                          : () => {
-                              onOpenTeam(game.awayTeamId!)
-                            }
-                      )}
-                    </UmpireCell>
-                    <UmpireCell divided compact width={columnWidth}>
-                      {link(
-                        game.venue !== '' ? game.venue : (game.location ?? ''),
-                        `Map of ${game.venue !== '' ? game.venue : (game.location ?? '')}`,
-                        (game.location == null || game.location === ''
-                          ? game.venue
-                          : game.location
-                        ).trim() === ''
-                          ? undefined
-                          : () => {
-                              run(async () => {
-                                await Linking.openURL(
-                                  googleDirectionsUrl(
-                                    game.location == null ||
-                                      game.location === ''
-                                      ? game.venue
-                                      : game.location
-                                  )
-                                )
-                              })
-                            }
-                      )}
-                    </UmpireCell>
-                    <UmpireCell divided compact width={columnWidth}>
-                      <Text numberOfLines={2} style={s.tableText}>
-                        {game.field}
-                      </Text>
-                    </UmpireCell>
-                    <UmpireCell divided compact width={columnWidth}>
-                      {game.notes === '' ? (
-                        ''
-                      ) : (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={`Notes for ${game.date}`}
-                          onPress={() => {
-                            setNotes(game.notes)
-                          }}
-                        >
-                          <Text numberOfLines={2} style={s.tableText}>
-                            {game.notes}
-                          </Text>
-                        </Pressable>
-                      )}
-                    </UmpireCell>
-                    {positions.map(p => (
-                      <UmpireCell
-                        divided
-                        compact
-                        key={p.slot}
-                        width={roleWidth}
-                        gray={
-                          !game.positions.some(
-                            position => position.slot === p.slot
-                          ) ||
-                          (game.status === 'final' &&
-                            game.assignments[p.slot] == null)
-                        }
-                      >
-                        {cell(game, p.slot)}
-                      </UmpireCell>
-                    ))}
-                    {schedule?.noteTypes.map(t => (
-                      <UmpireCell
-                        divided
-                        compact
-                        key={t.id}
-                        width={customWidth}
-                      >
-                        {noteEditor.cell(game, t)}
-                      </UmpireCell>
-                    ))}
-                    <UmpireCell divided compact width={conflictsWidth}>
-                      {game.conflicts.length > 0 ? (
-                        <TextWidthButton
-                          small
-                          label="Conflict"
-                          accessibilityLabel="Conflict"
-                          color="#FFE0B2"
-                          textColor="#6D4C41"
-                          onPress={() => {
-                            setConflicts(game)
-                          }}
-                        />
-                      ) : (
-                        '—'
-                      )}
-                    </UmpireCell>
-                  </View>
-                ))}
-              </View>
+              <PagedList
+                data={list.rows}
+                keyOf={gameId}
+                renderItem={renderRow}
+                extraData={rowsRead}
+                width={rowWidth}
+                estimatedItemSize={ROW_HEIGHT}
+                alwaysRenderKeys={alwaysRenderKeys}
+                anchorKey={list.anchorId}
+                onAnchorPosition={setFirstY}
+                onEndReached={() => {
+                  list.loadMore().catch(() => undefined)
+                }}
+                onStartReached={atRest => {
+                  list.loadOlder(atRest).catch(() => undefined)
+                }}
+              />
             </ScrollView>
+            <PagedListEnd list={list} />
           </>
         )}
       </View>
@@ -698,20 +840,17 @@ export function UmpireScheduleScreen({
         }}
       >
         <View style={{ width: 10000, alignItems: 'flex-start' }}>
-          {[...new Set(games.map(g => g.date))].map(date => (
-            <Text
-              key={date}
-              testID="umpire-date-measure"
-              style={s.tableText}
-              numberOfLines={1}
-              onLayout={e => {
-                const width = e.nativeEvent.layout.width
-                setDateWidth(w => Math.max(w, width))
-              }}
-            >
-              {date}
-            </Text>
-          ))}
+          <Text
+            testID="umpire-date-measure"
+            style={s.tableText}
+            numberOfLines={1}
+            onLayout={e => {
+              const width = e.nativeEvent.layout.width
+              setDateWidth(w => Math.max(w, width))
+            }}
+          >
+            {LONGEST_DATE}
+          </Text>
           <View
             testID="umpire-signup-measure"
             onLayout={e => {

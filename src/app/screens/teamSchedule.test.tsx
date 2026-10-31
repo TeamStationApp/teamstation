@@ -561,6 +561,44 @@ describe('a team’s schedule, a page at a time', function () {
     expect(linesOf(rows().at(-1)!)).includes(LAST_ROW)
   })
 
+  it('offers Retry above the first row when an older page fails', async function () {
+    const client = paging()
+    await mount('normal', 'schedule', client)
+    const opening = rows().map(row => row.textContent)
+    const reads = client.teamGamesPage.bind(client)
+    client.teamGamesPage = async () => {
+      throw new Error('Schedule offline')
+    }
+    await act(async () => {
+      reachStart()
+      await delay(10)
+    })
+    expect(rows().map(row => row.textContent)).deep.equals(opening)
+    const start = document.querySelector(
+      '[data-testid="paged-list-start-failed"]'
+    )!
+    expect(start.textContent).includes('Could not load more')
+    expect(
+      start.compareDocumentPosition(rows()[0]) &
+        window.Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(
+      document.querySelector('[data-testid="paged-list-end-failed"]')
+    ).equals(null)
+    client.teamGamesPage = reads
+    const retry = [
+      ...start.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Retry')!
+    await act(async () => {
+      retry.click()
+      await delay(10)
+    })
+    expect(linesOf(rows()[0])).includes(FIRST_ROW)
+    expect(
+      document.querySelector('[data-testid="paged-list-start-failed"]')
+    ).equals(null)
+  })
+
   it('reads on through the library as it reports its end', async function () {
     const recorded = fixtureClient('normal', games =>
       games.map(game => ({ ...game, videoCount: 1 }))

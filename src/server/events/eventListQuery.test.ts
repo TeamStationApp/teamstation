@@ -271,6 +271,12 @@ describe('GET /events query', function () {
       parseUmpirePageQuery({ paged: '1', around: 'next', limit: '9' })
     ).deep.include({ paged: true, around: true, limit: 9 })
     expect(parseUmpirePageQuery({ paged: '1' }).limit).equals(50)
+    // Every page computes the whole schedule, so a table reads what it holds
+    // again in one read.
+    expect(parseUmpirePageQuery({ paged: '1', limit: '500' }).limit).equals(500)
+    expect(() => parseUmpirePageQuery({ paged: '1', limit: '501' })).throws(
+      'limit must be at most 500 with paged'
+    )
   })
 
   it("takes only a team's own parameters on a team's games", function () {

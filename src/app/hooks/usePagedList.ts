@@ -6,7 +6,16 @@ import { useLatestRequest } from './useLatestRequest'
 /** Rows that fill a screen, for a list that does not say. */
 const SCREEN_ROWS = 10
 
-type Way = 'next' | 'previous'
+export type Way = 'next' | 'previous'
+
+/** A page with nothing on it, which ends a list that holds nothing. */
+export const EMPTY_PAGE: Page<never> = {
+  items: [],
+  nextCursor: null,
+  prevCursor: null,
+  anchorId: null,
+  counts: null
+}
 
 export interface PagedListOptions<T> {
   /**
@@ -14,8 +23,18 @@ export interface PagedListOptions<T> {
    * its way, so that a late page never lands on another filter.
    */
   listKey: string
-  /** Reads a page: the first for `null`, otherwise that of a cursor. */
-  read: (cursor: string | null) => Promise<Page<T>>
+  /**
+   * Reads a page: the first for `null`, otherwise that of a cursor. `count`
+   * asks for that many rows, where the server takes a size: only
+   * `refreshHeld` gives one, and only with `largestPage`.
+   */
+  read: (cursor: string | null, count?: number) => Promise<Page<T>>
+  /**
+   * The most rows the server answers in one read, for a list that takes a
+   * size. `refreshHeld` then reads the held rows in pages this large, not
+   * in pages of the usual size.
+   */
+  largestPage?: number
   keyOf: (row: T) => string
   /** A page adding fewer than this is followed at once by the next. */
   screenRows?: number
@@ -71,6 +90,11 @@ export interface PagedRows<T> {
   loadingMore: boolean
   /** The end could not be read: `Could not load more`, and Retry. */
   failed: boolean
+  /**
+   * Which way the read that failed went: `previous` is at the top of the
+   * list, where its Retry goes, and `next` at the bottom.
+   */
+  failedWay: Way | undefined
   error: unknown
   loadMore: () => Promise<void>
   /** Reads older rows, holding each page until `atRest` answers. */
@@ -81,8 +105,16 @@ export interface PagedRows<T> {
   refresh: () => Promise<void>
   /** `refresh`, for a first page the screen read for itself. */
   apply: (page: Page<T>) => Promise<void>
-  /** Reads every held page again, in place. */
+  /**
+   * Reads every held page again, in place: in as few reads as `largestPage`
+   * allows, or a page at a time.
+   */
   refreshHeld: () => Promise<void>
+  /**
+   * A first page the screen read for itself, which failed: the list stops
+   * opening and holds the failure, for its Retry. An open list is left be.
+   */
+  fail: (error: unknown) => void
   /** A stored first page, under anything the server has given. */
   paint: (page: Page<T>) => void
   update: (key: string, change: (row: T) => T) => void
@@ -347,29 +379,40 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
     const firstHeldKey = keyOf(held.current.rows[0])
     const heldRows = held.current.rows.length
     const topCursor = held.current.topCursor
+    const { largestPage } = latest.current
     const rows: T[] = []
     let cursor = topCursor
     let top: Page<T> | undefined
     let next: string | null = null
     let covered = false
     let pages = 0
-    // As many pages as the held rows fill, and one for rows added above the
+    // As many rows as are held, and a page more for rows added above the
     // last: a last row gone from the server is not looked for to the end.
-    let most = 1
+    let most = heldRows + 1
     try {
       do {
-        const page: Page<T> = await latest.current.read(cursor)
+        // Where the server takes a size, the rest of the held rows in one
+        // read if it can, and then a page past them. Only a read forward
+        // takes one: an older page's cursor sized would answer rows before
+        // it that the reader never read, so it is read as it was loaded.
+        const rest = heldRows - rows.length
+        const olderTop = pages === 0 && topCursor != null
+        const count =
+          largestPage == null || olderTop
+            ? undefined
+            : Math.min(largestPage, rest > 0 ? rest : most - heldRows)
+        const page: Page<T> = await latest.current.read(cursor, count)
         if (!current()) return
         if (top == null) {
           top = page
-          most = Math.ceil(heldRows / Math.max(1, page.items.length)) + 1
+          most = heldRows + Math.max(1, page.items.length)
         }
         pages += 1
         rows.push(...page.items)
         next = page.nextCursor
         cursor = next
         covered = page.items.some(row => keyOf(row) === lastKey)
-      } while (!covered && next != null && pages < most)
+      } while (!covered && next != null && rows.length < most && pages < most)
     } catch (caught) {
       if (current()) change({ error: caught })
       return
@@ -394,16 +437,36 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       startAt > 0 && (lastAt < 0 || startAt <= lastAt)
         ? now.rows.slice(0, startAt)
         : []
+    const fresh = unique(kept([...before, ...rows, ...behind]))
+    // The older rows read again stay above the first page: it starts where
+    // its first held row now stands.
+    const firstOfPage = now.rows.at(now.above)
+    const pageAt =
+      firstOfPage == null
+        ? -1
+        : fresh.findIndex(row => keyOf(row) === keyOf(firstOfPage))
     change({
-      rows: unique(kept([...before, ...rows, ...behind])),
+      rows: fresh,
       nextCursor: behind.length > 0 ? now.nextCursor : next,
       prevCursor:
         before.length > 0 ? now.prevCursor : (top?.prevCursor ?? null),
       counts: top?.counts ?? now.counts,
-      above: topCursor == null ? before.length : now.above,
+      above:
+        topCursor == null
+          ? before.length
+          : pageAt >= 0
+            ? pageAt
+            : Math.min(now.above, fresh.length),
       error: undefined
     })
   }, [change, kept, refresh, unique])
+
+  const fail = useCallback(
+    (error: unknown): void => {
+      if (held.current.opening) change({ opening: false, error })
+    },
+    [change]
+  )
 
   const paint = useCallback(
     (page: Page<T>): void => {
@@ -486,6 +549,7 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       empty: rows.length === 0 && !loading && failed == null && error == null,
       loadingMore: walking.next && rows.length > 0,
       failed: failed != null,
+      failedWay: failed,
       error,
       loadMore,
       loadOlder,
@@ -493,12 +557,14 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       refresh,
       apply,
       refreshHeld,
+      fail,
       paint,
       update,
       remove
     }
   }, [
     apply,
+    fail,
     loadMore,
     loadOlder,
     paint,

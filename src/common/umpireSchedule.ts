@@ -53,6 +53,12 @@ export interface UmpireGameRow {
   conflicts: UmpireConflict[]
   choices: Record<string, UmpireChoice[]>
 }
+/**
+ * The most rows a page of the umpire schedule holds. Each page computes the
+ * whole schedule, so the table reads the rows it holds again in one read
+ * after a sign-up, not a page at a time.
+ */
+export const UMPIRE_PAGE_MOST = 500
 export interface UmpireSchedule {
   settings: UmpireSettings
   levels: UmpireLevel[]

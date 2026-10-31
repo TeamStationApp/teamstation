@@ -1,12 +1,11 @@
 import React, { memo, useCallback } from 'react'
-import { ActivityIndicator, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { GamesPageQuery, TeamStationClient } from '../../common/api'
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail, PublicGame } from '../../common/publicGroups'
 import { ROLE_FLAGS } from '../../common/roles'
 import {
-  Button,
   Card,
   GameRow,
   ListCard,
@@ -14,11 +13,11 @@ import {
   SectionHeader
 } from '../components'
 import { PagedList } from '../components/PagedList'
-import { PagedListEnd } from '../components/PagedListEnd'
+import { PagedListEmpty, PagedListEnd } from '../components/PagedListEnd'
 import { PersonRow } from '../components/PeopleList'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { type PagedRows, usePagedList } from '../hooks/usePagedList'
-import { lstrings, videoCountLabel } from '../locales/strings'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { shortDate, shortTime } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
@@ -177,26 +176,16 @@ function usePublicGames(
 function NoRows(props: {
   list: PagedRows<PublicGame>
   none: string
-}): React.ReactElement | null {
-  const { loading, empty, error, refresh } = props.list
+}): React.ReactElement {
   const styles = getStyles(useTheme())
-  if (loading) return <ActivityIndicator accessibilityLabel="Loading games" />
-  if (error != null)
-    return (
-      <>
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error instanceof Error ? error.message : 'Cannot load games'}
-        </Text>
-        <Button
-          label={lstrings.paged_list_retry}
-          kind="secondary"
-          onPress={() => {
-            refresh().catch(() => undefined)
-          }}
-        />
-      </>
-    )
-  return empty ? <Text style={styles.hint}>{props.none}</Text> : null
+  return (
+    <PagedListEmpty
+      list={props.list}
+      loadingLabel="Loading games"
+      failure="Cannot load games"
+      none={<Text style={styles.hint}>{props.none}</Text>}
+    />
+  )
 }
 
 /** Every game of the team's with a video, a list of its own. */
